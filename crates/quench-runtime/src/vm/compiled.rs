@@ -641,9 +641,8 @@ fn emit_js_tagged_truthiness(
     let known_primitive = builder.ins().bor(known_primitive, is_null);
     let known_primitive = builder.ins().bor(known_primitive, is_undefined);
     // A direct object or array record is truthy: neither family holds the IsHTMLDDA object.
-    let family = builder.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-    let object = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
-    let array = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_ARRAY_TAG as i64);
+    let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), bits);
+    let array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), bits);
     let record = builder.ins().bor(object, array);
     let known = builder.ins().bor(known_primitive, record);
     let truthy_known = builder.ins().bor(is_true, record);
@@ -938,16 +937,8 @@ fn emit_value_index_offset(builder: &mut FunctionBuilder<'_>, index: ir::Value) 
 
 /// The record of the direct array `base`, tagged; any other value leaves through `fallback`.
 fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, fallback: ir::Block) -> ir::Value {
-    use crate::value::ValueLayout;
 
-    let family = builder
-        .ins()
-        .band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
-    let is_array = builder.ins().icmp_imm_u(
-        IntCC::Equal,
-        family,
-        ValueLayout::DIRECT_ARRAY_TAG as i64,
-    );
+    let is_array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), base);
     emit_js_guard(builder, is_array, fallback);
 
     // A direct array's index names a live record of the reservation.
@@ -1847,7 +1838,6 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
 /// where the receiver is no direct object or the heap bases are absent, which no folded
 /// field matches.
 fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value) -> LaneReceiver {
-    use crate::value::ValueLayout;
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
     let receiver = LaneReceiver {
         object: builder.declare_var(types::I64),
@@ -1866,8 +1856,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     builder.def_var(receiver.object, null);
     let found = builder.create_block();
     let done = builder.create_block();
-    let family = builder.ins().band_imm_u(this, ValueLayout::HEAP_FAMILY_MASK as i64);
-    let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+    let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), this);
     let record_id = builder.ins().ireduce(types::I32, this);
     let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
     let has_records = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
@@ -2226,11 +2215,7 @@ impl<H: Host> Vm<H> {
 /// or strictly. Any other pair goes on to `other`.
 fn emit_identity_equality(builder: &mut FunctionBuilder<'_>, (left, right): (ir::Value, ir::Value), negated: bool,
     other: ir::Block, join: ir::Block) {
-    use crate::value::ValueLayout;
-    let object = |builder: &mut FunctionBuilder<'_>, bits| {
-        let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
-        builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64)
-    };
+    let object = |builder: &mut FunctionBuilder<'_>, bits| crate::staged::value::is_direct_object(&mut object_slots::emit(builder), bits);
     let identified = |builder: &mut FunctionBuilder<'_>, bits, object| {
         let null = builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
         let undefined = builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
@@ -2276,8 +2261,7 @@ fn emit_nullish_edges(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     let equal = if comparison.strict {
         builder.ins().icmp_imm_u(IntCC::Equal, value, comparison.expected.to_bits() as i64)
     } else {
-        let family = builder.ins().band_imm_u(value, ValueLayout::HEAP_FAMILY_MASK as i64);
-        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+        let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), value);
         // A direct object cannot be nullish or IsHTMLDDA. Resolve that family
         // before inspecting the remaining canonical encodings.
         let remaining = builder.create_block();
@@ -2287,7 +2271,7 @@ fn emit_nullish_edges(builder: &mut FunctionBuilder<'_>, value: ir::Value,
         if html_dda {
             let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
             let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
-            let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+            let array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), value);
             let safe = builder.ins().bor(immediate, array);
             emit_js_guard(builder, safe, fallback);
         }

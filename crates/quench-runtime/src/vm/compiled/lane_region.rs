@@ -725,8 +725,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             if ty == Type::DIRECT_OBJECT_FAMILY && !state.values[index].value.ty.is_direct_object_family() {
                 let exit = self.guard_exit(state, target as u32);
                 let bits = self.tagged(state, register);
-                let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-                let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), bits);
                 emit_js_guard(&mut self.builder, object, exit);
                 self.refine_object_family(state, bits);
             }
@@ -2827,9 +2826,8 @@ impl Lowering<'_, '_> {
                 builder.ins().bor(null, undefined)
             };
             let record = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
-                let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
-                let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
-                let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(builder), bits);
+                let array = crate::staged::value::is_direct_array(&mut super::object_slots::emit(builder), bits);
                 builder.ins().bor(object, array)
             };
             let (left_nullish, right_nullish) = (nullish(&mut self.builder, left), nullish(&mut self.builder, right));
@@ -3001,8 +2999,7 @@ impl Lowering<'_, '_> {
     /// Nullish receivers need no boxing only when the body ignores `this`.
     /// All other primitives retain interpreter recovery's boxing semantics.
     fn receiver_recovery(&mut self, receiver: ir::Value, recovery: ReceiverRecovery) -> ir::Value {
-        let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-        let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+        let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), receiver);
         match recovery {
             ReceiverRecovery::Object => object,
             ReceiverRecovery::ObjectOrNullish => {
@@ -3095,7 +3092,6 @@ impl Lowering<'_, '_> {
     /// leave stops the caller too, its frames kept; any other callee, receiver, or a full
     /// stack takes `helper`. The caller wrote back its registers.
     fn direct_call(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
-        use crate::value::ValueLayout;
         let word = std::mem::size_of::<Value>() as i64;
         let frame_size = std::mem::size_of::<ShadowFrame>() as i64;
         let offset = |field: usize| i32::try_from(field).expect("dispatch offset fits i32");
@@ -3107,8 +3103,7 @@ impl Lowering<'_, '_> {
         // to the global object (`lane_receiver_this`); any other receiver takes the helper.
         let (admitted, this) = match callee.sloppy {
             Some(global) => {
-                let family = self.ins().band_imm_u(this, ValueLayout::HEAP_FAMILY_MASK as i64);
-                let object = self.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), this);
                 let undefined = self.ins().icmp_imm_u(IntCC::Equal, this, Value::UNDEFINED.to_bits() as i64);
                 let null = self.ins().icmp_imm_u(IntCC::Equal, this, Value::NULL.to_bits() as i64);
                 let nullish = self.ins().bor(undefined, null);
@@ -4296,8 +4291,7 @@ impl Lowering<'_, '_> {
         if let Some(header) = state.proofs.headers[index] {
             if !read && state.proofs.readable.contains(index) {
                 let bits = self.owner_bits(state, owner);
-                let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-                let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), bits);
                 emit_js_guard(&mut self.builder, object, exit);
                 state.proofs.readable.remove(index);
                 self.refine_owner(state, index, fact);

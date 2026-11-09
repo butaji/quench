@@ -66,8 +66,7 @@ impl ObjectRecord {
         // Only a dominating verified definition/edge can supply this fact.
         // No safepoint or layout-changing operation may cross its lifetime.
         if !known.is_some_and(|fact| fact.ty.is_direct_object_family()) {
-            let family = builder.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-            let object = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+            let object = crate::staged::value::is_direct_object(&mut emit(builder), bits);
             emit_js_guard(builder, object, miss);
         }
         // A direct object's id names a record of the reservation, whose base every native
@@ -116,24 +115,22 @@ impl ObjectHeader {
     /// A store must not take this proof: its barrier reads object record marks.
     pub(super) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
         records: ir::Value, functions: ir::Value, miss: ir::Block) -> Self {
-        use crate::value::ValueLayout;
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
         let function = crate::heap::NATIVE_FUNCTION_LAYOUT;
         let (object_block, function_block, join) = (builder.create_block(), builder.create_block(), builder.create_block());
         // A function's own read is the rare one; the object path stays the straight line.
         builder.set_cold_block(function_block);
         let record = builder.append_block_param(join, types::I64);
-        let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
         let id = builder.ins().ireduce(types::I32, bits);
         let id = builder.ins().uextend(types::I64, id);
-        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+        let object = crate::staged::value::is_direct_object(&mut emit(builder), bits);
         builder.ins().brif(object, object_block, &[], function_block, &[]);
         builder.switch_to_block(object_block);
         let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
         let object_record = builder.ins().iadd(records, offset);
         builder.ins().jump(join, &[ir::BlockArg::Value(object_record)]);
         builder.switch_to_block(function_block);
-        let is_function = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_FUNCTION_TAG as i64);
+        let is_function = crate::staged::value::is_direct_function(&mut emit(builder), bits);
         let reserved = builder.ins().icmp_imm_u(IntCC::NotEqual, functions, 0);
         let readable = builder.ins().band(is_function, reserved);
         emit_js_guard(builder, readable, miss);
