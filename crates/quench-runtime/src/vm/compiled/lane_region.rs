@@ -1369,7 +1369,7 @@ pub(super) fn lower(
         if instruction.op() != Op::GetField || instruction.result_flags() != 0 { return None; }
         let FieldLookup::Atom { base, cache_site, .. } = instruction.field_lookup()? else { return None };
         let [field] = fields.get(&cache_site)?.as_slice() else { return None };
-        field.holder.is_none().then_some((base.register_index()?, field.shape))
+        field.own_direct().then_some((base.register_index()?, field.shape))
     };
     lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[]);
     let loops = local_loops(unit, &program.constants, entry_pc);
@@ -2215,26 +2215,7 @@ impl Lowering<'_, '_> {
         let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let specialized = self.builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
         if let Some(held) = self.store_held_unnamed(atom, specialized) { return held; }
-        let word_index = atom / u64::BITS;
-        let words = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
-        let words_len = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, method_cache_atom_words));
-        let covered = self.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, words_len, i64::from(word_index));
-        let present = self.builder.create_block();
-        let join = self.builder.create_block();
-        let free = self.builder.append_block_param(join, types::I8);
-        let one = self.builder.ins().iconst(types::I8, 1);
-        self.builder.ins().brif(covered, present, &[], join, &[ir::BlockArg::Value(one)]);
-        self.builder.switch_to_block(present);
-        let word = self.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            words,
-            i32::try_from(word_index as usize * std::mem::size_of::<u64>()).expect("atom word offset fits i32"),
-        );
-        let named = self.builder.ins().band_imm_u(word, (1_u64 << (atom % u64::BITS)) as i64);
-        let unnamed = self.builder.ins().icmp_imm_u(IntCC::Equal, named, 0);
-        self.builder.ins().jump(join, &[ir::BlockArg::Value(unnamed)]);
-        self.builder.switch_to_block(join);
+        let free = super::general_store::emit_atom_unnamed(&mut self.builder, self.payload, atom);
         self.builder.ins().band(specialized, free)
     }
 
@@ -4077,13 +4058,13 @@ impl Lowering<'_, '_> {
             } else {
                 // A single shape's read proves an object, as the facts the CFG carries say
                 // (`facts::analyze`); a shape switch's may read a function's own fields.
-                let header = lowering.object_header(state, register, shapes.len() > 1, generic);
+                let header = lowering.object_header(state, register, shapes.len() > 1 || shapes[0].function_shape, generic);
                 (header.record.address(&mut lowering.builder), header.shape, header.inline)
             };
             let read = lowering.shape_switch_read(state, Some(owner), object, shape, inline, &shapes, generic)?;
             // A single own shape read proves the register's object has it, for the block, a
             // receiver alias's too.
-            if let ([field], Some(register)) = (shapes.as_slice(), register) {
+            if let ([field], Some(register)) = (shapes.as_slice(), register) && !field.function_shape {
                 state.values[usize::from(register)] = RegisterFact::definition(
                     Type::direct_object(field.shape), Representation::Tagged);
             }
@@ -5450,7 +5431,7 @@ mod tests {
         let mut fields: BTreeMap<_, _> = function.instructions().filter(|instruction| instruction.op() == Op::SetField)
             .map(|instruction| (instruction.cache_site_index(), vec![NativeFieldLoad {
                 shape: 0, holder: None, slot: 0, storage_len: 1, storage: None,
-                ty: Type::INT32, target_shape: None, inherited: None,
+                ty: Type::INT32, target_shape: None, inherited: None, function_shape: false,
             }])).collect();
         assert_eq!(fields.len(), 1, "the test must exercise a profiled store");
         let isa = super::super::super::jit_backend::target_isa().unwrap();
@@ -5480,7 +5461,7 @@ mod tests {
             if instruction.op() == Op::GetField
                 && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
                 && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, target_shape: None, inherited: None }]))
+                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, target_shape: None, inherited: None, function_shape: false }]))
             } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
@@ -5510,7 +5491,7 @@ mod tests {
                 && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
                 && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
                 Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, target_shape: None,
-                    ty: Type::ANY, inherited: None }]))
+                    ty: Type::ANY, inherited: None, function_shape: false }]))
             } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa().unwrap();

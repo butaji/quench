@@ -78,12 +78,12 @@ const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_REFERENCE_BITS;
 /// whose upper half is a narrow value never carries an extras tag.
 pub(crate) const NARROW_INTEGER_FLAG: u32 = 1;
 const NARROW_CODE_BITS: u32 = 4;
-const NARROW_CODE_SHIFT: u32 = NARROW_INTEGER_FLAG.trailing_ones();
-const NARROW_INDEX_SHIFT: u32 = NARROW_CODE_SHIFT + NARROW_CODE_BITS;
+pub(crate) const NARROW_CODE_SHIFT: u32 = NARROW_INTEGER_FLAG.trailing_ones();
+pub(crate) const NARROW_INDEX_SHIFT: u32 = NARROW_CODE_SHIFT + NARROW_CODE_BITS;
 /// Lower-word width of a narrow non-integer: it leaves the top two bits clear.
-const NARROW_INDEX_BITS: u32 = u32::BITS - NARROW_INDEX_SHIFT - 2;
+pub(crate) const NARROW_INDEX_BITS: u32 = u32::BITS - NARROW_INDEX_SHIFT - 2;
 /// Integer width of a narrow integer: its top two bits copy the sign.
-const NARROW_INTEGER_BITS: u32 = u32::BITS - NARROW_CODE_SHIFT - 1;
+pub(crate) const NARROW_INTEGER_BITS: u32 = u32::BITS - NARROW_CODE_SHIFT - 1;
 const LOWER_WORD: u64 = u32::MAX as u64;
 /// Upper words of narrow non-integers by code: the eight heap reference families in
 /// `HEAP_FAMILY_BITS` order, then the tagged constants. Unused codes hold zero, the upper word
@@ -155,8 +155,8 @@ const _: () = assert!(NARROW_HEAP_FAMILIES + 4 <= 1 << NARROW_CODE_BITS);
 const _: () = assert!(NARROW_HEAP_FAMILIES + 3 + NARROW_HEAP_FAMILIES <= NARROW_LOOKUP_CODES);
 /// The upper word of a direct object handle and its narrow code, its family bits, as
 /// `to_narrow`'s table names them; `to_narrow_reference` packs it without the lookup.
-const DIRECT_OBJECT_UPPER: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;
-const DIRECT_OBJECT_NARROW_CODE: u32 = ((DIRECT_OBJECT_UPPER & HEAP_FAMILY_BITS) >> HEAP_FAMILY_SHIFT) as u32;
+pub(crate) const DIRECT_OBJECT_UPPER: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;
+pub(crate) const DIRECT_OBJECT_NARROW_CODE: u32 = ((DIRECT_OBJECT_UPPER & HEAP_FAMILY_BITS) >> HEAP_FAMILY_SHIFT) as u32;
 const _: () = assert!(NARROW_UPPER_WORDS[DIRECT_OBJECT_NARROW_CODE as usize] == DIRECT_OBJECT_UPPER);
 
 impl Value {

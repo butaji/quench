@@ -634,7 +634,7 @@ complexity crates/quench-runtime/src/vm/compiled.rs::cached_direct_reference 13
 complexity crates/quench-runtime/src/vm/compiled.rs::compile_built_functions 14
 complexity crates/quench-runtime/src/vm/compiled.rs::js_general_dispatch_cache_key 12
 complexity crates/quench-runtime/src/vm/compiled.rs::js_semantic_callout 71
-complexity crates/quench-runtime/src/vm/compiled.rs::lower_js_general_dispatch 226
+complexity crates/quench-runtime/src/vm/compiled.rs::lower_js_general_dispatch 218
 complexity crates/quench-runtime/src/vm/compiled.rs::lower_static_typed_regions 24
 complexity crates/quench-runtime/src/vm/compiled.rs::native_operation_fallback_kind 43
 complexity crates/quench-runtime/src/vm/compiled.rs::osr_probe 15
@@ -722,7 +722,7 @@ complexity crates/quench-runtime/src/vm/date.rs::parse_date_offset 13
 complexity crates/quench-runtime/src/vm/date.rs::parse_numeric_date_parts 20
 complexity crates/quench-runtime/src/vm/date/legacy_parse.rs::Tokenizer<'a>::read 11
 complexity crates/quench-runtime/src/vm/date/legacy_parse.rs::parse_legacy_date 29
-complexity crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::step 230
+complexity crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::step 227
 complexity crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::try_inline_call_apply 19
 complexity crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::try_inline_user_call 20
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::call_prepared_lane 12
@@ -1457,9 +1457,9 @@ file-lines crates/quench-runtime/src/vm/call_printer.rs 624
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 521
 file-lines crates/quench-runtime/src/vm/collections.rs 1470
-file-lines crates/quench-runtime/src/vm/compiled.rs 19127
+file-lines crates/quench-runtime/src/vm/compiled.rs 19129
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
-file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5552
+file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5647
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 861
 file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7587
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 594
@@ -2849,7 +2849,6 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::compile_built_functions
 function-lines crates/quench-runtime/src/vm/compiled.rs::direct_reference_entry 55
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_cached_field_slot 155
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_int32_arithmetic 62
-function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_own_field_get 44
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_tagged_number 69
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_tagged_truthiness 50
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_lane_receiver 48
@@ -2859,7 +2858,7 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::enter_native 44
 function-lines crates/quench-runtime/src/vm/compiled.rs::import_callout 58
 function-lines crates/quench-runtime/src/vm/compiled.rs::js_general_dispatch_cache_key 93
 function-lines crates/quench-runtime/src/vm/compiled.rs::js_semantic_callout 433
-function-lines crates/quench-runtime/src/vm/compiled.rs::lower_js_general_dispatch 1319
+function-lines crates/quench-runtime/src/vm/compiled.rs::lower_js_general_dispatch 1276
 function-lines crates/quench-runtime/src/vm/compiled.rs::lower_static_typed_regions 74
 function-lines crates/quench-runtime/src/vm/compiled.rs::native_operation_fallback_kind 113
 function-lines crates/quench-runtime/src/vm/compiled.rs::note_reference_call_site 53
@@ -2941,7 +2940,7 @@ function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::store_field 75
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::typeof_test 54
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::loop_fields 79
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::lower 491
+function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::lower 492
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::tests::capture_entry_preserves_distinct_environments_and_mutations 53
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::tests::inductive_accumulator_keeps_the_predicate_loop_unboxed 51
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::tests::inlined_capture_reads_require_an_admitted_invariant_callee 99
@@ -3012,7 +3011,7 @@ function-lines crates/quench-runtime/src/vm/date.rs::date_getter 49
 function-lines crates/quench-runtime/src/vm/date.rs::make_date_milliseconds 68
 function-lines crates/quench-runtime/src/vm/date.rs::parse_numeric_date_parts 80
 function-lines crates/quench-runtime/src/vm/date/legacy_parse.rs::parse_legacy_date 92
-function-lines crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::step 1253
+function-lines crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::step 1240
 function-lines crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::try_inline_call_apply 101
 function-lines crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::try_inline_user_call 107
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::osr_diagnostics 73
