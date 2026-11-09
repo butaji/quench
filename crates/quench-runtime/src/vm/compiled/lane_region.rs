@@ -4945,8 +4945,10 @@ impl Lowering<'_, '_> {
             return Some(true);
         }
         // `%` is the shared Number remainder: both operands are Numbers, and the result
-        // keeps the sign of the dividend (`-0` included).
-        if instruction.op() == Op::Binary && operator == super::operations::REMAINDER {
+        // keeps the sign of the dividend (`-0` included). The opcode's denotation is the
+        // catalog's, so the meaning is not a second hand-written `Binary` arm.
+        if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+            && operator == super::operations::REMAINDER {
             let left = self.operand_number(state, left, exit)?;
             let right = self.operand_number(state, right, exit)?;
             let value = super::emit_number_remainder(&mut self.builder, types::I64, left, right);

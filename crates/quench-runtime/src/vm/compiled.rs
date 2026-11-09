@@ -6483,16 +6483,16 @@ impl CompiledOsrRegion {
             } else {
                 match LaneExit::decode(word) {
                     // A leave outside the loop is the loop's normal continuation, which the
-                    // lane resumes at that PC; a guard inside the loop is an exit. An
-                    // inlining region's unit PCs are not the original loop's.
+                    // lane resumes at that PC; a guard inside the loop is an exit. The word
+                    // already names the caller's PC, and an inlining region's loop ends at
+                    // the caller's latch, not at the region's last instruction.
                     LaneExit::At(pc) => {
                         let pc = pc as u32;
-                        if region.inlining.is_none()
-                            && !(region.header..=region.backedge).contains(&pc)
-                        {
-                            LoopOutcome::Resume(pc)
-                        } else {
+                        let latch = region.inlining.as_ref().map_or(region.backedge, |inlining| inlining.latch);
+                        if (region.header..=latch).contains(&pc) {
                             LoopOutcome::Exit(pc)
+                        } else {
+                            LoopOutcome::Resume(pc)
                         }
                     }
                     LaneExit::Entry => LoopOutcome::NotEntered(None),

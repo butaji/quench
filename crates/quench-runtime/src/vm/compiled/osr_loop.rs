@@ -816,6 +816,8 @@ pub(crate) struct Inlining {
     pub(crate) callee_captures: Vec<(usize, u16)>,
     /// The caller's register count: every register from it on is an inlined callee's.
     pub(crate) caller_registers: u16,
+    /// The caller's backward jump PC: the last caller PC of the loop it closes.
+    pub(crate) latch: u32,
 }
 
 /// The capture slot bit an inlined callee's capture read carries (`Inlining::callee_captures`):
@@ -1408,7 +1410,7 @@ pub(super) fn inline_region<'a>(
         frames.push(frame);
     }
     (region.fields.len() <= MAX_REGION_FIELDS).then_some(())?;
-    region.inlining = Some(Box::new(Inlining { origins, frames, callee_captures, caller_registers }));
+    region.inlining = Some(Box::new(Inlining { origins, frames, callee_captures, caller_registers, latch: backedge }));
     Some(region)
 }
 

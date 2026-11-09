@@ -6,7 +6,7 @@ use super::{
     publish_entry, tier_policy, CompiledOsrRegion, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts, Widening,
 };
-use crate::bytecode::{FieldLookup, Function, ResidualProgram};
+use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
 use super::super::specializer::Specializer;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -100,7 +100,7 @@ fn inlining_unit(region: &LoopRegion) -> Option<lane_unit::Unit> {
             instruction.set_jump_target(local as u32);
         }
     }
-    let origins: Vec<lane_unit::Origin> = inlining.origins.iter().take(count).map(|origin| match origin {
+    let mut origins: Vec<lane_unit::Origin> = inlining.origins.iter().take(count).map(|origin| match origin {
         osr_loop::Origin::Caller(pc) => lane_unit::Origin::Caller(*pc),
         osr_loop::Origin::Inlined { frame, pc } => lane_unit::Origin::Inlined { frame: usize::from(*frame), pc: *pc },
         osr_loop::Origin::Leave(pc) => lane_unit::Origin::Caller(*pc),
@@ -123,13 +123,38 @@ fn inlining_unit(region: &LoopRegion) -> Option<lane_unit::Unit> {
         alternative: None,
         function_call: None,
     }).collect();
-    let markers: Vec<usize> = (0..frames.len()).map(|frame| origins.iter().position(|origin|
-        matches!(origin, lane_unit::Origin::Inlined { frame: at, .. } if *at == frame)).unwrap_or(0)).collect();
+    // Each frame's call marker: a `Nop` where its body begins, at which the lane binds the
+    // callee and passes the call's arguments (`Lowering::inline_call`), as `lane_unit::unit`
+    // emits it. The region's own parameter moves precede the marker and write the same
+    // registers.
+    let mut inserted: Vec<(usize, u32)> = (0..frames.len()).filter_map(|frame| {
+        let at = origins.iter().position(|origin|
+            matches!(origin, lane_unit::Origin::Inlined { frame: at, .. } if *at == frame))?;
+        Some((at, frames[frame].call))
+    }).collect();
+    inserted.sort_unstable_by_key(|(at, _)| *at);
+    inserted.dedup_by_key(|(at, _)| *at);
+    let mut markers: Vec<usize> = inserted.iter().map(|(at, _)| *at).collect();
+    for &(at, call) in inserted.iter().rev() {
+        instructions.insert(at, WideInstruction::new(Op::Nop, 0, 0, 0, 0));
+        origins.insert(at, lane_unit::Origin::Caller(call));
+    }
+    // A jump target lands on the marker at its own position, as the call's PC did: an
+    // insertion at the target itself is that marker, so only earlier ones move it.
+    let shift = |target: usize| target + inserted.iter().filter(|(at, _)| *at < target).count();
+    for instruction in &mut instructions {
+        if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget {
+            instruction.set_jump_target(shift(instruction.imm() as usize) as u32);
+        }
+    }
+    for marker in &mut markers { *marker = shift(*marker); }
     let registers = frames.iter().map(|frame| frame.base + frame.registers)
         .max().unwrap_or(0).max(inlining.caller_registers);
     Some(lane_unit::Unit {
         instructions, origins, frames, markers,
-        caller_registers: inlining.caller_registers, registers, end: count as u32,
+        caller_registers: inlining.caller_registers, registers,
+        // The caller PC past the loop, where an edge out of it resumes.
+        end: inlining.latch + 1,
     })
 }
 
@@ -165,12 +190,17 @@ pub(in crate::vm) fn start_osr_region(
     let fields = loop_fields(region, observation);
     let simple = region.inlining.is_none();
     // A callee with its own loop makes the inlined unit a nested loop region. The lane
-    // plan's single loop does not inline that callee's loop yet; the verified lowering
-    // does, so the lane plan declines it and the verified lowering publishes the region.
-    let nested_inlined_loop = region.inlining.is_some() && region.instructions().iter().enumerate().any(|(pc, instruction)|
-        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
-            && (instruction.jump_target() as usize) <= pc
-            && pc != region.backedge as usize);
+    // plan's single `Coverage::Loop` does not model the callee's loop yet (its receiver
+    // and nested backedges need their own coverage); the verified lowering does, so the
+    // lane plan declines it and the verified lowering publishes the region. Region PCs are
+    // offsets from the header and a jump target is one too, so compare in that space.
+    let nested_inlined_loop = region.inlining.as_deref().is_some_and(|inlining|
+        region.instructions().iter().enumerate().any(|(offset, instruction)| {
+            let pc = region.header as usize + offset;
+            instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
+                && (instruction.jump_target() as usize) <= pc
+                && pc != inlining.latch as usize
+        }));
     let lane = (!nested_inlined_loop && (simple || inlined.is_some())).then(|| super::lane_region::RegionSpecializer {
         function_id, unit, helpers, fields: &fields,
         global_reads: &BTreeMap::new(), facts: VmFacts::STATIC, generic: &[],
