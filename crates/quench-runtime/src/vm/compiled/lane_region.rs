@@ -2296,26 +2296,7 @@ impl Lowering<'_, '_> {
         let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let specialized = self.builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
         if let Some(held) = self.store_held_unnamed(atom, specialized) { return held; }
-        let word_index = atom / u64::BITS;
-        let words = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
-        let words_len = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, method_cache_atom_words));
-        let covered = self.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, words_len, i64::from(word_index));
-        let present = self.builder.create_block();
-        let join = self.builder.create_block();
-        let free = self.builder.append_block_param(join, types::I8);
-        let one = self.builder.ins().iconst(types::I8, 1);
-        self.builder.ins().brif(covered, present, &[], join, &[ir::BlockArg::Value(one)]);
-        self.builder.switch_to_block(present);
-        let word = self.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            words,
-            i32::try_from(word_index as usize * std::mem::size_of::<u64>()).expect("atom word offset fits i32"),
-        );
-        let named = self.builder.ins().band_imm_u(word, (1_u64 << (atom % u64::BITS)) as i64);
-        let unnamed = self.builder.ins().icmp_imm_u(IntCC::Equal, named, 0);
-        self.builder.ins().jump(join, &[ir::BlockArg::Value(unnamed)]);
-        self.builder.switch_to_block(join);
+        let free = super::general_store::emit_atom_unnamed(&mut self.builder, self.payload, atom);
         self.builder.ins().band(specialized, free)
     }
 

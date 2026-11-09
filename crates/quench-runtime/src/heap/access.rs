@@ -788,8 +788,6 @@ impl Heap {
     }
 
     /// The recorded content type; `Type::ANY` when tracking is disabled or the slot is absent.
-    /// Native raw writes can bypass recording. Readers must check observations;
-    /// this is not a write-maintained contract.
     pub(crate) fn slot_type(&self, shape: u32, slot: usize) -> crate::typed_ir::Type {
         if !self.properties.tracks() || slot >= self.properties.shape_length(shape) {
             return crate::typed_ir::Type::ANY;
@@ -800,6 +798,8 @@ impl Heap {
     pub(crate) fn slot_target_shape(&self, shape: u32, slot: usize) -> Option<u32> {
         self.properties.slot_target_shape(shape, slot)
     }
+    /// Whether `slot` of `shape` already holds any target shape, so no store widens its target.
+    pub(crate) fn slot_target_settled(&self, shape: u32, slot: usize) -> bool { self.properties.slot_target_settled(shape, slot) }
 
     pub(crate) fn subscribe_slot(&mut self, dependency: crate::code_dependencies::SlotDependency,
         code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {

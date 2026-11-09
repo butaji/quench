@@ -106,6 +106,7 @@ mod general_getter;
 mod function_binding;
 use function_binding::{lane_admitted_function_binding, lane_function_binding};
 mod general_binary;
+mod general_store;
 pub(super) use frameless::{ChainFrame, Frameless};
 use exact_budget::PcLowering;
 use direct_call::direct_call;
@@ -1577,11 +1578,29 @@ fn emit_js_own_field_get(
     table: NarrowTable,
 ) {
     let fallback = builder.create_block();
+    // A single read may call its site's cached user getter (`general_getter`).
+    let getter = (sites.len() == 1).then_some((destination_offset, next));
+    let value = emit_js_field_read(builder, (arguments, payload), receiver, sites, table, (exact, getter), fallback);
+    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, fallback);
+}
+
+/// The value the field chain `sites` reads from `receiver`, in the current block: an own slot
+/// in inline storage holds a packed value, which decodes to the same Value, and a read the
+/// site's primary row does not answer asks the VM's caches (`general_field_get`), then the
+/// `getter` where one is given; a miss continues at `fallback`.
+fn emit_js_field_read(
+    builder: &mut FunctionBuilder<'_>,
+    (arguments, payload): (ir::Value, ir::Value),
+    receiver: JsFieldReceiver,
+    sites: &[(Atom, u16)],
+    table: NarrowTable,
+    (exact, getter): (&JsExactFallback, Option<(i32, ir::Block)>),
+    fallback: ir::Block,
+) -> ir::Value {
     let mut object = receiver.emit(builder, arguments, payload, fallback);
     for &(atom, site) in sites {
-        // An own slot in inline storage holds a packed value, which decodes to the same Value;
-        // a read the site's primary row does not answer asks the VM's caches
-        // (`general_field_get`), whose miss alone takes the exact step.
         let (packed, miss, read) = (builder.create_block(), builder.create_block(), builder.create_block());
         let packed_address = builder.append_block_param(packed, types::I64);
         let field = builder.append_block_param(read, types::I64);
@@ -1594,16 +1613,11 @@ fn emit_js_own_field_get(
         emit_narrow_read(builder, narrow, table, read);
         builder.switch_to_block(miss);
         builder.set_cold_block(miss);
-        // A single read may call its site's cached user getter (`general_getter`).
-        let getter = (sites.len() == 1).then_some((destination_offset, next));
         general_getter::emit_read_miss(builder, (arguments, payload), exact, object, (atom, site), getter, (read, fallback));
         builder.switch_to_block(read);
         object = field;
     }
-    let value = object;
-    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
-    builder.ins().jump(next, &[]);
-    exact.emit(builder, fallback);
+    object
 }
 
 /// Return a computed value, preserving the exact-PC interruption fallback.
@@ -1672,21 +1686,10 @@ fn emit_js_own_field_set(
     exact: &JsExactFallback,
 ) {
     let receiver = receiver.emit(builder, arguments, payload, fallback);
-    let write = builder.ins().iconst(types::I64, (i64::from(atom) << u16::BITS) | i64::from(site));
-    let atom = builder.ins().iconst(types::I64, i64::from(atom));
-    let site = builder.ins().iconst(types::I64, i64::from(site));
-    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_store));
-    let stored = emit_lane_helper_call(builder, payload, helper, &[receiver, atom, site, value]);
-    let stored = builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-    // A store that names no existing slot adds the property by its site's cached transition.
-    let (add, done) = (builder.create_block(), builder.create_block());
-    builder.ins().brif(stored, done, &[], add, &[]);
-    builder.switch_to_block(add);
-    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_add));
-    let added = emit_lane_helper_call(builder, payload, helper, &[payload, receiver, write, value]);
-    let added = builder.ins().icmp_imm_u(IntCC::NotEqual, added, 0);
-    emit_js_guard(builder, added, fallback);
-    builder.ins().jump(done, &[]);
+    let (store, add, done) = (builder.create_block(), builder.create_block(), builder.create_block());
+    general_store::emit_store(builder, (arguments, payload), receiver, atom, site, value, done, store);
+    builder.switch_to_block(store);
+    general_store::emit_helper_store(builder, payload, (receiver, atom, site, value), (add, done, fallback));
     builder.switch_to_block(done);
     if let Some(destination) = result_destination {
         builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
@@ -2790,25 +2793,14 @@ pub(super) fn lower_js_general_dispatch(
             && let Some(receiver) = js_field_receiver(site.base, &register_offset)
             && let Some(destination) = register_offset(instruction.result_register())
         {
+            // The read (no getter: a store's miss repeats the whole step), the store into
+            // `this`, and only then the register, which may be the read's base.
+            let exact = JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc };
+            let sites: smallvec::SmallVec<[(Atom, u16); 2]> = std::iter::once(site.first).chain(site.second).collect();
             let fallback = builder.create_block();
-            let (address, _) = emit_js_cached_field_slot(
-                &mut builder, arguments, payload, receiver, site.first.1, true, fallback, None, None, None,
-            );
-            let mut value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-            if let Some((_, cache)) = site.second {
-                let (address, _) = emit_js_cached_field_slot(
-                    &mut builder, arguments, payload, JsFieldReceiver::Value(value), cache, true, fallback, None, None, None,
-                );
-                value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-            }
-            let exact = JsExactFallback {
-                context, callout, callout_signature, result_pointer,
-                stopped_block, continue_block, pc,
-            };
-            emit_js_own_field_set(
-                &mut builder, arguments, payload, JsFieldReceiver::FixedThis, value,
-                sink_atom, sink_cache, Some(destination), next, fallback, &exact,
-            );
+            let value = emit_js_field_read(&mut builder, (arguments, payload), receiver, &sites, narrow_table, (&exact, None), fallback);
+            emit_js_own_field_set(&mut builder, arguments, payload, JsFieldReceiver::FixedThis, value,
+                sink_atom, sink_cache, Some(destination), next, fallback, &exact);
             general_dispatch_native_pcs[pc] = PcLowering::Native as u8;
             continue;
         }
@@ -6934,6 +6926,7 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
     );
     #[cfg(feature = "profile-native-ops")]
     super::native_op_profile::record_store(storage, hit);
+    if hit { general_store::record_store_class(vm, site as u16, Value::from_bits(value)); }
     u64::from(hit)
 }
 
