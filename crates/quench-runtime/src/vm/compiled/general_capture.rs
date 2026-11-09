@@ -4,7 +4,8 @@
 //! write directly (`capture_stores`), as the lane's store does (`lane_store_own_capture`).
 //! An entry whose view is missing asks `general_capture_slots` once before the exact step.
 //! A frame's own binding (`LoadEnvLocal`, `StoreEnvLocal`) asks `general_env_local`, the lane's
-//! operations on it (`Vm::initialized_frame_binding`, `Vm::store_initialized_frame_binding`).
+//! operations on it (`Vm::initialized_frame_binding`, `Vm::store_initialized_frame_binding`),
+//! and a closure (`MakeClosure`) `general_closure`, the lane's (`lane_closure_value_of`).
 use super::{emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback, JsStepDispatch, ResidualProgram, Vm};
 use crate::bytecode::{Op, WideInstruction};
 use crate::value::ValueLayout;
@@ -187,8 +188,8 @@ pub(super) unsafe extern "C" fn general_env_local<H: Host>(vm: u64, residual: u6
         &*(payload as *const JsStepDispatch)) };
     let store = word >> EnvLocal::STORE_BIT & 1 != 0;
     let refused = if store { ENV_STORE_REFUSED } else { Value::DELETED.to_bits() };
-    // A frameless activation's bindings are not its caller's frame's.
-    if vm.frameless.inside(dispatch) { return refused; }
+    // A frameless activation's or a lane body's bindings are not the payload frame's.
+    if vm.frameless.inside(dispatch) || dispatch.lane_context != 0 { return refused; }
     let slot = (word >> EnvLocal::SLOT_SHIFT) as usize;
     if store {
         let initializing = word >> EnvLocal::INITIALIZING_BIT & 1 != 0;
@@ -196,4 +197,62 @@ pub(super) unsafe extern "C" fn general_env_local<H: Host>(vm: u64, residual: u6
     } else {
         vm.initialized_frame_binding(program, dispatch.frame, slot).map_or(refused, Value::to_bits)
     }
+}
+
+/// Lowers the `MakeClosure` at the exact fallback's PC through `general_closure`, its miss
+/// taking the exact step, in a function with no binding sites, whose closures' environment is
+/// the frame's own (`Vm::capture_binding_environment`); false where only the step applies.
+pub(super) fn lower_closure(
+    builder: &mut FunctionBuilder<'_>,
+    (instruction, next): (WideInstruction, ir::Block),
+    function: &crate::bytecode::Function,
+    register_offset: &dyn Fn(u16) -> Option<i32>,
+    (arguments, payload): (ir::Value, ir::Value),
+    exact: &JsExactFallback,
+) -> bool {
+    if instruction.op().immediate_role() != crate::bytecode::ImmediateRole::ClosureFunctionIndex
+        || !function.binding_sites.is_empty() || instruction.result_flags() != 0 {
+        return false;
+    }
+    let Some(destination) = register_offset(instruction.result_register()) else { return false };
+    let id = builder.ins().iconst(types::I64, i64::from(instruction.closure_function_index()));
+    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, closure));
+    let closure = emit_lane_helper_call(builder, payload, helper, &[payload, id]);
+    let made = builder.ins().icmp_imm_u(IntCC::NotEqual, closure, Value::DELETED.to_bits() as i64);
+    let (done, fallback) = (builder.create_block(), builder.create_block());
+    builder.ins().brif(made, done, &[], fallback, &[]);
+    builder.switch_to_block(done);
+    builder.ins().store(MemFlagsData::trusted(), closure, arguments, destination);
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, fallback);
+    true
+}
+
+/// The closure of function `id` in the payload's frame, as the lane makes it
+/// (`lane_closure_value_of`): the frame's environment promoted once, then `Vm::closure`, which
+/// runs no guest code; `Value::DELETED` before any effect inside a frameless activation or a
+/// lane body, or with a collection due, which the exact step makes. Promotion moves the frame's captured
+/// locals into its environment, so the dispatch takes its views again.
+///
+/// # Safety
+/// As `general_capture_slots`.
+pub(super) unsafe extern "C" fn general_closure<H: Host>(vm: u64, residual: u64, payload: u64, id: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
+        &mut *(payload as *mut JsStepDispatch)) };
+    if vm.frameless.inside(dispatch) || dispatch.lane_context != 0 || vm.heap.should_collect() {
+        return Value::DELETED.to_bits();
+    }
+    let env = vm.promote_frame_environment(dispatch.frame);
+    let closure = vm.closure(program, id as u32, env).unwrap_or(Value::DELETED);
+    super::super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_heap_bases(vm, program);
+    closure.to_bits()
+}
+
+/// The helpers' addresses, as `JsStepDispatch` holds them: capture slots, frame bindings and
+/// closures.
+pub(super) fn helpers<H: Host>() -> (usize, usize, usize) {
+    (general_capture_slots::<H> as *const () as usize, general_env_local::<H> as *const () as usize,
+        general_closure::<H> as *const () as usize)
 }

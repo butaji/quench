@@ -34,7 +34,8 @@ pub(super) fn lower_shortcut(
     }
     let next = next?;
     if super::general_capture::lower_capture(builder, (instruction, next), register_offset, (arguments, payload), exact)
-        || super::general_capture::lower_env_local(builder, (instruction, next), function, register_offset, (arguments, payload), exact) {
+        || super::general_capture::lower_env_local(builder, (instruction, next), function, register_offset, (arguments, payload), exact)
+        || super::general_capture::lower_closure(builder, (instruction, next), function, register_offset, (arguments, payload), exact) {
         return Some(true);
     }
     if lower_construct(builder, (pc, instruction, next), register_offset, (arguments, payload), exact) {

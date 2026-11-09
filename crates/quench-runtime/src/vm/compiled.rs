@@ -7165,9 +7165,9 @@ struct JsStepDispatch {
     /// The call shortcuts a call site asks before the exact step (`general_call`).
     native_call: usize,
     user_call: usize,
-    /// The capture slots a capture site without a view asks for, the frame's own bindings
-    /// (`general_capture`), and whether `capture_values` admits a direct write.
-    captures: usize, env_local: usize,
+    /// The capture slots a capture site without a view asks for, the frame's own bindings and
+    /// closures (`general_capture`), and whether `capture_values` admits a direct write.
+    captures: usize, env_local: usize, closure: usize,
     capture_stores: usize,
     /// A global name's cached read (`general_names`).
     global_get: usize,
@@ -7931,7 +7931,7 @@ impl LaneFrame {
                 field_store: 0,
                 field_add: 0,
                 field_get: 0, field_getter: 0,
-                native_call: 0, user_call: 0, captures: 0, env_local: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, binary: 0,
+                native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, binary: 0,
                 allocated: 0,
                 collect_at: 0,
                 method_cache_atoms: 0,
@@ -8082,7 +8082,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -8121,7 +8121,7 @@ impl JsStepDispatch {
             general_getter::general_field_getter::<H> as *const () as usize);
         self.native_call = general_call::general_native_call::<H> as *const () as usize;
         self.user_call = general_call::general_user_call::<H> as *const () as usize;
-        (self.captures, self.env_local) = (general_capture::general_capture_slots::<H> as *const () as usize, general_capture::general_env_local::<H> as *const () as usize);
+        (self.captures, self.env_local, self.closure) = general_capture::helpers::<H>();
         self.global_get = general_names::general_global_get::<H> as *const () as usize;
         self.frameless = frameless::general_frameless_admit::<H> as *const () as usize;
         // SAFETY: the VM outlives this entry; the eval flags hold through it (`lane_function_matches`).
