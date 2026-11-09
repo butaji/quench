@@ -107,7 +107,14 @@ pub(in crate::vm) fn start_osr_region(
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
     let unit = loop_unit(program.function(function_id as usize));
     let fields = loop_fields(region, observation);
-    let lane = region.inlining.is_none().then(|| super::lane_region::RegionSpecializer {
+    // The lane unit models the loop's registers and locals; its captures, fields and
+    // arrays still come from the loop entry record, so those regions keep the private
+    // lowering until the lane unit carries them too.
+    let simple = region.inlining.is_none()
+        && region.captures.is_empty() && region.fields.is_empty()
+        && region.arrays.is_empty() && region.field_store_sites.is_empty()
+        && !region.reads_heap_natively();
+    let lane = simple.then(|| super::lane_region::RegionSpecializer {
         function_id, unit: &unit, helpers, fields: &fields,
         global_reads: &BTreeMap::new(), facts: VmFacts::STATIC, generic: &[],
         direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
@@ -120,10 +127,9 @@ pub(in crate::vm) fn start_osr_region(
     }.specialize(program).ok()).flatten();
     let (function, widenings, lane) = match lane {
         Some(region) => (region.function, BTreeMap::new(), true),
-        // The loop tier's private lowering remains only for an inlining region, whose
-        // callee frames the lane unit does not yet model. Every other loop either lowers
-        // through `RegionSpecializer` or stays in the interpreter.
-        None if region.inlining.is_some() => {
+        // The loop tier's private lowering remains for an inlining region and for a loop
+        // whose captures, fields or arrays the lane unit does not carry yet.
+        None if !simple => {
             let verified = osr_loop::verify_region(region, observation).ok()?;
             let (function, widenings) =
                 osr_loop::lower_verified(verified, observation, &*isa, poll_address(interrupt))?;
