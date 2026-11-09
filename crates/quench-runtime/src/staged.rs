@@ -19,6 +19,7 @@ use crate::typed_ir::Type;
 
 pub(crate) mod numeric;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
+pub(crate) mod elements;
 pub(crate) mod environment;
 pub(crate) mod object;
 pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
@@ -50,6 +51,10 @@ pub(crate) trait Stage {
     fn ne_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
     /// Whether `a` exceeds `imm`, both unsigned.
     fn ugt_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
+    /// Whether `a` is below `b`, both unsigned and of one width.
+    fn ult(&mut self, a: Self::Word, b: Self::Word) -> Self::Cond;
+    /// A 32-bit word zero-extended to the full word (the full word unchanged).
+    fn uextend32(&mut self, a: Self::Word) -> Self::Word;
     fn not(&mut self, cond: Self::Cond) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
@@ -300,6 +305,10 @@ impl Stage for Concrete {
     fn ne_imm(&mut self, a: u64, imm: u64) -> bool { a != imm }
     #[inline(always)]
     fn ugt_imm(&mut self, a: u64, imm: u64) -> bool { a > imm }
+    #[inline(always)]
+    fn ult(&mut self, a: u64, b: u64) -> bool { a < b }
+    #[inline(always)]
+    fn uextend32(&mut self, a: u64) -> u64 { a }
     #[inline(always)]
     fn not(&mut self, cond: bool) -> bool { !cond }
     #[inline(always)]

@@ -1102,14 +1102,9 @@ pub(super) fn emit_dense_element(
     index: ir::Value,
     fallback: ir::Block,
 ) -> (ir::Value, ir::Value) {
-    let in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, index, view.length);
-    emit_js_guard(builder, in_bounds, fallback);
-    let value_offset = emit_value_index_offset(builder, index);
-    let address = builder.ins().iadd(view.values, value_offset);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-    let is_present = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-    emit_js_guard(builder, is_present, fallback);
-    (address, value)
+    let mut stage = object_slots::Emit { builder, property_values: None };
+    crate::staged::elements::dense_element(&mut stage, view.values, view.length, index, fallback)
+        .expect("the emit stage continues past its guards")
 }
 
 /// Replace the present element at `address`, whose value was `old`, with the non-heap

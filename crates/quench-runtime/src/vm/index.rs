@@ -283,11 +283,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn direct_dense_element(&self, base: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
-        let value = *self.heap.record_array(base)?.elements().get(index)?;
-        if value.is_deleted() {
-            return None;
-        }
-        Some(value)
+        crate::staged::elements::concrete_dense_element(self.heap.record_array(base)?.elements(), index)
     }
 
     /// `base[key]` for a non-negative integer key that neither an ordinary object or array
