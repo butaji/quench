@@ -39,9 +39,8 @@ impl Division {
 /// published (linked object, Cranelift in live memory, copied stencils).
 pub(crate) trait Specializer {
     type Residual;
-    const DIVISION: Division;
 
-        fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String>;
+    fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String>;
 }
 
 /// Where control continues after an instruction's semantic entry returns.
@@ -139,18 +138,31 @@ pub(crate) trait CallThreadedExtension {
 /// The call-threaded specializer: dispatch, PCs, operand records and
 /// successors are folded; each instruction's meaning is its opcode's
 /// monomorphized semantic entry.
-pub(crate) struct CallThreaded<E>(pub(crate) E);
+pub(crate) struct CallThreaded<E> {
+    pub(crate) extension: E,
+    /// Which facts the sites may fold. The call-threaded graph itself reads no
+    /// heap fact yet, so a frozen publication starts with the same sites; the
+    /// division is what a fact-folding lowering will read.
+    pub(crate) division: Division,
+}
+
+impl<E> CallThreaded<E> {
+    /// The offline publication: static inputs and locations only.
+    pub(crate) fn new(extension: E) -> Self { Self { extension, division: Division::Offline } }
+    /// An eager image's publication: whole-program Stable facts, no feedback sites.
+    #[cfg(feature = "aot")]
+    pub(crate) fn frozen(extension: E) -> Self { Self { extension, division: Division::Frozen } }
+}
 
 impl<E: CallThreadedExtension> Specializer for CallThreaded<E> {
     type Residual = E::Residual;
-    const DIVISION: Division = Division::Offline;
 
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         program.validate_unless_proven()?;
-        let mut extension = self.0;
+        let Self { mut extension, division } = self;
         for id in 0..program.function_count() {
             let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
-            extension.function(function_id, instruction_sites(Self::DIVISION, program.function(id)))?;
+            extension.function(function_id, instruction_sites(division, program.function(id)))?;
         }
         extension.finish()
     }
@@ -184,7 +196,10 @@ mod tests {
     #[test]
     fn only_the_online_division_folds_stable_facts() {
         assert!(Division::Online.folds(BindingTime::Stable));
-        assert!(!Division::Offline.folds(BindingTime::Stable), "an AOT image takes no dependency on heap state");
+        assert!(Division::Frozen.folds(BindingTime::Stable), "a frozen image folds whole-program Stable facts");
+        assert!(!Division::Offline.folds(BindingTime::Stable), "an unfrozen AOT image takes no dependency on heap state");
+        assert!(!Division::Frozen.folds(BindingTime::Site), "a frozen image has no feedback sites");
+        assert!(Division::Online.folds(BindingTime::Site));
     }
 
     #[test]

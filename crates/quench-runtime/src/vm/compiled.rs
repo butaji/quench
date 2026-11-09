@@ -6457,7 +6457,7 @@ pub(super) fn compile_eager_native<H: Host>(
     let targets = super::compiled::static_call_targets(&program);
     let extension = EagerCraneliftExtension::<H> { program: &program, targets, isa, options, entries: Vec::new(),
         owners: EagerOwners::default(), counts: Default::default(), host: std::marker::PhantomData };
-    let (entries, owners, counts) = super::specialize::CallThreaded(extension).specialize(&program)?;
+    let (entries, owners, counts) = super::specialize::CallThreaded::frozen(extension).specialize(&program)?;
     // SAFETY: every entry was lowered from its exact function for host H.
     unsafe { crate::NativeJsProgram::from_entries_with_counts(program, entries, Rc::new(owners), counts) }
 }

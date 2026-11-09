@@ -626,7 +626,7 @@ pub(super) fn compile_program<H: Host>(
         stats: NativeStencilStats::default(),
         host: std::marker::PhantomData,
     };
-    let (image, entries, stats) = CallThreaded(extension).specialize(&program)?;
+    let (image, entries, stats) = CallThreaded::new(extension).specialize(&program)?;
     // SAFETY: each entry was specialized from this program's function for host
     // H, and the image keeps code, operand records and dispatch tables alive.
     let native = unsafe { crate::NativeJsProgram::from_entries(program, entries, Rc::new(image)) }?;

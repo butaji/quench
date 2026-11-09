@@ -107,7 +107,7 @@ pub fn lower_native_js_module_with_options(
         super::jit_backend::CodePublication::RelocatableObject,
     )
     .ok_or("native target unavailable")?;
-    CallThreaded(ObjectExtension { isa, namespace, options, program, functions: Vec::new() }).specialize(program)
+    CallThreaded::new(ObjectExtension { isa, namespace, options, program, functions: Vec::new() }).specialize(program)
 }
 
 /// The call-threaded generating extension for linked objects: each semantic
