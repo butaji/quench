@@ -4,7 +4,7 @@ use super::{Frame, Stage, Step};
 use crate::bytecode::{Operand, Register};
 use crate::vm::operations::{
     CheckedInt32Stage, NumberArithmetic, NumberArithmeticStage, NumberF64Stage, NumberRelation,
-    PartialOrderStage,
+    NumberUnary, PartialOrderStage,
 };
 
 /// The representation both operands and the result of a Number operation have.
@@ -34,6 +34,8 @@ pub(crate) trait NumericStage: Stage {
     /// `operation` of two binary64 words.
     fn float_arithmetic(&mut self, operation: NumberArithmetic,
         left: Self::Word, right: Self::Word) -> Self::Word;
+    /// The binary64 negation of `value`: `-0` stays negative and NaN stays NaN.
+    fn float_negate(&mut self, value: Self::Word) -> Self::Word;
     /// `operation` of two int32 words: the wrapped result and whether it overflowed.
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: Self::Word, right: Self::Word) -> (Self::Word, Self::Cond);
@@ -73,6 +75,8 @@ pub(crate) enum NumberOperation {
     Relation { left: Operand, right: Operand, relation: NumberRelation, domain: Domain },
     /// `source ± 1` (`++`, or `--` where `decrement`) of an int32 `source`.
     IncDec { destination: Register, source: Register, decrement: bool, overflow: Overflow },
+    /// `+source` or `-source` of a Number `source`, in `domain`; any other value leaves.
+    Unary { destination: Register, source: Operand, operation: NumberUnary, domain: Domain },
     /// ToNumeric of a Number `source` into `destination`; any other value leaves.
     ToNumeric { destination: Register, source: Register },
 }
@@ -89,6 +93,43 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         NumberOperation::IncDec { destination, source, decrement, overflow } =>
             increment(stage, frame, destination, source, decrement, overflow),
         NumberOperation::ToNumeric { destination, source } => to_numeric(stage, frame, destination, source),
+        NumberOperation::Unary { destination, source, operation, domain } =>
+            unary(stage, frame, destination, source, operation, domain),
+    }
+}
+
+/// `operation` of one Number `source` in `domain`; a negation of `i32::MIN` widens and
+/// leaves at the miss edge, since its Number result is no int32.
+fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, source: Operand, operation: NumberUnary, domain: Domain,
+) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    match domain {
+        Domain::Float64 => {
+            let value = frame.number_operand(stage, source, miss);
+            let result = match operation {
+                NumberUnary::Plus => value,
+                NumberUnary::Negate => stage.float_negate(value),
+            };
+            let fact = frame.number_fact();
+            frame.write(stage, destination, result, fact);
+            Step::Value(result)
+        }
+        Domain::Int32 => {
+            let value = frame.int_operand(stage, source, miss);
+            match operation {
+                NumberUnary::Plus => {
+                    let fact = frame.int_fact();
+                    frame.write(stage, destination, value, fact);
+                    Step::Value(value)
+                }
+                NumberUnary::Negate => {
+                    let zero = stage.i32_constant(0);
+                    int_arithmetic_result(stage, frame, destination, zero, value,
+                        NumberArithmetic::Subtract, Overflow::Exit, miss)
+                }
+            }
+        }
     }
 }
 
@@ -230,6 +271,9 @@ impl NumericStage for super::Concrete {
     fn float_arithmetic(&mut self, operation: NumberArithmetic, left: u64, right: u64) -> u64 {
         operation.apply(&mut NumberF64Stage,
             f64::from_bits(left), f64::from_bits(right)).to_bits()
+    }
+    fn float_negate(&mut self, value: u64) -> u64 {
+        (-f64::from_bits(value)).to_bits()
     }
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: u64, right: u64) -> (u64, bool) {

@@ -229,7 +229,7 @@ pub(super) trait NumberUnaryStage<T> {
 macro_rules! number_unary {
     ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(super) enum NumberUnary { $($operation),+ }
+        pub(crate) enum NumberUnary { $($operation),+ }
 
         impl NumberUnary {
             #[inline(always)]

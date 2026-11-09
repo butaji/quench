@@ -314,6 +314,31 @@ mod tests {
             "the lane OSR path ran");
     }
 
+    /// A loop negating a Number runs through the lane unit's shared Number unary denotation,
+    /// keeping `-0` and widening an overflowing int32 negation.
+    #[test]
+    fn a_float_unary_loop_runs_through_the_lane_unit() {
+        super::FORCE_LANE_OSR.with(|force| force.set(true));
+        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
+        let program = crate::Engine::compile(crate::ExecutionRequest::script(
+            "function negate(value){ let index=0; while(index<9999){ value=-value; index++; } return value; }
+             for(let call=0;call<100;call++) negate(0.5);
+             if(negate(0.5)!==-0.5) throw Error('float negation');
+             if(!Object.is(negate(0),-0)) throw Error('negative zero');
+             if(negate(-2147483648)!==2147483648) throw Error('int32 minimum');
+             print('ok');", "lane-osr-unary.js")).unwrap();
+        let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.programs.enable_js_lane_methods();
+        vm.programs.disable_js_entry_specializations();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["ok"]);
+        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+            "the lane OSR path ran");
+    }
+
     /// A loop reading a static own field lowers through the lane unit's field sites.
     #[test]
     fn a_field_loop_compiled_by_the_region_specializer_runs() {

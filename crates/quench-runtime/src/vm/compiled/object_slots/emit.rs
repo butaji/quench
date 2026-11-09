@@ -83,6 +83,9 @@ impl NumericStage for Emit<'_, '_> {
         left: ir::Value, right: ir::Value) -> ir::Value {
         emit_number_arithmetic_operation(self.builder, operation, left, right)
     }
+    fn float_negate(&mut self, value: ir::Value) -> ir::Value {
+        self.builder.ins().fneg(value)
+    }
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
         emit_checked_int32_arithmetic(self.builder, operation, left, right)

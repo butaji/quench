@@ -2501,6 +2501,8 @@ impl Lowering<'_, '_> {
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.operator(state, pc, instruction)
             }
+            op if plain && op.js_denotation() == JsDenotation::NumericUnary
+                && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
             Op::Unary if plain && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::LogicalNot as u32
                 && instruction.register_b() < self.unit.registers => {
                 let exit = self.guard_exit(state, pc32);
@@ -4819,6 +4821,31 @@ impl Lowering<'_, '_> {
         let stored = self.helper_call(LaneHelper::FieldSet, &[object, atom, site, value]);
         let ok = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
         emit_js_guard(&mut self.builder, ok, exit);
+    }
+
+    /// `+source` or `-source` of a Number: the shared Number unary denotation, with the
+    /// source's representation. A non-Number source leaves at its exact PC for the general
+    /// coercion, and an int32 negation that overflows widens and leaves.
+    fn unary(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        if instruction.result_flags() != 0 || instruction.writes_current_this() {
+            return None;
+        }
+        let operation = crate::vm::operations::NumberUnary::from_js_instruction(
+            instruction.op(), instruction.unary_operator())?;
+        let source = instruction.register_b();
+        let domain = if state.values[usize::from(source)].value.ty.is_subtype(Type::INT32) {
+            crate::staged::Domain::Int32
+        } else {
+            crate::staged::Domain::Float64
+        };
+        let exit = self.guard_exit(state, pc as u32);
+        let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Unary {
+            destination: instruction.result_register(),
+            source: crate::bytecode::Operand::register(source),
+            operation, domain,
+        });
+        self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
+        Some(true)
     }
 
     fn binary(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
