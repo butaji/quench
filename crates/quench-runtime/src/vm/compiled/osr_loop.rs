@@ -579,9 +579,9 @@ fn tagged_registers_with_failure(
         )
         // An entry array's register; a dynamic array's (one the region defines) is tagged by
         // its values' webs instead (`representations`), as its register may hold Numbers too.
-        .chain(instructions.iter().filter_map(|instruction| match instruction.op() {
-            Op::GetIndex => instruction.operand_b().register_index(),
-            Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
+        .chain(instructions.iter().filter_map(|instruction| match instruction.op().class() {
+            Class::GetIndex => instruction.operand_b().register_index(),
+            Class::SetIndex | Class::RequireObjectCoercible => Some(instruction.register_b()),
             _ => None,
         }).filter(|register| !dynamic_arrays.contains(register)))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| {
@@ -703,8 +703,8 @@ fn tagged_registers_with_failure(
             if !tagged.contains(&result) {
                 continue;
             }
-            match instruction.op() {
-                Op::LoadConst => {
+            match instruction.op().class() {
+                Class::LoadConst => {
                     if constants.get(instruction.constant_index()).is_none() {
                         if crate::trace::Channel::OsrReject.on() {
                             eprintln!(
@@ -715,12 +715,12 @@ fn tagged_registers_with_failure(
                     }
                 }
                 // Entry captures and cached fields can carry arbitrary boxed values.
-                Op::LoadCapture | Op::GetField | Op::GetIndex => {}
-                Op::Binary if number_comparison(instruction).is_some() => {}
+                Class::LoadCapture | Class::GetField | Class::GetIndex => {}
+                Class::Binary if number_comparison(instruction).is_some() => {}
                 // The type-name index is still a boxed Number at bytecode level. Its
                 // lowering reads only immediate tags and exits before the operation for
                 // heap values, whose language type depends on VM metadata.
-                Op::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => {
+                Class::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => {
                     tagged.insert(instruction.register_b());
                 }
                 _ => {
@@ -923,13 +923,13 @@ pub(super) fn renamed(
 /// The registers an instruction reads as objects: a field read's receiver, an indexed
 /// access's array.
 fn object_reads(instruction: WideInstruction) -> Option<Register> {
-    match instruction.op() {
-        Op::GetField => match instruction.field_lookup()? {
+    match instruction.op().class() {
+        Class::GetField => match instruction.field_lookup()? {
             FieldLookup::Atom { base, .. } => base.register_index(),
             _ => None,
         },
-        Op::GetIndex => instruction.operand_b().register_index(),
-        Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
+        Class::GetIndex => instruction.operand_b().register_index(),
+        Class::SetIndex | Class::RequireObjectCoercible => Some(instruction.register_b()),
         _ if let Some(receiver) = instruction.field_store_register() => Some(receiver),
         _ => None,
     }
@@ -1021,10 +1021,10 @@ pub(super) fn inline_region<'a>(
     // The names the loop stores: a receiver read through one changes in the loop.
     let caller_stored: std::collections::BTreeSet<crate::bytecode::Atom> = caller
         .iter()
-        .filter_map(|instruction| match instruction.op() {
-            op if admitted_store(op) => Some(instruction.atom_index()),
+        .filter_map(|instruction| match instruction.op().class() {
+            _ if admitted_store(instruction.op()) => Some(instruction.atom_index()),
             // A fused read the bytecode stores into a `this` field (`inlined_set_this`).
-            Op::GetField if instruction.writes_current_this() => match instruction.field_lookup()? {
+            Class::GetField if instruction.writes_current_this() => match instruction.field_lookup()? {
                 FieldLookup::Site(index) => sites.get(index)?.sink.map(|(atom, _)| atom),
                 FieldLookup::Atom { .. } => None,
             },
@@ -2694,19 +2694,19 @@ impl Webs {
 /// The Number registers an instruction reads.
 pub(super) fn number_reads(instruction: WideInstruction) -> Vec<Register> {
     let register = |operand: Operand| operand.register_index();
-    match instruction.op() {
-        Op::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => Vec::new(),
-        Op::Move | Op::IncDec | Op::Unary | Op::ToNumeric => vec![instruction.register_b()],
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => [
+    match instruction.op().class() {
+        Class::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => Vec::new(),
+        Class::Move | Class::IncDec | Class::Unary | Class::ToNumeric => vec![instruction.register_b()],
+        Class::Binary | Class::NumericAdd | Class::NumericMultiply | Class::JumpBinaryFalse => [
             register(instruction.operand_b()),
             register(instruction.operand_c()),
         ]
         .into_iter()
         .flatten()
         .collect(),
-        Op::JumpFalse | Op::JumpTrue => vec![instruction.register_a()],
-        Op::GetIndex => register(instruction.operand_c()).into_iter().collect(),
-        Op::SetIndex => vec![instruction.register_a(), instruction.register_c()],
+        Class::JumpFalse | Class::JumpTrue => vec![instruction.register_a()],
+        Class::GetIndex => register(instruction.operand_c()).into_iter().collect(),
+        Class::SetIndex => vec![instruction.register_a(), instruction.register_c()],
         _ => Vec::new(),
     }
 }
@@ -2731,9 +2731,9 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         reads.push((instruction.register_b(), Type::ANY));
     }
     if let Some(register) = object_reads(instruction) {
-        let dynamic = match instruction.op() {
-            Op::GetField => region.dynamic_field_reads.contains_key(&(offset as u32)),
-            Op::GetIndex => region.dynamic_arrays.contains(&register)
+        let dynamic = match instruction.op().class() {
+            Class::GetField => region.dynamic_field_reads.contains_key(&(offset as u32)),
+            Class::GetIndex => region.dynamic_arrays.contains(&register)
                 || !region.arrays.iter().any(|array| array.register == register),
             _ if instruction.field_store_register().is_some() => region.dynamic_field_stores.contains_key(&(offset as u32)),
             _ => region.dynamic_arrays.contains(&register),
@@ -2967,8 +2967,8 @@ fn representations(
         let Some(object) = object_reads(*instruction) else {
             continue;
         };
-        let dynamic = match instruction.op() {
-            Op::GetField => region.dynamic_field_reads.contains_key(&(offset as u32)),
+        let dynamic = match instruction.op().class() {
+            Class::GetField => region.dynamic_field_reads.contains_key(&(offset as u32)),
             _ => region.dynamic_arrays.contains(&object),
         };
         if dynamic {
@@ -3502,20 +3502,20 @@ fn exact_range(instruction: WideInstruction, operand: &dyn Fn(Operand) -> Option
         let values = [f(a, c), f(a, d), f(b, c), f(b, d)];
         (*values.iter().min().expect("four corners"), *values.iter().max().expect("four corners"))
     };
-    Some(match instruction.op() {
-        Op::LoadConst => {
+    Some(match instruction.op().class() {
+        Class::LoadConst => {
             match constants.get(&instruction.constant_index()) {
                 Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => (*number as i64, *number as i64),
                 _ => INT32_RANGE,
             }
         }
-        Op::Move | Op::ToNumeric => register(instruction.register_b())?,
-        Op::IncDec => {
+        Class::Move | Class::ToNumeric => register(instruction.register_b())?,
+        Class::IncDec => {
             let (low, high) = register(instruction.register_b())?;
             let step = if instruction.boolean_flag() == Some(true) { -1 } else { 1 };
             (low + step, high + step)
         }
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+        Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
             let (left, right) = (operand(instruction.operand_b())?, operand(instruction.operand_c())?);
             match arithmetic(instruction.op(), instruction.binary_operator()) {
                 Some(Arithmetic::Float(NumberArithmetic::Add)) => (left.0 + right.0, left.1 + right.1),
@@ -3736,9 +3736,9 @@ fn int32_facts(
             let instruction = region.instructions[*offset];
             let pc = region.header + *offset as u32;
             let reads = |register: Register| webs.read(region, pc, register) == web;
-            match instruction.op() {
-                Op::JumpBinaryFalse => true,
-                Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+            match instruction.op().class() {
+                Class::JumpBinaryFalse => true,
+                Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
                     let reads_operand = |operand: Operand| operand.register_index().is_some_and(reads);
                     match arithmetic(instruction.op(), instruction.binary_operator()) {
                         Some(Arithmetic::Int32(_)) => true,
@@ -3920,18 +3920,18 @@ fn counted_loop(
         let instruction = at(pc);
         let register = |register: Register| (int32(webs.read(region, pc, register)), value(&state, register));
         let defined = || int32(webs.defined(region, pc));
-        let result = match instruction.op() {
-            Op::LoadConst => {
+        let result = match instruction.op().class() {
+            Class::LoadConst => {
                 let index = instruction.constant_index();
                 constant(*region.constants.get(&index)?)
             }
-            Op::LoadCapture => {
+            Class::LoadCapture => {
                 let slot = instruction.capture_slot();
                 let index = region.captures.iter().position(|capture| *capture == slot)?;
                 (captures[index] == Representation::Int32).then_some(Affine::of(Base::Capture(index)))
             }
-            Op::Move | Op::ToNumeric => register(instruction.register_b()).1,
-            Op::IncDec => {
+            Class::Move | Class::ToNumeric => register(instruction.register_b()).1,
+            Class::IncDec => {
                 let (held, operand) = register(instruction.register_b());
                 let step = if instruction.boolean_flag()? { -1 } else { 1 };
                 let sum = operand.and_then(|operand| operand.plus(step));
@@ -3940,7 +3940,7 @@ fn counted_loop(
                 }
                 sum
             }
-            Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+            Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
                 let left = source(&state, pc, instruction.operand_b())?;
                 let right = source(&state, pc, instruction.operand_c())?;
                 let held = left.0 && right.0 && defined();
@@ -3989,7 +3989,7 @@ fn counted_loop(
             }
             // A dynamic array's length is the record's at each access, which no entry proof
             // reads (`LoopRegion::dynamic_arrays`).
-            Op::GetIndex => {
+            Class::GetIndex => {
                 let array = instruction.operand_b().register_index()?;
                 if region.arrays.iter().any(|entry| entry.register == array)
                     && let (true, Some(value)) = source(&state, pc, instruction.operand_c())? {
@@ -3997,7 +3997,7 @@ fn counted_loop(
                 }
                 None
             }
-            Op::SetIndex => {
+            Class::SetIndex => {
                 if !region.dynamic_arrays.contains(&instruction.register_b())
                     && let (true, Some(value)) = register(instruction.register_c())
                 {
@@ -4005,7 +4005,7 @@ fn counted_loop(
                 }
                 None
             }
-            Op::JumpBinaryFalse if pc == test => {
+            Class::JumpBinaryFalse if pc == test => {
                 let left = source(&state, pc, instruction.operand_b())?;
                 let right = source(&state, pc, instruction.operand_c())?;
                 tested = Some((instruction.binary_operator_field(), left, right));
@@ -4345,9 +4345,9 @@ impl Resident {
         let instructions = region.instructions.iter().enumerate();
         let read_hot = |used: &dyn Fn(&WideInstruction) -> bool| instructions.clone().any(|(offset, instruction)| hot(offset) && used(instruction));
         for (index, array) in region.arrays.iter().enumerate() {
-            let indexes = |instruction: &WideInstruction| match instruction.op() {
-                Op::GetIndex => instruction.operand_b().register_index() == Some(array.register),
-                Op::SetIndex => instruction.register_b() == array.register,
+            let indexes = |instruction: &WideInstruction| match instruction.op().class() {
+                Class::GetIndex => instruction.operand_b().register_index() == Some(array.register),
+                Class::SetIndex => instruction.register_b() == array.register,
                 _ => false,
             };
             if !read_hot(&indexes) {
@@ -6489,8 +6489,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     fn instruction(&mut self, pc: u32) -> Option<()> {
         let instruction = self.region.instructions[(pc - self.region.header) as usize];
-        match instruction.op() {
-            Op::LoadConst => {
+        match instruction.op().class() {
+            Class::LoadConst => {
                 let index = instruction.constant_index();
                 let source = if self.region.tagged_definition(pc - self.region.header) {
                     Source::Tagged(*self.region.tagged_constants.get(&index)?)
@@ -6501,19 +6501,19 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
-            Op::Move | Op::ToNumeric => {
+            Class::Move | Class::ToNumeric => {
                 let value = self.register(instruction.register_b());
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
-            Op::LoadCapture => {
+            Class::LoadCapture => {
                 let slot = instruction.capture_slot();
                 let index = self.region.captures.iter().position(|capture| *capture == slot)?;
                 let value = self.capture(index);
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
-            Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+            Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
                 let result = instruction.result_register();
@@ -6553,7 +6553,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.define(result, value);
                 self.fall_through(pc)
             }
-            Op::IncDec => {
+            Class::IncDec => {
                 let operand = self.register(instruction.register_b());
                 let decrement = instruction.boolean_flag()?;
                 let result = instruction.result_register();
@@ -6583,7 +6583,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.define(result, value);
                 self.fall_through(pc)
             }
-            Op::Unary => {
+            Class::Unary => {
                 let operand = self.register(instruction.register_b());
                 let result = instruction.result_register();
                 if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX {
@@ -6628,7 +6628,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             // An entry array is an object; a dynamic array's value is tested here, and a
             // nullish one throws in the lane at this PC.
-            Op::RequireObjectCoercible => {
+            Class::RequireObjectCoercible => {
                 if self.region.dynamic_arrays.contains(&instruction.register_b()) {
                     let value = self.register(instruction.register_b());
                     if value.representation != Representation::Tagged {
@@ -6641,7 +6641,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 }
                 self.fall_through(pc)
             }
-            Op::GetField => {
+            Class::GetField => {
                 let field = *self.region.field_reads.get(&(pc - self.region.header))?;
                 let value = if self.region.dynamic_field_reads.contains_key(&(pc - self.region.header)) {
                     self.dynamic_field(pc, field)?
@@ -6662,7 +6662,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
-            Op::LoadEnvLocal => {
+            Class::LoadEnvLocal => {
                 let slot = i64::try_from(instruction.local_slot()).ok()?;
                 let operation = self
                     .body
@@ -6692,7 +6692,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.define(instruction.result_register(), Typed::checked_load(value, representation));
                 self.fall_through(pc)
             }
-            Op::GetIndex => {
+            Class::GetIndex => {
                 // An index sum just before checked this read's bounds (`index_sum`).
                 let bounded = self.bounded_reads.remove(&pc);
                 let base = instruction.operand_b().register_index()?;
@@ -6800,7 +6800,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
-            Op::SetIndex => {
+            Class::SetIndex => {
                 self.element_stores += 1;
                 let base = instruction.register_b();
                 let dynamic = self.region.dynamic_arrays.contains(&base);
@@ -6845,7 +6845,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.guard(pc, miss);
                 self.fall_through(pc)
             }
-            op if admitted_store(op) => {
+            _ if admitted_store(instruction.op()) => {
                 let index = *self.region.field_stores.get(&(pc - self.region.header))?;
                 let pointer = self.field_store_pointer(index);
                 let value = self.register(instruction.register_a());
@@ -6864,16 +6864,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.ins().store(flags(), bits, pointer, 0);
                 self.fall_through(pc)
             }
-            op if exits_before_effects(op) => {
+            _ if exits_before_effects(instruction.op()) => {
                 self.leave(super::RegionExit::Fallback(pc));
                 Some(())
             }
-            Op::Return => {
+            Class::Return => {
                 self.leave(super::RegionExit::Resume(pc));
                 Some(())
             }
-            Op::Jump => self.jump(pc, instruction.jump_target()),
-            Op::JumpBinaryFalse => {
+            Class::Jump => self.jump(pc, instruction.jump_target()),
+            Class::JumpBinaryFalse => {
                 if let Some(branch) = self.region.identity_branches.get(&pc).copied() {
                     let value = self.register(branch.register);
                     if value.representation != Representation::Tagged {
@@ -6944,7 +6944,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 };
                 self.branch(pc, instruction.jump_target(), holds, false)
             }
-            Op::JumpFalse | Op::JumpTrue => {
+            Class::JumpFalse | Class::JumpTrue => {
                 let value = self.read(Source::Register(instruction.register_a()));
                 let truthy = match value.representation {
                     Representation::Int32 => {
