@@ -5858,7 +5858,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         } else {
             (self.float(left), self.float(right), super::NumberRelationDomain::Float64)
         };
-        super::emit_number_relation(&mut self.body.builder, operator, left, right, domain)
+        super::emit_number_relation_operator(&mut self.body.builder, operator, left, right, domain)
     }
 
     fn source(&self, operand: Operand) -> Option<Source> {

@@ -7,6 +7,8 @@ use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 use std::collections::HashSet;
 
+mod subscribe;
+
 impl Heap {
     /// Return live JavaScript objects whose internal prototype chain contains `prototype`.
     /// The caller is responsible for collecting first when it needs only currently reachable
@@ -808,11 +810,6 @@ impl Heap {
 
     pub(crate) fn slot_target_shape(&self, shape: u32, slot: usize) -> Option<u32> {
         self.properties.slot_target_shape(shape, slot)
-    }
-
-    pub(crate) fn subscribe_slot(&mut self, dependency: crate::code_dependencies::SlotDependency,
-        code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
-        self.properties.subscribe_slot(dependency, code)
     }
 
     pub(crate) fn subscribe_shape(&mut self, shape: u32,

@@ -23,7 +23,7 @@ pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualTha
 
 /// A stage supplies the machine operation for each semantic Number relation.
 /// The relation table below is shared by interpreter values and native emitters.
-pub(super) trait NumberRelationStage<T> {
+pub(crate) trait NumberRelationStage<T> {
     type Output;
 
     fn equal(&mut self, left: T, right: T) -> Self::Output;
@@ -37,7 +37,7 @@ pub(super) trait NumberRelationStage<T> {
 macro_rules! number_relations {
     ($($relation:ident => [$($operator:ident),+ $(,)?], $stage_method:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(super) enum NumberRelation { $($relation),+ }
+        pub(crate) enum NumberRelation { $($relation),+ }
 
         impl NumberRelation {
             #[inline(always)]
@@ -51,7 +51,7 @@ macro_rules! number_relations {
             }
 
             #[inline(always)]
-            pub(super) fn apply<T, S: NumberRelationStage<T>>(
+            pub(crate) fn apply<T, S: NumberRelationStage<T>>(
                 self,
                 stage: &mut S,
                 left: T,
@@ -87,7 +87,7 @@ number_relations! {
 
 /// The four IEEE Number arithmetic operations have one operator-to-method
 /// mapping. Interpreter values and native Cranelift values supply the stage.
-pub(super) trait NumberArithmeticStage<T> {
+pub(crate) trait NumberArithmeticStage<T> {
     type Output;
 
     fn add(&mut self, left: T, right: T) -> Self::Output;
@@ -99,14 +99,14 @@ pub(super) trait NumberArithmeticStage<T> {
 macro_rules! number_arithmetic {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-        pub(super) enum NumberArithmetic { $($operation),+ }
+        pub(crate) enum NumberArithmetic { $($operation),+ }
 
         impl NumberArithmeticStage<f64> for NumberF64Stage {
             type Output = f64;
             $(#[inline(always)]
             fn $stage_method(&mut self, left: f64, right: f64) -> f64 { left $symbol right })+
         }
-        struct CheckedInt32Stage;
+        pub(crate) struct CheckedInt32Stage;
         impl NumberArithmeticStage<i32> for CheckedInt32Stage {
             type Output = Option<i32>;
             $(#[inline(always)]
@@ -127,7 +127,7 @@ macro_rules! number_arithmetic {
             }
 
             #[inline(always)]
-            pub(super) fn apply<T, S: NumberArithmeticStage<T>>(
+            pub(crate) fn apply<T, S: NumberArithmeticStage<T>>(
                 self,
                 stage: &mut S,
                 left: T,
@@ -189,7 +189,7 @@ macro_rules! number_arithmetic_rows {
         Divide => Division, divide, None, /, fdiv, None, None;
     }};
 }
-pub(super) use number_arithmetic_rows;
+pub(crate) use number_arithmetic_rows;
 number_arithmetic_rows!(number_arithmetic);
 
 impl NumberArithmetic {
@@ -425,7 +425,7 @@ pub(super) fn number_bitwise_result(operation: NumberBitwise, left: i32, right: 
     }
 }
 
-pub(super) struct NumberF64Stage;
+pub(crate) struct NumberF64Stage;
 
 impl NumberUnaryStage<f64> for NumberF64Stage {
     type Output = f64;
@@ -480,7 +480,7 @@ fn number_arithmetic_result(operation: NumberArithmetic, left: f64, right: f64) 
     operation.apply(&mut NumberF64Stage, left, right)
 }
 
-pub(super) struct PartialOrderStage;
+pub(crate) struct PartialOrderStage;
 
 impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
     type Output = bool;

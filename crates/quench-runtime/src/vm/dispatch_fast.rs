@@ -931,6 +931,7 @@ impl LaneView {
         self.clear_name_hints();
         for site in &self.loops {
             let tier = site.tier.borrow();
+            tier.retire_named_shapes();
             if let Some(publication) = &tier.code
                 && publication.lease().is_some_and(|code| !code.facts.shape_dependencies.is_empty()) {
                 publication.retire();
@@ -2855,17 +2856,9 @@ lane_handler! {
     }
 }
 
-lane_handler! {
-    fn lane_move<ACC: u8>(cx, r, ip, i, view) {
-        produce!(cx, r, ip, i.a, read::<ACC, ACC_B>(r, i.b, view), view)
-    }
-}
-
-lane_handler! {
-    fn lane_load_const<>(cx, r, ip, i, view) {
-        produce!(cx, r, ip, i.a, i.constant(), view)
-    }
-}
+#[path = "dispatch_fast/lane_frame.rs"]
+mod lane_frame;
+use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_require_object_coercible, staged_to_numeric};
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
@@ -3366,11 +3359,13 @@ script_handler! {
 script_handler! {
     /// Numbers and BigInts convert to themselves; other values take the general path.
     fn lane_to_numeric<>(cx, r, ip, i, view) {
-        let value = r.get(i.b);
-        if value.as_number().is_none() && !matches!(unsafe { vm(cx) }.heap.get(value), Some(Cell::BigInt(_))) {
-            return exit(ip);
+        if !staged_to_numeric(r, Carried::script(cx), i.a, i.b) {
+            let value = r.get(i.b);
+            if !matches!(unsafe { vm(cx) }.heap.get(value), Some(Cell::BigInt(_))) {
+                return exit(ip);
+            }
+            r.set(i.a, value);
         }
-        r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -3402,8 +3397,7 @@ script_handler! {
     /// `RequireObjectCoercible`: any value but `null` and `undefined` passes; the general
     /// path throws for those.
     fn lane_require_object_coercible<>(cx, r, ip, i, view) {
-        let value = r.get(i.b);
-        if value.is_null() || value.is_undefined() {
+        if !staged_require_object_coercible(r, Carried::script(cx), i.b) {
             return exit(ip);
         }
         next!(cx, r, following(ip), Carried::script(cx))
@@ -4267,11 +4261,9 @@ script_handler! {
     /// `this` where the lane holds it; the frame's `this` takes `lane_load_frame_this`,
     /// so this handler makes no call and saves no registers.
     fn lane_load_this<>(cx, r, ip, i, view) {
-        let this = unsafe { (*cx).this };
-        if this.is_deleted() {
+        if !staged_load_this(r, view, unsafe { (*cx).this }, i.a) {
             sibling!(lane_load_frame_this::<H>, r, ip, view)
         }
-        r.set(i.a, this);
         next!(cx, r, following(ip), view)
     }
 }
@@ -4998,7 +4990,7 @@ script_handler! {
         let slots = capture_reads(unsafe { (*cx).capture });
         // SAFETY: null or the running function's dense storage, found this run
         // (`LaneContext::capture`). The scoped read retains bounds/marker checks.
-        let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, usize::from(ImmediateLayout::capture_slot(imm))) };
+        let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, ImmediateLayout::capture_slot(imm)) };
         let Some(value) = value else {
             sibling!(lane_load_capture_walk::<H>, r, ip, view)
         };
@@ -7658,7 +7650,7 @@ script_handler! {
         let value = if CAPTURE {
             let slots = capture_reads(unsafe { (*cx).capture });
             // SAFETY: as `lane_load_capture`'s read.
-            let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, usize::from(ImmediateLayout::capture_slot(i.imm()))) };
+            let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, ImmediateLayout::capture_slot(i.imm())) };
             let Some(value) = value else {
                 sibling!(lane_load_capture_walk::<H>, r, ip, view)
             };
@@ -7986,7 +7978,10 @@ fn lane_count_backedge<H: Host>(cx: *mut LaneContext<H>) {
 
 lane_handler! {
     fn lane_jump_always<BACKWARD: bool>(cx, r, ip, i, view) {
-        resume!(cx, lane_jump::<H>(r, ip, BACKWARD, view, None))
+        match staged_jump(r, view) {
+            crate::staged::Edge::Target => resume!(cx, lane_jump::<H>(r, ip, BACKWARD, view, None)),
+            crate::staged::Edge::Following => unreachable!("an unconditional jump takes its target"),
+        }
     }
 }
 
@@ -8506,7 +8501,7 @@ fn lane_loop_entry<H: Host>(
             }
             // SAFETY: the context's dense slots remain live until the next collection.
             // A cache miss follows the same non-effectful lookup as LoadCapture.
-            let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, usize::from(*slot)) }
+            let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, *slot) }
                 .or_else(|| lane_capture_value(cx, 0, *slot))
                 .or_else(|| {
                     // A projected global var aliases its global object's property. Native
@@ -8757,26 +8752,26 @@ script_handler! {
     /// `JumpFalse` of a value that decides its own truthiness (`Value::truthiness`); a heap
     /// value whose cell decides it takes `lane_jump_test_cell`.
     fn lane_jump_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(truthy) = r.get(i.a).truthiness() else {
-            sibling!(lane_jump_test_cell::<H, BACKWARD, false>, r, ip, Carried::script(cx))
-        };
-        if !truthy {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
+        match staged_jump_if::<false>(r, Carried::script(cx), i.a) {
+            Some(crate::staged::Edge::Target) =>
+                resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None)),
+            Some(crate::staged::Edge::Following) =>
+                next!(cx, r, following(ip), Carried::script(cx)),
+            None => sibling!(lane_jump_test_cell::<H, BACKWARD, false>, r, ip, Carried::script(cx)),
         }
-        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
 script_handler! {
     /// `JumpTrue` as `lane_jump_false`: ToBoolean runs no guest code.
     fn lane_jump_true<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(truthy) = r.get(i.a).truthiness() else {
-            sibling!(lane_jump_test_cell::<H, BACKWARD, true>, r, ip, Carried::script(cx))
-        };
-        if truthy {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
+        match staged_jump_if::<true>(r, Carried::script(cx), i.a) {
+            Some(crate::staged::Edge::Target) =>
+                resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None)),
+            Some(crate::staged::Edge::Following) =>
+                next!(cx, r, following(ip), Carried::script(cx)),
+            None => sibling!(lane_jump_test_cell::<H, BACKWARD, true>, r, ip, Carried::script(cx)),
         }
-        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
@@ -14977,9 +14972,10 @@ script_handler! {
             }
             next!(cx, r, base, Carried::script(cx))
         }
-        // SAFETY: the activation just set the context to its own receiver.
-        let this = unsafe { (*cx).this };
-        let receiver = if i.b != 0 && !this.is_deleted() { this } else { Value::DELETED };
+        // A frame activation keeps its `this` in the frame (`lane_this`); an uninitialized
+        // one stays `DELETED`, at which the body's `LoadThis` leaves for the general path.
+        // SAFETY: the activation just set the context to its own receiver and frame.
+        let receiver = if i.b != 0 { unsafe { lane_this(cx) }.unwrap_or(Value::DELETED) } else { Value::DELETED };
         // SAFETY: the activation just set the context to its own captures.
         let captures = capture_reads(unsafe { (*cx).capture });
         // SAFETY: the context's program outlives the lane run.
@@ -15226,9 +15222,13 @@ fn osr_shape_retirement_unlinks_actual_code_and_keeps_recovery_alive() {
     assert!(!publications.is_empty(), "must exercise actual OSR field code");
     let recovery: Vec<_> = publications.iter().map(|code| code.lease().unwrap()).collect();
     let weak: Vec<_> = recovery.iter().map(Rc::downgrade).collect();
+    // A receiver departure falls out at its use guard; only compaction renumbers embedded IDs.
     let added = vm.intern_atom("added");
     let next = vm.transition_shape(shape, added);
     vm.heap.property_add(owner, Value::integer(2), next);
+    assert!(publications.iter().all(|code| code.is_published() && code.lease().is_some()),
+        "a receiver shape departure must fall out at its guard, not retire the code");
+    vm.programs.invalidate_shape_bindings();
     assert!(publications.iter().all(|code| !code.is_published() && code.lease().is_none()));
     assert!(weak.iter().all(|code| code.upgrade().is_some()));
     drop(recovery);
@@ -15257,7 +15257,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     assert!(!root_target.view.is_null());
     let leaf_method = vm.compile_lane_method(&program, target.function,
         &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
-    assert!(!leaf_method.slot_dependencies.is_empty());
+    assert!(!leaf_method.dependencies.slots.is_empty());
     let leaf_publication = vm.programs.publish_lane_method(leaf_method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
     let leaf_body = leaf_publication.lease().unwrap();
     assert!(leaf_body.calls_only_natively());
@@ -15277,7 +15277,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     let root_method = vm.compile_lane_method(&program, root_target.function,
         &|_, _| Vec::new(), &|_| (0, 0), direct, &[]).unwrap();
     assert_eq!(root_method.direct.len(), 1);
-    assert_eq!(root_method.slot_dependencies, leaf_body.slot_dependencies);
+    assert_eq!(root_method.dependencies.slots, leaf_body.dependencies.slots);
     let root_publication = vm.programs.publish_lane_method(root_method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
     let active_root = root_publication.lease().unwrap();
     let leaf_code = Rc::downgrade(&leaf_body);
@@ -15712,8 +15712,8 @@ fn lane_body_left<H: Host>(
     };
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
-    (match exit {
-        super::compiled::LaneExit::Terminated => unreachable!("termination leaves before recovery"),
+    (match exit.resumed() {
+        super::compiled::LaneExit::Terminated | super::compiled::LaneExit::Entry => unreachable!("termination leaves before recovery; an entry leave resumes at its first record"),
         super::compiled::LaneExit::At(pc) => {
             let mut carried = Carried::script(cx);
             if let Some(&register) = own.accumulator_registers.get(pc)
@@ -16897,7 +16897,7 @@ unsafe fn lane_read_capture<H: Host>(vm: &mut Vm<H>, target: &ScriptCallTarget) 
     let slots = capture_reads(target.capture);
     if depth == 0 && !slots.is_null() {
         // SAFETY: as `ScriptCallTarget::capture`.
-        return unsafe { crate::heap::EnvironmentSlots::read_storage(slots, usize::from(slot)) };
+        return unsafe { crate::heap::EnvironmentSlots::read_storage(slots, slot) };
     }
     let (slots, root) = vm.walked_capture_slots(target.env, false, depth)?;
     // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.

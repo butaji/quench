@@ -91,7 +91,7 @@ unsafe fn writable_binding(target: &ScriptCallTarget) -> Option<(*const usize, u
     let imm = unsafe { &*(*target.view).records().add(LOAD_CAPTURE_PC) }.imm();
     let slot = usize::from(ImmediateLayout::capture_slot(imm));
     // SAFETY: capture_stores admits direct writes; the shared read rejects TDZ/markers.
-    let previous = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, slot) }?;
+    let previous = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, u16::try_from(slot).ok()?) }?;
     Some((slots, slot, previous))
 }
 
