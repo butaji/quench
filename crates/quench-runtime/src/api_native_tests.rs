@@ -2625,3 +2625,31 @@ fn a_frozen_image_folds_whole_program_globals_and_guards_a_change() {
     runtime.execute_native(&native).unwrap();
     assert_eq!(runtime.native_execution_rejections(), 0, "counts: {counts:?}");
 }
+
+#[cfg(feature = "aot")]
+#[test]
+fn a_frozen_image_folds_a_prototype_value_and_guards_a_redefinition() {
+    // `C.prototype.k` is stored once with an immediate, so the closed program gives every
+    // read of `k` the value 5. Redefining it through `defineProperty` (a call, not a store)
+    // makes the read-site guard fail; the shared body reads 7 instead.
+    let source = r#"
+        function C() { this.x = 1; }
+        C.prototype.k = 5;
+        var c = new C();
+        function read(n) { let s = 0; for (let i = 0; i < n; i++) { s = (s + c.k) | 0; } return s; }
+        globalThis.answer = read(3);
+        Object.defineProperty(C.prototype, "k", { value: 7, configurable: true });
+        globalThis.answer2 = read(3);
+        if (globalThis.answer !== 15 || globalThis.answer2 !== 21) throw Error(globalThis.answer + "," + globalThis.answer2);
+    "#;
+    let (program, native) = compile_frozen(source);
+    let counts = native.publication_counts();
+    assert!(counts.frozen_fields >= 1, "no prototype value folded: {counts:?}");
+    assert!(counts.tier_specialized >= 1, "no specialized tier: {counts:?}");
+    let k = program.atoms.iter().position(|name| name == "k").unwrap() as crate::bytecode::Atom;
+    assert!(native.frozen_field_atoms_for_test().contains(&k), "atoms: {:?}", native.frozen_field_atoms_for_test());
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    assert_eq!(runtime.native_execution_rejections(), 0, "counts: {counts:?}");
+}

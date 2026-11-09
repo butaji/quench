@@ -3960,6 +3960,21 @@ impl Lowering<'_, '_> {
             }
             _ => None,
         };
+        // A whole-program prototype value: read the field once here as data, require the
+        // value the closed program gives it, then fold it. A changed prototype fails the
+        // guard and leaves to the shared body.
+        if rest.is_empty() && sink.is_none() && completes.is_none()
+            && !instruction.writes_current_this()
+            && let Some(expected) = self.vm.frozen_fields.and_then(|fields| fields.get(&first.0)).copied()
+        {
+            let actual = self.base_field_read(state, register, receiver, *first, exit);
+            let same = self.ins().icmp_imm_u(IntCC::Equal, actual, expected.to_bits() as i64);
+            emit_js_guard(&mut self.builder, same, exit);
+            let value = self.ins().iconst(types::I64, expected.to_bits() as i64);
+            self.define(state, destination, value,
+                RegisterFact::definition(Type::immediate(expected), Representation::Tagged));
+            return Some(true);
+        }
         let known = field.and_then(|(owner, atom)| state.proofs.fields.iter().copied()
             .find(|field| field.owner == owner && field.atom == atom));
         let mut value = match known {

@@ -2256,18 +2256,22 @@ pub(super) struct VmFacts<'a> {
     /// Whether those Stable facts come from a closed whole-program image rather than from a
     /// running VM's feedback: `Division::Frozen` instead of `Division::Online`.
     pub(super) frozen: bool,
+    /// Whole-program prototype values by atom, each guarded at its read site.
+    pub(super) frozen_fields: Option<&'a std::collections::BTreeMap<Atom, Value>>,
 }
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
-    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None, frozen: false };
+    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None, frozen: false,
+        frozen_fields: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
-        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None, frozen: false }
+        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None, frozen: false,
+            frozen_fields: None }
     }
 }
 
@@ -6503,6 +6507,55 @@ pub(super) fn frozen_globals(program: &ResidualProgram) -> std::collections::BTr
     root_immediate_globals(program, &candidates, &stores)
 }
 
+#[cfg(feature = "aot")]
+fn field_store_counts(program: &ResidualProgram) -> std::collections::BTreeMap<Atom, usize> {
+    let mut counts: std::collections::BTreeMap<Atom, usize> = std::collections::BTreeMap::new();
+    for id in 0..program.function_count() {
+        let function = program.function(id);
+        for &packed in function.code.iter() {
+            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
+            if instruction.op().js_denotation() == crate::bytecode::JsDenotation::FieldStore {
+                *counts.entry(instruction.atom_index()).or_default() += 1;
+            }
+        }
+    }
+    counts
+}
+
+#[cfg(feature = "aot")]
+fn root_immediate_fields(program: &ResidualProgram,
+    counts: &std::collections::BTreeMap<Atom, usize>,
+) -> std::collections::BTreeMap<Atom, Value> {
+    let root = program.function(0);
+    let mut immediates: std::collections::BTreeMap<u16, Value> = std::collections::BTreeMap::new();
+    let mut values = std::collections::BTreeMap::new();
+    for &packed in root.code.iter() {
+        let instruction = super::dispatch_fast::decoded_instruction(root, packed);
+        for register in instruction.written_registers() { immediates.remove(&register); }
+        if instruction.op().js_denotation() == crate::bytecode::JsDenotation::LoadConst {
+            if let Some(value) = program.constants.get(instruction.constant_index()).and_then(facts::immediate) {
+                immediates.insert(instruction.result_register(), value);
+            }
+        } else if instruction.op().js_denotation() == crate::bytecode::JsDenotation::FieldStore {
+            let atom = instruction.atom_index();
+            if counts.get(&atom) == Some(&1)
+                && let Some(&value) = immediates.get(&instruction.register_a()) {
+                values.insert(atom, value);
+            }
+        }
+    }
+    values
+}
+
+/// Whole-program prototype values: a field the root stores exactly once with an
+/// immediate (a constructor's `prototype.k = <immediate>`), folded at each read and
+/// guarded there. Accessor definitions are outside this analysis.
+#[cfg(feature = "aot")]
+pub(super) fn frozen_fields(program: &ResidualProgram) -> std::collections::BTreeMap<Atom, Value> {
+    let counts = field_store_counts(program);
+    root_immediate_fields(program, &counts)
+}
+
 /// Each by-name load of a frozen global, with the closure's whole-program value.
 #[cfg(feature = "aot")]
 pub(super) fn frozen_global_reads(function: &Function,
@@ -6535,17 +6588,21 @@ pub(super) fn compile_eager_native<H: Host>(
     // be a second, weaker lowering of the interpreter.
     let targets = super::compiled::static_call_targets(&program);
     let globals = frozen_globals(&program);
+    let frozen_field_facts = frozen_fields(&program);
     // The image's invalidation word: zero while every whole-program assumption holds.
     let invalidation = crate::code_dependencies::Invalidation::default();
-    let extension = EagerCraneliftExtension::<H> { program: &program, targets, globals: &globals, isa, options, entries: Vec::new(),
+    let extension = EagerCraneliftExtension::<H> { program: &program, targets, globals: &globals,
+        fields: &frozen_field_facts, isa, options, entries: Vec::new(),
         owners: EagerOwners::default(), counts: Default::default(), invalidation: invalidation.clone(),
         host: std::marker::PhantomData };
     let (entries, mut owners, mut counts) = super::specialize::CallThreaded::frozen(extension).specialize(&program)?;
     counts.frozen_globals = globals.len();
+    counts.frozen_fields = frozen_field_facts.len();
     let frozen = crate::vm::native_program::FrozenAssumptions {
         invalidation: owners.invalidation.clone(),
         atoms: std::mem::take(&mut owners.frozen_atoms).into_iter().collect(),
         globals: globals.keys().copied().collect(),
+        fields: frozen_field_facts.keys().copied().collect(),
         watch: Rc::new(crate::code_dependencies::PublishedCode::with_invalidation((), invalidation.clone())),
     };
     // SAFETY: every entry was lowered from its exact function for host H.
@@ -6574,6 +6631,8 @@ struct EagerCraneliftExtension<'p, H> {
     targets: Vec<Vec<lane_unit::StaticTargets>>,
     /// Whole-program globals the frozen regions may fold.
     globals: &'p std::collections::BTreeMap<Atom, Value>,
+    /// Whole-program prototype values the frozen regions may fold.
+    fields: &'p std::collections::BTreeMap<Atom, Value>,
     isa: std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>,
     options: super::native_graph::NativeJsCodegenOptions,
     entries: Vec<crate::NativeJsFunctionEntry>,
@@ -6710,7 +6769,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
         isa: &dyn cranelift_codegen::isa::TargetIsa,
     ) -> Vec<StaticTypedRegion> {
         let unnamed_atoms = super::method_cache::AtomBits::default();
-        let facts = VmFacts { frozen: true, online: Some(OnlineFacts {
+        let facts = VmFacts { frozen: true, frozen_fields: Some(self.fields), online: Some(OnlineFacts {
             method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[],
         }), ..VmFacts::STATIC };
         let function = program.function(function_id as usize);
