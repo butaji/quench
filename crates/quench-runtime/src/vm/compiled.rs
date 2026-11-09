@@ -2374,9 +2374,9 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     let has_calls = unit.instructions.iter().any(|instruction|
         instruction.op().control_flow_layout() == ControlFlowLayout::Call);
     let scalar = !has_calls && unit.instructions.iter().all(|instruction|
-        instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
-            || matches!(instruction.op(), Op::Nop | Op::LoadConst | Op::Move | Op::IncDec
-                | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return)
+        matches!(instruction.op().js_denotation(), JsDenotation::NumericBinary | JsDenotation::Noop
+                | JsDenotation::LoadConst | JsDenotation::Move | JsDenotation::Jump | JsDenotation::Return)
+            || matches!(instruction.op(), Op::IncDec | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
             || (instruction.op().class().eq(Class::LoadCapture) && instruction.result_flags() == 0 && instruction.capture_depth() == 0));
     // A region whose loops index arrays in place also gets its typed-array variant, which the
     // dispatcher enters at the same header where the dense one leaves there (it comes first
