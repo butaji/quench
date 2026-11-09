@@ -15,14 +15,14 @@ pub(crate) struct FieldStore {
     pub(crate) strict: bool,
 }
 
-/// The pattern of every named field store opcode, for a `match` arm that must stay a jump
-/// table entry; `Op::field_store` says what each one means.
+/// The pattern of every named field store opcode's catalog index, for a `match` arm over an
+/// opcode index that must stay a jump table entry; `Op::field_store` says what each one means.
 macro_rules! field_store_op {
     () => {
-        $crate::bytecode::Op::SetField
-            | $crate::bytecode::Op::SetFieldStrict
-            | $crate::bytecode::Op::SetThisField
-            | $crate::bytecode::Op::SetThisFieldStrict
+        $crate::bytecode::index::SetField
+            | $crate::bytecode::index::SetFieldStrict
+            | $crate::bytecode::index::SetThisField
+            | $crate::bytecode::index::SetThisFieldStrict
     };
 }
 pub(crate) use field_store_op;

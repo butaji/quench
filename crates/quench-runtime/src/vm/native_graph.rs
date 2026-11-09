@@ -6,7 +6,7 @@ use super::native_object::{
 };
 use super::native_operands::NativeJsOperands;
 use super::specialize::{CallThreaded, CallThreadedExtension, Continuation, InstructionSite, Specializer};
-use crate::bytecode::{Function, Op, ProgramKind, ResidualProgram};
+use crate::bytecode::{Function, Op, OPCODE_COUNT, ProgramKind, ResidualProgram, opcode_name};
 use cranelift_codegen::{
     ir::{self, InstBuilder, MemFlagsData, condcodes::IntCC, types},
     isa::TargetIsa,
@@ -153,7 +153,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         // General dispatch decodes packed inline fields through the table too, so every image
         // publishes it (`NarrowTable::Linked`).
         let has_narrow_table = true;
-        let mut operations = vec![None; Op::COUNT];
+        let mut operations = vec![None; OPCODE_COUNT];
         for sites in &bodies {
             // Fallback tables name an entry for every PC, so every op is collected.
             for op in sites.iter().map(|site| site.op) {
@@ -165,7 +165,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                         name: format!(
                             "{}{}",
                             crate::bytecode::NATIVE_JS_OPERATION_PREFIX,
-                            Op::NAMES[op as usize]
+                            opcode_name(op as usize)
                         ),
                         signature: super::compiled::native_js_operation_signature(&*isa),
                     });
@@ -396,7 +396,7 @@ impl<'a> ObjectOperations<'a> {
             function_id,
             isa,
             operations,
-            entries: vec![None; Op::COUNT],
+            entries: vec![None; OPCODE_COUNT],
             operand_base: None,
         }
     }

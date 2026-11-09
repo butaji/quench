@@ -1,10 +1,10 @@
 //! Diagnostic census of lane exits (`profile-lane-exits`): how often the general loop takes
 //! over from the lane at each opcode, printed to stderr when the process exits.
 
-use crate::bytecode::Op;
+use crate::bytecode::{OPCODE_COUNT, opcode_name};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-static EXITS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
+static EXITS: [AtomicU64; OPCODE_COUNT] = [const { AtomicU64::new(0) }; OPCODE_COUNT];
 static REPORT: std::sync::Once = std::sync::Once::new();
 
 pub(super) enum CaptureEvent { LaneHit, LaneMiss, WalkHit, WalkMiss }
@@ -45,7 +45,7 @@ static DETAILS: std::sync::Mutex<Option<std::collections::HashMap<String, u64>>>
 static DISPATCHES: AtomicU64 = AtomicU64::new(0);
 /// Lane dispatches by opcode: the mix a row actually executes, which the exit census
 /// cannot show because it counts only the general loop's dispatches.
-static DISPATCH_OPS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
+static DISPATCH_OPS: [AtomicU64; OPCODE_COUNT] = [const { AtomicU64::new(0) }; OPCODE_COUNT];
 
 static CALL_TARGET_SAMPLE: AtomicU64 = AtomicU64::new(0);
 /// Exact, opt-in census of the general dispatch loop's in-loop call-target probe.
@@ -212,11 +212,11 @@ extern "C" fn report() {
         .collect();
     dispatch_ops.sort_unstable_by(|a, b| b.cmp(a));
     for (count, op) in dispatch_ops.into_iter().take(REPORTED_OPCODES) {
-        eprintln!("  lane op {count:>12} {}", Op::NAMES[op]);
+        eprintln!("  lane op {count:>12} {}", opcode_name(op));
     }
     eprintln!("lane exits: {total}");
     for (count, op) in counts.into_iter().take(REPORTED_OPCODES) {
-        eprintln!("  {count:>12} {}", Op::NAMES[op]);
+        eprintln!("  {count:>12} {}", opcode_name(op));
     }
     if let Some(details) = DETAILS.lock().expect("lane exit details").as_ref() {
         let mut details: Vec<_> = details.iter().collect();
@@ -335,7 +335,7 @@ pub(super) fn count_record(address: usize, record_size: usize) {
             return;
         };
         if census.op_counts.is_empty() {
-            census.op_counts = vec![0; Op::COUNT];
+            census.op_counts = vec![0; OPCODE_COUNT];
         }
         census.op_counts[op as usize] += 1;
         if let Some(previous) = census.previous_op.replace(op) {
@@ -351,7 +351,7 @@ const REPORTED_DISPATCHES: usize = 40;
 pub(super) fn count_general(label: impl FnOnce() -> String, key: (u32, u32), op: Op) {
     with_functions(|census| {
         if census.general_op_counts.is_empty() {
-            census.general_op_counts = vec![0; Op::COUNT];
+            census.general_op_counts = vec![0; OPCODE_COUNT];
         }
         census.general_op_counts[op as usize] += 1;
         let index = match census.general_keys.get(&key) {
@@ -388,18 +388,18 @@ extern "C" fn report_functions() {
         let mut ops: Vec<_> = census.op_counts.iter().enumerate().filter(|(_, count)| **count > 0).collect();
         ops.sort_unstable_by(|a, b| b.1.cmp(a.1));
         for (op, count) in ops.into_iter().take(REPORTED_DISPATCHES) {
-            eprintln!("  lane op {count:>12} {}", Op::NAMES[op]);
+            eprintln!("  lane op {count:>12} {}", opcode_name(op));
         }
         let mut general_ops: Vec<_> =
             census.general_op_counts.iter().enumerate().filter(|(_, count)| **count > 0).collect();
         general_ops.sort_unstable_by(|a, b| b.1.cmp(a.1));
         for (op, count) in general_ops.into_iter().take(REPORTED_DISPATCHES) {
-            eprintln!("  general op {count:>12} {}", Op::NAMES[op]);
+            eprintln!("  general op {count:>12} {}", opcode_name(op));
         }
         let mut pairs: Vec<_> = census.pair_counts.iter().collect();
         pairs.sort_unstable_by(|a, b| b.1.cmp(a.1));
         for ((first, second), count) in pairs.into_iter().take(REPORTED_DISPATCHES) {
-            eprintln!("  lane pair {count:>12} {} -> {}", Op::NAMES[*first], Op::NAMES[*second]);
+            eprintln!("  lane pair {count:>12} {} -> {}", opcode_name(*first), opcode_name(*second));
         }
         for (sum, lane, general, label) in rows.into_iter().take(REPORTED_FUNCTIONS) {
             eprintln!("  {sum:>12} lane={lane:>11} general={general:>10} {label}");

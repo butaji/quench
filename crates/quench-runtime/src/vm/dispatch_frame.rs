@@ -1,5 +1,5 @@
 use super::*;
-
+use crate::bytecode::index;
 mod loop_stack;
 
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
@@ -1964,7 +1964,7 @@ impl<H: Host> Vm<H> {
                     .and_then(|function| function.instructions().nth(pc))
                 {
                     super::lane_exits::record(instruction.op());
-                    if matches!(instruction.op(), Op::Call | Op::Construct) {
+                    if matches!(instruction.op() as u16, index::Call | index::Construct) {
                         let callee = self.frames[frame].registers.get(usize::from(instruction.register_b())).copied();
                         let detail = match callee.and_then(|callee| self.heap.function(callee)) {
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native @ (crate::heap::Native::FunctionBoundCall | crate::heap::Native::FunctionCall)), .. }) => {
@@ -1996,7 +1996,7 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
-                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::LoadNameCall | Op::PrivateIn | Op::Binary | Op::JumpBinaryFalse) || instruction.op().is_field_store() {
+                    if matches!(instruction.op() as u16, index::CloneEnv | index::Return | index::GetField | index::GetIndex | index::SetIndex | index::LoadName | index::LoadNameCall | index::PrivateIn | index::Binary | index::JumpBinaryFalse) || instruction.op().is_field_store() {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
@@ -2043,10 +2043,10 @@ impl<H: Host> Vm<H> {
                         let kind = base.and_then(|base| self.heap.get(base)).map_or("immediate", |cell| cell.profile_variant_name());
                         super::lane_exits::record_detail(format!("GetField {names} on {kind}"));
                     }
-                    if matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::DefineArrayElement) {
+                    if matches!(instruction.op() as u16, index::GetIndex | index::SetIndex | index::DefineArrayElement) {
                         let (base, key) = match instruction.op() {
-                            Op::GetIndex => (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c())),
-                            Op::SetIndex => (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c()))),
+                            index::GetIndex => (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c())),
+                            index::SetIndex => (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c()))),
                             _ => {
                                 let registers = &self.frames[frame].registers;
                                 (registers.get(usize::from(instruction.a())).copied(), registers.get(usize::from(instruction.register_b())).copied())
@@ -2077,7 +2077,7 @@ impl<H: Host> Vm<H> {
                         let dense = base.and_then(|base| self.heap.array(base)).map(|array| (array.elements().len(), array.has_indexed_descriptors(), array.is_frozen()));
                         super::lane_exits::record_detail(format!("{:?} kinds base={} key={} array={dense:?}", instruction.op(), describe(base), describe(key)));
                     }
-                    if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
+                    if matches!(instruction.op() as u16, index::JumpBinaryFalse | index::Binary) {
                         let constants = self.programs.constants(cursor.program);
                         let registers = &self.frames[frame].registers;
                         let kind = |operand: crate::bytecode::Operand| {
@@ -2141,7 +2141,7 @@ impl<H: Host> Vm<H> {
                     published_pc = &mut self.frames[frame].pc;
                     continue;
                 }
-                // A run that stopped at the `await` of the loop's own frame, whose `Op::Await`
+                // A run that stopped at the `await` of the loop's own frame, whose `Await`
                 // step would end the loop with it, suspends it here where the awaited value's
                 // conversion observes nothing (`lane_stop_awaits`); not past a native step, whose next PC may end the function.
                 if pending_calls.is_empty()
@@ -2224,14 +2224,14 @@ impl<H: Host> Vm<H> {
             self.profile.opcode(ins.op() as usize);
             // Register/local moves and field cache hits cannot allocate, collect or throw, so they
             // need neither the published root-map PC nor the general step result.
-            match ins.op() {
-                Op::LoadLocalPlain => {
+            match ins.op()  as u16 {
+                index::LoadLocalPlain => {
                     // SAFETY: validated bytecode bounds the slot by Function.locals.
                     let value = unsafe { self.read_validated_local(frame, ins.local_slot()) };
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }
-                Op::StoreLocalPlain => {
+                index::StoreLocalPlain => {
                     let value = self.read(frame, ins.register_a());
                     // SAFETY: validated bytecode bounds the slot by Function.locals.
                     unsafe { self.write_validated_local(frame, ins.local_slot(), value) };
@@ -2240,7 +2240,7 @@ impl<H: Host> Vm<H> {
                     }
                     continue;
                 }
-                Op::Move => {
+                index::Move => {
                     self.write(
                         frame,
                         ins.result_register(),
@@ -2248,13 +2248,13 @@ impl<H: Host> Vm<H> {
                     );
                     continue;
                 }
-                Op::LoadConst => {
+                index::LoadConst => {
                     if let Some(value) = self.active_constant(ins.constant_index()) {
                         self.write(frame, ins.result_register(), value);
                         continue;
                     }
                 }
-                Op::LoadCapture => {
+                index::LoadCapture => {
                     if let (Some(value), _) =
                         self.cached_plain_capture(frame, ins.capture_depth(), ins.capture_slot())
                     {
@@ -2262,7 +2262,7 @@ impl<H: Host> Vm<H> {
                         continue;
                     }
                 }
-                Op::JumpFalse | Op::JumpTrue => {
+                index::JumpFalse | index::JumpTrue => {
                     // ToBoolean runs no guest code.
                     let value = self.read(frame, ins.register_a());
                     let truthy = self.truthy(value);
@@ -2283,7 +2283,7 @@ impl<H: Host> Vm<H> {
                     }
                     continue;
                 }
-                Op::JumpBinaryFalse => {
+                index::JumpBinaryFalse => {
                     let operator = ins.binary_operator_field();
                     if let (Some(left), Some(right)) = (
                         self.inert_operand(frame, ins.operand_b()),
@@ -2330,7 +2330,7 @@ impl<H: Host> Vm<H> {
                 }
                 // Number arithmetic on register or constant operands runs no guest code,
                 // allocates nothing and cannot throw.
-                Op::Binary | Op::NumericAdd | Op::NumericMultiply
+                index::Binary | index::NumericAdd | index::NumericMultiply
                     if !ins.returns_from_frame()
                         && let (Some(left), Some(right)) = (
                             self.inert_operand(frame, ins.operand_b()),
@@ -2348,7 +2348,7 @@ impl<H: Host> Vm<H> {
                         self.frames[frame].locals[usize::from(local)] = value;
                         self.profile.virtual_opcode(
                             self.frames[frame].program.raw(),
-                            Op::StoreLocalPlain as usize,
+                            index::StoreLocalPlain as usize,
                         );
                     } else {
                         self.write(frame, ins.result_register(), value);
@@ -2357,7 +2357,7 @@ impl<H: Host> Vm<H> {
                 }
                 // Equality decided without conversion, and instanceof reduced to a prototype
                 // walk, run no guest code either.
-                Op::Binary
+                index::Binary
                     if !ins.returns_from_frame()
                         && ins.numeric_local_target().is_none()
                         && let (Some(left), Some(right)) = (
@@ -2380,7 +2380,7 @@ impl<H: Host> Vm<H> {
                 // A field cache hit reads a data slot, and an array's length is an own data
                 // property: neither allocates nor throws. Anything else takes the general path.
                 // `this` is a base once the activation fixed it, as for `SetThisField`.
-                Op::GetField
+                index::GetField
                     if ins.result_flags() == 0
                         && let Some(crate::bytecode::FieldLookup::Atom {
                             atom,
@@ -2411,7 +2411,7 @@ impl<H: Host> Vm<H> {
                 // A present dense array element is a data property (accessor indices are
                 // stored as holes): reading it, or replacing it in an array without indexed
                 // descriptors or frozen state, runs no guest code and cannot throw.
-                Op::GetIndex
+                index::GetIndex
                     if let (Some(base), Some(key)) = (
                         self.inert_operand(frame, ins.operand_b()),
                         self.inert_operand(frame, ins.operand_c()),
@@ -2420,7 +2420,7 @@ impl<H: Host> Vm<H> {
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }
-                Op::SetIndex => {
+                index::SetIndex => {
                     let (object, key) = (
                         self.read(frame, ins.register_b()),
                         self.read(frame, ins.register_c()),
@@ -2435,7 +2435,7 @@ impl<H: Host> Vm<H> {
                 }
                 // Number increments and conversions of Numbers run no guest code, allocate
                 // nothing and cannot throw.
-                Op::IncDec
+                index::IncDec
                     if let Some(value) = super::dispatch::number_increment(
                         self.read(frame, ins.register_b()),
                         ins.boolean_flag().expect("validated boolean immediate"),
@@ -2444,7 +2444,7 @@ impl<H: Host> Vm<H> {
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }
-                Op::ToNumeric if self.read(frame, ins.register_b()).as_number().is_some() => {
+                index::ToNumeric if self.read(frame, ins.register_b()).as_number().is_some() => {
                     self.write(
                         frame,
                         ins.result_register(),
@@ -2453,7 +2453,7 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 // A back edge collects only once the allocation threshold is reached.
-                Op::Jump if !self.heap.should_collect() => {
+                index::Jump if !self.heap.should_collect() => {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
                         self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
@@ -2476,11 +2476,11 @@ impl<H: Host> Vm<H> {
             self.frames[frame].pc_is_resume = false;
             // Returns and inline calls produce their step result here rather than through the
             // general `step` dispatch.
-            match ins.op() {
+            match ins.op()  as u16 {
                 // A call the lane made returned its callee's completion from this frame.
                 _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
-                Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
-                Op::Call if allow_inline_calls => {
+                index::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
+                index::Call if allow_inline_calls => {
                     match self.try_inline_reflect_apply(p, frame, ins, pc) {
                         Some(result) => result,
                         None => match self.try_inline_user_call(p, frame, ins, pc) {

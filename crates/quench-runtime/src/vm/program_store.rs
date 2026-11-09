@@ -2450,7 +2450,7 @@ impl ProgramStore {
                 let instruction_count = function_code.map_or(0, |function| {
                     u32::try_from(function.code.len()).unwrap_or(u32::MAX)
                 });
-                let mut opcode_counts = vec![0_u32; crate::bytecode::Op::COUNT];
+                let mut opcode_counts = vec![0_u32; crate::bytecode::OPCODE_COUNT];
                 if let Some(function) = function_code {
                     for instruction in &function.code {
                         let opcode = instruction.as_wide().op() as usize;
@@ -3476,7 +3476,7 @@ impl Drop for ProgramStore {
                     let name = match failure.reason {
                         super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
                         super::compiled::RegionRejection::UnsupportedInstruction(op) => {
-                            crate::bytecode::Op::NAMES.get(op as usize).copied().unwrap_or("unknown-opcode")
+                            crate::bytecode::opcode_name(usize::from(op))
                         }
                         super::compiled::RegionRejection::RegisterLimit => "register-limit",
                         super::compiled::RegionRejection::CaptureLimit => "capture-limit",
@@ -3507,10 +3507,7 @@ impl Drop for ProgramStore {
                 if site_index != 0 {
                     let _ = write!(stderr, ",");
                 }
-                let opcode = crate::bytecode::Op::NAMES
-                    .get(usize::from(site.opcode))
-                    .copied()
-                    .unwrap_or("unknown");
+                let opcode = crate::bytecode::opcode_name(usize::from(site.opcode));
                 let _ = write!(stderr, "{{\"pc\":{},\"opcode\":", site.pc);
                 let _ = write_json_string(&mut stderr, opcode);
                 let _ = write!(stderr, ",\"attempts\":{},\"direct_target\":", site.attempts);
@@ -3568,10 +3565,7 @@ impl Drop for ProgramStore {
                 if index != 0 {
                     let _ = write!(stderr, ",");
                 }
-                let name = crate::bytecode::Op::NAMES
-                    .get(usize::from(*opcode))
-                    .copied()
-                    .unwrap_or("unknown");
+                let name = crate::bytecode::opcode_name(usize::from(*opcode));
                 let _ = write!(stderr, "[");
                 let _ = write_json_string(&mut stderr, name);
                 let _ = write!(stderr, ",{count}]");
@@ -3585,10 +3579,7 @@ impl Drop for ProgramStore {
                 if index != 0 {
                     let _ = write!(stderr, ",");
                 }
-                let name = crate::bytecode::Op::NAMES
-                    .get(usize::from(*opcode))
-                    .copied()
-                    .unwrap_or("unknown");
+                let name = crate::bytecode::opcode_name(usize::from(*opcode));
                 let _ = write!(stderr, "[");
                 let _ = write_json_string(&mut stderr, name);
                 let _ = write!(stderr, ",{count}]");
@@ -3601,10 +3592,7 @@ impl Drop for ProgramStore {
                 let name = match reason {
                     super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
                     super::compiled::RegionRejection::UnsupportedInstruction(op) => {
-                        crate::bytecode::Op::NAMES
-                            .get(*op as usize)
-                            .copied()
-                            .unwrap_or("unknown-opcode")
+                        crate::bytecode::opcode_name(usize::from(*op))
                     }
                     super::compiled::RegionRejection::RegisterLimit => "register-limit",
                     super::compiled::RegionRejection::CaptureLimit => "capture-limit",

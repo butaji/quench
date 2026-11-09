@@ -2,6 +2,7 @@
 //! (`Class`, `class_of!`) and its orthogonal tier traits (`Traits`, `traits_of!`), which the
 //! `opcodes!` table expands into `Op::class` and `Op::traits`.
 use super::Op;
+pub(crate) use super::opcode_table::{OPCODE_COUNT, opcode_name};
 
 /// A tier's operation family, declared once by the catalog (`Op::class`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

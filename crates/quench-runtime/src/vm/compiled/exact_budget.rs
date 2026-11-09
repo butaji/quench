@@ -40,7 +40,7 @@ mod tests {
                 let op = instruction.op();
                 // A binary operation names its operator, which decides its lowering.
                 let name = if op.is_binary() { format!("Binary {:?}", instruction.binary_operator()) }
-                    else { crate::bytecode::Op::NAMES[op as usize].to_owned() };
+                    else { crate::bytecode::opcode_name(op as usize).to_owned() };
                 *ops.entry(name).or_default() += 1;
             }
         }
