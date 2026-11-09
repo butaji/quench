@@ -13163,7 +13163,7 @@ use wasm_calls::{known_call_handler, reference_call_handler};
 use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
-mod native_calls;
+mod native_calls; mod generator_yields; use generator_yields::yield_handler;
 mod array_steps;
 use array_steps::*;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
@@ -17648,46 +17648,6 @@ fn lane_push_frame_call<H: Host>(
     }
 }
 
-script_handler! {
-    /// `yield` of the frame of a generator its caller resumed in place
-    /// (`PendingGeneralCall::completion`), made as the general loop makes it: the frame
-    /// suspends into the generator at the record after this one, and the caller continues
-    /// with the step's result (`Vm::finish_in_loop_generator_step`). Any other `yield`
-    /// takes the general path.
-    #[inline(never)]
-    fn lane_yield<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        // SAFETY: the general loop's pending calls outlive the lane run.
-        let pending = unsafe { &mut *(*cx).pending };
-        let frame = unsafe { (*cx).frame };
-        let resumed_here = vm.lane_stack.activations.is_empty()
-            && frame + 1 == vm.frames.len()
-            && pending.last().is_some_and(|call| call.completion.is_generator() && call.caller + 1 == frame);
-        if !resumed_here {
-            return exit(ip);
-        }
-        let value = r.get(i.b);
-        // SAFETY: the record lies in the running view.
-        let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-        vm.frames[frame].pc = pc + 1;
-        vm.frames[frame].pc_is_resume = true;
-        let mut call = pending.pop().expect("a pending call resumed the generator");
-        let suspended = vm.frames.pop().expect("the generator's frame is the innermost");
-        let stop = super::generator::InLoopGeneratorStop::Yielded {
-            destination: i.a & crate::bytecode::REGISTER_MASK,
-            delegated_result: None,
-        };
-        let resume = call.completion.take_generator().expect("a generator call");
-        let result = vm.finish_in_loop_generator_step(suspended, resume, value, stop);
-        drop(call.call_guard);
-        vm.active_registers = vm.frames[call.caller].registers.as_mut_ptr();
-        vm.write(call.caller, call.destination, result);
-        // The result may be a fresh allocation, which the caller's safepoints collect after.
-        note_allocation(vm);
-        resume!(cx, lane_enter_script_frame(cx, call.caller))
-    }
-}
-
 /// `lane_generator_step` of a generator the general loop would resume in place
 /// (`Vm::try_in_loop_generator_step`): lane activations become frames, the generator's frame
 /// is pushed with the pending call its `yield` or return completes with the step's reused
@@ -17710,7 +17670,7 @@ fn lane_resume_generator_frame<H: Host>(
     // SAFETY: the call record lies in the running view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     let destination = i.a & crate::bytecode::REGISTER_MASK;
-    match vm.resume_generator_in_place(frame, call_pc + 1, method, generator, true)? {
+    match vm.resume_generator_in_place(frame, call_pc + 1, method, generator, Value::UNDEFINED, true)? {
         Ok((call_guard, resume)) => {
             // SAFETY: the general loop's pending calls outlive the lane run.
             unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
@@ -18143,7 +18103,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::CallForwardingArguments => Some(lane_forward_call::<H>),
         Class::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Class::Return => Some(lane_return::<H, NOT_LEAF>),
-        Class::Yield => Some(lane_yield::<H>),
+        _ if yield_handler::<H>(opcode).is_some() => yield_handler::<H>(opcode),
         _ => jump_handler::<H, BACKWARD, ACC>(opcode),
     }
 }
