@@ -194,6 +194,13 @@ impl<T: SiteEntry> SiteTable<T> {
         unsafe { self.set_unchecked(index, value) }
     }
 
+    /// Entry `index` as stored, for a fact an entry's encoding leaves room for.
+    pub(super) fn stored_mut(&mut self, index: usize) -> &mut T::Stored {
+        assert!(index < self.len, "cache site out of range");
+        // SAFETY: checked above; an index inside the table names an entry of the mapping.
+        unsafe { &mut *self.base.as_ptr().add(index) }
+    }
+
     #[cfg(test)]
     pub(super) fn push(&mut self, value: T) {
         self.extend_empty(1);

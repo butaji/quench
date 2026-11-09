@@ -6,7 +6,7 @@ use super::{
     emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback,
     JsNativeStep, JsStepDispatch, ResidualProgram, Vm, ACTIVE_CONTEXT,
 };
-use crate::bytecode::{Op, WideInstruction};
+use crate::bytecode::{ConstructArguments, Op, WideInstruction, RETURN_REGISTER};
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_frontend::FunctionBuilder;
@@ -23,16 +23,20 @@ const USER_CALL_MISSED: u64 = 2;
 /// island's batch: native code only resumes past it.
 pub(super) fn lower_shortcut(
     builder: &mut FunctionBuilder<'_>,
-    (pc, instruction, next): (usize, WideInstruction, ir::Block),
+    (pc, instruction, next): (usize, WideInstruction, Option<ir::Block>),
+    strict: bool,
     register_offset: &dyn Fn(u16) -> Option<i32>,
     (arguments, payload): (ir::Value, ir::Value),
     exact: &JsExactFallback,
 ) -> Option<bool> {
+    if lower_call(builder, (pc, instruction, next), strict, register_offset, (arguments, payload), exact) {
+        return Some(false);
+    }
+    let next = next?;
     if super::general_capture::lower_capture(builder, (instruction, next), register_offset, (arguments, payload), exact) {
         return Some(true);
     }
-    if lower_call(builder, (pc, instruction, next), register_offset, (arguments, payload), exact)
-        || lower_construct(builder, (pc, instruction, next), register_offset, (arguments, payload), exact) {
+    if lower_construct(builder, (pc, instruction, next), register_offset, (arguments, payload), exact) {
         return Some(false);
     }
     (instruction.op() == Op::SetIndex
@@ -41,29 +45,31 @@ pub(super) fn lower_shortcut(
 }
 
 /// Lowers the plain call at `pc` through its shortcuts, the exact step taking any miss;
-/// false where only the exact step applies.
+/// false where only the exact step applies. A call that returns its value (`return f()`,
+/// `Recipe::ReturnResult`) is that call and the native `Return` of its register; in a strict
+/// function whose host makes terminal calls proper tail calls, its exact step makes the call.
 fn lower_call(
     builder: &mut FunctionBuilder<'_>,
-    (pc, instruction, next): (usize, WideInstruction, ir::Block),
+    (pc, instruction, next): (usize, WideInstruction, Option<ir::Block>),
+    strict: bool,
     register_offset: &dyn Fn(u16) -> Option<i32>,
     (arguments, payload): (ir::Value, ir::Value),
     exact: &JsExactFallback,
 ) -> bool {
-    if instruction.op() != Op::Call || instruction.result_flags() != 0 || instruction.returns_from_frame()
+    let returns = instruction.returns_from_frame();
+    if instruction.op() != Op::Call || instruction.result_flags() != if returns { RETURN_REGISTER } else { 0 }
         || instruction.direct_eval() || instruction.parameter_eval() {
         return false;
     }
     let Some(destination) = register_offset(instruction.result_register()) else { return false };
     let fallback = builder.create_block();
+    let next = match (returns, next) {
+        (false, Some(next)) => next,
+        (false, None) => return false,
+        (true, _) => emit_returning_continuation(builder, (arguments, payload), (destination, fallback), strict, exact),
+    };
     if let Some(builtin) = builtin_call(instruction, register_offset) {
-        let value = emit_builtin_call(builder, (arguments, payload), builtin);
-        let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-        let (done, user) = (builder.create_block(), builder.create_block());
-        builder.ins().brif(hit, done, &[], user, &[]);
-        builder.switch_to_block(done);
-        builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
-        builder.ins().jump(next, &[]);
-        builder.switch_to_block(user);
+        emit_builtin_shortcut(builder, (arguments, payload), builtin, (destination, next));
     }
     let framed = builder.create_block();
     if super::frameless::emit_call(builder, (pc, instruction, next), register_offset, (arguments, payload), exact,
@@ -73,7 +79,35 @@ fn lower_call(
     true
 }
 
-/// Lowers the plain `new` at `pc` frameless, the exact step taking any miss.
+/// A returning call's continuation, the native `Return` of `destination`; in a strict
+/// function, a host with proper tail calls first sends the call to `fallback`.
+fn emit_returning_continuation(builder: &mut FunctionBuilder<'_>, (arguments, payload): (ir::Value, ir::Value),
+    (destination, fallback): (i32, ir::Block), strict: bool, exact: &JsExactFallback) -> ir::Block {
+    if strict {
+        let tail_calls = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, proper_tail_calls));
+        let call = builder.create_block();
+        builder.ins().brif(tail_calls, fallback, &[], call, &[]);
+        builder.switch_to_block(call);
+    }
+    exact.register_return(builder, arguments, destination)
+}
+
+/// A native's in-place case stores its value in `destination` and continues at `next`; a
+/// miss continues in a fresh current block.
+fn emit_builtin_shortcut(builder: &mut FunctionBuilder<'_>, (arguments, payload): (ir::Value, ir::Value),
+    builtin: BuiltinCall, (destination, next): (i32, ir::Block)) {
+    let value = emit_builtin_call(builder, (arguments, payload), builtin);
+    let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+    let (done, user) = (builder.create_block(), builder.create_block());
+    builder.ins().brif(hit, done, &[], user, &[]);
+    builder.switch_to_block(done);
+    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
+    builder.ins().jump(next, &[]);
+    builder.switch_to_block(user);
+}
+
+/// Lowers the plain `new` at `pc` frameless, else as an intrinsic array
+/// (`general_array_construct`), else framed (`general_user_call`), the exact step taking any miss.
 fn lower_construct(
     builder: &mut FunctionBuilder<'_>,
     (pc, instruction, next): (usize, WideInstruction, ir::Block),
@@ -88,7 +122,24 @@ fn lower_construct(
     let framed = builder.create_block();
     if super::frameless::emit_call(builder, (pc, instruction, next), register_offset, (arguments, payload), exact,
         destination, framed).is_none() { return false; }
-    exact.emit(builder, framed);
+    builder.switch_to_block(framed);
+    // A frameless construction takes only plain register windows, every register framed.
+    let ConstructArguments::Registers(window) = instruction.construct_arguments() else { unreachable!() };
+    let offset = |register| register_offset(register).expect("the frameless construction's register");
+    let callee = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset(instruction.register_b()));
+    let window_base = if window.count == 0 { 0 } else { offset(window.base) };
+    let values = builder.ins().iadd_imm_s(arguments, i64::from(window_base));
+    let count = builder.ins().iconst(types::I64, i64::from(window.count));
+    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, array_construct));
+    let array = emit_lane_helper_call(builder, payload, helper, &[payload, callee, values, count]);
+    let built = builder.ins().icmp_imm_u(IntCC::NotEqual, array, Value::DELETED.to_bits() as i64);
+    let (store, user, fallback) = (builder.create_block(), builder.create_block(), builder.create_block());
+    builder.ins().brif(built, store, &[], user, &[]);
+    builder.switch_to_block(store);
+    builder.ins().store(MemFlagsData::trusted(), array, arguments, destination);
+    builder.ins().jump(next, &[]);
+    builder.switch_to_block(user);
+    emit_user_call(builder, (pc, next, fallback), payload, exact);
     true
 }
 
@@ -161,8 +212,9 @@ pub(super) unsafe extern "C" fn general_native_call<H: Host>(vm: u64, residual: 
     value.to_bits()
 }
 
-/// The plain call at `pc` of the payload's frame, as the exact step's in-loop call runs it
-/// (`Vm::try_inline_user_call`, `Vm::complete_pushed_call`) without the step around it:
+/// The plain call or construction at `pc` of the payload's frame, as the exact step's in-loop
+/// push runs it (`Vm::try_inline_user_call`, `Vm::try_inline_construct`,
+/// `Vm::complete_pushed_call`) without the step around it:
 /// `USER_CALL_COMPLETED` with the value in its register, `USER_CALL_STOPPED` with the
 /// transition in the payload, or `USER_CALL_MISSED` before any effect.
 ///
@@ -188,7 +240,10 @@ fn user_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut 
     vm.frames[caller].pc = pc;
     vm.frames[caller].pc_is_resume = false;
     if let Err(error) = vm.check_execution_interrupt() { return stop(dispatch, pc, Err(error)); }
-    let Some(pushed) = vm.try_inline_user_call(program, caller, instruction, next) else { return USER_CALL_MISSED };
+    // Only calls and constructions take the framed path.
+    let pushed = if instruction.op().is_ordinary_call() { vm.try_inline_user_call(program, caller, instruction, next) }
+        else if dispatch.allow_inline_calls { vm.try_inline_construct(program, caller, instruction, next) } else { None };
+    let Some(pushed) = pushed else { return USER_CALL_MISSED };
     let step = vm.complete_pushed_call(program, caller, instruction, pushed);
     if !matches!(step, Ok(super::super::StepResult::Continue)) { return stop(dispatch, pc, step); }
     let frame = &mut vm.frames[caller];

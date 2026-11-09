@@ -12835,36 +12835,14 @@ script_handler! {
             }
             _ => {}
         }
-        if (returns && vm.lane_stack.activations.is_empty())
-            || !matches!(
-                vm.heap.function(callee),
-                Some(FunctionRecord {
-                    kind: FunctionKind::Native(Native::Array),
-                    ..
-                })
-            )
-        {
+        if returns && vm.lane_stack.activations.is_empty() {
             return exit(ip);
         }
-        let prototype_atom = vm.prototype_atom();
-        let Some(prototype) = vm
-            .own_function_prototype_data(callee, prototype_atom)
-            .filter(|prototype| vm.object_data(*prototype).is_some())
-        else {
-            return exit(ip);
-        };
         let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
         // SAFETY: the construction's window is registers of the running function.
         let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.c)), argc) };
-        let array = match args {
-            [length] if let Some(length) = length.as_number() => {
-                // An invalid length throws its RangeError on the general path.
-                let Some(array) = vm.array_of_length(prototype, length) else {
-                    return exit(ip);
-                };
-                array
-            }
-            _ => lane_new_array(vm, prototype, args),
+        let Some(array) = vm.intrinsic_array_construction(callee, args) else {
+            return exit(ip);
         };
         note_allocation(vm);
         if returns {
@@ -12876,15 +12854,6 @@ script_handler! {
         r.set(i.a, array);
         next!(cx, r, following(ip), Carried::script(cx))
     }
-}
-
-/// The array `new Array(...args)` allocates with `prototype`. Out of line: the cell it builds
-/// lives in its own frame, not the handler's.
-#[inline(never)]
-fn lane_new_array<H: Host>(vm: &mut Vm<H>, prototype: Value, args: &[Value]) -> Value {
-    vm.heap.alloc(Cell::Array {
-        object: crate::heap::ArrayObject::new(Vm::<H>::empty_object(prototype), args.to_vec()),
-    })
 }
 
 script_handler! {

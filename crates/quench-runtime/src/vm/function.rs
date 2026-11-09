@@ -377,6 +377,21 @@ impl<H: Host> Vm<H> {
         None
     }
 
+    /// A plain call forwarding without an observable step of its own (`forwarded_call`) to a
+    /// user function the loop pushes in place, with the forwarded receiver and arguments
+    /// (`lane_function_call`): `f.call(thisArg, ...args)`, a bound function without bound arguments.
+    #[inline(never)]
+    pub(super) fn try_forwarded_user_call(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize,
+        callee: Value) -> Option<Result<StepResult, JsError>> {
+        // Only a call passing a register window forwards its values (not `CallArray`'s array).
+        if !matches!(i.op().immediate_layout(), crate::bytecode::ImmediateLayout::CallWindowWithEvalFlags) { return None; }
+        let window: *const [Value] = self.register_window(f, i.call_window());
+        // SAFETY: the window lies in the caller frame, which callee setup only reads.
+        let forwarded = self.forwarded_call(callee, self.read(f, i.register_c()), unsafe { &*window })?;
+        let target = self.in_loop_call_target(p, forwarded.callee)?;
+        self.push_in_loop_call(p, f, pc, target, forwarded.callee, forwarded.receiver, forwarded.args, i.result_register())
+    }
+
     /// A bound function's target, bound `this` and bound arguments, read from the
     /// environment object `Function.prototype.bind` made (`env`); `None` for any other.
     pub(super) fn bound_function_parts(&self, env: Value) -> Option<(Value, Value, &[Value])> {

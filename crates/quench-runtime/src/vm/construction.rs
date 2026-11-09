@@ -1,4 +1,6 @@
 use super::*;
+#[path = "array_construction.rs"]
+mod array_construction;
 mod shortcut;
 
 /// The shapes an ordinary closure's own properties step through as `Vm::closure_in_realm`
@@ -1051,19 +1053,6 @@ impl<H: Host> Vm<H> {
         Ok(self.realm_object_prototype(realm))
     }
 
-    fn array_prototype_from_new_target(
-        &mut self,
-        p: &ResidualProgram,
-        new_target: Value,
-    ) -> Result<Value, JsError> {
-        let prototype = self.constructor_prototype_value(p, new_target)?;
-        if self.object_data(prototype).is_some() {
-            return Ok(prototype);
-        }
-        let realm = self.function_realm(p, new_target)?;
-        Ok(self.array_prototype_for_realm(realm))
-    }
-
     /// `realm`'s `Array.prototype`. The active realm's is the field that follows it
     /// (`Vm::realm_prototype_field`), read without the table.
     #[inline(always)]
@@ -1439,45 +1428,5 @@ impl<H: Host> Vm<H> {
             }
             _ => Err(JsError("native is not constructible".into())),
         }
-    }
-
-    /// `new Array(length)` of a Number `length` with `prototype` (ECMA-262 23.1.1.1 step 5):
-    /// an array of that length whose elements are all absent; `None` for a length that is no
-    /// array length, which throws a RangeError. Out of line: the lane makes it too
-    /// (`lane_native_construct`), whose frame then holds none of its temporaries.
-    #[inline(never)]
-    pub(super) fn array_of_length(&mut self, prototype: Value, length: f64) -> Option<Value> {
-        if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > f64::from(u32::MAX) {
-            return None;
-        }
-        let array = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()),
-        });
-        self.heap.sparse_set_length(array, length as usize);
-        Some(array)
-    }
-
-    fn construct_array_native(
-        &mut self,
-        p: &ResidualProgram,
-        args: &[Value],
-        new_target: Value,
-    ) -> Result<Value, JsError> {
-        let prototype = self.array_prototype_from_new_target(p, new_target)?;
-        if let [length] = args
-            && let Some(length) = length.as_number()
-        {
-            return match self.array_of_length(prototype, length) {
-                Some(array) => Ok(array),
-                None => Err(self.range_error(p, "Invalid array length".into())),
-            };
-        }
-
-        Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(prototype),
-                args.to_vec(),
-            ),
-        }))
     }
 }

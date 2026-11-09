@@ -1050,7 +1050,7 @@ impl<H: Host> Vm<H> {
         self.regexp_symbol_layouts.clear();
     }
     /// Notes that `site`'s per-site cache entries change (`field_cache_writes`).
-    fn note_field_cache_write(&mut self, site: usize) {
+    pub(super) fn note_field_cache_write(&mut self, site: usize) {
         if let Some(sites) = &mut self.field_cache_writes {
             if sites.len() < self.field_caches.len() / FIELD_CACHE_SPARSE_RESET_SHARE {
                 sites.push(site as u32);
