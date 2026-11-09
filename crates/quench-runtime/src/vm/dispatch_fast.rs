@@ -19649,7 +19649,7 @@ fn derive_lane_view<'live, H: Host>(
             .collect()
     };
     let (field_records, name_records) = (hinted_records(false), hinted_records(true));
-    let string_case_filters = string_case_filter::specialize::<H>(heap, constants, &mut records);
+    let string_case_filters = string_case_filter::specialize::<H>(heap, constants, &decoded, &mut records);
     let records: Box<[std::cell::UnsafeCell<LaneInstruction>]> =
         records.into_iter().map(std::cell::UnsafeCell::new).collect();
     let first = std::cell::UnsafeCell::raw_get(records.as_ptr()).cast_const();
