@@ -416,7 +416,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.profile_memory_checkpoint("node_buffer_global");
     crate::host::resident_pages::release_read_only_pages();
     context.scoped(install_shared_web_globals)?;
-    context.scoped(crate::modules::util_shared_vm::install_lazy_globals)?;
+    context.scoped(crate::modules::util_lazy_shared_vm::install_lazy_globals)?;
     let global = context.global_root()?;
     // The process.getBuiltinModule bootstrap needs access to the host's
     // builtin loader in both Script and Module goals. Keep it under a private
@@ -2157,7 +2157,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
         BuiltinModule::Zlib => crate::modules::zlib_shared_vm::module(context),
         #[cfg(quench_openssl_provider)]
-        BuiltinModule::Crypto => crate::modules::crypto_node::module(context),
+        BuiltinModule::Crypto => crate::modules::crypto_node::exports::module(context),
         #[cfg(not(quench_openssl_provider))]
         BuiltinModule::Crypto => Err(RootedError::host("node:crypto requires OpenSSL 3")),
         BuiltinModule::Domain => crate::modules::domain_shared_vm::module(context),

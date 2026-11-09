@@ -416,3 +416,18 @@ extern "C" fn report_functions() {
         }
     });
 }
+
+impl<H: crate::Host> super::Vm<H> {
+    /// Records a guarded native call's kind (a host function by its name), argument count and
+    /// the string lengths of its receiver and first argument.
+    pub(super) fn record_native_call(&self, native: crate::heap::Native, callee: crate::Value, this: crate::Value, args: &[crate::Value]) {
+        let name = if native == crate::heap::Native::HostFunction {
+            format!("host {}", self.host_function_name(callee).unwrap_or_default())
+        } else {
+            format!("{native:?}")
+        };
+        let units = |value: crate::Value| self.heap.string(value).map(|text| text.len());
+        record_detail(format!("native-call {name} argc={} receiver_units={:?} arg0_units={:?}",
+            args.len(), units(this), args.first().and_then(|value| units(*value))));
+    }
+}

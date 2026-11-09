@@ -1,7 +1,7 @@
 //! The existing Node host adapted to the shared VM; Node policy stays in modules.
 
 use super::NodeHost;
-use quench_runtime::{HostCallback, HostFunctionDescriptor, HostFunctionId, NativeContext, RootedError, SystemHost};
+use quench_runtime::{HostCallback, HostFunctionDescriptor, NativeContext, RootedError, SystemHost};
 
 pub(crate) mod commonjs;
 pub(crate) mod commonjs_exports;
@@ -11,62 +11,8 @@ pub(crate) mod esm_wasm;
 pub(crate) use commonjs::source_kind;
 
 pub(crate) use commonjs::with_import_resolver;
-
-const ABI_HASH_OFFSET: u64 = 0xcbf29ce484222325;
-const ABI_HASH_PRIME: u64 = 0x100000001b3;
-const ABI_FIELD_END: u8 = u8::MAX;
-
-const fn operation_abi(scope: &str, name: &str, length: u64, callback: &str) -> u64 {
-    let mut hash = ABI_HASH_OFFSET;
-    let fields = [scope, name, callback];
-    let mut field = 0;
-    while field < fields.len() {
-        let bytes = fields[field].as_bytes();
-        let mut byte = 0;
-        while byte < bytes.len() {
-            hash = (hash ^ bytes[byte] as u64).wrapping_mul(ABI_HASH_PRIME);
-            byte += 1;
-        }
-        hash = (hash ^ ABI_FIELD_END as u64).wrapping_mul(ABI_HASH_PRIME);
-        field += 1;
-    }
-    (hash ^ length).wrapping_mul(ABI_HASH_PRIME)
-}
-
-const fn bootstrap_abi(words: &[u64]) -> u64 {
-    let mut hash = ABI_HASH_OFFSET;
-    let mut word = 0;
-    while word < words.len() {
-        hash = (hash ^ words[word]).wrapping_mul(ABI_HASH_PRIME);
-        word += 1;
-    }
-    hash
-}
-
-const fn operation_bits<const WORDS: usize>(policies: &[bool]) -> [u64; WORDS] {
-    let mut words = [0; WORDS];
-    let mut index = 0;
-    while index < policies.len() {
-        if policies[index] { words[index / u64::BITS as usize] |= 1 << (index % u64::BITS as usize); }
-        index += 1;
-    }
-    words
-}
-
-const fn operation_beside_activations(name: &str) -> bool {
-    let name = name.as_bytes();
-    let mut index = 0;
-    while index < BESIDE_ACTIVATIONS.len() {
-        let candidate = BESIDE_ACTIVATIONS[index].as_bytes();
-        if candidate.len() == name.len() {
-            let mut byte = 0;
-            while byte < name.len() && candidate[byte] == name[byte] { byte += 1; }
-            if byte == name.len() { return true; }
-        }
-        index += 1;
-    }
-    false
-}
+use operation_index::{bootstrap_abi, operation_abi, operation_beside_activations, operation_bits};
+pub(crate) use operation_index::{operation, static_operation};
 
 // Operation identities must remain available without retaining callback addresses.
 // Both projections preserve declaration order and platform-specific entries.
@@ -106,27 +52,6 @@ macro_rules! literal_operation {
     };
 }
 pub(crate) use literal_operation as operation;
-
-/// Resolve host-owned literal names at Rust binding time, before any VM exists.
-pub(crate) const fn static_operation(name: &str) -> HostFunctionId {
-    let name = name.as_bytes();
-    let mut position = 0;
-    while position < OPERATION_DESCRIPTORS.len() {
-        let candidate = OPERATION_DESCRIPTORS[position].name.as_bytes();
-        if candidate.len() == name.len() {
-            let mut byte = 0;
-            while byte < name.len() && candidate[byte] == name[byte] {
-                byte += 1;
-            }
-            if byte == name.len() {
-                assert!(position <= u32::MAX as usize);
-                return HostFunctionId(position as u32);
-            }
-        }
-        position += 1;
-    }
-    panic!("unregistered Node operation")
-}
 
 node_bindings! {
         method "streamConstant" (0) => crate::modules::stream_shared_vm::constant,
@@ -495,11 +420,11 @@ node_bindings! {
         method "utilPromisified" (0) => crate::modules::util_module_shared_vm::promisified,
         method "utilPromisifySettle" (2) => crate::modules::util_module_shared_vm::promisify_settle,
         method "utilLog" (0) => crate::modules::util_module_shared_vm::log,
-        method "utilDebuglog" (2) => crate::modules::util_module_shared_vm::debuglog,
-        method "utilDebugLogger" (0) => crate::modules::util_module_shared_vm::debug_logger,
-        method "utilDebugEnabled" (0) => crate::modules::util_module_shared_vm::debug_enabled_get,
-        method "utilDebugWrite" (0) => crate::modules::util_module_shared_vm::debug_write,
-        method "utilNoop" (0) => crate::modules::util_module_shared_vm::noop,
+        method "utilDebuglog" (2) => crate::modules::util_debuglog_shared_vm::debuglog,
+        method "utilDebugLogger" (0) => crate::modules::util_debuglog_shared_vm::debug_logger,
+        method "utilDebugEnabled" (0) => crate::modules::util_debuglog_shared_vm::debug_enabled_get,
+        method "utilDebugWrite" (0) => crate::modules::util_debuglog_shared_vm::debug_write,
+        method "utilNoop" (0) => crate::modules::util_debuglog_shared_vm::noop,
         method "utilTransferableAbortSignal" (1) => crate::modules::util_module_shared_vm::transferable_abort_signal,
         method "utilTransferableAbortController" (0) => crate::modules::util_module_shared_vm::transferable_abort_controller,
         method "utilAborted" (2) => crate::modules::util_module_shared_vm::aborted,
@@ -1681,8 +1606,8 @@ node_bindings! {
         method "encodingInto" (0) => crate::modules::encoding_binding_shared_vm::encode_into,
         method "encodingDecodeUtf8" (0) => crate::modules::encoding_binding_shared_vm::decode,
         method "utilPromiseDetails" (0) => crate::modules::util_shared_vm::promise_details,
-        method "utilDefineLazyProperties" (0) => crate::modules::util_shared_vm::define_lazy_properties,
-        method "utilLazyPropertyInitialize" (0) => crate::modules::util_shared_vm::initialize_lazy_property,
+        method "utilDefineLazyProperties" (0) => crate::modules::util_lazy_shared_vm::define_lazy_properties,
+        method "utilLazyPropertyInitialize" (0) => crate::modules::util_lazy_shared_vm::initialize_lazy_property,
         method "utilMarkPromiseHandled" (0) => crate::modules::util_shared_vm::mark_promise_handled,
         method "utilOwnNonIndexProperties" (0) => crate::modules::util_shared_vm::own_non_index_properties,
         method "cryptoSetEngineBinding" (0) => crate::modules::crypto_engine_shared_vm::set_engine_binding,
@@ -1998,20 +1923,20 @@ node_bindings! {
         method "asyncPublicResourceBind" (2) => crate::modules::async_hooks_public::resource_bind,
         method "asyncPublicResourceStaticBind" (3) => crate::modules::async_hooks_public::resource_static_bind,
         method "asyncPublicResourceFinalize" (1) => crate::modules::async_hooks_public::resource_finalize,
-        method "asyncPublicStorage" (0) => crate::modules::async_hooks_public::storage,
-        method "asyncPublicStorageName" (0) => crate::modules::async_hooks_public::storage_name,
-        method "asyncPublicStorageGet" (0) => crate::modules::async_hooks_public::storage_get,
-        method "asyncPublicStorageRun" (2) => crate::modules::async_hooks_public::storage_run,
-        method "asyncPublicStorageExit" (1) => crate::modules::async_hooks_public::storage_exit,
-        method "asyncPublicStorageScope" (1) => crate::modules::async_hooks_public::storage_scope,
-        method "asyncPublicStorageBind" (1) => crate::modules::async_hooks_public::storage_bind,
-        method "asyncPublicStorageSnapshot" (0) => crate::modules::async_hooks_public::storage_snapshot,
-        method "asyncPublicScope" (2) => crate::modules::async_hooks_public::scope,
-        method "asyncPublicScopeDispose" (0) => crate::modules::async_hooks_public::scope_dispose,
-        method "asyncPublicScopeSymbolDispose" (0) => crate::modules::async_hooks_public::scope_symbol_dispose,
+        method "asyncPublicStorage" (0) => crate::modules::async_local_storage_public::storage,
+        method "asyncPublicStorageName" (0) => crate::modules::async_local_storage_public::storage_name,
+        method "asyncPublicStorageGet" (0) => crate::modules::async_local_storage_public::storage_get,
+        method "asyncPublicStorageRun" (2) => crate::modules::async_local_storage_public::storage_run,
+        method "asyncPublicStorageExit" (1) => crate::modules::async_local_storage_public::storage_exit,
+        method "asyncPublicStorageScope" (1) => crate::modules::async_local_storage_public::storage_scope,
+        method "asyncPublicStorageBind" (1) => crate::modules::async_local_storage_public::storage_bind,
+        method "asyncPublicStorageSnapshot" (0) => crate::modules::async_local_storage_public::storage_snapshot,
+        method "asyncPublicScope" (2) => crate::modules::async_local_storage_public::scope,
+        method "asyncPublicScopeDispose" (0) => crate::modules::async_local_storage_public::scope_dispose,
+        method "asyncPublicScopeSymbolDispose" (0) => crate::modules::async_local_storage_public::scope_symbol_dispose,
         method "asyncBoundDynamic" (0) => crate::modules::async_hooks_public::bound_dynamic,
         method "asyncBoundFixed" (0) => crate::modules::async_hooks_public::bound_fixed,
-        method "asyncSnapshotInvoke" (1) => crate::modules::async_hooks_public::snapshot_invoke,
+        method "asyncSnapshotInvoke" (1) => crate::modules::async_local_storage_public::snapshot_invoke,
         method "asyncPublicHook" (1) => crate::modules::async_hooks_public::hook,
         method "asyncPublicCreateHook" (1) => crate::modules::async_hooks_public::create_hook,
         method "asyncPublicHookEnable" (0) => crate::modules::async_hooks_public::hook_enable,
@@ -2019,10 +1944,10 @@ node_bindings! {
         method "asyncResourceInit" (2) => crate::modules::async_hooks_shared_vm::initialize_resource,
         method "asyncResourceEnterScope" (1) => crate::modules::async_hooks_shared_vm::enter_async_scope,
         method "asyncResourceExitScope" (0) => crate::modules::async_hooks_shared_vm::exit_async_scope,
-        method "asyncLocalStorageEnterWith" (1) => crate::modules::async_hooks_shared_vm::enter_with,
-        method "asyncLocalStorageGetStore" (0) => crate::modules::async_hooks_shared_vm::get_store,
-        method "asyncLocalStorageDisable" (0) => crate::modules::async_hooks_shared_vm::disable_storage,
-        method "asyncLocalStorageRun" (2) => crate::modules::async_hooks_shared_vm::run_storage,
+        method "asyncLocalStorageEnterWith" (1) => crate::modules::async_local_storage_shared_vm::enter_with,
+        method "asyncLocalStorageGetStore" (0) => crate::modules::async_local_storage_shared_vm::get_store,
+        method "asyncLocalStorageDisable" (0) => crate::modules::async_local_storage_shared_vm::disable_storage,
+        method "asyncLocalStorageRun" (2) => crate::modules::async_local_storage_shared_vm::run_storage,
         method "asyncLocalStorageConstructor" (0) => crate::modules::async_hooks_module_shared_vm::storage_constructor,
         method "asyncLocalStorageExit" (1) => crate::modules::async_hooks_module_shared_vm::storage_exit,
         method "asyncLocalStorageBind" (1) => crate::modules::async_hooks_module_shared_vm::storage_bind,
@@ -2482,67 +2407,6 @@ fn esm_directory_import_suggestion(directory: &std::path::Path) -> Option<String
         .and_then(|candidate| url::Url::from_file_path(candidate).ok())
         .map(|url| url.to_string())
 }
-
-/// The host function registered as `name`. Hosts resolve operations per request (an
-/// incoming message's stream methods, an accepted socket's handle), so the names are
-/// indexed once, by a binary search, rather than scanned among every binding. Each name
-/// registers exactly one function (`operation_names_are_unique`).
-pub(crate) fn operation(name: &str) -> HostFunctionId {
-    // Resolve immutable declaration order during compilation, without first-use
-    // allocation, sorting or synchronization. Each entry is only a binding index.
-    static INDEX: [u16; OPERATION_DESCRIPTORS.len()] = operation_index::sorted_indices(OPERATION_DESCRIPTORS);
-    let descriptors = OPERATION_DESCRIPTORS;
-    let index = &INDEX;
-    let first = index.partition_point(|&position| descriptors[usize::from(position)].name < name);
-    let position = index
-        .get(first)
-        .copied()
-        .filter(|&position| descriptors[usize::from(position)].name == name)
-        .unwrap_or_else(|| panic!("unregistered Node operation: {name}"));
-    HostFunctionId(u32::from(position))
-}
-
-/// The host operations that run beside a lane's frameless activations
-/// (`host_function_runs_beside_activations`).
-const BESIDE_ACTIVATIONS: &[&str] = &[
-    "emitterListenerCount",
-    "emitterEmitListeners",
-    "bufferBindingByteLengthUtf8",
-    "bufferBindingAsciiSlice",
-    "bufferBindingBase64Slice",
-    "bufferBindingBase64urlSlice",
-    "bufferBindingHexSlice",
-    "bufferBindingLatin1Slice",
-    "bufferBindingUcs2Slice",
-    "bufferBindingUtf8Slice",
-    "bufferBindingUtf8Write",
-    "utilTypeCheck",
-    "nextTick",
-    "asyncResourceInit",
-    "asyncResourceEnterScope",
-    "asyncResourceExitScope",
-    "stringDecoderDecode",
-    "markAsUncloneable",
-    "byteStringEnd",
-    "headerFields",
-    // Socket, timer, decoder and listener bookkeeping a request or message makes several
-    // times (ws, undici, esbuild and Fastify package censuses): none reads the frame stack
-    // itself, and the guest code or errors any of them reaches take frames first
-    // (`Vm::materialize_deferred_lane`).
-    "netSocketAccountWrite",
-    "netSocketRead",
-    "netSocketWrite",
-    "netSocketReference",
-    "setImmediate",
-    "clearTimeout",
-    "textDecoderDecode",
-    "encodingUtf8",
-    "emitterOnce",
-    "emitterAddListener",
-    "emitterRemoveListener",
-    "primordialsCopy",
-    "childProcessReference",
-];
 
 impl quench_runtime::Host for NodeHost {
     fn observes_promise_lifecycle(&self) -> bool {
@@ -3309,17 +3173,17 @@ mod tests {
             assert!(std::ptr::fn_addr_eq(super::callbacks()[index], legacy.call));
             assert_eq!(quench_runtime::Host::function_descriptor(&host, index), Some(*binding));
             assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
-            assert_eq!(super::static_operation(binding.name), super::HostFunctionId(index as u32));
+            assert_eq!(super::static_operation(binding.name), quench_runtime::HostFunctionId(index as u32));
             assert_eq!(super::operation(binding.name), super::static_operation(binding.name));
             assert_eq!(quench_runtime::Host::host_function_runs_beside_activations(&host, index),
-                super::BESIDE_ACTIVATIONS.contains(&binding.name), "{}", binding.name);
+                super::operation_index::BESIDE_ACTIVATIONS.contains(&binding.name), "{}", binding.name);
         }
         for index in [super::OPERATION_DESCRIPTORS.len(), usize::MAX] {
             assert!(quench_runtime::Host::function_descriptor(&host, index).is_none());
             assert!(quench_runtime::Host::function_callback(&host, index).is_none());
             assert!(!quench_runtime::Host::host_function_runs_beside_activations(&host, index));
         }
-        const FIRST: super::HostFunctionId = crate::host::shared_vm::operation!("streamConstant");
-        assert_eq!(FIRST, super::HostFunctionId(0));
+        const FIRST: quench_runtime::HostFunctionId = crate::host::shared_vm::operation!("streamConstant");
+        assert_eq!(FIRST, quench_runtime::HostFunctionId(0));
     }
 }

@@ -363,12 +363,6 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    fn alloc_for_in_key_array(&mut self, keys: crate::heap::ArrayElements, prototype: Value) -> Value {
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), keys),
-        })
-    }
-
     /// for-in keys of an object whose prototype chain holds only objects with
     /// shape-held keys (`shape_lists_enumerable_keys`). The
     /// keys and their order are those of the generic walk; prototypes after

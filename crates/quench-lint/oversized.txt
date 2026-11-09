@@ -730,11 +730,8 @@ complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_deferred_c
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::lane_native_callback 12
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::materialize_lane_activations 19
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 66
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::run_fast_lane 12
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 259
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::element_read_body 11
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::float_arithmetic 23
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::forwarding_read_body 16
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::handler_for 19
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::install_loop_sites 17
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_environment 15
@@ -752,7 +749,6 @@ complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_run 30
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_push_frame_call 14
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_super_construction 16
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_tier_enter 11
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::leaf_body 29
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::other_handler 63
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_capture_updates 11
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_environment_window 21
@@ -1265,7 +1261,6 @@ dod-dense-hash crates/quench-runtime/src/vm/compiled.rs 2
 dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_compile.rs 3
 dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_region.rs 18
 dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_region/stable.rs 2
-dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_sites.rs 1
 dod-dense-hash crates/quench-runtime/src/vm/compiled/osr_loop.rs 29
 dod-dense-hash crates/quench-runtime/src/vm/dispatch_fast.rs 1
 dod-dense-hash crates/quench-runtime/src/vm/lane_exits.rs 3
@@ -1285,11 +1280,11 @@ file-lines crates/quench-node/src/aot/graph/loader_bindings.rs 636
 file-lines crates/quench-node/src/host/hmr.rs 843
 file-lines crates/quench-node/src/host/node_host.rs 580
 file-lines crates/quench-node/src/host/resident_pages.rs 1144
-file-lines crates/quench-node/src/host/shared_vm.rs 3276
+file-lines crates/quench-node/src/host/shared_vm.rs 3189
 file-lines crates/quench-node/src/host/shared_vm/commonjs.rs 3365
 file-lines crates/quench-node/src/host/startup_snapshot.rs 577
 file-lines crates/quench-node/src/modules/assert_shared_vm.rs 1358
-file-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs 1267
+file-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs 1159
 file-lines crates/quench-node/src/modules/blob_shared_vm.rs 719
 file-lines crates/quench-node/src/modules/buffer_binding_shared_vm.rs 836
 file-lines crates/quench-node/src/modules/buffer_module.rs 1324
@@ -1310,7 +1305,7 @@ file-lines crates/quench-node/src/modules/crypto_key_shared_vm.rs 663
 file-lines crates/quench-node/src/modules/crypto_node/cipher.rs 592
 file-lines crates/quench-node/src/modules/crypto_node/dh.rs 607
 file-lines crates/quench-node/src/modules/crypto_node/keys.rs 1061
-file-lines crates/quench-node/src/modules/crypto_node/mod.rs 850
+file-lines crates/quench-node/src/modules/crypto_node/mod.rs 652
 file-lines crates/quench-node/src/modules/crypto_node/web.rs 1807
 file-lines crates/quench-node/src/modules/crypto_node/x509.rs 511
 file-lines crates/quench-node/src/modules/crypto_secret_job_shared_vm.rs 2463
@@ -1389,9 +1384,9 @@ file-lines crates/quench-node/src/modules/url_legacy_shared_vm.rs 964
 file-lines crates/quench-node/src/modules/url_whatwg_shared_vm.rs 912
 file-lines crates/quench-node/src/modules/util_comparisons_shared_vm.rs 891
 file-lines crates/quench-node/src/modules/util_inspect_shared_vm.rs 2193
-file-lines crates/quench-node/src/modules/util_module_shared_vm.rs 1085
+file-lines crates/quench-node/src/modules/util_module_shared_vm.rs 995
 file-lines crates/quench-node/src/modules/util_parse_args_shared_vm.rs 934
-file-lines crates/quench-node/src/modules/util_shared_vm.rs 1028
+file-lines crates/quench-node/src/modules/util_shared_vm.rs 948
 file-lines crates/quench-node/src/modules/v8_shared_vm.rs 871
 file-lines crates/quench-node/src/modules/vm_shared_vm.rs 571
 file-lines crates/quench-node/src/modules/websocket_shared_vm.rs 720
@@ -1722,7 +1717,6 @@ function-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs::emit_ini
 function-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs::enter_async_scope 47
 function-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs::initialize_resource 84
 function-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs::promise_job_boundary 51
-function-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs::run_storage 49
 function-lines crates/quench-node/src/modules/async_hooks_state.rs::SharedAsyncHooksState::write_snapshot 51
 function-lines crates/quench-node/src/modules/blob_shared_vm.rs::construct_blob 45
 function-lines crates/quench-node/src/modules/blob_shared_vm.rs::member 151
@@ -1823,7 +1817,6 @@ function-lines crates/quench-node/src/modules/crypto_digest.rs::Digest::fetch_pr
 function-lines crates/quench-node/src/modules/crypto_digest_error.rs::throw 42
 function-lines crates/quench-node/src/modules/crypto_engine_shared_vm.rs::native::set_key 41
 function-lines crates/quench-node/src/modules/crypto_error_shared_vm.rs::create_message 67
-function-lines crates/quench-node/src/modules/crypto_hash_shared_vm.rs::install 42
 function-lines crates/quench-node/src/modules/crypto_hkdf.rs::derive 87
 function-lines crates/quench-node/src/modules/crypto_kem_request.rs::Request::run 97
 function-lines crates/quench-node/src/modules/crypto_key_shared_vm.rs::binding 50
@@ -1843,7 +1836,6 @@ function-lines crates/quench-node/src/modules/crypto_node/keys.rs::generate_pair
 function-lines crates/quench-node/src/modules/crypto_node/keys.rs::import_jwk 76
 function-lines crates/quench-node/src/modules/crypto_node/keys.rs::pair_request 94
 function-lines crates/quench-node/src/modules/crypto_node/keys.rs::parse_key_encoding 73
-function-lines crates/quench-node/src/modules/crypto_node/mod.rs::build 85
 function-lines crates/quench-node/src/modules/crypto_node/web.rs::algorithm_object 41
 function-lines crates/quench-node/src/modules/crypto_node/web.rs::cipher_operation 47
 function-lines crates/quench-node/src/modules/crypto_node/web.rs::derive_bits 65
@@ -2083,7 +2075,6 @@ function-lines crates/quench-node/src/modules/net_socket_options.rs::initialize 
 function-lines crates/quench-node/src/modules/net_socket_options.rs::initialize_server 103
 function-lines crates/quench-node/src/modules/net_socket_options.rs::install 43
 function-lines crates/quench-node/src/modules/net_socket_options.rs::keep_alive 87
-function-lines crates/quench-node/src/modules/node_errors_shared_vm.rs::coded_error_prototype 66
 function-lines crates/quench-node/src/modules/os_binding_shared_vm.rs::build_constants 125
 function-lines crates/quench-node/src/modules/os_facts.rs::constrained_cpu 51
 function-lines crates/quench-node/src/modules/os_facts.rs::cpus 87
@@ -2243,7 +2234,6 @@ function-lines crates/quench-node/src/modules/tls_shared_vm/contexts.rs::select_
 function-lines crates/quench-node/src/modules/tls_shared_vm/discovery.rs::ca_certificates 101
 function-lines crates/quench-node/src/modules/tls_shared_vm/discovery.rs::set_default_ca_certificates 80
 function-lines crates/quench-node/src/modules/tls_shared_vm/facade.rs::initialize 55
-function-lines crates/quench-node/src/modules/tls_shared_vm/facade.rs::install 63
 function-lines crates/quench-node/src/modules/tls_shared_vm/facade.rs::version 41
 function-lines crates/quench-node/src/modules/tls_shared_vm/identity.rs::alt_names 45
 function-lines crates/quench-node/src/modules/tls_shared_vm/identity.rs::check_server_identity 148
@@ -2702,7 +2692,6 @@ function-lines crates/quench-runtime/src/heap/tests.rs::direct_array_records_tra
 function-lines crates/quench-runtime/src/heap/tests.rs::memory_census_counts_array_allocations_once_across_storage_and_collection 60
 function-lines crates/quench-runtime/src/heap/tests.rs::named_property_publication_retires_readers_for_every_record_family 57
 function-lines crates/quench-runtime/src/heap/tests.rs::object_property_storage_migration_preserves_writes_and_gc_roots 51
-function-lines crates/quench-runtime/src/heap/tests.rs::parallel_full_mark_follows_records_and_ephemerons_like_the_serial_mark 67
 function-lines crates/quench-runtime/src/heap/tests.rs::scope_slot_owners_survive_collection_and_release 49
 function-lines crates/quench-runtime/src/heap/tests.rs::shape_departures_retire_readers_through_each_storage_path 44
 function-lines crates/quench-runtime/src/heap/tests.rs::wide_environment_clones_store_only_the_slots_they_do_not_share 51
@@ -2932,7 +2921,6 @@ function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::require_object_latches 55
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::set_field 76
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::set_index 50
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::shape_switch_read 68
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::store_field 75
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::typeof_test 54
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::loop_fields 79
@@ -3066,7 +3054,6 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_script
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_site_targets 48
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_super_construction 71
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_tier_enter 47
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::leaf_body 86
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::leaf_call_tests::leaf_bodies_take_the_leaf_entry_and_others_activate 47
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::other_handler 69
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_environment_window 74
@@ -3343,7 +3330,6 @@ function-lines crates/quench-runtime/src/vm/object_assignment.rs::Vm<H>::primiti
 function-lines crates/quench-runtime/src/vm/object_assignment.rs::Vm<H>::rejected_assignment_error 52
 function-lines crates/quench-runtime/src/vm/object_builtins.rs::Vm<H>::install_object 68
 function-lines crates/quench-runtime/src/vm/object_builtins.rs::Vm<H>::object_define_properties 68
-function-lines crates/quench-runtime/src/vm/object_descriptors.rs::PropertyDescriptorRecord::fold_attributes 46
 function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::from_property_descriptor 41
 function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::object_get_own_property_descriptors 42
 function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::ordinary_own_string_property 91
@@ -4164,13 +4150,11 @@ hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::materialize_lane
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::run_fast_lane 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 16
-hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::forwarding_read_body 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::frame_entry_census 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::install_loop_sites 9
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_getter 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_keeping 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_inlined_activation 1
-hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_native 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_native_out 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_construct_forwarded_parent 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_direct_callees 1
@@ -4226,14 +4210,12 @@ hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::deferred_activati
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 2
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::closes_loop 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 43
-hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::forwarding_read_body 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::frame_entry_census 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::generic_handler 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::install_loop_sites 3
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::lane_fields_fit 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::lane_site_targets 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::lane_specialize 1
-hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::leaf_body 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::may_loop 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::memory_register 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::proved_handler 1
@@ -4312,7 +4294,6 @@ magic crates/quench-node/src/modules/assert_shared_vm.rs::fail 3
 magic crates/quench-node/src/modules/assert_shared_vm.rs::print_diff 1
 magic crates/quench-node/src/modules/async_hooks_module_shared_vm.rs::resource_static_bind 1
 magic crates/quench-node/src/modules/async_hooks_module_shared_vm.rs::run_in_async_scope 1
-magic crates/quench-node/src/modules/async_hooks_shared_vm.rs::run_storage 1
 magic crates/quench-node/src/modules/blob_binding_shared_vm.rs::store_data_object 1
 magic crates/quench-node/src/modules/blob_shared_vm.rs::build 1
 magic crates/quench-node/src/modules/blob_shared_vm.rs::class 1
@@ -4853,7 +4834,6 @@ magic crates/quench-node/src/modules/util_parse_args_shared_vm.rs::short_form 1
 magic crates/quench-node/src/modules/util_parse_args_shared_vm.rs::store_option 1
 magic crates/quench-node/src/modules/util_parse_args_shared_vm.rs::tokenize 3
 magic crates/quench-node/src/modules/util_shared_vm.rs::build_key_binding 3
-magic crates/quench-node/src/modules/util_shared_vm.rs::define_lazy_properties 1
 magic crates/quench-node/src/modules/util_shared_vm.rs::integer_separators 2
 magic crates/quench-node/src/modules/util_shared_vm.rs::promise_details 1
 magic crates/quench-node/src/modules/util_style_shared_vm.rs::hex 6
@@ -5100,11 +5080,8 @@ magic crates/quench-runtime/src/vm/date/legacy_parse.rs::TimeComposer::is_expect
 magic crates/quench-runtime/src/vm/date/legacy_parse.rs::TimeComposer::write 2
 magic crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::try_inline_call_apply 1
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::note_lane_body_run 1
-magic crates/quench-runtime/src/vm/dispatch_fast.rs::capture_read_body 1
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::copy_arguments 5
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 38
-magic crates/quench-runtime/src/vm/dispatch_fast.rs::element_read_body 1
-magic crates/quench-runtime/src/vm/dispatch_fast.rs::forwarding_read_body 4
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::fused_width 2
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::install_loop_sites 2
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_awaited_marked 1
@@ -5114,7 +5091,6 @@ magic crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_capture_updates 
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_int32_truncations 1
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_operator_pairs 2
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_updated_index_operators 2
-magic crates/quench-runtime/src/vm/dispatch_fast.rs::this_read_body 1
 magic crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::lane_apply_activation 1
 magic crates/quench-runtime/src/vm/disposal.rs::disposal_native_length 2
 magic crates/quench-runtime/src/vm/environment.rs::capture_walk_index 1

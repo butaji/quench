@@ -35,6 +35,32 @@ impl Lowering<'_, '_> {
         Some((value, super::super::facts::constant_type(constant)))
     }
 
+    /// `LoadConst` of `constant` at `pc`: a string a frozen image holds, read from the image
+    /// under its invalidation word, or the constant's value (`constant_value`).
+    pub(super) fn load_constant(&mut self, state: &mut State, pc: usize, instruction: WideInstruction,
+        constant: &crate::bytecode::Constant) -> Option<bool> {
+        let index = instruction.constant_index();
+        if super::super::facts::immediate(constant).is_none()
+            && matches!(constant, crate::bytecode::Constant::String(_))
+            && let Some(base) = self.vm.frozen_constants
+        {
+            // The image materializes the string once at load; the read is checked
+            // against the image's invalidation word like every other frozen fact.
+            let exit = self.guard_exit(state, pc as u32);
+            self.read_invalidation(state, exit);
+            let address = self.ins().iconst(types::I64, (base + index * std::mem::size_of::<Value>()) as i64);
+            let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+            self.define(state, instruction.result_register(), value,
+                RegisterFact::definition(super::super::facts::constant_type(constant), Representation::Tagged));
+            return Some(true);
+        }
+        self.constant_value(index).map(|(value, ty)| {
+            self.step(state, frame::Edges::Value, crate::staged::Operation::LoadConst {
+                destination: instruction.result_register(), constant: crate::staged::Constant { value, ty } });
+            true
+        })
+    }
+
     /// The result type of a binary operator a string or BigInt operand takes
     /// (`facts::heap_primitive_binary`), by its operands' facts here.
     pub(super) fn heap_primitive_binary(&self, state: &State, instruction: WideInstruction) -> Option<Type> {

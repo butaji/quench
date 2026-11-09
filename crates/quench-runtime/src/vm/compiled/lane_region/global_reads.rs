@@ -8,56 +8,63 @@ impl Lowering<'_, '_> {
     /// Stable fact while the realm compiled against is the active one (`hold_global`); else
     /// the lane's own read, which leaves where it misses.
     pub(super) fn global_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        let register = instruction.result_register();
         match self.global_reads[&pc] {
             GlobalRead::Constant(constant) => {
-                let value = self.ins().iconst(types::I64, constant.to_bits() as i64);
-                self.define(state, instruction.result_register(), value,
-                    RegisterFact::definition(Type::immediate(constant), Representation::Tagged));
+                self.define_immediate(state, register, constant);
             }
             GlobalRead::Stable { value, ty, fact, global, realm_offset } if self.division().folds(BindingTime::Stable) => {
                 let exit = self.guard_exit(state, pc as u32);
                 self.hold_global(state, exit, fact, (global, realm_offset));
-                let constant = self.ins().iconst(types::I64, value.to_bits() as i64);
-                let held = RegisterFact::admit(Fact { ty, representation: Representation::Tagged,
-                    binding: BindingTime::Stable, proof: Proof::Dependency, projection: Projection::Exact })
-                    .expect("a Stable fact's dependency proves any type");
-                self.define(state, instruction.result_register(), constant, held);
+                self.define_dependent(state, register, value, ty);
             }
             GlobalRead::Frozen { value, ty } => {
                 // Whole-program fact: read the cell once here and require the value the
                 // closed program gives it. A changed binding fails the guard and leaves
                 // to the shared body; the loop then runs the checked constant.
                 let exit = self.guard_exit(state, pc as u32);
-                let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));
-                let site = self.ins().iconst(types::I64, i64::from(instruction.cache_site_index()));
-                let global_get = self.helpers.address(self.builder.ins(), LaneHelper::GlobalGet);
-                let actual = emit_lane_helper_call(&mut self.builder, self.payload, global_get, &[atom, site]);
+                let actual = self.global_get(instruction);
                 let same = self.ins().icmp_imm_u(IntCC::Equal, actual, value.to_bits() as i64);
                 emit_js_guard(&mut self.builder, same, exit);
-                let constant = self.ins().iconst(types::I64, value.to_bits() as i64);
-                let held = RegisterFact::admit(Fact { ty, representation: Representation::Tagged,
-                    binding: BindingTime::Stable, proof: Proof::Dependency, projection: Projection::Exact })
-                    .expect("a frozen fact proves its immediate type");
-                self.define(state, instruction.result_register(), constant, held);
+                self.define_dependent(state, register, value, ty);
             }
             GlobalRead::Stable { .. } | GlobalRead::Dynamic => {
                 let exit = self.guard_exit(state, pc as u32);
-                let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));
-                let site = self.ins().iconst(types::I64, i64::from(instruction.cache_site_index()));
-                let global_get = self.helpers.address(self.builder.ins(), LaneHelper::GlobalGet);
-                let value = emit_lane_helper_call(&mut self.builder, self.payload, global_get, &[atom, site]);
+                let value = self.global_get(instruction);
                 let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
                 emit_js_guard(&mut self.builder, hit, exit);
-                self.set_tagged(state, instruction.result_register(), value);
+                self.set_tagged(state, register, value);
             }
         }
         // A call's receiver is `undefined` for a binding of the global scope.
         if instruction.op() == Op::LoadNameCall {
-            let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
-            self.define(state, instruction.register_b(), undefined,
-                RegisterFact::definition(Type::immediate(Value::UNDEFINED), Representation::Tagged));
+            self.define_immediate(state, instruction.register_b(), Value::UNDEFINED);
         }
         true
+    }
+
+    /// Defines `register` as the immediate `value`, of its own type.
+    fn define_immediate(&mut self, state: &mut State, register: Register, value: Value) {
+        let bits = self.ins().iconst(types::I64, value.to_bits() as i64);
+        self.define(state, register, bits, RegisterFact::definition(Type::immediate(value), Representation::Tagged));
+    }
+
+    /// The lane's own read of the global `instruction` names (`LaneHelper::GlobalGet`):
+    /// its value, or `Value::DELETED` where the read misses.
+    fn global_get(&mut self, instruction: WideInstruction) -> ir::Value {
+        let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));
+        let site = self.ins().iconst(types::I64, i64::from(instruction.cache_site_index()));
+        let global_get = self.helpers.address(self.builder.ins(), LaneHelper::GlobalGet);
+        emit_lane_helper_call(&mut self.builder, self.payload, global_get, &[atom, site])
+    }
+
+    /// Defines `register` as `value`, of type `ty`, held as a Stable fact by its dependency.
+    fn define_dependent(&mut self, state: &mut State, register: Register, value: Value, ty: Type) {
+        let constant = self.ins().iconst(types::I64, value.to_bits() as i64);
+        let held = RegisterFact::admit(Fact { ty, representation: Representation::Tagged,
+            binding: BindingTime::Stable, proof: Proof::Dependency, projection: Projection::Exact })
+            .expect("a Stable fact's dependency proves any type");
+        self.define(state, register, constant, held);
     }
 
     /// Before loop `header`, the proofs its blocks would otherwise make each iteration: the

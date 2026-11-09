@@ -20,39 +20,64 @@ enum ErrorPresentation {
     Direct,
     HiddenStackFrames,
 }
+type PrototypeKey = (&'static str, ErrorClass, ErrorPresentation);
+
+/// The prototype already made for `key`, if any.
+fn known_prototype(context: &mut NativeContext<'_, NodeHost>, key: PrototypeKey) -> Option<RootId> {
+    let state = context.host_mut().shared_state();
+    let state = state.borrow();
+    state.node_error_api.as_ref().and_then(|api| api.prototypes.get(&key)).copied()
+}
+
+/// Retains `prototype` as the one made for `key`.
+fn record_prototype(context: &mut NativeContext<'_, NodeHost>, key: PrototypeKey, prototype: RootId) -> Result<RootId, RootedError> {
+    let prototype = context.retain(prototype)?;
+    let state = context.host_mut().shared_state();
+    state.borrow_mut().node_error_api.as_mut().expect("initialized error API").prototypes.insert(key, prototype);
+    Ok(prototype)
+}
+
+/// Node's private brand (`kIsNodeError`), made with the error API on first use.
+fn node_error_brand(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let state = context.host_mut().shared_state();
+    if let Some(api) = state.borrow().node_error_api.as_ref() {
+        return Ok(api.brand);
+    }
+    let brand = context.symbol_rooted(Some("kIsNodeError"));
+    let brand = context.retain(brand)?;
+    state.borrow_mut().node_error_api = Some(NodeErrorApi { brand, prototypes: std::collections::HashMap::new() });
+    Ok(brand)
+}
+
+/// Defines a non-enumerable, configurable accessor reading `getter`.
+fn define_getter(context: &mut NativeContext<'_, NodeHost>, object: RootId, key: RootId, getter: RootId) -> Result<(), RootedError> {
+    context.define_property_fields_rooted(object, key, DescriptorFields {
+        get: Some(getter), enumerable: Some(false), configurable: Some(true), ..Default::default()
+    })?;
+    Ok(())
+}
+
+/// The `constructor` getter that reports `constructor`.
+fn constructor_getter(context: &mut NativeContext<'_, NodeHost>, prototype: RootId, constructor: RootId) -> Result<(), RootedError> {
+    let getter = context.host_function_named_with_data(
+        crate::host::shared_vm::operation!("nodeErrorConstructor"),
+        "get constructor",
+        constructor,
+    )?;
+    let key = context.string_rooted("constructor");
+    define_getter(context, prototype, key, getter)
+}
+
 fn coded_error_prototype(
     context: &mut NativeContext<'_, NodeHost>,
     code: &'static str,
     class: ErrorClass,
 ) -> Result<RootId, RootedError> {
-    let state = context.host_mut().shared_state();
-    if let Some(prototype) = state
-        .borrow()
-        .node_error_api
-        .as_ref()
-        .and_then(|api| {
-            api.prototypes
-                .get(&(code, class, ErrorPresentation::Direct))
-        })
-        .copied()
-    {
+    let key = (code, class, ErrorPresentation::Direct);
+    if let Some(prototype) = known_prototype(context, key) {
         return Ok(prototype);
     }
-    if state.borrow().node_error_api.is_none() {
-        // Node's private brand (`kIsNodeError`).
-        let brand = context.symbol_rooted(Some("kIsNodeError"));
-        let brand = context.retain(brand)?;
-        state.borrow_mut().node_error_api = Some(NodeErrorApi {
-            brand,
-            prototypes: std::collections::HashMap::new(),
-        });
-    }
-    let key = state
-        .borrow()
-        .node_error_api
-        .as_ref()
-        .expect("initialized error API")
-        .brand;
+    let brand_key = node_error_brand(context)?;
     let base_error = match class {
         ErrorClass::Error => context.error_rooted("")?,
         ErrorClass::TypeError => context.type_error_rooted("")?,
@@ -60,35 +85,19 @@ fn coded_error_prototype(
     };
     let base_prototype = context.prototype_rooted(base_error)?;
     let base = get(context, base_prototype, "constructor")?;
-    let constructor = context.host_function_named_with_data(
-        crate::host::shared_vm::operation!("nodeErrorConstructor"),
-        "get constructor",
-        base,
-    )?;
+    let prototype = context.object_rooted()?;
+    context.set_prototype_rooted(prototype, base_prototype)?;
+    constructor_getter(context, prototype, base)?;
     let brand = context.host_function_named(crate::host::shared_vm::operation!("nodeErrorBrand"), "get [kIsNodeError]")?;
+    define_getter(context, prototype, brand_key, brand)?;
     let code_root = context.string_rooted(code);
     let string = context.host_function_named_with_data(
         crate::host::shared_vm::operation!("nodeErrorToString"),
         "toString",
         code_root,
     )?;
-    let prototype = context.object_rooted()?;
-    context.set_prototype_rooted(prototype, base_prototype)?;
-    for (key, getter) in [(context.string_rooted("constructor"), constructor), (key, brand)] {
-        context.define_property_fields_rooted(prototype, key, DescriptorFields {
-            get: Some(getter), enumerable: Some(false), configurable: Some(true), ..Default::default()
-        })?;
-    }
     context.define_named_data_property_rooted(prototype, "toString", string, true, false, true)?;
-    let prototype = context.retain(prototype)?;
-    state
-        .borrow_mut()
-        .node_error_api
-        .as_mut()
-        .expect("initialized error API")
-        .prototypes
-        .insert((code, class, ErrorPresentation::Direct), prototype);
-    Ok(prototype)
+    record_prototype(context, key, prototype)
 }
 
 /// Validators use a distinct subclass while inheriting the code and brand.
@@ -115,38 +124,16 @@ fn hide_error(
     class: ErrorClass,
 ) -> Result<(), RootedError> {
     let base = coded_error_prototype(context, code, class)?;
-    let state = context.host_mut().shared_state();
     let key = (code, class, ErrorPresentation::HiddenStackFrames);
-    let cached = state
-        .borrow()
-        .node_error_api
-        .as_ref()
-        .and_then(|api| api.prototypes.get(&key))
-        .copied();
-    let prototype = if let Some(prototype) = cached {
-        prototype
-    } else {
-        let constructor = get(context, base, "constructor")?;
-        let constructor = context.host_function_named_with_data(
-            crate::host::shared_vm::operation!("nodeErrorConstructor"),
-            "get constructor",
-            constructor,
-        )?;
-        let prototype = context.object_rooted()?;
-        let constructor_key = context.string_rooted("constructor");
-        context.define_property_fields_rooted(prototype, constructor_key, DescriptorFields {
-            get: Some(constructor), enumerable: Some(false), configurable: Some(true), ..Default::default()
-        })?;
-        context.set_prototype_rooted(prototype, base)?;
-        let prototype = context.retain(prototype)?;
-        state
-            .borrow_mut()
-            .node_error_api
-            .as_mut()
-            .expect("initialized error API")
-            .prototypes
-            .insert(key, prototype);
-        prototype
+    let prototype = match known_prototype(context, key) {
+        Some(prototype) => prototype,
+        None => {
+            let constructor = get(context, base, "constructor")?;
+            let prototype = context.object_rooted()?;
+            constructor_getter(context, prototype, constructor)?;
+            context.set_prototype_rooted(prototype, base)?;
+            record_prototype(context, key, prototype)?
+        }
     };
     context.set_prototype_rooted(error, prototype)?;
     Ok(())

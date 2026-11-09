@@ -735,7 +735,7 @@ mod tests {
             let caller = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "caller")).unwrap();
             assert!(program.function(caller).instructions().any(|instruction|
-                instruction.op() == Op::LoadCapture && instruction.capture_depth() == 1));
+                instruction.op().is_load_capture() && instruction.capture_depth() == 1));
             let targets = static_call_targets(&program);
             let names: Vec<&str> = targets[caller].iter().flatten()
                 .map(|target| &program.atoms[program.function(*target as usize).name.unwrap() as usize]).collect();

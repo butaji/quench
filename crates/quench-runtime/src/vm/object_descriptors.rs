@@ -22,204 +22,9 @@ pub(super) enum TypedArrayIndexKey {
     Index(usize),
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct PropertyDescriptorRecord {
-    pub(super) value: Option<Value>,
-    pub(super) writable: Option<bool>,
-    pub(super) enumerable: Option<bool>,
-    pub(super) configurable: Option<bool>,
-    pub(super) getter: Option<Value>,
-    pub(super) setter: Option<Value>,
-}
-
-impl PropertyDescriptorRecord {
-    pub(super) fn data(value: Value) -> Self {
-        Self {
-            value: Some(value),
-            writable: Some(true),
-            enumerable: Some(true),
-            configurable: Some(true),
-            getter: None,
-            setter: None,
-        }
-    }
-
-    pub(super) fn for_definition(mode: PropertyDefinitionMode, value: Value) -> Self {
-        use PropertyDefinitionMode::*;
-        match mode {
-            Method | ReadonlyMethod => Self {
-                writable: Some(mode == Method),
-                enumerable: Some(false),
-                ..Self::data(value)
-            },
-            Getter | Setter | EnumerableGetter | EnumerableSetter => Self {
-                value: None,
-                writable: None,
-                enumerable: Some(matches!(mode, EnumerableGetter | EnumerableSetter)),
-                configurable: Some(true),
-                getter: matches!(mode, Getter | EnumerableGetter).then_some(value),
-                setter: matches!(mode, Setter | EnumerableSetter).then_some(value),
-            },
-        }
-    }
-
-    pub(super) fn value(value: Value) -> Self {
-        Self {
-            value: Some(value),
-            writable: None,
-            enumerable: None,
-            configurable: None,
-            getter: None,
-            setter: None,
-        }
-    }
-
-    pub(super) fn compatible_with(
-        self,
-        current: Option<Self>,
-        extensible: bool,
-        same_value: impl Fn(Value, Value) -> bool,
-    ) -> bool {
-        let Some(current) = current else {
-            return extensible;
-        };
-        let attributes = current.fold_attributes(DEFAULT_PROPERTY_ATTRIBUTES, true);
-        if attributes.configurable {
-            return true;
-        }
-        let next = self.fold_attributes(attributes, false);
-        if self.non_configurable_conflict(attributes, next).is_some()
-            || self.changes_non_configurable_accessor(attributes, &same_value)
-        {
-            return false;
-        }
-        attributes.accessor
-            || attributes.writable
-            || self
-                .value
-                .is_none_or(|value| same_value(value, current.value.unwrap_or(Value::UNDEFINED)))
-    }
-
-    pub(super) fn from_attributes(value: Value, attributes: PropertyAttributes) -> Self {
-        Self {
-            value: (!attributes.accessor).then_some(value),
-            writable: (!attributes.accessor).then_some(attributes.writable),
-            enumerable: Some(attributes.enumerable),
-            configurable: Some(attributes.configurable),
-            getter: attributes
-                .accessor
-                .then_some(attributes.getter.unwrap_or(Value::UNDEFINED)),
-            setter: attributes
-                .accessor
-                .then_some(attributes.setter.unwrap_or(Value::UNDEFINED)),
-        }
-    }
-
-    pub(super) fn has_accessor_fields(self) -> bool {
-        self.getter.is_some() || self.setter.is_some()
-    }
-
-    /// Whether this descriptor gives every field of its kind other than the shared
-    /// `[[Enumerable]]` and `[[Configurable]]`, so the property it defines keeps nothing of
-    /// the current one but those.
-    pub(super) fn replaces_kind_fields(self) -> bool {
-        (self.value.is_some() && self.writable.is_some())
-            || (self.getter.is_some() && self.setter.is_some())
-    }
-
-    pub(super) fn has_data_fields(self) -> bool {
-        self.value.is_some() || self.writable.is_some()
-    }
-
-    pub(super) fn fold_attributes(
-        self,
-        current: PropertyAttributes,
-        is_new: bool,
-    ) -> PropertyAttributes {
-        let mut next = if is_new {
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            }
-        } else {
-            current
-        };
-        if let Some(writable) = self.writable {
-            next.writable = writable;
-        }
-        if let Some(enumerable) = self.enumerable {
-            next.enumerable = enumerable;
-        }
-        if let Some(configurable) = self.configurable {
-            next.configurable = configurable;
-        }
-        if self.has_accessor_fields() {
-            next.accessor = true;
-            next.writable = false;
-            next.getter = self
-                .getter
-                .map(|value| (!value.is_undefined()).then_some(value))
-                .or_else(|| current.accessor.then_some(current.getter))
-                .flatten();
-            next.setter = self
-                .setter
-                .map(|value| (!value.is_undefined()).then_some(value))
-                .or_else(|| current.accessor.then_some(current.setter))
-                .flatten();
-        } else if self.has_data_fields() {
-            next.accessor = false;
-            next.getter = None;
-            next.setter = None;
-        }
-        next
-    }
-
-    pub(super) fn non_configurable_conflict(
-        self,
-        current: PropertyAttributes,
-        next: PropertyAttributes,
-    ) -> Option<DescriptorConflict> {
-        if current.configurable {
-            return None;
-        }
-        if next.configurable != current.configurable
-            || next.enumerable != current.enumerable
-            || next.writable && !current.writable
-        {
-            return Some(DescriptorConflict::Attributes);
-        }
-        let changes_kind = (self.has_accessor_fields() || self.has_data_fields())
-            && self.has_accessor_fields() != current.accessor;
-        changes_kind.then_some(DescriptorConflict::Kind)
-    }
-
-    pub(super) fn changes_non_configurable_accessor(
-        self,
-        current: PropertyAttributes,
-        same_value: impl Fn(Value, Value) -> bool,
-    ) -> bool {
-        !current.configurable
-            && current.accessor
-            && [(self.getter, current.getter), (self.setter, current.setter)]
-                .into_iter()
-                .any(|(requested, existing)| {
-                    requested.is_some_and(|requested| {
-                        !(requested.is_undefined() && existing.is_none())
-                            && !existing.is_some_and(|existing| same_value(existing, requested))
-                    })
-                })
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum DescriptorConflict {
-    Attributes,
-    Kind,
-}
+#[path = "object_descriptors/record.rs"]
+mod record;
+pub(super) use record::PropertyDescriptorRecord;
 
 impl<H: Host> Vm<H> {
     /// ToPropertyDescriptor's fields' keys, in the order it reads them.
@@ -772,12 +577,7 @@ impl<H: Host> Vm<H> {
     /// Presence needs only the slot; enumerability also reads its attributes. The query
     /// kind is bound by the caller, so presence reads no descriptor metadata.
     /// Exotics keep their shared descriptor operation; effectful lookups decline.
-    fn plain_own_query<const ENUMERABLE: bool>(
-        &mut self,
-        p: &ResidualProgram,
-        object: Value,
-        key: Value,
-    ) -> Option<Option<bool>> {
+    fn plain_own_query<const ENUMERABLE: bool>(&mut self, p: &ResidualProgram, object: Value, key: Value) -> Option<Option<bool>> {
         match self.heap.ordinary_object(object) {
             Some(data) => {
                 if data.is_module_namespace() || data.deferred_module().is_some() {
@@ -785,14 +585,7 @@ impl<H: Host> Vm<H> {
                 }
                 if !data.is_arguments_object() {
                     let shape = data.shape();
-                    let atom = self.string_key_atom(key)?;
-                    let slot = self.shape_slot(shape, atom);
-                    return Some(if ENUMERABLE {
-                        slot.and_then(|slot| self.shape_slot_attributes(shape, slot))
-                            .map(|attributes| attributes.enumerable)
-                    } else {
-                        slot.map(|_| true)
-                    });
+                    return self.shape_own_query::<ENUMERABLE>(shape, key);
                 }
             }
             None => {
@@ -808,6 +601,18 @@ impl<H: Host> Vm<H> {
         let atom = self.string_key_atom(key)?;
         let found = self.ordinary_own_string_property(p, object, &text, atom).ok()?;
         Some(found.map(|(_, attributes)| !ENUMERABLE || attributes.enumerable))
+    }
+
+    /// `plain_own_query` of an ordinary object other than an arguments object, from its
+    /// `shape` alone: presence reads the slot, enumerability also its attributes.
+    fn shape_own_query<const ENUMERABLE: bool>(&mut self, shape: u32, key: Value) -> Option<Option<bool>> {
+        let atom = self.string_key_atom(key)?;
+        let slot = self.shape_slot(shape, atom);
+        Some(if ENUMERABLE {
+            slot.and_then(|slot| self.shape_slot_attributes(shape, slot)).map(|attributes| attributes.enumerable)
+        } else {
+            slot.map(|_| true)
+        })
     }
 
     /// Whether `key` is an own enumerable property of `target`; `None` when it

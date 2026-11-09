@@ -74,9 +74,43 @@ pub(super) unsafe extern "C" fn general_array_construct<H: Host>(vm: u64, _resid
     array.to_bits()
 }
 
+/// A fresh ordinary object (`Vm::object`, as `lane_new_object` makes it) with no collection
+/// due; else `Value::DELETED` before any effect.
+///
+/// # Safety
+/// As `general_user_call`.
+pub(super) unsafe extern "C" fn general_object<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let object = vm.object();
+    super::super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    object.to_bits()
+}
+
+/// A literal's definition of its own data property `atom` of `object` through cache `site`
+/// (the word's halves), where the site's proved define takes it, as the lane's
+/// (`Vm::proved_field_define_hit`): 1, else 0 before any effect.
+///
+/// # Safety
+/// As `general_user_call`.
+pub(super) unsafe extern "C" fn general_define_field<H: Host>(vm: u64, _residual: u64, payload: u64, object: u64,
+    word: u64, value: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    let (atom, site) = ((word >> u16::BITS) as crate::bytecode::Atom, word as u16);
+    if !vm.proved_field_define_hit(Value::from_bits(object), atom, Value::from_bits(value), site) { return 0; }
+    // Adding a property can allocate.
+    super::super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    1
+}
+
 /// The construction helpers' addresses, as `JsStepDispatch` holds them: the receiver, the
-/// result and the intrinsic array.
-pub(super) fn construct_helpers<H: Host>() -> (usize, usize, usize) {
+/// result, the intrinsic array, a fresh object and a literal's field definition.
+pub(super) fn construct_helpers<H: Host>() -> (usize, usize, usize, usize, usize) {
     (general_construct_receiver::<H> as *const () as usize, general_construct_result::<H> as *const () as usize,
-        general_array_construct::<H> as *const () as usize)
+        general_array_construct::<H> as *const () as usize, general_object::<H> as *const () as usize,
+        general_define_field::<H> as *const () as usize)
 }

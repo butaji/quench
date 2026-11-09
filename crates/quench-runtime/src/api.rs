@@ -8,8 +8,7 @@ pub use embedding::RootedError;
 mod native;
 pub(crate) use native::CompiledScriptState;
 pub use native::{
-    CollectionContext,
-    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin, PreparedScript, NativeArithmetic,
+    CollectionContext, BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin, PreparedScript, NativeArithmetic,
     CompiledScript, NativeContext, RootScopeMark, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
     ModuleAcceptArguments, ModuleAcceptCallback,
     DeserializerDelegate, SerializerDelegate,
@@ -80,12 +79,6 @@ pub struct Runtime<H> {
 }
 
 impl<H: Host> Runtime<H> {
-    /// Record a method-cache name on the runtime's VM (tests).
-    #[cfg(all(test, feature = "aot"))]
-    pub(crate) fn name_method_atom(&mut self, atom: crate::bytecode::Atom) {
-        self.vm.name_method_atom(atom);
-    }
-
     pub fn new(host: H) -> Self {
         Self { vm: Vm::new(host) }
     }

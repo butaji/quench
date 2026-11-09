@@ -337,41 +337,36 @@ fn one_shot_error(c: &mut Context<'_>, name: &str, error: DigestError) -> Rooted
         Err(error) => error,
     }
 }
+/// The native handle classes: name, constructor operation and prototype methods.
+const CLASSES: [(&str, &str, &[(&str, &str)]); 2] = [
+    ("Hash", "cryptoNativeHashNew", &[("update", "cryptoNativeHashUpdate"), ("digest", "cryptoNativeHashDigest")]),
+    (
+        "Hmac",
+        "cryptoNativeHmacNew",
+        &[("init", "cryptoNativeHmacInit"), ("update", "cryptoNativeHashUpdate"), ("digest", "cryptoNativeHashDigest")],
+    ),
+];
+/// A class whose instances and methods share the slot key as function data.
+fn class(c: &mut Context<'_>, slot_key: RootId, name: &str, operation: &str, methods: &[(&str, &str)]) -> Result<RootId, RootedError> {
+    let constructor = c.host_constructor_with_data(crate::host::shared_vm::operation(operation), slot_key)?;
+    let key = c.string_rooted("name");
+    let text = c.string_rooted(name);
+    c.define_data_property_rooted(constructor, key, text, false, false, true)?;
+    let prototype = c.object_rooted()?;
+    for (name, operation) in methods {
+        let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, slot_key)?;
+        put(c, prototype, name, function)?;
+    }
+    let key = c.string_rooted("constructor");
+    c.define_data_property_rooted(prototype, key, constructor, true, false, true)?;
+    let key = c.string_rooted("prototype");
+    c.define_data_property_rooted(constructor, key, prototype, true, false, false)?;
+    Ok(constructor)
+}
 pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), RootedError> {
     let slot_key = c.private_symbol_rooted(Some("nativeHashSlot"));
-    for (name, operation, methods) in [
-        (
-            "Hash",
-            "cryptoNativeHashNew",
-            &[
-                ("update", "cryptoNativeHashUpdate"),
-                ("digest", "cryptoNativeHashDigest"),
-            ][..],
-        ),
-        (
-            "Hmac",
-            "cryptoNativeHmacNew",
-            &[
-                ("init", "cryptoNativeHmacInit"),
-                ("update", "cryptoNativeHashUpdate"),
-                ("digest", "cryptoNativeHashDigest"),
-            ][..],
-        ),
-    ] {
-        let constructor = c.host_constructor_with_data(crate::host::shared_vm::operation(operation), slot_key)?;
-        let key = c.string_rooted("name");
-        let text = c.string_rooted(name);
-        c.define_data_property_rooted(constructor, key, text, false, false, true)?;
-        let prototype = c.object_rooted()?;
-        for (name, operation) in methods {
-            let function =
-                c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, slot_key)?;
-            put(c, prototype, name, function)?;
-        }
-        let key = c.string_rooted("constructor");
-        c.define_data_property_rooted(prototype, key, constructor, true, false, true)?;
-        let key = c.string_rooted("prototype");
-        c.define_data_property_rooted(constructor, key, prototype, true, false, false)?;
+    for (name, operation, methods) in CLASSES {
+        let constructor = class(c, slot_key, name, operation, methods)?;
         put(c, binding, name, constructor)?;
     }
     let function = c.host_function_named(
@@ -416,129 +411,5 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
 crate::host::startup_snapshot::host_snap_empty!(State { handles, free } "a hash");
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use quench_runtime::{Engine, Value as JsValue};
-
-    fn call(runtime: &mut Runtime<NodeHost>, object: RootId, name: &str, args: &[RootId]) -> RootId {
-        let method = runtime.get_named_property_rooted(object, name).unwrap();
-        let result = runtime.call_rooted(method, object, args).unwrap();
-        runtime.release_root(method);
-        result
-    }
-
-    #[test]
-    fn native_hash_slots_match_node_and_reclaim_at_collection() {
-        let oracle = std::process::Command::new("node")
-            .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/crypto_hash_native_oracle.cjs"))
-            .env_remove("NODE_OPTIONS")
-            .output().unwrap();
-        assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
-        let expected: serde_json::Value = serde_json::from_slice(&oracle.stdout).unwrap();
-        let mut runtime = Runtime::new(NodeHost::new(vec!["quench-node".into()]));
-        let program = Engine::specialize("0;", "native-hash-slots.js").unwrap();
-        runtime.execute(&program).unwrap();
-        let undefined = runtime.root(JsValue::UNDEFINED);
-        let initialize = runtime.host_function(crate::host::shared_vm::operation("cryptoHashBinding")).unwrap();
-        let binding = runtime.call_rooted(initialize, undefined, &[]).unwrap();
-        let hash = runtime.get_named_property_rooted(binding, "Hash").unwrap();
-        let hmac = runtime.get_named_property_rooted(binding, "Hmac").unwrap();
-        let algorithms = ["sha256", "sha512", "sha1", "md5"];
-        let key = runtime.uint8_array_from_rooted(vec![0, 255, 1, 128, 42]).unwrap();
-        let mut handles = Vec::new();
-        let mut results = Vec::new();
-        for (kind, count) in [(hash, 48), (hmac, 24)] {
-            let mut group = Vec::new();
-            let mut live = Vec::new();
-            for index in 0..count {
-                let algorithm = runtime.string_rooted(algorithms[index % algorithms.len()]);
-                let value = if kind == hash {
-                    runtime.construct_rooted(kind, kind, &[algorithm]).unwrap()
-                } else {
-                    let value = runtime.construct_rooted(kind, kind, &[]).unwrap();
-                    let result = call(&mut runtime, value, "init", &[algorithm, key]);
-                    runtime.release_root(result);
-                    value
-                };
-                let prefix = runtime.string_rooted(&format!("prefix {index} é水🦄"));
-                let result = call(&mut runtime, value, "update", &[prefix]);
-                assert_eq!(runtime.rooted_value(result).unwrap().as_bool(), Some(true));
-                for root in [algorithm, prefix, result] { runtime.release_root(root); }
-                live.push(value);
-            }
-            for (index, &value) in live.iter().enumerate() {
-                let suffix = runtime.string_rooted(&format!(" suffix {index}"));
-                let result = call(&mut runtime, value, "update", &[suffix]);
-                let encoding = runtime.string_rooted("hex");
-                let digest = call(&mut runtime, value, "digest", &[encoding]);
-                group.push(runtime.string_text_rooted(digest).unwrap().unwrap());
-                for root in [suffix, result, encoding, digest] { runtime.release_root(root); }
-            }
-            handles.extend(live);
-            results.push(serde_json::to_value(group).unwrap());
-        }
-        let mut copies = Vec::new();
-        for algorithm in algorithms {
-            let algorithm = runtime.string_rooted(algorithm);
-            let original = runtime.construct_rooted(hash, hash, &[algorithm]).unwrap();
-            let prefix = runtime.string_rooted("copy prefix");
-            let result = call(&mut runtime, original, "update", &[prefix]);
-            runtime.release_root(result);
-            let copied = runtime.construct_rooted(hash, hash, &[original]).unwrap();
-            let mut pair = Vec::new();
-            for (value, suffix) in [(original, " original"), (copied, " copied")] {
-                let suffix = runtime.string_rooted(suffix);
-                let result = call(&mut runtime, value, "update", &[suffix]);
-                let encoding = runtime.string_rooted("hex");
-                let digest = call(&mut runtime, value, "digest", &[encoding]);
-                pair.push(runtime.string_text_rooted(digest).unwrap().unwrap());
-                for root in [suffix, result, encoding, digest] { runtime.release_root(root); }
-            }
-            copies.push(pair);
-            for root in [algorithm, prefix, original, copied] { runtime.release_root(root); }
-        }
-        results.push(serde_json::to_value(copies).unwrap());
-        assert_eq!(serde_json::Value::Array(results), serde_json::Value::Array(expected.as_array().unwrap()[..3].to_vec()));
-
-        // Native resources disappear at GC, before an event-loop turn or another constructor.
-        let algorithm = runtime.string_rooted("sha256");
-        let survivor = runtime.construct_rooted(hash, hash, &[algorithm]).unwrap();
-        let prefix = runtime.string_rooted("live across");
-        let result = call(&mut runtime, survivor, "update", &[prefix]);
-        runtime.release_root(result);
-        let shared = runtime.host_mut().shared_state();
-        let allocated = shared.borrow().crypto_hashes.handles.len();
-        for index in (0..handles.len()).step_by(3) { runtime.release_root(handles[index]); }
-        runtime.collect(&program).unwrap();
-        let vacancies = shared.borrow().crypto_hashes.free.len();
-        assert_eq!(vacancies, handles.len() / 3 + algorithms.len() * 2);
-        let mut replacements = Vec::new();
-        for _ in 0..vacancies { replacements.push(runtime.construct_rooted(hash, hash, &[algorithm]).unwrap()); }
-        assert_eq!(shared.borrow().crypto_hashes.handles.len(), allocated);
-        assert!(shared.borrow().crypto_hashes.free.is_empty());
-        // A live target remains usable across collection, while wrong receivers are rejected.
-        let encoding = runtime.string_rooted("hex");
-        let suffix = runtime.string_rooted(" collection");
-        let result = call(&mut runtime, survivor, "update", &[suffix]);
-        runtime.release_root(result);
-        let digest = call(&mut runtime, survivor, "digest", &[encoding]);
-        assert_eq!(runtime.string_text_rooted(digest).unwrap().unwrap(), expected[3].as_str().unwrap());
-        runtime.release_root(digest);
-        let digest = call(&mut runtime, handles[1], "digest", &[encoding]);
-        assert_eq!(runtime.string_text_rooted(digest).unwrap().unwrap(), expected[0][1].as_str().unwrap());
-        runtime.release_root(digest);
-        let update = runtime.get_named_property_rooted(handles[1], "update").unwrap();
-        let wrong = runtime.object_rooted().unwrap();
-        let error = runtime.call_rooted(update, wrong, &[algorithm]).unwrap_err();
-        assert!(error.exception.is_some());
-        if let Some(exception) = error.exception { runtime.release_root(exception); }
-        for (index, value) in handles.into_iter().enumerate() {
-            if index % 3 != 0 { runtime.release_root(value); }
-        }
-        for value in replacements { runtime.release_root(value); }
-        runtime.release_root(survivor);
-        runtime.collect(&program).unwrap();
-        assert!(shared.borrow().crypto_hashes.handles.is_empty());
-        assert!(shared.borrow().crypto_hashes.free.is_empty());
-    }
-}
+#[path = "crypto_hash_shared_vm_tests.rs"]
+mod tests;

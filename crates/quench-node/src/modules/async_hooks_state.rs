@@ -1,7 +1,7 @@
 //! Runtime-neutral identity and rooted state shared by async-hooks adapters.
 
 use std::cell::Cell;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::rc::Rc;
 
 use quench_runtime::RootId;
@@ -97,6 +97,38 @@ impl AsyncIdentity {
     }
 }
 
+/// A set of AsyncLocalStorage IDs, one bit each: the IDs are allocated densely
+/// (`AsyncIdentity::allocate_local_storage_id`).
+#[derive(Default)]
+pub(super) struct StorageSet(Vec<u64>);
+
+impl StorageSet {
+    /// The word holding `id`'s bit, and the bit.
+    fn position(id: u64) -> (usize, u64) {
+        let bits = u64::from(u64::BITS);
+        ((id / bits) as usize, 1 << (id % bits))
+    }
+
+    pub(super) fn insert(&mut self, id: u64) {
+        let (word, bit) = Self::position(id);
+        if self.0.len() <= word {
+            self.0.resize(word + 1, 0);
+        }
+        self.0[word] |= bit;
+    }
+
+    pub(super) fn remove(&mut self, id: u64) {
+        let (word, bit) = Self::position(id);
+        if let Some(word) = self.0.get_mut(word) {
+            *word &= !bit;
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.iter().all(|&word| word == 0)
+    }
+}
+
 /// Rooted state owned exclusively by the shared-VM async-hooks adapter.
 pub(crate) struct SharedAsyncHooksState {
     pub(super) identity: AsyncIdentity,
@@ -129,7 +161,7 @@ pub(crate) struct SharedAsyncHooksState {
     pub(super) store_references: FxHashMap<RootId, usize>,
     /// The AsyncLocalStorage instances entered since their last `disable()`. Like Node's
     /// storage hook, an enabled one makes promises tracked (`tracks_promises`).
-    pub(super) enabled_local_storages: FxHashSet<u64>,
+    pub(super) enabled_local_storages: StorageSet,
 }
 
 impl SharedAsyncHooksState {
@@ -151,7 +183,7 @@ impl SharedAsyncHooksState {
             entered_scopes: Vec::new(),
             local_stores: FxHashMap::default(),
             store_references: FxHashMap::default(),
-            enabled_local_storages: FxHashSet::default(),
+            enabled_local_storages: StorageSet::default(),
         }
     }
 

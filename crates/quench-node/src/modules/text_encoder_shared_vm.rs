@@ -19,54 +19,48 @@ pub(crate) fn constructor(c: &mut Context<'_>) -> Result<RootId, RootedError> {
                 brand,
             )?;
             let prototype = c.get_named_property_rooted(constructor, "prototype")?;
-            c.define_named_data_property_rooted(
-                constructor,
-                "prototype",
-                prototype,
-                false,
-                false,
-                false,
-            )?;
-            let getter = c.host_function_named_with_data(
-                operation("textEncoderEncoding"),
-                "get encoding",
-                brand,
-            )?;
-            let key = c.string_rooted("encoding");
-            c.define_property_fields_rooted(
-                prototype,
-                key,
-                DescriptorFields {
-                    get: Some(getter),
-                    enumerable: Some(true),
-                    configurable: Some(true),
-                    ..Default::default()
-                },
-            )?;
-            for (name, callback) in [
-                ("encode", "textEncoderEncode"),
-                ("encodeInto", "textEncoderEncodeInto"),
-            ] {
-                let function = c.host_function_named_with_data(operation(callback), name, brand)?;
-                c.define_named_data_property_rooted(prototype, name, function, true, true, true)?;
-            }
-            let global = c.global_root()?;
-            let symbol = c.get_named_property_rooted(global, "Symbol")?;
-            let tag = c.get_named_property_rooted(symbol, "toStringTag")?;
-            let tag_name = c.string_rooted("TextEncoder");
-            let symbol_for = c.get_named_property_rooted(symbol, "for")?;
-            let name = c.string_rooted("nodejs.util.inspect.custom");
-            let inspect_key = c.call_rooted(symbol_for, symbol, &[name])?;
-            let inspect = c.host_function_named_with_data(
-                operation("textEncoderInspect"),
-                "[nodejs.util.inspect.custom]",
-                brand,
-            )?;
-            c.define_data_property_rooted(prototype, inspect_key, inspect, true, false, true)?;
-            c.define_data_property_rooted(prototype, tag, tag_name, false, false, true)?;
+            c.define_named_data_property_rooted(constructor, "prototype", prototype, false, false, false)?;
+            install_members(c, prototype, brand)?;
+            install_symbols(c, prototype, brand)?;
             Ok(constructor)
         })
     })
+}
+
+/// The `encoding` getter and the encode methods.
+fn install_members(c: &mut Context<'_>, prototype: RootId, brand: RootId) -> Result<(), RootedError> {
+    let operation = crate::host::shared_vm::operation;
+    let getter = c.host_function_named_with_data(operation("textEncoderEncoding"), "get encoding", brand)?;
+    let key = c.string_rooted("encoding");
+    c.define_property_fields_rooted(
+        prototype,
+        key,
+        DescriptorFields { get: Some(getter), enumerable: Some(true), configurable: Some(true), ..Default::default() },
+    )?;
+    for (name, callback) in [("encode", "textEncoderEncode"), ("encodeInto", "textEncoderEncodeInto")] {
+        let function = c.host_function_named_with_data(operation(callback), name, brand)?;
+        c.define_named_data_property_rooted(prototype, name, function, true, true, true)?;
+    }
+    Ok(())
+}
+
+/// The custom inspection and `Symbol.toStringTag`.
+fn install_symbols(c: &mut Context<'_>, prototype: RootId, brand: RootId) -> Result<(), RootedError> {
+    let global = c.global_root()?;
+    let symbol = c.get_named_property_rooted(global, "Symbol")?;
+    let tag = c.get_named_property_rooted(symbol, "toStringTag")?;
+    let tag_name = c.string_rooted("TextEncoder");
+    let symbol_for = c.get_named_property_rooted(symbol, "for")?;
+    let name = c.string_rooted(super::keys::INSPECT_CUSTOM);
+    let inspect_key = c.call_rooted(symbol_for, symbol, &[name])?;
+    let inspect = c.host_function_named_with_data(
+        crate::host::shared_vm::operation("textEncoderInspect"),
+        "[nodejs.util.inspect.custom]",
+        brand,
+    )?;
+    c.define_data_property_rooted(prototype, inspect_key, inspect, true, false, true)?;
+    c.define_data_property_rooted(prototype, tag, tag_name, false, false, true)?;
+    Ok(())
 }
 
 pub(crate) fn initialize(
@@ -205,26 +199,7 @@ pub(crate) fn inspect(
         return Ok(this);
     }
     validate(c, this, true)?;
-    let mut prototype = this;
-    let constructor = loop {
-        if c.rooted_value(prototype)
-            .is_some_and(|value| value.is_null())
-        {
-            break constructor(c)?;
-        }
-        let key = c.string_rooted("constructor");
-        if let Some(fields) = c.own_property_fields_rooted(prototype, key)? {
-            if let Some(value) = fields.value {
-                if c.is_callable_rooted(value)? {
-                    let name = c.get_named_property_rooted(value, "name")?;
-                    if c.string_text(name)?.as_deref() != Some("") {
-                        break value;
-                    }
-                }
-            }
-        }
-        prototype = c.prototype_rooted(prototype)?;
-    };
+    let constructor = inspected_constructor(c, this)?;
     let prototype = c.record_rooted(false, &["constructor"], &[constructor])?;
     let encoding = c.string_rooted("utf-8");
     let object = c.record_rooted(false, &["encoding"], &[encoding])?;
@@ -233,4 +208,29 @@ pub(crate) fn inspect(
     let undefined = c.undefined();
     let options = args.get(1).copied().unwrap_or(undefined);
     c.call_rooted(inspect, undefined, &[object, options])
+}
+
+/// The first named constructor an own `constructor` data property along `object`'s
+/// prototype chain holds, as Node's inspection names a class; TextEncoder past the chain.
+fn inspected_constructor(c: &mut Context<'_>, object: RootId) -> Result<RootId, RootedError> {
+    let mut prototype = object;
+    while !c.rooted_value(prototype).is_some_and(|value| value.is_null()) {
+        if let Some(constructor) = own_named_constructor(c, prototype)? {
+            return Ok(constructor);
+        }
+        prototype = c.prototype_rooted(prototype)?;
+    }
+    constructor(c)
+}
+
+fn own_named_constructor(c: &mut Context<'_>, object: RootId) -> Result<Option<RootId>, RootedError> {
+    let key = c.string_rooted("constructor");
+    let Some(value) = c.own_property_fields_rooted(object, key)?.and_then(|fields| fields.value) else {
+        return Ok(None);
+    };
+    if !c.is_callable_rooted(value)? {
+        return Ok(None);
+    }
+    let name = c.get_named_property_rooted(value, "name")?;
+    Ok((c.string_text(name)?.as_deref() != Some("")).then_some(value))
 }
