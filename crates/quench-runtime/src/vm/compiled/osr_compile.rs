@@ -111,8 +111,8 @@ pub(in crate::vm) fn start_osr_region(
     // arrays still come from the loop entry record, so those regions keep the private
     // lowering until the lane unit carries them too.
     let simple = region.inlining.is_none()
-        && region.captures.is_empty() && region.fields.is_empty()
-        && region.arrays.is_empty() && region.field_store_sites.is_empty()
+        && region.captures.is_empty()
+        && region.field_store_sites.is_empty()
         && !region.reads_heap_natively();
     let lane = simple.then(|| super::lane_region::RegionSpecializer {
         function_id, unit: &unit, helpers, fields: &fields,
@@ -240,6 +240,41 @@ mod tests {
         vm.programs.disable_js_entry_specializations();
         let error = vm.execute(&program).unwrap_err();
         assert_eq!(error.thrown_value(), Some(crate::Value::integer(9_900_000)));
+        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+            "the lane OSR path ran");
+    }
+
+    /// A loop reading a static own field lowers through the lane unit's field sites.
+    #[test]
+    fn a_field_loop_compiled_by_the_region_specializer_runs() {
+        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
+        let program = crate::Engine::specialize(
+            "function helper(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+i+o.x)|0; } } return s; } throw helper({x:1});",
+            "lane-osr-field.js").unwrap();
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.programs.enable_js_lane_methods();
+        vm.programs.disable_js_entry_specializations();
+        let error = vm.execute(&program).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(crate::Value::integer(10_100_000)));
+        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+            "the lane OSR path ran");
+    }
+    /// A loop indexing a dense record array lowers through the lane unit's array views.
+    #[test]
+    fn an_array_loop_compiled_by_the_region_specializer_runs() {
+        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
+        let program = crate::Engine::specialize(
+            "function helper(arr){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+i+arr[i&3])|0; } } return s; } throw helper([1,2,3,4]);",
+            "lane-osr-array.js").unwrap();
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.programs.enable_js_lane_methods();
+        vm.programs.disable_js_entry_specializations();
+        let error = vm.execute(&program).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(crate::Value::integer(10_400_000)));
         assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
             "the lane OSR path ran");
     }
