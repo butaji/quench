@@ -164,7 +164,14 @@ pub(in crate::vm) fn start_osr_region(
     let unit = inlined.as_ref().unwrap_or(&plain);
     let fields = loop_fields(region, observation);
     let simple = region.inlining.is_none();
-    let lane = (simple || inlined.is_some()).then(|| super::lane_region::RegionSpecializer {
+    // A callee with its own loop makes the inlined unit a nested loop region. The lane
+    // plan models one loop; the verified lowering models the nested inlined loop, so the
+    // lane plan declines it and the verified lowering publishes the region.
+    let nested_inlined_loop = region.inlining.is_some() && region.instructions().iter().enumerate().any(|(pc, instruction)|
+        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
+            && (instruction.jump_target() as usize) <= pc
+            && pc != region.backedge as usize);
+    let lane = (!nested_inlined_loop && (simple || inlined.is_some())).then(|| super::lane_region::RegionSpecializer {
         function_id, unit, helpers, fields: &fields,
         global_reads: &BTreeMap::new(), facts: VmFacts::STATIC, generic: &[],
         direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
