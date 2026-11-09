@@ -28,7 +28,7 @@ use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
 use crate::bytecode::index as opc;
-use crate::bytecode::Class;
+use crate::bytecode::{Class, Traits};
 use crate::bytecode::{
     FieldLayout, FieldStore, Function, ImmediateLayout, ImmediateRole, InstructionField, StoreReceiver, WideInstruction,
 };
@@ -1689,7 +1689,7 @@ fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::by
                 }
                 PLAIN_LEAF
             }
-            Op::LoadThis => CONTEXT_LEAF,
+            op if op.traits().has(Traits::THIS_LEAF) => CONTEXT_LEAF,
             op if op.addresses_capture() => CAPTURE_LEAF,
             // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
             // place (`lane_set_field_in_place`) or on the general path, either of which makes
@@ -1702,10 +1702,10 @@ fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::by
             }
             // A global name's first load finds the running function (`lane_load_name_first`),
             // which makes the leaf an activation first; its later loads read the realm alone.
-            Op::LoadName if body.names_resolve_statically(code) => PLAIN_LEAF,
+            op if op.traits().has(Traits::NAME_LEAF) && body.names_resolve_statically(code) => PLAIN_LEAF,
             // A returning read requickens by its site's tier in its leaf form
             // (`lane_returning_field_first`, `LaneView::specialize_leaf_returns`).
-            Op::GetField => match instruction.field_lookup()? {
+            op if op.traits().has(Traits::FIELD_LEAF) => match instruction.field_lookup()? {
                 FieldLookup::Atom { atom, base, .. } => {
                     if private(atom) {
                         return None;
@@ -17490,15 +17490,14 @@ fn returning_kind(instruction: WideInstruction) -> Option<u8> {
     if !instruction.returns_from_frame() {
         return None;
     }
-    match instruction.op() {
-        Op::GetField => Some(RETURNING_FIELD),
-        Op::Unary => Some(RETURNING_UNARY),
-        Op::Binary => Some(RETURNING_BINARY),
-        Op::MakeObject2 => Some(RETURNING_OBJECT),
-        Op::MakeObjectLiteral => Some(RETURNING_OBJECT_LITERAL),
-        Op::SuperConstArrayObject2 => Some(RETURNING_LITERAL),
-        _ => None,
-    }
+    let traits = instruction.op().traits();
+    if traits.has(Traits::RETURNING_FIELD) { Some(RETURNING_FIELD) }
+    else if traits.has(Traits::RETURNING_UNARY) { Some(RETURNING_UNARY) }
+    else if traits.has(Traits::RETURNING_BINARY) { Some(RETURNING_BINARY) }
+    else if traits.has(Traits::RETURNING_OBJECT) { Some(RETURNING_OBJECT) }
+    else if traits.has(Traits::RETURNING_OBJECT_LITERAL) { Some(RETURNING_OBJECT_LITERAL) }
+    else if traits.has(Traits::RETURNING_LITERAL) { Some(RETURNING_LITERAL) }
+    else { None }
 }
 
 script_handler! {

@@ -786,6 +786,67 @@ macro_rules! class_of {
     ($other:ident) => { Class::Other };
 }
 
+/// Orthogonal tier traits of an opcode, each declared once by the catalog.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Traits(u16);
+
+impl Traits {
+    pub(crate) const NONE: Self = Self(0);
+    pub(crate) const LEAF_VALUE: Self = Self(1 << 0);
+    pub(crate) const LEAF_JUMP: Self = Self(1 << 1);
+    pub(crate) const LEAF_BINARY: Self = Self(1 << 2);
+    pub(crate) const THIS_LEAF: Self = Self(1 << 3);
+    pub(crate) const NAME_LEAF: Self = Self(1 << 4);
+    pub(crate) const FIELD_LEAF: Self = Self(1 << 5);
+    pub(crate) const NAME_OPERATION: Self = Self(1 << 6);
+    pub(crate) const MAKES_CLOSURE: Self = Self(1 << 7);
+    pub(crate) const RETURNING_FIELD: Self = Self(1 << 8);
+    pub(crate) const RETURNING_UNARY: Self = Self(1 << 9);
+    pub(crate) const RETURNING_BINARY: Self = Self(1 << 10);
+    pub(crate) const RETURNING_OBJECT: Self = Self(1 << 11);
+    pub(crate) const RETURNING_OBJECT_LITERAL: Self = Self(1 << 12);
+    pub(crate) const RETURNING_LITERAL: Self = Self(1 << 13);
+
+    pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
+    pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
+}
+
+/// The traits of each opcode, the catalog's one home for them.
+macro_rules! traits_of {
+    (Nop) => { Traits::LEAF_VALUE };
+    (LoadConst) => { Traits::LEAF_VALUE };
+    (Move) => { Traits::LEAF_VALUE };
+    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY) };
+    (IncDec) => { Traits::LEAF_VALUE };
+    (Return) => { Traits::LEAF_VALUE };
+    (Jump) => { Traits::LEAF_JUMP };
+    (JumpFalse) => { Traits::LEAF_JUMP };
+    (JumpTrue) => { Traits::LEAF_JUMP };
+    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY) };
+    (NumericAdd) => { Traits::LEAF_BINARY };
+    (NumericMultiply) => { Traits::LEAF_BINARY };
+    (JumpBinaryFalse) => { Traits::LEAF_BINARY };
+    (LoadThis) => { Traits::THIS_LEAF };
+    (LoadName) => { Traits::NAME_LEAF.union(Traits::NAME_OPERATION) };
+    (LoadNameCall) => { Traits::NAME_OPERATION };
+    (LoadNameTypeof) => { Traits::NAME_OPERATION };
+    (ResolveName) => { Traits::NAME_OPERATION };
+    (LoadResolvedName) => { Traits::NAME_OPERATION };
+    (DeleteName) => { Traits::NAME_OPERATION };
+    (StoreName) => { Traits::NAME_OPERATION };
+    (StoreResolvedName) => { Traits::NAME_OPERATION };
+    (StoreVarBinding) => { Traits::NAME_OPERATION };
+    (CloneEnv) => { Traits::NAME_OPERATION };
+    (InitializeThis) => { Traits::NAME_OPERATION };
+    (SuperCallCheck) => { Traits::NAME_OPERATION };
+    (MakeClosure) => { Traits::MAKES_CLOSURE };
+    (GetField) => { Traits::FIELD_LEAF.union(Traits::RETURNING_FIELD) };
+    (MakeObject2) => { Traits::RETURNING_OBJECT };
+    (MakeObjectLiteral) => { Traits::RETURNING_OBJECT_LITERAL };
+    (SuperConstArrayObject2) => { Traits::RETURNING_LITERAL };
+    ($other:ident) => { Traits::NONE };
+}
+
 macro_rules! opcodes {
     ($d:tt; $($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -806,6 +867,8 @@ macro_rules! opcodes {
             pub const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
             const CLASSES: [Class; Self::COUNT] = [$(class_of!($name)),+];
             pub(crate) const fn class(self) -> Class { Self::CLASSES[self as usize] }
+            const TRAITS: [Traits; Self::COUNT] = [$(traits_of!($name)),+];
+            pub(crate) const fn traits(self) -> Traits { Self::TRAITS[self as usize] }
             #[cfg(feature = "native-execution")]
             pub(crate) fn native_semantic_entry<H: crate::Host>(self) -> crate::NativeJsOperationEntry {
                 match self {
