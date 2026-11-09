@@ -21,6 +21,42 @@ pub(crate) enum GlobalRead {
     Dynamic,
 }
 
+/// What each by-name global read of a function or unit takes, by PC: a flat table, empty at
+/// a PC that is no such read (`Vm::lane_global_reads`).
+#[derive(Default)]
+pub(crate) struct GlobalReads(Box<[Option<GlobalRead>]>);
+
+impl GlobalReads {
+    pub(crate) fn contains_key(&self, pc: &usize) -> bool {
+        self.0.get(*pc).is_some_and(Option::is_some)
+    }
+
+    /// The reads at the PCs of `range`, in order.
+    pub(crate) fn range(&self, range: std::ops::RangeInclusive<usize>) -> impl Iterator<Item = (usize, &GlobalRead)> {
+        let end = (*range.end()).saturating_add(1).min(self.0.len());
+        let start = (*range.start()).min(end);
+        self.0[start..end].iter().enumerate().filter_map(move |(offset, read)| read.as_ref().map(|read| (start + offset, read)))
+    }
+}
+
+impl std::ops::Index<&usize> for GlobalReads {
+    type Output = GlobalRead;
+    fn index(&self, pc: &usize) -> &GlobalRead {
+        self.0[*pc].as_ref().expect("a global read at this PC")
+    }
+}
+
+impl FromIterator<(usize, GlobalRead)> for GlobalReads {
+    fn from_iter<I: IntoIterator<Item = (usize, GlobalRead)>>(reads: I) -> Self {
+        let mut table: Vec<Option<GlobalRead>> = Vec::new();
+        for (pc, read) in reads {
+            if pc >= table.len() { table.resize(pc + 1, None); }
+            table[pc] = Some(read);
+        }
+        Self(table.into_boxed_slice())
+    }
+}
+
 impl<H: Host> Vm<H> {
     /// The read of `atom` through cache `site` from the active realm's global scope as a Stable
     /// fact, where the cell the lane's own read resolves it to (`Vm::global_name_read`) is not

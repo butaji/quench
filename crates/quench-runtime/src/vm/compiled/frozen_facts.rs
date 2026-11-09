@@ -91,7 +91,7 @@ pub(in crate::vm) fn frozen_fields(program: &ResidualProgram) -> FrozenValues {
 #[cfg(feature = "aot")]
 /// Each by-name load of a frozen global, with the closure's whole-program value.
 pub(in crate::vm) fn frozen_global_reads(function: &Function, globals: &FrozenValues)
-    -> std::collections::BTreeMap<usize, crate::vm::global_facts::GlobalRead> {
+    -> crate::vm::global_facts::GlobalReads {
     function.code.iter().enumerate().filter_map(|(pc, &packed)| {
         let instruction = super::dispatch_fast::decoded_instruction(function, packed);
         if !instruction.op().loads_name() { return None; }

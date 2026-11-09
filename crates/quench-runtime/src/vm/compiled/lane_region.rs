@@ -359,7 +359,7 @@ struct Lowering<'a, 'f> {
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
-    global_reads: &'a BTreeMap<usize, crate::vm::global_facts::GlobalRead>,
+    global_reads: &'a crate::vm::global_facts::GlobalReads,
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
     /// (`array_length`), and whether an IsHTMLDDA object can exist (`emit_nullish_branch`).
     vm: VmFacts<'a>,
@@ -1146,7 +1146,7 @@ pub(super) fn lower_body(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
-    global_reads: &BTreeMap<usize, crate::vm::global_facts::GlobalRead>,
+    global_reads: &crate::vm::global_facts::GlobalReads,
     vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
@@ -1174,7 +1174,7 @@ pub(super) fn lower(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
-    global_reads: &BTreeMap<usize, crate::vm::global_facts::GlobalRead>,
+    global_reads: &crate::vm::global_facts::GlobalReads,
     vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
@@ -4847,7 +4847,7 @@ mod tests {
         let id = program.functions.iter().position(|body| body.header().name
             .is_some_and(|name| &program.atoms[name as usize] == "subject")).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let region = super::super::lower_static_typed_regions(&program, id as u32, &[], &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC, &std::collections::BTreeMap::new())
+        let region = super::super::lower_static_typed_regions(&program, id as u32, &[], &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC, &Default::default())
             .into_iter().next().expect("typed loop region");
         cranelift_codegen::verify_function(&region.function, &*isa).unwrap();
         if !super::super::FAULT_POLL_SUPPORTED { return; }
@@ -4941,7 +4941,7 @@ mod tests {
             let isa = super::super::super::jit_backend::target_isa().unwrap();
             let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
             let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-                &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
+                &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
                 Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
             let function = region.function;
             let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
@@ -5029,7 +5029,7 @@ mod tests {
                     .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "the Boolean method must inline");
             let isa = super::super::super::jit_backend::target_isa().unwrap();
-            let regions = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC, &std::collections::BTreeMap::new());
+            let regions = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC, &Default::default());
             assert!(!regions.is_empty(), "selected caller header must publish");
             let mut integer_add = false;
             for region in regions {
@@ -5201,7 +5201,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
             Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
@@ -5240,7 +5240,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
             Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
         assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
         for instruction in region.function.layout.blocks()
@@ -5298,7 +5298,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         assert!(region.fault_poll);
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -5335,7 +5335,7 @@ mod tests {
         for ty in [Type::INT32, Type::ANY] {
             fields.values_mut().next().unwrap()[0].ty = ty;
             let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-                &fields, &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
+                &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
                 Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
             let native = region.function;
             let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -5362,7 +5362,7 @@ mod tests {
         }).collect();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &BTreeMap::new(),
+        let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -5392,7 +5392,7 @@ mod tests {
         }).collect();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &BTreeMap::new(),
+        let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -5419,7 +5419,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
         assert!(region.native > 0);
         let native = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);

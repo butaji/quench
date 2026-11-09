@@ -1261,7 +1261,6 @@ dod-dense-hash crates/quench-runtime/src/vm/compiled.rs 2
 dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_compile.rs 3
 dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_region.rs 18
 dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_region/stable.rs 2
-dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_sites.rs 1
 dod-dense-hash crates/quench-runtime/src/vm/compiled/osr_loop.rs 29
 dod-dense-hash crates/quench-runtime/src/vm/dispatch_fast.rs 1
 dod-dense-hash crates/quench-runtime/src/vm/lane_exits.rs 3
@@ -2694,7 +2693,6 @@ function-lines crates/quench-runtime/src/heap/tests.rs::linked_target_observatio
 function-lines crates/quench-runtime/src/heap/tests.rs::memory_census_counts_array_allocations_once_across_storage_and_collection 60
 function-lines crates/quench-runtime/src/heap/tests.rs::named_property_publication_retires_readers_for_every_record_family 57
 function-lines crates/quench-runtime/src/heap/tests.rs::object_property_storage_migration_preserves_writes_and_gc_roots 51
-function-lines crates/quench-runtime/src/heap/tests.rs::parallel_full_mark_follows_records_and_ephemerons_like_the_serial_mark 67
 function-lines crates/quench-runtime/src/heap/tests.rs::scope_slot_owners_survive_collection_and_release 49
 function-lines crates/quench-runtime/src/heap/tests.rs::shape_departures_retire_readers_through_each_storage_path 44
 function-lines crates/quench-runtime/src/heap/tests.rs::wide_environment_clones_store_only_the_slots_they_do_not_share 51
@@ -3337,7 +3335,6 @@ function-lines crates/quench-runtime/src/vm/object_assignment.rs::Vm<H>::primiti
 function-lines crates/quench-runtime/src/vm/object_assignment.rs::Vm<H>::rejected_assignment_error 52
 function-lines crates/quench-runtime/src/vm/object_builtins.rs::Vm<H>::install_object 68
 function-lines crates/quench-runtime/src/vm/object_builtins.rs::Vm<H>::object_define_properties 68
-function-lines crates/quench-runtime/src/vm/object_descriptors.rs::PropertyDescriptorRecord::fold_attributes 46
 function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::from_property_descriptor 41
 function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::object_get_own_property_descriptors 42
 function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::ordinary_own_string_property 91
