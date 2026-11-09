@@ -20,15 +20,19 @@ impl<H: Host> Vm<H> {
 }
 
 /// A Math function of Numbers, which runs no guest code and observes no frame
-/// (`number::math_inline_call`, and `math_numbers` past two arguments).
+/// (`number::math_inline_call`, and `math_numbers` of up to `MATH_INLINE_ARGUMENTS`).
 fn math_value(native: Native, args: &[Value]) -> Option<Value> {
     if !native.is_math_function() {
         return None;
     }
     super::super::number::math_inline_call(native, args).or_else(|| {
-        let numbers = args.iter().map(|value| value.as_number())
-            .collect::<Option<smallvec::SmallVec<[f64; super::super::number::MATH_INLINE_ARGUMENTS]>>>()?;
-        super::super::number::math_numbers(native, &numbers).map(Value::number)
+        // Longer calls leave to the native, which converts them.
+        let mut numbers = [0.0; super::super::number::MATH_INLINE_ARGUMENTS];
+        let used = numbers.get_mut(..args.len())?;
+        for (number, value) in used.iter_mut().zip(args) {
+            *number = value.as_number()?;
+        }
+        super::super::number::math_numbers(native, used).map(Value::number)
     })
 }
 

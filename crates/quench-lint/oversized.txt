@@ -4160,7 +4160,6 @@ hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::install_loop_sites 9
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_getter 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_keeping 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_inlined_activation 1
-hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_native 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_native_out 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_construct_forwarded_parent 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_direct_callees 1
