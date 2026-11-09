@@ -1839,11 +1839,7 @@ fn admit_region(
 /// base renames as a register does. A site's lookup names its base in the site table, which
 /// keeps VM slots.
 fn lifetime_instruction(instruction: WideInstruction) -> bool {
-    matches!(instruction.op(),
-        Op::LoadConst | Op::Move | Op::Binary | Op::NumericAdd | Op::NumericMultiply
-        | Op::IncDec | Op::ToNumeric | Op::Unary | Op::GetIndex | Op::SetIndex
-        | Op::RequireObjectCoercible | Op::Jump | Op::JumpFalse | Op::JumpTrue
-        | Op::JumpBinaryFalse)
+    instruction.op().traits().has(crate::bytecode::Traits::LIFETIME_SAFE)
         || instruction.field_store_register().is_some()
         || (instruction.op().is_get_field()
             && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { base, .. })

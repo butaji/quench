@@ -238,6 +238,10 @@ impl Traits {
     pub(crate) const LANE_RESULT_STEP: Self = Self(1 << 18);
     /// An op whose result may return from the frame instead of the register file.
     pub(crate) const FRAME_RETURNABLE: Self = Self(1 << 19);
+    /// An op that reads and writes only registers and control, no heap value.
+    pub(crate) const FRAME_ONLY: Self = Self(1 << 20);
+    /// An op the lifetime-role loop admission can rename a register through.
+    pub(crate) const LIFETIME_SAFE: Self = Self(1 << 21);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -245,19 +249,19 @@ impl Traits {
 
 /// The traits of each opcode, the catalog's one home for them.
 macro_rules! traits_of {
-    (Nop) => { Traits::LEAF_VALUE };
-    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_RETURNABLE) };
-    (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
+    (Nop) => { Traits::LEAF_VALUE.union(Traits::FRAME_ONLY) };
+    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
+    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_RETURNABLE).union(Traits::LIFETIME_SAFE) };
+    (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
     (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE) };
-    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
-    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
-    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
-    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE) };
+    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
+    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
+    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
+    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
     (LoadThis) => { Traits::THIS_LEAF };
     (LoadName) => { Traits::NAME_LEAF.union(Traits::NAME_OPERATION) };
     (LoadNameCall) => { Traits::NAME_OPERATION };
@@ -280,10 +284,10 @@ macro_rules! traits_of {
     (SetField) => { Traits::INLINABLE };
     (SetThisField) => { Traits::INLINABLE };
     (LoadCapture) => { Traits::INLINABLE };
-    (ToNumeric) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
-    (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
-    (SetIndex) => { Traits::INLINABLE };
-    (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
+    (ToNumeric) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
+    (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
+    (SetIndex) => { Traits::INLINABLE.union(Traits::LIFETIME_SAFE) };
+    (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
     (WasmMemorySize) => { Traits::WASM_MEMORY };
     (WasmMemoryFill) => { Traits::WASM_MEMORY };
     (WasmMemoryCopy) => { Traits::WASM_MEMORY };

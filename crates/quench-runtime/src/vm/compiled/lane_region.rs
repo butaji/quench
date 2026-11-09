@@ -610,7 +610,7 @@ fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstructi
         match instruction.op() {
             Op::LoadConst => program.constants.get(instruction.constant_index())
                 .and_then(super::facts::immediate).is_some(),
-            Op::Nop | Op::Move | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return => true,
+            op if op.traits().has(Traits::FRAME_ONLY) || op.is_inc_dec() || op.is_return() => true,
             op => op.js_denotation() == JsDenotation::NumericBinary
                 && instruction.numeric_local_target().is_none(),
         }
@@ -949,7 +949,7 @@ fn int32_read(program: &ResidualProgram, fields: &BTreeMap<u16, Vec<NativeFieldL
 /// non-Number operand, a missed cache) leaves the body first.
 fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> bool {
     match instruction.op() {
-        Op::Move | Op::Nop | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse => true,
+        op if op.traits().has(Traits::FRAME_ONLY) => true,
         Op::LoadConst => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
         Op::IncDec => instruction.numeric_local_target().is_none(),
         Op::LoadCapture => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
