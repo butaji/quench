@@ -3124,14 +3124,14 @@ pub(super) fn lower_js_general_dispatch(
             continue;
         }
 
-        let direct_branch = match instruction.op() {
-            Op::JumpFalse | Op::JumpTrue => register_offset(instruction.register_a()).map(
+        let direct_branch = match instruction.op().class() {
+            Class::JumpFalse | Class::JumpTrue => register_offset(instruction.register_a()).map(
                 |_| JsGeneralBranch::ToBoolean {
                     source: instruction.register_a(),
-                    take_when_truthy: instruction.op().class().eq(Class::JumpTrue),
+                    take_when_truthy: instruction.op().is_jump_true(),
                 },
             ),
-            Op::JumpBinaryFalse => {
+            Class::JumpBinaryFalse => {
                 let operator = instruction.binary_operator_field();
                 let left = instruction.operand_b();
                 let right = instruction.operand_c();
@@ -6935,8 +6935,8 @@ impl<H: Host> Vm<H> {
     /// per read of its chain, and its sink's store.
     /// The field cache sites `instruction` reads (`true`) or stores through (`false`).
     fn instruction_field_sites(program: &ResidualProgram, instruction: &WideInstruction) -> Vec<(u16, bool)> {
-        match instruction.op() {
-            Op::GetField => match instruction.field_lookup() {
+        match instruction.op().class() {
+            Class::GetField => match instruction.field_lookup() {
                 Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
                 Some(FieldLookup::Site(index)) => program.field_sites.get(index).map_or_else(Vec::new, |site| {
                     let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
@@ -6944,7 +6944,7 @@ impl<H: Host> Vm<H> {
                 }),
                 None => Vec::new(),
             },
-            op if op.is_field_store() => vec![(instruction.cache_site_index(), false)],
+            _ if instruction.op().is_field_store() => vec![(instruction.cache_site_index(), false)],
             _ => Vec::new(),
         }
     }
@@ -8668,8 +8668,8 @@ impl<H: Host> Analysis<'_, H> {
             .zip(&instructions)
             .map(|(state, instruction)| {
                 let state = state.as_ref()?;
-                let operand = match instruction.op() {
-                    Op::WasmMemoryLoad | Op::WasmMemoryStore => instruction.c(),
+                let operand = match instruction.op().class() {
+                    Class::WasmMemoryLoad | Class::WasmMemoryStore => instruction.c(),
                     _ => instruction.b(),
                 };
                 Some(state.get(operand, function.registers).unwrap_or(Slot::Conflict))
@@ -10901,12 +10901,12 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// The instructions that define or read vectors (`Slot::Vector`); `None` for any other.
     fn vector_instruction(&mut self, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        match instruction.op() {
-            Op::Move if self.plan.operand(pc) == Slot::Vector => {
+        match instruction.op().class() {
+            Class::Move if self.plan.operand(pc) == Slot::Vector => {
                 let value = self.read_vector(b);
                 self.write_vector(a, value);
             }
-            Op::LoadConst | Op::WasmFillRegisters => {
+            Class::LoadConst | Class::WasmFillRegisters => {
                 let constant = self.analysis.constant(instruction.constant_index())?;
                 let bits = self.analysis.constant_vector(constant)?;
                 let registers = if instruction.op().class().eq(Class::LoadConst) {
@@ -10920,7 +10920,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                     self.write_vector(register, value);
                 }
             }
-            Op::WasmMemoryAddress => {
+            Class::WasmMemoryAddress => {
                 let offset = self
                     .analysis
                     .memory_offset(instruction.constant_index())
@@ -10931,17 +10931,17 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let address = self.body.core.builder.ins().iadd_imm_u(address, offset as i64);
                 self.write(a, Kind::I64, address);
             }
-            Op::WasmMemoryLoad => {
+            Class::WasmMemoryLoad => {
                 let (address, flags) = self.vector_address(pc, c);
                 let value = self.body.core.builder.ins().load(VECTOR_IR, flags, address, 0);
                 self.write_vector(a, value);
             }
-            Op::WasmMemoryStore => {
+            Class::WasmMemoryStore => {
                 let (address, flags) = self.vector_address(pc, c);
                 let value = self.read_vector(a);
                 self.body.core.builder.ins().store(flags, value, address, 0);
             }
-            Op::WasmSimdShuffle => {
+            Class::WasmSimdShuffle => {
                 let lanes = self
                     .analysis
                     .shuffle_lanes(instruction.constant_index())
@@ -10956,7 +10956,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let value = self.body.core.builder.ins().shuffle(left, right, mask);
                 self.write_vector(a, value);
             }
-            Op::WasmSimd => self.simd(pc, instruction),
+            Class::WasmSimd => self.simd(pc, instruction),
             _ => return None,
         }
         Some(true)
@@ -13387,8 +13387,8 @@ impl<H: Host> Vm<H> {
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                match instruction.op() {
-                    Op::Call => {
+                match instruction.op().class() {
+                    Class::Call => {
                         if let Slot::IndirectReference { table, .. } = full_plan.operand(pc) {
                             let site_id = reference_cache_count;
                             reference_cache_count += 1;
@@ -13404,7 +13404,7 @@ impl<H: Host> Vm<H> {
                             }
                         }
                     }
-                    Op::WasmGlobalGet | Op::WasmGlobalSet => {
+                    Class::WasmGlobalGet | Class::WasmGlobalSet => {
                         if let Some(Slot::Binding(slot)) = full_plan.operands[pc]
                             && !globals.contains(&slot)
                         {
