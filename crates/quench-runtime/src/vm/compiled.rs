@@ -2345,9 +2345,8 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     let has_calls = unit.instructions.iter().any(|instruction|
         instruction.op().control_flow_layout() == ControlFlowLayout::Call);
     let scalar = !has_calls && unit.instructions.iter().all(|instruction|
-        matches!(instruction.op().js_denotation(), JsDenotation::NumericBinary | JsDenotation::Noop
-                | JsDenotation::LoadConst | JsDenotation::Move | JsDenotation::Jump | JsDenotation::Return)
-            || matches!(instruction.op(), Op::IncDec | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
+        instruction.op().js_denotation() == JsDenotation::NumericBinary
+            || instruction.op().traits().has(crate::bytecode::Traits::SCALAR_REGION)
             || (instruction.op().class().eq(Class::LoadCapture) && instruction.result_flags() == 0 && instruction.capture_depth() == 0));
     // A region whose loops index arrays in place also gets its typed-array variant, which the
     // dispatcher enters at the same header where the dense one leaves there (it comes first
@@ -2388,7 +2387,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         instruction.op().control_flow_layout().jumps()
             && instruction.jump_target() as usize <= pc
             && unit.instructions[instruction.jump_target() as usize..=pc].iter()
-                .any(|body| matches!(body.op(), Op::GetIndex | Op::SetIndex)));
+                .any(|body| body.op().traits().has(crate::bytecode::Traits::ELEMENT_ACCESS)));
     if headers.is_empty() && !array_loops && !unit.frames.is_empty() { headers.push(0); }
     headers.into_iter().filter_map(|header| lower(lane_region::Coverage::PrefixFrom(header))).flatten().collect()
 }
