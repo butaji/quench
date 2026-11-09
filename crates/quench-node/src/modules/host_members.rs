@@ -64,6 +64,13 @@ pub(crate) fn captured<const N: usize>(c: &mut Context<'_>) -> Result<[RootId; N
     Ok(std::array::from_fn(|index| values.get(index + 1).copied().unwrap_or(missing)))
 }
 
+/// A call's first `N` arguments, `undefined` where absent, and the arguments after them.
+pub(crate) fn leading<'a, const N: usize>(c: &mut Context<'_>, args: &'a [RootId]) -> ([RootId; N], &'a [RootId]) {
+    let missing = c.undefined();
+    let named = std::array::from_fn(|index| args.get(index).copied().unwrap_or(missing));
+    (named, args.get(N..).unwrap_or_default())
+}
+
 /// Methods as Node assigns them to a prototype: enumerable, writable and configurable.
 pub(crate) fn methods<M: Members>(c: &mut Context<'_>, target: RootId, members: &[(&str, M)]) -> Result<(), RootedError> {
     for &(name, member) in members {

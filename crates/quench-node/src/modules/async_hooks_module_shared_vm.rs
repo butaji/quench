@@ -16,7 +16,7 @@ const SNAPSHOT_TYPE: &str = "AsyncLocalStorage.snapshot";
 /// `new AsyncLocalStorage()`: a storage with its own store slot.
 pub(crate) fn storage_constructor(c: &mut Context<'_>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     require_new(c, "AsyncLocalStorage")?;
-    super::async_hooks_shared_vm::initialize_storage(c, receiver, &[])?;
+    super::async_local_storage_shared_vm::initialize_storage(c, receiver, &[])?;
     Ok(c.undefined())
 }
 
@@ -24,7 +24,7 @@ pub(crate) fn storage_constructor(c: &mut Context<'_>, receiver: RootId, _: &[Ro
 pub(crate) fn storage_exit(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let mut run = vec![c.undefined()];
     run.extend_from_slice(args);
-    super::async_hooks_shared_vm::run_storage(c, receiver, &run)
+    super::async_local_storage_shared_vm::run_storage(c, receiver, &run)
 }
 
 /// `AsyncLocalStorage.bind(fn)`: `fn` bound to the current context.
