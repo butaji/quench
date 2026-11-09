@@ -276,6 +276,9 @@ fn count_opcode_names(source: &str, file: &str, arms: &mut std::collections::BTr
     for (at, _) in code.match_indices("Op::") {
         let op: String = code[at + 4..].chars().take_while(char::is_ascii_alphanumeric).collect();
         let qualified = code[..at].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_');
+        // `WideInstruction::new(Op::X, ...)` supplies an opcode value to the builder; it is
+        // not a second definition of the opcode's meaning.
+        if code[..at].trim_end().ends_with("WideInstruction::new(") { continue; }
         if !qualified && op.starts_with(|c: char| c.is_ascii_uppercase()) {
             *arms.entry((file.to_owned(), op)).or_insert(0) += 1;
         }
