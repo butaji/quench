@@ -163,8 +163,9 @@ fn step_moves_and_defines_constants_on_the_concrete_stage() {
 fn every_staged_opcode_decodes_to_one_operation() {
     use crate::bytecode::{Op, Semantics, WideInstruction};
     let constants = [Constant::untyped(Value::number(1.0))];
-    let staged = [Op::Move, Op::LoadConst, Op::Jump, Op::JumpFalse, Op::JumpTrue,
-        Op::LoadThis, Op::RequireObjectCoercible, Op::ToNumeric];
+    let staged = [Op::Move, Op::LoadConst, Op::LoadLocalPlain, Op::StoreLocalPlain,
+        Op::Jump, Op::JumpFalse, Op::JumpTrue, Op::LoadThis, Op::RequireObjectCoercible,
+        Op::ToNumeric];
     for op in staged {
         assert_eq!(op.semantics(), Semantics::Staged, "{op:?}");
         let instruction = WideInstruction::new(op, 1, 2, 3, 0);
