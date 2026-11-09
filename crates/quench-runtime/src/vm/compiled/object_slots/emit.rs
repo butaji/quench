@@ -14,7 +14,7 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
 }
 
 impl Stage for Emit<'_, '_> {
-    type Proof = CheckedObject;
+    type Proof = super::super::EmitProof;
     type Word = ir::Value;
     /// Any integer: nonzero holds.
     type Cond = ir::Value;
@@ -64,6 +64,18 @@ impl Stage for Emit<'_, '_> {
         self.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, a, imm as i64)
     }
     fn not(&mut self, cond: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, cond, 0) }
+    fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
+        self.builder.ins().select(cond, then, otherwise)
+    }
+    fn shape_in(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value {
+        let word = if self.builder.func.dfg.value_type(shape) == types::I32 { shape } else { self.builder.ins().ireduce(types::I32, shape) };
+        super::shape_in_set(self.builder, word, shapes)
+    }
+    fn number_truthy(&mut self, bits: ir::Value) -> ir::Value {
+        let number = self.builder.ins().bitcast(types::F64, MemFlagsData::new(), bits);
+        super::super::emit_number_truthiness(self.builder, number)
+    }
     fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
         otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
         let (then_block, else_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());

@@ -58,7 +58,7 @@ impl State {
     }
 
     fn branch(&mut self, program: &ResidualProgram, instruction: WideInstruction, truth: bool) -> Option<()> {
-        if instruction.op() != Op::JumpBinaryFalse { return Some(()); }
+        if !instruction.op().is_jump_binary_false() { return Some(()); }
         let Some(relation) = NumberRelation::from_operator(instruction.binary_operator_field()) else { return Some(()) };
         let operands = [instruction.operand_b(), instruction.operand_c()];
         let Some((left, right)) = self.operand(program, operands[0]).zip(self.operand(program, operands[1])) else { return Some(()) };
@@ -89,7 +89,7 @@ fn relation_ranges(relation: NumberRelation, truth: bool, left: IntRange, right:
 
 fn result(state: &State, program: &ResidualProgram, instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
-    if instruction.op() == Op::LoadConst {
+    if instruction.op().is_load_const() {
         return program.constants.get(instruction.constant_index())
             .and_then(super::super::facts::immediate).and_then(Value::as_int).map(IntRange::singleton);
     }
@@ -137,7 +137,7 @@ pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit:
             stores[index] = Some(range);
             state.write_field(range);
         }
-        let copied = (instruction.op() == Op::Move && instruction.result_flags() == 0)
+        let copied = (instruction.op().is_move() && instruction.result_flags() == 0)
             .then(|| (state.ranges[usize::from(instruction.register_b())], state.current.contains(usize::from(instruction.register_b()))));
         let read = field.reads.contains(&pc);
         let range = if read { Some(state.field) } else { result(&state, program, instruction) };

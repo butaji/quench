@@ -38,10 +38,8 @@ impl<H: Host> Vm<H> {
     /// Clears the registers dead at `frame`'s suspension and returns the live ones, when
     /// liveness covers its function.
     fn release_dead_registers(&self, frame: &mut super::Frame) -> Option<crate::compile::liveness::RegisterSet> {
-        let mask = self
-            .programs
-            .residual(frame.program)
-            .and_then(|program| program.register_root_mask(frame.function, frame.pc))?;
+        let masks = self.programs.residual(frame.program).and_then(|program| program.register_root_masks(frame.function))?;
+        if masks.is_windowed() { return None; } let mask = masks.get(frame.pc)?;
         // The mask covers the first `RegisterSet::BITS` registers; every later one is dead.
         type RegisterSet = crate::compile::liveness::RegisterSet;
         let covered = frame.registers.len().min(RegisterSet::BITS as usize);
@@ -50,7 +48,7 @@ impl<H: Host> Vm<H> {
         // Dead registers come in runs (a statement's temporaries), each cleared as one span,
         // found a machine word of the mask at a time.
         for (word, registers) in low.chunks_mut(u64::BITS as usize).enumerate() {
-            let live = (mask >> (word * u64::BITS as usize)) as u64;
+            let live = mask.word(word);
             let mut dead = !live & u64::MAX >> (u64::BITS as usize - registers.len());
             while dead != 0 {
                 let start = dead.trailing_zeros();

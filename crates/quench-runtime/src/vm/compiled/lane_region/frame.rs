@@ -26,6 +26,10 @@ pub(super) struct EmitFrame<'a> {
     pub(super) constants: &'a [crate::bytecode::Constant],
     /// The entry's `this` binding, where the lowering has entry facts.
     pub(super) this: Option<Variable>,
+    /// The running body's dispatch payload, which semantic helpers take.
+    pub(super) payload: ir::Value,
+    /// The helper table a callout addresses.
+    pub(super) helpers: LaneHelpers,
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -94,7 +98,8 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     /// read, so the frame adds no second decode.
     #[inline(always)]
     fn field_read(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, ty: Type,
-        proof: CheckedObject) -> Option<(ir::Value, RegisterFact)> {
+        proof: EmitProof) -> Option<(ir::Value, RegisterFact)> {
+        let EmitProof::Field(proof) = proof else { return None };
         Some((proof.read(stage.builder, slot),
             RegisterFact::definition(ty, Representation::Tagged)))
     }
@@ -103,10 +108,71 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     /// guard uses.
     #[inline(always)]
     fn field_write(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, _ty: Type,
-        value: ir::Value, proof: CheckedObject) -> Option<()> {
+        value: ir::Value, proof: EmitProof) -> Option<()> {
+        let EmitProof::Field(proof) = proof else { return None };
         let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
         let address = proof.arena_address(stage.builder, slot, miss)?;
         stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+        Some(())
+    }
+
+    /// A dense element under the view proof; a hole or an index past the view continues at
+    /// the proof's cold block, exactly as the lowering's cold path did.
+    #[inline(always)]
+    fn index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
+        let EmitProof::Index { view, absent } = proof else { return None };
+        Some(super::super::emit_dense_element(stage.builder, view, index, absent).1)
+    }
+
+    #[inline(always)]
+    fn index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
+        proof: EmitProof) -> Option<()> {
+        let EmitProof::Index { view, absent } = proof else { return None };
+        let (address, old) = super::super::emit_dense_element(stage.builder, view, index, absent);
+        super::super::emit_dense_element_replace(stage.builder, view, address, old, value);
+        Some(())
+    }
+
+    /// An object literal: the lane's own allocator, whose DELETED answer (a due collection)
+    /// leaves at the proof's miss edge.
+    #[inline(always)]
+    fn allocate_object(&mut self, stage: &mut Emit<'_, '_>, destination: Register, proof: EmitProof) -> Option<ir::Value> {
+        let EmitProof::Allocation { miss } = proof else { return None };
+        let payload = self.payload;
+        let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewObject);
+        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload]);
+        finish_allocation(stage, self, destination, value, miss);
+        Some(value)
+    }
+
+    /// An array literal: the lane's own allocator, with its holes or its written elements.
+    #[inline(always)]
+    fn allocate_array(&mut self, stage: &mut Emit<'_, '_>, destination: Register, length: ir::Value,
+        elements: ir::Value, proof: EmitProof) -> Option<ir::Value> {
+        let EmitProof::Allocation { miss } = proof else { return None };
+        let payload = self.payload;
+        let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewArray);
+        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload, length, elements]);
+        finish_allocation(stage, self, destination, value, miss);
+        Some(value)
+    }
+
+    /// A typed array element: the kind's load, as a Number word.
+    #[inline(always)]
+    fn typed_index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
+        let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
+        Some(super::typed_element(stage.builder, values, length, kind, index, absent, super::typed_read))
+    }
+
+    /// A typed array element store: the kind's conversion, then its width.
+    #[inline(always)]
+    fn typed_index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
+        proof: EmitProof) -> Option<()> {
+        let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
+        super::typed_element(stage.builder, values, length, kind, index, absent, |builder, load, address| {
+            super::typed_write(builder, load, address, value, absent);
+            value
+        });
         Some(())
     }
 
@@ -128,6 +194,17 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn jump(&mut self, _stage: &mut Emit<'_, '_>) {
         debug_assert!(matches!(self.edges, Edges::Jump));
     }
+}
+
+/// A literal allocation's DELETED answer (a due collection) leaves at `miss`; otherwise the
+/// literal is the destination's tagged value.
+#[inline(always)]
+fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<'_>, destination: Register,
+    value: ir::Value, miss: ir::Block) {
+    let made = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+    super::super::emit_js_guard(stage.builder, made, miss);
+    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
+        RegisterFact::definition(Type::ANY, Representation::Tagged));
 }
 
 /// ToBoolean of `register` as an i8, from its proved representation; a tagged value whose

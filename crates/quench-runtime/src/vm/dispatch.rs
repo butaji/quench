@@ -900,17 +900,7 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError::validation("constant array is outside program".into()))?;
                 self.write(f, i.result_register(), v);
             }
-            Op::StringCaseIndex => {
-                let start = i.constant_index();
-                let end = start + usize::from(i.element_count());
-                let value = self.read(f, i.register_c());
-                let cases = self.programs.constants(self.frames[f].program);
-                let cases = cases
-                    .get(start..end)
-                    .ok_or_else(|| JsError::validation("switch cases are outside program".into()))?;
-                let index = self.string_case_index(value, cases);
-                self.write(f, i.result_register(), Value::integer(index as i32));
-            }
+            Op::StringCaseIndex => self.select_string_case(f, i)?,
             Op::MakeLiteralTemplate => {
                 let v = self.literal_template(p, f, i.literal_template_index())?;
                 self.write(f, i.result_register(), v);
@@ -1296,11 +1286,8 @@ impl<H: Host> Vm<H> {
                 )?
             }
             Op::DefineArrayElement => {
-                let (array, index, value) =
-                    (self.read(f, i.register_b()), i.array_index() as usize, self.read(f, i.register_a()));
-                if !self.define_literal_element(array, index, value) {
-                    self.define_array_literal_element(p, array, index, value)?;
-                }
+                let (array, value) = (self.read(f, i.register_b()), self.read(f, i.register_a()));
+                self.define_array_literal_element(p, array, i.array_index() as usize, value)?;
             }
             Op::Move => self.write(f, i.result_register(), self.read(f, i.register_b())),
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
@@ -1747,6 +1734,7 @@ impl<H: Host> Vm<H> {
                 let message = self.detail_string(value);
                 return Err(JsError::thrown(value, message));
             }
+            Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
             _ => return self.step_wasm(p, f, i, pc),
         }
         Ok(StepResult::Continue)

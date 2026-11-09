@@ -37,7 +37,7 @@ impl Lowering<'_, '_> {
             }
         }
         // A call's receiver is `undefined` for a binding of the global scope.
-        if instruction.op() == Op::LoadNameCall {
+        if instruction.op().is_load_name_call() {
             self.define_immediate(state, instruction.register_b(), Value::UNDEFINED);
         }
         true
@@ -77,7 +77,7 @@ impl Lowering<'_, '_> {
         if !self.division().folds(BindingTime::Stable) { return; }
         let Some(end) = self.loop_end(header) else { return };
         let global = self.loop_realm(header, end);
-        let folds = global.is_some() || self.unit.instructions[header..=end].iter().any(|instruction| instruction.op() == Op::GetField);
+        let folds = global.is_some() || self.unit.instructions[header..=end].iter().any(|instruction| instruction.op().is_get_field());
         let stable = folds && (header..=end).all(|pc| self.keeps_stable_facts(pc, self.unit.instructions[pc]));
         if !(stable || global.is_some()) || !self.enters_only_at_header(header, end) { return; }
         let exit = self.guard_exit(state, header as u32);
@@ -89,7 +89,7 @@ impl Lowering<'_, '_> {
     /// The last backedge of the loop at `header`, if one closes there.
     fn loop_end(&self, header: usize) -> Option<usize> {
         self.unit.instructions.iter().rposition(|instruction|
-            instruction.op() == Op::Jump && instruction.jump_target() as usize == header).filter(|end| *end >= header)
+            instruction.op().is_jump() && instruction.jump_target() as usize == header).filter(|end| *end >= header)
     }
 
     /// The realm a Stable global read in `header..=end` was compiled against, if any.

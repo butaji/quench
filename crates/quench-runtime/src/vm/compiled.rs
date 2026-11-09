@@ -627,52 +627,11 @@ fn js_tagged_operand_supported(
 
 /// Compute ToBoolean for values whose truthiness is encoded without a heap
 /// lookup. Strings, BigInts, and objects take the VM path at the same PC.
-fn emit_js_tagged_truthiness(
-    builder: &mut FunctionBuilder<'_>,
-    bits: ir::Value,
-    fallback: ir::Block,
-) -> ir::Value {
-    let is_true = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64);
-    let is_false = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, bits, Value::FALSE.to_bits() as i64);
-    let is_null = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
-    let is_undefined = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
-    let known_primitive = builder.ins().bor(is_true, is_false);
-    let known_primitive = builder.ins().bor(known_primitive, is_null);
-    let known_primitive = builder.ins().bor(known_primitive, is_undefined);
-    // A direct object or array record is truthy: neither family holds the IsHTMLDDA object.
-    let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), bits);
-    let array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), bits);
-    let record = builder.ins().bor(object, array);
-    let known = builder.ins().bor(known_primitive, record);
-    let truthy_known = builder.ins().bor(is_true, record);
-
-    let known_block = builder.create_block();
-    let number_block = builder.create_block();
-    let join = builder.create_block();
-    builder.append_block_param(join, types::I8);
-    builder.ins().brif(known, known_block, &[], number_block, &[]);
-
-    builder.switch_to_block(known_block);
-    builder.ins().jump(join, &[ir::BlockArg::Value(truthy_known)]);
-
-    builder.switch_to_block(number_block);
-    let number = emit_js_tagged_number(builder, bits, fallback);
-    let truthy = emit_number_truthiness(builder, number);
-    builder.ins().jump(join, &[ir::BlockArg::Value(truthy)]);
-
-    builder.seal_block(known_block);
-    builder.seal_block(number_block);
-    builder.seal_block(join);
-    builder.switch_to_block(join);
-    builder.block_params(join)[0]
+fn emit_js_tagged_truthiness(builder: &mut FunctionBuilder<'_>, bits: ir::Value, fallback: ir::Block) -> ir::Value {
+    let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut object_slots::emit(builder), bits);
+    let decided = builder.ins().icmp_imm_u(IntCC::Equal, undecided, 0);
+    emit_js_guard(builder, decided, fallback);
+    truthy
 }
 
 /// Decode an already-proved Number without repeating its semantic type check.
@@ -1042,6 +1001,15 @@ pub(super) struct DenseArrayView {
     /// alone, is not frozen and has no extras (indexed descriptors, an arguments map or a
     /// prototype watch), as `Vm::try_replace_record_element` requires.
     pub(super) writable: bool,
+}
+
+/// The emission proofs a staged value operation carries: a field projection or a dense
+/// array view with the cold block a hole or miss continues at.
+#[derive(Clone, Copy)]
+pub(in crate::vm::compiled) enum EmitProof {
+    Field(object_slots::CheckedObject),
+    Index { view: DenseArrayView, absent: ir::Block },
+    TypedIndex { values: ir::Value, length: ir::Value, kind: ir::Value, absent: ir::Block }, Allocation { miss: ir::Block },
 }
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place
@@ -1650,10 +1618,10 @@ fn emit_js_own_field_set(
     exact: &JsExactFallback,
 ) {
     let receiver = receiver.emit(builder, arguments, payload, fallback);
-    let (store, add, done) = (builder.create_block(), builder.create_block(), builder.create_block());
+    let (store, done) = (builder.create_block(), builder.create_block());
     general_store::emit_store(builder, (arguments, payload), receiver, atom, site, value, done, store);
     builder.switch_to_block(store);
-    general_store::emit_helper_store(builder, payload, (receiver, atom, site, value), (add, done, fallback));
+    general_store::emit_helper_store(builder, payload, (receiver, atom, site, value), (done, fallback));
     builder.switch_to_block(done);
     if let Some(destination) = result_destination {
         builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
@@ -2353,9 +2321,8 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     let has_calls = unit.instructions.iter().any(|instruction|
         instruction.op().control_flow_layout() == ControlFlowLayout::Call);
     let scalar = !has_calls && unit.instructions.iter().all(|instruction|
-        matches!(instruction.op().js_denotation(), JsDenotation::NumericBinary | JsDenotation::Noop
-                | JsDenotation::LoadConst | JsDenotation::Move | JsDenotation::Jump | JsDenotation::Return)
-            || matches!(instruction.op(), Op::IncDec | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
+        instruction.op().js_denotation() == JsDenotation::NumericBinary
+            || instruction.op().traits().has(crate::bytecode::Traits::SCALAR_REGION)
             || (instruction.op().class().eq(Class::LoadCapture) && instruction.result_flags() == 0 && instruction.capture_depth() == 0));
     // A region whose loops index arrays in place also gets its typed-array variant, which the
     // dispatcher enters at the same header where the dense one leaves there (it comes first
@@ -2396,7 +2363,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         instruction.op().control_flow_layout().jumps()
             && instruction.jump_target() as usize <= pc
             && unit.instructions[instruction.jump_target() as usize..=pc].iter()
-                .any(|body| matches!(body.op(), Op::GetIndex | Op::SetIndex)));
+                .any(|body| body.op().traits().has(crate::bytecode::Traits::ELEMENT_ACCESS)));
     if headers.is_empty() && !array_loops && !unit.frames.is_empty() { headers.push(0); }
     headers.into_iter().filter_map(|header| lower(lane_region::Coverage::PrefixFrom(header))).flatten().collect()
 }
@@ -2779,7 +2746,7 @@ pub(super) fn lower_js_general_dispatch(
             continue;
         }
         if let Some(native) = general_call::lower_shortcut(&mut builder,
-            (pc, instruction, next), function, &register_offset, (arguments, payload), (locals, local_count),
+            (pc, instruction, &entries), function, &register_offset, (arguments, payload), (locals, local_count),
             &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) {
             general_dispatch_native_pcs[pc] = if native { PcLowering::Native } else { PcLowering::Stepped } as u8;
             continue;
@@ -4794,7 +4761,7 @@ unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) 
 /// Whether `field` of `instruction` is the unused second operand of a one-operand SIMD
 /// operator, which lowering leaves naming register 0 and nothing reads.
 fn unary_simd_spare(instruction: WideInstruction, field: crate::bytecode::InstructionField) -> bool {
-    instruction.op() == Op::WasmSimd
+    instruction.op().is_wasm_simd()
         && field == crate::bytecode::InstructionField::C
         && crate::wasm::simd::SimdKernel::of(instruction.imm())
             .is_some_and(|(kernel, _)| kernel.right.is_none())
@@ -6479,7 +6446,7 @@ struct JsStepDispatch {
     /// through callouts; growth/compaction update its base/length in place.
     property_buffer: usize,
     field_entries: usize,
-    /// Host-bound recording store operation; no JIT/compiler capability is required.
+    /// A store into the receiver's slot, else the site's cached add (`general_field_store`).
     field_store: usize,
     /// The names method caches hold (`Vm::method_caches_may_name`), one bit each, and its
     /// length in words; and whether the VM and program run specialized, which a cached store
@@ -6511,9 +6478,6 @@ struct JsStepDispatch {
     /// The next free and the end of the run's shadow frames (`LaneFrame::shadow`).
     shadow_top: usize,
     shadow_end: usize,
-    /// What a store missing its existing slot tries next (`lane_store_miss`): the object's
-    /// shape and storage may change, which only re-proved reads see.
-    field_add: usize,
     /// The VM's cached read (`general_field_get`), which a read its site's primary row does
     /// not answer asks before the exact step, then its cached user getter (`general_getter`).
     field_get: usize, field_getter: usize,
@@ -6868,6 +6832,15 @@ unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u6
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
     1
+}
+
+/// A general-dispatch store in one call: into the slot the receiver has (`lane_field_set`),
+/// else as `lane_store_miss`.
+unsafe extern "C" fn general_field_store<H: Host>(vm: u64, residual: u64, payload: u64, receiver: u64, write: u64, value: u64) -> u64 {
+    let (atom, site) = (write >> u16::BITS, write & u64::from(u16::MAX));
+    // SAFETY: as the caller promises, for both.
+    unsafe { lane_field_set::<H>(vm, residual, receiver, atom, site, value) != 0 || lane_store_miss::<H>(vm, residual, payload, receiver, write, value) != 0 }
+        .into()
 }
 
 /// A general-dispatch store that missed its existing slot (`lane_field_set`): the site's cached
@@ -7286,7 +7259,6 @@ impl LaneFrame {
                 property_buffer: 0,
                 field_entries: 0,
                 field_store: 0,
-                field_add: 0,
                 field_get: 0, field_getter: 0,
                 native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0,
                 allocated: 0,
@@ -7439,7 +7411,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -7472,8 +7444,7 @@ impl JsStepDispatch {
     fn bind_native_storage<H: Host>(&mut self, vm: *mut Vm<H>) {
         let offset = std::mem::offset_of!(Vm<H>, heap) + crate::heap::Heap::PROPERTY_BUFFER_OFFSET;
         self.property_buffer = vm.cast::<u8>().wrapping_add(offset) as usize;
-        self.field_store = lane_field_set::<H> as *const () as usize;
-        self.field_add = lane_store_miss::<H> as *const () as usize;
+        self.field_store = general_field_store::<H> as *const () as usize;
         (self.field_get, self.field_getter) = (general_field_get::<H> as *const () as usize,
             general_getter::general_field_getter::<H> as *const () as usize);
         self.native_call = general_call::general_native_call::<H> as *const () as usize;
@@ -7510,6 +7481,7 @@ impl JsStepDispatch {
 
     /// Refresh the additional frame and array views read by the general tier.
     fn refresh_heap_bases<H: Host>(&mut self, vm: &Vm<H>, program: &ResidualProgram) {
+        let (epoch, captures, view) = (self.epoch, self.capture_values, self.env_view);
         self.refresh_object_bases(vm);
         self.fixed_this_slot = vm.frames.get(self.frame)
             .filter(|frame| frame.fixed_this)
@@ -7523,7 +7495,11 @@ impl JsStepDispatch {
                 unsafe { &*slots }.native_dense_view()
             })
             .unwrap_or((std::ptr::null(), 0));
-        (self.capture_stores, self.env_view) = (0, general_capture::EnvView::of(vm, self));
+        // Admitted writes outlive the refresh while their slots and collection epoch do: the
+        // barrier they took holds until a collection.
+        let kept = |same: bool| usize::from(same && epoch == self.epoch);
+        self.capture_stores &= kept(captures == self.capture_values);
+        self.env_view = general_capture::EnvView::of(vm, self).kept(view, kept(true));
         vm.frameless.bind(self);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
         self.stores_specialized = usize::from(vm.specialized && program.specialized);
@@ -8746,7 +8722,7 @@ impl<H: Host> Analysis<'_, H> {
         result: Option<crate::WasmType>,
     ) -> Option<()> {
         let op = instruction.op();
-        if op != Op::Return && instruction.returns_from_frame() {
+        if !op.is_return() && instruction.returns_from_frame() {
             return None;
         }
         if !super::dispatch_fast::lane_fields_fit(instruction, function) {
@@ -8767,7 +8743,7 @@ impl<H: Host> Analysis<'_, H> {
         // The memory register is read only by direct accesses through it.
         if memory_register.is_some_and(|memory| {
             !direct_access(op) && !op.traits().has(Traits::WASM_MEMORY)
-                && op != Op::WasmInstanceBinding
+                && !op.is_wasm_instance_binding()
                 && crate::bytecode::InstructionField::ALL.iter().any(|field| {
                     op.field_layout(*field).reads_register()
                         && instruction.field_value(*field) == memory
@@ -11230,7 +11206,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             };
             return true;
         }
-        if op == Op::WasmMemorySize {
+        if op.is_wasm_memory_size() {
             let bytes = self.body.core.builder.ins().load(
                 types::I64,
                 MemFlagsData::trusted(),
@@ -11242,7 +11218,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             self.write(a, Kind::I32, pages);
             return true;
         }
-        if op == Op::WasmMemoryCopy {
+        if op.is_wasm_memory_copy() {
             let (destination, source) = instruction.register_pair();
             let destination = self.read(destination, Kind::I32);
             let destination = self.body.core.builder.ins().uextend(types::I64, destination);
@@ -11283,7 +11259,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 .call_indirect(signature, target, &[destination, source, length]);
             return true;
         }
-        if op == Op::WasmMemoryFill {
+        if op.is_wasm_memory_fill() {
             let (destination, _) = instruction.register_pair();
             let destination = self.read(destination, Kind::I32);
             let destination = self.body.core.builder.ins().uextend(types::I64, destination);
@@ -11372,7 +11348,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                     .expect("planned");
                 let kind = self.analysis.constant_kind(constant);
                 let bits = self.analysis.constant_bits(constant);
-                if op == Op::LoadConst {
+                if op.is_load_const() {
                     self.write_constant(a, kind, bits);
                 } else {
                     let window = instruction.register_window();
@@ -11410,7 +11386,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             Op::WasmJumpI32Zero | Op::WasmJumpI32NonZero => {
                 let value = self.read(a, Kind::I32);
                 let (taken, other) = (instruction.jump_target() as usize, pc + 1);
-                if op == Op::WasmJumpI32NonZero {
+                if op.is_wasm_jump_i32_non_zero() {
                     self.branch(pc, value, taken, other);
                 } else {
                     self.branch(pc, value, other, taken);
@@ -11768,7 +11744,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             .iter()
             .enumerate()
             .filter(|(pc, instruction)| {
-                plan.reachable(*pc) && instruction.op() == Op::WasmBranchTable
+                plan.reachable(*pc) && instruction.op().is_wasm_branch_table()
             })
             .map(|(_, instruction)| instruction.a())
             .collect();
@@ -18498,7 +18474,7 @@ mod tests {
     fn static_semantic_entry_admits_wide_opcodes_without_decoding_source_operands() {
         let mut program = crate::Engine::specialize("throw 7;", "wide-semantic-entry.js").unwrap();
         let body = &mut program.functions[0];
-        let pc = body.instructions().position(|instruction| instruction.op() == Op::Throw).unwrap();
+        let pc = body.instructions().position(|instruction| instruction.op().is_throw()).unwrap();
         let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
         let wide_index = body.wide.len();
         body.wide.push(instruction);

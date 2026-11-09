@@ -59,6 +59,9 @@ pub struct NativeJsPublicationCounts {
     pub frozen_globals: usize,
     /// Whole-program prototype values the image folds, each guarded at its read site.
     pub frozen_fields: usize,
+    /// Functions whose windowed root map would exceed `MAX_MASK_BYTES`: their frames carry
+    /// one conservative all-live map.
+    pub wide_frame_functions: usize,
 }
 
 /// The whole-program assumptions an eager image folded, replayed when it loads.

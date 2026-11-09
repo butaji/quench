@@ -10,7 +10,7 @@
 //! outermost first, through the lane's own call path, and continues at the innermost one's
 //! record (`Vm::lane_body_inlined_activation`).
 
-use crate::bytecode::{Class, FieldLookup, ImmediateLayout, Op, Register, WideInstruction};
+use crate::bytecode::{Class, FieldLookup, ImmediateLayout, Op, Register, Traits, WideInstruction};
 use crate::bytecode::Function;
 use crate::value::Value;
 #[cfg(feature = "aot")] #[path = "lane_unit/static_hints.rs"] mod static_hints;
@@ -144,7 +144,7 @@ impl Unit {
         &self, program: &'a crate::ResidualProgram, caller: u32,
     ) -> Option<std::borrow::Cow<'a, crate::compile::liveness::RegisterMasks>> {
         use crate::compile::liveness::{ROOT_MAP_REGISTERS, RegisterMasks, RegisterSet, register_bit};
-        let caller_masks = program.register_root_masks(caller)?;
+        let caller_masks = program.register_root_masks(caller).filter(|masks| !masks.is_windowed())?;
         if self.frames.is_empty() && self.origins.iter().enumerate().all(|(pc, origin)|
             *origin == Origin::Caller(pc as u32)) {
             return Some(std::borrow::Cow::Borrowed(caller_masks));
@@ -155,13 +155,13 @@ impl Unit {
         let mut callees = Vec::with_capacity(self.frames.len());
         for frame in &self.frames {
             let (parent, outer) = match frame.parent {
-                None => (caller_masks, 0),
+                None => (caller_masks, RegisterSet::default()),
                 Some(parent) => (callees[parent], suspended[parent]),
             };
             let call = frame.call as usize;
-            let around = parent.get(call)? | (parent.get(call + 1).unwrap_or(0) & !frame.result.map_or(0, |result| register_bit(result - frame.parent_base(&self.frames))));
+            let around = parent.get(call)? | (parent.get(call + 1).unwrap_or_default() & !frame.result.map_or_else(RegisterSet::default, |result| register_bit(result - frame.parent_base(&self.frames))));
             suspended.push(outer | around.checked_shl(u32::from(frame.parent_base(&self.frames)))?);
-            callees.push(program.register_root_masks(frame.target.function)?);
+            callees.push(program.register_root_masks(frame.target.function).filter(|masks| !masks.is_windowed())?);
         }
         let mut masks = self.origins.iter().map(|origin| match *origin {
             Origin::Caller(pc) => caller_masks.get(pc as usize),
@@ -174,12 +174,12 @@ impl Unit {
                 &program.field_sites, &program.superinstructions)).collect();
         // A marker defines its callee's registers: call admission binds every one.
         for (frame, pc) in self.frames.iter().zip(&self.markers) {
-            transfers[*pc].1 = (0..frame.registers).fold(0, |mask, register| mask | register_bit(frame.base + register));
+            transfers[*pc].1 = (0..frame.registers).fold(RegisterSet::default(), |mask, register| mask | register_bit(frame.base + register));
         }
         // A returning instruction continues at the function's terminal `Return` where it has
         // one, whose register then holds its value; otherwise it completes the activation.
         let terminal = self.instructions.len().checked_sub(1)
-            .filter(|terminal| self.instructions[*terminal].op() == Op::Return);
+            .filter(|terminal| self.instructions[*terminal].op().is_return());
         let mut starts = Vec::with_capacity(self.instructions.len() + 1);
         let mut successors = Vec::new();
         for (pc, instruction) in self.instructions.iter().enumerate() {
@@ -229,8 +229,7 @@ const MAX_INLINING_DEPTH: usize = 5;
 fn inlinable(instruction: WideInstruction) -> bool {
     let plain = instruction.result_flags() == 0 || super::osr_loop::inlined_returning(instruction);
     match instruction.op() {
-        Op::Return | Op::Nop | Op::LoadConst | Op::Move | Op::LoadThis | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue
-        | Op::JumpBinaryFalse | Op::GetIndex | Op::SetIndex => plain,
+        op if op.traits().has(Traits::SCALAR_REGION.union(Traits::ELEMENT_ACCESS).union(Traits::THIS_LEAF)) => plain,
         // The callee's own captures, which its frame reads from its environment
         // (`Lowering::frame_captures`).
         Op::LoadCapture => plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,
@@ -280,7 +279,7 @@ fn call_length(alternatives: &[InlinedPlan]) -> u32 {
 /// The canonical caller completion a terminal call may use without replaying the call.
 fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
     code.len().checked_sub(1).filter(|pc|
-        code[*pc].op() == Op::Return && code[*pc].result_flags() == 0)
+        code[*pc].op().is_return() && code[*pc].result_flags() == 0)
 }
 
 /// Whether an inlined callee's `instruction` renames to the unit's registers

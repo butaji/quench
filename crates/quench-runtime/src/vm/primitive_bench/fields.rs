@@ -29,7 +29,7 @@ fn cached_own<const OP: u8, const ARENA: bool, const MISS: bool>(
         .functions
         .iter()
         .flat_map(|f| f.instructions())
-        .find(|i| i.op() == Op::SetField)
+        .find(|i| i.op().is_set_field())
         .unwrap();
     let (atom, site) = (instruction.atom_index(), instruction.cache_site_index());
     let mut vm = super::super::Vm::new(TestHost::default());

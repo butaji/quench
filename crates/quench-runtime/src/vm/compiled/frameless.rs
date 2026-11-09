@@ -12,11 +12,14 @@ use super::{
     emit_js_payload_word, emit_lane_helper_call, native_entry_signature, Host, JsExactFallback, JsNativeStep,
     JsStepDispatch, ResidualProgram, Vm, CONTEXT_STACK_LIMIT, JS_GENERAL_RETURN_STATUS_BASE,
 };
-use crate::bytecode::{ConstructArguments, Op, WideInstruction};
+use crate::bytecode::{ConstructArguments, WideInstruction};
 use crate::value::ValueLayout;
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_frontend::FunctionBuilder;
+
+#[path = "frameless/admission.rs"] mod admission;
+pub(super) use admission::general_frameless_admit;
 
 /// Values of the windows of all frameless activations one native entry may hold.
 const WINDOW_VALUES: usize = 1 << 16;
@@ -74,6 +77,9 @@ pub(crate) struct Frameless {
     windows: Box<[Value]>,
     shadow: Box<[ShadowRecord]>,
     cache: Box<[CallEntry]>,
+    /// Each function's last admission, by function index, with its program and closure
+    /// environment: a fresh closure of it shares all but its callee and captures (`admit`).
+    functions: Vec<(u32, Value, CallEntry)>,
     /// The leaves of each function's frameless activations in the epoch they count in
     /// (`MATERIALIZATION_LIMIT`).
     materializations: rustc_hash::FxHashMap<(u32, u32), (u32, u64)>,
@@ -86,6 +92,7 @@ impl Default for Frameless {
             windows: vec![Value::UNDEFINED; WINDOW_VALUES].into_boxed_slice(),
             shadow: vec![empty; SHADOW_RECORDS].into_boxed_slice(),
             cache: vec![CallEntry::default(); CACHE_ENTRIES].into_boxed_slice(),
+            functions: Vec::new(),
             materializations: rustc_hash::FxHashMap::default(),
         }
     }
@@ -108,7 +115,10 @@ impl Frameless {
     }
 
     /// Forgets every admission (`Vm::clear_call_targets`).
-    pub(in crate::vm) fn clear(&mut self) { self.cache.fill(CallEntry::default()); }
+    pub(in crate::vm) fn clear(&mut self) {
+        self.cache.fill(CallEntry::default());
+        self.functions.clear();
+    }
 
     fn live(&self, dispatch: &JsStepDispatch) -> &[ShadowRecord] {
         let count = (dispatch.shadow_top - self.shadow.as_ptr() as usize) / size_of::<ShadowRecord>();
@@ -130,7 +140,7 @@ pub(super) fn emit_call(
     destination: i32,
     framed: ir::Block,
 ) -> Option<()> {
-    let (window, receiver) = if instruction.op() == Op::Construct {
+    let (window, receiver) = if instruction.op().is_construct() {
         let ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
         (!instruction.is_super_construct()).then_some((window, None))?
     } else { (instruction.call_window(), Some(register_offset(instruction.register_c())?)) };
@@ -368,70 +378,6 @@ fn emit_enter(builder: &mut FunctionBuilder<'_>, (payload, context, result): (ir
         builder.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
     }
     status
-}
-
-/// Admits `callee` for frameless calls from the payload's program and caches it: its
-/// entry's address, or 0 where its calls keep frames. Admitted are plain user functions of
-/// the running program (`CallPlan::in_loop`) whose whole state is their registers
-/// (`CallPlan::registers_only`), whose body has a linked native entry, and whose
-/// activations have not kept leaving.
-///
-/// # Safety
-/// As `general_user_call`.
-pub(super) unsafe extern "C" fn general_frameless_admit<H: Host>(vm: u64, residual: u64, payload: u64, callee: u64) -> u64 {
-    // SAFETY: as the caller promises; admission reads the heap and allocates nothing.
-    let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
-        &*(payload as *const JsStepDispatch)) };
-    admit(vm, program, dispatch, Value::from_bits(callee)).map_or(0, |entry| entry as u64)
-}
-
-fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDispatch, callee: Value) -> Option<*const CallEntry> {
-    let (owner, function, env) = vm.in_loop_call_target(program, callee)?;
-    if owner != dispatch.program_id { return None; }
-    let body = program.function_get(function as usize)?;
-    let plan = body.call_plan(program);
-    if !plan.in_loop || !plan.registers_only || body.rest { return None; }
-    let epoch = vm.heap.collection_epoch();
-    if vm.frameless.materializations.get(&(owner.raw(), function))
-        .is_some_and(|&(leaves, counted)| leaves >= MATERIALIZATION_LIMIT && counted == epoch) {
-        return None;
-    }
-    let code = native_entry(vm, owner, function)?;
-    let capture = vm.target_capture(program, owner, env);
-    // SAFETY: a live environment's dense slots stay in place through this collection epoch.
-    let (values, len) = (!capture.is_null()).then(|| unsafe {
-        crate::heap::EnvironmentSlots::native_storage_view(super::super::dispatch_fast::capture_reads(capture)) }).flatten()
-        .unwrap_or((std::ptr::null(), 0));
-    let this = if body.is_arrow { THIS_NONE } else if body.strict { THIS_RECEIVER } else { vm.realm.globals.to_bits() };
-    let entry = CallEntry {
-        callee: callee.to_bits(),
-        epoch: vm.heap.collection_epoch(),
-        code: code as u64,
-        capture_values: values as u64,
-        capture_len: len as u64,
-        capture_stores: u64::from(super::super::dispatch_fast::capture_stores(capture).is_some()),
-        meta: u64::from(function) | (u64::from(body.registers) << META_REGISTERS) | (u64::from(body.params) << META_PARAMS),
-        this,
-        constructs: u64::from(Vm::<H>::inline_constructible(body)),
-    };
-    let slot = (callee.to_bits() as usize) & (CACHE_ENTRIES - 1);
-    vm.frameless.cache[slot] = entry;
-    Some(&vm.frameless.cache[slot])
-}
-
-/// The chain of the payload's frameless activations, outermost first, each `(function, call
-/// PC, PC, registers)`, followed by `inlined`: each continues at its callee's call, the
-/// innermost at `pc`. Counts the leave against the innermost frameless function
-/// (`MATERIALIZATION_LIMIT`).
-/// The native entry of `function` in `owner`'s linked code, which only native builds have.
-#[cfg(feature = "native-execution")]
-fn native_entry<H: Host>(vm: &Vm<H>, owner: crate::vm::ProgramId, function: u32) -> Option<usize> {
-    vm.programs.native_js_code(owner)?.entries().get(function as usize).map(|code| *code as usize)
-}
-
-#[cfg(not(feature = "native-execution"))]
-fn native_entry<H: Host>(_: &Vm<H>, _: crate::vm::ProgramId, _: u32) -> Option<usize> {
-    None
 }
 
 /// The chain of the payload's frameless activations, outermost first, followed by `inlined`:

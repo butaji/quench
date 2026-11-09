@@ -1,12 +1,12 @@
 //! The opcode catalog's tier facts, each declared once per opcode: its operation family
 //! (`Class`, `class_of!`) and its orthogonal tier traits (`Traits`, `traits_of!`), which the
 //! `opcodes!` table expands into `Op::class` and `Op::traits`.
-
 use super::Op;
 
 /// A tier's operation family, declared once by the catalog (`Op::class`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
+#[allow(dead_code)]
 pub(crate) enum Class {
     Other,
     Move,
@@ -205,8 +205,8 @@ macro_rules! class_of {
     (WasmJumpI32NonZero) => { Class::WasmJumpI32NonZero };
     (WasmJumpI32Zero) => { Class::WasmJumpI32Zero };
     (WasmSimd) => { Class::WasmSimd };
-    (WasmSimdShuffle) => { Class::WasmSimdShuffle };    ($other:ident) => { Class::Other };
-
+    (WasmSimdShuffle) => { Class::WasmSimdShuffle };
+    ($other:ident) => { Class::Other };
 }
 
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
@@ -235,6 +235,22 @@ impl Traits {
     pub(crate) const PURE_SETUP: Self = Self(1 << 15);
     /// A Wasm memory access through the function's memory register.
     pub(crate) const WASM_MEMORY: Self = Self(1 << 16);
+    /// An op reading nothing of its activation (environment, `this`, captures, names), making no closure or call.
+    pub(crate) const ACTIVATION_FREE: Self = Self(1 << 17);
+    /// An op a call-free loop region lowers beside numeric binaries (`static_typed_regions`).
+    pub(crate) const SCALAR_REGION: Self = Self(1 << 18);
+    /// An indexed element read or write, which a loop region views its arrays for.
+    pub(crate) const ELEMENT_ACCESS: Self = Self(1 << 19);
+    /// A general step that reads and writes only the frame, its registers and heap values.
+    pub(crate) const LANE_IN_PLACE: Self = Self(1 << 20);
+    /// A frame-local step that runs beside frameless activations.
+    pub(crate) const LANE_RESULT_STEP: Self = Self(1 << 21);
+    /// An op whose result may return from the frame instead of the register file.
+    pub(crate) const FRAME_RETURNABLE: Self = Self(1 << 22);
+    /// An op that reads and writes only registers and control, no heap value.
+    pub(crate) const FRAME_ONLY: Self = Self(1 << 23);
+    /// An op the lifetime-role loop admission can rename a register through.
+    pub(crate) const LIFETIME_SAFE: Self = Self(1 << 24);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -242,19 +258,19 @@ impl Traits {
 
 /// The traits of each opcode, the catalog's one home for them.
 macro_rules! traits_of {
-    (Nop) => { Traits::LEAF_VALUE };
-    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE) };
-    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
-    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
-    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
-    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE) };
+    (Nop) => { Traits::LEAF_VALUE.union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY) };
+    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::LIFETIME_SAFE) };
+    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::FRAME_RETURNABLE).union(Traits::LIFETIME_SAFE) };
+    (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::SCALAR_REGION).union(Traits::LIFETIME_SAFE) };
+    (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
+    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
+    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::LIFETIME_SAFE) };
+    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::LIFETIME_SAFE) };
+    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::LIFETIME_SAFE) };
+    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
     (LoadThis) => { Traits::THIS_LEAF };
     (LoadName) => { Traits::NAME_LEAF.union(Traits::NAME_OPERATION) };
     (LoadNameCall) => { Traits::NAME_OPERATION };
@@ -269,25 +285,77 @@ macro_rules! traits_of {
     (InitializeThis) => { Traits::NAME_OPERATION };
     (SuperCallCheck) => { Traits::NAME_OPERATION };
     (MakeClosure) => { Traits::MAKES_CLOSURE };
-    (GetField) => { Traits::FIELD_LEAF.union(Traits::RETURNING_FIELD).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (MakeObject2) => { Traits::RETURNING_OBJECT };
-    (MakeObjectLiteral) => { Traits::RETURNING_OBJECT_LITERAL };
-    (SuperConstArrayObject2) => { Traits::RETURNING_LITERAL };
-    (Call) => { Traits::INLINABLE };
+    (GetField) => { Traits::FIELD_LEAF.union(Traits::RETURNING_FIELD).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_RETURNABLE) };
+    (MakeObject2) => { Traits::RETURNING_OBJECT.union(Traits::FRAME_RETURNABLE) };
+    (MakeObjectLiteral) => { Traits::RETURNING_OBJECT_LITERAL.union(Traits::FRAME_RETURNABLE) };
+    (SuperConstArrayObject2) => { Traits::RETURNING_LITERAL.union(Traits::FRAME_RETURNABLE) };
+    (Call) => { Traits::INLINABLE.union(Traits::FRAME_RETURNABLE) };
     (SetField) => { Traits::INLINABLE };
     (SetThisField) => { Traits::INLINABLE };
     (LoadCapture) => { Traits::INLINABLE };
-    (ToNumeric) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
-    (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
-    (SetIndex) => { Traits::INLINABLE };
-    (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
+    (ToNumeric) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
+    (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::ELEMENT_ACCESS).union(Traits::LIFETIME_SAFE) };
+    (SetIndex) => { Traits::INLINABLE.union(Traits::ELEMENT_ACCESS).union(Traits::LIFETIME_SAFE) };
+    (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
     (WasmMemorySize) => { Traits::WASM_MEMORY };
     (WasmMemoryFill) => { Traits::WASM_MEMORY };
     (WasmMemoryCopy) => { Traits::WASM_MEMORY };
     (WasmMemoryAddress) => { Traits::WASM_MEMORY };
     (WasmMemoryLoad) => { Traits::WASM_MEMORY };
     (WasmMemoryStore) => { Traits::WASM_MEMORY };
+    (DefineField) => { Traits::LANE_IN_PLACE };
+    (DefineComputedField) => { Traits::LANE_IN_PLACE };
+    (DefinePrivateField) => { Traits::LANE_IN_PLACE };
+    (CheckPrivate) => { Traits::LANE_IN_PLACE };
+    (PrivateIn) => { Traits::LANE_IN_PLACE };
+    (MarkPrivateName) => { Traits::LANE_IN_PLACE };
+    (SetFunctionName) => { Traits::LANE_IN_PLACE };
+    (SetFunctionNameKey) => { Traits::LANE_IN_PLACE };
+    (SetFunctionDebugName) => { Traits::LANE_IN_PLACE };
+    (DefineArrayElement) => { Traits::LANE_IN_PLACE };
+    (AppendArray) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (ToPropertyKey) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (CopyDataProperties) => { Traits::LANE_IN_PLACE };
+    (GetIterator) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (ForInStart) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (ForInNext) => { Traits::LANE_IN_PLACE };
+    (RequireIteratorResult) => { Traits::LANE_IN_PLACE };
+    (IteratorClose) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (IteratorCleanupPush) => { Traits::LANE_IN_PLACE };
+    (IteratorCleanupPop) => { Traits::LANE_IN_PLACE };
+    (CallForwardingArguments) => { Traits::FRAME_RETURNABLE };
+    (Construct) => { Traits::FRAME_RETURNABLE };
+    (LoadLocal) => { Traits::ACTIVATION_FREE };
+    (LoadLocalPlain) => { Traits::ACTIVATION_FREE };
+    (StoreLocal) => { Traits::ACTIVATION_FREE };
+    (StoreLocalPlain) => { Traits::ACTIVATION_FREE };
     ($other:ident) => { Traits::NONE };
+}
+
+
+/// The guarded JavaScript denotation available to the shared compiled region
+/// analyzer. This describes an instruction operation, never a source pattern.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JsDenotation {
+    Unsupported,
+    Noop,
+    Jump,
+    LoadConst,
+    Move,
+    GetField,
+    FieldStore,
+    NumericBinary,
+    NumericUnary,
+    /// ToString of each register of a window, concatenated in order.
+    StringConcatenation,
+    CapturedValue,
+    PlainLocalLoad,
+    PlainLocalStore,
+    Return,
+    /// A fresh ordinary object with the realm's `Object.prototype` (`Vm::object`).
+    ObjectAllocation,
+    /// A literal's own data property definition, by name, through its cache site.
+    FieldDefinition,
 }
 
 /// Direct opcode predicates the runtime paths use: a catalog-generated projection with no
@@ -328,36 +396,38 @@ op_predicates! {
     is_require_object_coercible => RequireObjectCoercible,
     is_define_array_element => DefineArrayElement,
     is_string_case_index => StringCaseIndex,
-}
-
-/// The guarded JavaScript denotation available to the shared compiled region
-/// analyzer. This describes an instruction operation, never a source pattern.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum JsDenotation {
-    Unsupported,
-    Noop,
-    Jump,
-    LoadConst,
-    Move,
-    GetField,
-    FieldStore,
-    NumericBinary,
-    NumericUnary,
-    /// ToString of each register of a window, concatenated in order.
-    StringConcatenation,
-    CapturedValue,
-    PlainLocalLoad,
-    PlainLocalStore,
-    Return,
-    /// A fresh ordinary object with the realm's `Object.prototype` (`Vm::object`).
-    ObjectAllocation,
-    /// A literal's own data property definition, by name, through its cache site.
-    FieldDefinition,
+    is_construct => Construct,
+    is_require_iterator_result => RequireIteratorResult,
+    is_call_forwarding_arguments => CallForwardingArguments,
+    is_wasm_memory_address => WasmMemoryAddress,
+    is_wasm_instance_binding => WasmInstanceBinding,
+    is_wasm_branch_table => WasmBranchTable,
+    is_wasm_i32_add_immediate => WasmI32AddImmediate,
+    is_wasm_i32_and_immediate => WasmI32AndImmediate,
+    is_wasm_i32_shift_right_unsigned_and_immediate => WasmI32ShiftRightUnsignedAndImmediate,
+    is_wasm_i32_load => WasmI32Load,
+    is_wasm_i32_store => WasmI32Store,
+    is_wasm_f64_load => WasmF64Load,
+    is_wasm_f64_store => WasmF64Store,
+    is_wasm_f64_binary => WasmF64Binary,
+    is_throw => Throw,
+    is_wasm_simd => WasmSimd,
+    is_wasm_jump_i32_non_zero => WasmJumpI32NonZero,
+    is_wasm_memory_size => WasmMemorySize,
+    is_wasm_memory_copy => WasmMemoryCopy,
+    is_wasm_memory_fill => WasmMemoryFill,
+    is_call_array => CallArray,
+    is_call_known => CallKnown,
+    is_load_name_call => LoadNameCall,
+    is_make_object => MakeObject,
+    is_store_capture => StoreCapture,
+    is_wasm_ref_cast => WasmRefCast,
+    is_yield_star => YieldStar,
 }
 
 #[cfg(test)]
 mod class_table_tests {
-    use crate::bytecode::{Class, Op, Traits};
+    use super::{Class, Op, Traits};
 
     #[test]
     fn catalog_tables_are_compact_and_the_runtime_uses_direct_predicates() {

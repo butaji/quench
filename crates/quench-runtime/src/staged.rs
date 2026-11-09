@@ -17,10 +17,14 @@
 use crate::bytecode::Register;
 use crate::typed_ir::Type;
 
+mod concrete;
 pub(crate) mod numeric;
+mod heap;
+pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
 pub(crate) mod environment;
+pub(crate) mod ic;
 pub(crate) mod object;
 pub(crate) mod value;
 pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
@@ -65,6 +69,14 @@ pub(crate) trait Stage {
     fn store_u32(&mut self, base: Self::Word, offset: i32, value: Self::Word);
     fn store_u64(&mut self, base: Self::Word, offset: i32, value: Self::Word);
     fn not(&mut self, cond: Self::Cond) -> Self::Cond;
+    /// Whether either condition holds.
+    fn any(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
+    /// `then` where `cond` holds, else `otherwise`.
+    fn pick(&mut self, cond: Self::Cond, then: Self::Cond, otherwise: Self::Cond) -> Self::Cond;
+    /// ToBoolean of the Number whose IEEE double bits are `bits` (`number_is_truthy`).
+    fn number_truthy(&mut self, bits: Self::Word) -> Self::Cond;
+    /// Whether the shape word `shape` is one of `shapes`, sorted.
+    fn shape_in(&mut self, shape: Self::Word, shapes: &[u32]) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
         otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
@@ -159,6 +171,32 @@ pub(crate) trait Frame<S: Stage> {
         None
     }
 
+    /// The dense array element at `index`, under the proof; a hole, a miss or an index past
+    /// the view leaves `None` to the caller's cold path.
+    #[inline(always)]
+    fn index_read(&mut self, _stage: &mut S, _index: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// Store `value` at the dense array element `index`, under the proof.
+    #[inline(always)]
+    fn index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
+    /// The typed array element at `index`, as a Number word.
+    #[inline(always)]
+    fn typed_index_read(&mut self, _stage: &mut S, _index: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// Store the Number `value` at typed array element `index`.
+    #[inline(always)]
+    fn typed_index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
+    /// The object literal `destination`, written with the frame's fact; `None` where the
+    /// frame has no heap allocator.
+    #[inline(always)]
+    fn allocate_object(&mut self, _stage: &mut S, _destination: Register, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// The array literal `destination`, of `length` holes or `elements` values.
+    #[inline(always)]
+    fn allocate_array(&mut self, _stage: &mut S, _destination: Register, _length: S::Word, _elements: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -199,6 +237,19 @@ pub(crate) enum Operation<W, P> {
     ReadField { base: Register, slot: u16, ty: Type, proof: P },
     /// Write `value` to the proven slot `slot` of `base`'s object under `proof`.
     WriteField { base: Register, slot: u16, ty: Type, value: W, proof: P },
+    /// A dense array element at `index`, under `proof`; a hole or miss leaves `Unresolved`.
+    IndexRead { index: W, proof: P },
+    /// Store `value` at dense array element `index`, under `proof`.
+    IndexWrite { index: W, value: W, proof: P },
+    /// A typed array element at `index`, as a Number word, under `proof`.
+    TypedIndexRead { index: W, proof: P },
+    /// Store the Number `value` at typed array element `index`, under `proof`.
+    TypedIndexWrite { index: W, value: W, proof: P },
+    /// The object literal `destination`, allocated by the frame's heap; a due collection
+    /// leaves at the frame's miss edge.
+    MakeObject { destination: Register, proof: P },
+    /// The array literal `destination`: `length` holes, or `elements` values.
+    MakeArray { destination: Register, length: W, elements: W, proof: P },
 }
 
 /// Which of an instruction's two control edges it takes.
@@ -232,24 +283,12 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             Step::Value(value)
         }
         Operation::Jump => Step::Control(frame.jump(stage)),
-        Operation::JumpIf { register, taken } => jump_if(stage, frame, register, taken),
+        Operation::JumpIf { register, taken } => heap::jump_if(stage, frame, register, taken),
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
-        Operation::ReadField { base, slot, ty, proof } =>
-            frame.field_read(stage, base, slot, ty, proof).map_or(Step::Unresolved, |(value, _)| Step::Value(value)),
-        Operation::WriteField { base, slot, ty, value, proof } =>
-            frame.field_write(stage, base, slot, ty, value, proof).map_or(Step::Unresolved, |()| Step::Value(value)),
+        heap => heap::heap_step(stage, frame, heap),
     }
-}
-
-/// A conditional jump on the register's truthiness, taken when it is `taken`; unresolved where
-/// the stage cannot tell its truthiness.
-fn jump_if<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, register: Register, taken: bool)
-    -> Step<S::Word, F::Control> {
-    let Some(condition) = frame.truthiness(stage, register) else { return Step::Unresolved };
-    let condition = if taken { condition } else { stage.not(condition) };
-    Step::Control(frame.branch(stage, condition))
 }
 
 /// The activation's `this` into `destination`, where the activation holds it.
@@ -282,94 +321,6 @@ fn require_object_coercible<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
         Some(()) => Step::Value(value),
         None => Step::Unresolved,
     }
-}
-
-/// The interpreter's stage: machine words, read from live memory. It knows every condition,
-/// so a guard never fails and each `choose` runs one arm.
-#[derive(Clone, Copy)]
-pub(crate) struct Concrete {
-    tables: [u64; Table::COUNT],
-}
-
-impl Concrete {
-    #[inline(always)]
-    pub(crate) fn new(property_values: *const crate::Value) -> Self {
-        Self { tables: [property_values as u64] }
-    }
-}
-
-impl Stage for Concrete {
-    type Word = u64;
-    type Proof = ();
-    type Cond = bool;
-    type Miss = ();
-
-    #[inline(always)]
-    fn constant(&mut self, bits: u64) -> u64 { bits }
-    #[inline(always)]
-    fn load_u32(&mut self, base: u64, offset: i32) -> u64 {
-        // SAFETY: a staged operation loads only from a live record or table at a layout offset.
-        u64::from(unsafe { ((base as *const u8).offset(offset as isize) as *const u32).read() })
-    }
-    #[inline(always)]
-    fn load_u64(&mut self, base: u64, offset: i32) -> u64 {
-        // SAFETY: as `load_u32`; records and arena values are 8-byte aligned.
-        unsafe { ((base as *const u8).offset(offset as isize) as *const u64).read() }
-    }
-    #[inline(always)]
-    fn load_table(&mut self, address: u64) -> u64 { self.load_u64(address, 0) }
-    #[inline(always)]
-    fn add(&mut self, a: u64, b: u64) -> u64 { a.wrapping_add(b) }
-    #[inline(always)]
-    fn or(&mut self, a: u64, b: u64) -> u64 { a | b }
-    #[inline(always)]
-    fn add_imm(&mut self, a: u64, imm: u64) -> u64 { a.wrapping_add(imm) }
-    #[inline(always)]
-    fn mul_imm(&mut self, a: u64, imm: u64) -> u64 { a.wrapping_mul(imm) }
-    #[inline(always)]
-    fn and_imm(&mut self, a: u64, imm: u64) -> u64 { a & imm }
-    #[inline(always)]
-    fn or_imm(&mut self, a: u64, imm: u64) -> u64 { a | imm }
-    #[inline(always)]
-    fn shr_imm(&mut self, a: u64, shift: u32) -> u64 { a >> shift }
-    #[inline(always)]
-    fn sar32_imm(&mut self, a: u64, shift: u32) -> u64 { u64::from(((a as u32 as i32) >> shift) as u32) }
-    #[inline(always)]
-    fn eq_imm(&mut self, a: u64, imm: u64) -> bool { a == imm }
-    #[inline(always)]
-    fn ne_imm(&mut self, a: u64, imm: u64) -> bool { a != imm }
-    #[inline(always)]
-    fn ugt_imm(&mut self, a: u64, imm: u64) -> bool { a > imm }
-    #[inline(always)]
-    fn ult(&mut self, a: u64, b: u64) -> bool { a < b }
-    #[inline(always)]
-    fn uextend32(&mut self, a: u64) -> u64 { a }
-    #[inline(always)]
-    fn sub(&mut self, a: u64, b: u64) -> u64 { a.wrapping_sub(b) }
-    #[inline(always)]
-    fn select(&mut self, cond: bool, then: u64, otherwise: u64) -> u64 { if cond { then } else { otherwise } }
-    #[inline(always)]
-    fn store_u32(&mut self, base: u64, offset: i32, value: u64) {
-        // SAFETY: a staged operation stores only into a live record or backing at a layout offset.
-        unsafe { ((base as *mut u8).offset(offset as isize) as *mut u32).write(value as u32) }
-    }
-    #[inline(always)]
-    fn store_u64(&mut self, base: u64, offset: i32, value: u64) {
-        // SAFETY: as `store_u32`; values and backings are 8-byte aligned.
-        unsafe { ((base as *mut u8).offset(offset as isize) as *mut u64).write(value) }
-    }
-    #[inline(always)]
-    fn not(&mut self, cond: bool) -> bool { !cond }
-    #[inline(always)]
-    fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
-        if cond { then(self) } else { otherwise(self) }
-    }
-    #[inline(always)]
-    fn guard(&mut self, cond: bool, _miss: ()) -> Option<()> { cond.then_some(()) }
-    #[inline(always)]
-    fn known(&self, cond: bool) -> Option<bool> { Some(cond) }
-    #[inline(always)]
-    fn table(&mut self, table: Table) -> u64 { self.tables[table as usize] }
 }
 
 #[cfg(test)]

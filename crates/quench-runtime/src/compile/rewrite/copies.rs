@@ -56,7 +56,7 @@ impl Scope {
     fn of(function: &BcFunction) -> Self {
         let mask = |parameters_only: bool| function.local_registers.iter()
             .filter(|entry| !parameters_only || entry.local < function.params)
-            .fold(0, |mask, entry| mask | register_bit(entry.register));
+            .fold(RegisterSet::default(), |mask, entry| mask | register_bit(entry.register));
         Self {
             protected: protected_positions(&function.code, &function.wide, &function.handlers,
                 function.parameter_end_pc, &function.binding_sites),

@@ -11,7 +11,7 @@ impl Lowering<'_, '_> {
     pub(super) fn literal_elements(&mut self, state: &mut State, pc: usize, make: WideInstruction) -> ir::Value {
         let (array, length) = (make.result_register(), make.array_length());
         let defines = (1..=length).all(|offset| self.unit.instructions.get(pc + offset).is_some_and(|define|
-            define.op() == Op::DefineArrayElement && define.register_b() == array && define.register_a() != array
+            define.op().is_define_array_element() && define.register_b() == array && define.register_a() != array
                 && define.imm() as usize == offset - 1 && self.blocks[pc + offset].is_none()));
         if length == 0 || !defines { return self.ins().iconst(types::I64, 0); }
         let word = types::I64.bytes();

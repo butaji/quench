@@ -1226,8 +1226,7 @@ pub(crate) struct HotDecoding {
 
 impl HotDecoding {
     /// Counts one entry and returns the expanded code once the function is hot.
-    #[inline(always)]
-    pub(crate) fn on_entry(
+    #[inline(always)] pub(crate) fn on_entry(
         &self,
         code: &[Instr],
         wide: &[WideInstruction],
@@ -1557,14 +1556,12 @@ impl FunctionSlot {
         self.record.get().is_none() && self.unlowered.borrow().is_none()
     }
 
-    #[inline(always)]
-    pub(crate) fn header(&self) -> &FunctionHeader {
+    #[inline(always)] pub(crate) fn header(&self) -> &FunctionHeader {
         &self.header
     }
 
     /// The compiled record, when it exists.
-    #[inline(always)]
-    pub(crate) fn record(&self) -> Option<&Function> {
+    #[inline(always)] pub(crate) fn record(&self) -> Option<&Function> {
         self.record.get().map(|function| &**function)
     }
 
@@ -2248,18 +2245,13 @@ impl Function {
     }
 
     /// The function's `CallPlan`, derived on first use.
-    #[inline(always)]
-    pub(crate) fn call_plan(&self, tables: &impl FactTables) -> CallPlan {
+    #[inline(always)] pub(crate) fn call_plan(&self, tables: &impl FactTables) -> CallPlan {
         *self.call_plan.get_or_init(|| self.derive_call_plan(tables))
     }
 
     fn derive_call_plan(&self, tables: &impl FactTables) -> CallPlan {
         {
-            let promoted_parameters = self
-                .local_registers
-                .iter()
-                .filter(|entry| entry.local < self.params)
-                .count();
+            let promoted_parameters = self.local_registers.iter().filter(|entry| entry.local < self.params).count();
             // Laid out as its registers whatever kind of function it is: an ordinary
             // body's layout, or a non-suspending async body's (`settles_registers_only`).
             let registers_layout_of_any_kind = self.parent.is_some()
@@ -2430,8 +2422,7 @@ impl Function {
     }
 
     /// The function's `initializer_stores`, derived on first use.
-    #[inline(always)]
-    pub(crate) fn initializer_stores(&self, constants: &[Constant]) -> Option<&[InitializerStore]> {
+    #[inline(always)] pub(crate) fn initializer_stores(&self, constants: &[Constant]) -> Option<&[InitializerStore]> {
         self.initializer
             .get_or_init(|| self.derive_initializer_stores(constants).map(Into::into))
             .as_deref()
@@ -2611,10 +2602,7 @@ impl Function {
         if !fits(self.code.len()) {
             return None;
         }
-        let mut records = self
-            .instructions()
-            .take(shaped_records + FORWARDED_WINDOW_COPY)
-            .collect::<SmallVec<[WideInstruction; 16]>>();
+        let mut records = self.instructions().take(shaped_records + FORWARDED_WINDOW_COPY).collect::<SmallVec<[WideInstruction; 16]>>();
         // The copy, dropped here: the call's window is that copy.
         let copied = records.iter().position(|record| record.op() == Op::Call).and_then(|call| {
             let moved = *records.get(call.checked_sub(1)?)?;
@@ -2897,8 +2885,7 @@ impl Function {
     }
 
     /// The memoized `plain_local_slots` projection for this residual's atoms.
-    #[inline(always)]
-    pub(crate) fn plain_local(&self, tables: &impl FactTables, slot: usize) -> bool {
+    #[inline(always)] pub(crate) fn plain_local(&self, tables: &impl FactTables, slot: usize) -> bool {
         let words =
             self.plain_locals.get_or_init(|| self.plain_local_slots(tables.superinstructions()).words().to_vec().into());
         crate::bitset::words_contain(words, slot)
@@ -3156,7 +3143,7 @@ impl FieldBase {
         Self(value)
     }
 
-    pub(crate) fn register_index(self) -> Option<Register> {
+    #[inline(always)] pub(crate) fn register_index(self) -> Option<Register> {
         (self.0 <= REGISTER_MASK).then_some(self.0)
     }
 
@@ -3164,7 +3151,7 @@ impl FieldBase {
         (value <= REGISTER_MASK).then_some(Self(Self::LOCAL_FLAG | value))
     }
 
-    pub(crate) fn local_index(self) -> Option<u16> {
+    #[inline(always)] pub(crate) fn local_index(self) -> Option<u16> {
         (self.0 & Self::LOCAL_FLAG != 0
             && self.0 & !(Self::LOCAL_FLAG | REGISTER_MASK) == 0)
             .then_some(self.0 & REGISTER_MASK)
@@ -3254,7 +3241,7 @@ impl Operand {
         self.0 & Self::PAYLOAD_MASK
     }
 
-    pub(crate) fn register_index(self) -> Option<Register> {
+    #[inline(always)] pub(crate) fn register_index(self) -> Option<Register> {
         (self.kind() == Some(OperandKind::Register)).then_some(self.payload())
     }
 }
@@ -3858,8 +3845,7 @@ impl ResidualProgram {
     }
     /// The record of function `index`, compiled again from source on its first read when
     /// the program released it.
-    #[inline(always)]
-    pub(crate) fn function(&self, index: usize) -> &Function {
+    #[inline(always)] pub(crate) fn function(&self, index: usize) -> &Function {
         let slot = &self.functions[index];
         match slot.record() {
             Some(function) => function,
@@ -3868,8 +3854,7 @@ impl ResidualProgram {
     }
 
     /// `function`, for an index that may lie outside the table.
-    #[inline(always)]
-    pub(crate) fn function_get(&self, index: usize) -> Option<&Function> {
+    #[inline(always)] pub(crate) fn function_get(&self, index: usize) -> Option<&Function> {
         (index < self.functions.len()).then(|| self.function(index))
     }
 
@@ -3909,10 +3894,7 @@ impl ResidualProgram {
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }
-        let deferred = self
-            .encoded_records
-            .as_deref()
-            .and_then(|records| binary::decode_deferred_function(records, index));
+        let deferred = self.encoded_records.as_deref().and_then(|records| binary::decode_deferred_function(records, index));
         let function = match deferred {
             Some(decoded) => decoded.unwrap_or_else(|error| {
                 panic!("function {index} of {} does not decode: {error}", self.source_name)
@@ -3940,10 +3922,7 @@ impl ResidualProgram {
     fn lower_unlowered(&self, unlowered: std::rc::Rc<Function>) -> Function {
         let mut function = std::rc::Rc::unwrap_or_clone(unlowered);
         let undefined_constant = *self.undefined_constant.get_or_init(|| {
-            let index = self
-                .constants
-                .iter()
-                .position(|constant| matches!(constant, Constant::Undefined))
+            let index = self.constants.iter().position(|constant| matches!(constant, Constant::Undefined))
                 .expect("a program with an unlowered record holds the `undefined` constant");
             u32::try_from(index).expect("constant index fits u32")
         });
@@ -3988,6 +3967,7 @@ impl ResidualProgram {
     }
 
     /// The registers live at `pc` in `function`, when liveness covers it.
+    #[allow(dead_code)]
     pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::compile::liveness::RegisterSet> {
         self.register_root_masks(function)?.get(pc)
     }
