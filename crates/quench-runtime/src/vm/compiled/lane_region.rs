@@ -2570,6 +2570,7 @@ impl Lowering<'_, '_> {
                 let target = instruction.jump_target() as usize;
                 if target <= pc {
                     self.backedge |= target == self.coverage.entry();
+                    if target == self.coverage.entry() { self.count_backedge(); }
                     if self.shared_backedge(state, target) { return false; }
                     self.interrupt_check(state, pc32);
                     if let Some(header) = instructions.get(target).copied()
@@ -3317,6 +3318,26 @@ impl Lowering<'_, '_> {
         self.ins().jump(leave, &[returned.into()]);
     }
 
+    /// Count a taken execution of the region's backward edge in the loop entry record
+    /// (`LoopEntry::backedge_count`), which the lane's general-dispatch pricing reads.
+    /// A lane body (`Coverage::Prefix`) counts nothing.
+    fn count_backedge(&mut self) {
+        if !matches!(self.coverage, Coverage::Loop { .. }) { return; }
+        let offset = i32::try_from(std::mem::offset_of!(super::JsStepDispatch, loop_entry))
+            .expect("dispatch offset fits i32");
+        let payload = self.payload;
+        let entry = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset);
+        let zero = self.ins().icmp_imm_u(IntCC::Equal, entry, 0);
+        let (skip, count) = (self.builder.create_block(), self.builder.create_block());
+        self.ins().brif(zero, skip, &[], count, &[]);
+        self.builder.switch_to_block(count);
+        let word = self.ins().load(types::I64, MemFlagsData::trusted(), entry, 0);
+        let next = self.ins().iadd_imm_s(word, 1);
+        self.ins().store(MemFlagsData::trusted(), next, entry, 0);
+        self.ins().jump(skip, &[]);
+        self.builder.switch_to_block(skip);
+    }
+
     fn interrupt_check(&mut self, state: &State, pc: u32) {
         if self.fault_poll {
             self.emit_fault_poll();
@@ -3375,7 +3396,9 @@ impl Lowering<'_, '_> {
 
     fn continue_branch(&mut self, state: &mut State, pc: usize, target: usize,
         taken_block: ir::Block, fall_block: ir::Block) {
-        self.backedge |= target <= pc && target == self.coverage.entry();
+        let back = target <= pc && target == self.coverage.entry();
+        self.backedge |= back;
+        if back { self.count_backedge(); }
         self.switch_to(taken_block, true);
         let mut taken_state = state.clone();
         self.continue_at(&mut taken_state, target);

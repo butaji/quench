@@ -6425,6 +6425,7 @@ impl CompiledOsrRegion {
         let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, |native, vm| {
             native.dispatch.bind_native_storage(vm);
             native.dispatch.lane_context = lane_context;
+            native.dispatch.loop_entry = entry as *mut LoopEntry as usize;
             // The loop entry's captures in the dense slot view the lane capture reads use.
             let captures = if region.captures.is_empty() { Vec::new() } else {
                 let len = region.captures.iter().map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);
@@ -7376,6 +7377,9 @@ struct JsStepDispatch {
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
     allocated: usize,
     collect_at: usize,
+    /// The loop entry record a lane OSR region counts its taken backward edges in
+    /// (`LoopEntry::backedge_count`); zero for every other lane run.
+    loop_entry: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -8122,6 +8126,7 @@ impl LaneFrame {
                 native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, binary: 0,
                 allocated: 0,
                 collect_at: 0,
+                loop_entry: 0,
                 method_cache_atoms: 0,
                 method_cache_atom_words: 0,
                 stores_specialized: 0,
@@ -8270,7 +8275,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            field_entries: 0, field_store: 0, field_add: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, capture_stores: 0, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, binary: 0, allocated: 0, collect_at: 0, loop_entry: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
