@@ -234,14 +234,12 @@ fn a_function_past_the_old_width_still_has_a_stack_map() {
 
 #[cfg(feature = "aot")]
 #[test]
-fn functions_past_the_window_budget_keep_a_conservative_map() {
-    let parameters = (0..crate::compile::liveness::MAX_MAP_REGISTERS + 1)
-        .map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
+fn functions_past_4096_registers_keep_precise_maps() {
+    let parameters = (0..4097).map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
     let source = format!("function wide({parameters}) {{ return p0; }}\nwide(1);\n");
     let program = Engine::specialize(&source, "wide-frame-budget.js").unwrap();
     let wide = (0..program.function_count()).find(|index| program.function_get(*index)
-        .is_some_and(|function| function.registers > crate::compile::liveness::MAX_MAP_REGISTERS))
-        .expect("the wide body");
-    let masks = program.register_root_masks(wide as u32).expect("a body past the budget keeps a map");
-    assert!(!masks.is_windowed() && masks.get(0).is_none(), "the map is conservative all-live");
+        .is_some_and(|function| function.registers > 4096)).expect("the wide body");
+    let masks = program.register_root_masks(wide as u32).expect("a body past 4096 keeps a map");
+    assert!(masks.is_windowed() && masks.live_at(0, 4096).is_some(), "nine precise windows");
 }

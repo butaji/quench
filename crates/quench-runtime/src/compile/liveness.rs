@@ -7,7 +7,7 @@ use crate::bytecode::{
 /// derives, and the root masks a collection reads.
 pub(crate) use set::RegisterSet; mod set;
 
-mod solve; mod masks; mod windows;
+mod solve; mod masks; pub(crate) mod windows;
 pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_successors, analyze_transfers};
 pub(crate) use masks::RegisterMasks;
 use solve::LiveMask;
@@ -15,9 +15,6 @@ use solve::LiveMask;
 /// The registers a `RegisterSet` covers. Liveness, and with it root maps, register promotion
 /// and move coalescing, covers only functions whose registers fit.
 pub(crate) const ROOT_MAP_REGISTERS: u16 = RegisterSet::BITS as u16;
-/// The widest register file with a precise mask: the window budget times one window.
-#[cfg_attr(not(feature = "aot"), allow(dead_code))]
-pub(crate) const MAX_MAP_REGISTERS: u16 = ROOT_MAP_REGISTERS * windows::MAX_WINDOWS as u16;
 
 /// Whether `register` is in `set`; a register past the set's width never is.
 #[inline(always)]
