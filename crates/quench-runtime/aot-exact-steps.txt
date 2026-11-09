@@ -1,10 +1,10 @@
 # Exact-only PCs per benchmark source that general dispatch (JIT and AOT) lowers. Shrink-only.
 2 quench-bench/jetstream/Octane/richards.js
-3 quench-bench/jetstream/Octane/deltablue.js
+2 quench-bench/jetstream/Octane/deltablue.js
 14 quench-bench/jetstream/Octane/navier-stokes.js
 75 quench-bench/jetstream/Octane/raytrace.js
 17 quench-bench/jetstream/SeaMonster/gaussian-blur.js
-84 quench-bench/jetstream/simple/hash-map.js
+77 quench-bench/jetstream/simple/hash-map.js
 1 quench-bench/micros/001.js
 1 quench-bench/micros/002.js
 1 quench-bench/micros/003.js
