@@ -63,6 +63,14 @@ impl Stage for Emit<'_, '_> {
         self.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, a, imm as i64)
     }
     fn not(&mut self, cond: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, cond, 0) }
+    fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
+        self.builder.ins().select(cond, then, otherwise)
+    }
+    fn number_truthy(&mut self, bits: ir::Value) -> ir::Value {
+        let number = self.builder.ins().bitcast(types::F64, MemFlagsData::new(), bits);
+        super::super::emit_number_truthiness(self.builder, number)
+    }
     fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
         otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
         let (then_block, else_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());

@@ -6075,35 +6075,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// it is `null`, `undefined`, the hole or `false`. Any other heap value (a string, or a
     /// function that may be the IsHTMLDDA object) exits at `pc`.
     fn tagged_truthiness(&mut self, pc: u32, bits: ir::Value) -> ir::Value {
-        let builder = &mut self.body.builder;
-        let tag = builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
-        let heap = builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::HEAP_TAG as i64);
-        let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
-        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
-        let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
-        let record = builder.ins().bor(object, array);
-        let not_record = builder.ins().icmp_imm_u(IntCC::Equal, record, 0);
-        let undecided = builder.ins().band(heap, not_record);
+        let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut super::object_slots::emit(&mut self.body.builder), bits);
         self.guard(pc, undecided);
-        let builder = &mut self.body.builder;
-        let integer = builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::INT_TAG as i64);
-        let payload = builder.ins().ireduce(types::I32, bits);
-        let integer_truthy = builder.ins().icmp_imm_u(IntCC::NotEqual, payload, 0);
-        let field = builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
-        let offset = builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
-        let tagged = builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
-        let mut falsy = builder.ins().iconst(types::I8, 0);
-        for value in [Value::NULL, Value::UNDEFINED, Value::DELETED, Value::FALSE] {
-            let equal = builder.ins().icmp_imm_u(IntCC::Equal, bits, value.to_bits() as i64);
-            falsy = builder.ins().bor(falsy, equal);
-        }
-        let immediate_truthy = builder.ins().icmp_imm_u(IntCC::Equal, falsy, 0);
-        let double = builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
-        let double_truthy = super::emit_number_truthiness(builder, double);
-        let one = builder.ins().iconst(types::I8, 1);
-        let tagged_truthy = builder.ins().select(integer, integer_truthy, immediate_truthy);
-        let unheaped = builder.ins().select(tagged, tagged_truthy, double_truthy);
-        builder.ins().select(heap, one, unheaped)
+        truthy
     }
 
     /// A capacity helper may relocate a backing shared by several entry views. Reload

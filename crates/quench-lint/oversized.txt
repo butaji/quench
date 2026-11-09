@@ -2848,7 +2848,6 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::direct_reference_entry 
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_cached_field_slot 155
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_int32_arithmetic 62
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_tagged_number 69
-function-lines crates/quench-runtime/src/vm/compiled.rs::emit_js_tagged_truthiness 50
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_lane_receiver 48
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_number_relation 82
 function-lines crates/quench-runtime/src/vm/compiled.rs::emit_unlogged_property_store_guard 60

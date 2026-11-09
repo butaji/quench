@@ -64,6 +64,12 @@ pub(crate) trait Stage {
     fn store_u32(&mut self, base: Self::Word, offset: i32, value: Self::Word);
     fn store_u64(&mut self, base: Self::Word, offset: i32, value: Self::Word);
     fn not(&mut self, cond: Self::Cond) -> Self::Cond;
+    /// Whether either condition holds.
+    fn any(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
+    /// `then` where `cond` holds, else `otherwise`.
+    fn pick(&mut self, cond: Self::Cond, then: Self::Cond, otherwise: Self::Cond) -> Self::Cond;
+    /// ToBoolean of the Number whose IEEE double bits are `bits` (`number_is_truthy`).
+    fn number_truthy(&mut self, bits: Self::Word) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
         otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
@@ -333,6 +339,12 @@ impl Stage for Concrete {
     }
     #[inline(always)]
     fn not(&mut self, cond: bool) -> bool { !cond }
+    #[inline(always)]
+    fn any(&mut self, a: bool, b: bool) -> bool { a | b }
+    #[inline(always)]
+    fn pick(&mut self, cond: bool, then: bool, otherwise: bool) -> bool { if cond { then } else { otherwise } }
+    #[inline(always)]
+    fn number_truthy(&mut self, bits: u64) -> bool { crate::vm::number_is_truthy(f64::from_bits(bits)) }
     #[inline(always)]
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
         if cond { then(self) } else { otherwise(self) }
