@@ -92,10 +92,6 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let api = c.null_object_rooted()?;
         put(c, api, "handles", map)?;
         put(c, api, "set", set)?;
-        let u8 = get(c, global, "Uint8Array")?;
-        let p = get(c, u8, "prototype")?;
-        let set = get(c, p, "set")?;
-        put(c, api, "copy", set)?;
         let result = c.object_rooted()?;
         let constructors = [
             ("Zlib", "Zlib"),
@@ -212,7 +208,7 @@ pub(crate) fn initialize(
         return Err(fail(c, "Compression handle already initialized"));
     }
     let (engine, state_index, callback_index) =
-        if matches!(mode, Mode::ZstdCompress | Mode::ZstdDecompress) {
+        if mode.is_zstd() {
             let params = parameter_values(c, args)?;
             let pledge = pledged_size(c, args.get(1).copied())?;
             let dictionary = dictionary_bytes(c, args.get(4).copied())?;
@@ -234,7 +230,7 @@ pub(crate) fn initialize(
         Ok(engine) => engine,
         Err(error) => {
             emit_error(c, handle, &error)?;
-            let init_message = if matches!(mode, Mode::ZstdCompress | Mode::ZstdDecompress) {
+            let init_message = if mode.is_zstd() {
                 &error.message
             } else {
                 "Initialization failed"
@@ -337,7 +333,8 @@ fn initialize_zlib(
 }
 struct Write {
     flush: i32,
-    input: Vec<u8>,
+    /// The input view and the range of it to compress, validated; `None` for an empty null.
+    input: Option<(RootId, std::ops::Range<usize>)>,
     delivery: Delivery,
 }
 struct Delivery {
@@ -353,36 +350,29 @@ fn arguments(c: &mut Context<'_>, args: &[RootId]) -> Result<Write, RootedError>
         .ok_or_else(|| RootedError::host("compression input missing"))?;
     let begin = number(c, args, 2)?;
     let length = number(c, args, 3)?;
-    let bytes = if c.rooted_value(input).is_some_and(|v| v.is_null()) && length == 0 {
-        Vec::new()
+    let range = begin..begin.checked_add(length).ok_or_else(|| fail(c, "Compression input range overflow"))?;
+    // Not copied: a synchronous write reads the view, often a whole file's bytes, in place.
+    let input = if c.rooted_value(input).is_some_and(|v| v.is_null()) && length == 0 {
+        None
+    } else if c.with_view_bytes_rooted(input, |bytes| range.end <= bytes.len()).ok_or_else(|| fail(c, "Compression input is not a buffer view"))? {
+        Some((input, range))
     } else {
-        c.view_bytes_rooted(input)
-            .ok_or_else(|| fail(c, "Compression input is not a buffer view"))?
+        return Err(fail(c, "Compression input range out of bounds"));
     };
-    let input = bytes
-        .get(
-            begin
-                ..begin
-                    .checked_add(length)
-                    .ok_or_else(|| fail(c, "Compression input range overflow"))?,
-        )
-        .ok_or_else(|| fail(c, "Compression input range out of bounds"))?
-        .to_vec();
     let output = *args
         .get(4)
         .ok_or_else(|| RootedError::host("compression output missing"))?;
     let offset = number(c, args, 5)?;
     let capacity = number(c, args, 6)?;
-    let bytes = c
-        .view_bytes_rooted(output)
+    let output_length = c
+        .with_view_bytes_rooted(output, <[u8]>::len)
         .ok_or_else(|| fail(c, "Compression output is not a buffer view"))?;
     if offset
         .checked_add(capacity)
-        .is_none_or(|end| end > bytes.len())
+        .is_none_or(|end| end > output_length)
     {
         return Err(fail(c, "Compression output range out of bounds"));
     }
-    let input_length = input.len();
     Ok(Write {
         flush,
         input,
@@ -390,9 +380,13 @@ fn arguments(c: &mut Context<'_>, args: &[RootId]) -> Result<Write, RootedError>
             target: output,
             offset,
             capacity,
-            input_length,
+            input_length: length,
         },
     })
+}
+/// A worker's own copy of the input range, which the guest may change while it runs.
+fn input_copy(c: &Context<'_>, input: Option<&(RootId, std::ops::Range<usize>)>) -> Vec<u8> {
+    input.and_then(|(view, range)| c.with_view_bytes_rooted(*view, |bytes| bytes.get(range.clone()).map(<[u8]>::to_vec))?).unwrap_or_default()
 }
 fn complete(
     c: &mut Context<'_>,
@@ -400,16 +394,19 @@ fn complete(
     handle: RootId,
     delivery: Delivery,
     result: &Result<Step, Failure>,
-    output: &[u8],
+    output: Option<&[u8]>,
     asynchronous: bool,
 ) -> Result<(), RootedError> {
     let data = payload(c, api, handle)?;
     match result {
         Ok(step) => {
-            let bytes = c.uint8_array_rooted(&output[..step.produced])?;
-            let copy = get(c, api, "copy")?;
-            let offset = c.number(delivery.offset as f64);
-            c.call_rooted(copy, delivery.target, &[bytes, offset])?;
+            // A worker's output is copied in; a synchronous write wrote in place.
+            if let Some(output) = output {
+                let range = delivery.offset..delivery.offset + step.produced;
+                c.with_buffer_bytes_mut_rooted(delivery.target, |bytes| bytes.get_mut(range).map(|to| to.copy_from_slice(&output[..step.produced])))
+                    .flatten()
+                    .ok_or_else(|| fail(c, "Compression output is not writable"))?;
+            }
             let state = get(c, data, "state")?;
             for (name, n) in [
                 ("0", delivery.capacity - step.produced),
@@ -434,13 +431,10 @@ pub(crate) fn write_sync(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let i = index(c, handle)?;
+    let shared = c.host_mut().shared_state();
     let write = arguments(c, args)?;
     let api = c.host_function_data()?;
-    let shared = c.host_mut().shared_state();
-    let phase = std::mem::replace(
-        &mut shared.borrow_mut().zlib_native.entries[i].phase,
-        Phase::New,
-    );
+    let phase = std::mem::replace(&mut shared.borrow_mut().zlib_native.entries[i].phase, Phase::New);
     let mut engine = match phase {
         Phase::Ready(engine) => engine,
         other => {
@@ -448,11 +442,18 @@ pub(crate) fn write_sync(
             return Err(fail(c, "Compression handle is not ready"));
         }
     };
-    let mut output = vec![0; write.delivery.capacity];
-    let result = engine.write(write.flush, &write.input, &mut output);
+    // The engine writes into the output view itself, as Node's does.
+    let range = write.delivery.offset..write.delivery.offset + write.delivery.capacity;
+    let (flush, target) = (write.flush, write.delivery.target);
+    let step = |from: &[u8], bytes: &mut [u8]| bytes.get_mut(range).map(|to| engine.write(flush, from, to));
+    let result = match write.input {
+        Some((input, within)) => c.with_view_and_buffer_bytes_mut_rooted(input, within, target, step),
+        None => c.with_buffer_bytes_mut_rooted(target, |bytes| step(&[], bytes)),
+    };
     // Restore the real engine before any guest callback can close or re-enter it.
     shared.borrow_mut().zlib_native.entries[i].phase = Phase::Ready(engine);
-    complete(c, api, handle, write.delivery, &result, &output, false)?;
+    let result = result.flatten().ok_or_else(|| fail(c, "Compression output is not writable"))?;
+    complete(c, api, handle, write.delivery, &result, None, false)?;
     Ok(c.undefined())
 }
 fn queue_poll(c: &mut Context<'_>, data: RootId) -> Result<(), RootedError> {
@@ -487,10 +488,7 @@ pub(crate) fn write(
     let write = arguments(c, args)?;
     let api = c.host_function_data()?;
     let shared = c.host_mut().shared_state();
-    let phase = std::mem::replace(
-        &mut shared.borrow_mut().zlib_native.entries[i].phase,
-        Phase::New,
-    );
+    let phase = std::mem::replace(&mut shared.borrow_mut().zlib_native.entries[i].phase, Phase::New);
     let mut engine = match phase {
         Phase::Ready(engine) => engine,
         other => {
@@ -499,7 +497,7 @@ pub(crate) fn write(
         }
     };
     let (tx, rx) = mpsc::channel();
-    let input = write.input;
+    let input = input_copy(c, write.input.as_ref());
     let flush = write.flush;
     let capacity = write.delivery.capacity;
     super::native_work::submit(move || {
@@ -583,7 +581,7 @@ pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
             input_length: length,
         },
         &result,
-        &output,
+        Some(&output),
         true,
     )?;
     if close_requested {

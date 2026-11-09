@@ -3,6 +3,8 @@ use super::object_keys::EnumerableOwnPropertyKind;
 use super::object_symbols::PropertyCopyKind;
 use super::property_key::PropertyKey;
 use super::*;
+mod for_in_keys;
+pub(super) use for_in_keys::ForInMemo;
 
 impl<H: Host> Vm<H> {
     /// `Object.create(proto)` before its properties argument: an empty ordinary object
@@ -214,20 +216,7 @@ impl<H: Host> Vm<H> {
                 Some(Cell::RegExp { .. }) => "RegExp",
                 Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
                 Some(Cell::DataView { .. }) => "DataView",
-                Some(Cell::TypedArray { kind, .. }) => match kind {
-                    TypedArrayKind::Uint8 => "Uint8Array",
-                    TypedArrayKind::Uint8Clamped => "Uint8ClampedArray",
-                    TypedArrayKind::Uint16 => "Uint16Array",
-                    TypedArrayKind::Uint32 => "Uint32Array",
-                    TypedArrayKind::Int8 => "Int8Array",
-                    TypedArrayKind::Int16 => "Int16Array",
-                    TypedArrayKind::Int32 => "Int32Array",
-                    TypedArrayKind::BigInt64 => "BigInt64Array",
-                    TypedArrayKind::BigUint64 => "BigUint64Array",
-                    TypedArrayKind::Float16 => "Float16Array",
-                    TypedArrayKind::Float32 => "Float32Array",
-                    TypedArrayKind::Float64 => "Float64Array",
-                },
+                Some(Cell::TypedArray { kind, .. }) => kind.name(),
                 Some(Cell::WeakRef { .. }) => "WeakRef",
                 Some(Cell::FinalizationRegistry { .. }) => "FinalizationRegistry",
                 Some(Cell::Error(_)) => "Error",
@@ -309,40 +298,16 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    /// The language loop consumes a private read-only view. The intrinsic entry below
-    /// still returns a fresh array, so guest code cannot mutate a shared view.
-    pub(super) fn object_for_in_snapshot(
-        &mut self,
-        p: &ResidualProgram,
-        source: Value,
-    ) -> Result<Value, JsError> {
-        if let Some(snapshot) = self.plain_for_in_snapshot(source) {
-            return Ok(snapshot);
-        }
-        self.object_for_in_keys(p, source)
-    }
-
-    pub(super) fn plain_for_in_snapshot(&mut self, source: Value) -> Option<Value> {
-        let (shape, slots) = self.own_for_in_slots(source)?;
-        if let Some(snapshot) = self.enumerable_keys.snapshot(shape) {
-            return Some(snapshot);
-        }
-        let elements = self.enumerable_key_elements(&slots);
-        // The private view exposes no array protocol and must not retain a realm prototype.
-        let snapshot = self.alloc_for_in_key_array(elements, Value::NULL);
-        self.enumerable_keys.record_snapshot(shape, snapshot);
-        Some(snapshot)
-    }
-
-    pub(super) fn object_for_in_keys(
-        &mut self,
-        p: &ResidualProgram,
-        source: Value,
-    ) -> Result<Value, JsError> {
-        if let Some(keys) = self.plain_for_in_keys(source) {
+    /// The for-in key snapshot of `object` (`Vm::for_in_start`): every enumerable string key
+    /// along its prototype chain, each once, in EnumerateObjectProperties order.
+    pub(super) fn object_for_in_keys(&mut self, p: &ResidualProgram, object: Value) -> Result<Value, JsError> {
+        let mut current = object;
+        if let Some(keys) = self.list_own_for_in_keys(current) {
             return Ok(keys);
         }
-        let mut current = self.box_object(source)?;
+        if let Some(keys) = self.shape_for_in_keys(current) {
+            return Ok(self.array_of(&keys));
+        }
         let mut visited_objects = FxHashMap::default();
         // `JsString` caches its flattened units in a `OnceCell`; `Hash` and `Eq` read only the units.
         #[allow(clippy::mutable_key_type)]
@@ -398,49 +363,23 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    /// Prepare the internal key array without invoking guest code or collecting.
-    /// Other receivers use the rooted generic enumeration path.
-    pub(super) fn plain_for_in_keys(&mut self, source: Value) -> Option<Value> {
-        let keys = if source.is_null() || source.is_undefined() {
-            crate::heap::ArrayElements::new()
-        } else {
-            self.shape_for_in_keys(source)?
-        };
-        Some(self.alloc_for_in_key_array(keys, self.array_proto))
-    }
-
     fn alloc_for_in_key_array(&mut self, keys: crate::heap::ArrayElements, prototype: Value) -> Value {
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(Self::empty_object(prototype), keys),
         })
     }
 
-    fn enumerable_key_elements(&mut self, slots: &[(Atom, u32)]) -> crate::heap::ArrayElements {
-        crate::heap::ArrayElements::from_fn(slots.len(), |index| self.atom_string(slots[index].0))
-    }
-
     /// for-in keys of an object whose prototype chain holds only objects with
-    /// shape-held keys: no Proxy, array, typed array or module namespace. The
+    /// shape-held keys (`shape_lists_enumerable_keys`). The
     /// keys and their order are those of the generic walk; prototypes after
     /// the last one with an enumerable key are skipped, since they can neither
     /// add a key nor shadow one. `None` sends other chains to the generic walk.
-    fn shape_for_in_keys(&mut self, receiver: Value) -> Option<crate::heap::ArrayElements> {
-        // The common chain: the receiver's memoized enumerable keys, and no prototype with an
-        // enumerable key, so no key shadows another and the order is the receiver's own.
-        if let Some((_, slots)) = self.own_for_in_slots(receiver) {
-            return Some(self.enumerable_key_elements(&slots));
-        }
+    fn shape_for_in_keys(&mut self, receiver: Value) -> Option<Vec<Value>> {
         let mut chain = Vec::new();
         let mut current = receiver;
         while !current.is_null() {
-            let plain = !matches!(self.heap.get(current), Some(Cell::Proxy { .. }))
-                && self.heap.array(current).is_none()
-                && !matches!(self.heap.get(current), Some(Cell::TypedArray { .. }));
-            let object = self.object_data(current).filter(|_| plain)?;
-            if object.is_module_namespace() {
-                return None;
-            }
-            let prototype = object.proto();
+            let plain = self.shape_lists_enumerable_keys(current);
+            let prototype = self.object_data(current).filter(|_| plain)?.proto();
             let keys = self
                 .own_named_keys(current)
                 .into_iter()
@@ -458,7 +397,7 @@ impl<H: Host> Vm<H> {
             .iter()
             .rposition(|keys| keys.iter().any(|(_, enumerable)| *enumerable))
         else {
-            return Some(crate::heap::ArrayElements::new());
+            return Some(Vec::new());
         };
         let mut visited = FxHashSet::default();
         let mut result = Vec::new();
@@ -473,29 +412,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        Some(result.into())
-    }
-
-    /// `shape_for_in_keys` of a receiver none of whose prototypes has an enumerable string
-    /// key, as most have not (class methods are not enumerable): a prototype then neither
-    /// adds a key nor shadows one the receiver lists first, so the keys are the receiver's
-    /// own enumerable ones, read from the shape memo (`shape_enumerable_slots`). `None`
-    /// leaves any other chain to the walk.
-    fn own_for_in_slots(
-        &self,
-        receiver: Value,
-    ) -> Option<(u32, super::enumerable_key_memo::EnumerableSlots)> {
-        let data = self.object_data(receiver)?;
-        let shape = data.shape();
-        let mut prototype = data.proto();
-        let slots = self.shape_enumerable_slots(receiver)?;
-        while !prototype.is_null() {
-            if !self.shape_enumerable_slots(prototype)?.is_empty() {
-                return None;
-            }
-            prototype = self.object_data(prototype)?.proto();
-        }
-        Some((shape, slots))
+        Some(result)
     }
 
     pub(super) fn object_for_in_key_is_enumerable(
@@ -506,9 +423,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         if source.is_null() || source.is_undefined() {
             return Ok(false);
-        }
-        if let Some(enumerable) = self.plain_for_in_key_is_enumerable(p, source, key) {
-            return Ok(enumerable == Value::TRUE);
         }
         let mut current = self.box_object(source)?;
         if !matches!(self.heap.get(current), Some(Cell::Proxy { .. }))
@@ -663,20 +577,6 @@ impl<H: Host> Vm<H> {
                     self.box_object(value)
                 }
             }
-            Native::ForInKeys => {
-                self.object_for_in_keys(p, args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
-            Native::ForInKeyIsEnumerable => Ok(
-                if self.object_for_in_key_is_enumerable(
-                    p,
-                    args.first().copied().unwrap_or(Value::UNDEFINED),
-                    args.get(1).copied().unwrap_or(Value::UNDEFINED),
-                )? {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                },
-            ),
             Native::ObjectGetOwnPropertyNames => {
                 self.object_names(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
@@ -691,18 +591,8 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectDefineProperty => self.object_define_property(p, args),
             Native::ObjectDefineProperties => self.object_define_properties(p, args),
-            Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries => {
-                let kind = match native {
-                    Native::ObjectKeys => EnumerableOwnPropertyKind::Key,
-                    Native::ObjectValues => EnumerableOwnPropertyKind::Value,
-                    Native::ObjectEntries => EnumerableOwnPropertyKind::KeyValue,
-                    _ => unreachable!("enumeration native selected by dispatch"),
-                };
-                self.enumerable_own_properties(
-                    p,
-                    args.first().copied().unwrap_or(Value::UNDEFINED),
-                    kind,
-                )
+            _ if let Some(kind) = EnumerableOwnPropertyKind::of(native) => {
+                self.enumerable_own_properties(p, args.first().copied().unwrap_or(Value::UNDEFINED), kind)
             }
             Native::ObjectFromEntries => {
                 self.object_from_entries(p, args.first().copied().unwrap_or(Value::UNDEFINED))
@@ -857,7 +747,6 @@ impl<H: Host> Vm<H> {
     pub(super) fn ordered_shape(&self, data: &Object) -> Vec<(Atom, usize)> {
         let mut entries = self
             .shape_entries(data.shape())
-            .iter()
             .filter_map(|(key, slot)| match *key {
                 PropertyKey::String(atom) => Some((atom, *slot as usize)),
                 PropertyKey::Symbol(_) | PropertyKey::Private(_) => None,

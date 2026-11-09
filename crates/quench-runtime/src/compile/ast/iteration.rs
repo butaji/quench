@@ -98,96 +98,44 @@ impl FunctionCompiler<'_, '_> {
             }
         }
         let object = self.expression(&item.right);
-        let object_atom = self.hidden_local("\0quench:for-in:source");
-        self.store_atom(object_atom, object);
-        let object = self.load_atom(object_atom);
-        let source = self.reg();
-        self.emit(Op::ForInKeys, source, object, 0, 0);
+        let state = self.reg();
+        self.emit(Op::ForInStart, state, object, 0, 0);
         let clone_environment = iteration_may_capture_bindings(&item.left, &item.right, &item.body);
-        self.for_in_snapshot(
-            &item.left,
-            &item.body,
-            source,
-            object_atom,
-            clone_environment,
-            label,
-        );
+        self.for_in_keys(&item.left, &item.body, state, clone_environment, label);
         if scoped {
             self.lexical_scopes.pop();
         }
     }
 
-    /// For-in enumerates an internal key list, never the public iterator protocol.
-    fn for_in_snapshot(
+    /// Steps the for-in `state` (`Op::ForInNext`), which yields each snapshot key still an
+    /// enumerable property: the snapshot is an internal array no script reaches, so no
+    /// iterator protocol runs and no abrupt exit has anything to close.
+    fn for_in_keys(
         &mut self,
         left: &ForStatementLeft<'_>,
         body: &Statement<'_>,
-        source: Register,
-        object_atom: Atom,
+        state: Register,
         clone_environment: bool,
         label: Option<Atom>,
     ) {
-        let keys_atom = self.hidden_local("\0quench:for-in:keys");
-        self.store_atom(keys_atom, source);
-        let index_atom = self.hidden_local("\0quench:for-in:index");
-        let zero = self.literal(Constant::Number(0.0));
-        self.store_atom(index_atom, zero);
-        let length_atom = self.hidden_local("\0quench:for-in:length");
-        let length = self.reg();
-        let name = self.owner.atom("length");
-        let cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            length,
-            FieldBase::register(source).0,
-            cache,
-            name,
-        );
-        self.store_atom(length_atom, length);
+        let state_atom = self.hidden_local("\0quench:for-in:state");
+        self.store_atom(state_atom, state);
         let head = self.code.len() as u32;
-        let index = self.load_atom(index_atom);
-        let length = self.load_atom(length_atom);
-        let end_edge = self.emit(
-            Op::JumpBinaryFalse,
-            BinaryOperator::LessThan as u16,
-            Operand::register(index).0,
-            Operand::register(length).0,
-            0,
-        );
-        let keys = self.load_atom(keys_atom);
-        let value = self.reg();
-        self.emit(Op::GetIndex, value, keys, index, 0);
-        let object = self.load_atom(object_atom);
-        let valid = self.reg();
-        self.emit(Op::ForInKeyIsEnumerable, valid, object, value, 0);
-        let invalid = self.emit(Op::JumpFalse, valid, 0, 0, 0);
+        let state = self.load_atom(state_atom);
+        let key = self.reg();
+        let end_edge = self.emit(Op::ForInNext, key, state, 0, 0);
         self.push_control(ControlKind::Loop, label);
         if clone_environment
-            && matches!(left,
-            ForStatementLeft::VariableDeclaration(declaration)
+            && matches!(left, ForStatementLeft::VariableDeclaration(declaration)
                 if declaration.kind != VariableDeclarationKind::Var)
         {
             self.clone_lexical_environment();
         }
-        self.with_registers_held(|compiler| {
-            compiler.bind_iteration_left(left, value);
-            compiler.statement(body);
-        });
+        self.bind_iteration_left(left, key);
+        self.statement(body);
         let control = self.controls.pop().unwrap();
         let update = self.code.len() as u32;
         self.patch_edges(&control.continues, update);
-        self.patch_to(invalid, update);
-        let index = self.load_atom(index_atom);
-        let one = self.literal(Constant::Number(1.0));
-        let next = self.reg();
-        self.emit(
-            Op::Binary,
-            next,
-            Operand::register(index).0,
-            Operand::register(one).0,
-            BinaryOperator::Addition as u32,
-        );
-        self.store_atom(index_atom, next);
         self.emit(Op::Jump, 0, 0, 0, head);
         let end = self.code.len() as u32;
         self.patch_to(end_edge, end);
@@ -269,10 +217,7 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::IteratorCleanupPush, iterator, done, 0, 0);
         let using_iteration = match left {
             ForStatementLeft::VariableDeclaration(declaration)
-                if matches!(
-                    declaration.kind,
-                    VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
-                ) =>
+                if super::disposal::disposes(declaration.kind) =>
             {
                 Some(declaration.kind)
             }

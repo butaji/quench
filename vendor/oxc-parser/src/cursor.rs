@@ -16,6 +16,7 @@ pub struct ParserCheckpoint<'a> {
     cur_token: Token,
     prev_token_end: u32,
     errors_pos: usize,
+    regexp_literals_pos: usize,
     fatal_error: Option<FatalError<'a>>,
 }
 
@@ -315,6 +316,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             cur_token: self.token,
             prev_token_end: self.prev_token_end,
             errors_pos: self.errors.len(),
+            regexp_literals_pos: self.regexp_literals.len(),
             fatal_error: self.checkpoint_fatal_error(),
         }
     }
@@ -325,6 +327,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             cur_token: self.token,
             prev_token_end: self.prev_token_end,
             errors_pos: self.errors.len(),
+            regexp_literals_pos: self.regexp_literals.len(),
             fatal_error: self.checkpoint_fatal_error(),
         }
     }
@@ -338,6 +341,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             cur_token,
             prev_token_end,
             errors_pos,
+            regexp_literals_pos,
             fatal_error,
         } = checkpoint;
 
@@ -345,6 +349,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.token = cur_token;
         self.prev_token_end = prev_token_end;
         self.errors.truncate(errors_pos);
+        self.regexp_literals.truncate(regexp_literals_pos);
         self.fatal_error = fatal_error;
     }
 

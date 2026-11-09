@@ -151,7 +151,7 @@ struct ScriptedDeserializer {
     receiver: RootId,
 }
 
-pub(crate) const DESERIALIZATION_ERROR: &str = "Unable to deserialize cloned data.";
+pub(crate) use quench_runtime::DESERIALIZATION_ERROR;
 
 impl DeserializerDelegate<NodeHost> for ScriptedDeserializer {
     fn read_host_object(&mut self, c: &mut Context<'_>, _: &SharedWireInput) -> Result<HostObjectRead<RootId>, RootedError> {

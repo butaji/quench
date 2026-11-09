@@ -9,10 +9,14 @@
 pub mod aot;
 pub mod esm_imports;
 pub mod host;
+mod io_transient;
 pub mod modules;
 pub mod shared_run;
 
 pub use host::{NodeHost, NodeOutputSink};
+
+/// The environment variable naming the file a `quench-node-test` case process writes its result to.
+pub const CASE_RESULT_ENV: &str = "QUENCH_NODE_TEST_CASE_RESULT";
 pub use shared_run::EntryGoal;
 
 /// On unix, every binary that links this host (the CLI and the Node test runners alike)

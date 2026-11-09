@@ -40,24 +40,22 @@ mod field {
     pub(super) const MAP: &str = "map";
     pub(super) const COOKIES: &str = "cookies";
     pub(super) const SORTED: &str = "sorted";
-    pub(super) const NAME: &str = "name";
-    pub(super) const VALUE: &str = "value";
-    /// An iterator's target, kind and position.
-    pub(super) const TARGET: &str = "target";
-    pub(super) const KIND: &str = "kind";
-    pub(super) const INDEX: &str = "index";
+    pub(crate) use crate::modules::keys::NAME;
+    pub(crate) use crate::modules::keys::VALUE;
+    pub(crate) use crate::modules::keys::TARGET;
+    pub(crate) use crate::modules::keys::KIND;
+    pub(crate) use crate::modules::keys::INDEX;
 }
 use field::*;
 
 /// The header list's map keys: the lowercase name behind a prefix, so no name is an
 /// array index (which property order would sort first).
 const KEY_PREFIX: &str = "h:";
-const SET_COOKIE: &str = "set-cookie";
+pub(crate) use crate::modules::keys::SET_COOKIE;
 /// What joins the values of a repeated header.
 const VALUE_SEPARATOR: &str = ", ";
-/// What an iterator yields.
-const KEYS: f64 = 0.0;
-const VALUES: f64 = 1.0;
+use crate::modules::fetch_shared_vm::form_data::KEYS;
+use crate::modules::fetch_shared_vm::form_data::VALUES;
 const ENTRIES: f64 = 2.0;
 /// The HTTP whitespace a header value is trimmed of.
 const HTTP_WHITESPACE: [char; 4] = ['\t', '\n', '\r', ' '];
@@ -115,7 +113,7 @@ pub(crate) fn create(c: &mut Context<'_>, guard: Guard) -> Result<(RootId, RootI
 fn initialize(c: &mut Context<'_>, object: RootId, guard: Guard) -> Outcome {
     let map = c.null_object_rooted()?;
     let cookies = c.array_rooted(&[])?;
-    let state = record(c, &[(MAP, map), (COOKIES, cookies)])?;
+    let state = record(c, &[MAP, COOKIES], &[map, cookies])?;
     put_num(c, state, GUARD, guard as usize as f64)?;
     private_slot::write(c, object, Slot::Headers, state)?;
     Ok(state)
@@ -188,7 +186,7 @@ pub(crate) fn append_raw(c: &mut Context<'_>, state: RootId, name: &str, value: 
     } else {
         let name_value = c.string_rooted(name);
         let value_value = c.string_rooted(value);
-        let created = record(c, &[(NAME, name_value), (VALUE, value_value)])?;
+        let created = record(c, &[NAME, VALUE], &[name_value, value_value])?;
         let map = get(c, state, MAP)?;
         put(c, map, &format!("{KEY_PREFIX}{lower}"), created)?;
     }
@@ -208,7 +206,7 @@ pub(crate) fn set_raw(c: &mut Context<'_>, state: RootId, name: &str, value: &st
     delete_raw(c, state, &lower)?;
     let name_value = c.string_rooted(name);
     let value_value = c.string_rooted(value);
-    let created = record(c, &[(NAME, name_value), (VALUE, value_value)])?;
+    let created = record(c, &[NAME, VALUE], &[name_value, value_value])?;
     let map = get(c, state, MAP)?;
     put(c, map, &format!("{KEY_PREFIX}{lower}"), created)?;
     if lower == SET_COOKIE {
@@ -350,7 +348,7 @@ fn iterator(c: &mut Context<'_>, this: RootId, kind: f64) -> Outcome {
     c.set_prototype_rooted(object, prototype)?;
     let kind = c.number(kind);
     let index = c.number(0.0);
-    let state = record(c, &[(TARGET, this), (KIND, kind), (INDEX, index)])?;
+    let state = record(c, &[TARGET, KIND, INDEX], &[this, kind, index])?;
     private_slot::write(c, object, Slot::HeadersIterator, state)?;
     Ok(object)
 }

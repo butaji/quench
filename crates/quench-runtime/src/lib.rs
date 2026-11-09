@@ -1,19 +1,53 @@
 #![deny(warnings)]
 #![feature(rust_preserve_none_cc)]
+// Lane handlers dispatch their successor with `become`, so every dispatch is a sibling jump
+// whatever the handler body keeps on its stack (`vm::dispatch_fast`).
+#![cfg_attr(quench_lane_tail_calls, feature(explicit_tail_calls))]
+#![cfg_attr(quench_lane_tail_calls, allow(incomplete_features))]
 // `heap::array_proofs` reads its armed pointer as a plain thread-local load on every array
 // storage change (`ARMED_PROOFS`).
 #![feature(thread_local)]
 #![cfg_attr(all(test, feature = "bench-primitives"), feature(test))]
 
 mod execution_interrupt;
+/// Numeric facts shared by the runtime and its hosts.
+pub mod units {
+    pub use quench_temporal::units::*;
+    /// `Number.MAX_SAFE_INTEGER`.
+    pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    pub const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
+    pub const BINARY_RADIX: u32 = 2;
+    pub const OCTAL_RADIX: u32 = 8;
+    pub const DECIMAL_RADIX: u32 = 10;
+    pub const HEXADECIMAL_RADIX: u32 = 16;
+    /// A fraction's scale as a percentage.
+    pub const PERCENT: f64 = 100.0;
+    /// The UTF-16 code units of the line terminators text readers split on.
+    pub const LINE_FEED: u16 = b'\n' as u16;
+    pub const CARRIAGE_RETURN: u16 = b'\r' as u16;
+}
+
+/// JavaScript property names the runtime and its hosts both spell.
+pub mod property_names {
+    pub const LENGTH: &str = "length";
+}
+
+pub use vm::value_serializer::DESERIALIZATION_ERROR;
 pub use execution_interrupt::ExecutionInterrupt;
 #[cfg(unix)]
 pub use vm::NativeFaultHandler;
 mod bigint;
+mod bitset;
 mod bytecode;
 mod compile;
 mod code_dependencies;
+mod float_layout;
 mod heap;
+#[cfg_attr(
+    not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))),
+    allow(dead_code)
+)]
+mod jit_coverage;
 mod host;
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
 mod memory_edge;
@@ -23,7 +57,9 @@ mod number_to_string;
 #[path = "../benches/support/number_inputs.rs"]
 mod number_inputs;
 mod profile;
+pub mod trace;
 mod snapshot;
+mod staged;
 mod typed_ir;
 pub(crate) use quench_stack as stack;
 mod unicode;
@@ -37,7 +73,7 @@ pub use wasm::{
     WasmFunction, WasmFunctionBody, WasmFunctionImport, WasmGlobal, WasmGlobalInitializer,
     WasmI32Function, WasmImportName, WasmInstance, WasmMemory, WasmModule,
     WasmReferenceInitializer, WasmReferenceKind, WasmSignature, WasmTable, WasmTableInitializer,
-    WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue,
+    WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue, extern_kind::WasmExternKind,
 };
 
 pub use bytecode::{KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase};
@@ -55,7 +91,7 @@ pub use memory_edge::report_allocator_memory;
 pub use stack::{STACK_BUDGET_BYTES, STACK_HEADROOM_BYTES, WORKER_STACK_SIZE};
 pub use value::Value;
 pub use vm::{
-    write_double, write_raw_bytes, write_uint32, write_uint64, ExecutionMode, HostObjectRead, JsError, SerializedValue, SharedWireInput,
+    local_timezone_changed, write_double, write_raw_bytes, write_uint32, write_uint64, ExecutionMode, HostObjectRead, JsError, SerializedValue, SharedWireInput,
     ValueDeserializer, ValueSerializer, WireInput, WireOutput, WIRE_FORMAT_VERSION,
 };
 

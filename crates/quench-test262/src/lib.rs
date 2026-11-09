@@ -11,7 +11,7 @@ mod harness_cache;
 pub mod ratchet;
 pub mod reporting;
 mod runner_support;
-pub use runner_support::{cached_harness as harness_sources, negative as classify_test_outcome, outcome as execution_outcome, script_source};
+pub use runner_support::{cached_harness as harness_sources, negative as classify_test_outcome, outcome as execution_outcome, required_timeout_ms, script_source, select_files, worker_jobs, WORK_BATCH};
 pub mod runtime_host;
 mod stages;
 pub mod waivers;
@@ -679,7 +679,7 @@ impl<H: Test262Host> Test262Runner<H> {
         path: Option<&Path>,
     ) -> TestOutcome {
         self.host.configure(metadata);
-        // AGENTS.md: harness fidelity is absolute; dispatch the composed sources unchanged.
+        // Harness fidelity is absolute: dispatch the composed sources unchanged.
         if metadata.is_module {
             if let Some(path) = path {
                 return runner_support::outcome(

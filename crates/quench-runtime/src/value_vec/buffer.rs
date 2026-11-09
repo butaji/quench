@@ -80,6 +80,16 @@ impl DerefMut for PropertyBuffer {
 }
 
 impl PropertyBuffer {
+    /// Whether the values keep their addresses as the buffer grows: a reservation's do,
+    /// a heap allocation's may move.
+    #[inline(always)]
+    pub(super) fn keeps_addresses(&self) -> bool {
+        #[cfg(unix)]
+        return matches!(self.allocation, Allocation::Reserved { .. });
+        #[cfg(not(unix))]
+        false
+    }
+
     #[inline]
     pub(super) fn capacity(&self) -> usize {
         self.capacity

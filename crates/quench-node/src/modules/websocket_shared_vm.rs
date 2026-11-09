@@ -34,7 +34,7 @@ members!(Member, "webSocket", [
 
 /// The `builtin_cache` key of the class, and the socket's private slot.
 const CLASS: &str = "\0webSocket:class";
-const SLOT: &str = "\0slot:WebSocket";
+use crate::modules::keys::SLOT;
 const INTERFACE: &str = "WebSocket";
 
 /// The ready states, by value.
@@ -80,7 +80,7 @@ const MAX_REASON_BYTES: usize = 123;
 
 /// A socket's fields.
 mod field {
-    pub(super) const URL: &str = "url";
+    pub(crate) use crate::modules::keys::URL;
     pub(super) const STATE: &str = "readyState";
     pub(super) const BINARY_TYPE: &str = "binaryType";
     pub(super) const PROTOCOL: &str = "protocol";
@@ -95,7 +95,7 @@ mod field {
     pub(super) const CLOSE_SENT: &str = "closeSent";
     pub(super) const CLOSE_RECEIVED: &str = "closeReceived";
     pub(super) const CODE: &str = "code";
-    pub(super) const REASON: &str = "reason";
+    pub(crate) use crate::modules::keys::REASON;
     pub(super) const OBJECT: &str = "object";
 }
 use field::*;
@@ -286,7 +286,7 @@ fn connect(c: &mut Context<'_>, state: RootId, url: &url::Url, protocols: &[Stri
     let target = format!("{}{}", if secure { "https" } else { "http" }, &url.as_str()[url.scheme().len()..]);
     let target = c.string_rooted(&target);
     let method = c.string_rooted("GET");
-    let options = literal(c, &[("method", method), ("headers", headers)])?;
+    let options = literal(c, &["method", "headers"], &[method, headers])?;
     let request = call(c, module, "request", &[target, options])?;
     put(c, state, REQUEST, request)?;
     on(c, request, "upgrade", Member::OnUpgrade, state)?;
@@ -308,7 +308,7 @@ fn fire_close(c: &mut Context<'_>, state: RootId, clean: bool, code: f64, reason
     put_num(c, state, STATE, CLOSED)?;
     let clean = c.boolean(clean);
     let code = c.number(code);
-    let init = literal(c, &[("wasClean", clean), ("code", code), ("reason", reason)])?;
+    let init = literal(c, &["wasClean", "code", "reason"], &[clean, code, reason])?;
     let event = events::create(c, Event::Close, "close", init)?;
     dispatch(c, state, event)
 }
@@ -324,7 +324,7 @@ fn fail(c: &mut Context<'_>, state: RootId, message: &str) -> Result<(), RootedE
         call(c, socket, "destroy", &[])?;
     }
     let message = c.string_rooted(message);
-    let init = literal(c, &[("message", message)])?;
+    let init = literal(c, &["message"], &[message])?;
     let error = events::create(c, Event::Error, "error", init)?;
     dispatch(c, state, error)?;
     let empty = c.string_rooted("");
@@ -535,7 +535,7 @@ fn deliver(c: &mut Context<'_>, state: RootId, opcode: u8, payload: Vec<u8>) -> 
     let url = c.to_string(url)?;
     let origin = url::Url::parse(&url).map(|url| url.origin().ascii_serialization()).unwrap_or_default();
     let origin = c.string_rooted(&origin);
-    let init = literal(c, &[("data", data), ("origin", origin)])?;
+    let init = literal(c, &["data", "origin"], &[data, origin])?;
     let event = events::create(c, Event::Message, "message", init)?;
     dispatch(c, state, event)
 }
@@ -611,10 +611,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let empty = c.string_rooted("");
             let requested_values = requested.iter().map(|protocol| c.string_rooted(protocol)).collect::<Vec<_>>();
             let requested_values = c.array_rooted(&requested_values)?;
-            let state = record(
-                c,
-                &[(OBJECT, object), (URL, url_value), (BINARY_TYPE, binary_type), (PROTOCOL, empty), (EXTENSIONS, empty), (PROTOCOLS, requested_values)],
-            )?;
+            let state = record(c, &[OBJECT, URL, BINARY_TYPE, PROTOCOL, EXTENSIONS, PROTOCOLS], &[object, url_value, binary_type, empty, empty, requested_values])?;
             put_num(c, state, STATE, CONNECTING)?;
             web::put_flag(c, state, CLOSE_SENT, false)?;
             web::put_flag(c, state, CLOSE_RECEIVED, false)?;

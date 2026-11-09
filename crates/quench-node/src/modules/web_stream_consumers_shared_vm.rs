@@ -38,12 +38,12 @@ const NOT_ASYNC_ITERABLE: &str = "stream is not async iterable";
 
 /// A consumption's state.
 mod field {
-    pub(super) const PROMISE: &str = "promise";
-    pub(super) const ITERATOR: &str = "iterator";
-    pub(super) const NEXT: &str = "next";
-    pub(super) const SYNC: &str = "sync";
-    pub(super) const KIND: &str = "kind";
-    pub(super) const CHUNKS: &str = "chunks";
+    pub(crate) use crate::modules::keys::PROMISE;
+    pub(crate) use crate::modules::keys::ITERATOR;
+    pub(crate) use crate::modules::keys::NEXT;
+    pub(crate) use crate::modules::keys::SYNC;
+    pub(crate) use crate::modules::keys::KIND;
+    pub(crate) use crate::modules::keys::CHUNKS;
     pub(super) const TEXT: &str = "text";
     pub(super) const DECODER: &str = "decoder";
 }
@@ -116,7 +116,7 @@ fn begin(c: &mut Context<'_>, member: Member, stream: RootId, promise: RootId) -
     let kind = c.number(kind_index(member));
     let chunks = c.array_rooted(&[])?;
     let text = c.string_rooted("");
-    let state = record(c, &[(PROMISE, promise), (ITERATOR, iterator), (NEXT, next), (SYNC, sync), (KIND, kind), (CHUNKS, chunks), (TEXT, text)])?;
+    let state = record(c, &[PROMISE, ITERATOR, NEXT, SYNC, KIND, CHUNKS, TEXT], &[promise, iterator, next, sync, kind, chunks, text])?;
     if matches!(member, Member::Text | Member::Json) {
         let global = c.global_root()?;
         let decoder = get(c, global, "TextDecoder")?;
@@ -163,7 +163,7 @@ fn chunk(c: &mut Context<'_>, state: RootId, value: RootId) -> Result<(), Rooted
             } else {
                 let decoder = get(c, state, DECODER)?;
                 let decode = get(c, decoder, "decode")?;
-                let options = literal(c, &[])?;
+                let options = literal(c, &[], &[])?;
                 let yes = c.boolean(true);
                 put(c, options, "stream", yes)?;
                 let decoded = c.call_rooted(decode, decoder, &[value, options])?;

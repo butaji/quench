@@ -122,6 +122,18 @@ pub(crate) fn validate_abort_signal(
     Ok(())
 }
 
+/// Node's `validateString(value, name)`: the string's text, or `ERR_INVALID_ARG_TYPE`.
+pub(crate) fn validate_string(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    name: &str,
+) -> Result<String, RootedError> {
+    match context.string_text(value)? {
+        Some(text) => Ok(text),
+        None => Err(argument_type_error(context, value, name, "string")?),
+    }
+}
+
 pub(crate) fn argument_type_error(
     context: &mut NativeContext<'_, NodeHost>,
     root: RootId,

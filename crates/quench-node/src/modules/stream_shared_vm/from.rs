@@ -4,7 +4,7 @@
 use super::errors::{self, StreamError};
 use super::readable::is_buffer;
 use super::{
-    arg, await_then, call_method, captures, closure, get, intrinsics, is_null, is_nullish, is_string,
+    arg, await_then, call_method, captures, closure, get, intrinsic, is_null, is_nullish, is_string,
     next_tick, put, put_bool, Class, Context, Outcome, Slot,
 };
 use quench_runtime::{RootId, RootedError};
@@ -25,7 +25,7 @@ fn options(c: &mut Context<'_>, high_water_mark: bool, opts: RootId) -> Outcome 
 }
 
 fn new_readable(c: &mut Context<'_>, options: RootId) -> Outcome {
-    let readable = intrinsics(c)?.class(Class::Readable);
+    let readable = intrinsic(c, |i| i.class(Class::Readable))?;
     c.construct_rooted(readable, readable, &[options])
 }
 
@@ -37,7 +37,7 @@ pub(crate) fn from(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
         put(c, options, "read", read)?;
         return new_readable(c, options);
     }
-    let intrinsics = intrinsics(c)?;
+    let intrinsics = intrinsic(c, |i| *i)?;
     let (method, asynchronous) = if is_nullish(c, iterable) {
         (None, false)
     } else {
@@ -171,10 +171,8 @@ fn next_sync(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
             Ok(false) => {}
             Err(thrown) => return destroy_with(c, record, thrown),
         }
-        match push_value(c, record, value)? {
-            Ok(Pushed::More) => continue,
-            Ok(Pushed::Stop) => return Ok(()),
-            Err(thrown) => return destroy_with(c, record, thrown),
+        if !push_and_continue(c, record, value)? {
+            return Ok(());
         }
     }
 }
@@ -195,20 +193,23 @@ fn continuation(c: &mut Context<'_>, record: RootId, operation: &str) -> Outcome
 /// `changeToAsyncValues(value)`.
 fn change_to_async_values(c: &mut Context<'_>, record: RootId, value: RootId) -> Result<(), RootedError> {
     put_bool(c, record, "isAsyncValues", true)?;
-    let fulfilled = continuation(c, record, "streamFromFirstAsyncValue")?;
+    await_async_value(c, record, value)
+}
+
+/// Awaits a thenable value, pushing it when it fulfills.
+fn await_async_value(c: &mut Context<'_>, record: RootId, value: RootId) -> Result<(), RootedError> {
+    let fulfilled = continuation(c, record, "streamFromAsyncValue")?;
     let rejected = continuation(c, record, "streamFromRejected")?;
     await_then(c, value, fulfilled, rejected)
 }
 
-pub(crate) fn first_async_value(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let [record] = captures(c)?;
-    let value = arg(c, args, 0);
+/// Pushes one value and answers whether the stream wants another; a throw destroys it.
+fn push_and_continue(c: &mut Context<'_>, record: RootId, value: RootId) -> Result<bool, RootedError> {
     match push_value(c, record, value)? {
-        Ok(Pushed::More) => next_sync_with_async_values(c, record)?,
-        Ok(Pushed::Stop) => {}
-        Err(thrown) => destroy_with(c, record, thrown)?,
+        Ok(Pushed::More) => Ok(true),
+        Ok(Pushed::Stop) => Ok(false),
+        Err(thrown) => destroy_with(c, record, thrown).map(|()| false),
     }
-    Ok(c.undefined())
 }
 
 pub(crate) fn rejected(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
@@ -232,14 +233,10 @@ fn next_sync_with_async_values(c: &mut Context<'_>, record: RootId) -> Result<()
             return attempted(c, record, ended);
         }
         if is_thenable(c, value)? {
-            let fulfilled = continuation(c, record, "streamFromAsyncValue")?;
-            let rejected = continuation(c, record, "streamFromRejected")?;
-            return await_then(c, value, fulfilled, rejected);
+            return await_async_value(c, record, value);
         }
-        match push_value(c, record, value)? {
-            Ok(Pushed::More) => continue,
-            Ok(Pushed::Stop) => return Ok(()),
-            Err(thrown) => return destroy_with(c, record, thrown),
+        if !push_and_continue(c, record, value)? {
+            return Ok(());
         }
     }
 }
@@ -247,10 +244,8 @@ fn next_sync_with_async_values(c: &mut Context<'_>, record: RootId) -> Result<()
 pub(crate) fn async_value(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let [record] = captures(c)?;
     let value = arg(c, args, 0);
-    match push_value(c, record, value)? {
-        Ok(Pushed::More) => next_sync_with_async_values(c, record)?,
-        Ok(Pushed::Stop) => {}
-        Err(thrown) => destroy_with(c, record, thrown)?,
+    if push_and_continue(c, record, value)? {
+        next_sync_with_async_values(c, record)?;
     }
     Ok(c.undefined())
 }
@@ -281,10 +276,8 @@ pub(crate) fn async_result(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> O
         let ended = end(c, record);
         attempted(c, record, ended)?;
     } else {
-        match push_value(c, record, value)? {
-            Ok(Pushed::More) => next_async(c, record)?,
-            Ok(Pushed::Stop) => {}
-            Err(thrown) => destroy_with(c, record, thrown)?,
+        if push_and_continue(c, record, value)? {
+            next_async(c, record)?;
         }
     }
     Ok(c.undefined())

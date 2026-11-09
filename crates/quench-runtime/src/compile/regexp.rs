@@ -592,7 +592,7 @@ fn find_close_bracket(pattern: &str, start: usize) -> Option<usize> {
 }
 
 fn is_valid_group_name(name: &str) -> bool {
-    let Some(decoded) = decode_identifier_escapes(name) else {
+    let Some(decoded) = quench_regexp::decode_identifier_escapes(name) else {
         return false;
     };
     let mut chars = decoded.chars();
@@ -600,55 +600,6 @@ fn is_valid_group_name(name: &str) -> bool {
         return false;
     };
     is_id_start(first) && chars.all(is_id_continue)
-}
-
-fn decode_identifier_escapes(name: &str) -> Option<String> {
-    let mut units = Vec::new();
-    let mut chars = name.chars();
-    while let Some(character) = chars.next() {
-        if character != '\\' {
-            let mut encoded = [0; 2];
-            units.extend(character.encode_utf16(&mut encoded).iter().copied());
-            continue;
-        }
-        if chars.next()? != 'u' {
-            return None;
-        }
-        let first = chars.next()?;
-        let value = if first == '{' {
-            let mut digits = String::new();
-            loop {
-                let digit = chars.next()?;
-                if digit == '}' {
-                    break;
-                }
-                if !digit.is_ascii_hexdigit() {
-                    return None;
-                }
-                digits.push(digit);
-            }
-            u32::from_str_radix(&digits, 16).ok()?
-        } else {
-            let mut digits = String::from(first);
-            digits.extend(chars.by_ref().take(3));
-            if digits.len() != 4 || !digits.chars().all(|digit| digit.is_ascii_hexdigit()) {
-                return None;
-            }
-            u32::from_str_radix(&digits, 16).ok()?
-        };
-        if value > u32::from(u16::MAX) {
-            let mut encoded = [0; 2];
-            units.extend(
-                char::from_u32(value)?
-                    .encode_utf16(&mut encoded)
-                    .iter()
-                    .copied(),
-            );
-        } else {
-            units.push(u16::try_from(value).ok()?);
-        }
-    }
-    String::from_utf16(&units).ok()
 }
 
 fn is_id_start(character: char) -> bool {

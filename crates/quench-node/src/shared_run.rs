@@ -8,7 +8,7 @@ use std::{path::PathBuf, process::ExitCode};
 /// as the runtime's later initialization boundaries.
 #[cfg(feature = "profile-memory")]
 pub(crate) fn profile_startup_boundary(phase: &str) {
-    if std::env::var_os("QUENCH_MEMORY").is_some() {
+    if quench_runtime::trace::Channel::Memory.on() {
         quench_runtime::report_allocator_memory(phase);
     }
 }
@@ -24,11 +24,6 @@ const TYPESCRIPT_MODULE_ENTRY_NAME: &str = "<quench:typescript-module-entry>";
 const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
 /// Select the child process's raw stdout/stderr boundary for Quench workers.
 pub const CHILD_RUNNER_ENV: &str = "QUENCH_CHILD_RUNNER";
-/// Names the process's memory policy (`MemoryPolicy::name`); unset, it is the default
-/// (throughput). Child processes inherit it with the environment.
-pub const MEMORY_POLICY_ENV: &str = "QUENCH_MEMORY_POLICY";
-/// The CLI's form of `MEMORY_POLICY_ENV`, which takes precedence over it.
-const MEMORY_POLICY_FLAG: &str = "--memory-policy";
 
 /// The options that name the inline source (`-e`, `-p` and their combined forms), each
 /// followed by the source; a print option followed by another option is a switch instead.
@@ -109,36 +104,18 @@ pub(crate) fn process_memory_policy() -> Option<MemoryPolicy> {
     PROCESS_MEMORY_POLICY.get().copied()
 }
 
-/// Selects the process's memory policy once: the CLI's `chosen` name, else
-/// `MEMORY_POLICY_ENV`, else the default. An unknown name is an error.
-pub(crate) fn select_memory_policy(chosen: Option<&str>) -> Result<MemoryPolicy, String> {
-    if let Some(policy) = PROCESS_MEMORY_POLICY.get() {
-        return Ok(*policy);
-    }
-    let environment = std::env::var_os(MEMORY_POLICY_ENV);
-    let (source, name) = match (chosen, &environment) {
-        (Some(name), _) => (MEMORY_POLICY_FLAG, name),
-        (None, Some(name)) => (
-            MEMORY_POLICY_ENV,
-            name.to_str().ok_or_else(|| format!("{MEMORY_POLICY_ENV} is not valid Unicode"))?,
-        ),
-        (None, None) => return Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| {
-            let policy = MemoryPolicy::default();
-            apply_allocator_policy(policy);
-            policy
-        })),
-    };
-    let policy = MemoryPolicy::from_name(name).ok_or_else(|| {
-        format!("{source}: unknown memory policy '{name}' (expected {})", memory_policy_names())
-    })?;
-    Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| {
+/// Selects the process's memory policy once: the default, or memory-first under the
+/// `QUENCH_DEV=memory-first` experiment, which child processes inherit with the environment.
+pub(crate) fn select_memory_policy() -> MemoryPolicy {
+    *PROCESS_MEMORY_POLICY.get_or_init(|| {
+        let policy = if quench_runtime::trace::Dev::MemoryFirst.on() {
+            MemoryPolicy::MemoryFirst
+        } else {
+            MemoryPolicy::default()
+        };
         apply_allocator_policy(policy);
         policy
-    }))
-}
-
-fn memory_policy_names() -> String {
-    MemoryPolicy::ALL.map(MemoryPolicy::name).join("|")
+    })
 }
 
 /// Convert V8's `--stack_size` (in KiB) into a corresponding guest call
@@ -432,13 +409,13 @@ fn execute_shared_on_worker(
     let _guest_call_limit =
         guest_call_limit(&exec_argv).map(quench_stack::GuestCallLimitGuard::enter);
 
-    let memory_policy = select_memory_policy(None)?;
+    let memory_policy = select_memory_policy();
     let new_host = |worker: Option<crate::modules::worker_shared_vm::WorkerContext>| -> Result<NodeHost, String> {
         let mut host = NodeHost::new(argv.clone()).with_exec_argv(exec_argv.clone())?;
         host.inline_source = inline_source;
         host.eval_builtin_globals = eval_builtin_globals;
         host.eval_source_nonempty = eval_source_nonempty;
-        host.eval_print = eval_print.clone();
+        host.eval_print.clone_from(&eval_print);
         host.eval_crypto = eval_crypto;
         let host = match commonjs_entry.clone() {
             Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
@@ -713,7 +690,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         Some("--help") | Some("-h") => {
             print_cli_help();
             // Quench's own options follow Node's.
-            println!("quench-node [--jit] [{}] [{MEMORY_POLICY_FLAG}={}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG, memory_policy_names());
+            println!("quench-node [--jit] [{}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG);
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
@@ -735,15 +712,11 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut eval_source = None;
     let mut print = false;
     let mut jit = false;
-    let mut memory_policy = None;
     let mut guest_arguments = Vec::new();
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--jit" => jit = true,
-            option if option.split_once('=').is_some_and(|(name, _)| name == MEMORY_POLICY_FLAG) => {
-                memory_policy = option.split_once('=').map(|(_, value)| value.to_owned());
-            }
             "--env-file" | "--env-file-if-exists" => {
                 let Some(path) = args.get(index + 1) else {
                     return Ok(cli_usage_error(&format!(
@@ -935,7 +908,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         }
         index += 1;
     }
-    select_memory_policy(memory_policy.as_deref())?;
+    select_memory_policy();
     if interactive && input_type_module {
         eprintln!("Cannot specify --input-type for REPL");
         return Ok(ExitCode::FAILURE);
@@ -1121,7 +1094,7 @@ fn compile_cli_source(source: &str, name: &str, kind: SourceKind) -> Result<Exit
 fn unescape_eval_option_source(source: String) -> String {
     source
         .strip_prefix("\\-")
-        .map_or(source.clone(), |remainder| format!("-{remainder}"))
+        .map_or_else(|| source.clone(), |remainder| format!("-{remainder}"))
 }
 
 /// Permission allow-list options require Node's permission mode, even when

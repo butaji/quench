@@ -1,4 +1,5 @@
 use super::*;
+mod keys;
 
 const MAX_DENSE_ARRAY_HOLE_GAP: usize = 1024;
 #[cfg(feature = "profile-aggregate")]
@@ -44,11 +45,11 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(always)]
-    /// A string's own integer-indexed property (String exotic [[GetOwnProperty]]): the
+    /// A string's, or its wrapper's, own integer index (String exotic [[GetOwnProperty]]): the
     /// one-unit string at `index`, or `None` past its end, where lookup continues on the
     /// prototype.
     pub(super) fn string_index_value(&mut self, string: Value, index: usize) -> Option<Value> {
-        let text = self.heap.string(string)?;
+        let text = self.heap.string(string).or_else(|| self.heap.string(self.string_wrapper_primitive(string)?))?;
         let unit = text.units().get(index)?;
         // An ASCII unit's string is shared (`ascii_unit_string`), as `charAt`'s is.
         Some(match self.ascii_unit_string(unit) {
@@ -183,25 +184,11 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<(), JsError> {
         if object.is_null() || object.is_undefined() {
-            let property = self.detail_string(key);
-            return Err(self.nullish_assignment_error(p, object, &property));
+            let property = self.detail_string(key); return Err(self.nullish_assignment_error(p, object, &property));
         }
         if let Some(index) = self.array_index_key(key) {
             let index = index as usize;
-            // Descriptors, accessors and frozen state are the only things that make replacing a
-            // present dense element differ from a plain store, and a plain array has none.
-            if let Some(data) = self.heap.array(object)
-                && !data.has_indexed_descriptors()
-                && !data.is_frozen()
-                && data
-                    .elements()
-                    .get(index)
-                    .is_some_and(|value| !value.is_deleted())
-            {
-                self.replace_dense_element(object, index, value);
-                return Ok(());
-            }
-            if self.append_dense_element(object, index, value) {
+            if self.store_plain_element(object, index, value) {
                 return Ok(());
             }
             // A typed array's integer-indexed [[Set]] is TypedArraySetElement: its indices
@@ -306,11 +293,10 @@ impl<H: Host> Vm<H> {
     /// `base[key]` for a non-negative integer key that neither an ordinary object or array
     /// `base` nor anything on its prototype chain holds: `undefined`, as [[Get]] finds it. An
     /// object on the chain holds the index as an element of an array, as a property keyed by
-    /// the index's canonical atom (none exists without one, `lookup_array_index_atom`), or
-    /// through exotic behaviour, where this declines.
+    /// the index's canonical atom (`shape_names_index`), or through exotic behaviour, where
+    /// this declines.
     pub(super) fn absent_array_element(&self, base: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
-        let atom = self.lookup_array_index_atom(index).map(PropertyKey::string);
         let mut current = base;
         loop {
             let data = self.object_data(current)?;
@@ -320,7 +306,7 @@ impl<H: Host> Vm<H> {
                 || data.is_module_namespace()
                 || data.deferred_module().is_some()
                 || self.heap.sparse_length(current).is_some()
-                || atom.is_some_and(|key| self.property_shape_slot(data.shape(), key).is_some())
+                || self.shape_names_index(data.shape(), index)
             {
                 return None;
             }
@@ -361,30 +347,6 @@ impl<H: Host> Vm<H> {
             .elements()
             .get(index)
             .copied()
-            .filter(|value| !value.is_deleted())
-    }
-
-    /// A present own data index on an ordinary array, whether it lives in the dense
-    /// vector or sparse backing. Accessors and absent indices stay on the full lookup path.
-    pub(super) fn direct_array_index_data(&self, base: Value, key: Value) -> Option<Value> {
-        let index = usize::try_from(self.array_index_key(key)?).ok()?;
-        let array = self.heap.array(base)?;
-        if let Some(value) = array
-            .elements()
-            .get(index)
-            .copied()
-            .filter(|value| !value.is_deleted())
-        {
-            return Some(value);
-        }
-        if self
-            .array_descriptor_entry(base, index)
-            .is_some_and(|(_, attributes)| attributes.accessor)
-        {
-            return None;
-        }
-        self.heap
-            .sparse_get(base, index)
             .filter(|value| !value.is_deleted())
     }
 
@@ -596,30 +558,18 @@ impl<H: Host> Vm<H> {
         self.set_property_with_program_mode(p, object, atom, value, strict)
     }
 
-    /// `key`, or the integer naming the same property when `key` is a flat string holding
-    /// an array index in canonical decimal form (`object_static::array_index`), so the
-    /// integer-keyed element reads answer `base["0"]` as they answer `base[0]`.
-    #[inline(always)]
-    pub(super) fn canonical_index_key(&self, key: Value) -> Value {
-        let Some(text) = self.heap.string(key) else {
-            return key;
-        };
-        let leads_with_digit =
-            text.existing_flat().and_then(|units| units.unit(0)).is_some_and(|unit| (u16::from(b'0')..=u16::from(b'9')).contains(&unit));
-        if !leads_with_digit {
-            return key;
+    /// The stores of index `index` needing no [[Set]] step past a plain array's own elements:
+    /// replacing a present one, appending at the dense length, or filling a hole no prototype
+    /// claims (`set_index_mode`, `general_elements`); `false` before any effect.
+    pub(super) fn store_plain_element(&mut self, object: Value, index: usize, value: Value) -> bool {
+        let Some(data) = self.heap.array(object) else { return false };
+        if data.has_indexed_descriptors() || data.is_frozen() { return false; }
+        match data.elements().get(index) {
+            Some(present) if !present.is_deleted() => { self.replace_dense_element(object, index, value); true }
+            Some(_) => !data.is_arguments_object() && self.inherited_index_unclaimed(object, index)
+                && self.set_array_element(object, index, value),
+            None => self.append_dense_element(object, index, value),
         }
-        super::object_static::array_index(text.host_string())
-            .and_then(|index| i32::try_from(index).ok())
-            .map_or(key, Value::integer)
-    }
-
-    pub(super) fn array_index_key(&self, key: Value) -> Option<u32> {
-        if let Some(index) = key.as_int() {
-            return u32::try_from(index).ok();
-        }
-        let key = self.heap.string(key)?;
-        super::object_static::array_index(key.host_string())
     }
 
     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
@@ -964,3 +914,4 @@ mod tests {
         assert_ne!(template.as_ptr(), elements.as_ptr());
     }
 }
+

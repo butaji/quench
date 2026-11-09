@@ -693,20 +693,20 @@ enum TimerDurationWarning {
     NotNumber,
 }
 
+/// Each warning's name and how its message describes the duration, in
+/// [`TimerDurationWarning`] order.
+const TIMER_DURATION_WARNINGS: [(&str, &str); 3] = [
+    ("TimeoutOverflowWarning", "does not fit into a 32-bit signed integer."),
+    ("TimeoutNegativeWarning", "is a negative number."),
+    ("TimeoutNaNWarning", "is not a number."),
+];
+
 impl TimerDurationWarning {
     fn name(self) -> &'static str {
-        match self {
-            Self::Overflow => "TimeoutOverflowWarning",
-            Self::Negative => "TimeoutNegativeWarning",
-            Self::NotNumber => "TimeoutNaNWarning",
-        }
+        TIMER_DURATION_WARNINGS[self as usize].0
     }
     fn detail(self) -> &'static str {
-        match self {
-            Self::Overflow => "does not fit into a 32-bit signed integer.",
-            Self::Negative => "is a negative number.",
-            Self::NotNumber => "is not a number.",
-        }
+        TIMER_DURATION_WARNINGS[self as usize].1
     }
 }
 
@@ -854,18 +854,8 @@ fn set_timer_ref(
     Ok(receiver)
 }
 
-pub(crate) fn timer_has_ref(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let api = timer_handle_api(context)?;
-    let refed = context.get_property_rooted(receiver, api.refed_key)?;
-    let refed = context.truthy_rooted(refed)?;
-    Ok(context.boolean(refed))
-}
-
-pub(crate) fn immediate_has_ref(
+/// `hasRef()` of a timer or an immediate handle.
+pub(crate) fn handle_has_ref(
     context: &mut NativeContext<'_, NodeHost>,
     receiver: RootId,
     _: &[RootId],

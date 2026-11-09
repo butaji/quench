@@ -40,13 +40,13 @@ members!(Member, "webTransform", [
 
 /// A transform stream's and its controller's fields.
 mod field {
-    pub(super) const READABLE: &str = "readable";
-    pub(super) const WRITABLE: &str = "writable";
-    pub(super) const BACKPRESSURE: &str = "backpressure";
+    pub(crate) use crate::modules::keys::READABLE;
+    pub(crate) use crate::modules::keys::WRITABLE;
+    pub(crate) use crate::modules::keys::BACKPRESSURE;
     pub(super) const BACKPRESSURE_CHANGE: &str = "backpressureChange";
-    pub(super) const TRANSFORM: &str = "transform";
+    pub(crate) use crate::modules::keys::TRANSFORM;
     pub(super) const FLUSH: &str = "flush";
-    pub(super) const CANCEL: &str = "cancel";
+    pub(crate) use crate::modules::keys::CANCEL;
     pub(super) const FINISH: &str = "finishPromise";
     /// Whether the stream's transform is the identity (`defaultTransformAlgorithm`).
     pub(super) const IDENTITY: &str = "identity";
@@ -75,7 +75,7 @@ fn initialize(
     readable_high_water_mark: f64,
     readable_size: RootId,
 ) -> Outcome {
-    let stream = record(c, &[(SELF, object)])?;
+    let stream = record(c, &[SELF], &[object])?;
     attach(c, object, Brand::TransformStream, stream)?;
     let write = function(c, Member::SinkWrite, "", &[stream])?;
     let close = function(c, Member::SinkClose, "", &[stream])?;
@@ -253,7 +253,7 @@ pub(crate) fn create_transform(c: &mut Context<'_>, object: RootId, transform: R
 }
 
 fn setup_controller(c: &mut Context<'_>, stream: RootId, algorithms: &[(&str, RootId)], internal: bool, identity: bool) -> Outcome {
-    let controller = record(c, &[(STREAM, stream)])?;
+    let controller = record(c, &[STREAM], &[stream])?;
     for &(name, value) in algorithms {
         put(c, controller, name, value)?;
     }
@@ -347,7 +347,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let readable = side(c, stream, true)?;
             let writable = side(c, stream, false)?;
             let backpressure = get(c, stream, BACKPRESSURE)?;
-            let data = literal(c, &[("readable", readable), ("writable", writable), ("backpressure", backpressure)])?;
+            let data = literal(c, &["readable", "writable", "backpressure"], &[readable, writable, backpressure])?;
             custom_inspect(c, this, Brand::TransformStream.name(), data, args)
         }
         Member::ControllerConstruct => {
@@ -382,7 +382,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let controller = this_state(c, this, Brand::TransformController)?;
             let stream = get(c, controller, STREAM)?;
             let stream = get(c, stream, SELF)?;
-            let data = literal(c, &[("stream", stream)])?;
+            let data = literal(c, &["stream"], &[stream])?;
             custom_inspect(c, this, Brand::TransformController.name(), data, args)
         }
         Member::SinkWrite => {

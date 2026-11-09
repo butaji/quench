@@ -13,8 +13,8 @@ pub(super) const TIME_FIELDS: [&str; 6] = [
 pub(super) const TIME_FIELDS_BEFORE_MONTH: usize = 4;
 pub(super) const TIME_LIMITS: [i32; 6] = [23, 999, 999, 59, 999, 59];
 const DEFAULT_DATE_PREFIX: &str = "1970-01-01T";
-const ISO_YEAR_DIGITS: usize = 4;
-const ISO_MONTH_DIGITS: usize = 2;
+use crate::vm::temporal_date_parse::ISO_YEAR_DIGITS;
+use crate::vm::temporal_date_parse::ISO_MONTH_DIGITS;
 const FRACTIONAL_SECOND_DIGITS: usize = 9;
 
 pub(super) fn convert<H: Host>(
@@ -58,7 +58,7 @@ pub(super) fn to_time_with_options<H: Host>(
     }
     if let Some(Cell::TemporalZonedDateTime { instant, .. }) = vm.heap.get(value) {
         let (epoch_nanoseconds, time_zone) =
-            (instant.epoch_nanoseconds, instant.time_zone.to_string());
+            (instant.epoch_nanoseconds, instant.time_zone.clone());
         validate_overflow_options_type(vm, p, options)?;
         let local =
             super::temporal_zoned_date_time::zoned_date_time_fields(epoch_nanoseconds, &time_zone)

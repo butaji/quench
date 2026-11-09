@@ -1,5 +1,7 @@
 use super::*;
 
+mod spelling_tests;
+
 #[test]
 fn regression_global_var_lowering_checks_instruction_roles_before_slots() {
     let wide_count = (1..=u16::MAX)
@@ -452,5 +454,22 @@ fn global_declarations_include_bindings_whose_initializers_never_execute() {
         for name in expected {
             assert!(names.iter().any(|atom| &program.atoms[*atom as usize] == *name), "missing {name}");
         }
+    }
+}
+
+#[test]
+fn strict_for_in_of_head_rejects_eval_and_arguments() {
+    // A bare `eval` or `arguments` head is no assignment or update, which OXC's checker
+    // judges; the parser rejects it in strict code (expected outcomes from Node).
+    let rejects = |source: &str| Engine::specialize(source, "for-head.js").is_err();
+    for head in ["for (eval in {});", "for (arguments of []);", "for ((eval) of []);"] {
+        assert!(rejects(&format!("'use strict'; {head}")), "{head}");
+        assert!(rejects(&format!("function f() {{ 'use strict'; {head} }}")), "{head}");
+        assert!(rejects(&format!("'use strict'; function f() {{ function g() {{ {head} }} }}")), "{head}");
+        assert!(rejects(&format!("(class {{ m() {{ {head} }} }});")), "{head}");
+        assert!(!rejects(head), "{head}");
+    }
+    for head in ["for (eval.x in {});", "for (x of [eval]);", "for (let x in { eval: 1 });"] {
+        assert!(!rejects(&format!("'use strict'; var x; {head}")), "{head}");
     }
 }

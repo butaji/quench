@@ -7,12 +7,12 @@
 # A lane handler ends by dispatching its successor's handler (`next!`, `sibling!`). On the
 # builds that form sibling calls (`quench_lane_tail_calls`) that dispatch must be a jump: a
 # call nests a native frame per record run, which grows the stack until the safepoint floor
-# sends the run back to the lane loop. LLVM forms the jump only when no stack temporary of
-# the handler escapes. A helper the handler inlines that takes a local's address, or returns
-# a value too wide for registers, prevents it, and profile-guided inlining can make that
-# happen to a hot handler in one build and not the next (one such `IncDec` handler made
-# NavierStokes 17% slower at an equal instruction count). The check reads symbols, so run
-# it on a binary that keeps them (`production`, `profiling`). It prints each handler with an
+# sends the run back to the lane loop. LLVM forms that jump unprompted only when no stack
+# temporary of the handler escapes, which inlining decided per build (one `IncDec` handler
+# made NavierStokes 17% slower at an equal instruction count), so `next!` and `sibling!`
+# dispatch with `become`, and helpers of the default convention return where to continue
+# (`Resumed`) instead of dispatching. The check confirms none is left. It reads symbols, so run
+# it on a binary that keeps them (`release`, `profiling`). It prints each handler with an
 # indirect call and how many it has; the HANDLER names given must have none, and the exit
 # status is 1 when one does.
 set -euo pipefail

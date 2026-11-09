@@ -86,7 +86,7 @@ impl Options {
         let args = std::env::args().skip(1).collect::<Vec<_>>();
         let [node, compiler, output, compile_seconds, execute_seconds, rest @ ..] = args.as_slice()
         else {
-            return Err("usage: run-npm-aot NODE COMPILER REPORT COMPILE_SECONDS EXECUTE_SECONDS [--profile iteration|production] [--sdk-report FILE] [--package NAME]".into());
+            return Err("usage: run-npm-aot NODE COMPILER REPORT COMPILE_SECONDS EXECUTE_SECONDS [--profile iteration|release] [--sdk-report FILE] [--package NAME]".into());
         };
         let duration = |value: &str| -> Result<Duration, String> {
             let seconds = value.parse::<u64>().map_err(|e| e.to_string())?;
@@ -111,8 +111,8 @@ impl Options {
                 .next()
                 .ok_or_else(|| format!("missing {option} value"))?;
             match option.as_str() {
-                "--profile" if matches!(value.as_str(), "iteration" | "production") => {
-                    options.profile = value.clone()
+                "--profile" if matches!(value.as_str(), "iteration" | "release") => {
+                    options.profile.clone_from(value)
                 }
                 "--sdk-report" => {
                     options.sdk_report = Some(fs::canonicalize(value).map_err(|e| e.to_string())?)

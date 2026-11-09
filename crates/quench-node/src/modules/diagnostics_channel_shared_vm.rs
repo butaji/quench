@@ -108,17 +108,16 @@ const FUNCTIONS: [Method; 5] = [
 /// A channel's own fields, in Node's definition order.
 const SUBSCRIBERS: &str = "_subscribers";
 const STORES: &str = "_stores";
-const NAME: &str = "name";
+pub(crate) use crate::modules::keys::NAME;
 
 /// The members of the group's shared data (`SharedDiagnosticsState::api`).
 mod api {
-    /// The private key of a channel's registry key.
-    pub(super) const SLOT: &str = "slot";
+    pub(crate) use crate::modules::keys::SLOT;
     /// The channels by name (a `Map`), as `channel(name)` finds them.
     pub(super) const CHANNELS: &str = "channels";
-    pub(super) const MAP: &str = "Map";
+    pub(crate) use crate::modules::keys::MAP;
     pub(super) const MAP_GET: &str = "mapGet";
-    pub(super) const MAP_SET: &str = "mapSet";
+    pub(crate) use crate::modules::keys::MAP_SET;
     pub(super) const MAP_DELETE: &str = "mapDelete";
     pub(super) const STORE_MAP_PROTOTYPE: &str = "storeMapPrototype";
     pub(super) const CHANNEL_PROTOTYPE: &str = "channelPrototype";
@@ -575,7 +574,7 @@ pub(crate) fn channel_run_stores(c: &mut Context<'_>, receiver: RootId, args: &[
     let stores = store_entries(c, receiver)?;
     let remaining = stores.len() / STORE_ENTRY_WIDTH;
     let stores = c.array_rooted(&stores)?;
-    let run = c.record_rooted(&STORE_RUN, &[receiver, data, function, this, rest, stores])?;
+    let run = c.record_rooted(false, &STORE_RUN, &[receiver, data, function, this, rest, stores])?;
     run_stores_from(c, run, remaining)
 }
 
@@ -613,7 +612,7 @@ fn run_stores_from(c: &mut Context<'_>, run: RootId, remaining: usize) -> Outcom
         }
     };
     let remaining = c.number(entered as f64);
-    let step = c.record_rooted(&STORE_STEP, &[run, remaining])?;
+    let step = c.record_rooted(false, &STORE_STEP, &[run, remaining])?;
     let next = c.host_function_named_with_data(crate::host::shared_vm::operation!("diagnosticsRunStoresNext"), "", step)?;
     call_method(c, store, "run", &[context, next])
 }
@@ -795,7 +794,7 @@ fn trace_frame(c: &mut Context<'_>, receiver: RootId, function: RootId, context:
     for &event in TRACE_EVENTS {
         fields.push(get(c, receiver, event)?);
     }
-    c.record_rooted(&TRACE_FRAME, &fields)
+    c.record_rooted(false, &TRACE_FRAME, &fields)
 }
 
 /// Whether the tracing channel has a subscriber, read as Node reads `this.hasSubscribers`.
@@ -958,7 +957,7 @@ pub(crate) fn trace_callback(c: &mut Context<'_>, receiver: RootId, args: &[Root
     let context = argument(c, args, 2);
     let mut rest = rest.to_vec();
     let frame = trace_frame(c, receiver, function, context, this, &[])?;
-    let wrapper_data = c.record_rooted(&WRAPPED_CALLBACK, &[frame, callback])?;
+    let wrapper_data = c.record_rooted(false, &WRAPPED_CALLBACK, &[frame, callback])?;
     rest[index] = c.host_function_named_with_data(crate::host::shared_vm::operation!("diagnosticsTraceWrappedCallback"), "wrappedCallback", wrapper_data)?;
     let rest = c.array_rooted(&rest)?;
     put(c, frame, "arguments", rest)?;
@@ -986,7 +985,7 @@ pub(crate) fn trace_wrapped_callback(c: &mut Context<'_>, receiver: RootId, args
         put(c, context, "result", result)?;
     }
     let arguments = c.array_rooted(args)?;
-    let call = c.record_rooted(&CALLBACK_CALL, &[frame, callback, receiver, arguments])?;
+    let call = c.record_rooted(false, &CALLBACK_CALL, &[frame, callback, receiver, arguments])?;
     let body = c.host_function_named_with_data(crate::host::shared_vm::operation!("diagnosticsTraceCallbackContinue"), "", call)?;
     let async_start = get(c, frame, "asyncStart")?;
     let context = get(c, frame, "context")?;

@@ -1,3 +1,6 @@
+mod abi;
+mod closure_tables;
+use closure_tables::{read_closure_tables, write_closure_tables};
 use super::{
     AtomTable, BindingSite, Constant, DerivedFact, DispatchClass, FactTables, EvalBinding, EvalBindingDeclaration,
     EvalBindingLocation, FieldBase, FieldSite, Function, FunctionSlot, Handler, InitialRegister, Instr,
@@ -40,6 +43,8 @@ const MODULE_LINK_PLAN_SOME: u8 = 1;
 const LITERAL_STEP_CONSTANT: u8 = 0;
 const LITERAL_STEP_ARRAY: u8 = 1;
 const LITERAL_STEP_OBJECT: u8 = 2;
+const LITERAL_STEP_INT: u8 = 3;
+const LITERAL_STEP_JSON: u8 = 4;
 
 fn read_eval_binding(input: &mut BinaryReader<'_>) -> Result<EvalBinding, String> {
     Ok(EvalBinding {
@@ -76,17 +81,16 @@ fn write_eval_binding(out: &mut BinaryWriter, binding: &EvalBinding) {
     out.u8(binding.declaration as u8);
 }
 
-pub(super) fn write_program(
-    program: &super::ResidualProgram,
-    path: &std::path::Path,
-) -> Result<(), String> {
+pub(super) fn write_program(program: &super::ResidualProgram, path: &std::path::Path) -> Result<(), String> {
+    crate::vm::freeze_call_sites(program);
     let (bytes, _) = encode_program(program, AtomEncoding::Program, SourceEncoding::Included);
     std::fs::write(path, bytes).map_err(|error| error.to_string())
 }
 
 /// A compact encoding of `program` for a compile cache, with the program's atom ids in the
 /// order its table names them (`decode_compact_program` maps each name to its reader's id).
-/// The source text is left out: whoever decodes it supplies the same text.
+/// The source text is left out: whoever decodes it supplies the same text. Its reader, this
+/// build, parses call sites for a diagnostic alone (each entry's had cost mandreel 14 MB).
 pub(super) fn encode_compact_program(program: &super::ResidualProgram) -> (Vec<u8>, Vec<u32>) {
     let (bytes, order) = encode_program(program, AtomEncoding::Compact(Default::default()), SourceEncoding::External);
     (sealed(bytes), order)
@@ -95,6 +99,7 @@ pub(super) fn encode_compact_program(program: &super::ResidualProgram) -> (Vec<u
 /// An entry program's cached form (`ResidualProgram::encode_trusted`): the lossless encoding
 /// under the program's own atom ids, which seed the VM's, followed by its checksum.
 pub(super) fn encode_trusted_program(program: &super::ResidualProgram) -> Vec<u8> {
+    crate::vm::freeze_call_sites(program);
     sealed(encode_program(program, AtomEncoding::Program, SourceEncoding::Included).0)
 }
 
@@ -376,6 +381,8 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
                 LiteralStep::Constant(index) => (LITERAL_STEP_CONSTANT, index),
                 LiteralStep::Array(count) => (LITERAL_STEP_ARRAY, count),
                 LiteralStep::Object(site) => (LITERAL_STEP_OBJECT, site),
+                LiteralStep::Int(value) => (LITERAL_STEP_INT, value.cast_unsigned()),
+                LiteralStep::Json(start) => (LITERAL_STEP_JSON, start),
             };
             out.u8(tag);
             out.u32(operand);
@@ -387,7 +394,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
             out.instruction(instruction.op(), instruction.a(), instruction.b(), instruction.c(), instruction.imm());
         }
     }
-    write_closure_reads(&mut out, program.closure_reads.as_deref());
+    write_closure_tables(&mut out, program);
     let order = match out.atoms {
         AtomEncoding::Program => {
             header.strings(&program.atoms);
@@ -443,6 +450,7 @@ pub(super) fn decode_compact_program(
 
 #[cfg(feature = "aot")]
 pub(super) fn encode_native_program(program: &super::ResidualProgram) -> Vec<u8> {
+    crate::vm::freeze_call_sites(program);
     sealed(encode_program(program, AtomEncoding::Shared, SourceEncoding::Included).0)
 }
 
@@ -691,6 +699,8 @@ fn decode_program(
                     LITERAL_STEP_CONSTANT => LiteralStep::Constant(operand),
                     LITERAL_STEP_ARRAY => LiteralStep::Array(operand),
                     LITERAL_STEP_OBJECT => LiteralStep::Object(operand),
+                    LITERAL_STEP_INT => LiteralStep::Int(operand.cast_signed()),
+                    LITERAL_STEP_JSON => LiteralStep::Json(operand),
                     _ => return Err("invalid residual literal template step".into()),
                 })
             })?
@@ -719,7 +729,7 @@ fn decode_program(
         }
         Ok(Superinstruction::new(code))
     })?;
-    let closure_reads = read_closure_reads(&mut input)?;
+    let (closure_reads, first_call_scopes) = read_closure_tables(&mut input, functions.len())?;
     input.finish()?;
     let program = super::ResidualProgram {
         specialized,
@@ -740,7 +750,7 @@ fn decode_program(
         regexp_literal_sites,
         literal_templates,
         superinstructions,
-        replay: None,
+        replay: None, first_call_scopes,
         encoded_records,
         validated: Default::default(),
         undefined_constant: Default::default(),
@@ -748,53 +758,6 @@ fn decode_program(
         closure_reads,
     };
     Ok(program)
-}
-
-/// A program's closure reads (`ClosureReads`), when it has them: per function its parent,
-/// whether it is an arrow, its reads (none for its whole chain) and its by-name slots.
-fn write_closure_reads(out: &mut BinaryWriter, reads: Option<&super::ClosureReads>) {
-    out.u8(u8::from(reads.is_some()));
-    let Some(reads) = reads else {
-        return;
-    };
-    out.u32(reads.functions.len() as u32);
-    for function in reads.functions.iter() {
-        out.option_u32(function.parent);
-        out.u8(u8::from(function.is_arrow));
-        out.u8(u8::from(function.reads.is_some()));
-        if let Some(pairs) = &function.reads {
-            out.u32(pairs.len() as u32);
-            for &(distance, slot) in pairs.iter() {
-                out.u32(distance);
-                out.u16(slot);
-            }
-        }
-        out.u16s(&function.named_slots);
-    }
-}
-
-fn read_closure_reads(input: &mut BinaryReader<'_>) -> Result<Option<std::rc::Rc<super::ClosureReads>>, String> {
-    if input.u8()? == 0 {
-        return Ok(None);
-    }
-    let functions = input.list(|input| {
-        let parent = input.option_u32()?;
-        let is_arrow = input.u8()? != 0;
-        let reads = if input.u8()? != 0 {
-            Some(input.list(|input| Ok((input.u32()?, input.u16()?)))?.into_boxed_slice())
-        } else {
-            None
-        };
-        let named_slots = input.u16s()?.into_boxed_slice();
-        Ok(super::closure_reads::FunctionReads { parent, is_arrow, reads, named_slots })
-    })?;
-    if functions
-        .iter()
-        .any(|function| function.parent.is_some_and(|parent| parent as usize >= functions.len()))
-    {
-        return Err("invalid residual closure reads parent".into());
-    }
-    Ok(Some(std::rc::Rc::new(super::ClosureReads { functions: functions.into_boxed_slice() })))
 }
 
 /// The body's entry for a deferred record, `record` of `region`: its length, its place and its
@@ -969,15 +932,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         for binding in &name_bindings {
             write_eval_binding(out, binding);
         }
-        out.u32(function.environment_clones.len() as u32);
-        for clone in &function.environment_clones {
-            for slots in [&clone.fresh, &clone.reset] {
-                out.u32(slots.len() as u32);
-                for slot in slots {
-                    out.u16(*slot);
-                }
-            }
-        }
+        function.environment_clones.write(out);
         match &function.selective_capture_slots {
             Some(slots) => {
                 out.u8(1);
@@ -1059,11 +1014,11 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         }
         out.source_positions(&function.source_positions);
         let plain = match function.plain_locals.get() {
-            Some(plain) => plain.to_vec(),
-            None => function.plain_local_slots(superinstructions),
+            Some(words) => words.to_vec(),
+            None => function.plain_local_slots(superinstructions).words().to_vec(),
         };
-        for byte in plain.chunks(u8::BITS as usize) {
-            out.u8(byte.iter().enumerate().fold(0, |bits, (bit, &plain)| bits | (u8::from(plain) << bit)));
+        for byte in 0..usize::from(function.locals).div_ceil(u8::BITS as usize) {
+            out.u8((plain[byte / 8] >> (byte % 8 * 8)) as u8);
         }
         out.u32(derived_facts);
 }
@@ -1195,12 +1150,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
         let environment_atoms = input.list(|input| input.atom())?;
         let mut name_bindings = input.list(read_eval_binding)?;
         input.restore_atom_order(&mut name_bindings);
-        let environment_clones = input.list(|input| {
-            Ok(crate::bytecode::EnvironmentClone {
-                fresh: input.list(|input| input.u16())?,
-                reset: input.list(|input| input.u16())?,
-            })
-        })?;
+        let environment_clones = crate::bytecode::EnvironmentClones::read(input)?;
         let selective_capture_slots = match input.u8()? {
             0 => None,
             1 => Some(input.u16s()?.into()),
@@ -1227,16 +1177,8 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             })
         })?;
         let registers = input.u16()?;
-        let dispatch = match input.u8()? {
-            0 => DispatchClass::General,
-            1 => DispatchClass::Numeric,
-            _ => return Err("invalid residual dispatch class".into()),
-        };
-        let covered = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid residual register root coverage".into()),
-        };
+        let dispatch = input.dispatch_class()?;
+        let covered = input.flag("register root coverage")?;
         let dead_call_results = input.list(BinaryReader::u32)?;
         if !dead_call_results.is_sorted_by(|before, after| before < after) || !covered && !dead_call_results.is_empty() {
             return Err("invalid residual dead call results".into());
@@ -1309,15 +1251,8 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             })
         })?;
         let source_positions = input.source_positions()?;
-        let plain_locals: crate::heap::ThinBoxSlice<bool> = {
-            let mut plain = Vec::with_capacity(usize::from(locals));
-            for _ in 0..usize::from(locals).div_ceil(u8::BITS as usize) {
-                let bits = input.u8()?;
-                plain.extend((0..u8::BITS).map(|bit| bits & (1 << bit) != 0));
-            }
-            plain.truncate(usize::from(locals));
-            plain.into()
-        };
+        let plain_bytes = (0..usize::from(locals).div_ceil(u8::BITS as usize)).map(|_| input.u8()).collect::<Result<Vec<_>, _>>()?;
+        let plain_locals: crate::heap::ThinBoxSlice<u64> = crate::bitset::words_from_le_bytes(usize::from(locals), &plain_bytes).into();
         let derived_facts = input.u32()?;
         let function = Function {
             parent,
@@ -1351,7 +1286,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             environment_atoms: environment_atoms.into(),
             selective_capture_slots,
             inherited_with_scope,
-            environment_clones: environment_clones.into(),
+            environment_clones,
             name_bindings: crate::bytecode::NameBindings::flat(name_bindings),
             lexical_atoms: lexical_atoms.into(),
             global_declarations: super::GlobalDeclarations {
@@ -1399,11 +1334,7 @@ fn read_function_header(input: &mut BinaryReader<'_>) -> Result<super::FunctionH
         None
     };
     let length = input.u16()?;
-    let dispatch = match input.u8()? {
-        0 => DispatchClass::General,
-        1 => DispatchClass::Numeric,
-        _ => return Err("invalid residual dispatch class".into()),
-    };
+    let dispatch = input.dispatch_class()?;
     Ok(super::FunctionHeader {
         parent,
         name,
@@ -1524,6 +1455,14 @@ impl<'a> BinaryReader<'a> {
     /// A one-byte boolean, named by `what` in its error.
     fn flag(&mut self, what: &str) -> Result<bool, String> {
         match self.u8()? { 0 => Ok(false), 1 => Ok(true), _ => Err(format!("invalid residual {what} flag")) }
+    }
+    /// A function's dispatch class, written as its discriminant.
+    fn dispatch_class(&mut self) -> Result<DispatchClass, String> {
+        match self.u8()? {
+            byte if byte == DispatchClass::General as u8 => Ok(DispatchClass::General),
+            byte if byte == DispatchClass::Numeric as u8 => Ok(DispatchClass::Numeric),
+            _ => Err("invalid residual dispatch class".into()),
+        }
     }
     fn source_positions(&mut self) -> Result<super::SourcePositions, String> {
         let len = self.u32()? as usize;

@@ -7,11 +7,22 @@ use crate::value_vec::{
 };
 use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
-use rustc_hash::FxHashMap;
+use super::{WeakMapEntries, WeakSetEntries};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod global_values;
+mod modes;
+mod prototype_values;
+mod shape_id;
 mod snapshot;
+mod typed_array_kind;
+mod wasm_fields;
+pub(crate) use wasm_fields::{WasmGcFields, WasmTableElements};
+pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
+pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
+pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
+pub(crate) use global_values::{GlobalCell, GlobalFact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_value};
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes; a collection frees a prototype, whose
@@ -27,15 +38,11 @@ pub(crate) fn prototype_layout_epoch() -> u64 {
     PROTOTYPE_LAYOUT_EPOCH.load(Ordering::Relaxed)
 }
 
-/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`.
+/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`, and all code that
+/// holds a prototype's value as a constant: a layout change moves what a slot holds.
 pub(crate) fn advance_prototype_layout_epoch() {
     PROTOTYPE_LAYOUT_EPOCH.fetch_add(1, Ordering::Relaxed);
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct WeakMapEntries {
-    ordered: Vec<(Value, Value)>,
-    indices: FxHashMap<Value, usize>,
+    prototype_values::reset();
 }
 
 #[cfg(test)]
@@ -102,61 +109,13 @@ mod cell_layout_tests {
     }
 }
 
-impl WeakMapEntries {
-    pub(crate) fn get(&self, key: Value) -> Option<Value> {
-        self.indices
-            .get(&key)
-            .and_then(|index| self.ordered.get(*index))
-            .map(|(_, value)| *value)
-    }
-
-    pub(crate) fn insert(&mut self, key: Value, value: Value) {
-        if let Some(index) = self.indices.get(&key).copied() {
-            self.ordered[index].1 = value;
-        } else {
-            self.indices.insert(key, self.ordered.len());
-            self.ordered.push((key, value));
-        }
-    }
-
-    pub(crate) fn remove(&mut self, key: Value) -> bool {
-        let Some(index) = self.indices.remove(&key) else {
-            return false;
-        };
-        self.ordered.swap_remove(index);
-        if let Some((moved_key, _)) = self.ordered.get(index) {
-            self.indices.insert(*moved_key, index);
-        }
-        true
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &(Value, Value)> {
-        self.ordered.iter()
-    }
-
-    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&(Value, Value)) -> bool) {
-        self.ordered.retain(|entry| keep(entry));
-        self.indices.clear();
-        self.indices.extend(
-            self.ordered
-                .iter()
-                .enumerate()
-                .map(|(index, (key, _))| (*key, index)),
-        );
-    }
-
-    pub(crate) fn allocated_bytes(&self) -> usize {
-        self.ordered.capacity() * std::mem::size_of::<(Value, Value)>()
-            + self.indices.capacity() * std::mem::size_of::<(Value, usize)>()
-    }
-}
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u16)]
 pub(crate) enum Native {
     Print, HostDone, CreateRealm, IsHTMLDDA, EvalScript, CollectGarbage, RealmTypeError, Eval, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionCaller, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmImportValueFulfilled, ShadowRealmWrappedFunction,
     Object,
-    ObjectKeys, ForInKeys, ForInKeyIsEnumerable, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
+    ObjectKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectDefineProperties, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen, ObjectGroupBy,
     ObjectSetPrototypeOf, ObjectHasOwn, ObjectPrototypeHasOwnProperty, ObjectPrototypePropertyIsEnumerable, ObjectPrototypeIsPrototypeOf, ObjectPrototypeLookupGetter, ObjectPrototypeLookupSetter, ObjectPrototypeDefineGetter, ObjectPrototypeDefineSetter, ObjectPrototypeProtoGetter, ObjectPrototypeProtoSetter, ObjectPrototypeToLocaleString, ObjectPrototypeToString, ObjectPrototypeValueOf,
     ReflectGet, ReflectHas, ReflectApply, ReflectGetOwnPropertyDescriptor, ReflectDefineProperty, ReflectDeleteProperty, ReflectPreventExtensions, ReflectIsExtensible,
@@ -671,7 +630,7 @@ pub(crate) enum Native {
     WasmInstance, WasmInstanceExportsGetter,
     WasmMemory, WasmMemoryGrow, WasmMemoryBufferGetter,
     WasmTable, WasmTableLengthGetter, WasmTableGrow, WasmTableGet, WasmTableSet,
-    WasmGlobal, WasmGlobalValueGetter, WasmGlobalValueSetter, WasmGlobalValueOf,
+    WasmGlobal, WasmGlobalValueGetter, WasmGlobalValueSetter, WasmGlobalValueOf, WasmTag,
     WasmCompileError, WasmLinkError, WasmRuntimeError,
     /// A Wasm function as JavaScript sees it; its environment is the Wasm closure.
     WasmExportedFunction,
@@ -734,22 +693,6 @@ pub(crate) struct WasmHostMemcpyTarget {
     pub(crate) view_environment: Value,
     pub(crate) view_slot: usize,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TypedArrayKind {
-    Uint8,
-    Uint8Clamped,
-    Uint16,
-    Uint32,
-    Int8,
-    Int16,
-    Int32,
-    BigInt64,
-    BigUint64,
-    Float16,
-    Float32,
-    Float64,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ArrayFromAsyncAwait {
     IteratorStep,
@@ -801,29 +744,17 @@ impl AwaitState {
         }
     }
 }
-impl TypedArrayKind {
-    pub(crate) const fn is_bigint(self) -> bool {
-        matches!(self, Self::BigInt64 | Self::BigUint64)
-    }
-
-    pub(crate) const fn width(self) -> usize {
-        match self {
-            Self::Uint8 => 1,
-            Self::Uint8Clamped => 1,
-            Self::Uint16 => 2,
-            Self::Uint32 => 4,
-            Self::Int8 => 1,
-            Self::Int16 => 2,
-            Self::Int32 => 4,
-            Self::BigInt64 => 8,
-            Self::BigUint64 => 8,
-            Self::Float16 => 2,
-            Self::Float32 => 4,
-            Self::Float64 => 8,
+impl Native {
+    /// The constructor intrinsic (`Function`, `AsyncFunction`, ...) of a function of this kind.
+    pub(crate) fn function_constructor(is_async: bool, is_generator: bool) -> Self {
+        match (is_async, is_generator) {
+            (true, true) => Self::AsyncGeneratorFunction,
+            (false, true) => Self::GeneratorFunction,
+            (true, false) => Self::AsyncFunction,
+            (false, false) => Self::Function,
         }
     }
-}
-impl Native {
+
     /// The `get [Symbol.species]` accessors, each of which returns its receiver.
     pub(crate) fn is_intrinsic_species_getter(self) -> bool {
         matches!(
@@ -848,8 +779,8 @@ impl Native {
 
     /// `String.prototype` methods that, for a string primitive receiver and arguments that
     /// are not objects, run no guest code and have no effect beyond allocating their result.
-    /// The methods that look up a `Symbol.split`-like method on an argument (`split`,
-    /// `replace`, `match` and their kin) are not among them.
+    /// `split` looks `Symbol.split` up only on an object separator (ES2025), so it is among
+    /// them; `match` and `search`, which make a RegExp of a string, are not.
     pub(crate) fn is_pure_string_method(self) -> bool {
         matches!(
             self,
@@ -874,6 +805,7 @@ impl Native {
                 | Self::StringRepeat
                 | Self::StringPadStart
                 | Self::StringPadEnd
+                | Self::StringSplit
         )
     }
 
@@ -935,8 +867,24 @@ impl Native {
                     | Self::StringMatch
                     | Self::StringMatchAll
                     | Self::StringSearch
-                    | Self::StringSplit
             )
+    }
+
+    /// `Array.prototype.forEach` and the other array methods that call a callback per index
+    /// (`Vm::array_callback_native`), the reducers (`Native::is_array_reducer`) among them.
+    pub(crate) fn is_array_callback(self) -> bool {
+        matches!(
+            self,
+            Self::ArrayForEach
+                | Self::ArrayMap
+                | Self::ArrayFilter
+                | Self::ArraySome
+                | Self::ArrayEvery
+                | Self::ArrayFind
+                | Self::ArrayFindIndex
+                | Self::ArrayFindLast
+                | Self::ArrayFindLastIndex | Self::ArrayReduce | Self::ArrayReduceRight
+        )
     }
 
     /// Whether the native observes the frame stack only by calling guest code, capturing an
@@ -972,7 +920,6 @@ impl Native {
                 | Self::ObjectPrototypeToString
                 | Self::ReflectGetPrototypeOf
                 | Self::ReflectSetPrototypeOf
-                | Self::ForInKeys
                 | Self::ArrayJoin
                 | Self::ArraySplice
                 | Self::StringSplit
@@ -1080,6 +1027,7 @@ impl Native {
                     | Self::ArrayBuffer
                     | Self::SharedArrayBuffer
                     | Self::RegExp
+                    | Self::Date
                     | Self::Map
                     | Self::Set
                     | Self::WeakMap
@@ -1118,7 +1066,7 @@ impl Native {
     }
 
     #[rustfmt::skip]
-    pub(crate) fn is_object_static(self) -> bool { matches!(self, Native::Object | Native::ObjectKeys | Native::ForInKeys | Native::ForInKeyIsEnumerable | Native::ObjectValues | Native::ObjectEntries | Native::ObjectGetOwnPropertyNames | Native::ObjectGetOwnPropertySymbols | Native::ObjectGetOwnPropertyDescriptor | Native::ObjectGetOwnPropertyDescriptors | Native::ObjectFromEntries | Native::ObjectIs | Native::ObjectCreate | Native::ObjectAssign | Native::ObjectDefineProperty | Native::ObjectDefineProperties | Native::ObjectGetPrototypeOf | Native::ObjectSetPrototypeOf | Native::ObjectHasOwn | Native::ObjectPreventExtensions | Native::ObjectIsExtensible | Native::ObjectSeal | Native::ObjectIsSealed | Native::ObjectFreeze | Native::ObjectIsFrozen | Native::ObjectGroupBy) }
+    pub(crate) fn is_object_static(self) -> bool { matches!(self, Native::Object | Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries | Native::ObjectGetOwnPropertyNames | Native::ObjectGetOwnPropertySymbols | Native::ObjectGetOwnPropertyDescriptor | Native::ObjectGetOwnPropertyDescriptors | Native::ObjectFromEntries | Native::ObjectIs | Native::ObjectCreate | Native::ObjectAssign | Native::ObjectDefineProperty | Native::ObjectDefineProperties | Native::ObjectGetPrototypeOf | Native::ObjectSetPrototypeOf | Native::ObjectHasOwn | Native::ObjectPreventExtensions | Native::ObjectIsExtensible | Native::ObjectSeal | Native::ObjectIsSealed | Native::ObjectFreeze | Native::ObjectIsFrozen | Native::ObjectGroupBy) }
     pub(crate) fn is_typed_array_method(self) -> bool {
         matches!(
             self,
@@ -1334,7 +1282,7 @@ impl IteratorKind {
 #[derive(Clone, Debug)]
 pub(crate) enum IteratorHelper {
     RegExpStringMatchAll {
-        input: JsString,
+        input: Value, // The string matched, the value each step passes to `exec`.
         global: bool,
         unicode: bool,
     },
@@ -1421,7 +1369,9 @@ impl InlineObjectHeader {
     }
 
     fn of_storage(proto: Value, storage: ValueVec) -> Self {
-        let object = Object::with_property_storage(proto, storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+        // Its inline values are `undefined`, which the payload word holds, so the object has
+        // no extras and nothing to drop.
+        let object = std::mem::ManuallyDrop::new(Object::with_property_storage(proto, storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]));
         Self {
             meta: object.meta,
             auxiliary: object.auxiliary,
@@ -1430,6 +1380,18 @@ impl InlineObjectHeader {
 }
 
 #[repr(C)]
+/// Where an object outside dictionary storage keeps its values (`Object::exact_storage`).
+#[derive(Clone, Copy)]
+pub(crate) enum ExactStorage {
+    /// No extras and no inline storage: an arena run from this start.
+    Plain(usize),
+    /// No extras: the inline slots, narrow, in the payload word.
+    PackedInline,
+    /// Behind extras, as a prototype's or an object with a wide inline value: the inline
+    /// slots there, or an arena run (`Object::properties`).
+    Extended { inline: bool },
+}
+
 pub(crate) struct Object {
     /// The prototype's heap index (`PROTO_INDEX_BITS`, with null and undefined sentinels) and
     /// the `OBJECT_*` flags: array, inline storage, and the integrity bits `ValueVec` keeps.
@@ -1474,6 +1436,12 @@ impl ProtoLink {
     #[inline(always)]
     pub(crate) fn of(prototype: Value) -> Self {
         Self(Object::encode_proto(prototype))
+    }
+
+    /// The link as the object header encodes it (`OBJECT.proto_mask`).
+    #[inline(always)]
+    pub(crate) fn bits(self) -> u32 {
+        self.0
     }
 
     /// The link naming object record `id`.
@@ -1628,6 +1596,8 @@ pub(super) const NATIVE_ARRAY_ELEMENTS_OFFSET: usize =
     std::mem::offset_of!(ArrayObject, elements);
 /// Where an array record's object part (`Object`: meta, auxiliary, payload) starts.
 pub(super) const NATIVE_ARRAY_OBJECT_OFFSET: usize = std::mem::offset_of!(ArrayObject, object);
+pub(super) const NATIVE_FUNCTION_RECORD_SIZE: usize = std::mem::size_of::<FunctionRecord>();
+pub(super) const NATIVE_FUNCTION_OBJECT_OFFSET: usize = std::mem::offset_of!(FunctionRecord, object);
 
 const _: () = assert!(
     NATIVE_ARRAY_ELEMENTS_OFFSET + std::mem::size_of::<super::ArrayElements>()
@@ -1635,6 +1605,20 @@ const _: () = assert!(
 );
 
 impl ArrayObject {
+    /// A new array of `prototype` with no properties: `new` of `Object::new(prototype)`,
+    /// made with its arena storage at once.
+    #[inline(always)]
+    pub(crate) fn fresh(prototype: Value, elements: super::ArrayElements) -> Self {
+        let mut object = Object {
+            meta: Object::encode_array_proto(prototype) | OBJECT_ARRAY,
+            auxiliary: 0,
+            payload: 0,
+        };
+        object.initialize_properties(ValueVec::new());
+        debug_assert!(object.proto() == prototype);
+        Self { object, elements }
+    }
+
     pub(crate) fn new(mut object: Object, elements: impl Into<super::ArrayElements>) -> Self {
         let elements = elements.into();
         // Array objects keep named properties in the arena; a fresh object has none inline.
@@ -1660,11 +1644,24 @@ impl ArrayObject {
 
     /// The elements for any change, including their backing's: the running lane's array
     /// storage proofs retire first (`retire_array_storage_proofs`).
+    #[inline(always)]
     pub(crate) fn elements_mut(&mut self) -> &mut super::ArrayElements {
         // A prototype's elements answer index reads of the objects it is the prototype of.
         self.object.note_prototype_elements_change();
         super::array_proofs::retire_array_storage_proofs();
         &mut self.elements
+    }
+
+    /// Whether a dead array owns anything its drop frees: extras, or an element allocation
+    /// it counts among its backing's owners. Young runs and the empty header need none.
+    pub(crate) fn needs_drop(&self) -> bool {
+        self.object.extras_pointer().is_some() || self.elements.owner_count() != 0
+    }
+
+    /// Copies a young run of elements to an allocation of the array's own
+    /// (`ArrayElements::leave_nursery`): the same values, so no proof or dependent retires.
+    pub(crate) fn leave_nursery(&mut self) {
+        self.elements.leave_nursery();
     }
 
     /// Replaces the present element at `index` in place where this array alone owns its
@@ -1788,10 +1785,7 @@ struct ObjectExtras {
     /// An array's storage position, displaced from its first payload word.
     arena_start: u32,
     arguments_map: Option<Vec<u16>>,
-    arguments_object: bool,
-    raw_json: bool,
-    error_data: bool,
-    module_namespace: bool,
+    brand: ObjectBrand,
     external_address: Option<usize>,
     boxed_primitive: Option<Value>,
     structured_serialization: StructuredSerialization,
@@ -1800,17 +1794,14 @@ struct ObjectExtras {
     deferred_module: Option<crate::ModuleSource>,
     private_elements: Vec<PrivateElement>,
     stack_data: Option<StackData>,
-    /// An index-keyed property descriptor has been recorded for this object; never cleared.
-    indexed_descriptors: bool,
-    /// A `length` descriptor has been recorded for this object, as a non-writable array
-    /// length is; never cleared.
-    length_descriptor: bool,
-    /// Any property descriptor beside the shape has been recorded for this object
-    /// (`Vm::insert_descriptor`); never cleared.
-    side_descriptors: bool,
+    /// What has been recorded about the object's properties beside its shape; bits are set
+    /// once and never cleared (`ElementFacts`).
+    element_facts: ElementFacts,
     /// A prototype's subject in its heap's dependency table, which its layout and element
     /// changes retire (`Object::note_prototype_layout_change`).
     watch: super::dependencies::Watch,
+    /// A global object's table of the values code read from it by name (`global_values`).
+    global_values: Option<Box<global_values::GlobalValues>>,
 }
 /// How structured serialization treats an object (HTML [[Serializable]] and
 /// [[Transferable]] host objects).
@@ -1909,7 +1900,26 @@ impl Object {
         )
     }
 
+    /// A direct object, the usual prototype, is tested first: its record id and its range's
+    /// base alone, before the decode of every other reference family.
+    #[inline(always)]
     fn encode_proto(proto: Value) -> u32 {
+        match proto.direct_object_index() {
+            Some(id) => PROTO_OBJECT_RECORD_BASE + id,
+            None => Self::encode_other_proto(proto),
+        }
+    }
+
+    /// `encode_proto` of a direct array, as every realm's `Array.prototype` is.
+    #[inline(always)]
+    fn encode_array_proto(proto: Value) -> u32 {
+        match proto.direct_array_index() {
+            Some(id) => PROTO_ARRAY_RECORD_BASE + id,
+            None => Self::encode_proto(proto),
+        }
+    }
+
+    fn encode_other_proto(proto: Value) -> u32 {
         match proto.heap_reference() {
             Some(HeapReference::LegacySlot(index)) => {
                 assert!(
@@ -2099,6 +2109,23 @@ impl Object {
             .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)
     }
 
+    /// Releases a dead object's storage in `arena` (`ValueArena::release`), and answers
+    /// whether it owns extras, which its drop frees. Inline values hold no arena words;
+    /// without extras the payload word is the storage position alone, upper half zero
+    /// (`plain_storage_start`).
+    #[inline(always)]
+    pub(crate) fn release_storage(&self, arena: &mut ValueArena) -> bool {
+        if self.meta & OBJECT_INLINE_STORAGE != 0 {
+            return self.extras_pointer().is_some();
+        }
+        if self.payload >> u32::BITS == 0 {
+            arena.release(ValueVec::from_parts(self.payload as u32, self.auxiliary));
+            return false;
+        }
+        arena.release(self.properties());
+        true
+    }
+
     fn extras(&self) -> Option<&ObjectExtras> {
         // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime.
         self.extras_pointer().map(|extras| unsafe { &*extras })
@@ -2270,7 +2297,7 @@ impl Object {
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
         Some(match self.extras() {
             Some(extras) => extras.inline_properties.0[slot],
-            None => Value::from_narrow((self.payload >> (slot as u32 * u32::BITS)) as u32),
+            None => Value::from_narrow(self.payload_narrow(slot)),
         })
     }
 
@@ -2335,12 +2362,57 @@ impl Object {
         self.set_shape(shape, properties);
     }
 
+    /// The half of the payload word that holds inline `slot`, the first the lower: one
+    /// half-word access, which neither shifts nor touches the other slot.
+    #[inline(always)]
+    fn payload_half(slot: usize) -> usize {
+        debug_assert!(slot < INLINE_PROPERTY_COUNT);
+        if cfg!(target_endian = "little") { slot } else { INLINE_PROPERTY_COUNT - 1 - slot }
+    }
+
+    /// The narrow form at inline `slot` of the payload word, which holds the inline values.
+    #[inline(always)]
+    fn payload_narrow(&self, slot: usize) -> u32 {
+        // SAFETY: `payload` is a `u64`, two in-bounds `u32` halves.
+        unsafe { (&raw const self.payload).cast::<u32>().add(Self::payload_half(slot)).read() }
+    }
+
     /// Stores the narrow form `narrow` at inline `slot` of the payload word, which holds the
     /// inline values.
     #[inline(always)]
     fn store_payload_narrow(&mut self, slot: usize, narrow: u32) {
-        let shift = slot as u32 * u32::BITS;
-        self.payload = self.payload & !(u64::from(u32::MAX) << shift) | u64::from(narrow) << shift;
+        // SAFETY: `payload` is a `u64`, two in-bounds `u32` halves; `&mut self` is exclusive.
+        unsafe { (&raw mut self.payload).cast::<u32>().add(Self::payload_half(slot)).write(narrow) };
+    }
+
+    /// Where the values of an object outside dictionary storage live, decoded from its
+    /// payload word once (`ExactStorage`).
+    #[inline(always)]
+    pub(crate) fn exact_storage(&self) -> ExactStorage {
+        let inline = self.meta & OBJECT_INLINE_STORAGE != 0;
+        match (self.extras_pointer(), inline) {
+            (Some(_), _) => ExactStorage::Extended { inline },
+            (None, true) => ExactStorage::PackedInline,
+            (None, false) => ExactStorage::Plain(self.payload as usize),
+        }
+    }
+
+    /// Stores a value's narrow form `narrow` (`Value::to_narrow`) into inline `slot` of a
+    /// `PackedInline` object (`exact_storage`), that half of the payload word; `false` for a
+    /// value without one, changing nothing.
+    #[inline(always)]
+    pub(crate) fn store_packed_narrow(&mut self, slot: usize, narrow: Option<u32>) -> bool {
+        debug_assert!(matches!(self.exact_storage(), ExactStorage::PackedInline));
+        narrow.map(|narrow| self.store_payload_narrow(slot, narrow)).is_some()
+    }
+
+    /// Stores `value` into inline `slot` of an `Extended` object (`exact_storage`), whose
+    /// extras hold its inline values.
+    #[inline(always)]
+    pub(crate) fn store_extended_inline(&mut self, slot: usize, value: Value) {
+        let extras = self.extras_pointer().expect("an extended object has extras");
+        // SAFETY: owned by this object, and `&mut self` makes the borrow unique.
+        unsafe { (*extras).inline_properties.0[slot] = value };
     }
 
     /// `set_inline_property` into extras: the object has them, or `value` has no narrow form.
@@ -2381,7 +2453,7 @@ impl Object {
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
     pub(crate) fn error(proto: Value) -> Self {
         let mut object = Self::new(proto);
-        object.extras_mut().error_data = true;
+        object.extras_mut().brand = ObjectBrand::Error;
         object
     }
 
@@ -2404,7 +2476,7 @@ impl Object {
     }
 
     pub(crate) fn has_error_data(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.error_data)
+        self.brand() == ObjectBrand::Error
     }
 
     /// Genuine primitive-wrapper data; guest properties cannot supply this slot.
@@ -2497,9 +2569,7 @@ impl Object {
     pub(crate) fn set_shape(&mut self, shape: u32, arena: &mut ValueArena) {
         arena.note_shape_transition(self.shape(), shape);
         self.note_prototype_layout_change();
-        let mut properties = ValueVec::from_parts(0, self.auxiliary);
-        properties.set_auxiliary(shape);
-        self.auxiliary = properties.into_parts().1;
+        self.renumber_shape(shape);
     }
     pub(crate) fn is_extensible(&self) -> bool {
         self.properties().is_extensible()
@@ -2509,8 +2579,24 @@ impl Object {
     /// namespace, whose exotic own properties its shape does not describe.
     #[inline(always)]
     pub(crate) fn admits_cached_add(&self) -> bool {
-        self.is_extensible()
-            && self.extras().is_none_or(|extras| !extras.arguments_object && !extras.module_namespace)
+        self.is_extensible() && !self.has_exotic_access()
+    }
+    /// Whether the object's property access is not the ordinary one its shape describes: an
+    /// arguments object, a module namespace or a proxy's own object. A header bit, so fast
+    /// paths need not read the extras (`ObjectBrand`).
+    #[inline(always)]
+    pub(crate) fn has_exotic_access(&self) -> bool {
+        self.auxiliary & crate::value_vec::EXOTIC_ACCESS != 0
+    }
+    fn brand(&self) -> ObjectBrand {
+        self.extras().map_or(ObjectBrand::Ordinary, |extras| extras.brand)
+    }
+    #[inline(always)]
+    fn element_facts(&self) -> ElementFacts {
+        self.extras().map_or(ElementFacts(0), |extras| extras.element_facts)
+    }
+    fn mark_element_fact(&mut self, bit: u8) {
+        self.extras_mut().element_facts.0 |= bit;
     }
     pub(crate) fn set_extensible(&mut self, value: bool) {
         let mut properties = ValueVec::from_parts(self.meta & VALUE_VEC_INTEGRITY_BITS, 0);
@@ -2545,54 +2631,57 @@ impl Object {
         self.extras_mut().arguments_map = Some(mapping);
     }
     pub(crate) fn set_arguments_object(&mut self) {
-        self.extras_mut().arguments_object = true;
+        self.extras_mut().brand = ObjectBrand::Arguments;
         self.auxiliary |= crate::value_vec::EXOTIC_ACCESS;
     }
-    /// Whether the object's elements are ordinary, as `dense_array_length` needs them: it
-    /// is extensible and not frozen, and holds no indexed or `length` descriptor and no
-    /// arguments mapping. Read from the integrity bits and one extras record.
+    /// Whether the object's elements are ordinary and all dense, as `dense_array_length`
+    /// needs them: it is extensible and not frozen, and holds no indexed or `length`
+    /// descriptor, no arguments mapping and never held sparse elements
+    /// (`mark_sparse_elements`, which every sparse write makes). Read from the header bits
+    /// and one mask of the extras' element facts.
     #[inline(always)]
     pub(crate) fn holds_ordinary_elements(&self) -> bool {
         self.meta & VALUE_VEC_INTEGRITY_BITS == 0
-            && self.extras().is_none_or(|extras| {
-                !extras.indexed_descriptors && !extras.arguments_object && !extras.length_descriptor
-            })
+            && !self.has_exotic_access()
+            && !self.element_facts().has(ElementFacts::NOT_ORDINARY)
     }
     pub(crate) fn is_arguments_object(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.arguments_object)
+        self.brand() == ObjectBrand::Arguments
     }
     pub(crate) fn has_indexed_descriptors(&self) -> bool {
-        self.extras()
-            .is_some_and(|extras| extras.indexed_descriptors)
+        self.element_facts().has(ElementFacts::INDEXED_DESCRIPTORS)
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
         self.note_prototype_layout_change();
         super::array_proofs::retire_array_storage_proofs();
-        self.extras_mut().indexed_descriptors = true;
+        self.mark_element_fact(ElementFacts::INDEXED_DESCRIPTORS);
+    }
+    pub(crate) fn mark_sparse_elements(&mut self) {
+        self.mark_element_fact(ElementFacts::SPARSE_ELEMENTS);
     }
     pub(crate) fn has_length_descriptor(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.length_descriptor)
+        self.element_facts().has(ElementFacts::LENGTH_DESCRIPTOR)
     }
     pub(crate) fn mark_length_descriptor(&mut self) {
-        self.extras_mut().length_descriptor = true;
+        self.mark_element_fact(ElementFacts::LENGTH_DESCRIPTOR);
     }
     /// Whether the VM's descriptor table may hold an entry for this object: lookups of an
     /// object without one need not probe the table.
     #[inline(always)]
     pub(crate) fn has_side_descriptors(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.side_descriptors)
+        self.element_facts().has(ElementFacts::SIDE_DESCRIPTORS)
     }
     /// A prototype's side descriptors can name keys its shape lacks, which retires the
     /// proofs (`prototype_layout_epoch`) that found them absent.
     pub(crate) fn mark_side_descriptors(&mut self) {
         self.note_prototype_layout_change();
-        self.extras_mut().side_descriptors = true;
+        self.mark_element_fact(ElementFacts::SIDE_DESCRIPTORS);
     }
     pub(crate) fn is_raw_json(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.raw_json)
+        self.brand() == ObjectBrand::RawJson
     }
     pub(crate) fn set_raw_json(&mut self) {
-        self.extras_mut().raw_json = true;
+        self.extras_mut().brand = ObjectBrand::RawJson;
     }
 
     pub(crate) fn external_address(&self) -> Option<usize> {
@@ -2605,10 +2694,17 @@ impl Object {
     }
 
     pub(crate) fn is_module_namespace(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.module_namespace)
+        self.brand() == ObjectBrand::ModuleNamespace
+    }
+    /// A proxy's own object: the handler answers every access, so no shape a cache records
+    /// may match it.
+    pub(crate) fn proxy(proto: Value) -> Self {
+        let mut object = Self::new(proto);
+        object.auxiliary |= crate::value_vec::EXOTIC_ACCESS;
+        object
     }
     pub(crate) fn set_module_namespace(&mut self) {
-        self.extras_mut().module_namespace = true;
+        self.extras_mut().brand = ObjectBrand::ModuleNamespace;
         self.auxiliary |= crate::value_vec::EXOTIC_ACCESS;
     }
     pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
@@ -3019,6 +3115,25 @@ impl EnvironmentSlots {
         Some(())
     }
 
+    /// `read_storage` and `write_storage` of one slot under one borrow and bounds test: `update`
+    /// maps the slot's ordinary value to the one it stores, or declines and stores nothing.
+    /// The old value and the stored one.
+    /// # Safety
+    /// As `write_storage`.
+    #[inline(always)]
+    pub(crate) unsafe fn update_storage(
+        storage: *const usize,
+        slot: usize,
+        update: impl FnOnce(Value) -> Option<Value>,
+    ) -> Option<(Value, Value)> {
+        // SAFETY: as guaranteed by the caller, for this update only.
+        let mut slots = unsafe { Self::borrow_storage(storage) }?;
+        let place = slots.dense_plain_mut(slot)?;
+        let old = *place;
+        *place = update(old)?;
+        Some((old, *place))
+    }
+
     /// Native entry's values/count projection of the same cached storage.
     /// # Safety
     /// As `read_storage`; the returned pointer expires with the original storage.
@@ -3245,13 +3360,13 @@ impl EnvironmentSlots {
         &self,
         environment: Value,
         fresh: &[u16],
-        reset: &[u16],
+        reset: crate::bytecode::Resets<'_>,
         owned_value: impl Fn(Value, usize) -> Option<Value>,
     ) -> Option<Self> {
         let len = self.len();
         let copy_slot = |index: usize| -> Option<EnvironmentSlot> {
             let slot = u16::try_from(index).ok()?;
-            if reset.binary_search(&slot).is_ok() {
+            if reset.contains(slot) {
                 return Some(EnvironmentSlot::owned(Value::UNDEFINED));
             }
             let fresh = fresh.binary_search(&slot).is_ok();
@@ -3282,7 +3397,7 @@ impl EnvironmentSlots {
                     EnvironmentSlotState::Shared(owner) => owned_value(owner, index)?,
                 });
             }
-            for &slot in reset {
+            for slot in reset.iter() {
                 if let Some(target) = copy.get_mut(usize::from(slot)) {
                     *target = EnvironmentSlot::owned(Value::UNDEFINED);
                 }
@@ -3296,7 +3411,7 @@ impl EnvironmentSlots {
         let mut indexes = merge_ascending(
             merge_ascending(self.sparse_indexes(), fresh.iter().map(|&slot| usize::from(slot)))
                 .into_iter(),
-            reset.iter().map(|&slot| usize::from(slot)),
+            reset.iter().map(usize::from),
         );
         indexes.truncate(indexes.partition_point(|&index| index < len));
         let shared = Value::shared_environment_slot(owner);
@@ -3369,15 +3484,15 @@ impl From<Vec<(Atom, Value)>> for EnvironmentBindings {
 /// An iterator's protocol caches, helper state and generator record: needed by
 /// helpers, wrapped iterators and generators, while built-in stepping only reads
 /// `source`, `kind`, `index` and `done`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct IteratorExt {
     /// Upper half of the iterator position; nonzero only for array-likes iterated past
     /// 2^32 elements, whose lengths reach 2^53 - 1.
     pub(crate) position_high: u32,
     pub(crate) next_method: Option<Value>,
     pub(crate) helper: Option<Box<IteratorHelper>>,
-    pub(crate) helper_running: bool,
-    pub(crate) helper_started: bool,
+    /// Where `helper` is in its life; the record's `done` ends it.
+    pub(crate) helper_phase: HelperPhase,
     pub(crate) generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
 }
 
@@ -3467,39 +3582,6 @@ impl std::ops::DerefMut for BufferViewObject {
     }
 }
 
-/// A Wasm GC object's field values and optional descriptor, boxed together so the cell
-/// keeps four words; field access reads the values through `Deref`.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct WasmGcFields {
-    pub(crate) values: Vec<Value>,
-    pub(crate) descriptor: Option<Value>,
-}
-
-/// A Wasm table's references and optional maximum, boxed together so the cell keeps four
-/// words; element access reads the references through `Deref`.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct WasmTableElements {
-    pub(crate) values: Vec<Value>,
-    pub(crate) maximum: Option<u64>,
-}
-
-macro_rules! deref_to_values {
-    ($($owner:ty),*) => {$(
-        impl std::ops::Deref for $owner {
-            type Target = Vec<Value>;
-            fn deref(&self) -> &Vec<Value> {
-                &self.values
-            }
-        }
-
-        impl std::ops::DerefMut for $owner {
-            fn deref_mut(&mut self) -> &mut Vec<Value> {
-                &mut self.values
-            }
-        }
-    )*};
-}
-deref_to_values!(WasmGcFields, WasmTableElements);
 
 /// A PlainDateTime's ISO year, month and day with its hour-through-nanosecond fields, boxed
 /// together so the cell keeps four words.
@@ -3620,22 +3702,20 @@ pub(crate) enum Cell {
         kind: TypedArrayKind,
         object: Box<BufferViewObject>,
         buffer: Value,
-        length: usize,
-        length_tracking: bool,
+        length: ViewLength,
     },
     DataView {
         object: Box<BufferViewObject>,
         buffer: Value,
-        length: usize,
-        length_tracking: bool,
+        length: ViewLength,
     },
     Map {
         object: Box<Object>,
-        entries: Box<super::CollectionEntries<(Value, Value)>>,
+        entries: super::Entries<(Value, Value)>,
     },
     Set {
         object: Box<Object>,
-        entries: Box<super::CollectionEntries<Value>>,
+        entries: super::Entries<Value>,
     },
     ShadowRealm {
         object: Box<Object>,
@@ -3648,9 +3728,7 @@ pub(crate) enum Cell {
     },
     WeakSet {
         object: Box<Object>,
-        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
-        #[allow(clippy::box_collection)]
-        entries: Box<Vec<Value>>,
+        entries: Box<WeakSetEntries>,
     },
     WeakRef {
         object: Box<Object>,
@@ -3702,9 +3780,9 @@ pub(crate) enum Cell {
         payload: Box<Vec<Value>>,
     },
     /// A tag retains its original declaration; identity is independent of type equality.
-    WasmTag { declarations: crate::WasmTypes, ty: u32 },
+    WasmTag { object: Box<Object>, declarations: crate::WasmTypes, ty: u32 },
     /// GC object identity owns its original declaration and traced field values.
-    WasmGc { declarations: Box<crate::WasmTypes>, ty: u32, fields: Box<WasmGcFields> },
+    WasmGc { declarations: crate::WasmTypes, ty: u32, fields: WasmGcFields },
     /// The native callable's immutable host operation and structural signature.
     WasmHostFunction {
         target: WasmHostTarget,
@@ -3727,10 +3805,10 @@ pub(crate) enum Cell {
         table64: bool,
         elements: Box<WasmTableElements>,
         element_type: wasmparser::RefType,
-        declarations: Box<crate::WasmTypes>,
+        declarations: crate::WasmTypes,
     },
-    /// Boxed so a slot stays one tag word plus the object layout (`cells_stay_compact`).
-    BigInt(Box<num_bigint::BigInt>),
+    /// Digits inline up to `bigint::INLINE_DIGITS`, within the slot (`cells_stay_compact`).
+    BigInt(crate::bigint::JsBigInt),
     Symbol(SymbolData),
     Date { milliseconds: f64, object: Box<Object> },
     /// `meta` is shared: every evaluation of one literal site takes the site's record
@@ -3799,7 +3877,7 @@ pub(crate) enum Cell {
 
 impl Cell {
     pub(crate) fn bigint(value: num_bigint::BigInt) -> Self {
-        Self::BigInt(Box::new(value))
+        Self::BigInt(crate::bigint::JsBigInt::from(&value))
     }
 
     /// Whether a collection prunes this cell's entries by the liveness of their targets

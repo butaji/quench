@@ -108,8 +108,7 @@ pub(crate) fn resolve_kept<T, E>(
     })
 }
 
-/// The directory each ancestor of a requester searches for packages.
-const NODE_MODULES: &str = "node_modules";
+pub(crate) use crate::modules::keys::NODE_MODULES;
 
 /// An existing explicit filesystem target needs no package or extension search.
 /// URL delimiters and percent escapes stay with the full resolver.
@@ -1642,7 +1641,7 @@ fn cached_builtin(
         context.with_startup_intrinsics(|context| build_builtin(context, builtin))
     })?;
     let retained = context.retain(module)?;
-    let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
+    let previous = roots.borrow_mut().builtin_cache.insert(key, retained);
     if let Some(previous) = previous { context.release_root(previous); }
     Ok(module)
 }
@@ -2294,7 +2293,7 @@ fn resolve_filename_from_host(
     lookup: Option<&[PathBuf]>, filename: Option<&str>,
 ) -> Result<PathBuf, RootedError> {
     let directory = match filename {
-        Some(filename) => Path::new(filename).parent().unwrap_or(Path::new(".")).to_owned(),
+        Some(filename) => Path::new(filename).parent().unwrap_or_else(|| Path::new(".")).to_owned(),
         None => {
             let directory = get(context, parent, "path")?;
             let directory = context
@@ -2582,7 +2581,7 @@ fn module_record(
     set(context, module, "id", id)?;
     let name = context.string_rooted(&filename.to_string_lossy());
     set(context, module, "filename", name)?;
-    let directory = filename.parent().unwrap_or(Path::new("."));
+    let directory = filename.parent().unwrap_or_else(|| Path::new("."));
     let path = context.string_rooted(&directory.to_string_lossy());
     set(context, module, "path", path)?;
     let parent = parent.unwrap_or_else(|| context.null());
@@ -3097,7 +3096,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
             let directory = context.string_rooted(
                 &filename
                     .parent()
-                    .unwrap_or(Path::new("."))
+                    .unwrap_or_else(|| Path::new("."))
                     .to_string_lossy(),
             );
             let (prefix, suffix) = (WRAPPER_PREFIX, WRAPPER_SUFFIX);
@@ -3208,7 +3207,7 @@ pub(crate) fn native_commonjs_source(
         keep_records: entry, typescript,
     };
     let body = if typescript {
-        quench_runtime::Engine::project_typescript_module_syntax(body).map(|(source, _)| source).unwrap_or(body.into())
+        quench_runtime::Engine::project_typescript_module_syntax(body).map(|(source, _)| source).unwrap_or_else(|| body.into())
     } else { body.into() };
     let source = [WRAPPER_PREFIX, body.as_ref(), WRAPPER_SUFFIX].concat();
     quench_runtime::NativeSourceKey::new(&filename.to_string_lossy(), &["specialized", &options.cache_goal(), &source])

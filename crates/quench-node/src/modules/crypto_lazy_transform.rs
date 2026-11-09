@@ -12,7 +12,7 @@ pub(crate) fn constructor(c: &mut Context<'_>, transform: RootId) -> Result<Root
     c.set_prototype_rooted(prototype, transform_prototype)?;
     for name in ["_readableState", "_writableState"] {
         let name = c.string_rooted(name);
-        let data = c.record_rooted(&["transform", "name"], &[transform, name])?;
+        let data = c.record_rooted(false, &["transform", "name"], &[transform, name])?;
         let getter = c.host_function_named_with_data(operation("cryptoLazyStateGet"), "", data)?;
         let setter = c.host_function_named_with_data(operation("cryptoLazyStateSet"), "", data)?;
         c.define_property_fields_rooted(

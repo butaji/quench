@@ -1,0 +1,15 @@
+[package]
+name = "quench-lint"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Repository-wide redundancy rules: one fact, one definition; one piece of work, one function"
+
+[dependencies]
+syn = { version = "2", features = ["full", "visit"] }
+quote = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+
+[lints]
+workspace = true

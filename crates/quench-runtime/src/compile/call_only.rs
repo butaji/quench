@@ -12,6 +12,9 @@
 //! claim. A `with` object can only redirect a name the analysis classified by its syntax,
 //! which hands the binding's value nowhere new.
 
+mod deferred;
+pub(super) use deferred::compiles_at_load;
+
 use oxc_ast::ast::{
     AssignmentExpression, AssignmentOperator, AssignmentTarget, CallExpression, Expression,
     ExpressionStatement, Function, IdentifierReference, SequenceExpression, VariableDeclarator,

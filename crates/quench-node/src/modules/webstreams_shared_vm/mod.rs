@@ -12,6 +12,7 @@ pub(crate) mod byte;
 pub(crate) mod codecs;
 pub(crate) mod pipe;
 pub(crate) mod readable;
+mod states;
 pub(crate) mod strategies;
 pub(crate) mod transform;
 pub(crate) mod writable;
@@ -23,7 +24,6 @@ use quench_runtime::{DescriptorFields, NativeContext, PromiseSnapshot, RootId, R
 pub(crate) type Context<'a> = NativeContext<'a, NodeHost>;
 pub(crate) type Outcome = Result<RootId, RootedError>;
 type Done = Result<(), RootedError>;
-
 
 /// The `builtin_cache` key of the realm's streams intrinsics.
 const INTRINSICS: &str = "\0webstreams:intrinsics";
@@ -122,11 +122,11 @@ const EXPORTS: [Brand; 17] = [
 
 /// The intrinsics record's members.
 pub(crate) mod key {
-    pub(crate) const STATE: &str = "state";
+    pub(crate) use crate::modules::keys::STATE;
     pub(crate) const THEN: &str = "then";
     pub(crate) const IS_CLOSED: &str = "isClosedPromise";
     pub(crate) const ERROR_FUNCTION: &str = "controllerErrorFunction";
-    pub(crate) const INSPECT: &str = "inspect";
+    pub(crate) use crate::modules::keys::INSPECT;
     pub(crate) const ASYNC_ITERATOR: &str = "AsyncIterator";
     pub(crate) const ASYNC_ITERATOR_KEY: &str = "asyncIterator";
     pub(crate) const TO_STRING_TAG: &str = "toStringTag";
@@ -214,35 +214,26 @@ pub(crate) fn same(c: &mut Context<'_>, left: RootId, right: RootId) -> Result<b
     c.strict_equal_rooted(left, right)
 }
 
-/// A fresh null-prototype record with `fields`.
-pub(crate) fn record(c: &mut Context<'_>, fields: &[(&str, RootId)]) -> Outcome {
-    let object = c.null_object_rooted()?;
-    for &(name, value) in fields {
-        put(c, object, name, value)?;
-    }
-    Ok(object)
+/// A fresh null-prototype record of `names` holding `values`, made at its final shape.
+pub(crate) fn record(c: &mut Context<'_>, names: &'static [&'static str], values: &[RootId]) -> Outcome {
+    c.record_rooted(true, names, values)
 }
 
-/// A plain object with `fields` in order, as an object literal makes it.
-pub(crate) fn literal(c: &mut Context<'_>, fields: &[(&str, RootId)]) -> Outcome {
-    let object = c.object_rooted()?;
-    for &(name, value) in fields {
-        let key = c.string_rooted(name);
-        c.define_data_property_rooted(object, key, value, true, true, true)?;
-    }
-    Ok(object)
+/// A plain object of `names` holding `values` in order, as an object literal makes it.
+pub(crate) fn literal(c: &mut Context<'_>, names: &'static [&'static str], values: &[RootId]) -> Outcome {
+    c.record_rooted(false, names, values)
 }
 
 /// `{ value, done }`, in the order Node's read requests write it.
 pub(crate) fn read_result(c: &mut Context<'_>, value: RootId, done: bool) -> Outcome {
     let done = c.boolean(done);
-    literal(c, &[("value", value), ("done", done)])
+    literal(c, &["value", "done"], &[value, done])
 }
 
 /// `{ done, value }`, in the order Node's async iterator writes a finished step.
 pub(crate) fn done_result(c: &mut Context<'_>, value: RootId) -> Outcome {
     let done = c.boolean(true);
-    literal(c, &[("done", done), ("value", value)])
+    literal(c, &["done", "value"], &[done, value])
 }
 
 /// A queue of values: a record heading a singly linked list of `{ value, next }` cells.
@@ -252,13 +243,13 @@ pub(crate) mod list {
 
     const HEAD: &str = "head";
     const TAIL: &str = "tail";
-    const LENGTH: &str = "length";
-    const VALUE: &str = "value";
-    const NEXT: &str = "next";
+    use quench_runtime::property_names::LENGTH;
+    use crate::modules::keys::VALUE;
+    use crate::modules::keys::NEXT;
 
     pub(crate) fn new(c: &mut Context<'_>) -> Outcome {
         let empty = c.number(0.0);
-        record(c, &[(LENGTH, empty)])
+        record(c, &[LENGTH], &[empty])
     }
 
     pub(crate) fn len(c: &mut Context<'_>, list: RootId) -> Result<usize, RootedError> {
@@ -266,7 +257,7 @@ pub(crate) mod list {
     }
 
     pub(crate) fn push(c: &mut Context<'_>, list: RootId, value: RootId) -> Done {
-        let cell = record(c, &[(VALUE, value)])?;
+        let cell = record(c, &[VALUE], &[value])?;
         let tail = get(c, list, TAIL)?;
         if is_undefined(c, tail) {
             put(c, list, HEAD, cell)?;
@@ -335,7 +326,7 @@ pub(crate) fn intrinsic(c: &mut Context<'_>, name: &str) -> Outcome {
 
 fn build_intrinsics(c: &mut Context<'_>) -> Outcome {
     let state = c.private_symbol_rooted(Some("kState"));
-    let table = record(c, &[(key::STATE, state)])?;
+    let table = record(c, &[key::STATE], &[state])?;
     let global = c.global_root()?;
     let promise = get(c, global, "Promise")?;
     let promise_prototype = get(c, promise, "prototype")?;
@@ -570,8 +561,7 @@ pub(crate) fn run_algorithm(c: &mut Context<'_>, controller: RootId, name: &str,
 
 /// The controller fields that say how its algorithms are called.
 pub(crate) mod algorithm {
-    /// The underlying source, sink or transformer user callbacks are called on.
-    pub(crate) const SOURCE: &str = "source";
+    pub(crate) use crate::modules::keys::SOURCE;
     /// Whether the algorithms are the module's own (they return promises directly).
     pub(crate) const INTERNAL: &str = "internal";
 }
@@ -736,14 +726,7 @@ pub(crate) fn caught(error: RootedError) -> Outcome {
     }
 }
 
-/// A call's completion as `try`/`catch` sees it: its value or the value it threw.
-pub(crate) fn attempt<T>(result: Result<T, RootedError>) -> Result<Result<T, RootId>, RootedError> {
-    match result {
-        Ok(value) => Ok(Ok(value)),
-        Err(RootedError { exception: Some(exception), .. }) => Ok(Err(exception)),
-        Err(error) => Err(error),
-    }
-}
+pub(crate) use crate::modules::stream_shared_vm::attempt;
 
 /// One of the shared release errors, made once (Node's `lazyReadableReleasedError` and
 /// friends).

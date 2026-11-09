@@ -14,29 +14,10 @@
 //! The contract, the division table and the plan live in
 //! `Linear TOD-1232`.
 
-use crate::bytecode::{BindingTime, ControlFlowLayout, Function, Op, ResidualProgram};
-
-/// Which binding times a specializer treats as known.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Division {
-    /// Build-time facts only: static inputs and storage locations. AOT images
-    /// and eager publication need no training run, so they never fold feedback.
-    Offline,
-    /// Also the contents of feedback sites, each behind a guard whose failure
-    /// resumes the interpreter at the exact PC: the JIT's regions.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the guarded-region specializer adopts it (TOD-1237)"))]
-    Online,
-}
+use crate::bytecode::{ControlFlowLayout, Function, Op, ResidualProgram};
+pub(crate) use crate::typed_ir::Division;
 
 impl Division {
-    pub(crate) const fn folds(self, time: BindingTime) -> bool {
-        match time {
-            BindingTime::Static | BindingTime::Location => true,
-            BindingTime::Site => matches!(self, Self::Online),
-            BindingTime::Dynamic => false,
-        }
-    }
-
     /// Whether this division knows every input of `op`, so its generating
     /// extension may residualize the instruction's meaning beyond a call to
     /// the semantic entry.
@@ -178,6 +159,7 @@ impl<E: CallThreadedExtension> Specializer for CallThreaded<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytecode::BindingTime;
 
     #[test]
     fn division_is_total_and_offline_never_folds_sites() {
@@ -197,6 +179,12 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn only_the_online_division_folds_stable_facts() {
+        assert!(Division::Online.folds(BindingTime::Stable));
+        assert!(!Division::Offline.folds(BindingTime::Stable), "an AOT image takes no dependency on heap state");
     }
 
     #[test]

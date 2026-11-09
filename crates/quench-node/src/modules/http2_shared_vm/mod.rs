@@ -3,7 +3,7 @@
 //! settings, pings, GOAWAY) and the sessions, streams, servers and compatibility classes
 //! project it as Node's JavaScript API over any `net` or `tls` socket.
 
-mod compat;
+pub(crate) mod compat;
 mod connection;
 mod constants;
 mod faults;
@@ -14,7 +14,7 @@ mod huffman;
 mod server;
 mod session;
 mod settings;
-mod stream;
+pub(crate) mod stream;
 
 pub(crate) use compat::member as compat_member;
 pub(crate) use server::member as server_member;

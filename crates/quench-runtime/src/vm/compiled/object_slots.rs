@@ -57,9 +57,9 @@ pub(super) enum ObjectRecord {
 impl ObjectRecord {
     pub(super) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
         records: impl Into<ObjectTable>, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
-        let (records, table_present) = match records.into() {
-            ObjectTable::Unchecked(base) => (base, false),
-            ObjectTable::Checked(table) => (table.base(), true),
+        let records = match records.into() {
+            ObjectTable::Unchecked(base) => base,
+            ObjectTable::Checked(table) => table.base(),
         };
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
         let id = builder.ins().ireduce(types::I32, bits);
@@ -70,14 +70,8 @@ impl ObjectRecord {
             let object = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
             emit_js_guard(builder, object, miss);
         }
-        if known.and_then(|fact| fact.ty.object_shape()).is_none() {
-            let inside = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, id, layout.record_capacity as i64);
-            emit_js_guard(builder, inside, miss);
-            if !table_present {
-                let present = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
-                emit_js_guard(builder, present, miss);
-            }
-        }
+        // A direct object's id names a record of the reservation, whose base every native
+        // entry and allocating callout reads (`JsStepDispatch::refresh_allocation_bases`).
         let id = builder.ins().uextend(types::I64, id);
         let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
         Self::Indexed { base: records, offset }
@@ -118,6 +112,43 @@ impl ObjectHeader {
         records: impl Into<ObjectTable>, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
         ObjectRecord::prove(builder, bits, records, known, miss).header(builder, known)
     }
+
+    /// `prove` for a read, which a function's own fields answer too: a direct function's
+    /// record holds its `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`, of the same words.
+    /// A store must not take this proof: its barrier reads object record marks.
+    pub(super) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
+        records: ir::Value, functions: ir::Value, miss: ir::Block) -> Self {
+        use crate::value::ValueLayout;
+        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+        let function = crate::heap::NATIVE_FUNCTION_LAYOUT;
+        let (object_block, function_block, join) = (builder.create_block(), builder.create_block(), builder.create_block());
+        // A function's own read is the rare one; the object path stays the straight line.
+        builder.set_cold_block(function_block);
+        let record = builder.append_block_param(join, types::I64);
+        let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
+        let id = builder.ins().ireduce(types::I32, bits);
+        let id = builder.ins().uextend(types::I64, id);
+        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+        builder.ins().brif(object, object_block, &[], function_block, &[]);
+        builder.switch_to_block(object_block);
+        let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
+        let object_record = builder.ins().iadd(records, offset);
+        builder.ins().jump(join, &[ir::BlockArg::Value(object_record)]);
+        builder.switch_to_block(function_block);
+        let is_function = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_FUNCTION_TAG as i64);
+        let reserved = builder.ins().icmp_imm_u(IntCC::NotEqual, functions, 0);
+        let readable = builder.ins().band(is_function, reserved);
+        emit_js_guard(builder, readable, miss);
+        let offset = builder.ins().imul_imm_u(id, function.record_size as i64);
+        let function_record = builder.ins().iadd(functions, offset);
+        let function_object = builder.ins().iadd_imm_u(function_record, function.object_offset as i64);
+        builder.ins().jump(join, &[ir::BlockArg::Value(function_object)]);
+        builder.switch_to_block(join);
+        let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32);
+        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.meta_offset as i32);
+        let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
+        Self { record: ObjectRecord::Address(record), shape, inline }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +165,124 @@ pub(crate) struct NativeFieldLoad {
     pub(crate) ty: crate::typed_ir::Type,
     /// Historical pointee shape, not a heap-access proof.
     pub(crate) target_shape: Option<u32>,
+    /// For a holder read, the value its proved immediate prototype holds when the code was
+    /// compiled (`Vm::inherited_constant`): a Stable fact. A read takes it while the receiver's
+    /// prototype is that one; a change of the value retires the code that took it
+    /// (`heap::subscribe_prototype_values`).
+    pub(crate) inherited: Option<InheritedConstant>,
+}
+
+/// The most shape-guarded load groups one field read lowers before it calls the field cache
+/// instead (`field_load_groups`): V8 inlines 4 maps per access and SpiderMonkey folds 16
+/// shapes into one guard; families make a group of many shapes.
+const FIELD_LOAD_GROUPS: usize = 8;
+/// The widest span of shape ids one shape-set guard tests by bitset, in 64-bit words
+/// (`shape_in_set`); a wider set compares each shape.
+const SHAPE_SET_WORDS: usize = 8;
+const SHAPE_SET_WORD_BITS: u32 = u64::BITS;
+
+/// A field read's loads as layout families: own fields at one slot of one storage form share
+/// one decode, bounded by the family's shortest storage (which still holds the slot), behind
+/// one shape-set guard (`shape_in_set`), as V8's homomorphic IC and SpiderMonkey's
+/// GuardMultipleShapes do. A prototype-held load keeps its own group. Each group's shapes
+/// come sorted; its load is the family's shortest. `None` for no loads, or more groups than
+/// one read lowers (`FIELD_LOAD_GROUPS`): the read then takes the field cache.
+pub(crate) fn field_load_groups(loads: &[NativeFieldLoad]) -> Option<Vec<(NativeFieldLoad, Vec<u32>)>> {
+    let mut groups: Vec<(NativeFieldLoad, Vec<u32>)> = Vec::new();
+    for load in loads {
+        let family = groups.iter_mut().find(|(known, _)| load.holder.is_none() && known.holder.is_none()
+            && known.slot == load.slot && known.storage == load.storage);
+        match family {
+            Some((known, shapes)) => {
+                shapes.push(load.shape);
+                if load.storage_len < known.storage_len { *known = *load; }
+            }
+            None => groups.push((*load, vec![load.shape])),
+        }
+    }
+    for (_, shapes) in &mut groups {
+        shapes.sort_unstable();
+    }
+    (!groups.is_empty() && groups.len() <= FIELD_LOAD_GROUPS).then_some(groups)
+}
+
+/// Whether the 32-bit header word `shape` is one of `shapes` (sorted, non-empty): one
+/// compare for one shape, a range check and a bit of a constant bitset over the span the
+/// shapes cover, else a compare per shape. Flag bits above the shape id put a header outside
+/// every span.
+pub(super) fn shape_in_set(builder: &mut FunctionBuilder<'_>, shape: ir::Value, shapes: &[u32]) -> ir::Value {
+    let (low, high) = (shapes[0], shapes[shapes.len() - 1]);
+    let span = u64::from(high - low) + 1;
+    if shapes.len() == 1 || span > SHAPE_SET_WORDS as u64 * u64::from(SHAPE_SET_WORD_BITS) {
+        let mut tests = shapes.iter().map(|&known| builder.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(known)));
+        let first = tests.next().expect("a shape set is non-empty");
+        let rest: Vec<_> = tests.collect();
+        return rest.into_iter().fold(first, |any, test| builder.ins().bor(any, test));
+    }
+    let mut words = [0_u64; SHAPE_SET_WORDS];
+    for &known in shapes {
+        let offset = known - low;
+        words[(offset / SHAPE_SET_WORD_BITS) as usize] |= 1 << (offset % SHAPE_SET_WORD_BITS);
+    }
+    let used = span.div_ceil(u64::from(SHAPE_SET_WORD_BITS)) as usize;
+    let offset = builder.ins().iadd_imm_u(shape, -i64::from(low));
+    let in_span = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, offset, span as i64);
+    let offset = builder.ins().uextend(types::I64, offset);
+    let index = builder.ins().ushr_imm_u(offset, i64::from(SHAPE_SET_WORD_BITS.trailing_zeros()));
+    let mut word = builder.ins().iconst(types::I64, words[used - 1] as i64);
+    for (position, &bits) in words[..used - 1].iter().enumerate().rev() {
+        let here = builder.ins().icmp_imm_u(IntCC::Equal, index, position as i64);
+        let bits = builder.ins().iconst(types::I64, bits as i64);
+        word = builder.ins().select(here, bits, word);
+    }
+    let bit = builder.ins().band_imm_u(offset, i64::from(SHAPE_SET_WORD_BITS - 1));
+    let bit = builder.ins().ushr(word, bit);
+    let bit = builder.ins().band_imm_u(bit, 1);
+    let member = builder.ins().icmp_imm_u(IntCC::NotEqual, bit, 0);
+    builder.ins().band(in_span, member)
+}
+
+/// The most prototypes of one holder shape an inherited read folds: sibling classes whose
+/// prototypes hold the same names share a shape, and each holds its own values.
+pub(crate) const INHERITED_PROTOTYPES: usize = 4;
+
+/// An inherited read's values, each fixed by the receiver's prototype link that names its
+/// holder, as they were when the code was compiled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct InheritedConstant {
+    values: [(u32, Value); INHERITED_PROTOTYPES],
+    count: u8,
+}
+
+impl InheritedConstant {
+    /// The values `holders` (prototype link and value) give; `None` where there are none or
+    /// more than the read folds.
+    pub(crate) fn of(holders: impl IntoIterator<Item = (u32, Value)>) -> Option<Self> {
+        let mut constant = Self { values: [(0, Value::UNDEFINED); INHERITED_PROTOTYPES], count: 0 };
+        for holder in holders {
+            *constant.values.get_mut(usize::from(constant.count))? = holder;
+            constant.count += 1;
+        }
+        (constant.count > 0).then_some(constant)
+    }
+
+    pub(crate) fn values(&self) -> &[(u32, Value)] {
+        &self.values[..usize::from(self.count)]
+    }
+
+    /// These values and `other`'s, each prototype once; `None` where a prototype holds two
+    /// values or there are more than the read folds.
+    pub(crate) fn joined(self, other: Self) -> Option<Self> {
+        let mut values: Vec<(u32, Value)> = self.values().to_vec();
+        for (prototype, value) in other.values() {
+            match values.iter().find(|(known, _)| known == prototype) {
+                Some((_, held)) if held != value => return None,
+                Some(_) => {}
+                None => values.push((*prototype, *value)),
+            }
+        }
+        Self::of(values)
+    }
 }
 
 impl NativeFieldLoad {
@@ -144,6 +293,16 @@ impl NativeFieldLoad {
         })
     }
 
+    /// Whether a miss of a site's `loads` asks the VM's caches before it leaves: a slot held
+    /// by the immediate prototype proves only that prototype, where a deeper holder's read
+    /// may answer, and a polymorphic site's other receivers may be cached. A monomorphic
+    /// site's inherited constant proves its value exactly; its miss leaves.
+    pub(super) fn probes_misses(loads: &[Self]) -> bool {
+        match loads {
+            [load] => load.holder.is_some() && load.inherited.is_none(),
+            loads => loads.iter().any(|load| load.holder.is_some()),
+        }
+    }
     pub(super) fn valid(self) -> bool {
         self.shape & crate::value_vec::DICTIONARY_STORAGE == 0
             && usize::from(self.slot) < self.storage_len
@@ -158,7 +317,7 @@ mod tests {
 
     #[test]
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, target_shape: None };
+        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, target_shape: None, inherited: None };
         assert!(field.valid());
         for shape in [super::super::super::NO_FIELD_RECEIVER,
             crate::value_vec::DICTIONARY_STORAGE, crate::value_vec::DICTIONARY_STORAGE | 1] {
@@ -169,7 +328,7 @@ mod tests {
     #[cfg(feature = "jit")]
     #[test]
     fn checked_table_admits_once_without_admitting_receiver_handles() {
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 3]);
         signature.returns.push(AbiParam::new(types::I64));
@@ -195,8 +354,9 @@ mod tests {
         builder.finalize(isa.frontend_config());
         let guards = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|inst| native.dfg.insts[*inst].opcode() == ir::Opcode::Brif).count();
+        // A receiver's family alone: a direct object's id names a record of the reservation.
         const TABLE_GUARDS: usize = 1;
-        const RECEIVER_GUARDS: usize = 2;
+        const RECEIVER_GUARDS: usize = 1;
         assert_eq!(guards, TABLE_GUARDS + 2 * RECEIVER_GUARDS, "{native}");
         let memory = compile_native_function(native, &*isa, usize::MAX, CodeMemory::new).unwrap();
         // SAFETY: the compiled function only checks bits and computes an
@@ -207,11 +367,9 @@ mod tests {
         let records = vec![0_u8; layout.record_size * 2];
         let base = records.as_ptr() as u64;
         let object = Value::direct_object(1).to_bits();
-        let outside = Value::direct_object(layout.record_capacity as u32).to_bits();
         assert_eq!(unsafe { run(base, object, object) }, base + layout.record_size as u64);
         for (table, first, second) in [
-            (0, object, object), (base, Value::NULL.to_bits(), object),
-            (base, object, Value::NULL.to_bits()), (base, outside, object), (base, object, outside),
+            (0, object, object), (base, Value::NULL.to_bits(), object), (base, object, Value::NULL.to_bits()),
         ] {
             assert_eq!(unsafe { run(table, first, second) }, Value::DELETED.to_bits());
         }
@@ -219,17 +377,19 @@ mod tests {
 
     #[cfg(feature = "jit")]
     #[test]
-    fn direct_family_admission_keeps_range_and_table_base_guards() {
+    fn direct_family_admission_tests_the_family_alone() {
         use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Representation, Type};
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+        // A direct object's id names a record of the reservation, whose base every native
+        // entry reads: only the family needs a test, and none where a fact proves it.
         for (ty, expected_guards) in [
-            (None, 3),
-            (Some(Type::language(crate::ValueType::Object)), 3),
-            (Some(Type::DIRECT_OBJECT_FAMILY), 2),
+            (None, 1),
+            (Some(Type::language(crate::ValueType::Object)), 1),
+            (Some(Type::DIRECT_OBJECT_FAMILY), 0),
             (Some(Type::direct_object(0)), 0),
-            (Some(Type::direct_object(0).join(Type::language(crate::ValueType::Null))), 3),
-            (Some(Type::direct_object(0).join(Type::NULLISH)), 3),
+            (Some(Type::direct_object(0).join(Type::language(crate::ValueType::Null))), 1),
+            (Some(Type::direct_object(0).join(Type::NULLISH)), 1),
         ] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 2]);
@@ -256,9 +416,7 @@ mod tests {
             let guards = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
                 .filter(|inst| native.dfg.insts[*inst].opcode() == ir::Opcode::Brif).count();
             assert_eq!(guards, expected_guards, "{ty:?}: {native}");
-            // Exact shapes retain the previous complete admission contract.
-            // Only the weaker family contract is exercised with invalid IDs/bases.
-            if ty.is_some_and(|ty| ty.object_shape().is_some()) { continue; }
+            if ty.is_some_and(|ty| ty.is_direct_object_family()) { continue; }
             let memory = compile_native_function(native, &*isa, usize::MAX, CodeMemory::new).unwrap();
             // SAFETY: the entry takes two u64 words and performs guarded address
             // arithmetic only; it never dereferences the supplied table address.
@@ -268,155 +426,62 @@ mod tests {
             let base = records.as_ptr() as u64;
             let bits = Value::direct_object(1).to_bits();
             assert_eq!(unsafe { run(base, bits) }, base + layout.record_size as u64);
-            assert_eq!(unsafe { run(0, bits) }, Value::DELETED.to_bits(), "{ty:?}");
-            let outside = Value::direct_object(layout.record_capacity as u32).to_bits();
-            assert_eq!(unsafe { run(base, outside) }, Value::DELETED.to_bits(), "{ty:?}");
-            if ty != Some(Type::DIRECT_OBJECT_FAMILY) {
-                assert_eq!(unsafe { run(base, Value::NULL.to_bits()) }, Value::DELETED.to_bits(), "{ty:?}");
-                assert_eq!(unsafe { run(base, Value::UNDEFINED.to_bits()) }, Value::DELETED.to_bits(), "{ty:?}");
-            }
+            assert_eq!(unsafe { run(base, Value::NULL.to_bits()) }, Value::DELETED.to_bits(), "{ty:?}");
+            assert_eq!(unsafe { run(base, Value::UNDEFINED.to_bits()) }, Value::DELETED.to_bits(), "{ty:?}");
         }
     }
 }
 
-/// The caller's admitted effects determine whether packed contents can change.
-#[derive(Clone, Copy)]
-pub(super) enum PackedAccess { Snapshot, Reload }
+pub(super) use crate::staged::PackedAccess;
+use crate::staged::{Form, Layout, Slots};
+mod emit;
+pub(super) use emit::Emit;
 
+/// A projection for a guarded receiver and exact shape: `staged::own_layout`'s residual. It may
+/// only be reused while no admitted effect can change its layout, arena base or object lifetime.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum PackedValue { Snapshot(ir::Value), Record(ir::Value) }
-
-impl PackedValue {
-    fn load(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
-        match self {
-            Self::Snapshot(bits) => bits,
-            Self::Record(record) => builder.ins().load(types::I64, MemFlagsData::trusted(), record,
-                crate::heap::NATIVE_OBJECT_LAYOUT.payload_offset as i32),
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Slots {
-    Packed(PackedValue),
-    Arena(ir::Value),
-    Dynamic { packed: PackedValue, inline: ir::Value, arena: ir::Value },
-}
-
-/// A projection for a guarded receiver and exact shape. It may only be reused
-/// while no admitted effect can change its layout, arena base or object lifetime.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct CheckedObject {
-    slots: Slots,
-    pub(super) storage_len: usize,
-}
+pub(super) struct CheckedObject(Layout<ir::Value, ir::Value>);
 
 impl CheckedObject {
+    pub(super) fn storage_len(self) -> usize { self.0.storage_len }
+
     /// A flat store can reuse the range proof; packed writes use the VM's
     /// narrow-value encoder and layout-preserving barrier helper instead.
     pub(super) fn arena_address(self, builder: &mut FunctionBuilder<'_>, slot: u16, miss: ir::Block) -> Option<ir::Value> {
-        debug_assert!(usize::from(slot) < self.storage_len);
-        let base = match self.slots {
+        debug_assert!(usize::from(slot) < self.0.storage_len);
+        let base = match self.0.slots {
             Slots::Packed(_) => return None,
-            Slots::Arena(base) => base,
-            Slots::Dynamic { inline, arena, .. } => {
-                let flat = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-                emit_js_guard(builder, flat, miss);
-                arena
+            Slots::Flat(base) => base,
+            Slots::Either { inline, flat, .. } => {
+                let is_flat = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+                emit_js_guard(builder, is_flat, miss);
+                flat
             }
         };
         Some(builder.ins().iadd_imm_u(base,
             i64::from(slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64))
     }
 
-    /// The caller proves receiver identity and exact shape before this operation.
+    /// The caller proves receiver identity and exact shape before this operation; `inline`
+    /// is the record's inline-storage bits (`ObjectRecord::header`), `base` the arena's.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prove(
         builder: &mut FunctionBuilder<'_>,
         record: ir::Value,
         inline: ir::Value,
         base: ir::Value,
-        length: ir::Value,
         plan: NativeFieldLoad,
         access: PackedAccess,
         miss: ir::Block,
     ) -> Option<Self> {
         if !plan.valid() { return None; }
-        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-        let payload = builder.ins().load(types::I64, MemFlagsData::trusted(), record, layout.payload_offset as i32);
-        let extras = builder.ins().band_imm_u(payload, layout.extras_tag_mask as i64);
-        let plain = builder.ins().icmp_imm_u(IntCC::NotEqual, extras, layout.extras_tag as i64);
-        emit_js_guard(builder, plain, miss);
-        let packed = match access {
-            PackedAccess::Snapshot => PackedValue::Snapshot(payload),
-            PackedAccess::Reload => PackedValue::Record(record),
-        };
-        let slots = if plan.storage == Some(PlainPropertyStorage::PackedInline) {
-            emit_js_guard(builder, inline, miss);
-            Slots::Packed(packed)
-        } else {
-            let start = builder.ins().ireduce(types::I32, payload);
-            let start = builder.ins().band_imm_u(start, layout.storage_start_mask as i64);
-            let start = builder.ins().uextend(types::I64, start);
-            let end = builder.ins().iadd_imm_u(start, plan.storage_len as i64);
-            let inside = builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, length);
-            let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
-            let arena = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-            let requires_arena = plan.storage == Some(PlainPropertyStorage::Arena)
-                || plan.storage_len > layout.inline_property_count;
-            if requires_arena {
-                // Keep the conjunction in control flow: each failed obligation has
-                // the same pre-read recovery, so no boolean temporary is needed.
-                emit_js_guard(builder, present, miss);
-                emit_js_guard(builder, arena, miss);
-                emit_js_guard(builder, inside, miss);
-            } else {
-                let valid = builder.ins().band(inside, present);
-                let valid = builder.ins().band(valid, arena);
-                let is_packed = builder.ins().icmp_imm_u(IntCC::NotEqual, inline, 0);
-                let valid = builder.ins().bor(valid, is_packed);
-                emit_js_guard(builder, valid, miss);
-            }
-            let offset = builder.ins().imul_imm_u(start, layout.property_value_size as i64);
-            let arena = builder.ins().iadd(base, offset);
-            if requires_arena {
-                Slots::Arena(arena)
-            } else {
-                Slots::Dynamic { packed, inline, arena }
-            }
-        };
-        Some(Self { slots, storage_len: plan.storage_len })
+        let mut stage = Emit { builder, property_values: Some(base) };
+        crate::staged::own_layout(&mut stage, record, inline, Form::of(plan.storage, plan.storage_len),
+            plan.storage_len, access, miss).map(Self)
     }
 
     /// Read fresh contents using only the established layout and slot bound.
     pub(super) fn read(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> ir::Value {
-        debug_assert!(usize::from(slot) < self.storage_len);
-        let offset = i32::from(slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i32;
-        if let Slots::Arena(base) = self.slots {
-            return builder.ins().load(types::I64, MemFlagsData::trusted(), base, offset);
-        }
-        let join = builder.create_block();
-        let bits = builder.append_block_param(join, types::I64);
-        let packed = match self.slots {
-            Slots::Packed(packed) => packed,
-            Slots::Dynamic { packed, inline, arena } => {
-                let inline_block = builder.create_block();
-                let arena_block = builder.create_block();
-                builder.ins().brif(inline, inline_block, &[], arena_block, &[]);
-                builder.switch_to_block(arena_block);
-                builder.seal_block(arena_block);
-                let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arena, offset);
-                builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
-                builder.switch_to_block(inline_block);
-                builder.seal_block(inline_block);
-                packed
-            }
-            Slots::Arena(_) => unreachable!(),
-        };
-        let payload = packed.load(builder);
-        emit_packed_object_slot_read(builder, payload, slot, join);
-        builder.switch_to_block(join);
-        builder.seal_block(join);
-        bits
+        crate::staged::read_slot(&mut Emit { builder, property_values: None }, self.0, slot)
     }
 }

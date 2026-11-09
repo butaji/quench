@@ -9,8 +9,8 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 
 pub(super) const SLOT: &str = "domExceptionSlot";
-const NAME: &str = "name";
-const MESSAGE: &str = "message";
+use crate::modules::keys::NAME;
+pub(crate) use crate::modules::keys::MESSAGE;
 const DEFAULT_NAME: &str = "Error";
 /// The receiver error of the getters, with Node's wording.
 const FOREIGN_RECEIVER: &str = "Value of \"this\" must be of DOMException";

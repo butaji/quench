@@ -240,7 +240,7 @@ impl super::Lowering<'_> {
         let result = self.depth;
         // Preserve guest inputs until the complete window has read them.
         self.depth = result + guest_count;
-        let memory = self.memory_binding(arg.memory)?;
+        let memory = self.atomic_window_memory(arg.memory, result + guest_count)?;
         let address = self.push()?;
         let offset = self.scalar_constant(WasmValue::I64(arg.offset as i64))?;
         self.emit(Op::WasmMemoryAddress, address, result, memory, offset)?;
@@ -260,6 +260,23 @@ impl super::Lowering<'_> {
             self.push()?;
         }
         Ok(true)
+    }
+
+    /// The memory binding at `window`, an atomic access's first input: a binding a register
+    /// already holds moves there, so the inputs after it are the window's own.
+    fn atomic_window_memory(
+        &mut self,
+        index: u32,
+        window: crate::bytecode::Register,
+    ) -> Result<crate::bytecode::Register, crate::Diagnostic> {
+        let memory = self.memory_binding(index)?;
+        if memory == window {
+            return Ok(memory);
+        }
+        let moved = self.push()?;
+        debug_assert_eq!(moved, window, "the window's first input follows its guest inputs");
+        self.emit(crate::bytecode::Op::Move, moved, memory, 0, 0)?;
+        Ok(moved)
     }
 }
 

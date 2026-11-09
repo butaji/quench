@@ -50,39 +50,12 @@ members!(Member, "webWritable", [
     AbortRejected,
 ]);
 
-/// A writable stream's state.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum State {
-    Writable,
-    Erroring,
-    Closed,
-    Errored,
-}
-
-impl State {
-    fn from(value: f64) -> Self {
-        match value as u8 {
-            0 => Self::Writable,
-            1 => Self::Erroring,
-            2 => Self::Closed,
-            _ => Self::Errored,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Writable => "writable",
-            Self::Erroring => "erroring",
-            Self::Closed => "closed",
-            Self::Errored => "errored",
-        }
-    }
-}
+pub(crate) use super::states::WritableState as State;
 
 /// A writable stream's, writer's and controller's fields beyond the readable family's.
 pub(crate) mod field {
-    pub(crate) const WRITER: &str = "writer";
-    pub(crate) const BACKPRESSURE: &str = "backpressure";
+    pub(crate) use crate::modules::keys::WRITER;
+    pub(crate) use crate::modules::keys::BACKPRESSURE;
     pub(crate) const CLOSE_REQUEST: &str = "closeRequest";
     pub(crate) const IN_FLIGHT_WRITE: &str = "inFlightWriteRequest";
     pub(crate) const IN_FLIGHT_CLOSE: &str = "inFlightCloseRequest";
@@ -90,12 +63,11 @@ pub(crate) mod field {
     pub(crate) const WRITE_REQUESTS: &str = "writeRequests";
     pub(crate) const READY: &str = "ready";
     pub(crate) const WRITE: &str = "write";
-    pub(crate) const CLOSE: &str = "close";
+    pub(crate) use crate::modules::keys::CLOSE;
     pub(crate) const ABORT: &str = "abort";
     pub(crate) const ABORT_CONTROLLER: &str = "abortController";
-    /// A pending abort request's fields.
-    pub(crate) const PROMISE: &str = "promise";
-    pub(crate) const REASON: &str = "reason";
+    pub(crate) use crate::modules::keys::PROMISE;
+    pub(crate) use crate::modules::keys::REASON;
     pub(crate) const WAS_ALREADY_ERRORING: &str = "wasAlreadyErroring";
 }
 use field::*;
@@ -122,11 +94,11 @@ fn clear(c: &mut Context<'_>, object: RootId, name: &str) -> Done {
 fn initialize_stream(c: &mut Context<'_>, object: RootId) -> Outcome {
     let closed = deferred(c)?;
     let requests = list::new(c)?;
-    let stream = record(c, &[(SELF, object), (CLOSED_PROMISE, closed), (WRITE_REQUESTS, requests)])?;
+    let stream = record(c, &[SELF, CLOSED_PROMISE, WRITE_REQUESTS], &[object, closed, requests])?;
     set_state(c, stream, State::Writable)?;
     put_flag(c, stream, BACKPRESSURE, false)?;
     attach(c, object, Brand::WritableStream, stream)?;
-    let holder = literal(c, &[(PROMISE, closed)])?;
+    let holder = literal(c, &[PROMISE], &[closed])?;
     let symbol = intrinsic(c, key::IS_CLOSED)?;
     c.define_data_property_rooted(object, symbol, holder, true, true, true)?;
     Ok(stream)
@@ -147,7 +119,7 @@ fn initialize_writer(c: &mut Context<'_>, object: RootId, stream: RootId) -> Out
     if is_locked(c, stream)? {
         return Err(throw(c, WebError::InvalidState("WritableStream is locked")));
     }
-    let writer = record(c, &[(SELF, object), (STREAM, stream)])?;
+    let writer = record(c, &[SELF, STREAM], &[object, stream])?;
     attach(c, object, Brand::Writer, writer)?;
     put(c, stream, WRITER, object)?;
     let (ready, closed) = match state(c, stream)? {
@@ -193,7 +165,7 @@ pub(crate) fn writer(c: &mut Context<'_>, stream: RootId) -> Outcome {
 /// `writableStreamAbort(stream, reason)`.
 pub(crate) fn abort(c: &mut Context<'_>, stream: RootId, reason: RootId) -> Outcome {
     let current = state(c, stream)?;
-    if matches!(current, State::Closed | State::Errored) {
+    if current.is_finished() {
         return resolved_undefined(c);
     }
     let controller = get(c, stream, CONTROLLER)?;
@@ -208,7 +180,7 @@ pub(crate) fn abort(c: &mut Context<'_>, stream: RootId, reason: RootId) -> Outc
     let reason = if already { c.undefined() } else { reason };
     let promise = deferred(c)?;
     let already_value = c.boolean(already);
-    let request = record(c, &[(PROMISE, promise), (REASON, reason), (WAS_ALREADY_ERRORING, already_value)])?;
+    let request = record(c, &[PROMISE, REASON, WAS_ALREADY_ERRORING], &[promise, reason, already_value])?;
     put(c, stream, PENDING_ABORT, request)?;
     if !already {
         start_erroring(c, stream, reason)?;
@@ -219,7 +191,7 @@ pub(crate) fn abort(c: &mut Context<'_>, stream: RootId, reason: RootId) -> Outc
 /// `writableStreamClose(stream)`.
 pub(crate) fn close(c: &mut Context<'_>, stream: RootId) -> Outcome {
     let current = state(c, stream)?;
-    if matches!(current, State::Closed | State::Errored) {
+    if current.is_finished() {
         return rejected_with(c, WebError::InvalidState("WritableStream is closed"));
     }
     let promise = deferred(c)?;
@@ -549,7 +521,7 @@ fn close_sentinel(c: &mut Context<'_>) -> Outcome {
     if !is_undefined(c, sentinel) {
         return Ok(sentinel);
     }
-    let sentinel = record(c, &[])?;
+    let sentinel = record(c, &[], &[])?;
     put(c, intrinsics, key::CLOSE_SENTINEL, sentinel)?;
     Ok(sentinel)
 }
@@ -599,7 +571,7 @@ fn setup_controller(
     let family = crate::modules::events_shared_vm::event_family(c)?;
     let abort_controller_class = get(c, family, "abortControllerCtor")?;
     let abort_controller = c.construct_rooted(abort_controller_class, abort_controller_class, &[])?;
-    let controller = record(c, &[(STREAM, stream), (QUEUE, queue), (SIZE, size), (ABORT_CONTROLLER, abort_controller)])?;
+    let controller = record(c, &[STREAM, QUEUE, SIZE, ABORT_CONTROLLER], &[stream, queue, size, abort_controller])?;
     for &(name, value) in algorithms {
         put(c, controller, name, value)?;
     }
@@ -770,7 +742,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let locked = c.boolean(locked);
             let state = state(c, stream)?.name();
             let state = c.string_rooted(state);
-            let data = literal(c, &[("locked", locked), ("state", state)])?;
+            let data = literal(c, &["locked", "state"], &[locked, state])?;
             custom_inspect(c, this, Brand::WritableStream.name(), data, args)
         }
         Member::IsErrored | Member::IsWritable => {
@@ -843,7 +815,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             };
             let closed = get(c, writer, CLOSED)?;
             let ready = get(c, writer, READY)?;
-            let data = literal(c, &[("stream", stream_object), ("close", closed), ("ready", ready), ("desiredSize", desired)])?;
+            let data = literal(c, &["stream", "close", "ready", "desiredSize"], &[stream_object, closed, ready, desired])?;
             custom_inspect(c, this, Brand::Writer.name(), data, args)
         }
         Member::ControllerConstruct => {
@@ -868,7 +840,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let controller = this_state(c, this, Brand::WritableController)?;
             let stream = get(c, controller, STREAM)?;
             let stream = get(c, stream, SELF)?;
-            let data = literal(c, &[("stream", stream)])?;
+            let data = literal(c, &["stream"], &[stream])?;
             custom_inspect(c, this, Brand::WritableController.name(), data, args)
         }
         Member::ErrorFunction => {

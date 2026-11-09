@@ -1,16 +1,28 @@
-//! An array's dense elements: one copy-on-write allocation that holds a header (owner count,
+//! An array's dense elements: one copy-on-write backing that holds a header (owner count,
 //! length, capacity) followed by the values. Arrays that copy a constant literal or a slice
 //! share one backing until either writes, so an element read is one load from the backing,
 //! and an empty array owns no allocation at all.
+//!
+//! A backing is a heap allocation its owners count, or a young run (`ArrayElements::young`)
+//! that no owner counts: a new small array's elements, bumped from the property arena's
+//! nursery (`ValueArena::young_elements`) beside the young objects' runs, where a dead one
+//! costs nothing to reclaim. Like a shared backing it admits reads only: the first write
+//! copies it to an allocation of its own (`make_mut`), as does the collection its array
+//! survives (`ArrayElements::leave_nursery`), so every young run's owner is a young array
+//! record its sweep shows.
 use crate::value::Value;
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 use std::ptr::NonNull;
 
 #[repr(C, align(8))]
 struct Header {
-    /// Owners of this backing; zero only in the shared empty header, which no owner counts.
+    /// Owners of this backing; zero where no owner counts it: the shared empty header and
+    /// young runs, which no drop frees.
     owners: u32,
     len: u32,
+    /// Room for values after the header, with `BIASED` set when the header was moved past
+    /// values a front removal dropped (`UniqueElements::remove` of index 0): the allocation
+    /// then starts `bias` values earlier, a count kept in the word just before the header.
     capacity: u32,
     /// How many values below `len` are not int32s, holes (`Value::DELETED`) included: the
     /// fold of every write, each adding what it writes and removing what it overwrites, so a
@@ -48,6 +60,10 @@ fn recounted(others: u32, added: u32, removed: u32) -> u32 {
 
 /// The values start right after the header, at their own alignment.
 const VALUES_OFFSET: usize = size_of::<Header>();
+/// The arena values a young run's header takes ahead of its values.
+pub(crate) const HEADER_VALUES: usize = VALUES_OFFSET / size_of::<Value>();
+const _: () = assert!(HEADER_VALUES * size_of::<Value>() == VALUES_OFFSET);
+const _: () = assert!(align_of::<Header>() <= align_of::<Value>());
 const _: () = assert!(VALUES_OFFSET.is_multiple_of(align_of::<Value>()));
 const _: () = assert!(align_of::<Header>() >= align_of::<Value>());
 /// The byte offset from a backing's first value to its `u32` length: native code that
@@ -65,6 +81,19 @@ static EMPTY: Header = Header {
     capacity: 0,
     others: 0,
 };
+
+/// The `Header::capacity` flag of a backing whose header moved past dropped front values.
+/// Native code never reads the capacity word, so the flag changes no native layout.
+const BIASED: u32 = 1 << 31;
+
+/// The shortest backing whose front removal moves its header instead of its values: V8
+/// moves the values of short arrays too, where the copy costs less than the bookkeeping.
+const TRIM_MIN_LEN: usize = 16;
+
+/// A backing with front room compacts in place, instead of growing, while at most
+/// 1/COMPACT_LIVE_DIVISOR of it is live: each compaction then follows as many front removals
+/// as it moves values.
+const COMPACT_LIVE_DIVISOR: usize = 2;
 
 /// The smallest capacity a growing backing takes, as `Vec` grows from empty.
 const MIN_GROWN_CAPACITY: usize = 4;
@@ -124,11 +153,6 @@ impl ArrayElements {
         elements
     }
 
-    /// `len` copies of `value`, allocated at their final size with no intermediate buffer.
-    pub(crate) fn filled(len: usize, value: Value) -> Self {
-        Self::from_fn(len, |_| value)
-    }
-
     /// The `len` values `value` gives for each index in order, written straight into a
     /// backing allocated at its final size, with no intermediate buffer.
     pub(crate) fn from_fn(len: usize, mut value: impl FnMut(usize) -> Value) -> Self {
@@ -147,6 +171,50 @@ impl ArrayElements {
         elements
     }
 
+    /// The young run (`HEADER_VALUES` and then `len` values) at `run` for the `len` values
+    /// `value` gives for each index in order, admitting reads until a write or a survived
+    /// collection copies it to an allocation (`make_mut`, `leave_nursery`).
+    ///
+    /// # Safety
+    /// `run` starts `HEADER_VALUES + len` values of the arena's nursery that nothing else
+    /// holds, and the array record that takes these elements is made before any collection.
+    pub(crate) unsafe fn young(run: NonNull<Value>, len: usize, mut value: impl FnMut(usize) -> Value) -> Self {
+        debug_assert!(len > 0);
+        let header = run.cast::<Header>();
+        let elements = Self { header };
+        let mut counted = 0;
+        for slot in 0..len {
+            let written = value(slot);
+            counted += other(written);
+            // SAFETY: the run holds `len` values after the header.
+            unsafe { elements.values().add(slot).write(written) };
+        }
+        // SAFETY: the run starts with room for a header, which no owner counts.
+        unsafe {
+            header.as_ptr().write(Header {
+                owners: 0,
+                len: len as u32,
+                capacity: len as u32,
+                others: counted,
+            });
+        }
+        elements
+    }
+
+    /// Whether this backing is a young run (`ArrayElements::young`).
+    #[inline(always)]
+    pub(crate) fn is_young(&self) -> bool {
+        self.header().owners == 0 && self.capacity() != 0
+    }
+
+    /// Copies a young run to an allocation of this array's own, as the collection it
+    /// survives must before the nursery takes the run back; any other backing stays.
+    pub(crate) fn leave_nursery(&mut self) {
+        if self.is_young() {
+            self.detach();
+        }
+    }
+
     fn layout(capacity: usize) -> Layout {
         Layout::from_size_align(
             VALUES_OFFSET + capacity.checked_mul(size_of::<Value>()).expect("array backing overflow"),
@@ -158,7 +226,7 @@ impl ArrayElements {
     /// A backing of one owner with room for `capacity` values, the first `len` uninitialized.
     fn allocate(capacity: usize, len: usize) -> Self {
         debug_assert!(capacity > 0 && len <= capacity);
-        let capacity_word = u32::try_from(capacity).expect("array backing capacity overflow");
+        let capacity_word = u32::try_from(capacity).ok().filter(|word| word & BIASED == 0).expect("array backing capacity overflow");
         let layout = Self::layout(capacity);
         // SAFETY: the layout has a non-zero size (the header).
         let pointer = unsafe { alloc(layout) }.cast::<Header>();
@@ -197,14 +265,32 @@ impl ArrayElements {
 
     #[inline(always)]
     pub(crate) fn capacity(&self) -> usize {
-        self.header().capacity as usize
+        (self.header().capacity & !BIASED) as usize
+    }
+
+    /// The values a front removal dropped ahead of the header (`BIASED`).
+    #[inline(always)]
+    fn bias(&self) -> usize {
+        if self.header().capacity & BIASED == 0 {
+            return 0;
+        }
+        // SAFETY: a biased header follows at least one dropped value, whose word holds the bias.
+        unsafe { self.header.as_ptr().cast::<usize>().sub(1).read() }
+    }
+
+    /// The start and layout of the allocation the header lives in.
+    fn allocation(&self) -> (*mut u8, Layout) {
+        let bias = self.bias();
+        // SAFETY: a biased header lies `bias` values into its allocation.
+        let start = unsafe { self.header.as_ptr().cast::<Value>().sub(bias) };
+        (start.cast(), Self::layout(self.capacity() + bias))
     }
 
     /// Requested allocation extent; the shared static empty header owns no allocation.
     pub(crate) fn allocated_bytes(&self) -> usize {
         match self.capacity() {
             0 => 0,
-            capacity => Self::layout(capacity).size(),
+            _ => self.allocation().1.size(),
         }
     }
 
@@ -229,7 +315,7 @@ impl ArrayElements {
         self.header.as_ptr().cast()
     }
 
-    /// The owners of this backing; zero for the shared empty one.
+    /// The owners of this backing; zero for the shared empty one and young runs.
     pub(crate) fn owner_count(&self) -> usize {
         self.header().owners as usize
     }
@@ -273,8 +359,8 @@ impl ArrayElements {
         }
     }
 
-    /// This array's values for writing: its own backing, copied first when shared (or when it
-    /// is the shared empty header).
+    /// This array's values for writing: its own backing, copied first when shared or young
+    /// (or when it is the shared empty header).
     #[inline(always)]
     pub(crate) fn make_mut(&mut self) -> &mut UniqueElements {
         if !self.is_unique() && self.capacity() != 0 {
@@ -312,16 +398,21 @@ impl From<Vec<Value>> for ArrayElements {
 
 impl Clone for ArrayElements {
     fn clone(&self) -> Self {
-        if self.capacity() != 0 {
-            // Only losing unique ownership can falsify a writable proof. A shared
-            // backing already admits reads only; another owner changes neither its
-            // address nor its bounds.
-            if self.is_unique() {
-                super::array_proofs::retire_array_storage_proofs();
+        match (self.header().owners, self.capacity()) {
+            (0, 0) => {}
+            // A young run has one owner, its array record: a copy owns an allocation.
+            (0, _) => return Self::copied(self, self.header().others),
+            (owners, _) => {
+                // Only losing unique ownership can falsify a writable proof. A shared
+                // backing already admits reads only; another owner changes neither its
+                // address nor its bounds.
+                if self.is_unique() {
+                    super::array_proofs::retire_array_storage_proofs();
+                }
+                let owners = owners.checked_add(1).expect("array backing owners overflow");
+                // SAFETY: arrays are single-threaded; the header is live and only owners write it.
+                unsafe { (*self.header.as_ptr()).owners = owners };
             }
-            let owners = self.header().owners.checked_add(1).expect("array backing owners overflow");
-            // SAFETY: arrays are single-threaded; the header is live and only owners write it.
-            unsafe { (*self.header.as_ptr()).owners = owners };
         }
         Self {
             header: self.header,
@@ -331,15 +422,15 @@ impl Clone for ArrayElements {
 
 impl Drop for ArrayElements {
     fn drop(&mut self) {
-        let capacity = self.capacity();
-        if capacity == 0 {
+        // The empty header and young runs count no owner, and no drop frees them.
+        let Some(owners) = self.header().owners.checked_sub(1) else {
             return;
-        }
-        let owners = self.header().owners - 1;
+        };
         if owners == 0 {
             // SAFETY: the last owner frees the allocation `allocate` made for this capacity;
             // values need no drop.
-            unsafe { dealloc(self.header.as_ptr().cast(), Self::layout(capacity)) };
+            let (start, layout) = self.allocation();
+            unsafe { dealloc(start, layout) };
         } else {
             // SAFETY: as in `clone`.
             unsafe { (*self.header.as_ptr()).owners = owners };
@@ -426,13 +517,26 @@ impl UniqueElements {
         }
     }
 
-    /// Room for `additional` more values, growing by `GROWTH_SHIFT`.
+    /// Room for `additional` more values, growing by `GROWTH_SHIFT`. Inline: a backing with
+    /// room, the common append, tests its capacity alone.
+    #[inline(always)]
     pub(crate) fn reserve(&mut self, additional: usize) {
         let required = self.0.len().checked_add(additional).expect("array backing overflow");
-        let capacity = self.0.capacity();
-        if required <= capacity {
-            return;
+        if required > self.0.capacity() {
+            self.grow_for(required);
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_for(&mut self, required: usize) {
+        if self.0.bias() != 0 {
+            self.unbias();
+            if required <= self.0.capacity() && self.0.len() <= self.0.capacity() / COMPACT_LIVE_DIVISOR {
+                return;
+            }
+        }
+        let capacity = self.0.capacity();
         let grown = required.max(capacity + (capacity >> GROWTH_SHIFT)).max(MIN_GROWN_CAPACITY);
         self.grow_to(grown);
     }
@@ -459,6 +563,7 @@ impl UniqueElements {
         unsafe { (*header.as_ptr()).capacity = capacity_word };
     }
 
+    #[inline(always)]
     pub(crate) fn push(&mut self, value: Value) {
         let len = self.0.len();
         self.reserve(1);
@@ -468,6 +573,7 @@ impl UniqueElements {
         self.set_len(len + 1);
     }
 
+    #[inline(always)]
     pub(crate) fn pop(&mut self) -> Option<Value> {
         let len = self.0.len().checked_sub(1)?;
         let value = self[len];
@@ -514,6 +620,10 @@ impl UniqueElements {
         assert!(index < len, "array removal index out of bounds");
         let value = self[index];
         self.recount(0, other(value));
+        if index == 0 && len >= TRIM_MIN_LEN && self.0.capacity() != 0 {
+            self.trim_front();
+            return value;
+        }
         // SAFETY: the tail shifts down within the initialized values.
         unsafe {
             let at = self.0.values().add(index);
@@ -527,6 +637,9 @@ impl UniqueElements {
     pub(crate) fn splice(&mut self, range: std::ops::Range<usize>, values: &[Value]) {
         let len = self.0.len();
         assert!(range.start <= range.end && range.end <= len, "array splice out of bounds");
+        if range.end == 0 && len >= TRIM_MIN_LEN {
+            return self.prepend(values);
+        }
         let removed = range.end - range.start;
         if values.len() > removed {
             self.reserve(values.len() - removed);
@@ -566,215 +679,6 @@ impl Extend<Value> for UniqueElements {
     }
 }
 
+mod front_room;
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn array_counter_unknown_is_sticky() {
-        for (added, removed) in [(0, 0), (1, 0), (0, 1), (1, 1), (OTHERS_UNKNOWN - 1, OTHERS_UNKNOWN - 1)] {
-            assert_eq!(recounted(OTHERS_UNKNOWN, added, removed), OTHERS_UNKNOWN);
-        }
-    }
-
-    #[test]
-    fn array_counter_exact_updates_do_not_saturate_intermediate_sums() {
-        for (before, added, removed) in [
-            (0, 3, 0),
-            (5, 1, 3),
-            (OTHERS_UNKNOWN - 2, 3, 2),
-            (OTHERS_UNKNOWN - 1, OTHERS_UNKNOWN - 1, OTHERS_UNKNOWN - 1),
-        ] {
-            let expected = u32::try_from(u64::from(before) - u64::from(removed) + u64::from(added)).unwrap();
-            assert_eq!(recounted(before, added, removed), expected);
-        }
-    }
-
-    #[test]
-    fn array_counter_unknown_survives_proved_replacements() {
-        let mut elements = ArrayElements::from([Value::integer(1), Value::number(0.5)]);
-        elements.make_mut().set_others(OTHERS_UNKNOWN);
-        let values = elements.unique_values().unwrap();
-        for value in [Value::number(1.5), Value::integer(2)] {
-            // SAFETY: the backing remains unique and the index is below its length.
-            unsafe { ArrayElements::replace_through(values, 1, value) };
-            assert_eq!(elements[1], value);
-            assert_eq!(elements.header().others, OTHERS_UNKNOWN);
-            assert!(!elements.holds_only_int32());
-        }
-    }
-
-    #[test]
-    fn array_counter_unknown_survives_unique_mutations() {
-        let mutations: [(&str, fn(&mut UniqueElements)); 4] = [
-            ("set", |elements| elements.set(0, Value::integer(3))),
-            ("fill", |elements| elements.fill(0..2, Value::integer(0))),
-            ("copy", |elements| elements.copy_from(0, &[Value::integer(0), Value::number(2.5)])),
-            ("truncate", |elements| elements.truncate(0)),
-        ];
-        for (name, mutate) in mutations {
-            let mut elements = ArrayElements::from([Value::number(0.5), Value::number(1.5)]);
-            let unique = elements.make_mut();
-            unique.set_others(OTHERS_UNKNOWN);
-            mutate(unique);
-            assert_eq!(elements.header().others, OTHERS_UNKNOWN, "{name}");
-        }
-    }
-
-    #[test]
-    fn native_layout_matches_header_and_dense_backing() {
-        assert_eq!(
-            NATIVE_HEADER_POINTER_OFFSET,
-            std::mem::offset_of!(ArrayElements, header)
-        );
-        assert_eq!(
-            NATIVE_HEADER_LENGTH_OFFSET,
-            std::mem::offset_of!(Header, len)
-        );
-        assert_eq!(NATIVE_HEADER_VALUES_OFFSET, std::mem::size_of::<Header>());
-        assert_eq!(
-            NATIVE_HEADER_VALUES_OFFSET % std::mem::align_of::<Value>(),
-            0
-        );
-        assert!(
-            NATIVE_HEADER_LENGTH_OFFSET + std::mem::size_of::<u32>()
-                <= NATIVE_HEADER_VALUES_OFFSET
-        );
-
-        let empty = ArrayElements::new();
-        let empty_values = unsafe {
-            empty
-                .header
-                .as_ptr()
-                .cast::<u8>()
-                .add(NATIVE_HEADER_VALUES_OFFSET)
-                .cast::<Value>()
-                .cast_const()
-        };
-        assert_eq!(empty_values, (*empty).as_ptr());
-        assert_eq!(empty.len(), 0);
-
-        let values = [Value::integer(7), Value::integer(9)];
-        let dense = ArrayElements::from(values);
-        let current_values = unsafe {
-            dense
-                .header
-                .as_ptr()
-                .cast::<u8>()
-                .add(NATIVE_HEADER_VALUES_OFFSET)
-                .cast::<Value>()
-                .cast_const()
-        };
-        assert_eq!(current_values, (*dense).as_ptr());
-        // The header pointer belongs to this ArrayElements value; re-reading it observes the
-        // new header/backing after copy-on-write mutation.
-        let mut shared = dense.clone();
-        shared.make_mut().push(Value::integer(11));
-        let current_values = unsafe {
-            shared
-                .header
-                .as_ptr()
-                .cast::<u8>()
-                .add(NATIVE_HEADER_VALUES_OFFSET)
-                .cast::<Value>()
-                .cast_const()
-        };
-        assert_eq!(current_values, (*shared).as_ptr());
-        assert_eq!(shared.len(), 3);
-    }
-
-    #[test]
-    fn in_place_replacements_keep_the_others_count_exact() {
-        // An array storage proof's store writes through the backing (`replace_through`),
-        // as an in-place replacement does: the count stays the one authority.
-        let mut elements = ArrayElements::from(vec![Value::integer(1), Value::integer(2)]);
-        assert!(elements.replace_in_place(0, Value::number(0.5)));
-        assert!(!elements.holds_only_int32());
-        let values = elements.unique_values().expect("a unique backing");
-        // SAFETY: the backing stays unique and both indices are below its length.
-        unsafe { ArrayElements::replace_through(values, 0, Value::integer(3)) };
-        assert!(elements.holds_only_int32());
-        unsafe { ArrayElements::replace_through(values, 1, Value::NULL) };
-        assert!(!elements.holds_only_int32());
-        let shared = elements.clone();
-        assert!(!elements.replace_in_place(1, Value::integer(4)));
-        assert!(elements.unique_values().is_none());
-        assert_eq!(shared[1], Value::NULL);
-    }
-
-    #[test]
-    fn every_write_keeps_the_others_count_exact() {
-        let ints = || ArrayElements::from(vec![Value::integer(1), Value::integer(2)]);
-        assert!(ints().holds_only_int32());
-        assert!(!ArrayElements::from(vec![Value::integer(1), Value::number(0.5)]).holds_only_int32());
-        assert!(ArrayElements::filled(3, Value::integer(0)).holds_only_int32());
-        assert!(!ArrayElements::from_fn(3, |slot| if slot == 2 { Value::NULL } else { Value::integer(0) }).holds_only_int32());
-        let demotions: [(&str, fn(&mut UniqueElements)); 6] = [
-            ("set", |elements| elements.set(0, Value::DELETED)),
-            ("push", |elements| elements.push(Value::number(0.5))),
-            ("resize", |elements| elements.resize(4, Value::UNDEFINED)),
-            ("fill", |elements| elements.fill(0..1, Value::TRUE)),
-            ("copy_from", |elements| elements.copy_from(1, &[Value::NULL])),
-            ("splice", |elements| elements.splice(0..1, &[Value::FALSE])),
-        ];
-        for (write, demote) in demotions {
-            let mut elements = ints();
-            demote(elements.make_mut());
-            assert!(!elements.holds_only_int32(), "{write}");
-        }
-        let mut grown = ints();
-        for value in 3..64 {
-            grown.make_mut().push(Value::integer(value));
-        }
-        grown.make_mut().set(5, Value::integer(-5));
-        assert!(grown.holds_only_int32(), "int32 writes and growth keep the kind");
-        let mut shared = ArrayElements::from(vec![Value::integer(1), Value::NULL]);
-        let mut copy = shared.clone();
-        copy.make_mut().set(1, Value::integer(2));
-        assert_eq!((shared.holds_only_int32(), copy.holds_only_int32()), (false, true), "a detached copy counts its own writes");
-        shared.make_mut().truncate(1);
-        assert!(shared.holds_only_int32(), "removing the last other value restores Int32");
-        let mut holey = ints();
-        holey.make_mut().resize(4, Value::DELETED);
-        assert!(!holey.holds_only_int32());
-        for index in [3, 2] {
-            holey.make_mut().set(index, Value::integer(0));
-        }
-        assert!(holey.holds_only_int32(), "filling every hole with int32s restores Int32");
-        holey.make_mut().set(0, Value::number(0.5));
-        holey.make_mut().pop();
-        assert!(!holey.holds_only_int32());
-        holey.make_mut().remove(0);
-        assert!(holey.holds_only_int32());
-        assert!(ArrayElements::new().holds_only_int32());
-    }
-
-    #[test]
-    fn shared_backings_copy_on_write_and_empty_arrays_allocate_nothing() {
-        let empty = ArrayElements::new();
-        assert_eq!(empty.capacity(), 0);
-        let mut first = ArrayElements::from(vec![Value::integer(1), Value::integer(2)]);
-        let mut second = first.clone();
-        assert_eq!(first.as_ptr(), second.as_ptr());
-        assert_eq!(first.owner_count(), 2);
-        second.make_mut().push(Value::integer(3));
-        assert_ne!(first.as_ptr(), second.as_ptr());
-        assert_eq!(&*first, &[Value::integer(1), Value::integer(2)]);
-        assert_eq!(&*second, &[Value::integer(1), Value::integer(2), Value::integer(3)]);
-        first.make_mut().set(0, Value::integer(9));
-        assert_eq!(first[0], Value::integer(9));
-
-        let mut grown = ArrayElements::new();
-        let unique = grown.make_mut();
-        unique.extend((0..10).map(Value::integer));
-        assert_eq!(unique.remove(0), Value::integer(0));
-        unique.splice(1..3, &[Value::TRUE]);
-        unique.truncate(4);
-        assert_eq!(&*grown, &[Value::integer(1), Value::TRUE, Value::integer(4), Value::integer(5)]);
-        let unique = grown.make_mut();
-        assert_eq!(unique.pop(), Some(Value::integer(5)));
-        unique.resize(6, Value::NULL);
-        assert_eq!(&grown[3..], &[Value::NULL; 3]);
-        drop(empty);
-    }
-}
+mod tests;

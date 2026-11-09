@@ -383,7 +383,7 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::WasmI64UnaryOperator => {
             crate::wasm::integer::I64UnaryOperator::from_tag(instruction.imm()).is_some()
         }
-        super::ImmediateRole::WasmStructFieldIndex => true, // The live struct owns field bounds.
+        super::ImmediateRole::WasmGcField => crate::wasm::gc::GcField::from_tag(instruction.imm()).is_some(),
         super::ImmediateRole::WasmGcTypeIndex | super::ImmediateRole::WasmExceptionFieldIndex => {
             true
         } // The attached graph owns this index domain.
@@ -404,7 +404,7 @@ fn immediate_domains_in_bounds(
         }
         super::ImmediateRole::UnaryOperator => {
             instruction.unary_operator() <= oxc_ast::ast::UnaryOperator::Void as u32
-                || instruction.unary_operator() == super::UNARY_TO_STRING
+                || instruction.unary_operator() == super::UNARY_TO_STRING_PRIMITIVE
                 || super::typeof_test(instruction.unary_operator()).is_some()
                 || instruction.unary_operator() == super::UNARY_TYPEOF_INDEX
         }
@@ -618,7 +618,7 @@ impl ResidualProgram {
             // Wasm locals are frame slots by construction: no environment
             // capture, TDZ, or name binding can observe them.
             let plain_local_slots = if self.kind == super::ProgramKind::Wasm {
-                vec![true; usize::from(function.locals)]
+                crate::bitset::BitSet::from_fn(usize::from(function.locals), |_| true)
             } else {
 function.plain_local_slots(&self.superinstructions)
             };
@@ -687,15 +687,7 @@ function.plain_local_slots(&self.superinstructions)
                 ));
             }
 
-            if function.environment_clones.iter().any(|clone| {
-                [&clone.fresh, &clone.reset].into_iter().any(|slots| {
-                    slots.iter().any(|slot| *slot >= function.locals)
-                        || slots.windows(2).any(|pair| pair[0] >= pair[1])
-                }) || clone
-                    .reset
-                    .iter()
-                    .any(|slot| clone.fresh.binary_search(slot).is_ok())
-            }) {
+            if !function.environment_clones.valid(function.locals) {
                 return Err(format!(
                     "function {index} has invalid environment clone slots"
                 ));
@@ -753,10 +745,7 @@ function.plain_local_slots(&self.superinstructions)
                 if matches!(
                     instruction.op(),
                     super::Op::LoadLocalPlain | super::Op::StoreLocalPlain
-                ) && !plain_local_slots
-                    .get(instruction.local_slot())
-                    .copied()
-                    .unwrap_or(false)
+                ) && !plain_local_slots.contains(instruction.local_slot())
                 {
                     return Err(format!(
                         "function {index} has an unproven plain-local operation"
@@ -810,10 +799,7 @@ function.plain_local_slots(&self.superinstructions)
                 if instruction.op() == super::Op::Binary
                     && instruction.numeric_local_target().is_some_and(|slot| {
                         function.dispatch != super::DispatchClass::Numeric
-                            && !plain_local_slots
-                                .get(usize::from(slot))
-                                .copied()
-                                .unwrap_or(false)
+                            && !plain_local_slots.contains(usize::from(slot))
                     })
                 {
                     return Err(format!(
@@ -962,11 +948,13 @@ function.plain_local_slots(&self.superinstructions)
                 super::LiteralStep::Constant(index) => {
                     (0, (index as usize) < self.constants.len())
                 }
+                super::LiteralStep::Int(_) => (0, true),
                 super::LiteralStep::Array(count) => (count as usize, true),
                 super::LiteralStep::Object(site) => match self.object_sites.get(site as usize) {
                     Some(site) => (site.atoms.len(), true),
                     None => (0, false),
                 },
+                super::LiteralStep::Json(start) => (0, self.data_literal_text(start).is_some()),
             };
             if !valid || taken > depth {
                 return false;
@@ -1201,7 +1189,7 @@ mod tests {
         invalid.functions[0].binding_sites[0].bindings[0].location =
             super::super::EvalBindingLocation::Local(u16::MAX);
         assert!(invalid.validate().is_err());
-        let mut invalid = program.clone();
+        let mut invalid = program;
         let binding = invalid.functions[0].binding_sites[0].bindings[0];
         invalid.functions[0].binding_sites[0].bindings.push(binding);
         assert!(invalid.validate().is_err());
@@ -1361,7 +1349,7 @@ mod tests {
             regexp_literal_sites: vec![],
             literal_templates: Vec::new(),
             superinstructions: vec![],
-            replay: None,
+            replay: None, first_call_scopes: Default::default(),
             encoded_records: None,
             validated: Default::default(),
             undefined_constant: Default::default(),

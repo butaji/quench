@@ -4,7 +4,7 @@ use super::*;
 pub(super) const MAX_CALENDAR_DIFFERENCE_ROUNDING_INCREMENT: i128 = 100_000_000;
 const MAX_PLAIN_DATE_TIME_ROUNDING_INCREMENT: f64 = 1_000_000_000.0;
 
-const MONTHS_PER_YEAR: i128 = 12;
+use crate::vm::temporal_date_difference::MONTHS_PER_YEAR;
 const UNITS: [&str; 10] = [
     "year",
     "month",
@@ -146,7 +146,7 @@ impl<H: Host> Vm<H> {
         let rounding_mode = if mode_value.is_undefined() {
             "trunc".to_owned()
         } else {
-            self.to_string(p, mode_value)?.to_string()
+            self.to_string(p, mode_value)?
         };
         if !ROUNDING_MODES.contains(&rounding_mode.as_str()) {
             return Err(self.range_error(p, "Invalid roundingMode".into()));
@@ -184,7 +184,7 @@ impl<H: Host> Vm<H> {
         if value.is_undefined() {
             return Ok(None);
         }
-        let value = self.to_string(p, value)?.to_string();
+        let value = self.to_string(p, value)?;
         let value = value.strip_suffix('s').unwrap_or(&value);
         if allow_auto && value == "auto" {
             return Ok(Some("auto"));

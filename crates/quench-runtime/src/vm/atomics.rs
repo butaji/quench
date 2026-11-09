@@ -124,7 +124,7 @@ impl<H: Host> Vm<H> {
         {
             return self.atomic_shared_native(p, native, args);
         }
-        if matches!(native, Native::AtomicsWait | Native::AtomicsWaitAsync) {
+        if waits(native) {
             return self.atomic_wait(p, native, args);
         }
         if native == Native::AtomicsNotify {
@@ -147,13 +147,13 @@ impl<H: Host> Vm<H> {
             .unwrap_or(Value::UNDEFINED);
         if native == Native::AtomicsLoad
             && self.test262_agent.active_callback
-            && matches!(kind, TypedArrayKind::Int32 | TypedArrayKind::BigInt64)
+            && kind.is_waitable()
             && self.atomic_is_zero(kind, current)
         {
             let has_waiter = !self.test262_agent.waiters.is_empty();
             if has_waiter || self.agent_spin_escape() {
                 return Ok(
-                    if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64) {
+                    if kind.is_bigint() {
                         self.heap.alloc(Cell::bigint(1_u8.into()))
                     } else {
                         Value::number(1.0)
@@ -171,7 +171,7 @@ impl<H: Host> Vm<H> {
             | Native::AtomicsXor
             | Native::AtomicsExchange
             | Native::AtomicsCompareExchange => {
-                if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64) {
+                if kind.is_bigint() {
                     self.atomic_bigint(p, native, view, index, current, args)
                 } else {
                     self.atomic_number(p, native, kind, view, index, current, args)
@@ -350,7 +350,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::BigInt(old_number)) = self.heap.get(old).cloned() else {
             return Err(self.type_error(p, "Atomics BigInt element is invalid".into()));
         };
-        let old_number = *old_number;
+        let old_number = old_number.to_num();
         let first = self.to_bigint(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
         let replacement = if native == Native::AtomicsCompareExchange {
             self.to_bigint(p, args.get(3).copied().unwrap_or(Value::UNDEFINED))?
@@ -374,11 +374,11 @@ impl<H: Host> Vm<H> {
         if native != Native::AtomicsCompareExchange || compare {
             let mut next = match native {
                 Native::AtomicsStore | Native::AtomicsExchange => replacement,
-                Native::AtomicsAdd => old_number.clone() + first.clone(),
-                Native::AtomicsSub => old_number.clone() - first.clone(),
-                Native::AtomicsAnd => old_number.clone() & first.clone(),
-                Native::AtomicsOr => old_number.clone() | first.clone(),
-                Native::AtomicsXor => old_number.clone() ^ first.clone(),
+                Native::AtomicsAdd => old_number + first.clone(),
+                Native::AtomicsSub => old_number - first.clone(),
+                Native::AtomicsAnd => old_number & first.clone(),
+                Native::AtomicsOr => old_number | first.clone(),
+                Native::AtomicsXor => old_number ^ first.clone(),
                 Native::AtomicsCompareExchange => replacement,
                 _ => unreachable!(),
             };
@@ -427,7 +427,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let view = args.first().copied().unwrap_or(Value::UNDEFINED);
         let kind = self.atomic_array_kind(p, view)?;
-        if !matches!(kind, TypedArrayKind::Int32 | TypedArrayKind::BigInt64)
+        if !kind.is_waitable()
             || self.typed_array_shared(view) != Some(true)
         {
             return Err(self.type_error(
@@ -543,7 +543,7 @@ impl<H: Host> Vm<H> {
     fn atomics_notify(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
         let view = args.first().copied().unwrap_or(Value::UNDEFINED);
         let kind = self.atomic_array_kind(p, view)?;
-        if !matches!(kind, TypedArrayKind::Int32 | TypedArrayKind::BigInt64) {
+        if !kind.is_waitable() {
             return Err(self.type_error(
                 p,
                 "Atomics.notify requires Int32Array or BigInt64Array".into(),
@@ -598,7 +598,7 @@ impl<H: Host> Vm<H> {
     fn atomic_is_zero(&self, kind: TypedArrayKind, value: Value) -> bool {
         match kind {
             TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
-                matches!(self.heap.get(value), Some(Cell::BigInt(value)) if value.sign() == num_bigint::Sign::NoSign)
+                matches!(self.heap.get(value), Some(Cell::BigInt(value)) if value.is_zero())
             }
             _ => value.as_number() == Some(0.0),
         }
@@ -610,6 +610,16 @@ impl<H: Host> Vm<H> {
     }
 }
 
+/// Whether an `Atomics` native waits on a shared location.
+fn waits(native: Native) -> bool {
+    matches!(native, Native::AtomicsWait | Native::AtomicsWaitAsync)
+}
+
+/// Whether an `Atomics` native waits on or notifies a shared location.
+fn waits_or_notifies(native: Native) -> bool {
+    waits(native) || native == Native::AtomicsNotify
+}
+
 impl<H: Host> Vm<H> {
     /// Simulated Test262 agents can never be woken through the shared backing's waiter list
     /// or run while this thread blocks, so their scheduler serves every wait and notify. Once
@@ -618,10 +628,7 @@ impl<H: Host> Vm<H> {
     fn test262_agent_owns_atomic(&self, native: Native) -> bool {
         self.test262_agent.installed
             && (self.test262_agent.emulates_agents()
-                || matches!(
-                    native,
-                    Native::AtomicsWait | Native::AtomicsWaitAsync | Native::AtomicsNotify
-                ))
+                || waits_or_notifies(native))
     }
 
     fn atomic_shared_backing(
@@ -660,10 +667,7 @@ impl<H: Host> Vm<H> {
         use crate::shared_backing::{Rmw, WaitResult};
         let view = args.first().copied().unwrap_or(Value::UNDEFINED);
         let kind = self.atomic_array_kind(p, view)?;
-        if matches!(
-            native,
-            Native::AtomicsWait | Native::AtomicsWaitAsync | Native::AtomicsNotify
-        ) && !matches!(kind, TypedArrayKind::Int32 | TypedArrayKind::BigInt64)
+        if waits_or_notifies(native) && !kind.is_waitable()
         {
             return Err(self.type_error(
                 p,
@@ -674,7 +678,7 @@ impl<H: Host> Vm<H> {
         let length = self.typed_array_length(view).unwrap_or(0);
         let index = self.atomic_index(p, args.get(1).copied())?;
         self.atomic_validate_index(p, length, index)?;
-        let big = matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64);
+        let big = kind.is_bigint();
         let mut store_result = None;
         let mut convert = |vm: &mut Self, value: Value| -> Result<u64, JsError> {
             if big {
@@ -715,14 +719,12 @@ impl<H: Host> Vm<H> {
                 replacement = convert(self, args.get(3).copied().unwrap_or(Value::UNDEFINED))?
             }
         }
-        if matches!(native, Native::AtomicsWait | Native::AtomicsWaitAsync) {
+        if waits(native) {
             let n = self.to_number(p, args.get(3).copied().unwrap_or(Value::UNDEFINED))?;
             timeout = if n.is_nan() || n == f64::INFINITY {
                 None
             } else {
-                Some(std::time::Duration::from_secs_f64(
-                    (n.max(0.0) / 1000.0).min(u64::MAX as f64 / 2.0),
-                ))
+                Some(std::time::Duration::from_secs_f64((n.max(0.0) / 1000.0).min(u64::MAX as f64 / 2.0)))
             }
         }
         self.atomic_array_kind(p, view)?;
@@ -742,7 +744,7 @@ impl<H: Host> Vm<H> {
                 .notify(offset, count)
                 .map(|n| Value::number(n as f64))
                 .map_err(|_| self.type_error(p, "Shared notify failed".into()));
-        } else if matches!(native, Native::AtomicsWait | Native::AtomicsWaitAsync) {
+        } else if waits(native) {
             if native == Native::AtomicsWaitAsync {
                 return self.shared_wait_async(p, &backing, offset, kind.width(), first, timeout);
             }
@@ -750,13 +752,7 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "Atomics.wait cannot block in this agent".into()));
             }
             let result = backing
-                .wait_with_interrupt(
-                    offset,
-                    kind.width(),
-                    first,
-                    timeout,
-                    &self.execution_interrupt_handle(),
-                )
+                .wait_with_interrupt(offset, kind.width(), first, timeout, &self.execution_interrupt_handle())
                 .map_err(|_| self.type_error(p, "Shared wait failed".into()))?;
             if result == WaitResult::Cancelled {
                 self.check_execution_interrupt()?;

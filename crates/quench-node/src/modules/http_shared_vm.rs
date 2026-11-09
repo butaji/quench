@@ -6,7 +6,7 @@ pub(crate) mod agent;
 pub(crate) mod client;
 pub(crate) mod incoming;
 pub(crate) mod outgoing;
-mod parser;
+pub(crate) mod parser;
 mod parsing;
 pub(crate) mod server;
 mod state;
@@ -146,7 +146,7 @@ impl Class {
 }
 
 /// `Number.MAX_SAFE_INTEGER`, the bound of Node's integer option validation.
-pub(crate) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+pub(crate) use quench_runtime::units::MAX_SAFE_INTEGER;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Intrinsics {
@@ -249,14 +249,6 @@ pub(crate) fn connection_reset(c: &mut Context<'_>, message: &str) -> Outcome {
     let code = c.string_rooted("ECONNRESET");
     c.assign_named_property_rooted(error, "code", code)?;
     Ok(error)
-}
-
-/// `class` as a subclass of `parent`: both the constructor and the prototype chains.
-pub(crate) fn inherit(c: &mut Context<'_>, class: RootId, parent: RootId) -> Result<(), RootedError> {
-    let prototype = get(c, class, "prototype")?;
-    let parent_prototype = get(c, parent, "prototype")?;
-    c.set_prototype_rooted(prototype, parent_prototype)?;
-    c.set_prototype_rooted(class, parent).map(drop)
 }
 
 /// `util.inspect(value)`, as `ERR_INVALID_ARG_VALUE` shows what it received.

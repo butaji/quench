@@ -9,15 +9,42 @@ pub(crate) trait DependentCode {
     fn retire(&self);
 }
 
+/// The word a body's code reads at its invalidation points: zero while every assumption the
+/// code folded holds, nonzero once a change retired it. Code that holds an assumption (a
+/// Stable fact, `typed_ir::BindingTime::Stable`) pays no check per use: it reads this word
+/// once at entry and again only after a call that may have changed the assumption's subject,
+/// and leaves at the exact PC where it is set.
+#[derive(Clone, Default)]
+pub(crate) struct Invalidation(Rc<std::cell::Cell<u64>>);
+
+impl Invalidation {
+    /// The word's address, which lives as long as any holder of this invalidation.
+    pub(crate) fn address(&self) -> usize { self.0.as_ptr() as usize }
+    #[cfg(test)]
+    pub(crate) fn is_set(&self) -> bool { self.0.get() != 0 }
+    fn set(&self) { self.0.set(1); }
+}
+
 /// Publication owns future entry; execution and recovery own independent leases.
 /// No borrow of the publication survives acquiring a lease or retiring it.
-pub(crate) struct PublishedCode<T>(std::cell::RefCell<Option<Rc<T>>>);
+pub(crate) struct PublishedCode<T> {
+    code: std::cell::RefCell<Option<Rc<T>>>,
+    /// Set when the code retires, for runs already inside it (`Invalidation`).
+    invalidation: Invalidation,
+}
 
 impl<T> PublishedCode<T> {
-    pub(crate) fn new(code: T) -> Self { Self(std::cell::RefCell::new(Some(Rc::new(code)))) }
-    pub(crate) fn lease(&self) -> Option<Rc<T>> { self.0.borrow().clone() }
-    pub(crate) fn is_published(&self) -> bool { self.0.borrow().is_some() }
-    pub(crate) fn retire(&self) { self.0.borrow_mut().take(); }
+    pub(crate) fn new(code: T) -> Self { Self::with_invalidation(code, Invalidation::default()) }
+    /// Code compiled to read `invalidation` at its invalidation points.
+    pub(crate) fn with_invalidation(code: T, invalidation: Invalidation) -> Self {
+        Self { code: std::cell::RefCell::new(Some(Rc::new(code))), invalidation }
+    }
+    pub(crate) fn lease(&self) -> Option<Rc<T>> { self.code.borrow().clone() }
+    pub(crate) fn is_published(&self) -> bool { self.code.borrow().is_some() }
+    pub(crate) fn retire(&self) {
+        self.invalidation.set();
+        self.code.borrow_mut().take();
+    }
 }
 
 impl<T> DependentCode for PublishedCode<T> {
@@ -102,8 +129,18 @@ impl CodeReaders {
         true
     }
 
-    /// A widening visits only this owner's readers, before the incompatible effect.
+    /// A widening visits only this owner's readers, before the incompatible effect. An owner
+    /// without readers, every owner of a run without native code, is the test alone; the
+    /// walk is out of line (`retire_readers`).
+    #[inline(always)]
     pub(crate) fn retire(&mut self, owner: u32) {
+        if self.heads.get(owner as usize).is_some_and(Option::is_some) {
+            self.retire_readers(owner);
+        }
+    }
+
+    #[inline(never)]
+    fn retire_readers(&mut self, owner: u32) {
         let Some(head) = self.heads.get_mut(owner as usize) else { return };
         let mut cursor = head.take();
         while let Some(link) = cursor {
@@ -128,10 +165,130 @@ impl Drop for CodeReaders {
     fn drop(&mut self) { self.reset(); }
 }
 
+/// A fact about one realm's intrinsic method that fast paths rely on with no check per use
+/// (a fuse): the realm's holder keeps the fuse's key as an own data property holding the
+/// realm's intrinsic. A lookup proves it once (`Vm::fuse_intact`); a write to that slot of the
+/// holder pops it for good (`Fuses::note_slot_write`), and a change of the holder's layout,
+/// which may move the slot, only sends the next use back to one proof.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum IntactFuse {
+    /// `Array.prototype[@@iterator]` is the realm's `Array.prototype.values`.
+    ArrayIterator,
+    /// `%ArrayIteratorPrototype%.next` is the realm's intrinsic `next`.
+    ArrayIteratorNext,
+    StringCharCodeAt,
+    StringIncludes,
+    RegExpTest,
+    RegExpExec,
+}
+
+impl IntactFuse {
+    const COUNT: usize = 6;
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum FuseState {
+    #[default]
+    Unproved,
+    Intact,
+    Popped,
+}
+
+/// One fuse's proof: of `holder`, a watched prototype, whose `slot` held the intrinsic.
+#[derive(Clone, Copy)]
+struct FuseRecord {
+    holder: crate::Value,
+    subject: u32,
+    slot: u32,
+    state: FuseState,
+}
+
+impl Default for FuseRecord {
+    fn default() -> Self {
+        Self { holder: crate::Value::UNDEFINED, subject: u32::MAX, slot: 0, state: FuseState::Unproved }
+    }
+}
+
+/// Every fuse's proof, kept by the heap's dependency table, which hears the writes and layout
+/// changes of the watched prototypes they name (`heap::dependencies::Watch`).
+#[derive(Default)]
+pub(crate) struct Fuses([FuseRecord; IntactFuse::COUNT]);
+
+impl Fuses {
+    /// Whether `fuse` holds for `holder`; `None` where no proof for `holder` is held.
+    #[inline(always)]
+    pub(crate) fn intact(&self, fuse: IntactFuse, holder: crate::Value) -> Option<bool> {
+        let record = &self.0[fuse as usize];
+        match record.state {
+            _ if record.holder != holder => None,
+            FuseState::Intact => Some(true),
+            FuseState::Popped => Some(false),
+            FuseState::Unproved => None,
+        }
+    }
+
+    /// Records the proof of `fuse`: `holder`, watched as `subject`, holds the intrinsic at
+    /// `slot`, or (`None`) does not.
+    pub(crate) fn prove(&mut self, fuse: IntactFuse, holder: crate::Value, subject: u32, slot: Option<u32>) {
+        let state = if slot.is_some() { FuseState::Intact } else { FuseState::Popped };
+        self.0[fuse as usize] = FuseRecord { holder, subject, slot: slot.unwrap_or(0), state };
+    }
+
+    /// A write to `slot` of watched prototype `subject`: each fuse it held there pops.
+    #[inline(always)]
+    pub(crate) fn note_slot_write(&mut self, subject: u32, slot: usize) {
+        for record in &mut self.0 {
+            if record.subject == subject && record.slot as usize == slot && record.state == FuseState::Intact {
+                record.state = FuseState::Popped;
+            }
+        }
+    }
+
+    /// A change of watched prototype `subject`'s layout or elements: the slots its fuses name
+    /// may move, so each is proved again on its next use.
+    pub(crate) fn note_layout_change(&mut self, subject: u32) {
+        for record in &mut self.0 {
+            if record.subject == subject && record.state == FuseState::Intact {
+                record.state = FuseState::Unproved;
+            }
+        }
+    }
+
+    /// Watched prototype `subject` died: no proof names it.
+    pub(crate) fn forget(&mut self, subject: u32) {
+        for record in &mut self.0 {
+            if record.subject == subject {
+                *record = FuseRecord::default();
+            }
+        }
+    }
+
+    /// Every proof is made again: no subject names the change (a restored heap).
+    pub(crate) fn forget_all(&mut self) {
+        self.0 = Default::default();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn retirement_sets_the_invalidation_word_running_code_reads() {
+        let invalidation = Invalidation::default();
+        let publication = Rc::new(PublishedCode::with_invalidation((), invalidation.clone()));
+        let reader: Rc<dyn DependentCode> = publication;
+        let mut readers = CodeReaders::default();
+        assert!(readers.subscribe(3, &reader));
+        assert!(!invalidation.is_set());
+        // SAFETY: the word is live while `invalidation` holds it.
+        assert_eq!(unsafe { *(invalidation.address() as *const u64) }, 0);
+        readers.retire(3);
+        assert!(invalidation.is_set(), "a run already inside the code leaves at its next invalidation point");
+        assert_ne!(unsafe { *(invalidation.address() as *const u64) }, 0);
+    }
 
     #[test]
     fn retirement_unlinks_entry_but_preserves_execution_and_recovery_leases() {
@@ -214,5 +371,28 @@ mod tests {
         assert!(arena.subscribe_slot(SlotDependency { ty: Type::ANY, ..dependency }, &reset));
         arena.track();
         assert!(!reset.is_published(), "a fresh census cannot retain old observations' readers");
+    }
+
+    #[test]
+    fn fuses_pop_on_their_slot_write_and_are_proved_again_after_a_layout_change() {
+        use crate::Value;
+        let (holder, other) = (Value::integer(1), Value::integer(2));
+        let mut fuses = Fuses::default();
+        assert_eq!(fuses.intact(IntactFuse::ArrayIterator, holder), None);
+        fuses.prove(IntactFuse::ArrayIterator, holder, 4, Some(3));
+        assert_eq!(fuses.intact(IntactFuse::ArrayIterator, holder), Some(true));
+        assert_eq!(fuses.intact(IntactFuse::ArrayIterator, other), None, "another realm's holder proves its own");
+        fuses.note_slot_write(4, 2);
+        fuses.note_slot_write(5, 3);
+        assert_eq!(fuses.intact(IntactFuse::ArrayIterator, holder), Some(true), "other slots and holders leave it");
+        fuses.note_layout_change(4);
+        assert_eq!(fuses.intact(IntactFuse::ArrayIterator, holder), None, "a layout change asks for one proof");
+        fuses.prove(IntactFuse::ArrayIterator, holder, 4, Some(3));
+        fuses.note_slot_write(4, 3);
+        assert_eq!(fuses.intact(IntactFuse::ArrayIterator, holder), Some(false));
+        fuses.note_layout_change(4);
+        assert_eq!(fuses.intact(IntactFuse::ArrayIterator, holder), Some(false), "a popped fuse stays popped");
+        fuses.forget(4);
+        assert_eq!(fuses.intact(IntactFuse::ArrayIterator, holder), None, "a dead holder's record is reused");
     }
 }

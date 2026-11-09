@@ -188,7 +188,7 @@ pub(crate) fn encode_into(
         .unwrap_or_default();
     let read = c.number(read as f64);
     let written = c.number(written as f64);
-    c.record_rooted(&["read", "written"], &[read, written])
+    c.record_rooted(false, &["read", "written"], &[read, written])
 }
 
 pub(crate) fn inspect(
@@ -225,9 +225,9 @@ pub(crate) fn inspect(
         }
         prototype = c.prototype_rooted(prototype)?;
     };
-    let prototype = c.record_rooted(&["constructor"], &[constructor])?;
+    let prototype = c.record_rooted(false, &["constructor"], &[constructor])?;
     let encoding = c.string_rooted("utf-8");
-    let object = c.record_rooted(&["encoding"], &[encoding])?;
+    let object = c.record_rooted(false, &["encoding"], &[encoding])?;
     c.set_prototype_rooted(object, prototype)?;
     let inspect = super::util_shared_vm::internal_inspect(c)?;
     let undefined = c.undefined();

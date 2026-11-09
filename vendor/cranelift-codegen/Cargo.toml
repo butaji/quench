@@ -23,7 +23,6 @@ autotests = false
 autobenches = false
 description = "Low-level code generator library"
 documentation = "https://docs.rs/cranelift-codegen"
-readme = "README.md"
 keywords = [
     "compile",
     "compiler",

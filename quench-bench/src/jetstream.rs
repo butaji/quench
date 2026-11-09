@@ -167,6 +167,11 @@ pub(crate) fn prelude() -> &'static [u8] {
     PRELUDE.as_bytes()
 }
 
+/// The same shell surface on QuickJS's `std`/`os` modules (run with `qjs --std`).
+pub(crate) fn quickjs_prelude() -> &'static [u8] {
+    include_bytes!("jetstream-quickjs-prelude.js")
+}
+
 /// Engine arguments after the engine's own: the prelude, the corpus root and
 /// the driver flags selecting one test.
 pub(crate) fn arguments(file: &Path, prelude: &Path) -> Vec<OsString> {

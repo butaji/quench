@@ -54,8 +54,9 @@ const ENGINES: [&str; 3] = ["quench", "node", "bun"];
 const WIN_MARGIN: f64 = 0.2;
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 const WATCHDOG_INTERVAL: Duration = Duration::from_millis(50);
-/// The exit status a shell reports for a process a signal ended.
-const SIGNAL_STATUS_BASE: i32 = 128;
+#[path = "../process_status.rs"]
+mod process_status;
+use process_status::SIGNAL_STATUS_BASE;
 const TIMEOUT_STATUS: i32 = -1;
 const KIB: f64 = 1024.0;
 const STDERR_FILE_MODE: libc::mode_t = 0o600;
@@ -149,7 +150,7 @@ fn parse(mut arguments: impl Iterator<Item = String>) -> Result<Options, String>
     let mut every = 1;
     let mut rounds = 1;
     while let Some(argument) = arguments.next() {
-        let mut value = || arguments.next().ok_or(format!("{argument} needs a value"));
+        let mut value = || arguments.next().ok_or_else(|| format!("{argument} needs a value"));
         match argument.as_str() {
             "--suite" => {
                 suite = Some(match value()?.as_str() {
@@ -464,7 +465,7 @@ fn run_one(
         wait_measured(pid, watchdog)
     });
     let wall_ms = started.elapsed().as_secs_f64() * MICROS_PER_MILLI;
-    let (status, usage) = measured.unwrap_or((SIGNAL_STATUS_BASE, zeroed_usage()));
+    let (status, usage) = measured.unwrap_or_else(|_| (SIGNAL_STATUS_BASE, zeroed_usage()));
     let timed_out = wall_ms >= options.timeout.as_secs_f64() * MICROS_PER_MILLI;
     let status = if timed_out { TIMEOUT_STATUS } else { status };
     let passed = status == 0 && outcome_passed(options, case, engine);

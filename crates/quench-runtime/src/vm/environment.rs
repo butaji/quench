@@ -9,6 +9,15 @@ const UNRESOLVABLE_NAME_REFERENCE: Value = Value::UNDEFINED;
 // ResolveName's other bases are objects, so null names this allocation-free base.
 const GLOBAL_LEXICAL_NAME_REFERENCE: Value = Value::NULL;
 
+/// Where a root projection's plain read found its value (`Vm::plain_capture`): a global var's
+/// property on the global object, or a retained global lexical binding at its index in the
+/// realm's bindings.
+#[derive(Clone, Copy)]
+pub(super) enum RootRead {
+    GlobalVar(Atom),
+    GlobalLexical(Atom, usize),
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn own_dynamic_bindings(&self, frame: usize) -> Option<&Vec<(Atom, Value)>> {
         let activation = self.frames.get(frame)?;
@@ -445,7 +454,7 @@ impl<H: Host> Vm<H> {
         slot: u16,
         value: Value,
     ) -> Result<(), JsError> {
-        self.clone_frame_environment(frame, &[slot], &[])?;
+        self.clone_frame_environment(frame, &[slot], crate::bytecode::Resets::listed(&[]))?;
         *self
             .frame_binding_mut(p, frame, usize::from(slot))
             .ok_or_else(|| JsError("invalid handler binding".into()))? = value;
@@ -1482,7 +1491,7 @@ impl<H: Host> Vm<H> {
             }
         }
         if active.is_none() || self.realm.global_lexical_bindings.contains_key(&atom) {
-            self.realm.bind_global_lexical(atom, value);
+            self.bind_global_lexical(atom, value);
         }
         Ok(())
     }
@@ -1601,6 +1610,12 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
+        self.slot_binding(slots, slot)
+    }
+
+    /// The initialized binding `slot` of `slots` holds, itself or through its owner.
+    #[inline(always)]
+    fn slot_binding(&self, slots: &crate::heap::EnvironmentSlots, slot: u16) -> Option<Value> {
         let value = match slots.state(usize::from(slot))? {
             crate::heap::EnvironmentSlotState::Owned(value) => value,
             // A shared slot names its owner, which holds the slot itself.
@@ -1609,6 +1624,37 @@ impl<H: Host> Vm<H> {
             }
         };
         (!value.is_deleted()).then_some(value)
+    }
+
+    /// `owned_capture`, also answering a root slot's projection where reading it runs no guest
+    /// code and throws nothing (`plain_projected_root_binding`): one decision per read, from
+    /// the slot's rule (`ProgramStore::root_slot`); with the global var whose global object
+    /// property answered it.
+    #[inline(always)]
+    pub(super) fn plain_capture(
+        &self,
+        slots: &crate::heap::EnvironmentSlots,
+        root: Option<Option<u32>>,
+        slot: u16,
+    ) -> (Option<Value>, Option<RootRead>) {
+        use crate::bytecode::RootSlotRule;
+        let Some(program) = root else {
+            return (self.slot_binding(slots, slot), None);
+        };
+        let owner = program.map_or(self.active_program, super::ProgramId::from_raw);
+        match self.programs.root_slot(owner, slot) {
+            RootSlotRule::Binding => (self.slot_binding(slots, slot), None),
+            RootSlotRule::GlobalLexical(atom) => match self.realm.global_lexical_bindings.get_full(&atom) {
+                Some((index, _, value)) => {
+                    ((!value.is_deleted()).then_some(*value), Some(RootRead::GlobalLexical(atom, index)))
+                }
+                None => (self.slot_binding(slots, slot), None),
+            },
+            RootSlotRule::GlobalVar(atom) if self.direct_eval_var_program != Some(owner) => {
+                (self.plain_named_get(self.realm.globals, atom), Some(RootRead::GlobalVar(atom)))
+            }
+            RootSlotRule::GlobalVar(_) | RootSlotRule::Import => (None, None),
+        }
     }
 
     /// The slots a direct capture at `depth` reads, and the program of a root environment
@@ -1758,11 +1804,29 @@ impl<H: Host> Vm<H> {
         depth: u16,
         slot: u16,
     ) -> Option<Value> {
+        self.cached_capture(frame, depth, slot, Self::owned_capture).flatten()
+    }
+
+    /// `cached_direct_capture` that also answers a root projection's plain read
+    /// (`plain_capture`), for the interpreter's reads, which take the value however held.
+    #[inline(always)]
+    pub(super) fn cached_plain_capture(&mut self, frame: usize, depth: u16, slot: u16) -> (Option<Value>, Option<RootRead>) {
+        self.cached_capture(frame, depth, slot, Self::plain_capture).unwrap_or((None, None))
+    }
+
+    #[inline(always)]
+    fn cached_capture<R>(
+        &mut self,
+        frame: usize,
+        depth: u16,
+        slot: u16,
+        read: fn(&Self, &crate::heap::EnvironmentSlots, Option<Option<u32>>, u16) -> R,
+    ) -> Option<R> {
         if depth != 0 {
             let (env, captured) = (self.frames[frame].env, self.frames[frame].captured);
             let (slots, root) = self.walked_capture_slots(env, captured, depth)?;
             // SAFETY: as `walked_capture_slots`: the walk ends at a live cell this collection.
-            return self.owned_capture(unsafe { &*slots }, root, slot);
+            return Some(read(self, unsafe { &*slots }, root, slot));
         }
         let (slots, root) = if let Some(current) = self.current_capture_slots(frame) {
             current
@@ -1780,38 +1844,7 @@ impl<H: Host> Vm<H> {
             (slots, root)
         };
         // SAFETY: see above; the pointer was taken from the frame's current environment.
-        self.owned_capture(unsafe { &*slots }, root, slot)
-    }
-
-    /// A capture that can be read from an owned or shared environment slot after applying the same
-    /// functionless-layer skipping as `capture`, without projected property lookup.
-    pub(super) fn jit_owned_capture(
-        &mut self,
-        frame: usize,
-        depth: u16,
-        slot: u16,
-    ) -> Option<Value> {
-        if let Some(value) = self.cached_direct_capture(frame, depth, slot) {
-            return Some(value);
-        }
-        let env = self.capture_env(frame, depth)?;
-        let Some(Cell::Environment {
-            function,
-            scope,
-            ..
-        }) = self.heap.get(env)
-        else {
-            return None;
-        };
-        let root = *function == super::ROOT_FUNCTION_ID;
-        if root && !self.root_environment_slot_is_binding(scope.program(), slot) {
-            return None;
-        }
-        let value = self
-            .heap
-            .environment_slot(env, usize::from(slot))
-            .filter(|value| !value.is_deleted())?;
-        Some(value)
+        Some(read(self, unsafe { &*slots }, root, slot))
     }
 
     #[cold]
@@ -1857,13 +1890,15 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn root_environment_slot_is_binding(&self, program: Option<u32>, slot: u16) -> bool {
         let owner = program.map_or(self.active_program, super::ProgramId::from_raw);
-        // A live script owns its slots until its bindings are retained in the
-        // realm. Captures must then read the realm record, even in later scripts.
-        let retained = !self.realm.global_lexical_bindings.is_empty()
-            && self.programs.residual(owner)
-                .and_then(|program| self.root_global_lexical_atom(program, super::ROOT_FUNCTION_ID, usize::from(slot)))
-                .is_some_and(|atom| self.realm.global_lexical_bindings.contains_key(&atom));
-        self.programs.root_slot_is_binding(owner, slot, !retained)
+        match self.programs.root_slot(owner, slot) {
+            crate::bytecode::RootSlotRule::Binding => true,
+            // A live script owns its slots until its bindings are retained in the
+            // realm. Captures must then read the realm record, even in later scripts.
+            crate::bytecode::RootSlotRule::GlobalLexical(atom) => {
+                !self.realm.global_lexical_bindings.contains_key(&atom)
+            }
+            crate::bytecode::RootSlotRule::GlobalVar(_) | crate::bytecode::RootSlotRule::Import => false,
+        }
     }
 
     /// `load_projected_environment_binding` where reading runs no guest code and throws
@@ -2127,7 +2162,7 @@ impl<H: Host> Vm<H> {
         self.store_environment_mapped_argument(owner, function, env, slot_index, value);
         if let Some(atom) = self.root_global_lexical_atom(owner, function, slot_index) {
             if self.realm.global_lexical_bindings.contains_key(&atom) {
-                self.realm.bind_global_lexical(atom, value);
+                self.bind_global_lexical(atom, value);
             }
             let owner = self.frames.iter().rposition(|active| {
                 active.function == super::ROOT_FUNCTION_ID && active.program == owner_id
@@ -2263,12 +2298,12 @@ impl<H: Host> Vm<H> {
 
     /// Whether the executing activation's names, with every enclosing function's, the compiler
     /// resolved statically where only global bindings lie beyond them
-    /// (`ProgramStore::unresolved_names_are_global`): a by-name load there can only denote a
+    /// (`ProgramStore::names_are_global`): a by-name load there can only denote a
     /// global binding.
     #[inline(always)]
     fn global_scope_names_resolve_statically(&self, p: &ResidualProgram) -> bool {
         self.frames.last().is_some_and(|frame| {
-            self.programs.unresolved_names_are_global(frame.program, frame.function)
+            self.programs.names_are_global(frame.program)
                 && p.function_get(frame.function as usize)
                     .is_some_and(|function| function.names_resolve_statically(p))
         })

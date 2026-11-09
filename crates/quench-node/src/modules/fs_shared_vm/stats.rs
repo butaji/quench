@@ -27,8 +27,7 @@ pub(crate) const TIME_FIELDS: [&str; 4] = ["atime", "mtime", "ctime", "birthtime
 /// `StatFs`'s fields, in Node's order.
 pub(crate) const STATFS_FIELDS: [&str; 8] = ["type", "bsize", "frsize", "blocks", "bfree", "bavail", "files", "ffree"];
 
-const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
-const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
+use quench_runtime::units::{NANOSECONDS_PER_MILLISECOND, NANOSECONDS_PER_SECOND};
 
 /// The predicates `StatsBase.prototype` and `Dirent.prototype` share, with the `S_IFMT` type
 /// each tests and the `UV_DIRENT_*` type a directory entry carries.
@@ -98,7 +97,7 @@ fn milliseconds(time: i128) -> f64 {
 /// The object of `class` whose own fields are `names` holding `values`, made at its final
 /// shape.
 fn record(c: &mut Context<'_>, class: Root, names: &'static [&'static str], values: &[RootId]) -> Outcome {
-    let object = c.record_rooted(names, values)?;
+    let object = c.record_rooted(false, names, values)?;
     let prototype = classes::prototype(c, class)?;
     c.set_prototype_rooted(object, prototype)?;
     Ok(object)

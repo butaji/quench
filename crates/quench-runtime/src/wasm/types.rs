@@ -1,6 +1,9 @@
 //! Module type facts retain recursive group boundaries and source index order.
 //! Executable signatures are projections, not replacements for declarations.
 
+mod ancestry;
+mod fingerprint;
+
 use rustc_hash::FxHashSet;
 use std::rc::Rc;
 use wasmparser::{
@@ -8,30 +11,49 @@ use wasmparser::{
     UnpackedIndex, ValType,
 };
 
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct WasmTypes {
-    groups: Rc<[Vec<SubType>]>,
+/// A module's one type table: every holder (module, function, GC object) shares it by one
+/// pointer, so allocating a GC object never copies it.
+#[derive(Clone, Debug, Default)]
+pub struct WasmTypes(Rc<Declarations>);
+
+#[derive(Debug, Default, PartialEq)]
+struct Declarations {
+    groups: Box<[Vec<SubType>]>,
+    /// Each declaration's group and its position in it, so a declaration is found at once.
+    members: Box<[(u32, u32)]>,
+    /// Each group's shapes, hashed once (`fingerprint`).
+    shapes: Box<[u64]>,
+    /// Each declaration's canonical index, found once (`ancestry`).
+    canonical: Box<[u32]>,
+    /// Each declaration's supertype display: where its run of `ancestors` starts and its
+    /// depth (`ancestry`).
+    displays: Box<[(u32, u32)]>,
+    /// The displays' runs, each the canonical indices of a declaration's ancestors from its
+    /// root down to itself, so a subtype check reads one entry at the target's depth.
+    ancestors: Box<[u32]>,
+}
+
+impl PartialEq for WasmTypes {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0) || self.0 == other.0
+    }
 }
 
 impl WasmTypes {
     pub fn from_groups(groups: impl IntoIterator<Item = RecGroup>) -> Self {
-        Self {
-            groups: groups
-                .into_iter()
-                .map(|group| group.into_types().collect())
-                .collect(),
-        }
+        Self::of(groups.into_iter().map(|group| group.into_types().collect()).collect())
+    }
+
+    fn of(groups: Box<[Vec<SubType>]>) -> Self {
+        let members = groups.iter().enumerate().flat_map(|(group, types)| (0..types.len()).map(move |member| (group as u32, member as u32))).collect();
+        let shapes = groups.iter().map(|group| fingerprint::group_shapes(group)).collect();
+        Self(Rc::new(Declarations { shapes, groups, members, ..Declarations::default() })).with_ancestry()
     }
 
     /// Embedding inputs without a binary type section declare singleton,
     /// final, unshared function groups, just like ordinary function types.
     pub fn from_functions(functions: impl IntoIterator<Item = FuncType>) -> Self {
-        Self {
-            groups: functions
-                .into_iter()
-                .map(|function| vec![SubType::func(function, false)])
-                .collect(),
-        }
+        Self::of(functions.into_iter().map(|function| vec![SubType::func(function, false)]).collect())
     }
 
     pub(crate) fn struct_fields(&self, index: u32) -> Option<&[FieldType]> {
@@ -79,17 +101,12 @@ impl WasmTypes {
     }
 
     pub fn groups(&self) -> &[Vec<SubType>] {
-        &self.groups
+        &self.0.groups
     }
 
-    fn locate(&self, mut index: usize) -> Option<(&[SubType], usize)> {
-        for group in self.groups.iter() {
-            if index < group.len() {
-                return Some((group, index));
-            }
-            index -= group.len();
-        }
-        None
+    fn locate(&self, index: usize) -> Option<(&[SubType], usize)> {
+        let &(group, member) = self.0.members.get(index)?;
+        Some((&self.0.groups[group as usize], member as usize))
     }
 
     pub fn get(&self, index: usize) -> Option<&SubType> {
@@ -109,6 +126,9 @@ impl WasmTypes {
         };
         if member != other_member {
             return false;
+        }
+        if Rc::ptr_eq(&self.0, &other.0) && let Some(same) = self.same_class(index, other_index) {
+            return same;
         }
         let mut comparison = Equivalence {
             tables: [self, other],
@@ -134,7 +154,10 @@ impl WasmTypes {
     /// Defined-type subtyping follows declared ancestry, never an accidental
     /// structural match between unrelated declarations.
     pub fn is_subtype(&self, mut index: usize, other: &Self, other_index: usize) -> bool {
-        let declarations = self.groups.iter().map(Vec::len).sum::<usize>();
+        if Rc::ptr_eq(&self.0, &other.0) && let Some(subtype) = self.ancestry_subtype(index, other_index) {
+            return subtype;
+        }
+        let declarations = self.0.members.len();
         // Validated ancestry is acyclic. The declaration count also bounds
         // malformed embedding input without inventing a runtime type-depth cap.
         for _ in 0..declarations {
@@ -157,30 +180,6 @@ impl WasmTypes {
         false
     }
 
-    fn edge(&self, index: UnpackedIndex, origin: usize) -> Option<Edge> {
-        let (group, _) = self.locate(origin)?;
-        match index {
-            UnpackedIndex::RecGroup(member) => {
-                let member = member as usize;
-                (member < group.len()).then_some(Edge::Local(member))
-            }
-            UnpackedIndex::Module(index) => {
-                let index = index as usize;
-                if index >= origin {
-                    let member = index - origin;
-                    return (member < group.len()).then_some(Edge::Local(member));
-                }
-                let (_, member) = self.locate(index)?;
-                Some(Edge::External {
-                    origin: index - member,
-                    member,
-                })
-            }
-            // Allocator-specific IDs are not indices in this declaration table.
-            UnpackedIndex::Id(_) => None,
-        }
-    }
-
     /// Callable ABI facts retain defined reference kinds and exactness in this
     /// graph's source index domain.
     pub fn callable_value_type(&self, ty: ValType) -> Option<super::WasmType> {
@@ -190,11 +189,7 @@ impl WasmTypes {
         let ValType::Ref(reference) = ty else {
             return None;
         };
-        let (index, exact) = match reference.heap_type() {
-            HeapType::Concrete(UnpackedIndex::Module(index)) => (index, false),
-            HeapType::Exact(UnpackedIndex::Module(index)) => (index, true),
-            _ => return None,
-        };
+        let (index, exact) = super::reference::module_type_index(reference.heap_type())?;
         let declaration = self.get(index as usize)?;
         if declaration.composite_type.shared {
             return None;
@@ -275,16 +270,7 @@ impl WasmTypes {
                         )
                     )
             }),
-            (
-                HeapType::Abstract {
-                    shared: false,
-                    ty: source,
-                },
-                HeapType::Abstract {
-                    shared: false,
-                    ty: target,
-                },
-            ) => {
+            (HeapType::Abstract { shared: false, ty: source }, HeapType::Abstract { shared: false, ty: target }) => {
                 use wasmparser::AbstractHeapType::*;
                 source == target
                     || matches!(
@@ -297,11 +283,7 @@ impl WasmTypes {
                             | (NoExn, Exn)
                     )
             }
-            (
-                HeapType::Exact(UnpackedIndex::Module(source)),
-                HeapType::Exact(UnpackedIndex::Module(target)),
-            ) => self.equivalent(source as usize, other, target as usize),
-            (HeapType::Concrete(_), HeapType::Exact(_)) => false,
+            (HeapType::Exact(UnpackedIndex::Module(source)), HeapType::Exact(UnpackedIndex::Module(target))) => self.equivalent(source as usize, other, target as usize),
             _ => false,
         }
     }

@@ -13,13 +13,17 @@
 use crate::bytecode::{FieldLookup, ImmediateLayout, Op, Register, WideInstruction};
 use crate::bytecode::Function;
 use crate::value::Value;
+#[cfg(feature = "aot")] #[path = "lane_unit/static_hints.rs"] mod static_hints;
+#[cfg(feature = "aot")] pub(crate) use static_hints::{static_call_targets, StaticTargets};
 
 /// Binding time of a callee: a published closure, whose identity the call compares, or a
 /// static body whose actual closure and environment are admitted at the call. Function
 /// bindings are accepted for verified plain bodies with explicit restart or exact-state
-/// recovery.
+/// recovery. A forwarded binding is a closure the site called through a native that
+/// forwards its receiver as the callee (`Function.prototype.call`, `Vm::forwarded_call`):
+/// the call guards the native's identity too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CalleeBinding { Identity(Value), Function }
+pub(crate) enum CalleeBinding { Identity(Value), Function, Forwarded { through: Value, callee: Value } }
 
 /// How a leave inside a function-bound frame recovers: restart the call, which ran no
 /// effect yet, or materialize the callee's exact activation.
@@ -35,7 +39,12 @@ pub(crate) struct CallTarget {
 
 impl CallTarget {
     pub(crate) fn identity(self) -> Option<Value> {
-        match self.callee { CalleeBinding::Identity(value) => Some(value), CalleeBinding::Function => None }
+        match self.callee { CalleeBinding::Identity(value) | CalleeBinding::Forwarded { callee: value, .. } => Some(value), _ => None }
+    }
+
+    /// The forwarding native this site called the target through.
+    pub(crate) fn through(self) -> Option<Value> {
+        match self.callee { CalleeBinding::Forwarded { through, .. } => Some(through), _ => None }
     }
 }
 
@@ -65,12 +74,19 @@ pub(crate) struct Frame {
     /// The call's first argument register.
     pub(crate) window: Register,
     pub(crate) arguments: u16,
+    /// The register the call's completion writes in its parent, dead until then; `None` for a returning call.
+    pub(crate) result: Option<Register>,
     /// The callee's register 0.
     pub(crate) base: Register,
     pub(crate) registers: u16,
     /// The unit PC of the call's next alternative's marker, where a callee other than this
     /// frame's goes; `None` for the last, which leaves at the call.
     pub(crate) alternative: Option<usize>,
+    /// For a call through a forwarding native (`CalleeBinding::Forwarded`), the register
+    /// holding the native and its identity, which the call guards too; the callee register
+    /// then holds the function it calls, the receiver is the first argument and the window
+    /// the rest (`Planner::through_call`).
+    pub(crate) function_call: Option<(Register, Value)>,
 }
 
 impl Frame {
@@ -114,15 +130,7 @@ impl Unit {
 
     /// Maximum simultaneous inlined activations, derived from the parent graph.
     pub(crate) fn recovery_depth(&self) -> usize {
-        (0..self.frames.len()).map(|index| {
-            let mut depth = 1;
-            let mut parent = self.frames[index].parent;
-            while let Some(index) = parent {
-                depth += 1;
-                parent = self.frames[index].parent;
-            }
-            depth
-        }).max().unwrap_or(0)
+        (0..self.frames.len()).map(|index| self.chain(index).len()).max().unwrap_or(0)
     }
 
     /// Project the original functions' recovery liveness onto unit registers. A suspended
@@ -151,7 +159,7 @@ impl Unit {
                 Some(parent) => (callees[parent], suspended[parent]),
             };
             let call = frame.call as usize;
-            let around = parent.get(call)? | parent.get(call + 1).unwrap_or(0);
+            let around = parent.get(call)? | (parent.get(call + 1).unwrap_or(0) & !frame.result.map_or(0, |result| register_bit(result - frame.parent_base(&self.frames))));
             suspended.push(outer | around.checked_shl(u32::from(frame.parent_base(&self.frames)))?);
             callees.push(program.register_root_masks(frame.target.function)?);
         }
@@ -202,110 +210,6 @@ impl Unit {
     }
 }
 
-#[cfg(feature = "aot")]
-/// Every register output retires the previous hypothesis before its new value is recorded.
-fn clear_written_hints<T>(hints: &mut [Option<T>], instruction: WideInstruction) {
-    for register in instruction.written_registers() { hints[usize::from(register)] = None; }
-}
-
-/// Static method-name, local-closure and captured-slot hints, resolved into flat per-PC targets.
-/// A hint is never a proof: replacement/aliasing is handled by call-edge admission.
-#[cfg(feature = "aot")]
-pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<Option<u32>>> {
-    #[derive(Clone, Copy)]
-    enum Definition { Closure(u32), Name(crate::bytecode::Atom) }
-    // Derive a flat constant-index projection once, without allocating lookup
-    // nodes or rescanning all names at each method definition.
-    let constant_names: Vec<_> = {
-        let mut names: Vec<_> = program.atoms.iter().enumerate().map(|(atom, name)|
-            (name, crate::bytecode::Atom::try_from(atom).expect("validated atom index"))).collect();
-        names.sort_unstable_by_key(|&(name, _)| name);
-        program.constants.iter().map(|constant| match constant {
-            crate::bytecode::Constant::String(name) => names.binary_search_by(|(candidate, _)|
-                candidate.cmp(&name.as_ref())).ok().map(|index| names[index].1),
-            _ => None,
-        }).collect()
-    };
-    let mut methods = vec![None::<Option<u32>>; program.atoms.len()];
-    let mut captured = Vec::new();
-    let mut offsets = Vec::with_capacity(program.function_count() + 1);
-    let mut parents = Vec::with_capacity(program.function_count());
-    let observe = |slot: &mut Option<Option<u32>>, target| {
-        *slot = Some(match *slot { None => Some(target), Some(Some(old)) if old == target => Some(target), _ => None });
-    };
-    for id in 0..program.function_count() {
-        program.with_record(id, |function| {
-            let start = captured.len();
-            offsets.push(start);
-            parents.push(function.parent);
-            captured.resize(start + usize::from(function.locals), None);
-            let mut definitions = vec![None; usize::from(function.registers)];
-            for instruction in function.instructions() {
-                if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict)
-                    && let Some(Definition::Closure(id)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() {
-                        observe(&mut methods[instruction.atom_index() as usize], id);
-                    }
-                if instruction.op() == Op::DefinePropertyRecord
-                    && matches!(instruction.property_definition_mode(),
-                        Some(crate::bytecode::PropertyDefinitionMode::Method | crate::bytecode::PropertyDefinitionMode::ReadonlyMethod))
-                    && let Some(Definition::Closure(id)) = definitions[usize::from(instruction.register_a())]
-                    && let Some(Definition::Name(atom)) = definitions[usize::from(instruction.register_c())] {
-                        // Class definitions use an explicit key register. Only
-                        // an admitted literal name contributes a body hint;
-                        // computed effects/accessor results remain dynamic.
-                        observe(&mut methods[atom as usize], id);
-                    }
-                if matches!(instruction.op(), Op::StoreLocal | Op::StoreEnvLocal)
-                    && let Some(Definition::Closure(target)) = definitions.get(usize::from(instruction.register_a())).copied().flatten()
-                    && let Some(slot) = captured[start..].get_mut(instruction.local_slot()) {
-                        observe(slot, target);
-                    }
-                let value = match instruction.op() {
-                    Op::MakeClosure => Some(Definition::Closure(instruction.closure_function_index())),
-                    Op::LoadConst => constant_names.get(instruction.constant_index()).copied().flatten().map(Definition::Name),
-                    Op::Move => definitions.get(usize::from(instruction.register_b())).copied().flatten(),
-                    _ => None,
-                };
-                clear_written_hints(&mut definitions, instruction);
-                if let Some(register) = instruction.defined_register() { definitions[usize::from(register)] = value; }
-                if instruction.op().control_flow_layout() != crate::bytecode::ControlFlowLayout::Fallthrough { definitions.fill(None); }
-            }
-        });
-    }
-    offsets.push(captured.len());
-    (0..program.function_count()).map(|id| program.with_record(id, |function| {
-        let mut methods_by_register = vec![None; usize::from(function.registers)];
-        function.instructions().map(|instruction| {
-            let target = (instruction.op() == Op::Call).then(||
-                methods_by_register[usize::from(instruction.register_b())]).flatten();
-            let method = match instruction.op() {
-                Op::GetField => match instruction.field_lookup() {
-                    Some(FieldLookup::Atom { atom, .. }) => methods.get(atom as usize).copied().flatten().flatten(),
-                    _ => None,
-                },
-                Op::MakeClosure => Some(instruction.closure_function_index()),
-                Op::LoadCapture => {
-                    // The lexical owner and source slot come from the same layout as
-                    // capture execution. This identifies a possible body, never the
-                    // closure: admission checks its body, and captures read its actual environment.
-                    let owner = (0..=instruction.capture_depth()).try_fold(id, |owner, _|
-                        parents.get(owner).copied().flatten().map(|parent| parent as usize));
-                    owner.and_then(|owner| captured[offsets[owner]..offsets[owner + 1]]
-                        .get(usize::from(instruction.capture_slot())).copied().flatten().flatten())
-                }
-                Op::Move => methods_by_register[usize::from(instruction.register_b())],
-                _ => None,
-            };
-            clear_written_hints(&mut methods_by_register, instruction);
-            if let Some(register) = instruction.defined_register() { methods_by_register[usize::from(register)] = method; }
-            // Hints survive control-flow edges, including loops around a local
-            // closure. They are hypotheses only: inline admission checks the
-            // actual closure/program/body before any callee effect.
-            target
-        }).collect()
-    })).collect()
-}
-
 /// The longest callee body the unit inlines: each copy of it costs code and compile time at
 /// every call site, and short bodies (accessors, field updates) are where a call costs most
 /// relative to its work.
@@ -325,9 +229,8 @@ const MAX_INLINING_DEPTH: usize = 5;
 fn inlinable(instruction: WideInstruction) -> bool {
     let plain = instruction.result_flags() == 0 || super::osr_loop::inlined_returning(instruction);
     match instruction.op() {
-        Op::Return => plain,
-        Op::Nop | Op::LoadConst | Op::Move | Op::LoadThis | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue
-        | Op::JumpBinaryFalse => plain,
+        Op::Return | Op::Nop | Op::LoadConst | Op::Move | Op::LoadThis | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue
+        | Op::JumpBinaryFalse | Op::GetIndex | Op::SetIndex => plain,
         // The callee's own captures, which its frame reads from its environment
         // (`Lowering::frame_captures`).
         Op::LoadCapture => plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,
@@ -338,20 +241,25 @@ fn inlinable(instruction: WideInstruction) -> bool {
             Some(FieldLookup::Site(_)) => plain || instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER,
             None => false,
         },
-        Op::SetThisField | Op::SetThisFieldStrict | Op::SetField | Op::SetFieldStrict | Op::GetIndex | Op::SetIndex => plain,
+        op if op.is_field_store() => plain,
+        // A fused `typeof` test (`Lowering::typeof_test`), a `typeof` switch's index
+        // (`Lowering::typeof_index`); any other unary leaves where the lowering has none.
+        Op::Unary => plain,
+        // Operations native code leaves at, exactly, through the inlined frame's recovery: a
+        // global name's read, a construction and a throw, typically a callee's error path.
+        Op::LoadName | Op::Construct | Op::Throw => instruction.result_flags() == 0,
         Op::Call => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
         op => plain && op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     }
 }
 
 /// The shared lowering performs only guarded, non-guest operations for an inlinable pure
-/// leaf. A miss may restart that call without replaying effects. Captured stores
-/// additionally allow one final write with an infallible tail.
+/// leaf. A miss may restart that call without replaying effects.
 fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
     if super::lane_region::restartable_numeric_function(program, function, code) { return true; }
-    if super::super::js_compiled::captured_field_store_candidate(program, function).is_some() { return true; }
     code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
-        Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict | Op::SetIndex | Op::Call => false,
+        Op::SetIndex | Op::Call => false,
+        op if op.is_field_store() => false,
         Op::IncDec => instruction.numeric_local_target().is_none(),
         Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse => instruction.jump_target() as usize > pc,
         _ => true, // `inlinable` owns the supported instruction/effect set.
@@ -380,7 +288,7 @@ fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
 /// unit it plans always emits.
 fn renamable(instruction: WideInstruction) -> bool {
     match instruction.op() {
-        Op::Call | Op::Return | Op::LoadThis => true,
+        Op::Call | Op::Return | Op::LoadThis | Op::LoadName | Op::Construct | Op::Throw => true,
         Op::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
         _ => {
             let plain = if super::osr_loop::inlined_returning(instruction) {
@@ -417,6 +325,9 @@ struct Plan {
     /// Whether a call the plan does not inline has run (its site linked a target): an
     /// inlined callee's never-run call is an exit of the unit, one that runs is not.
     blocked: bool,
+    /// Per PC, the register and identity of the forwarding native an inlined call through it
+    /// guards; its instruction in `code` is then the call of the function it calls.
+    through_call: Vec<Option<(Register, Value)>>,
 }
 
 struct InlinedPlan {
@@ -432,15 +343,16 @@ impl Plan {
     /// The unit PCs the function takes where `root` keeps its own instructions; an inlined
     /// callee's completions add their moves and jumps.
     fn length(&self, root: bool) -> u32 {
-        self.code
-            .iter()
-            .zip(&self.calls)
-            .map(|(instruction, calls)| match calls.as_slice() {
-                [] if root => 1,
-                [] => completion_length(*instruction),
-                alternatives => call_length(alternatives),
-            })
-            .sum()
+        self.lengths(root).sum()
+    }
+
+    /// The unit PCs each instruction takes, in order.
+    fn lengths(&self, root: bool) -> impl Iterator<Item = u32> + '_ {
+        self.code.iter().zip(&self.calls).map(move |(instruction, calls)| match calls.as_slice() {
+            [] if root => 1,
+            [] => completion_length(*instruction),
+            alternatives => call_length(alternatives),
+        })
     }
 }
 
@@ -455,29 +367,54 @@ struct Planner<'t, 'f> {
 impl Planner<'_, '_> {
     /// The plan of `function`'s `code`, its calls inlined where the budget allows. A callee
     /// is inlined only whole: every call of its own inlined too.
-    fn plan(&mut self, function: u32, code: Vec<WideInstruction>, strict: bool, depth: usize) -> Plan {
+    fn plan(&mut self, function: u32, mut code: Vec<WideInstruction>, strict: bool, depth: usize) -> Plan {
         let mut blocked = false;
+        let mut through_call = vec![None; code.len()];
+        let mut called = Vec::new();
         let calls = code
             .iter()
             .enumerate()
             .map(|(pc, instruction)| {
+                // A call through a forwarding native inlines as the call of the function it calls.
+                let through = self.through_call(function, pc as u32, *instruction);
                 // Strict terminal calls retain the VM's proper-tail-call policy.
                 // A root completion must name a real Return, never the completed Call.
                 let (calls, ran) = if instruction.op() == Op::Call && instruction.returns_from_frame()
                     && (strict || (depth == 0 && terminal_return(&code).is_none())) {
                     (Vec::new(), true)
-                } else { self.inline(function, pc as u32, *instruction, depth) };
+                } else { self.inline(function, pc as u32, through.map_or(*instruction, |(call, _)| call), depth, through.is_some()) };
                 blocked |= calls.is_empty() && ran;
+                if let Some((call, native)) = through.filter(|_| !calls.is_empty()) {
+                    called.push((pc, call));
+                    through_call[pc] = Some(native);
+                }
                 calls
             })
             .collect();
-        Plan { code, calls, blocked }
+        for (pc, call) in called {
+            code[pc] = call;
+        }
+        Plan { code, calls, blocked, through_call }
     }
 
-    /// The callees the call at `pc` of `function` inlines: every target its site linked, or
-    /// none, so a callee the switch names never leaves it for a call.
+    /// The call at `pc` of `function` as the call of the function it forwards to, where its
+    /// site called its targets through a forwarding native (`CalleeBinding::Forwarded`): the
+    /// receiver is the callee and the first argument the receiver. With the native's register
+    /// and identity, which the inlined call guards.
+    fn through_call(&self, function: u32, pc: u32, instruction: WideInstruction) -> Option<(WideInstruction, (Register, Value))> {
+        let imm = instruction.imm();
+        let (base, count) = (ImmediateLayout::call_window_base(imm), ImmediateLayout::argument_count(imm));
+        (instruction.op() == Op::Call && count > 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
+        let through = (self.targets)(function, pc).into_iter().find_map(CallTarget::through)?;
+        let call = WideInstruction::new(Op::Call, instruction.a(), instruction.register_c(), base,
+            ImmediateLayout::call_immediate(base + 1, count - 1, false, false));
+        Some((call, (instruction.register_b(), through)))
+    }
+
+    /// The callees the call at `pc` of `function` inlines: each target its site linked that
+    /// inlines within the budget, as the call's switch; any other callee takes the call.
     /// With whether the call has run: a call the plan may not inline counts as run.
-    fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize) -> (Vec<InlinedPlan>, bool) {
+    fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize, forwarded: bool) -> (Vec<InlinedPlan>, bool) {
         if instruction.op() != Op::Call {
             return (Vec::new(), false);
         }
@@ -486,20 +423,15 @@ impl Planner<'_, '_> {
         {
             return (Vec::new(), true);
         }
-        let (registers, budget) = (self.registers, self.budget);
-        let found = (self.targets)(function, pc);
+        // A forwarded call inlines the targets reached through the native; a plain call, the others.
+        let found: Vec<_> = (self.targets)(function, pc).into_iter().filter_map(|target| match target.callee {
+            CalleeBinding::Forwarded { callee, .. } => forwarded.then_some(CallTarget { callee: CalleeBinding::Identity(callee), ..target }),
+            _ => (!forwarded).then_some(target),
+        }).collect();
         let ran = !found.is_empty();
-        let alternatives: Option<Vec<InlinedPlan>> = found
-            .into_iter()
-            .map(|target| self.inline_target(target, instruction, depth))
-            .collect();
-        match alternatives {
-            Some(alternatives) if !alternatives.is_empty() => (alternatives, true),
-            _ => {
-                (self.registers, self.budget) = (registers, budget);
-                (Vec::new(), ran)
-            }
-        }
+        // A target that does not inline gives back what it reserved (`inline_target`).
+        let alternatives = found.into_iter().filter_map(|target| self.inline_target(target, instruction, depth)).collect();
+        (alternatives, ran)
     }
 
     fn inline_target(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
@@ -558,13 +490,9 @@ impl Emitter {
         let root = frame.is_none();
         let mut flat = Vec::with_capacity(plan.code.len() + 1);
         let mut at = self.unit.instructions.len() as u32;
-        for (instruction, calls) in plan.code.iter().zip(&plan.calls) {
+        for length in plan.lengths(root) {
             flat.push(at);
-            at += match calls.as_slice() {
-                [] if root => 1,
-                [] => completion_length(*instruction),
-                alternatives => call_length(alternatives),
-            };
+            at += length;
         }
         flat.push(at);
         let target_of = |target: u32| flat.get(target as usize).copied();
@@ -602,10 +530,11 @@ impl Emitter {
                         callee_register: register(instruction.register_b()),
                         receiver: register(instruction.register_c()),
                         window: register(ImmediateLayout::call_window_base(instruction.imm())),
-                        arguments: ImmediateLayout::argument_count(instruction.imm()),
+                        arguments: ImmediateLayout::argument_count(instruction.imm()), result: (!returns).then_some(call_result),
                         base: callee_base,
                         registers: call.registers,
                         alternative: next,
+                        function_call: plan.through_call[pc].map(|(native, through)| (register(native), through)),
                     };
                     self.unit.frames.push(frame_record);
                     // The marker: the call's guards and bindings (`Lowering::inline_call`); a
@@ -649,6 +578,11 @@ impl Emitter {
                     WideInstruction::new(Op::Jump, 0, 0, 0, continuation)
                 }
                 Op::LoadThis => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
+                // Exit-only operations (`inlinable`): their registers, renamed for the analyses;
+                // the lowering leaves at each, and recovery runs the callee's own instruction.
+                Op::LoadName | Op::Throw => WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
+                Op::Construct => WideInstruction::new(Op::Construct, register(instruction.a()), register(instruction.b()),
+                    register(instruction.c()), instruction.imm()),
                 Op::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
                     let flags = instruction.result_flags();
                     WideInstruction::new(Op::GetField, flags | register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
@@ -733,22 +667,25 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
-    fn method_hints_follow_definition_records_and_reject_conflicting_bodies() {
+    fn method_hints_follow_definition_records_and_bound_conflicting_bodies() {
+        // Each case names how many bodies the call site is hinted with: every distinct
+        // definition of the name, each guarded at the call, up to `tier_policy::POLYMORPHISM`.
         for (definition, expected) in [
-            ("class Thing { probe(){return 1;} }", true),
-            ("class Thing { static probe(){return 1;} }", true),
-            ("let mask=4;class Thing { probe(){return (this.bits&mask)!==0||this.bits===2;} }", true),
+            ("class Thing { probe(){return 1;} }", 1),
+            ("class Thing { static probe(){return 1;} }", 1),
+            ("let mask=4;class Thing { probe(){return (this.bits&mask)!==0||this.bits===2;} }", 1),
             // Computed keys travel through ToPropertyKey and environment
             // homes; this literal-register proof deliberately declines them.
-            ("class Thing { ['probe'](){return 1;} }", false),
-            ("function make(mask){return class Thing { probe(){return mask|0;} };}", true),
-            ("class Thing { probe(){return 1;} probe(){return 2;} }", false),
-            ("class First { probe(){return 1;} } class Second { probe(){return 2;} }", false),
-            ("class Thing { probe(){return 1;} } Thing.prototype.probe=function replacement(){return 2;};", false),
-            ("class Thing { get probe(){return function(){return 1;};} }", false),
-            ("class Thing { set probe(value){} }", false),
-            ("class Thing { get probe(){return 1;} set probe(value){} }", false),
-            ("class Thing { [unknownName](){return 1;} }", false),
+            ("class Thing { ['probe'](){return 1;} }", 0),
+            ("function make(mask){return class Thing { probe(){return mask|0;} };}", 1),
+            ("class Thing { probe(){return 1;} probe(){return 2;} }", 2),
+            ("class First { probe(){return 1;} } class Second { probe(){return 2;} }", 2),
+            ("class Thing { probe(){return 1;} } Thing.prototype.probe=function replacement(){return 2;};", 2),
+            (&(0..=crate::vm::compiled::tier_policy::POLYMORPHISM).map(|n| format!("class C{n} {{ probe(){{return {n};}} }}")).collect::<String>(), 0),
+            ("class Thing { get probe(){return function(){return 1;};} }", 0),
+            ("class Thing { set probe(value){} }", 0),
+            ("class Thing { get probe(){return 1;} set probe(value){} }", 0),
+            ("class Thing { [unknownName](){return 1;} }", 0),
         ] {
             let source = format!("{definition} function caller(receiver){{let result=receiver.probe();return result;}}");
             for typescript in [false, true] {
@@ -756,7 +693,7 @@ mod tests {
                     else { crate::Engine::specialize(&source, "method-hints.cjs") };
                 let program = match admitted {
                     Ok(program) => program,
-                    Err(errors) if typescript && !expected => {
+                    Err(errors) if typescript && expected != 1 => {
                         // OXC rejects duplicate TypeScript implementations;
                         // JavaScript's accepted duplicate still exercises the
                         // conflicting-definition path below.
@@ -769,14 +706,14 @@ mod tests {
                 let caller = program.functions.iter().position(|body|
                     body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "caller")).unwrap();
                 let targets = static_call_targets(&program);
-                assert_eq!(targets[caller].iter().filter(|target| target.is_some()).count(), usize::from(expected),
+                assert_eq!(targets[caller].iter().map(|site| site.len()).sum::<usize>(), expected,
                     "{definition}\n{}", program.disassemble());
-                if expected {
-                    let target = targets[caller].iter().copied().flatten().next().unwrap();
+                if expected == 1 {
+                    let target = targets[caller].iter().flatten().copied().next().unwrap();
                     assert!(program.function(target as usize).instructions().any(|instruction| instruction.op() == Op::Return
                         || instruction.returns_from_frame()));
                     let unit = unit(&program, caller as u32, program.function(caller), &|function, pc|
-                        targets[function as usize].get(pc as usize).copied().flatten()
+                        targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
                             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                         &|id| program.function_get(id as usize)).unwrap();
                     assert_eq!(unit.frames.len(), 1, "method hint must reach the shared guarded inliner: {definition}");
@@ -788,10 +725,11 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
-    fn captured_hints_resolve_lexical_depth_and_reject_conflicting_bodies() {
+    fn captured_hints_resolve_lexical_depth_and_bound_conflicting_bodies() {
         for (binding, expected) in [
-            ("let target = function leaf(x) {return x + 1;};", true),
-            ("let target; if (flag) target = function first(x) {return x + 1;}; else target = function second(x) {return x + 2;};", false),
+            ("let target = function leaf(x) {return x + 1;};", &["leaf"][..]),
+            ("let target; if (flag) target = function first(x) {return x + 1;}; else target = function second(x) {return x + 2;};",
+                &["first", "second"][..]),
         ] {
             let source = format!("function outer(flag) {{{binding} function middle() {{function caller(x) {{return target(x);}} return caller;}} return middle();}}");
             let program = crate::Engine::specialize(&source, "capture-depth.js").unwrap();
@@ -800,12 +738,9 @@ mod tests {
             assert!(program.function(caller).instructions().any(|instruction|
                 instruction.op() == Op::LoadCapture && instruction.capture_depth() == 1));
             let targets = static_call_targets(&program);
-            assert_eq!(targets[caller].iter().any(Option::is_some), expected);
-            if expected {
-                let target = targets[caller].iter().copied().flatten().next().unwrap();
-                let name = program.function(target as usize).name.unwrap();
-                assert_eq!(&program.atoms[name as usize], "leaf");
-            }
+            let names: Vec<&str> = targets[caller].iter().flatten()
+                .map(|target| &program.atoms[program.function(*target as usize).name.unwrap() as usize]).collect();
+            assert_eq!(names, expected);
         }
     }
 
@@ -822,7 +757,7 @@ mod tests {
             let targets = static_call_targets(&program);
             let original_terminal = program.function(caller).code.len() - 1;
             let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-                .get(pc as usize).copied().flatten()
+                .get(pc as usize).into_iter().flatten().copied().next()
                 .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
             if strict {
@@ -856,7 +791,7 @@ mod tests {
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
             let targets = static_call_targets(&program);
             let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-                .get(pc as usize).copied().flatten()
+                .get(pc as usize).into_iter().flatten().copied().next()
                 .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
             if strict {
@@ -883,9 +818,9 @@ mod tests {
             let caller = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
             let targets = static_call_targets(&program);
-            assert!(targets[caller].iter().any(Option::is_some), "the hint must reach admission");
+            assert!(targets[caller].iter().any(|site| !site.is_empty()), "the hint must reach admission");
             let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-                .get(pc as usize).copied().flatten()
+                .get(pc as usize).into_iter().flatten().copied().next()
                 .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "exact recovery admits {body}");
@@ -908,7 +843,7 @@ mod tests {
         let mut targets = vec![None; body.code.len()];
         targets[call] = Some(CallTarget { callee: CalleeBinding::Identity(Value::UNDEFINED), function: leaf });
         let mut unit = unit(&program, caller, body, &|function, pc| if function == caller {
-            targets.get(pc as usize).copied().flatten().into_iter().collect()
+            targets.get(pc as usize).into_iter().flatten().copied().next().into_iter().collect()
         } else { Vec::new() }, &|function| program.function_get(function as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
         let masks = unit.register_masks(&program, caller).expect("covered remapped graph");

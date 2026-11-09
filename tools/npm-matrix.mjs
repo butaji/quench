@@ -74,7 +74,7 @@ Options:
   --workload ID       repeatable workload id (default: all)
   --phase MODE        repeatable: no-jit or jit (default: both)
   --out DIR           new output directory (default a temporary directory)
-  --quench PATH       quench-node binary (default target/production/quench-node)
+  --quench PATH       quench-node binary (default target/release/quench-node)
   --node PATH         Node binary (default the running node)
   --bun PATH          Bun binary (default bun on PATH)
   --no-gate           write evidence but exit 0 even when a gate is missed
@@ -472,7 +472,7 @@ function markdown(rows, failures, context) {
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const quench = resolveExecutable(options.quench, [
-    path.join(root, "target/production/quench-node"),
+    path.join(root, "target/release/quench-node"),
   ]);
   const node = resolveExecutable(options.node, [process.execPath]);
   const bun = resolveExecutable(options.bun, [

@@ -714,11 +714,8 @@ impl<H: Host> Vm<H> {
                         .copied()
                         .filter(|value| !value.is_deleted())
                 })
-                .or_else(|| {
-                    self.heap
-                        .sparse_get(target, index)
-                        .filter(|value| !value.is_deleted())
-                });
+                .or_else(|| self.heap.sparse_get(target, index).filter(|value| !value.is_deleted()))
+                .or_else(|| self.string_index_value(target, index));
             if let Some(value) = value {
                 return Ok(Some((value, attributes)));
             }
@@ -811,28 +808,6 @@ impl<H: Host> Vm<H> {
         let atom = self.string_key_atom(key)?;
         let found = self.ordinary_own_string_property(p, object, &text, atom).ok()?;
         Some(found.map(|(_, attributes)| !ENUMERABLE || attributes.enumerable))
-    }
-
-    /// `object_for_in_key_is_enumerable` of a string key along a chain whose own lookups run
-    /// no guest code (`plain_own_query`): the nearest own property's enumerability, or
-    /// false past the chain's end. `None` leaves the walk, a Proxy's or primitive's
-    /// included, to the general path.
-    pub(super) fn plain_for_in_key_is_enumerable(
-        &mut self,
-        p: &ResidualProgram,
-        source: Value,
-        key: Value,
-    ) -> Option<Value> {
-        let mut current = source;
-        loop {
-            if let Some(enumerable) = self.plain_own_query::<true>(p, current, key)? {
-                return Some(if enumerable { Value::TRUE } else { Value::FALSE });
-            }
-            current = self.object_data(current)?.proto();
-            if current.is_null() {
-                return Some(Value::FALSE);
-            }
-        }
     }
 
     /// Whether `key` is an own enumerable property of `target`; `None` when it

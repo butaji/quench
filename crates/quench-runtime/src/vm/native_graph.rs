@@ -6,7 +6,7 @@ use super::native_object::{
 };
 use super::native_operands::NativeJsOperands;
 use super::specialize::{CallThreaded, CallThreadedExtension, Continuation, InstructionSite, Specializer};
-use crate::bytecode::{ControlFlowLayout, Function, Op, ProgramKind, ResidualProgram};
+use crate::bytecode::{Function, Op, ProgramKind, ResidualProgram};
 use cranelift_codegen::{
     ir::{self, InstBuilder, MemFlagsData, condcodes::IntCC, types},
     isa::TargetIsa,
@@ -150,11 +150,9 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                 signature: super::compiled::native_lane_helpers_signature(&*isa),
             });
         }
-        let has_narrow_table = typed_units.iter().flatten().any(|unit|
-            unit.function.global_values.values().any(|global| matches!(global,
-                ir::GlobalValueData::Symbol { name: ir::ExternalName::User(name), .. }
-                    if unit.function.params.user_named_funcs()[*name] == ir::UserExternalName::new(
-                        NATIVE_DATA_NAMESPACE, program.function_count() as u32))));
+        // General dispatch decodes packed inline fields through the table too, so every image
+        // publishes it (`NarrowTable::Linked`).
+        let has_narrow_table = true;
         let mut operations = vec![None; Op::COUNT];
         for sites in &bodies {
             // Fallback tables name an entry for every PC, so every op is collected.
@@ -179,43 +177,6 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         let region_count = (0..program.function_count())
             .try_fold(0usize, |count, id| count.checked_add(options.region_count(program.function(id).code.len())))
             .ok_or("native region count overflow")?;
-        let mut boolean_regions = Vec::new();
-        let mut captured_stores = Vec::new();
-        for id in 1..program.function_count() {
-            let body = program.function(id);
-            if let Some(store) = super::js_compiled::captured_field_store_candidate(program, body) {
-                captured_stores.push((u32::try_from(id).map_err(|_| "native function count exceeds u32")?, store));
-            }
-            if body.params != 0 || !body.plain_activation(program) || options.region_count(body.code.len()) != 0
-                || !body.code.iter().copied().enumerate().all(|(pc, packed)| {
-                    if packed.is_wide() { return false; }
-                    let instruction = packed.as_wide();
-                    match instruction.op().control_flow_layout() {
-                        ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump =>
-                            usize::try_from(instruction.jump_target()).is_ok_and(|target| target > pc),
-                        _ => true,
-                    }
-                })
-                || super::js_compiled::numeric_capture_candidate(body).is_none()
-                || super::js_compiled::cached_numeric_field_inputs_candidate(body).is_none()
-            {
-                continue;
-            }
-            let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
-            if let Some(region) = super::js_compiled::lower_number_domain_boolean_tree(
-                program, function_id, body, &*isa,
-            ).filter(|region| {
-                region.field_argument.is_none()
-                    && !region.capture_arguments.is_empty()
-                    && !region.numeric_field_inputs.is_empty()
-                    && region.capture_arguments.iter().all(|capture| capture.depth == 0)
-                    && region.numeric_field_inputs.iter().all(|input| {
-                        input.receiver == super::js_compiled::JsJitFieldReceiver::This
-                    })
-            }) {
-                boolean_regions.push((function_id, region));
-            }
-        }
         let scalar_regions: Vec<_> = (0..program.function_count()).map(|id| {
             let body = program.function(id);
             if id == 0 || options.regions(body.code.len()).is_some()
@@ -232,11 +193,9 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             .checked_add(program.function_count())
             .and_then(|base| base.checked_add(region_count))
             .ok_or("native scalar symbol count overflow")?;
-        let boolean_base = scalar_base.checked_add(scalar_count)
-            .ok_or("native boolean symbol count overflow")?;
-        u32::try_from(boolean_base).map_err(|_| "native scalar symbol count exceeds u32")?;
-        let fallback_base = boolean_base.checked_add(boolean_regions.len())
+        let fallback_base = scalar_base.checked_add(scalar_count)
             .ok_or("native fallback symbol count overflow")?;
+        u32::try_from(fallback_base).map_err(|_| "native scalar symbol count exceeds u32")?;
         let mut data = Vec::with_capacity(program.function_count());
         let mut region_definitions = Vec::new();
         let mut fallback_definitions = Vec::new();
@@ -316,7 +275,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                     .and_then(|index| u32::try_from(index).ok())
                     .ok_or("native fallback symbol count exceeds u32")?;
                 match super::compiled::lower_js_general_dispatch(
-                    program, function_id, false, &*isa,
+                    program, function_id, &*isa,
                     super::compiled::JsGeneralCallout::Relocatable { fallback },
                     &scalar_regions.iter().enumerate().map(|(offset, region)| {
                         super::compiled::StaticRegionEntry {
@@ -383,58 +342,10 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             .function_count()
             .checked_add(crate::NATIVE_JS_IMAGE_HEADER_WORDS)
             .ok_or("native entry table size overflow")?;
-        let entries_bytes = words
+        let bytes = words
             .checked_mul(pointer_bytes)
             .ok_or("native entry table size overflow")?;
-        let guarded_count = boolean_regions.len().checked_add(captured_stores.len())
-            .ok_or("native guarded-call count overflow")?;
-        let index_bytes = if guarded_count == 0 { 0 } else { program.function_count().checked_mul(pointer_bytes)
-            .ok_or("native guarded index size overflow")? };
-        let regions_base = entries_bytes.checked_add(index_bytes).ok_or("native guarded index size overflow")?;
-        let bytes = boolean_regions.len()
-            .checked_mul(std::mem::size_of::<super::native_program::NativeBooleanRegion>())
-            .and_then(|bytes| regions_base.checked_add(bytes))
-            .ok_or("native boolean region table size overflow")?;
-        let stores_base = bytes;
-        let bytes = captured_stores.len()
-            .checked_mul(std::mem::size_of::<super::native_program::NativeCapturedStore>())
-            .and_then(|stores| bytes.checked_add(stores))
-            .ok_or("native captured-store table size overflow")?;
-        let mut table = vec![0; bytes];
-        let count_offset = super::native_program::BOOLEAN_REGION_COUNT_WORD * pointer_bytes;
-        table[count_offset..count_offset + pointer_bytes]
-            .copy_from_slice(&boolean_regions.len().to_ne_bytes());
-        let store_count_offset = super::native_program::CAPTURED_STORE_COUNT_WORD * pointer_bytes;
-        table[store_count_offset..store_count_offset + pointer_bytes]
-            .copy_from_slice(&captured_stores.len().to_ne_bytes());
-        use super::native_program::{GuardedCallIndex, GuardedCallKind};
-        let indices = boolean_regions.iter().enumerate().map(|(row, (function, _))| (GuardedCallKind::Boolean, row, *function))
-            .chain(captured_stores.iter().enumerate().map(|(row, (function, _))| (GuardedCallKind::CapturedStore, row, *function)));
-        for (kind, row, function) in indices {
-            let base = entries_bytes + function as usize * pointer_bytes;
-            if table[base..base + pointer_bytes].iter().any(|byte| *byte != 0) {
-                return Err("multiple native guarded plans for one function".into());
-            }
-            let word = GuardedCallIndex::encode(kind, row).ok_or("native guarded-call index overflow")?;
-            table[base..base + pointer_bytes].copy_from_slice(&word.to_ne_bytes());
-        }
-        for (index, (function, store)) in captured_stores.iter().enumerate() {
-            use super::native_program::NativeCapturedStore as Layout;
-            let base = stores_base + index * std::mem::size_of::<Layout>();
-            let mut write = |offset: usize, value: &[u8]| {
-                table[base + offset..base + offset + value.len()].copy_from_slice(value);
-            };
-            write(std::mem::offset_of!(Layout, function), &function.to_ne_bytes());
-            write(std::mem::offset_of!(Layout, atom), &store.atom.to_ne_bytes());
-            write(std::mem::offset_of!(Layout, capture_slot), &store.capture_slot.to_ne_bytes());
-            write(std::mem::offset_of!(Layout, cache_site), &store.cache_site.to_ne_bytes());
-            let operator = match store.update {
-                Some(operation) => u16::try_from(operation.operator())
-                    .map_err(|_| "captured-store operator exceeds native layout")?,
-                None => super::js_compiled::CAPTURED_STORE_ASSIGNMENT,
-            };
-            write(std::mem::offset_of!(Layout, operator), &operator.to_ne_bytes());
-        }
+        let table = vec![0; bytes];
         let mut addresses = Vec::with_capacity(words);
         addresses.push(NativeFunctionAddress {
             offset: 0,
@@ -449,38 +360,8 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                 .ok_or("native function symbol count exceeds u32")?;
             addresses.push(NativeFunctionAddress { offset, function });
         }
-        for (index, (function, region)) in boolean_regions.iter().enumerate() {
-            use super::native_program::NativeBooleanRegion as Layout;
-            let base = regions_base + index * std::mem::size_of::<Layout>();
-            let mut write = |offset: usize, value: &[u8]| {
-                table[base + offset..base + offset + value.len()].copy_from_slice(value);
-            };
-            write(std::mem::offset_of!(Layout, function), &function.to_ne_bytes());
-            write(std::mem::offset_of!(Layout, capture_count), &(region.capture_arguments.len() as u16).to_ne_bytes());
-            write(std::mem::offset_of!(Layout, field_count), &(region.numeric_field_inputs.len() as u16).to_ne_bytes());
-            let flags = if region.requires_signed_int32_arguments { Layout::SIGNED_INT32_INPUTS } else { 0 };
-            write(std::mem::offset_of!(Layout, flags), &flags.to_ne_bytes());
-            for (slot, capture) in region.capture_arguments.iter().enumerate() {
-                write(std::mem::offset_of!(Layout, capture_slots) + slot * std::mem::size_of::<u16>(), &capture.slot.to_ne_bytes());
-            }
-            for (slot, field) in region.numeric_field_inputs.iter().enumerate() {
-                if usize::from(field.source) == slot {
-                    write(std::mem::offset_of!(Layout, field_sites) + slot * std::mem::size_of::<u16>(), &field.cache_site.to_ne_bytes());
-                }
-                write(std::mem::offset_of!(Layout, field_sources) + slot * std::mem::size_of::<u16>(), &field.source.to_ne_bytes());
-            }
-            addresses.push(NativeFunctionAddress {
-                offset: u32::try_from(base + std::mem::offset_of!(Layout, entry))
-                    .map_err(|_| "native boolean table exceeds relocation offsets")?,
-                function: u32::try_from(boolean_base + index)
-                    .map_err(|_| "native boolean symbol count exceeds u32")?,
-            });
-        }
         functions.extend(region_definitions);
         functions.extend(scalar_definitions);
-        functions.extend(boolean_regions.into_iter().map(|(id, region)| NativeFunction::Definition {
-            name: format!("{namespace}_function_{id}_boolean"), function: region.function,
-        }));
         functions.extend(fallback_definitions);
         u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
         let entry_table = data.len();
@@ -914,63 +795,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn captured_field_predicates_have_sparse_relocatable_entries() {
-        for program in [
-            crate::Engine::specialize(
-                "function make(mask, expected) { function check() { return (this.value & mask) !== 0 || this.value == expected; } return check; }",
-                "boolean.js",
-            ).unwrap(),
-            crate::Engine::specialize_typescript(
-                "function make(mask: number, expected: number) { function check(this: {value: number}): boolean { return (this.value & mask) !== 0 || this.value == expected; } return check; }",
-                "boolean.ts",
-            ).unwrap(),
-        ] {
-            let module = lower_native_js_module(&program, "boolean").unwrap();
-            assert!(module.functions.iter().any(|function| matches!(function,
-                NativeFunction::Definition { name, .. } if name.ends_with("_boolean")
-            )));
-            let table = &module.data[module.entry_table];
-            let word = std::mem::size_of::<usize>();
-            let offset = super::super::native_program::BOOLEAN_REGION_COUNT_WORD * word;
-            let count = usize::from_ne_bytes(table.bytes[offset..offset + word].try_into().unwrap());
-            assert_eq!(count, 1);
-            assert_eq!(table.function_addresses.len(), program.function_count() + 2);
-            let region_base = (crate::NATIVE_JS_IMAGE_HEADER_WORDS + program.function_count() * 2) * word;
-            let source = region_base + std::mem::offset_of!(super::super::native_program::NativeBooleanRegion, field_sources);
-            let width = std::mem::size_of::<u16>();
-            assert_eq!(u16::from_ne_bytes(table.bytes[source..source + width].try_into().unwrap()), 0);
-            assert_eq!(u16::from_ne_bytes(table.bytes[source + width..source + width * 2].try_into().unwrap()), 0);
-            let object = super::super::native_object::emit_native_module(
-                "boolean", module.functions, module.data,
-            ).unwrap();
-            assert!(!object.is_empty());
-        }
-    }
-
-    #[test]
-    fn guarded_lookup_indexes_both_payload_kinds_by_function() {
-        use super::super::native_program::{GuardedCallIndex, GuardedCallKind, NativeBooleanRegion, NativeCapturedStore};
-        let program = crate::Engine::specialize(
-            "function make(mask) { return {check:function(){return (this.value & mask)!==0;},mark:function(){this.value=mask;}}; }",
-            "indexed-calls.js",
-        ).unwrap();
-        let module = lower_native_js_module(&program, "indexed").unwrap();
-        let table = &module.data[module.entry_table];
-        let word = std::mem::size_of::<usize>();
-        let read = |offset| usize::from_ne_bytes(table.bytes[offset..offset + word].try_into().unwrap());
-        assert_eq!(read(super::super::native_program::BOOLEAN_REGION_COUNT_WORD * word), 1);
-        assert_eq!(read(super::super::native_program::CAPTURED_STORE_COUNT_WORD * word), 1);
-        let index = (crate::NATIVE_JS_IMAGE_HEADER_WORDS + program.function_count()) * word;
-        let boolean = index + program.function_count() * word;
-        let store = boolean + std::mem::size_of::<NativeBooleanRegion>();
-        for (kind, record, function_offset) in [
-            (GuardedCallKind::Boolean, boolean, std::mem::offset_of!(NativeBooleanRegion, function)),
-            (GuardedCallKind::CapturedStore, store, std::mem::offset_of!(NativeCapturedStore, function)),
-        ] {
-            let offset = record + function_offset;
-            let function = u32::from_ne_bytes(table.bytes[offset..offset + std::mem::size_of::<u32>()].try_into().unwrap());
-            assert_eq!(read(index + function as usize * word), GuardedCallIndex::encode(kind, 0).unwrap());
-        }
-    }
 }

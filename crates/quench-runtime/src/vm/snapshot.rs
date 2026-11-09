@@ -240,6 +240,7 @@ impl<H: Host> Vm<H> {
         }
         let Self {
             native_microtask_running,
+            unobserved_jobs_entered: _,
             host,
             specialized,
             heap,
@@ -290,15 +291,13 @@ impl<H: Host> Vm<H> {
             temporal_plain_month_day_proto: _,
             temporal_plain_year_month_proto: _,
             natives,
-            atom_strings,
             frames,
             native_stack_frames,
             native_root_lists: _,
-            gc_root_count: _,
             gc_owned_root_count: _,
             frame_pool: _,
             pending_call_stacks: _,
-            js_native_context: _,
+            js_native_contexts: _,
             lane_stack: _,
             execution_mode: _,
             native_execution_rejections: _,
@@ -337,8 +336,10 @@ impl<H: Host> Vm<H> {
             symbol_write_proofs: _,
             symbol_load_proofs: _,
             private_site_homes: _,
-            array_iteration_proof: _,
+            array_iteration_shape: _,
             array_species_proof: _,
+            for_in: _,
+            json_plain: _,
             species_slot_proof: _,
             promise_species_proof: _,
             function_name_shapes: _,
@@ -354,23 +355,24 @@ impl<H: Host> Vm<H> {
             regexp_subjects: _,
             regexp_matchers: _,
             atom_classes: _,
+            intrinsic_natives: _,
+            native_families: _, first_chunks: _,
             dynamic_strings: _,
             symbol_registry,
             well_known_symbols,
-            string_atoms: _,
-            recent_atom_strings: _,
-            ascii_unit_strings: _,
             bound_parts_layout: _,
-            call_targets: _,
+            call_targets: _, frameless: _,
             field_caches: _,
             inherited_field_indices: _,
-            accessor_field_caches: _,
+            accessor_field_indices: _,
+            accessor_fields: _,
             field_add_indices: _,
-            field_add_sets: _,
+            field_add_sets: _, json_parse_cache: _,
             keyed_adds: _,
             megamorphic_field_indices: _,
             field_cache_writes: _,
             megamorphic_fields: _,
+            holder_hints: _,
             length_atom,
             prototype_atom,
             instanceof_constructor_layouts: _,
@@ -392,7 +394,6 @@ impl<H: Host> Vm<H> {
             to_precision_atom,
             runtime_atoms,
             // A proof of the running heap's methods; a restored heap proves its own.
-            intact_builtins: _,
             constructed_shapes: _,
             // Templates name roots of the running heap; a restored heap starts without any,
             // and its hosts capture them again.
@@ -461,9 +462,7 @@ impl<H: Host> Vm<H> {
         writer.bool(*specialized);
         // Atoms first: the programs decode against the restored sequence.
         writer.len(atom_text.len());
-        for name in atom_text.iter() {
-            writer.str(name);
-        }
+        atom_text.iter().for_each(|name| writer.str(name));
         writer.len(atom_sequence.appended_len());
         for offset in 0..atom_sequence.appended_len() {
             atom_sequence.appended(offset).write_snapshot(&mut writer);
@@ -483,7 +482,7 @@ impl<H: Host> Vm<H> {
         }
         builtin_prototypes!(write_prototypes);
         natives.snap(&mut writer)?;
-        atom_strings.snap(&mut writer)?;
+        self.heap.kept_atom_strings().collect::<Vec<_>>().snap(&mut writer)?;
         startup_intrinsics.write_snapshot(&mut writer)?;
         writer.bool(*with_scope_entered);
         programs.write_snapshot(&mut writer)?;
@@ -498,6 +497,7 @@ impl<H: Host> Vm<H> {
         shape_constructors.snap(&mut writer)?;
         shape_accessors.snap(&mut writer)?;
         writer.u32s(&transitions.children().collect::<Vec<_>>());
+        shape_lookup::owned_dictionaries(shapes).snap(&mut writer)?;
         symbol_registry.snap(&mut writer)?;
         well_known_symbols.snap(&mut writer)?;
         for atom in [length_atom, prototype_atom, to_fixed_atom, to_precision_atom] {
@@ -506,14 +506,14 @@ impl<H: Host> Vm<H> {
         runtime_atoms.snap(&mut writer)?;
         descriptors.snap(&mut writer)?;
         writer.len(function_values.len());
-        for (key, handles) in function_values {
+        for (key, handles) in function_values.iter() {
             key.snap(&mut writer)?;
             let live = handles.iter().filter_map(|handle| heap.weak_value(*handle)).collect::<Vec<_>>();
             writer.values(&live);
         }
         private_homes.snap(&mut writer)?;
-        let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, js_tag } = wasm_js;
-        [*module, *instance, *memory, *table, *global, *js_tag].snap(&mut writer)?;
+        let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag } = wasm_js;
+        [*module, *instance, *memory, *table, *global, *tag, *js_tag].snap(&mut writer)?;
         writer.value(*instanceof_has_instance_holder);
         write_host(host, &mut crate::SnapshotWriter { writer: &mut writer, heap }).map_err(SnapshotError)?;
         Ok(writer.finish())
@@ -565,13 +565,15 @@ impl<H: Host> Vm<H> {
         self.realm.parked = Snap::unsnap(&mut reader)?;
         self.realm.intrinsics = Snap::unsnap(&mut reader)?;
         self.realm.template_objects = Snap::unsnap(&mut reader)?;
+        // The restored realms' declarations may shadow names a derived view's hints read.
+        self.note_global_lexical_names();
         self.realm.promise = promise::PromiseRuntime::read_snapshot(&mut reader)?;
         macro_rules! read_prototypes {
             ($($field:ident),*) => { $( self.$field = reader.value()?; )* };
         }
         builtin_prototypes!(read_prototypes);
         self.natives = Snap::unsnap(&mut reader)?;
-        self.atom_strings = Snap::unsnap(&mut reader)?;
+        Vec::<(Atom, Value)>::unsnap(&mut reader)?.into_iter().for_each(|(atom, string)| self.heap.register_string_atom(string, atom, true));
         self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
         self.with_scope_entered = reader.bool()?;
         #[cfg(feature = "profile-memory")]
@@ -601,11 +603,11 @@ impl<H: Host> Vm<H> {
                         .ok_or_else(|| SnapshotError("snapshot function cache names a dead value".into()))
                 })
                 .collect::<SnapshotResult<Vec<_>>>()?;
-            self.function_values.insert(key, handles);
+            self.function_values.record(key, handles);
         }
         self.private_homes = Snap::unsnap(&mut reader)?;
-        let [module, instance, memory, table, global, js_tag] = <[Value; 6]>::unsnap(&mut reader)?;
-        self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, js_tag };
+        let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;
+        self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag };
         let holder = reader.value()?;
         self.set_instanceof_has_instance_holder(holder);
         read_host(&mut self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
@@ -655,6 +657,7 @@ impl<H: Host> Vm<H> {
         self.name_atom_memo.clear();
         self.private_site_homes.clear();
         self.atom_classes.clear();
+        self.intrinsic_natives.clear();
         self.atom_classes.reserve(base + appended);
         self.atom_classes.resize_with(base, Default::default);
         let atom_text = self.atom_text.clone();
@@ -702,6 +705,7 @@ impl<H: Host> Vm<H> {
                 return Err(SnapshotError("snapshot transition names no cached shape".into()));
             }
         }
+        shape_lookup::restore_owned_dictionaries(&mut self.shapes, Snap::unsnap(reader)?)?;
         Ok(())
     }
 
@@ -746,6 +750,8 @@ impl<H: Host> Vm<H> {
         self.megamorphic_field_indices.clear();
         self.field_add_indices.clear();
         self.inherited_field_indices.clear();
+        self.accessor_field_indices.clear();
+        self.accessor_fields.clear();
         self.method_caches.clear();
         self.object_shapes.clear();
         self.field_cache_writes = Some(Vec::new());

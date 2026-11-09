@@ -120,7 +120,7 @@ impl<H: Host> Vm<H> {
             value
         };
         match self.heap.get(primitive) {
-            Some(Cell::BigInt(value)) => Ok(value.as_ref().clone()),
+            Some(Cell::BigInt(value)) => Ok(value.to_num()),
             _ if let Some(value) = self.heap.string(primitive)  => {
                 let Some(value) = crate::bigint::parse_string(value.host_string()) else {
                     let message = self.bigint_conversion_message(primitive);
@@ -184,7 +184,10 @@ impl<H: Host> Vm<H> {
         if let Some(text) = self.heap.string(primitive) {
             return Ok(text.clone());
         }
-        self.to_string(program, primitive).map(JsString::from)
+        match primitive.as_number() {
+            Some(number) => Ok(JsString::from_number(number)),
+            None => self.to_string(program, primitive).map(JsString::from),
+        }
     }
 
     /// `!value`: the negated truthiness.
@@ -214,12 +217,12 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, BIGINT_TO_NUMBER.into()));
             }
             if op == UNARY_NEGATION {
-                let negated = -value.as_ref();
-                return Ok(self.heap.alloc(Cell::bigint(negated)));
+                let negated = value.negate();
+                return Ok(self.heap.alloc_bigint(negated));
             }
             if op == BITWISE_NOT {
-                let complement = !value.as_ref();
-                return Ok(self.heap.alloc(Cell::bigint(complement)));
+                let complement = value.not();
+                return Ok(self.heap.alloc_bigint(complement));
             }
         }
         Ok(match op {
@@ -240,10 +243,7 @@ impl<H: Host> Vm<H> {
                 self.typeof_test_value(value, index, negated)
             }
             crate::bytecode::UNARY_TYPEOF_INDEX => self.typeof_index_value(value),
-            crate::bytecode::UNARY_TO_STRING => {
-                let text = self.coerce_js_string(p, value)?;
-                self.string_value_from(value, &text)
-            }
+            crate::bytecode::UNARY_TO_STRING_PRIMITIVE => return self.string_primitive(p, value),
             _ => return Err(JsError("unsupported unary operator".into())),
         })
     }
@@ -300,7 +300,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<String, JsError> {
         if let Some(text) = immediate_to_string(value) {
-            return Ok(text);
+            return Ok(text.into());
         }
         if self.object_data(value).is_some() {
             let primitive = self.to_primitive(program, value, "string")?;
@@ -405,11 +405,12 @@ impl<H: Host> Vm<H> {
     /// BigInts, of equal contents.
     #[inline(always)]
     pub(super) fn heap_values_strictly_equal(&self, a: Value, b: Value) -> bool {
-        if let (Some(a), Some(b)) = (self.heap.string(a), self.heap.string(b)) {
-            return a == b;
+        // `a`'s cell alone decides most pairs: an object or symbol equals nothing it is not.
+        if let Some(a) = self.heap.string(a) {
+            return self.heap.string(b).is_some_and(|b| a == b);
         }
-        match (self.heap.get(a), self.heap.get(b)) {
-            (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) => a == b,
+        match self.heap.get(a) {
+            Some(Cell::BigInt(a)) => matches!(self.heap.get(b), Some(Cell::BigInt(b)) if a == b),
             _ => false,
         }
     }
@@ -439,7 +440,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn heap_cell_truthy(&self, v: Value) -> bool {
         match self.heap.get(v) {
             _ if let Some(text) = self.heap.string(v)  => !text.units().is_empty(),
-            Some(Cell::BigInt(value)) => value.sign() != num_bigint::Sign::NoSign,
+            Some(Cell::BigInt(value)) => !value.is_zero(),
             _ => !self.is_html_dda(v),
         }
     }
@@ -484,24 +485,26 @@ pub(super) fn typeof_text(kind: crate::ValueType) -> &'static str {
 
 /// ToString where the value alone decides it: `undefined` (the deleted marker reads as it),
 /// `null`, a Boolean or a Number. `None` for a heap value, whose conversion reads its cell and
-/// may run guest code.
-pub(super) fn immediate_to_string(value: Value) -> Option<String> {
-    if value.is_undefined() || value.is_deleted() {
-        return Some("undefined".into());
+/// may run guest code. A Number's digits are written straight into the string.
+pub(super) fn immediate_to_string(value: Value) -> Option<JsString> {
+    match value.as_bool() {
+        _ if value.is_undefined() || value.is_deleted() => Some(JsString::from_str("undefined")),
+        _ if value.is_null() => Some(JsString::from_str("null")),
+        Some(value) => Some(JsString::from_str(if value { "true" } else { "false" })),
+        None => value.as_number().map(JsString::from_number),
     }
-    if value.is_null() {
-        return Some("null".into());
-    }
-    if let Some(value) = value.as_bool() {
-        return Some(value.to_string());
-    }
-    value.as_number().map(crate::number_to_string::format)
 }
 
 /// The kind of a value its bits alone decide (undefined, null, a boolean, a Number); `None`
 /// for a heap value, whose kind its cell decides (`Vm::value_type`). None of these kinds is
 /// the `[[IsHTMLDDA]]` object's.
 #[inline(always)]
+/// The index in `bytecode::TYPEOF_NAMES` of `typeof value` for a value outside the heap,
+/// which its tag alone decides; `None` for a heap value.
+pub(super) fn immediate_typeof_index(value: Value) -> Option<usize> {
+    immediate_value_type(value).map(typeof_name_index)
+}
+
 fn immediate_value_type(value: Value) -> Option<crate::ValueType> {
     use crate::ValueType as T;
     Some(if value.is_undefined() || value.is_deleted() {

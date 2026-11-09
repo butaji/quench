@@ -7,8 +7,6 @@ const LEADING_SURROGATES: std::ops::RangeInclusive<u16> =
     LEADING_SURROGATE_BASE as u16..=(LEADING_SURROGATE_BASE + SURROGATE_OFFSET_MASK) as u16;
 const TRAILING_SURROGATES: std::ops::RangeInclusive<u16> =
     TRAILING_SURROGATE_BASE as u16..=(TRAILING_SURROGATE_BASE + SURROGATE_OFFSET_MASK) as u16;
-const SURROGATE_CODE_POINTS: std::ops::RangeInclusive<u32> =
-    LEADING_SURROGATE_BASE..=(TRAILING_SURROGATE_BASE + SURROGATE_OFFSET_MASK);
 const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
 const HEX_NIBBLE_MASK: u8 = 0x0f;
 const ESCAPE_ASCII_MAX: u16 = 0x7f;
@@ -16,36 +14,25 @@ const ESCAPE_LATIN1_MAX: u16 = 0xff;
 const ESCAPE_WIDE_MARKER: u16 = b'u' as u16;
 const ESCAPE_BYTE_HEX_DIGITS: usize = 2;
 const ESCAPE_WIDE_HEX_DIGITS: usize = 4;
+use crate::units::HEXADECIMAL_RADIX;
+/// Bits one hex digit spells.
+const HEX_DIGIT_BITS: u32 = HEXADECIMAL_RADIX.ilog2();
+/// A URI escape is `%` and two hex digits.
+const URI_ESCAPE_LEN: usize = 1 + ESCAPE_BYTE_HEX_DIGITS;
+/// The longest UTF-8 sequence.
+const UTF8_MAX_WIDTH: usize = 4;
 const URI_RESERVED: &[u8] = b";/?:@&=+$,#";
 const URI_UNESCAPED: &[u8] = b"-_.!~*'()";
 const ESCAPE_UNESCAPED: &[u8] = b"@*_+-./";
 
 fn hex_digit(unit: u16) -> Option<u8> {
-    match unit {
-        unit if (b'0' as u16..=b'9' as u16).contains(&unit) => Some((unit - b'0' as u16) as u8),
-        unit if (b'a' as u16..=b'f' as u16).contains(&unit) => {
-            Some((unit - b'a' as u16 + 10) as u8)
-        }
-        unit if (b'A' as u16..=b'F' as u16).contains(&unit) => {
-            Some((unit - b'A' as u16 + 10) as u8)
-        }
-        _ => None,
-    }
-}
-
-#[inline(always)]
-fn hex_digit_ascii(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
+    let digit = char::from_u32(u32::from(unit))?.to_digit(HEXADECIMAL_RADIX)?;
+    u8::try_from(digit).ok()
 }
 
 fn append_escape_hex(output: &mut String, value: u16, digit_count: usize) {
     for shift in (0..digit_count).rev() {
-        let digit = ((value >> (shift * 4)) & u16::from(HEX_NIBBLE_MASK)) as usize;
+        let digit = ((value >> (shift as u32 * HEX_DIGIT_BITS)) & u16::from(HEX_NIBBLE_MASK)) as usize;
         output.push(HEX_DIGITS[digit] as char);
     }
 }
@@ -94,13 +81,13 @@ fn unescape_escape(units: &[u16], index: usize) -> Option<(u16, usize)> {
     if units.get(index + 1) == Some(&ESCAPE_WIDE_MARKER) {
         let digits = units.get(index + 2..index + 2 + ESCAPE_WIDE_HEX_DIGITS)?;
         let unit = digits.iter().try_fold(0_u16, |value, digit| {
-            Some((value << 4) | u16::from(hex_digit(*digit)?))
+            Some((value << HEX_DIGIT_BITS) | u16::from(hex_digit(*digit)?))
         })?;
         return Some((unit, 2 + ESCAPE_WIDE_HEX_DIGITS));
     }
     let high = hex_digit(*units.get(index + 1)?)?;
     let low = hex_digit(*units.get(index + 2)?)?;
-    Some((u16::from((high << 4) | low), 3))
+    Some((u16::from((high << HEX_DIGIT_BITS) | low), URI_ESCAPE_LEN))
 }
 
 const MALFORMED_URI_MESSAGE: &str = "URI malformed";
@@ -157,148 +144,87 @@ pub(super) fn decode_uri(
     component: bool,
 ) -> Result<super::wtf16::JsString, &'static str> {
     let units = value.units();
-    if !units.iter().any(|unit| unit == b'%' as u16) {
+    if !units.iter().any(|unit| unit == u16::from(b'%')) {
         return Ok(value.clone());
     }
-    if let super::wtf16::Units::Ascii(bytes) = units {
-        return decode_uri_ascii(bytes, component);
-    }
-    let mut output = Vec::with_capacity(units.len());
-    let mut index = 0;
-    while index < units.len() {
-        if units.at(index) != b'%' as u16 {
-            output.push(units.at(index));
-            index += 1;
-            continue;
+    // ASCII strings are Quench's common representation for escaped URI input; keep that loop
+    // on bytes, since the general `Units` accessor branches on ASCII vs UTF-16 per code unit.
+    // Decoding never expands past one UTF-16 unit per escaped input byte, so the ASCII bound
+    // keeps one allocation without reserving six times the result.
+    let output = match units {
+        super::wtf16::Units::Ascii(bytes) => {
+            let mut output = Vec::with_capacity(bytes.len().div_ceil(URI_ESCAPE_LEN));
+            decode_uri_units(bytes.len(), |index| u16::from(bytes[index]), component, &mut output)?;
+            output
         }
-        if index + 2 >= units.len() {
-            return Err(MALFORMED_URI_MESSAGE);
+        _ => {
+            let mut output = Vec::with_capacity(units.len());
+            decode_uri_units(units.len(), |index| units.at(index), component, &mut output)?;
+            output
         }
-        let first = (hex_digit(units.at(index + 1)).ok_or(MALFORMED_URI_MESSAGE)? << 4)
-            | hex_digit(units.at(index + 2)).ok_or(MALFORMED_URI_MESSAGE)?;
-        let (width, mut code_point, minimum) = match first {
-            0x00..=0x7f => (1, u32::from(first), 0),
-            0xc2..=0xdf => (2, u32::from(first & 0x1f), 0x80),
-            0xe0..=0xef => (3, u32::from(first & 0x0f), 0x800),
-            0xf0..=0xf4 => (4, u32::from(first & 0x07), 0x10000),
-            _ => return Err(MALFORMED_URI_MESSAGE),
-        };
-        if width == 1 && !component && URI_RESERVED.contains(&{ first }) {
-            units.slice(index..index + 3).extend_into(&mut output);
-            index += 3;
-            continue;
-        }
-        for continuation in 1..width {
-            let escape = index + continuation * 3;
-            if units.get(escape) != Some(b'%' as u16) || escape + 2 >= units.len() {
-                return Err(MALFORMED_URI_MESSAGE);
-            }
-            let byte = (hex_digit(units.at(escape + 1)).ok_or(MALFORMED_URI_MESSAGE)? << 4)
-                | hex_digit(units.at(escape + 2)).ok_or(MALFORMED_URI_MESSAGE)?;
-            if byte & 0xc0 != 0x80 {
-                return Err(MALFORMED_URI_MESSAGE);
-            }
-            if continuation == 1
-                && ((first == 0xe0 && byte < 0xa0)
-                    || (first == 0xf0 && byte < 0x90)
-                    || (first == 0xf4 && byte > 0x8f))
-            {
-                return Err(MALFORMED_URI_MESSAGE);
-            }
-            code_point = (code_point << 6) | u32::from(byte & 0x3f);
-        }
-        if code_point < minimum
-            || code_point > 0x10ffff
-            || SURROGATE_CODE_POINTS.contains(&code_point)
-        {
-            return Err(MALFORMED_URI_MESSAGE);
-        }
-        if code_point <= 0xffff {
-            output.push(code_point as u16);
-        } else {
-            let scalar = code_point - 0x10000;
-            output.push(0xd800 | (scalar >> 10) as u16);
-            output.push(0xdc00 | (scalar & 0x3ff) as u16);
-        }
-        index += width * 3;
-    }
+    };
     Ok(super::wtf16::JsString::from_units(&output))
 }
 
-/// ASCII strings are Quench's common representation for escaped URI input. Keep this loop on
-/// bytes: the general `Units` accessor has to branch on ASCII vs UTF-16 for every code unit.
-fn decode_uri_ascii(
-    bytes: &[u8],
+/// ECMAScript's `Decode` over `len` code units read through `at`: each `%XX` escape run that
+/// spells one UTF-8 sequence becomes its UTF-16 units, and an escaped reserved character
+/// stays escaped unless decoding a URI component.
+#[inline(always)]
+fn decode_uri_units(
+    len: usize,
+    at: impl Fn(usize) -> u16,
     component: bool,
-) -> Result<super::wtf16::JsString, &'static str> {
-    // Each escaped input byte occupies three ASCII bytes, and decoding never expands the
-    // resulting UTF-16 code-unit count past the encoded byte count. This avoids reserving six
-    // times the result size for the common percent-encoded astral text while keeping one
-    // allocation for ordinary ASCII-heavy strings.
-    let mut output = Vec::with_capacity(bytes.len().div_ceil(3));
+    output: &mut Vec<u16>,
+) -> Result<(), &'static str> {
     let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != b'%' {
-            output.push(u16::from(bytes[index]));
-            index += 1;
-            continue;
-        }
-        if index + 2 >= bytes.len() {
-            return Err(MALFORMED_URI_MESSAGE);
-        }
-        let first = (hex_digit_ascii(bytes[index + 1]).ok_or(MALFORMED_URI_MESSAGE)? << 4)
-            | hex_digit_ascii(bytes[index + 2]).ok_or(MALFORMED_URI_MESSAGE)?;
-        let (width, mut code_point, minimum) = match first {
-            0x00..=0x7f => (1, u32::from(first), 0),
-            0xc2..=0xdf => (2, u32::from(first & 0x1f), 0x80),
-            0xe0..=0xef => (3, u32::from(first & 0x0f), 0x800),
-            0xf0..=0xf4 => (4, u32::from(first & 0x07), 0x10000),
-            _ => return Err(MALFORMED_URI_MESSAGE),
-        };
-        if width == 1 && !component && URI_RESERVED.contains(&first) {
-            output.extend([
-                u16::from(b'%'),
-                u16::from(bytes[index + 1]),
-                u16::from(bytes[index + 2]),
-            ]);
-            index += 3;
-            continue;
-        }
-        for continuation in 1..width {
-            let escape = index + continuation * 3;
-            if bytes.get(escape) != Some(&b'%') || escape + 2 >= bytes.len() {
-                return Err(MALFORMED_URI_MESSAGE);
-            }
-            let byte = (hex_digit_ascii(bytes[escape + 1]).ok_or(MALFORMED_URI_MESSAGE)? << 4)
-                | hex_digit_ascii(bytes[escape + 2]).ok_or(MALFORMED_URI_MESSAGE)?;
-            if byte & 0xc0 != 0x80 {
-                return Err(MALFORMED_URI_MESSAGE);
-            }
-            if continuation == 1
-                && ((first == 0xe0 && byte < 0xa0)
-                    || (first == 0xf0 && byte < 0x90)
-                    || (first == 0xf4 && byte > 0x8f))
-            {
-                return Err(MALFORMED_URI_MESSAGE);
-            }
-            code_point = (code_point << 6) | u32::from(byte & 0x3f);
-        }
-        if code_point < minimum
-            || code_point > 0x10ffff
-            || SURROGATE_CODE_POINTS.contains(&code_point)
-        {
-            return Err(MALFORMED_URI_MESSAGE);
-        }
-        if code_point <= 0xffff {
-            output.push(code_point as u16);
+    while index < len {
+        if at(index) == u16::from(b'%') {
+            index = decode_uri_escape(len, &at, component, index, output)?;
         } else {
-            let scalar = code_point - 0x10000;
-            output.push(0xd800 | (scalar >> 10) as u16);
-            output.push(0xdc00 | (scalar & 0x3ff) as u16);
+            output.push(at(index));
+            index += 1;
         }
-        index += width * 3;
     }
-    Ok(super::wtf16::JsString::from_units(&output))
+    Ok(())
+}
+
+/// Decodes the escape run that starts at `index` into `output`; answers where the run ends.
+#[inline(always)]
+fn decode_uri_escape(
+    len: usize,
+    at: &impl Fn(usize) -> u16,
+    component: bool,
+    index: usize,
+    output: &mut Vec<u16>,
+) -> Result<usize, &'static str> {
+    let escaped_byte = |index: usize| -> Option<u8> {
+        if index + URI_ESCAPE_LEN > len || at(index) != u16::from(b'%') {
+            return None;
+        }
+        Some(hex_digit(at(index + 1))? << HEX_DIGIT_BITS | hex_digit(at(index + 2))?)
+    };
+    let lead = escaped_byte(index).ok_or(MALFORMED_URI_MESSAGE)?;
+    // A UTF-8 lead byte's leading ones count the sequence's bytes; an ASCII byte has none.
+    let width = match lead.leading_ones() as usize {
+        0 => 1,
+        width @ 2..=UTF8_MAX_WIDTH => width,
+        _ => return Err(MALFORMED_URI_MESSAGE),
+    };
+    let escapes = index..index + width * URI_ESCAPE_LEN;
+    let end = escapes.end;
+    if width == 1 && !component && URI_RESERVED.contains(&lead) {
+        output.extend(escapes.map(at));
+        return Ok(end);
+    }
+    let mut sequence = [0; UTF8_MAX_WIDTH];
+    for (byte, escape) in sequence[..width].iter_mut().zip(escapes.step_by(URI_ESCAPE_LEN)) {
+        *byte = escaped_byte(escape).ok_or(MALFORMED_URI_MESSAGE)?;
+    }
+    // UTF-8 validity rejects overlong forms, surrogates and code points past U+10FFFF,
+    // exactly the sequences `Decode` rejects.
+    let decoded = std::str::from_utf8(&sequence[..width]).map_err(|_| MALFORMED_URI_MESSAGE)?;
+    output.extend(decoded.encode_utf16());
+    Ok(end)
 }
 
 pub(super) fn parse_integer(text: &str, mut radix: i32) -> f64 {

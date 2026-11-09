@@ -4,7 +4,7 @@ use super::body::{self, Consume};
 use super::headers::{self, Guard};
 use super::{private_slot, type_error, usv_or_byte_string, usv_string, Context, Outcome, Slot};
 use crate::modules::host_members::{current, members};
-use crate::modules::webstreams_shared_vm::{self as web, arg, custom_inspect, get, install, is_nullish, is_undefined, literal, put, record, ClassMember};
+use crate::modules::webstreams_shared_vm::{self as web, arg, custom_inspect, get, install, is_nullish, is_undefined, put, record, ClassMember};
 use quench_runtime::{RootId, RootedError};
 
 members!(Member, "fetchResponse", [
@@ -33,12 +33,12 @@ members!(Member, "fetchResponse", [
 
 /// A response's fields.
 pub(crate) mod field {
-    pub(crate) const TYPE: &str = "type";
+    pub(crate) use crate::modules::keys::TYPE;
     pub(crate) const STATUS: &str = "status";
     pub(crate) const STATUS_TEXT: &str = "statusText";
-    pub(crate) const HEADERS: &str = "headers";
-    pub(crate) const HEADERS_STATE: &str = "headersState";
-    pub(crate) const BODY: &str = "body";
+    pub(crate) use crate::modules::keys::HEADERS;
+    pub(crate) use crate::modules::keys::HEADERS_STATE;
+    pub(crate) use crate::modules::keys::BODY;
     pub(crate) const URL_LIST: &str = "urlList";
 }
 use field::*;
@@ -46,17 +46,16 @@ use field::*;
 /// The response types this module makes.
 pub(crate) const DEFAULT: &str = "default";
 pub(crate) const BASIC: &str = "basic";
-const ERROR: &str = "error";
+use crate::modules::keys::ERROR;
 /// The status range a constructed Response may have, and its OK range.
-const STATUS_RANGE: std::ops::RangeInclusive<f64> = 200.0..=599.0;
+pub(crate) const STATUS_RANGE: std::ops::RangeInclusive<f64> = 200.0..=599.0;
 const OK_RANGE: std::ops::RangeInclusive<f64> = 200.0..=299.0;
 /// The statuses whose responses have no body, and the redirect statuses.
 pub(crate) const NULL_BODY_STATUSES: [u16; 4] = [101, 204, 205, 304];
 pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const DEFAULT_STATUS: f64 = 200.0;
 const DEFAULT_REDIRECT_STATUS: f64 = 302.0;
-/// Web IDL's `unsigned short` wraps modulo this.
-const UNSIGNED_SHORT_MODULUS: f64 = 65536.0;
+use crate::modules::message_event_shared_vm::UNSIGNED_SHORT_MODULUS;
 const JSON_TYPE: &str = "application/json";
 
 const MEMBERS: [ClassMember<Member>; 16] = [
@@ -115,18 +114,7 @@ pub(crate) fn initialize(
     let status_text = c.string_rooted(status_text);
     let urls = urls.iter().map(|url| c.string_rooted(url)).collect::<Vec<_>>();
     let urls = c.array_rooted(&urls)?;
-    let state = record(
-        c,
-        &[
-            (TYPE, kind),
-            (STATUS, status),
-            (STATUS_TEXT, status_text),
-            (HEADERS, headers_object),
-            (HEADERS_STATE, headers_state),
-            (BODY, body),
-            (URL_LIST, urls),
-        ],
-    )?;
+    let state = record(c, &[TYPE, STATUS, STATUS_TEXT, HEADERS, HEADERS_STATE, BODY, URL_LIST], &[kind, status, status_text, headers_object, headers_state, body, urls])?;
     private_slot::write(c, object, Slot::Response, state)?;
     Ok(state)
 }
@@ -219,7 +207,7 @@ fn clone(c: &mut Context<'_>, this: RootId) -> Outcome {
         return Err(type_error(c, "Response.clone: Body has already been consumed."));
     }
     let object = super::bare_instance(c, super::table::RESPONSE)?;
-    let copy = record(c, &[])?;
+    let copy = record(c, &[], &[])?;
     for name in [TYPE, STATUS, STATUS_TEXT, URL_LIST] {
         let value = get(c, state, name)?;
         put(c, copy, name, value)?;
@@ -316,7 +304,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             ] {
                 fields.push((name, getter(c, state, member)?));
             }
-            let data = literal(c, &fields)?;
+            let data = super::literal_fields(c, &fields)?;
             custom_inspect(c, this, "Response", data, args)
         }
         Member::Error => {

@@ -9,11 +9,6 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 
-#[cfg(unix)]
-unsafe extern "C" {
-    fn tzset();
-}
-
 pub(crate) fn collect_garbage(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -30,7 +25,7 @@ pub(crate) fn collect_garbage(
 
 const STDOUT_FD: i32 = 1;
 const STDERR_FD: i32 = 2;
-const CASE_RESULT_ENV: &str = "QUENCH_NODE_TEST_CASE_RESULT";
+use crate::CASE_RESULT_ENV;
 const MAX_SAFE_EXIT_CODE: f64 = 9_007_199_254_740_991.0;
 const UNHANDLED_REJECTION_CLI_GUIDANCE: &str = "To terminate the node process on unhandled promise rejection, use the CLI flag `--unhandled-rejections=strict` (see https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode).";
 
@@ -273,7 +268,7 @@ fn install_identity(context: &mut NativeContext<'_, NodeHost>, process: RootId) 
     // remains useful when Quench is embedded in run-parallel, where argv0 is
     // the harness executable rather than this runtime.
     let node_executable = if argv0_is_runtime {
-        executable.clone()
+        executable
     } else {
         crate::shared_run::executable_path()
             .map_err(|error| RootedError::host(error.to_string()))?
@@ -853,7 +848,7 @@ pub(crate) fn really_exit(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    // A memory census of the process as it exits (`QUENCH_MEMORY`), whose allocation counts
+    // A memory census of the process as it exits (`QUENCH_TRACE=memory`), whose allocation counts
     // after a known amount of work give that work's allocations.
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("process_exit");
@@ -1625,7 +1620,7 @@ fn errno_name(errno: i32) -> &'static str {
     }
 }
 
-const NANOSECONDS_PER_SECOND: f64 = 1_000_000_000.0;
+const NANOSECONDS_PER_SECOND: f64 = quench_runtime::units::NANOSECONDS_PER_SECOND as f64;
 
 /// The monotonic clock `process.hrtime` reads, in nanoseconds.
 fn monotonic_ns(context: &mut NativeContext<'_, NodeHost>) -> Result<f64, RootedError> {
@@ -2057,12 +2052,7 @@ pub(crate) fn set_env(
     // SAFETY: the shared VM serializes host environment reads and writes for
     // this process, matching Node's process.env behavior.
     unsafe { std::env::set_var(&key, &value) };
-    #[cfg(unix)]
-    if key == "TZ" {
-        // POSIX local-time conversion caches TZ; Node refreshes it when the
-        // environment variable changes so Date observes process.env.TZ.
-        unsafe { tzset() };
-    }
+    crate::modules::util_env::env_changed(&key);
     Ok(context.undefined())
 }
 
@@ -2081,10 +2071,7 @@ pub(crate) fn delete_env(
     }
     // SAFETY: see `set_env`; this is the matching process.env deletion path.
     unsafe { std::env::remove_var(&key) };
-    #[cfg(unix)]
-    if key == "TZ" {
-        unsafe { tzset() };
-    }
+    crate::modules::util_env::env_changed(&key);
     Ok(context.undefined())
 }
 
@@ -2151,10 +2138,7 @@ pub(crate) fn load_env_file(
         }
         let key = context.string_rooted(&key_text);
         let existing = context.get_property_rooted(env, key)?;
-        if !context
-            .rooted_value(existing)
-            .is_some_and(Value::is_undefined)
-        {
+        if !context.rooted_value(existing).is_some_and(Value::is_undefined) {
             continue;
         }
         let value = context.string_rooted(&value_text);
@@ -2164,6 +2148,7 @@ pub(crate) fn load_env_file(
         // SAFETY: this synchronous Node API mirrors Node's process.env update;
         // the environment is observed only at host process boundaries.
         unsafe { std::env::set_var(&key_text, &value_text) };
+        crate::modules::util_env::env_changed(&key_text);
     }
     Ok(context.undefined())
 }
@@ -2427,7 +2412,7 @@ pub(crate) fn finish_after_uncaught_error(
     if control.requested_exit_code().is_some() {
         let exit = finish_requested_exit(runtime, program);
         if control.fatal_uncaught_requested() {
-            return routed.and(exit.map(|_| false));
+            return routed.and_then(|_| exit.map(|_| false));
         }
         if control.fatal_exception_handler_failed() {
             return routed.and(exit).map(|_| true);
@@ -3025,12 +3010,21 @@ pub(super) fn route_callback_failure(
     let Some(exception) = failure.exception else {
         return Err(runtime.format_rooted_error(program, &mut failure));
     };
+    route_uncaught_failure(runtime, program, exception, &mut failure)
+}
+
+/// Routes a thrown `exception` (rooted in `failure`) to `uncaughtException` listeners and
+/// releases its root: handled, or the uncaught error's text when nobody listens.
+fn route_uncaught_failure(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    exception: RootId,
+    failure: &mut RootedError,
+) -> Result<(), String> {
     let routed = route_uncaught_exception_value(runtime, program, exception, "uncaughtException");
     let result = match routed {
         Ok(true) => Ok(()),
-        Ok(false) => {
-            Err(format_uncaught_error(runtime, program, &mut failure))
-        }
+        Ok(false) => Err(format_uncaught_error(runtime, program, failure)),
         Err(handler_error) => Err(handler_error),
     };
     runtime.release_root(exception);
@@ -3263,17 +3257,7 @@ pub(crate) fn run_host_jobs_with_uncaught(
             error,
             exception: Some(exception),
         };
-        let routed =
-            route_uncaught_exception_value(runtime, program, exception, "uncaughtException");
-        let result = match routed {
-            Ok(true) => Ok(()),
-            Ok(false) => {
-                Err(format_uncaught_error(runtime, program, &mut failure))
-            }
-            Err(handler_error) => Err(handler_error),
-        };
-        runtime.release_root(exception);
-        result?;
+        route_uncaught_failure(runtime, program, exception, &mut failure)?;
     }
 }
 

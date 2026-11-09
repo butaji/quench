@@ -2,13 +2,14 @@
 //!
 //! Entries live in slots in insertion order. Deleting an entry leaves a hole, so the
 //! position an iterator or `forEach` holds keeps naming the same entry; holes are dropped by
-//! compaction, which renumbers the collection's registered iterators. A hash index maps each
-//! key's SameValueZero hash to its slot. It is built by the first lookup in a collection
-//! larger than a linear scan is worth and kept current by every mutation here. The
-//! collector reads only the slots.
+//! compaction, which renumbers the collection's registered iterators. Each slot's key hash,
+//! folded to 32 bits, sits beside the slots in a parallel array: probes compare hashes before
+//! keys, and the key index (`index::KeyIndex`: flat arrays of hash tags and slots, probed a
+//! word of tags at a time) is built from the hashes once a collection outgrows a linear scan
+//! and kept current by every mutation here. The collector reads only the slots.
 
 use crate::value::Value;
-use std::cell::RefCell;
+use smallvec::SmallVec;
 
 /// Collections up to this size are searched by a linear scan: comparing a few keys costs
 /// less than hashing the probe key and building an index.
@@ -19,6 +20,12 @@ const MIN_COMPACTED_HOLES: usize = 16;
 
 /// The key a deleted slot holds; no JavaScript value is the deleted sentinel.
 const HOLE: Value = Value::DELETED;
+
+mod index;
+mod lazy;
+mod weak;
+pub(crate) use lazy::Entries;
+pub(crate) use weak::{WeakMapEntries, WeakSetEntries};
 
 pub(crate) trait CollectionEntry: Copy {
     fn key(&self) -> Value;
@@ -43,44 +50,54 @@ impl CollectionEntry for (Value, Value) {
     }
 }
 
-/// One indexed entry: its slot and its key's hash folded to 32 bits, which also rehashes
-/// the index as it grows without reading the keys.
-#[derive(Clone, Copy, Debug)]
-struct IndexedSlot {
-    hash: u32,
-    slot: u32,
-}
-
-/// Maps each live key's hash to its slot; keys sharing a hash hold separate entries.
-type KeyIndex = hashbrown::HashTable<IndexedSlot>;
-
 /// A key hash folded to the 32 bits an index entry keeps.
 fn folded_hash(hash: u64) -> u32 {
     (hash ^ (hash >> u32::BITS)) as u32
 }
 
-/// The table hash of a folded hash: hashbrown picks buckets from the low bits and tags
-/// from the high bits, so the folded bits fill both halves.
-fn table_hash(folded: u32) -> u64 {
-    u64::from(folded) | (u64::from(folded) << u32::BITS)
+/// The SameValueZero hash of a number key: both zeros and every NaN hash alike. A small
+/// integer's bits end in dozens of zeros, which a multiplicative hash would keep at the
+/// bottom, where the index picks buckets, so splitmix64's output function (Steele, Lea and
+/// Flood, OOPSLA 2014) mixes every bit into every other.
+pub(crate) fn number_key_hash(number: f64) -> u64 {
+    let bits = if number == 0.0 { 0 } else if number.is_nan() { f64::NAN.to_bits() } else { number.to_bits() };
+    let x = (bits ^ (bits >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    let x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
 }
 
-fn index_slot(slot: usize) -> u32 {
-    u32::try_from(slot).expect("a collection's slots fit its index")
-}
-
-fn insert_slot(index: &mut KeyIndex, hash: u64, slot: usize) {
-    let hash = folded_hash(hash);
-    index.insert_unique(table_hash(hash), IndexedSlot { hash, slot: index_slot(slot) }, |entry| {
-        table_hash(entry.hash)
-    });
+impl super::Heap {
+    /// The SameValueZero hash of a key that is no number: a string by its text hash, a
+    /// BigInt by value, anything else by identity. Kept out of line, so a number key's
+    /// hash stays a few inlined instructions.
+    #[inline(never)]
+    pub(crate) fn non_number_key_hash(&self, key: Value) -> u64 {
+        use std::hash::{Hash, Hasher};
+        if let Some(hash) = self.string_hash(key) {
+            return u64::from(hash);
+        }
+        let mut hasher = rustc_hash::FxHasher::default();
+        match self.get(key) {
+            Some(super::Cell::BigInt(value)) => value.hash(&mut hasher),
+            _ => key.hash(&mut hasher),
+        }
+        hasher.finish()
+    }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct CollectionEntries<T> {
     slots: Vec<T>,
+    /// Per slot, its key's folded hash (`folded_hash`); a hole keeps its key's. Inline while
+    /// a linear scan serves, so a small collection allocates its slots alone.
+    hashes: SmallVec<[u32; LINEAR_SCAN_ENTRIES]>,
     live: usize,
-    index: RefCell<Option<KeyIndex>>,
+    /// No live entry sits before this slot: deleting the oldest entries (a queue, an LRU
+    /// cache evicting `map.keys().next()`) leaves holes at the front, which a walk from the
+    /// first slot would otherwise step over again on every iteration.
+    head: usize,
+    /// Present once the slots outnumber `LINEAR_SCAN_ENTRIES`.
+    index: Option<index::KeyIndex>,
     /// Iterators over this collection, renumbered by compaction and reset by `clear`. Not
     /// traced: an entry whose cell is no longer such an iterator is dropped when visited.
     iterators: Vec<Value>,
@@ -93,23 +110,18 @@ impl<T> Default for CollectionEntries<T> {
     fn default() -> Self {
         Self {
             slots: Vec::new(),
+            hashes: SmallVec::new(),
             live: 0,
-            index: RefCell::new(None),
+            head: 0,
+            index: None,
             iterators: Vec::new(),
             walks: 0,
         }
     }
 }
 
-impl<T: CollectionEntry> From<Vec<T>> for CollectionEntries<T> {
-    fn from(entries: Vec<T>) -> Self {
-        Self {
-            live: entries.len(),
-            slots: entries,
-            ..Self::default()
-        }
-    }
-}
+/// What a snapshot keeps of a collection: slots, their hashes, the live count, iterators.
+pub(crate) type SnapshotParts<'a, T> = (&'a [T], &'a [u32], usize, &'a [Value]);
 
 /// How a compaction moved slots: an iterator positioned at slot `old` continues from
 /// `new_slot(old)`.
@@ -126,19 +138,27 @@ impl Compaction {
 }
 
 impl<T: CollectionEntry> CollectionEntries<T> {
-    /// The slots (holes included, so registered iterators keep their positions), the live
-    /// count and the registered iterators, for a snapshot; refused while a walk holds slot
-    /// positions outside any iterator. The key index is rebuilt on first lookup.
-    pub(crate) fn snapshot_parts(&self) -> crate::snapshot::SnapshotResult<(&[T], usize, &[Value])> {
+    /// The slots (holes included, so registered iterators keep their positions), their
+    /// hashes, the live count and the registered iterators, for a snapshot; refused while a
+    /// walk holds slot positions outside any iterator.
+    pub(crate) fn snapshot_parts(&self) -> crate::snapshot::SnapshotResult<SnapshotParts<'_, T>> {
         if self.walks != 0 {
             return Err(crate::snapshot::SnapshotError::unsupported("a collection being walked"));
         }
-        Ok((&self.slots, self.live, &self.iterators))
+        Ok((&self.slots, &self.hashes, self.live, &self.iterators))
     }
 
-    /// The entries `snapshot_parts` gave.
-    pub(crate) fn from_snapshot_parts(slots: Vec<T>, live: usize, iterators: Vec<Value>) -> Self {
-        Self { slots, live, iterators, ..Self::default() }
+    /// The entries `snapshot_parts` gave; the key index is rebuilt from the hashes.
+    pub(crate) fn from_snapshot_parts(slots: Vec<T>, hashes: Vec<u32>, live: usize, iterators: Vec<Value>) -> Self {
+        let index = (slots.len() > LINEAR_SCAN_ENTRIES).then(|| index::KeyIndex::of(&hashes));
+        Self { slots, hashes: SmallVec::from_vec(hashes), live, head: 0, index, iterators, walks: 0 }
+    }
+
+    /// Entries with distinct keys, each with its key's hash.
+    pub(crate) fn from_hashed(entries: impl IntoIterator<Item = (T, u64)>) -> Self {
+        let mut collection = Self::default();
+        entries.into_iter().for_each(|(entry, hash)| collection.push(entry, hash));
+        collection
     }
 
     /// The number of live entries.
@@ -154,11 +174,13 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// (`Cell::payload_bytes`).
     pub(crate) fn payload_bytes(&self) -> usize {
         self.slots.capacity() * size_of::<T>()
+            + if self.hashes.spilled() { self.hashes.capacity() * size_of::<u32>() } else { 0 }
+            + self.index.as_ref().map_or(0, index::KeyIndex::bytes)
     }
 
     /// The live entries in insertion order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = T> + '_ {
-        self.slots
+        self.slots[self.head..]
             .iter()
             .copied()
             .filter(|entry| entry.key() != HOLE)
@@ -178,6 +200,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
 
     /// The first live entry at or after `slot`, with its slot.
     pub(crate) fn next_live(&self, slot: usize) -> Option<(usize, T)> {
+        let slot = slot.max(self.head);
         self.slots
             .get(slot..)?
             .iter()
@@ -185,59 +208,43 @@ impl<T: CollectionEntry> CollectionEntries<T> {
             .map(|offset| (slot + offset, self.slots[slot + offset]))
     }
 
-    /// The slot of the entry whose key `same` accepts. `hash` gives SameValueZero-equal keys
-    /// equal hashes; `key_hash` is the probe key's.
-    pub(crate) fn position(
-        &self,
-        key_hash: u64,
-        hash: impl Fn(Value) -> u64,
-        same: impl Fn(Value) -> bool,
-    ) -> Option<usize> {
-        if self.slots.len() <= LINEAR_SCAN_ENTRIES {
-            return self
-                .slots
-                .iter()
-                .position(|entry| entry.key() != HOLE && same(entry.key()));
+    /// The slot of the entry whose key is `key` or one `same` accepts. `key_hash` is `key`'s
+    /// hash, under which SameValueZero-equal keys agree. Identical bits are SameValueZero (a
+    /// NaN included), so `same` runs only for keys spelled differently.
+    #[inline]
+    pub(crate) fn position(&self, key: Value, key_hash: u64, same: impl Fn(Value) -> bool) -> Option<usize> {
+        let hash = folded_hash(key_hash);
+        let matches = |slot: usize| {
+            let candidate = self.slots[slot].key();
+            candidate == key || (candidate != HOLE && same(candidate))
+        };
+        match &self.index {
+            Some(index) => index.find(hash, matches),
+            None => (0..self.slots.len()).find(|&slot| self.hashes[slot] == hash && matches(slot)),
         }
-        let mut index = self.index.borrow_mut();
-        let index = index.get_or_insert_with(|| {
-            let mut index = KeyIndex::with_capacity(self.live);
-            for (slot, entry) in self.slots.iter().enumerate() {
-                if entry.key() != HOLE {
-                    insert_slot(&mut index, hash(entry.key()), slot);
-                }
-            }
-            index
-        });
-        let folded = folded_hash(key_hash);
-        index
-            .find(table_hash(folded), |entry| {
-                entry.hash == folded && same(self.slots[entry.slot as usize].key())
-            })
-            .map(|entry| entry.slot as usize)
     }
 
     /// Appends an entry whose key is absent; `key_hash` is its key's hash.
     pub(crate) fn push(&mut self, entry: T, key_hash: u64) {
-        if let Some(index) = self.index.get_mut() {
-            insert_slot(index, key_hash, self.slots.len());
-        }
         self.slots.push(entry);
+        self.hashes.push(folded_hash(key_hash));
         self.live += 1;
+        match &mut self.index {
+            Some(index) => index.push(&self.hashes),
+            None if self.slots.len() > LINEAR_SCAN_ENTRIES => self.index = Some(index::KeyIndex::of(&self.hashes)),
+            None => {}
+        }
     }
 
-    /// Deletes the live entry at `slot`, whose key hashes to `key_hash`, leaving a hole.
-    /// Returns the compaction it triggered, which the caller applies to the registered
-    /// iterators (`take_iterators`).
-    pub(crate) fn remove(&mut self, slot: usize, key_hash: u64) -> Option<Compaction> {
-        if let Some(index) = self.index.get_mut() {
-            let indexed = index_slot(slot);
-            if let Ok(entry) = index.find_entry(table_hash(folded_hash(key_hash)), |entry| entry.slot == indexed) {
-                entry.remove();
-            }
-        }
+    /// Deletes the live entry at `slot`, leaving a hole the index skips (a hole's key matches
+    /// no probe). Returns the compaction it triggered, which the caller applies to the
+    /// registered iterators (`take_iterators`).
+    pub(crate) fn remove(&mut self, slot: usize) -> Option<Compaction> {
         self.slots[slot] = T::hole();
         self.live -= 1;
+        if slot == self.head {
+            self.head += self.slots[slot..].iter().take_while(|entry| entry.key() == HOLE).count();
+        }
         let holes = self.slots.len() - self.live;
         (self.walks == 0 && holes >= MIN_COMPACTED_HOLES && holes > self.live)
             .then(|| self.compact())
@@ -253,8 +260,11 @@ impl<T: CollectionEntry> CollectionEntries<T> {
             }
         }
         live_before.push(live);
+        let mut kept = self.slots.iter().map(|entry| entry.key() != HOLE);
+        self.hashes.retain(|_| kept.next().unwrap_or(false));
         self.slots.retain(|entry| entry.key() != HOLE);
-        *self.index.get_mut() = None;
+        self.index = (self.slots.len() > LINEAR_SCAN_ENTRIES).then(|| index::KeyIndex::of(&self.hashes));
+        self.head = 0;
         Compaction { live_before }
     }
 
@@ -264,11 +274,14 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     pub(crate) fn clear(&mut self) {
         if self.walks == 0 {
             self.slots.clear();
+            self.hashes.clear();
+            self.index = None;
         } else {
+            // Holes match no probe, so the index stays valid for the slots that follow.
             self.slots.fill(T::hole());
         }
         self.live = 0;
-        *self.index.get_mut() = None;
+        self.head = self.slots.len();
     }
 
     /// Registers a new iterator, each registered once (a fresh one, or one `take_iterators`

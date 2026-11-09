@@ -23,7 +23,7 @@ use std::ptr::NonNull;
 pub(crate) const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
 /// A field load answered `depth` prototypes above a receiver of shape `receiver`: the chain
 /// still has exactly `prototype_shapes[..depth]`, and `answer` says what that chain holds.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct InheritedFieldCache {
     pub(crate) receiver: u32,
     pub(crate) atom: crate::bytecode::Atom,
@@ -40,6 +40,11 @@ pub(crate) struct InheritedFieldCache {
     /// The receiver's prototype link the proof holds for, compared undecoded.
     pub(crate) proved_prototype: super::ProtoLink,
     pub(crate) proved_holder: Value,
+    /// The value a `Slot` answer read under the current proof, held while `constant_watch`
+    /// is published (`heap::watch_prototype_values` of the holder): a use then reads it
+    /// without the holder. `None` before a read and once a walk proves the chain again.
+    pub(crate) constant: Value,
+    pub(crate) constant_watch: Option<crate::heap::PrototypeValueWatch>,
     /// The site's next older entry, or `NO_INHERITED_FIELD`: a site keeps up to
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
     pub(crate) next: u32,
@@ -98,10 +103,13 @@ struct Table {
     inherited: Vec<InheritedFieldCache>,
     /// Subjects a dead prototype released, for reuse.
     free: Vec<u32>,
+    /// The intrinsic-builtin fuses, which watched prototypes hold.
+    fuses: crate::code_dependencies::Fuses,
 }
 
 impl Table {
     fn retire(&mut self, subject: u32) {
+        self.fuses.note_layout_change(subject);
         if let Some(entries) = self.inherited_readers.get_mut(subject as usize) {
             for entry in std::mem::take(entries) {
                 if let Some(cache) = self.inherited.get_mut(entry as usize) {
@@ -196,6 +204,7 @@ impl Dependencies {
     pub(crate) fn release(&mut self, subject: u32) {
         let table = self.table_mut();
         table.retire(subject);
+        table.fuses.forget(subject);
         table.free.push(subject);
     }
 
@@ -208,6 +217,17 @@ impl Dependencies {
         table.readers.iter_mut().for_each(|readers| *readers = 0);
         table.inherited_readers.iter_mut().for_each(Vec::clear);
         table.inherited.iter_mut().for_each(|cache| cache.proved = false);
+        table.fuses.forget_all();
+    }
+
+    /// The intrinsic-builtin fuses (`code_dependencies::Fuses`).
+    #[inline(always)]
+    pub(crate) fn fuses(&self) -> &crate::code_dependencies::Fuses {
+        &self.table().fuses
+    }
+
+    pub(crate) fn fuses_mut(&mut self) -> &mut crate::code_dependencies::Fuses {
+        &mut self.table_mut().fuses
     }
 
     /// Inherited field cache entry `entry`.
@@ -223,6 +243,12 @@ impl Dependencies {
     #[inline(always)]
     pub(crate) fn inherited(&self, entry: u32) -> &InheritedFieldCache {
         &self.table().inherited[entry as usize]
+    }
+
+    /// Inherited field cache entry `entry`, where the cache holds one.
+    #[inline(always)]
+    pub(crate) fn inherited_get(&self, entry: u32) -> Option<&InheritedFieldCache> {
+        self.table().inherited.get(entry as usize)
     }
 
     pub(crate) fn inherited_mut(&mut self, entry: u32) -> &mut InheritedFieldCache {
@@ -296,6 +322,15 @@ impl Watch {
             // SAFETY: the table outlives every object of its heap, which owns it, and no
             // reference to it is live while an object's layout changes (`Dependencies`).
             unsafe { (*table.as_ref().get()).retire(subject) };
+        }
+    }
+
+    /// Pops the fuses this subject holds at `slot`: a write stores another value there.
+    #[inline(always)]
+    pub(crate) fn note_slot_write(&self, slot: usize) {
+        if let Some((table, subject)) = self.0 {
+            // SAFETY: as `retire`.
+            unsafe { (*table.as_ref().get()).fuses.note_slot_write(subject, slot) };
         }
     }
 }

@@ -1,5 +1,5 @@
-use super::module::ModuleRecord;
-use super::promise::PromiseState;
+mod collection_boundary;
+use super::{module::ModuleRecord, promise::PromiseState};
 use super::*;
 use smallvec::SmallVec;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -51,19 +51,17 @@ pub(super) fn active_shape_attributes(
     shapes: &[Shape],
     shape: u32,
 ) -> Vec<Option<(property_key::PropertyKey, ShapeAttributes)>> {
+    shape_lookup::owned_slots(shapes, shape).unwrap_or_else(|| chain_shape_attributes(shapes, shape))
+}
+
+fn chain_shape_attributes(
+    shapes: &[Shape],
+    shape: u32,
+) -> Vec<Option<(property_key::PropertyKey, ShapeAttributes)>> {
     // Both vectors are sized exactly: collections call this for every rooted shape.
-    let mut depth = 0;
-    let mut current = Some(shape);
-    while let Some(id) = current {
-        depth += 1;
-        current = shapes[id as usize].parent();
-    }
-    let mut chain = Vec::with_capacity(depth);
-    let mut current = Some(shape);
-    while let Some(id) = current {
-        chain.push(id);
-        current = shapes[id as usize].parent();
-    }
+    let ancestors = || std::iter::successors(Some(shape), |&id| shapes[id as usize].parent());
+    let mut chain = Vec::with_capacity(ancestors().count());
+    chain.extend(ancestors());
     chain.reverse();
 
     let mut entries = Vec::with_capacity(shapes[shape as usize].storage_len());
@@ -176,8 +174,8 @@ struct ParallelShapeTrace<'a> {
 }
 
 // SAFETY: the shape vector is immutable for the duration of collection, and
-// `append_shape_roots` reads only `parent` and `transition`, never the
-// interior-mutable caches. All shared bitmap updates are atomic; owned roots
+// `append_shape_roots` reads only `parent`, `transition` and an owned dictionary's
+// already-initialized lookup index, never initializing or mutating a cache. All shared bitmap updates are atomic; owned roots
 // are read-only. The trace object cannot outlive the joined worker scope.
 unsafe impl Send for ParallelShapeTrace<'_> {}
 // SAFETY: same immutable-metadata contract as the Send implementation.
@@ -282,19 +280,11 @@ fn rebuild_shape(
     transitions: &mut super::shape_transitions::ShapeTransitionIndex,
 ) -> u32 {
     let mut parent = 0;
-    let (function_name, constructed_name, name_reconfigured) = provenance::shape_names(old_shapes, old_shape);
-    for transition in [
-        function_name.map(|name| ShapeTransition::FunctionName { name }),
-        name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
-        provenance::shape_function_length_reconfigured(old_shapes, old_shape).then_some(ShapeTransition::FunctionLengthReconfigured),
-        constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
-    ].into_iter().flatten() {
+    for transition in provenance::metadata_transitions(old_shapes, old_shape) {
         parent = append_compacted_shape(shapes, transitions, parent, transition, 0);
     }
-    for (slot, entry) in active_shape_attributes(old_shapes, old_shape)
-        .into_iter()
-        .enumerate()
-    {
+    if let Some(shape) = shape_lookup::rebuild_owned_dictionary(old_shapes, old_accessors, old_shape, shapes, accessors, parent) { return shape; }
+    for (slot, entry) in active_shape_attributes(old_shapes, old_shape).into_iter().enumerate() {
         let slot = u32::try_from(slot).expect("object property index exceeds u32");
         let storage_len = slot as usize + 1;
         // Data attributes ride on the add; an accessor's take a descriptor after it.
@@ -404,15 +394,12 @@ impl<H: Host> Vm<H> {
             self.host.at_collection_boundary(self.memory_policy());
         }
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
+        if crate::trace::Channel::FunctionUse.on() {
             self.report_function_use();
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
-        // Slot projections contain immutable atom/slot IDs and survive collection. Private
-        // heap views are weak: retire them before sweep; active loops root their snapshots.
-        self.enumerable_keys.clear_snapshots();
         // Prepared regexp subjects share their strings' text: kept across a collection, they
         // would keep a dropped subject's text alive however large, as no string holds them.
         self.regexp_subjects.clear();
@@ -467,10 +454,10 @@ impl<H: Host> Vm<H> {
             self.heap.record_vm_gc_phase(0, phase_started);
             phase_started = std::time::Instant::now();
         }
-        // Roots are gathered source by source: a single iterator chain over
-        // every source costs each root a step through every nesting level. The previous
-        // collection's count sizes the vector, which otherwise regrows from empty each time.
-        let mut roots = Vec::with_capacity(self.gc_root_count);
+        // Roots are gathered source by source: a single iterator chain over every source
+        // costs each root a step through every nesting level. They go into the previous
+        // collection's mark stack, which holds as many already.
+        let mut roots = self.heap.take_mark_stack();
         self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
         roots.extend(self.wasm_js.roots());
         roots.extend([
@@ -708,7 +695,7 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.roots());
-        roots.extend(self.atom_strings.values().copied());
+        roots.extend(self.heap.kept_atom_roots(full));
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -798,9 +785,8 @@ impl<H: Host> Vm<H> {
                 )
         }));
         roots.extend(external_roots);
-        self.gc_root_count = roots.len();
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
+        if crate::trace::Channel::MemoryPeak.on() {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
             self.report_memory_snapshot(&phase);
         }
@@ -869,7 +855,7 @@ impl<H: Host> Vm<H> {
         unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         self.programs.clear_wasm_reference_caches();
-        self.prune_function_values();
+        self.prune_function_values(full);
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
         // before their slots can name new cells.
@@ -892,6 +878,13 @@ impl<H: Host> Vm<H> {
             self.compact_live_shapes(live_shapes);
         } else {
             self.retain_live_method_caches();
+        }
+        let heap = &self.heap;
+        self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
+        // A hint names its prototype by record id, which an allocation may give another object
+        // once this one is swept.
+        for hint in self.holder_hints.iter_mut().filter(|hint| !heap.is_live(hint.holder)) {
+            hint.watch.retire();
         }
         self.realm.jobs.extend(
             finalization_jobs
@@ -936,21 +929,12 @@ impl<H: Host> Vm<H> {
         if let Some(strings) = &mut self.dynamic_strings {
             strings.retain(|_, value| self.heap.is_live(*value));
         }
-        if let Some(atoms) = &mut self.string_atoms {
-            atoms.fill((Value::UNDEFINED, 0));
-        }
-        if let Some(strings) = &mut self.recent_atom_strings {
-            strings.fill((super::NO_RECENT_ATOM, Value::UNDEFINED));
-        }
-        if let Some(strings) = &mut self.ascii_unit_strings {
-            strings.fill(Value::UNDEFINED);
-        }
         H::after_collection(&mut crate::CollectionContext::new(&mut self.host, &mut self.heap));
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
-        self.host.at_collection_boundary(self.memory_policy());
+        self.collection_boundary();
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
+        if crate::trace::Channel::MemoryPeak.on() {
             let phase = format!("gc_{}_after", self.heap.collection_count());
             self.report_memory_snapshot(&phase);
         }
@@ -1020,6 +1004,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.object_shapes.reset();
         self.invalidate_field_caches();
+        self.holder_hints.clear();
         self.programs.invalidate_shape_bindings();
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
         self.megamorphic_methods.clear();
@@ -1027,7 +1012,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.remap_invalidated_method_shapes(&mapping);
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
+        if crate::trace::Channel::Memory.on() {
             eprintln!(
                 "{{\"kind\":\"quench-shape-compaction\",\"before\":{},\"after\":{},\"live_shapes\":{}}}",
                 old_shape_count,
@@ -1102,21 +1087,39 @@ impl<H: Host> Vm<H> {
         mut more: impl FnMut(&Self) -> bool,
     ) -> Result<(), JsError> {
         let home = self.realm.globals;
+        // An enclosing queue's entry stays in place below this queue's own.
+        let outer = std::mem::replace(&mut self.unobserved_jobs_entered, false);
         let result = (|| {
             while more(self) && let Some(job) = self.realm.jobs.pop_front() {
                 self.check_execution_interrupt()?;
+                if matches!(job, PendingJob::Call { .. }) {
+                    self.leave_unobserved_jobs();
+                }
                 self.run_pending_job(program, job, home)?;
                 // Static continuations may become ready after a reaction. Import
                 // loading waits for the agent checkpoint after this queue drains.
                 if self.static_module_jobs_pending() {
+                    self.leave_unobserved_jobs();
                     self.switch_realm_global(home);
                     self.advance_static_module_jobs(program)?;
                 }
             }
             Ok(())
         })();
+        self.leave_unobserved_jobs();
+        self.unobserved_jobs_entered = outer;
         self.switch_realm_global(home);
         result
+    }
+
+    /// Leaves the context unobserved Promise jobs of the running queue share, if entered: a
+    /// host job and module advancement run in the queue's own.
+    fn leave_unobserved_jobs(&mut self) {
+        if std::mem::take(&mut self.unobserved_jobs_entered) {
+            for root in self.host.leave_unobserved_job() {
+                self.heap.release_root(root);
+            }
+        }
     }
 
     /// Runs a job already taken off the queue, leaving its realm current: a finished job

@@ -1,9 +1,11 @@
-use num_bigint::{BigInt, Sign};
+mod digits;
+#[cfg(test)]
+mod tests;
+mod value;
 
-pub(crate) const IEEE754_FRACTION_BITS: u32 = f64::MANTISSA_DIGITS - 1;
-pub(crate) const IEEE754_EXPONENT_BIAS: i32 = 1023;
-pub(crate) const IEEE754_MAX_EXPONENT_BITS: u64 = 0x7ff;
-pub(crate) const IEEE754_SUBNORMAL_EXPONENT: i32 = -1074;
+pub(crate) use value::{Bitwise, JsBigInt};
+
+use num_bigint::{BigInt, Sign};
 
 pub(crate) fn parse_string(value: &str) -> Option<BigInt> {
     let value = value.trim();
@@ -26,17 +28,12 @@ pub(crate) fn number_as_bigint(value: f64) -> Option<BigInt> {
     if value == 0.0 {
         return Some(BigInt::from(0));
     }
-    let bits = value.abs().to_bits();
-    let exponent =
-        i32::from(u16::try_from((bits >> IEEE754_FRACTION_BITS) & IEEE754_MAX_EXPONENT_BITS).ok()?)
-            - IEEE754_EXPONENT_BIAS;
-    let significand =
-        (bits & ((1_u64 << IEEE754_FRACTION_BITS) - 1)) | (1_u64 << IEEE754_FRACTION_BITS);
-    let mut integer = if exponent >= IEEE754_FRACTION_BITS as i32 {
-        BigInt::from(significand)
-            << usize::try_from(exponent - IEEE754_FRACTION_BITS as i32).ok()?
+    // An integral value's significand shifted right drops only zero bits.
+    let (significand, exponent) = crate::float_layout::binary64_parts(value);
+    let mut integer = if exponent >= 0 {
+        BigInt::from(significand) << exponent.unsigned_abs()
     } else {
-        BigInt::from(significand >> u32::try_from(IEEE754_FRACTION_BITS as i32 - exponent).ok()?)
+        BigInt::from(significand >> exponent.unsigned_abs())
     };
     if value.is_sign_negative() {
         integer = -integer;
@@ -48,13 +45,8 @@ pub(crate) fn number_as_bigint(value: f64) -> Option<BigInt> {
 pub(crate) enum Error {
     DivisionByZero,
     NegativeExponent,
-    ExponentTooLarge,
-}
-
-pub(crate) fn shift(value: &BigInt, count: &BigInt, left_shift: bool) -> Result<BigInt, Error> {
-    let reverse = count.sign() == Sign::Minus;
-    let magnitude = usize::try_from(count.magnitude()).map_err(|_| Error::ExponentTooLarge)?;
-    Ok(if left_shift != reverse { value << magnitude } else { value >> magnitude })
+    /// The result would pass `value::MAX_BITS`.
+    TooLarge,
 }
 
 /// The value of a BigInt literal; OXC normalizes its digits to base 10 without separators.
@@ -64,14 +56,10 @@ pub(crate) fn decimal_literal(digits: &str) -> BigInt {
 
 /// The Number nearest `value`, ties to even; magnitudes past the finite range are infinite.
 pub(crate) fn to_f64(value: &BigInt) -> f64 {
-    num_traits::ToPrimitive::to_f64(value).unwrap_or(if value.sign() == Sign::Minus {
+    num_traits::ToPrimitive::to_f64(value).unwrap_or_else(|| if value.sign() == Sign::Minus {
         f64::NEG_INFINITY
     } else {
         f64::INFINITY
     })
 }
 
-/// Bytes the magnitude's digits occupy, for heap accounting.
-pub(crate) fn magnitude_bytes(value: &BigInt) -> usize {
-    usize::try_from(value.bits().div_ceil(u64::from(u8::BITS))).unwrap_or(usize::MAX)
-}

@@ -97,7 +97,7 @@ impl<H: Host> Vm<H> {
                 {
                     locale = locale
                         .split_once("-u-")
-                        .map_or(locale.clone(), |(base, _)| base.to_owned());
+                        .map_or_else(|| locale.clone(), |(base, _)| base.to_owned());
                 }
                 let numbering_system = option_numbering_system
                     .or(locale_numbering_system)
@@ -977,10 +977,10 @@ impl<H: Host> Vm<H> {
             {
                 let minimum = min_significant
                     .filter(|value| !value.is_undefined())
-                    .unwrap_or(Value::number(1.0));
+                    .unwrap_or_else(|| Value::number(1.0));
                 let maximum = max_significant
                     .filter(|value| !value.is_undefined())
-                    .unwrap_or(Value::number(if compact {
+                    .unwrap_or_else(|| Value::number(if compact {
                         2.0
                     } else {
                         NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS
@@ -1008,7 +1008,7 @@ impl<H: Host> Vm<H> {
             vm.set_intl_string_property(result, "signDisplay", &sign_display)?;
             let increment = vm
                 .hidden_value(this, NUMBER_FORMAT_ROUNDING_INCREMENT_SLOT)
-                .unwrap_or(Value::number(1.0));
+                .unwrap_or_else(|| Value::number(1.0));
             vm.set_named(p, result, "roundingIncrement", increment)?;
             for (key, slot, default) in [
                 (
@@ -1210,7 +1210,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<f64, JsError> {
         if let Some(Cell::BigInt(value)) = self.heap.get(value) {
-            return Ok(crate::bigint::to_f64(value));
+            return Ok(value.to_f64());
         }
         self.to_number(p, value)
     }
@@ -2033,8 +2033,8 @@ fn format_decimal_string(
             increment_decimal_digits(&mut digits);
             let digits = String::from_utf8(digits).ok()?;
             let split = digits.len().saturating_sub(maximum_fraction_digits);
-            integer = digits[..split].to_owned();
-            fraction = digits[split..].to_owned();
+            digits[..split].clone_into(&mut integer);
+            digits[split..].clone_into(&mut fraction);
         }
     }
     while fraction.ends_with('0') && fraction.len() > minimum_fraction_digits {
@@ -2157,55 +2157,48 @@ fn shared_currency_suffix(first: &str, second: &str, currency: &str) -> String {
     }
 }
 
+/// English labels of a measure unit: the long form (singular, plural), the short form
+/// (singular, plural) and the narrow form.
+pub(super) struct UnitLabel {
+    unit: &'static str,
+    long: [&'static str; 2],
+    short: [&'static str; 2],
+    narrow: &'static str,
+}
+
+/// The units `Intl.NumberFormat` and `Intl.DurationFormat` label, by singular unit name.
+pub(super) const UNIT_LABELS: &[UnitLabel] = &[
+    UnitLabel { unit: "year", long: ["year", "years"], short: ["yr", "yr"], narrow: "y" },
+    UnitLabel { unit: "month", long: ["month", "months"], short: ["mo", "mo"], narrow: "m" },
+    UnitLabel { unit: "week", long: ["week", "weeks"], short: ["wk", "wk"], narrow: "w" },
+    UnitLabel { unit: "day", long: ["day", "days"], short: ["day", "days"], narrow: "d" },
+    UnitLabel { unit: "hour", long: ["hour", "hours"], short: ["hr", "hr"], narrow: "h" },
+    UnitLabel { unit: "minute", long: ["minute", "minutes"], short: ["min", "min"], narrow: "m" },
+    UnitLabel { unit: "second", long: ["second", "seconds"], short: ["sec", "sec"], narrow: "s" },
+    UnitLabel { unit: "millisecond", long: ["millisecond", "milliseconds"], short: ["ms", "ms"], narrow: "ms" },
+    UnitLabel { unit: "microsecond", long: ["microsecond", "microseconds"], short: ["μs", "μs"], narrow: "μs" },
+    UnitLabel { unit: "nanosecond", long: ["nanosecond", "nanoseconds"], short: ["ns", "ns"], narrow: "ns" },
+    UnitLabel {
+        unit: "kilometer-per-hour",
+        long: ["kilometers per hour", "kilometers per hour"],
+        short: ["km/h", "km/h"],
+        narrow: "km/h",
+    },
+];
+
+/// The English label of `unit` in `display` style, if the unit has one.
+pub(super) fn unit_label(unit: &str, display: &str, singular: bool) -> Option<&'static str> {
+    let label = UNIT_LABELS.iter().find(|label| label.unit == unit)?;
+    let number = usize::from(!singular);
+    Some(match display {
+        "long" => label.long[number],
+        "narrow" => label.narrow,
+        _ => label.short[number],
+    })
+}
+
 fn format_number_unit(unit: &str, display: &str, value: f64) -> String {
-    let singular = value.abs() == 1.0;
-    let (long, short, narrow) = match unit {
-        "year" => (if singular { "year" } else { "years" }, "yr", "y"),
-        "month" => (if singular { "month" } else { "months" }, "mo", "m"),
-        "week" => (if singular { "week" } else { "weeks" }, "wk", "w"),
-        "day" => (
-            if singular { "day" } else { "days" },
-            if singular { "day" } else { "days" },
-            "d",
-        ),
-        "hour" => (if singular { "hour" } else { "hours" }, "hr", "h"),
-        "minute" => (if singular { "minute" } else { "minutes" }, "min", "m"),
-        "second" => (if singular { "second" } else { "seconds" }, "sec", "s"),
-        "millisecond" => (
-            if singular {
-                "millisecond"
-            } else {
-                "milliseconds"
-            },
-            "ms",
-            "ms",
-        ),
-        "microsecond" => (
-            if singular {
-                "microsecond"
-            } else {
-                "microseconds"
-            },
-            "μs",
-            "μs",
-        ),
-        "kilometer-per-hour" => ("kilometers per hour", "km/h", "km/h"),
-        "nanosecond" => (
-            if singular {
-                "nanosecond"
-            } else {
-                "nanoseconds"
-            },
-            "ns",
-            "ns",
-        ),
-        _ => (unit, unit, unit),
-    };
-    match display {
-        "long" => long.into(),
-        "narrow" => narrow.into(),
-        _ => short.into(),
-    }
+    unit_label(unit, display, value.abs() == 1.0).unwrap_or(unit).into()
 }
 
 fn format_number_unit_locale(text: &str, unit: &str, display: &str, locale: &str) -> String {

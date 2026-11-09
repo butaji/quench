@@ -26,10 +26,6 @@ pub extern "C" fn quench_entry_compiled() {
 #[cfg(feature = "aot")]
 pub(crate) const COMPILED_ENTRY_SYMBOL: &str = stringify!(quench_entry_compiled);
 
-/// Opts into platform-specific resident-memory readings at start-up phase boundaries.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const RSS_PHASES_ENV: &str = "QUENCH_RSS_PHASES";
-
 /// The kernel's per-process status, for `phase_peak`.
 #[cfg(target_os = "linux")]
 const STATUS_PATH: &str = "/proc/self/status";
@@ -40,13 +36,13 @@ const RESET_PEAK: &str = "5";
 #[cfg(target_os = "linux")]
 const CLEAR_REFS_PATH: &str = "/proc/self/clear_refs";
 
-/// Diagnostic (`RSS_PHASES_ENV`): reports on stderr the peak resident set since the previous
+/// Diagnostic (`QUENCH_TRACE=rss-phases`): reports on stderr the peak resident set since the previous
 /// boundary, and the resident anonymous and file pages now, then resets the peak, so that
 /// each phase of a run (load, start-up, entry compilation, the run up to its first
 /// collection, the rest) reports its own peak.
 #[cfg(target_os = "linux")]
 pub fn phase_peak(phase: &str) {
-    if std::env::var_os(RSS_PHASES_ENV).is_none() {
+    if !quench_runtime::trace::Channel::RssPhases.on() {
         return;
     }
     let status = std::fs::read_to_string(STATUS_PATH).unwrap_or_default();
@@ -66,7 +62,7 @@ pub fn phase_peak(phase: &str) {
 /// boundary samples, not Linux's resettable per-phase peak or anonymous/file split.
 #[cfg(target_os = "macos")]
 pub fn phase_peak(phase: &str) {
-    if std::env::var_os(RSS_PHASES_ENV).is_none() {
+    if !quench_runtime::trace::Channel::RssPhases.on() {
         return;
     }
     let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();
@@ -103,28 +99,14 @@ const CODE_MAPPING: &str = "r-xp";
 /// (`at_compile_phase`) each come at most once per this interval,
 /// which bounds that cost to about 1% of a run's time: loads that follow each other faster run
 /// the same loader and compiler code, which a release would only refault (semver scenario
-/// 926 -> 741 ms). Collections keep releasing at each boundary (`at_collection_boundary`):
-/// even a 10 ms interval there raised V8-v7 NavierStokes max RSS 5236 -> 5516 KiB.
+/// 926 -> 741 ms). Collections release them only under memory-first
+/// (`release_at_collection`). Compile phases had released every 5 ms, and inside that when
+/// resident code passed 512 KiB, up to a tenth of a run's time: JetStream 3 refaulted its
+/// code at nearly every lazy compilation, 2-5x Node's minor faults. At this interval (no-JIT,
+/// x86_64, 2026-11-07): minor faults Air 43.6K -> 13.6K, ML 87K -> 16K, octane-code-load
+/// 36K -> 15K, Babylon 18K -> 12K; max RSS +0-2 MB (ML 12 -> 14), scores within noise.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
-
-/// The first-call release interval under a policy that returns pages at collections
-/// (memory-first). Before a run's first collections its first calls run code it runs only
-/// once, and that code stayed resident until the first collection while the heap built up:
-/// the max RSS of V8-v7 DeltaBlue and RayTrace without JIT, and of RegExp in both modes, fell
-/// at 18-100 ms, during that warm-up. A release costs the refaults that follow, about 0.35 ms
-/// (npm scenarios with 300-1800 first calls, x86_64 VM, 2026-10-22), so a release at every
-/// first call slowed TypeScript's transpile 313 -> 829 ms. At 5 ms (plain x86_64 build,
-/// MemoryFirst, 10 runs): V8-v7 max
-/// RSS without JIT -124 to -516 KiB on six fixtures, with JIT -144 to +48 KiB, scores within
-/// noise; npm scenarios run 7-21% longer for -3.4 to +0.1 MB. Memory-first is the opt-in
-/// policy that trades speed for memory; the throughput default keeps `LOAD_RELEASE_INTERVAL`.
-/// Code generation and a kept program's release share it (`compile_release_interval`): at
-/// `LOAD_RELEASE_INTERVAL` a decode or bootstrap release just before had held back the entry
-/// compilation's, so its parser, code generator and encoder stayed resident together
-/// (`evidence/tod123-cold-entry-release-linux-2026-10-25`).
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const MEMORY_FIRST_COMPILE_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// When the read-only pages were last released.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -143,8 +125,12 @@ pub fn release_read_only_pages_after_load() {
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
+    if run_code_stays() { return }
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
+    }
+    if !file_pages_weigh() {
+        return;
     }
     let segments = loaded_segments(ReleasedSegment::Clean);
     for &(start, end) in segments.iter().chain(unwritten_relro_pages()) {
@@ -170,28 +156,26 @@ pub fn release_read_only_pages() {
     }
 }
 
-/// How far apart the default policy's collection-time releases are kept
-/// (`release_at_collection`): V8-v7 Richards no-JIT max RSS 3196-3296 KiB at
-/// `LOAD_RELEASE_INTERVAL`, 3048 at 10 ms and at 2 ms, Score unchanged (static incremental
-/// production build, pinned, x86_64 4 vCPU, 2026-11-01): past 10 ms what stays resident between
-/// releases is the run's working set.
+/// The least time between collection-time trims (`release_at_collection`), whose freed pages refault (no-JIT x86_64,
+/// 2026-11-08, minor faults 10 -> 100 ms: Sunspider 62K -> 49K, Air 16.5K -> 9K, npm sharp 61K -> 41K; same RSS).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const COLLECTION_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+const COLLECTION_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// The release at a collection boundary (`at_collection_boundary`): the read-only pages and
-/// the allocator's free pages. A policy that returns pages at collections releases at every
-/// boundary; the default releases at most once per `COLLECTION_RELEASE_INTERVAL` on the shared
-/// release clock, so a run's hot code refaults at most that often. Without it the default
-/// kept every code page a run had touched and every free page its sweeps left: V8-v7
-/// Richards max RSS about 10 MB against 3.8 MB released at every boundary, while releasing at
-/// every young collection cost RayTrace about 40% of its Score in refaults.
+/// A collection boundary's release (`at_collection_boundary`). Memory-first returns the
+/// read-only pages and the system allocator's free pages at every boundary. The default only
+/// trims, paced, and keeps the code a run executes again right after: releasing it lowered no
+/// JetStream 3 peak RSS (8 tests, x86_64, 2026-11-07) and cost Babylon 12% of its score.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_at_collection(returns_pages: bool) {
-    if !returns_pages && released_within(COLLECTION_RELEASE_INTERVAL) {
-        return;
+    static LAST_TRIM: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let mut last = LAST_TRIM.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if returns_pages || last.is_none_or(|last| last.elapsed() >= COLLECTION_RELEASE_INTERVAL) {
+        *last = Some(std::time::Instant::now());
+        if returns_pages {
+            release_read_only_pages();
+        }
+        release_free_heap_pages();
     }
-    release_read_only_pages();
-    release_free_heap_pages();
 }
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
@@ -409,6 +393,7 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 /// it can drop or swap.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_code_and_data() {
+    if run_code_stays() { return }
     release_read_only_pages();
     for (start, end) in loaded_segments(ReleasedSegment::LibraryData) {
         // SAFETY: paging out never changes a mapping's contents.
@@ -422,16 +407,15 @@ pub fn release_read_only_code_and_data() {
 pub fn release_read_only_code_and_data() {}
 
 /// The host's action at a compilation's phase boundaries (`set_compile_phase_boundary`), each
-/// at most once per its interval (`compile_release_interval`). Code generation pages code and data out
+/// at most once per its interval (`LOAD_RELEASE_INTERVAL`). Code generation pages code and data out
 /// (`release_read_only_code_and_data`); compilations that follow it quickly (functions a
 /// program builds at run time with `new Function`, `eval` or `vm`) run the same parser and
 /// code generator, which a release would only refault, and each release reads the whole
-/// mapping table (7% of the `@testing-library/dom` npm scenario's instructions). A first call
-/// releases the read-only pages, timed apart from the collections' releases, which come far
-/// more often, and sooner once their resident pages pass a budget
-/// (`CompileRelease::over_budget`): a run that reports its result once at the end first calls its reporting code
-/// then, at its heap's peak, with the code it ran since the last collection resident (V8-v7
-/// RegExp).
+/// mapping table (7% of the `@testing-library/dom` npm scenario's instructions). First calls
+/// and lane derivations release nothing: a run's code refaulted after each release, and
+/// JetStream 3 without those releases faulted about half as often, ran 5-12% less CPU on its
+/// startup tests (prismjs-startup-es6 0.43 -> 0.38 s, crypto 0.24 -> 0.21) and peaked at most
+/// 1-2 MB higher (Babylon 12.9 -> 14.6 MB), 2026-11-07.
 pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
     match phase {
         // The entry's analysis and code generation release whatever the pace says
@@ -449,32 +433,14 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
             }
             release_once_per_interval(CompileRelease::CodeGeneration, release_read_only_code_and_data)
         }
-        quench_runtime::CompilePhase::FirstCall => {
-            release_once_per_interval(CompileRelease::FirstCall, release_read_only_pages)
-        }
         quench_runtime::CompilePhase::Encoding => {
             release_once_per_interval(CompileRelease::Encoding, release_read_only_code_and_data)
-        }
-        // A run's lane views derive in bursts once its warm-up calls are over, with no compile
-        // boundary between them, and a burst kept the deriver's, the lanes' and the general
-        // loop's code resident beside the heap: 1.25 MB of file pages in one collection
-        // interval at V8-v7 RayTrace's peak. Only over the budget: releasing on the interval
-        // as well raised Richards and DeltaBlue by 84-140 KiB. Bolted static x86_64,
-        // memory-first, pinned, two rounds of 3 runs, 2026-10-28, worst runs against none:
-        // RayTrace 2904 -> 2776-2812 KiB, Crypto 2908-3088 -> 2812-2908, RegExp 5284-5340 ->
-        // 5156-5284, NavierStokes 3884-4012 -> 3836-3884, DeltaBlue `--jit` 2988 -> 2804-2916,
-        // Richards 2396 -> 2416; Scores within the runs' spread.
-        quench_runtime::CompilePhase::LaneDerivation => {
-            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-            if CompileRelease::LaneDerivation.over_budget() {
-                release_read_only_pages();
-            }
         }
     }
 }
 
 /// The release before a kept program loads (`Host::kept_compiled_program`), at most once per
-/// `compile_release_interval`. A bootstrap loads its builtin modules from the compile cache
+/// `LOAD_RELEASE_INTERVAL`. A bootstrap loads its builtin modules from the compile cache
 /// with no compilation boundary between them, so the code each module's set-up ran stayed
 /// resident beside the next one's: V8-v7 Richards start-up peaked at 4.0 MB, 3.2 MB with
 /// these releases and the two before the bootstrap (`execute_shared_on_worker`).
@@ -500,107 +466,13 @@ pub fn after_program_kept() {
 #[derive(Clone, Copy)]
 enum CompileRelease {
     CodeGeneration,
-    FirstCall,
     Encoding,
     Kept,
-    /// Constructed only by the Linux page releases (`at_compile_phase`).
-    #[cfg_attr(not(all(target_os = "linux", target_arch = "x86_64")), allow(dead_code))]
-    LaneDerivation,
 }
 
 impl CompileRelease {
     #[cfg_attr(not(all(target_os = "linux", target_arch = "x86_64")), allow(dead_code))]
-    const COUNT: usize = 5;
-
-    /// The releases that may come inside their interval once resident code passes the budget
-    /// (`over_budget`). A binary's first run compiles and keeps every bootstrap script back
-    /// to back, each within the interval of the last, and the compiler's and the host's code
-    /// stayed resident together: 1.95 MB of file pages beside 800 KiB of heap (V8-v7
-    /// MemoryFirst, first run with an empty compile cache, pinned, bolted static x86_64,
-    /// 3 runs, 2026-10-25: Richards 3028 -> 2336 KiB, RayTrace 2924-3048 -> 2768, DeltaBlue
-    /// 2952-3040 -> 2768-2844; warm runs within the pinned reading's 64-128 KiB modes, and
-    /// RayTrace's second run 2776 -> 2648). Encoding is left paced: a release there raised
-    /// RegExp's warm runs (5156 -> 5340).
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    fn releases_over_budget(self) -> bool {
-        match self {
-            Self::FirstCall | Self::CodeGeneration | Self::Kept | Self::LaneDerivation => true,
-            Self::Encoding => false,
-        }
-    }
-}
-
-/// How far apart each compile-phase release's runs are kept.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn compile_release_interval() -> std::time::Duration {
-    std::time::Duration::from_micros(tuned("QUENCH_TUNE_COMPILE_RELEASE_US", MEMORY_FIRST_COMPILE_RELEASE_INTERVAL.as_micros() as u64))
-}
-
-/// Under a policy that returns pages at collections, the resident file pages past which a
-/// first call, a code generation or a kept program releases within `MEMORY_FIRST_COMPILE_RELEASE_INTERVAL` of the last release. A
-/// run's warm-up faults in 1.3-1.5 MB of code within one interval, while its heap is at its
-/// peak (V8-v7 RegExp, bolted static x86_64, 2026-10-24: code pages 1.3-1.45 MB beside 4.3 MB
-/// of heap at 50-80 ms).
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const MEMORY_FIRST_RESIDENT_FILE_BUDGET: usize = 512 * 1024;
-
-/// The refaults that follow a release (`MEMORY_FIRST_COMPILE_RELEASE_INTERVAL`'s measurement).
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const RELEASE_REFAULT_COST: std::time::Duration = std::time::Duration::from_micros(350);
-
-/// Releases over the budget cost at most this fraction of the run's time, at
-/// `RELEASE_REFAULT_COST` each: a program whose code alone passes the budget would otherwise
-/// release at nearly every first call (TypeScript's transpile 262 -> 555 ms, ESLint
-/// 248 -> 536). At a tenth (memory-first, bolted static x86_64, interleaved, 2026-10-24):
-/// V8-v7 RegExp max RSS 5792 -> 5560 KiB (15 runs), with JIT at most 5816 -> 5564, scores
-/// -2 to -4%; npm scenarios TypeScript 297 -> 296 ms, ESLint 241 -> 268, Acorn 346 -> 396
-/// at 13.6 -> 12.3 MB, Ajv 124 -> 132: a larger working set refaults more per release than
-/// the estimate.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const BUDGET_RELEASE_TIME_DIVISOR: u32 = 10;
-
-/// Releases over the budget a run may spend before its elapsed time has earned them
-/// (`BUDGET_RELEASE_TIME_DIVISOR`): its warm-up specializes the functions it first calls, and
-/// with only the time-earned budget a run 12 ms in had about three, so the specialization's
-/// code built up beside the heap and set the peak whenever no collection released it first
-/// (V8-v7 RayTrace's high runs: 1.9-2.0 MB of file pages at 12-13 ms, against about 1.3 MB
-/// at a later peak). V8-v7 without JIT, 15 interleaved runs of one bolted static binary,
-/// worst max RSS against none (x86_64 VM, 2026-10-25): RayTrace 2892 -> 2704 KiB, Crypto
-/// 3228 -> 3060, Richards 2728 -> 2464, NavierStokes 3980 -> 3928, RegExp 5512 -> 5492,
-/// DeltaBlue 2764 -> 2772; medians equal or lower, scores within noise. 16 and 24 left
-/// RayTrace and Crypto worse. The releases cost a short npm scenario the most: Acorn 138 ->
-/// 165 ms, ESLint 323 -> 341, Ajv 282 -> 305, TypeScript 410 -> 413.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const MEMORY_FIRST_START_RELEASES: u32 = 40;
-
-/// When the first budget check ran, and the releases over the budget since.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static BUDGET_RELEASES: std::sync::Mutex<Option<(std::time::Instant, u32)>> = std::sync::Mutex::new(None);
-
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-impl CompileRelease {
-    /// Whether a first call, a code generation or a kept program releases inside its
-    /// interval: the resident file pages passed
-    /// `MEMORY_FIRST_RESIDENT_FILE_BUDGET`, and the releases over it so far leave room in
-    /// the run's time (`BUDGET_RELEASE_TIME_DIVISOR`) beyond the start's allowance
-    /// (`MEMORY_FIRST_START_RELEASES`).
-    fn over_budget(self) -> bool {
-        if !self.releases_over_budget() {
-            return false;
-        }
-        let Ok(mut releases) = BUDGET_RELEASES.lock() else {
-            return false;
-        };
-        let (started, count) = releases.get_or_insert_with(|| (std::time::Instant::now(), 0));
-        let allowed = started.elapsed() / tuned("QUENCH_TUNE_BUDGET_TIME_DIVISOR", u64::from(BUDGET_RELEASE_TIME_DIVISOR)) as u32 + RELEASE_REFAULT_COST * MEMORY_FIRST_START_RELEASES;
-        if RELEASE_REFAULT_COST * (*count + 1) > allowed
-            || resident_file_bytes().is_none_or(|bytes| bytes as u64 <= tuned("QUENCH_TUNE_FIRST_CALL_BUDGET_BYTES", MEMORY_FIRST_RESIDENT_FILE_BUDGET as u64))
-        {
-            return false;
-        }
-        *count += 1;
-        true
-    }
+    const COUNT: usize = 3;
 }
 
 /// The process's own memory counts in pages, space-separated (proc(5)).
@@ -615,10 +487,20 @@ const STATM_BYTES: usize = 128;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const STATM_RESIDENT_SHARED_FIELD: usize = 2;
 
+/// The field of `STATM_PATH` that counts all resident pages.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const STATM_RESIDENT_FIELD: usize = 1;
+
 /// The bytes of resident file-backed pages (`STATM_PATH`), read through one descriptor kept
-/// open: a budget check runs at first calls, hundreds to thousands in a run.
+/// open: a budget check runs at each paced compile phase.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn resident_file_bytes() -> Option<usize> {
+    resident_statm_bytes(STATM_RESIDENT_SHARED_FIELD)
+}
+
+/// The bytes of `STATM_PATH`'s page count at `field`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn resident_statm_bytes(field: usize) -> Option<usize> {
     use std::os::unix::fs::FileExt;
     static STATM: std::sync::OnceLock<Option<std::fs::File>> = std::sync::OnceLock::new();
     let file = STATM.get_or_init(|| std::fs::File::open(STATM_PATH).ok()).as_ref()?;
@@ -627,10 +509,29 @@ fn resident_file_bytes() -> Option<usize> {
     let pages = std::str::from_utf8(&text[..length])
         .ok()?
         .split_ascii_whitespace()
-        .nth(STATM_RESIDENT_SHARED_FIELD)?
+        .nth(field)?
         .parse::<usize>()
         .ok()?;
     pages.checked_mul(page_size())
+}
+
+/// Resident file pages below this share (`1 / divisor`) of the resident set are not worth
+/// releasing: a release saves at most their bytes and costs the refaults of the code the run
+/// touches again. A run whose heap is a few megabytes keeps code at a large share (V8-v7, file
+/// pages about 1.3-2 MB of 3-5 MB) and keeps releasing; a run whose heap dwarfs its code
+/// (JetStream's tests, 20-160 MB) no longer refaults its working code tens of times per
+/// iteration (web-ssr: about 80 releases and 21K refaults per iteration).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const FILE_PAGES_RELEASE_SHARE_DIVISOR: usize = 4;
+
+/// Whether the resident file pages are a large enough share of the resident set to release
+/// (`FILE_PAGES_RELEASE_SHARE_DIVISOR`); `true` when either count cannot be read.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn file_pages_weigh() -> bool {
+    match (resident_file_bytes(), resident_statm_bytes(STATM_RESIDENT_FIELD)) {
+        (Some(file), Some(resident)) => file * FILE_PAGES_RELEASE_SHARE_DIVISOR >= resident,
+        _ => true,
+    }
 }
 
 /// When each compile-phase release last ran, indexed by `CompileRelease`.
@@ -644,12 +545,7 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
         return;
     };
     let last = &mut releases[release as usize];
-    let recent = if shares_release_clock() {
-        !release_due()
-    } else {
-        last.is_some_and(|last| last.elapsed() < compile_release_interval())
-    };
-    if recent && !release.over_budget() {
+    if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
         return;
     }
     *last = Some(std::time::Instant::now());
@@ -674,10 +570,31 @@ pub fn release_before_entry_compile() {
     ENTRY_COMPILE.store(EntryCompile::Analysis as u8, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The main entry is compiled; its execution can refault only the code it uses.
+/// The main entry is compiled; the default policy keeps the code its run touches (`CODE_STAYS_RESIDENT`).
 pub fn release_after_entry_compile() {
     release_read_only_code_and_data();
     release_main_text_at_phase_boundary();
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    let memory_first = crate::shared_run::process_memory_policy() == Some(quench_runtime::MemoryPolicy::MemoryFirst);
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    CODE_STAYS_RESIDENT.store(!memory_first, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Set once the main entry has compiled under the default policy: start-up's releases drop the bootstrap's code
+/// (about 5 MB), and the run's own, which refaulted what it runs again, wait for `RUN_CODE_BUDGET_BYTES`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static CODE_STAYS_RESIDENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Resident file bytes a run keeps before releasing them (x86_64, 2026-11-08, minor faults and max RSS against
+/// releasing throughout: richards 11.9K -> 5.2K, 12 MB both; Air 23.6K -> 9.3K, 21 MB; octane-code-load 15K ->
+/// 8.6K, 17 -> 18 MB; npm fastify 32.8K -> 14.7K, 34 -> 31 MB; vite 35K -> 17K, 43 -> 35 MB). At 10 MB Air
+/// refaulted 18K; at 16 MB fastify peaked at 36 MB.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const RUN_CODE_BUDGET_BYTES: usize = 12 << 20;
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn run_code_stays() -> bool {
+    CODE_STAYS_RESIDENT.load(std::sync::atomic::Ordering::Relaxed) && resident_file_bytes().is_some_and(|bytes| bytes < RUN_CODE_BUDGET_BYTES)
 }
 
 /// Retire the previous phase's resident main-image translations. Code needed by
@@ -733,25 +650,11 @@ fn released_within(interval: std::time::Duration) -> bool {
     LAST_RELEASE.lock().ok().and_then(|last| *last).is_some_and(|last| last.elapsed() < interval)
 }
 
-/// Whether the process's release pace (`compile_release_interval`) has passed since the
+/// Whether the process's release pace (`LOAD_RELEASE_INTERVAL`) has passed since the
 /// read-only pages last left, by any release.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn release_due() -> bool {
-    !released_within(compile_release_interval())
-}
-
-/// Whether every paced release shares one clock, the last release of any kind
-/// (`release_due`), rather than each compile phase keeping its own. Under throughput a 100 ms
-/// window held up to five full releases, one per phase clock, and npm runs refaulted after
-/// each (TOD-180: whatwg-url 78 ms with one clock vs 99 ms with five, 7.3K vs 9.8K faults).
-/// Memory-first keeps one clock per phase: each phase boundary leaves a distinct working set
-/// resident, and with one clock the collections' releases held back a cold run's encoding and
-/// kept-program releases (V8-v7 cold first run, same-binary toggle, 7 runs, 2026-10-25:
-/// median max RSS Richards 2096 -> 2608 KiB; worst DeltaBlue 2532 -> 2788, NavierStokes
-/// 3540 -> 3792).
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn shares_release_clock() -> bool {
-    false
+    !released_within(LOAD_RELEASE_INTERVAL)
 }
 
 /// The loaded segments a release reaches, by the loader's program headers.
@@ -1098,9 +1001,6 @@ fn register_touched_pages_only(start: usize, length: usize) {
     if fd == NO_FD {
         return;
     }
-    // A mapping covers whole pages, and the kernel refuses a range that does not: a file whose
-    // length is no page multiple ends its mapping on a partial page.
-    let length = length.next_multiple_of(page_size());
     let mut range = UffdioRegister { start: start as u64, len: length as u64, mode: UFFDIO_REGISTER_MODE_WP, ioctls: 0 };
     // SAFETY: the ioctl reads and writes only `range`; a failed registration leaves the
     // mapping with fault-around.
@@ -1241,16 +1141,4 @@ pub fn at_native_compilation(boundary: NativeCompilation) {
     if matches!(boundary, NativeCompilation::After) {
         release_free_heap_pages();
     }
-}
-
-/// Measurement builds (`release-tuning`) read a release knob from the environment, in place
-/// of its value; other builds use the value.
-#[cfg(all(target_os = "linux", target_arch = "x86_64", feature = "release-tuning"))]
-fn tuned(name: &str, value: u64) -> u64 {
-    std::env::var(name).ok().and_then(|text| text.parse().ok()).unwrap_or(value)
-}
-
-#[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "release-tuning")))]
-const fn tuned(_name: &str, value: u64) -> u64 {
-    value
 }

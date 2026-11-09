@@ -22,142 +22,6 @@ fn encoding_allocates(ty: WasmType) -> bool {
     matches!(ty, WasmType::I64 | WasmType::F64 | WasmType::V128)
 }
 
-const DIRECT_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT";
-const RAW_I32_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32";
-const EARLY_IMPORT_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT";
-
-static DIRECT_EMSCRIPTEN_COPY_SWITCH: std::sync::OnceLock<Option<bool>> =
-    std::sync::OnceLock::new();
-static RAW_I32_EMSCRIPTEN_COPY_SWITCH: std::sync::OnceLock<Option<bool>> =
-    std::sync::OnceLock::new();
-static EARLY_IMPORT_EMSCRIPTEN_COPY_SWITCH: std::sync::OnceLock<Option<bool>> =
-    std::sync::OnceLock::new();
-
-#[cfg(test)]
-thread_local! {
-    static DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-    static RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-    static EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-}
-
-/// Whether the guarded direct-copy path is enabled in this process. Separate
-/// processes can use this switch for an on/off A/B without rebuilding.
-pub(super) fn emscripten_memcpy_direct_copy_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return enabled;
-    }
-
-    DIRECT_EMSCRIPTEN_COPY_SWITCH
-        .get_or_init(
-            || match std::env::var(DIRECT_EMSCRIPTEN_COPY_ENV).as_deref() {
-                Ok("0") => Some(false),
-                Ok("1") => Some(true),
-                _ => None,
-            },
-        )
-        .unwrap_or(true)
-}
-
-pub(super) fn emscripten_memcpy_direct_copy_switch() -> &'static str {
-    #[cfg(test)]
-    if let Some(enabled) = DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return if enabled { "1" } else { "0" };
-    }
-
-    match DIRECT_EMSCRIPTEN_COPY_SWITCH.get_or_init(|| {
-        match std::env::var(DIRECT_EMSCRIPTEN_COPY_ENV).as_deref() {
-            Ok("0") => Some(false),
-            Ok("1") => Some(true),
-            _ => None,
-        }
-    }) {
-        Some(false) => "0",
-        Some(true) => "1",
-        None => "default",
-    }
-}
-
-/// The raw-argument import path is opt-in so the late-bound path remains the
-/// control arm unless an experiment explicitly selects it.
-pub(super) fn emscripten_memcpy_raw_i32_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return enabled;
-    }
-
-    RAW_I32_EMSCRIPTEN_COPY_SWITCH
-        .get_or_init(
-            || match std::env::var(RAW_I32_EMSCRIPTEN_COPY_ENV).as_deref() {
-                Ok("0") => Some(false),
-                Ok("1") => Some(true),
-                _ => None,
-            },
-        )
-        .unwrap_or(false)
-}
-
-pub(super) fn emscripten_memcpy_raw_i32_switch() -> &'static str {
-    #[cfg(test)]
-    if let Some(enabled) = RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return if enabled { "1" } else { "0" };
-    }
-
-    match RAW_I32_EMSCRIPTEN_COPY_SWITCH.get_or_init(|| {
-        match std::env::var(RAW_I32_EMSCRIPTEN_COPY_ENV).as_deref() {
-            Ok("0") => Some(false),
-            Ok("1") => Some(true),
-            _ => None,
-        }
-    }) {
-        Some(false) => "0",
-        Some(true) => "1",
-        None => "default",
-    }
-}
-
-/// Whether compiled import callouts may try the raw memcpy guard before the
-/// general Wasm import dispatcher. The exact-import and current-view checks
-/// remain mandatory; this switch only selects where they run.
-pub(super) fn emscripten_memcpy_early_import_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return enabled;
-    }
-
-    EARLY_IMPORT_EMSCRIPTEN_COPY_SWITCH
-        .get_or_init(
-            || match std::env::var(EARLY_IMPORT_EMSCRIPTEN_COPY_ENV).as_deref() {
-                Ok("0") => Some(false),
-                Ok("1") => Some(true),
-                _ => None,
-            },
-        )
-        .unwrap_or(false)
-}
-
-pub(super) fn emscripten_memcpy_early_import_switch() -> &'static str {
-    #[cfg(test)]
-    if let Some(enabled) = EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return if enabled { "1" } else { "0" };
-    }
-
-    match EARLY_IMPORT_EMSCRIPTEN_COPY_SWITCH.get_or_init(|| {
-        match std::env::var(EARLY_IMPORT_EMSCRIPTEN_COPY_ENV).as_deref() {
-            Ok("0") => Some(false),
-            Ok("1") => Some(true),
-            _ => None,
-        }
-    }) {
-        Some(false) => "0",
-        Some(true) => "1",
-        None => "default",
-    }
-}
-
 pub(super) fn copy_within_relative_index(index: i64, length: usize) -> usize {
     if index < 0 {
         let magnitude = usize::try_from(index.unsigned_abs()).unwrap_or(usize::MAX);
@@ -177,70 +41,6 @@ fn note_emscripten_memcpy_fast_path(counter: *mut u64) {
     }
 }
 
-fn note_emscripten_memcpy_raw_i32_hit(counter: *mut u64) {
-    if !counter.is_null() {
-        // SAFETY: the diagnostic counter lives for the compiled invocation.
-        unsafe {
-            *counter = (*counter).saturating_add(1);
-        }
-    }
-}
-
-#[cfg(test)]
-pub(super) fn with_emscripten_memcpy_direct_copy_for_test<R>(
-    enabled: bool,
-    run: impl FnOnce() -> R,
-) -> R {
-    struct Restore(Option<bool>);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.set(self.0));
-        }
-    }
-
-    let previous = DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.replace(Some(enabled)));
-    let _restore = Restore(previous);
-    run()
-}
-
-#[cfg(test)]
-pub(super) fn with_emscripten_memcpy_raw_i32_for_test<R>(
-    enabled: bool,
-    run: impl FnOnce() -> R,
-) -> R {
-    struct Restore(Option<bool>);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.set(self.0));
-        }
-    }
-
-    let previous = RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.replace(Some(enabled)));
-    let _restore = Restore(previous);
-    run()
-}
-
-#[cfg(test)]
-pub(super) fn with_emscripten_memcpy_early_import_for_test<R>(
-    enabled: bool,
-    run: impl FnOnce() -> R,
-) -> R {
-    struct Restore(Option<bool>);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.set(self.0));
-        }
-    }
-
-    let previous =
-        EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.replace(Some(enabled)));
-    let _restore = Restore(previous);
-    run()
-}
-
 /// The main realm's interface prototypes, which every new Wasm object of the matching kind
 /// receives. Null until the namespace is installed.
 #[derive(Clone, Copy, Debug)]
@@ -250,9 +50,25 @@ pub(crate) struct WasmJsIntrinsics {
     pub(crate) memory: Value,
     pub(crate) table: Value,
     pub(crate) global: Value,
+    pub(crate) tag: Value,
     /// `WebAssembly.JSTag`: the tag whose one `externref` parameter carries a JavaScript
     /// exception through Wasm.
     pub(crate) js_tag: Value,
+}
+
+impl WasmJsIntrinsics {
+    /// Where `constructor`'s new objects find their prototype.
+    fn prototype_slot(&mut self, constructor: Native) -> Option<&mut Value> {
+        Some(match constructor {
+            Native::WasmModule => &mut self.module,
+            Native::WasmInstance => &mut self.instance,
+            Native::WasmMemory => &mut self.memory,
+            Native::WasmTable => &mut self.table,
+            Native::WasmGlobal => &mut self.global,
+            Native::WasmTag => &mut self.tag,
+            _ => return None,
+        })
+    }
 }
 
 impl Default for WasmJsIntrinsics {
@@ -263,21 +79,15 @@ impl Default for WasmJsIntrinsics {
             memory: Value::NULL,
             table: Value::NULL,
             global: Value::NULL,
+            tag: Value::NULL,
             js_tag: Value::NULL,
         }
     }
 }
 
 impl WasmJsIntrinsics {
-    pub(crate) fn roots(&self) -> [Value; 6] {
-        [
-            self.module,
-            self.instance,
-            self.memory,
-            self.table,
-            self.global,
-            self.js_tag,
-        ]
+    pub(crate) fn roots(&self) -> [Value; 7] {
+        [self.module, self.instance, self.memory, self.table, self.global, self.tag, self.js_tag]
     }
 }
 
@@ -338,6 +148,7 @@ const INTERFACES: &[Interface] = &[
             Some(Native::WasmGlobalValueSetter),
         )],
     },
+    Interface { name: "Tag", constructor: Native::WasmTag, statics: &[], methods: &[], getters: &[] },
 ];
 
 const NAMESPACE_FUNCTIONS: &[(&str, Native)] = &[
@@ -384,7 +195,7 @@ pub(super) fn is_wasm_js_native(native: Native) -> bool {
             | Native::WasmGlobal
             | Native::WasmGlobalValueGetter
             | Native::WasmGlobalValueSetter
-            | Native::WasmGlobalValueOf
+            | Native::WasmGlobalValueOf | Native::WasmTag
             | Native::WasmExportedFunction
     )
 }
@@ -396,7 +207,7 @@ pub(super) fn is_wasm_js_constructor(native: Native) -> bool {
             | Native::WasmInstance
             | Native::WasmMemory
             | Native::WasmTable
-            | Native::WasmGlobal
+            | Native::WasmGlobal | Native::WasmTag
     )
 }
 
@@ -416,7 +227,7 @@ pub(super) const fn wasm_js_native_length(native: Native) -> Option<f64> {
         | Native::WasmTableGet
         | Native::WasmTableSet
         | Native::WasmGlobal
-        | Native::WasmGlobalValueSetter
+        | Native::WasmGlobalValueSetter | Native::WasmTag
         | Native::WasmCompileError
         | Native::WasmLinkError
         | Native::WasmRuntimeError => 1.0,
@@ -430,18 +241,8 @@ pub(super) const fn wasm_js_native_length(native: Native) -> Option<f64> {
     })
 }
 
-fn kind_name(kind: ExternalKind) -> &'static str {
-    match kind {
-        ExternalKind::Func | ExternalKind::FuncExact => "function",
-        ExternalKind::Table => "table",
-        ExternalKind::Memory => "memory",
-        ExternalKind::Global => "global",
-        ExternalKind::Tag => "tag",
-    }
-}
-
 /// The reference types a `WebAssembly.Table` descriptor names.
-fn descriptor_reference_type(name: &str) -> Option<wasmparser::RefType> {
+pub(super) fn descriptor_reference_type(name: &str) -> Option<wasmparser::RefType> {
     Some(match name {
         "anyfunc" => wasmparser::RefType::FUNCREF,
         "externref" => wasmparser::RefType::EXTERNREF,
@@ -475,7 +276,7 @@ fn reference_value_type(element_type: wasmparser::RefType) -> WasmType {
 fn reference_value_type_in(element_type: wasmparser::RefType, declarations: &crate::WasmTypes) -> WasmType {
     declarations
         .callable_value_type(wasmparser::ValType::Ref(element_type))
-        .unwrap_or(WasmType::Reference {
+        .unwrap_or_else(|| WasmType::Reference {
             kind: crate::WasmReferenceKind::External,
             nullable: element_type.is_nullable(),
         })
@@ -529,18 +330,13 @@ impl<H: Host> Vm<H> {
                     },
                 )?;
             }
-            let slot = match interface.constructor {
-                Native::WasmModule => &mut self.wasm_js.module,
-                Native::WasmInstance => &mut self.wasm_js.instance,
-                Native::WasmMemory => &mut self.wasm_js.memory,
-                Native::WasmTable => &mut self.wasm_js.table,
-                _ => &mut self.wasm_js.global,
-            };
-            *slot = prototype;
+            if let Some(slot) = self.wasm_js.prototype_slot(interface.constructor) {
+                *slot = prototype;
+            }
             self.set_builtin_value_named(namespace, interface.name, constructor)?;
         }
         self.install_wasm_errors(program, namespace)?;
-        let js_tag = self.heap.alloc(js_tag_cell());
+        let js_tag = self.heap.alloc(js_tag_cell(Box::new(Self::empty_object(self.wasm_js.tag))));
         self.wasm_js.js_tag = js_tag;
         let atom = self.intern_atom("JSTag");
         self.set_property_with_attributes(
@@ -619,13 +415,11 @@ impl<H: Host> Vm<H> {
         let arg = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
         match native {
             Native::WebAssemblyValidate => {
-                let bytes = self.wasm_source_bytes(p, arg(0), native)?;
                 let mode = self.execution_mode;
-                Ok(if !bytes.is_empty() && self.host.validate_wasm(&bytes, mode) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
+                let valid = self.with_wasm_source(p, arg(0), native, |host, bytes| {
+                    !bytes.is_empty() && host.validate_wasm(bytes, mode)
+                })?;
+                Ok(Value::boolean(valid))
             }
             Native::WebAssemblyCompile => {
                 let module = self.wasm_compile_module(p, arg(0), native);
@@ -645,7 +439,7 @@ impl<H: Host> Vm<H> {
                 let mut values = Vec::with_capacity(descriptors.len());
                 for (name, kind) in descriptors {
                     values.push(
-                        self.wasm_descriptor(p, &[("name", &name), ("kind", kind_name(kind))])?,
+                        self.wasm_descriptor(p, &[("name", &name), ("kind", crate::WasmExternKind::from(kind).name())])?,
                     );
                 }
                 Ok(self.new_array(values))
@@ -685,7 +479,7 @@ impl<H: Host> Vm<H> {
                         &[
                             ("module", &module),
                             ("name", &name),
-                            ("kind", kind_name(kind)),
+                            ("kind", crate::WasmExternKind::from(kind).name()),
                         ],
                     )?);
                 }
@@ -888,23 +682,8 @@ impl<H: Host> Vm<H> {
                     initial_value,
                 )
             }
-            Native::WasmGlobal => {
-                let descriptor = self.wasm_descriptor_object(p, arg(0))?;
-                let mutable = self.wasm_descriptor_member(p, descriptor, "mutable")?;
-                let mutable = self.truthy(mutable);
-                let ty = self.wasm_descriptor_member(p, descriptor, "value")?;
-                let ty = self.to_string(p, ty)?;
-                let Some(ty) = descriptor_value_type(&ty) else {
-                    return Err(
-                        self.type_error(p, "WebAssembly.Global(): invalid value type".into())
-                    );
-                };
-                let value = match args.get(1) {
-                    Some(value) if !value.is_undefined() => self.js_to_wasm(p, *value, ty, None)?,
-                    _ => self.wasm_global_default(ty),
-                };
-                Ok(self.alloc_wasm_global(value, ty, crate::WasmTypes::default(), mutable))
-            }
+            Native::WasmGlobal => self.construct_wasm_global(p, arg(0), arg(1)),
+            Native::WasmTag => self.construct_wasm_tag(p, arg(0)),
             _ => unreachable!("not a WebAssembly constructor"),
         }
     }
@@ -931,30 +710,31 @@ impl<H: Host> Vm<H> {
         Ok(promise)
     }
 
-    fn wasm_source_bytes(
+    /// Run `f` with the host over a Wasm source's bytes, borrowed in place (a module binary
+    /// is megabytes; copying it doubles the compile's peak). Detached sources read empty.
+    fn with_wasm_source<T>(
         &mut self,
         p: &ResidualProgram,
         source: Value,
         consumer: Native,
-    ) -> Result<Vec<u8>, JsError> {
-        let bytes = match self.heap.get(source) {
-            Some(Cell::ArrayBuffer {
-                bytes, detached, shared: false, ..
-            }) => Some(if *detached {
-                Vec::new()
-            } else {
-                bytes.to_vec()
-            }),
-            Some(Cell::TypedArray { .. }) => self.embedding_view_bytes(source),
+        f: impl FnOnce(&mut H, &[u8]) -> T,
+    ) -> Result<T, JsError> {
+        let range = match self.heap.get(source) {
+            Some(Cell::ArrayBuffer { shared: false, .. } | Cell::TypedArray { .. }) => self.embedding_buffer_range(source),
             _ => None,
         };
-        bytes.ok_or_else(|| {
+        let Some((buffer, range)) = range else {
             let name = wasm_source_consumer_name(consumer);
             let required = if consumer == Native::WebAssemblyInstantiate {
                 "a buffer source or a WebAssembly.Module object"
             } else { "a buffer source" };
-            self.type_error(p, format!("WebAssembly.{name}(): Argument 0 must be {required}"))
-        })
+            return Err(self.type_error(p, format!("WebAssembly.{name}(): Argument 0 must be {required}")));
+        };
+        let Some(Cell::ArrayBuffer { bytes, detached, .. }) = self.heap.get(buffer) else {
+            return Ok(f(&mut self.host, &[]));
+        };
+        let read = bytes.read();
+        Ok(f(&mut self.host, if *detached { &[] } else { read.get(range).unwrap_or_default() }))
     }
 
     fn wasm_compile_module(
@@ -963,17 +743,16 @@ impl<H: Host> Vm<H> {
         source: Value,
         consumer: Native,
     ) -> Result<Value, JsError> {
-        let bytes = self.wasm_source_bytes(p, source, consumer)?;
-        if bytes.is_empty() {
+        let mode = self.execution_mode;
+        let compiled = self.with_wasm_source(p, source, consumer, |host, bytes| {
+            (!bytes.is_empty()).then(|| host.compile_wasm(bytes, mode))
+        })?;
+        let Some(compiled) = compiled else {
             let name = wasm_source_consumer_name(consumer);
             return Err(self.wasm_js_error(p, Native::WasmCompileError,
                 format!("WebAssembly.{name}(): BufferSource argument is empty")));
-        }
-        let mode = self.execution_mode;
-        let module = self
-            .host
-            .compile_wasm(&bytes, mode)
-            .map_err(|message| self.wasm_js_error(p, Native::WasmCompileError, message))?;
+        };
+        let module = compiled.map_err(|message| self.wasm_js_error(p, Native::WasmCompileError, message))?;
         Ok(self.heap.alloc(Cell::WasmObject {
             object: Box::new(Self::empty_object(self.wasm_js.module)),
             slot: WasmObjectSlot::Module(Box::new(module)),
@@ -1590,14 +1369,13 @@ impl<H: Host> Vm<H> {
                 .environment_slot(view_environment, view_slot)
                 .unwrap_or(Value::UNDEFINED);
             let copy_within_atom = self.intern_atom("copyWithin");
-            let direct_copy = emscripten_memcpy_direct_copy_enabled()
-                && self.try_emscripten_memcpy_same_memory(
-                    view,
-                    current_memory,
-                    signature,
-                    args,
-                    copy_within_atom,
-                )?;
+            let direct_copy = self.try_emscripten_memcpy_same_memory(
+                view,
+                current_memory,
+                signature,
+                args,
+                copy_within_atom,
+            )?;
             if direct_copy {
                 note_emscripten_memcpy_fast_path(memcpy_fast_path_hits);
                 Value::UNDEFINED
@@ -1689,33 +1467,6 @@ impl<H: Host> Vm<H> {
         ))
     }
 
-    /// The compiled callout's opt-in raw-i32 admission path. It reloads the
-    /// captured view here on every call and shares W-08's complete memory guard.
-    pub(super) fn try_emscripten_memcpy_same_memory_raw_capture(
-        &mut self,
-        view_environment: Value,
-        view_slot: usize,
-        current_memory: Value,
-        indices: [i32; 3],
-        raw_i32_fast_path_hits: *mut u64,
-    ) -> bool {
-        let view = self
-            .heap
-            .environment_slot(view_environment, view_slot)
-            .unwrap_or(Value::UNDEFINED);
-        let copy_within_atom = self.intern_atom("copyWithin");
-        let hit = self.try_emscripten_memcpy_same_memory_raw(
-            view,
-            current_memory,
-            indices,
-            copy_within_atom,
-        );
-        if hit {
-            note_emscripten_memcpy_raw_i32_hit(raw_i32_fast_path_hits);
-        }
-        hit
-    }
-
     fn try_emscripten_memcpy_same_memory_raw(
         &mut self,
         view: Value,
@@ -1759,7 +1510,7 @@ impl<H: Host> Vm<H> {
             _ => return false,
         };
         let Some((base, memory_length)) =
-            super::dispatch_fast::unshared_memory(self, current_memory)
+            super::dispatch_fast::direct_memory(self, current_memory)
         else {
             return false;
         };
@@ -2086,7 +1837,7 @@ impl<H: Host> Vm<H> {
     /// The declarations of the module that defined `table`'s element type.
     fn wasm_table_declarations(&self, table: Value) -> Option<crate::WasmTypes> {
         match self.heap.get(table) {
-            Some(Cell::WasmTable { declarations, .. }) => Some((**declarations).clone()),
+            Some(Cell::WasmTable { declarations, .. }) => Some(declarations.clone()),
             _ => None,
         }
     }
@@ -2130,6 +1881,27 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    fn construct_wasm_global(
+        &mut self,
+        p: &ResidualProgram,
+        descriptor: Value,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let descriptor = self.wasm_descriptor_object(p, descriptor)?;
+        let mutable = self.wasm_descriptor_member(p, descriptor, "mutable")?;
+        let mutable = self.truthy(mutable);
+        let ty = self.wasm_descriptor_member(p, descriptor, "value")?;
+        let ty = self.to_string(p, ty)?;
+        let Some(ty) = descriptor_value_type(&ty) else {
+            return Err(self.type_error(p, "WebAssembly.Global(): invalid value type".into()));
+        };
+        let value = match value.is_undefined() {
+            false => self.js_to_wasm(p, value, ty, None)?,
+            true => self.wasm_global_default(ty),
+        };
+        Ok(self.alloc_wasm_global(value, ty, crate::WasmTypes::default(), mutable))
+    }
+
     fn wasm_global_receiver(
         &mut self,
         p: &ResidualProgram,
@@ -2142,22 +1914,6 @@ impl<H: Host> Vm<H> {
             _ => Err(self.type_error(p, "receiver is not a WebAssembly.Global".into())),
         }
     }
-}
-
-/// `WebAssembly.JSTag`'s type: a tag whose one `externref` parameter carries a JavaScript
-/// exception through Wasm. Every realm makes the same one.
-pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
-    let declarations = crate::WasmTypes::from_functions([wasmparser::FuncType::new(
-        [wasmparser::ValType::EXTERNREF],
-        [],
-    )]);
-    (declarations, 0)
-}
-
-/// `WebAssembly.JSTag`'s cell (`js_tag_type`).
-pub(crate) fn js_tag_cell() -> Cell {
-    let (declarations, ty) = js_tag_type();
-    Cell::WasmTag { declarations, ty }
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ const MONTHS_PER_YEAR: usize = 12;
 const HOURS_PER_DAY: u32 = 24;
 const HOURS_PER_HALF_DAY: u32 = 12;
 const YEARS_PER_CENTURY: i32 = 100;
-const DECIMAL_RADIX: u32 = 10;
+use crate::units::DECIMAL_RADIX;
 const FULL_FRACTION_DIGITS: u32 = 3;
 const TWO_DIGIT_WIDTH: usize = 2;
 const FIRST_WEEKDAY_CHAR: usize = 1;

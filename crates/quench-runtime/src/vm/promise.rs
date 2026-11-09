@@ -10,22 +10,17 @@ const JAVASCRIPT_MODULE_TYPE: &str = "javascript";
 use crate::{ModuleSource, module_identity::ModuleIdentity};
 use rustc_hash::FxHashSet;
 
-/// Where SpeciesConstructor(promise, %Promise%) found the realm's `%Promise%` for receivers
-/// of one shape and prototype under one prototype layout epoch (`Vm::promise_species_proved`):
-/// `constructor` in a data slot of a prototype, and its own `@@species` slot holding the
-/// intrinsic getter. Every collection advances the epoch, so no value here outlives its record.
-#[derive(Clone, Copy)]
+/// That SpeciesConstructor(promise, %Promise%) answers the realm's `%Promise%` for receivers
+/// of one shape and prototype (`Vm::promise_species_proved`), held as a dependency: the walk
+/// that proved it found `constructor` in a data slot of a prototype and the constructor's own
+/// `@@species` holding the intrinsic getter, and both objects are watched prototypes whose
+/// values it watches (`heap::watch_prototype_values`, holder then constructor): a write to their slots or a
+/// change to any prototype's layout retires it, as does a collection. A use reads no slot.
 pub(super) struct PromiseSpeciesProof {
     shape: u32,
     prototype: Value,
-    epoch: u64,
     realm: Value,
-    holder: Value,
-    holder_slot: u32,
-    constructor: Value,
-    constructor_shape: u32,
-    species_slot: usize,
-    getter: Value,
+    watches: [crate::heap::PrototypeValueWatch; 2],
 }
 
 pub(super) fn module_cache_key(name: &str, module_type: &str) -> String {
@@ -303,6 +298,9 @@ pub(super) fn native_length(kind: Native) -> Option<f64> {
     NATIVE_LENGTHS[kind as usize]
 }
 
+#[path = "native_lengths.rs"]
+mod native_lengths;
+
 pub(super) const fn native_length_definition(kind: Native) -> Option<f64> {
     let callbacks = super::typed_array_install::TYPED_ARRAY_CALLBACK_METHODS;
     let mut index = 0;
@@ -331,698 +329,10 @@ pub(super) const fn native_length_definition(kind: Native) -> Option<f64> {
     if let Some(length) = super::wasm_js::wasm_js_native_length(kind) {
         return Some(length);
     }
-    Some(match kind {
-        Native::FunctionPrototype
-        | Native::IsHTMLDDA
-        | Native::CollectGarbage
-        | Native::FunctionToString
-        | Native::FunctionCaller
-        | Native::TypedArray
-        | Native::TypedArrayOf
-        | Native::Uint8ArrayReverse
-        | Native::Uint8ArrayToString
-        | Native::Uint8ArrayKeys
-        | Native::Uint8ArrayValues
-        | Native::Uint8ArrayEntries
-        | Native::Uint8ArrayToHex
-        | Native::Uint8ArrayToBase64
-        | Native::TypedArrayToStringTag
-        | Native::TypedArrayBufferGetter
-        | Native::TypedArrayByteLengthGetter
-        | Native::TypedArrayByteOffsetGetter
-        | Native::TypedArrayLengthGetter
-        | Native::TypedArrayToReversed
-        | Native::TypedArrayToLocaleString
-        | Native::ThrowTypeError => 0.0,
-        Native::TypedArrayAt | Native::TypedArrayToSorted => 1.0,
-        Native::TypedArrayLastIndexOf => 1.0,
-        Native::TypedArraySort => 1.0,
-        Native::TypedArrayWith => 2.0,
-        Native::Uint8ArrayFill
-        | Native::Uint8ArrayIncludes
-        | Native::Uint8ArrayIndexOf
-        | Native::Uint8ArrayJoin
-        | Native::Uint8ArraySet => 1.0,
-        Native::Uint8ArrayCopyWithin | Native::Uint8ArraySubarray | Native::Uint8ArraySlice => 2.0,
-        Native::Uint8ArrayFromBase64
-        | Native::Uint8ArrayFromHex
-        | Native::Uint8ArraySetFromBase64
-        | Native::Uint8ArraySetFromHex => 1.0,
-        Native::FunctionPrototypeHasInstance => 1.0,
-        Native::FunctionCall | Native::FunctionBind => 1.0,
-        Native::FunctionApply => 2.0,
-        Native::Proxy => 2.0,
-        Native::ProxyRevocable => 2.0,
-        Native::ProxyRevoke => 0.0,
-        Native::AbstractModuleSource => 0.0,
-        Native::AbstractModuleSourceToStringTag => 0.0,
-        Native::AggregateError => 2.0,
-        Native::BigInt => 1.0,
-        Native::Boolean => 1.0,
-        Native::BooleanToString | Native::BooleanValueOf => 0.0,
-        Native::DataView => 1.0,
-        Native::EncodeUri
-        | Native::EncodeUriComponent
-        | Native::DecodeUri
-        | Native::DecodeUriComponent
-        | Native::GlobalEscape
-        | Native::GlobalUnescape
-        | Native::Eval => 1.0,
-        Native::DataViewGetBigInt64
-        | Native::DataViewGetBigUint64
-        | Native::DataViewGetFloat16
-        | Native::DataViewGetFloat32
-        | Native::DataViewGetFloat64
-        | Native::DataViewGetInt8
-        | Native::DataViewGetInt16
-        | Native::DataViewGetInt32
-        | Native::DataViewGetUint8
-        | Native::DataViewGetUint16
-        | Native::DataViewGetUint32 => 1.0,
-        Native::DataViewSetBigInt64
-        | Native::DataViewSetBigUint64
-        | Native::DataViewSetFloat16
-        | Native::DataViewSetFloat32
-        | Native::DataViewSetFloat64
-        | Native::DataViewSetInt8
-        | Native::DataViewSetInt16
-        | Native::DataViewSetInt32
-        | Native::DataViewSetUint8
-        | Native::DataViewSetUint16
-        | Native::DataViewSetUint32 => 2.0,
-        Native::DataViewBufferGetter
-        | Native::DataViewByteLengthGetter
-        | Native::DataViewByteOffsetGetter => 0.0,
-        Native::BigIntAsIntN | Native::BigIntAsUintN => 2.0,
-        Native::BigIntValueOf | Native::BigIntToString | Native::BigIntToLocaleString => 0.0,
-        Native::IntlNumberFormat | Native::IntlNumberFormatFormatGetter => 0.0,
-        Native::IntlNumberFormatSupportedLocalesOf => 1.0,
-        Native::IntlNumberFormatFormat | Native::IntlNumberFormatFormatToParts => 1.0,
-        Native::IntlNumberFormatFormatRange | Native::IntlNumberFormatFormatRangeToParts => 2.0,
-        Native::IntlNumberFormatResolvedOptions => 0.0,
-        Native::IntlRelativeTimeFormat => 0.0,
-        Native::IntlRelativeTimeFormatSupportedLocalesOf => 1.0,
-        Native::IntlRelativeTimeFormatFormat | Native::IntlRelativeTimeFormatFormatToParts => 2.0,
-        Native::IntlRelativeTimeFormatResolvedOptions => 0.0,
-        Native::IntlSegmenter => 0.0,
-        Native::IntlSegmenterSupportedLocalesOf => 1.0,
-        Native::IntlSegmenterSegment => 1.0,
-        Native::IntlSegmenterResolvedOptions => 0.0,
-        Native::IntlSegmenterSegmentsIterator => 0.0,
-        Native::IntlSegmenterSegmentsContaining => 1.0,
-        Native::IntlSegmenterIteratorNext => 0.0,
-        Native::IntlGetCanonicalLocales | Native::IntlSupportedValuesOf | Native::IntlLocale => 1.0,
-        Native::IntlLocaleToString
-        | Native::IntlLocaleMaximize
-        | Native::IntlLocaleMinimize
-        | Native::IntlLocaleGetCalendars
-        | Native::IntlLocaleGetCollations
-        | Native::IntlLocaleGetHourCycles
-        | Native::IntlLocaleGetNumberingSystems
-        | Native::IntlLocaleGetTimeZones
-        | Native::IntlLocaleGetTextInfo
-        | Native::IntlLocaleGetWeekInfo => 0.0,
-        Native::IntlLocaleBaseNameGetter
-        | Native::IntlLocaleLanguageGetter
-        | Native::IntlLocaleScriptGetter
-        | Native::IntlLocaleRegionGetter
-        | Native::IntlLocaleVariantsGetter
-        | Native::IntlLocaleCalendarGetter
-        | Native::IntlLocaleCollationGetter
-        | Native::IntlLocaleHourCycleGetter
-        | Native::IntlLocaleCaseFirstGetter
-        | Native::IntlLocaleFirstDayOfWeekGetter
-        | Native::IntlLocaleNumberingSystemGetter
-        | Native::IntlLocaleNumericGetter => 0.0,
-        Native::IntlCollator => 0.0,
-        Native::IntlPluralRules => 0.0,
-        Native::IntlPluralRulesSupportedLocalesOf => 1.0,
-        Native::IntlPluralRulesSelect => 1.0,
-        Native::IntlPluralRulesSelectRange => 2.0,
-        Native::IntlPluralRulesResolvedOptions => 0.0,
-        Native::IntlCollatorSupportedLocalesOf => 1.0,
-        Native::IntlCollatorCompareGetter => 0.0,
-        Native::IntlCollatorCompare => 2.0,
-        Native::IntlCollatorResolvedOptions => 0.0,
-        Native::IntlDateTimeFormat => 0.0,
-        Native::IntlDateTimeFormatFormatGetter | Native::IntlDateTimeFormatResolvedOptions => 0.0,
-        Native::IntlDateTimeFormatFormat => 1.0,
-        Native::IntlDateTimeFormatFormatToParts => 1.0,
-        Native::IntlDateTimeFormatFormatRange => 2.0,
-        Native::IntlDateTimeFormatFormatRangeToParts => 2.0,
-        Native::IntlDateTimeFormatSupportedLocalesOf => 1.0,
-        Native::IntlDisplayNames => 2.0,
-        Native::IntlDisplayNamesSupportedLocalesOf => 1.0,
-        Native::IntlDisplayNamesOf => 1.0,
-        Native::IntlDisplayNamesResolvedOptions => 0.0,
-        Native::IntlDurationFormat => 0.0,
-        Native::IntlDurationFormatFormatGetter | Native::IntlDurationFormatResolvedOptions => 0.0,
-        Native::IntlDurationFormatFormat | Native::IntlDurationFormatFormatToParts => 1.0,
-        Native::IntlDurationFormatSupportedLocalesOf => 1.0,
-        Native::IntlListFormat => 0.0,
-        Native::IntlListFormatFormatGetter => 0.0,
-        Native::IntlListFormatResolvedOptions => 0.0,
-        Native::IntlListFormatFormat | Native::IntlListFormatFormatToParts => 1.0,
-        Native::IntlListFormatSupportedLocalesOf => 1.0,
-        Native::Number => 1.0,
-        Native::NumberValueOf | Native::NumberToLocaleString => 0.0,
-        Native::NumberString
-        | Native::NumberIsNaN
-        | Native::NumberIsFinite
-        | Native::NumberIsInteger
-        | Native::NumberIsSafeInteger
-        | Native::NumberParseFloat
-        | Native::NumberFixed
-        | Native::NumberExponential
-        | Native::NumberPrecision => 1.0,
-        Native::GlobalIsFinite | Native::GlobalIsNaN => 1.0,
-        Native::ParseInt => 2.0,
-        Native::SuppressedError => 3.0,
-        Native::Error
-        | Native::EvalError
-        | Native::RangeError
-        | Native::ReferenceError
-        | Native::SyntaxError
-        | Native::TypeError
-        | Native::URIError => 1.0,
-        Native::Promise => 1.0,
-        Native::PromiseSpeciesGetter => 0.0,
-        Native::PromiseResolve
-        | Native::PromiseReject
-        | Native::PromiseTry
-        | Native::PromiseCatch
-        | Native::PromiseFinally => 1.0,
-        Native::PromiseThen => 2.0,
-        Native::PromiseAll
-        | Native::PromiseAllKeyed
-        | Native::PromiseRace
-        | Native::PromiseAllSettled
-        | Native::PromiseAllSettledKeyed
-        | Native::PromiseAny => 1.0,
-        Native::PromiseFinallyHandler => 1.0,
-        Native::PromiseFinallyContinuationHandler => 0.0,
-        Native::PromiseAggregateJob => 1.0,
-        Native::PromiseWithResolvers => 0.0,
-        Native::PromiseCapabilityExecutor => 2.0,
-        Native::Object => 1.0,
-        Native::ShadowRealmImportValueFulfilled => 1.0,
-        Native::String => 1.0,
-        Native::TemporalDuration => 0.0,
-        Native::TemporalDurationFrom => 1.0,
-        Native::TemporalDurationCompare => 2.0,
-        Native::TemporalDurationAdd | Native::TemporalDurationSubtract => 1.0,
-        Native::TemporalDurationWith => 1.0,
-        Native::TemporalDurationAbs | Native::TemporalDurationNegated => 0.0,
-        Native::TemporalDurationTotal => 1.0,
-        Native::TemporalDurationRound => 1.0,
-        Native::TemporalToLocaleString | Native::TemporalDurationToString => 0.0,
-        Native::TemporalDurationToJSON
-        | Native::TemporalDurationValueOf
-        | Native::TemporalDurationYearsGetter
-        | Native::TemporalDurationMonthsGetter
-        | Native::TemporalDurationWeeksGetter
-        | Native::TemporalDurationDaysGetter
-        | Native::TemporalDurationHoursGetter
-        | Native::TemporalDurationMinutesGetter
-        | Native::TemporalDurationSecondsGetter
-        | Native::TemporalDurationMillisecondsGetter
-        | Native::TemporalDurationMicrosecondsGetter
-        | Native::TemporalDurationNanosecondsGetter
-        | Native::TemporalDurationSignGetter
-        | Native::TemporalDurationBlankGetter => 0.0,
-        Native::TemporalPlainDate => 3.0,
-        Native::TemporalPlainDateFrom => 1.0,
-        Native::TemporalPlainDateCompare => 2.0,
-        Native::TemporalPlainDateEquals => 1.0,
-        Native::TemporalPlainDateWith => 1.0,
-        Native::TemporalPlainDateWithCalendar => 1.0,
-        Native::TemporalPlainDateAdd | Native::TemporalPlainDateSubtract => 1.0,
-        Native::TemporalPlainDateUntil | Native::TemporalPlainDateSince => 1.0,
-        Native::TemporalPlainDateTime => 3.0,
-        Native::TemporalPlainDateTimeFrom => 1.0,
-        Native::TemporalPlainDateTimeCompare => 2.0,
-        Native::TemporalPlainDateTimeAdd | Native::TemporalPlainDateTimeSubtract => 1.0,
-        Native::TemporalPlainDateTimeRound => 1.0,
-        Native::TemporalPlainDateTimeUntil | Native::TemporalPlainDateTimeSince => 1.0,
-        Native::TemporalPlainDateTimeToString | Native::TemporalPlainDateTimeToPlainDate => 0.0,
-        Native::TemporalPlainDateTimeToJSON
-        | Native::TemporalPlainDateTimeToPlainTime
-        | Native::TemporalPlainDateTimeValueOf => 0.0,
-        Native::TemporalPlainDateTimeToZonedDateTime => 1.0,
-        Native::TemporalPlainDateTimeWith => 1.0,
-        Native::TemporalPlainDateTimeWithCalendar => 1.0,
-        Native::TemporalPlainDateTimeWithPlainTime => 0.0,
-        Native::TemporalPlainTime => 0.0,
-        Native::TemporalPlainTimeFrom => 1.0,
-        Native::TemporalPlainTimeCompare => 2.0,
-        Native::TemporalPlainTimeAdd | Native::TemporalPlainTimeSubtract => 1.0,
-        Native::TemporalPlainTimeEquals => 1.0,
-        Native::TemporalPlainTimeHourGetter
-        | Native::TemporalPlainTimeMinuteGetter
-        | Native::TemporalPlainTimeSecondGetter
-        | Native::TemporalPlainTimeMillisecondGetter
-        | Native::TemporalPlainTimeMicrosecondGetter
-        | Native::TemporalPlainTimeNanosecondGetter => 0.0,
-        Native::TemporalPlainTimeValueOf => 0.0,
-        Native::TemporalPlainTimeRound => 1.0,
-        Native::TemporalPlainTimeUntil | Native::TemporalPlainTimeSince => 1.0,
-        Native::TemporalPlainTimeToString | Native::TemporalPlainTimeToJSON => 0.0,
-        Native::TemporalPlainTimeWith => 1.0,
-        Native::TemporalNowInstant
-        | Native::TemporalNowPlainDateISO
-        | Native::TemporalNowPlainDateTimeISO
-        | Native::TemporalNowPlainTimeISO
-        | Native::TemporalNowTimeZoneId
-        | Native::TemporalNowZonedDateTimeISO => 0.0,
-        Native::TemporalZonedDateTimeToInstant
-        | Native::TemporalZonedDateTimeToPlainDate
-        | Native::TemporalZonedDateTimeToPlainDateTime
-        | Native::TemporalZonedDateTimeToPlainTime
-        | Native::TemporalZonedDateTimeValueOf => 0.0,
-        Native::TemporalZonedDateTimeAdd
-        | Native::TemporalZonedDateTimeSubtract
-        | Native::TemporalZonedDateTimeGetTimeZoneTransition
-        | Native::TemporalZonedDateTimeRound
-        | Native::TemporalZonedDateTimeUntil
-        | Native::TemporalZonedDateTimeSince => 1.0,
-        Native::TemporalZonedDateTimeStartOfDay => 0.0,
-        Native::TemporalPlainMonthDay | Native::TemporalPlainYearMonth => 2.0,
-        Native::TemporalPlainMonthDayFrom | Native::TemporalPlainYearMonthFrom => 1.0,
-        Native::TemporalPlainMonthDayCompare | Native::TemporalPlainYearMonthCompare => 2.0,
-        Native::TemporalPlainMonthDayEquals | Native::TemporalPlainMonthDayToPlainDate => 1.0,
-        Native::TemporalPlainMonthDayWith => 1.0,
-        Native::TemporalPlainYearMonthEquals
-        | Native::TemporalPlainYearMonthAdd
-        | Native::TemporalPlainYearMonthSubtract
-        | Native::TemporalPlainYearMonthUntil
-        | Native::TemporalPlainYearMonthSince
-        | Native::TemporalPlainYearMonthWith
-        | Native::TemporalPlainYearMonthToPlainDate => 1.0,
-        Native::TemporalPlainMonthDayCalendarIdGetter
-        | Native::TemporalPlainMonthDayDayGetter
-        | Native::TemporalPlainMonthDayMonthCodeGetter
-        | Native::TemporalPlainYearMonthCalendarIdGetter
-        | Native::TemporalPlainYearMonthYearGetter
-        | Native::TemporalPlainYearMonthMonthGetter
-        | Native::TemporalPlainYearMonthMonthCodeGetter
-        | Native::TemporalPlainYearMonthEraGetter
-        | Native::TemporalPlainYearMonthEraYearGetter
-        | Native::TemporalPlainYearMonthReferenceISODayGetter
-        | Native::TemporalPlainYearMonthDaysInMonthGetter
-        | Native::TemporalPlainYearMonthDaysInYearGetter
-        | Native::TemporalPlainYearMonthMonthsInYearGetter
-        | Native::TemporalPlainYearMonthInLeapYearGetter
-        | Native::TemporalPlainMonthDayToString
-        | Native::TemporalPlainMonthDayToJSON
-        | Native::TemporalPlainMonthDayValueOf
-        | Native::TemporalPlainYearMonthToString
-        | Native::TemporalPlainYearMonthToJSON
-        | Native::TemporalPlainYearMonthValueOf => 0.0,
-        Native::TemporalPlainMonthDayToLocaleString
-        | Native::TemporalPlainYearMonthToLocaleString => 0.0,
-        Native::TemporalPlainDateTimeCalendarIdGetter
-        | Native::TemporalPlainDateTimeYearGetter
-        | Native::TemporalPlainDateTimeMonthGetter
-        | Native::TemporalPlainDateTimeMonthCodeGetter
-        | Native::TemporalPlainDateTimeDayGetter
-        | Native::TemporalPlainDateTimeHourGetter
-        | Native::TemporalPlainDateTimeMinuteGetter
-        | Native::TemporalPlainDateTimeSecondGetter
-        | Native::TemporalPlainDateTimeMillisecondGetter
-        | Native::TemporalPlainDateTimeMicrosecondGetter
-        | Native::TemporalPlainDateTimeNanosecondGetter
-        | Native::TemporalPlainDateTimeEraGetter
-        | Native::TemporalPlainDateTimeEraYearGetter
-        | Native::TemporalPlainDateTimeDayOfWeekGetter
-        | Native::TemporalPlainDateTimeDayOfYearGetter
-        | Native::TemporalPlainDateTimeWeekOfYearGetter
-        | Native::TemporalPlainDateTimeYearOfWeekGetter
-        | Native::TemporalPlainDateTimeDaysInWeekGetter
-        | Native::TemporalPlainDateTimeDaysInMonthGetter
-        | Native::TemporalPlainDateTimeDaysInYearGetter
-        | Native::TemporalPlainDateTimeMonthsInYearGetter
-        | Native::TemporalPlainDateTimeInLeapYearGetter => 0.0,
-        Native::TemporalPlainDateTimeEquals => 1.0,
-        Native::TemporalPlainDateCalendarIdGetter
-        | Native::TemporalPlainDateYearGetter
-        | Native::TemporalPlainDateMonthGetter
-        | Native::TemporalPlainDateMonthCodeGetter
-        | Native::TemporalPlainDateDayGetter
-        | Native::TemporalPlainDateEraGetter
-        | Native::TemporalPlainDateEraYearGetter
-        | Native::TemporalPlainDateDayOfWeekGetter
-        | Native::TemporalPlainDateDayOfYearGetter
-        | Native::TemporalPlainDateWeekOfYearGetter
-        | Native::TemporalPlainDateYearOfWeekGetter
-        | Native::TemporalPlainDateDaysInWeekGetter
-        | Native::TemporalPlainDateDaysInMonthGetter
-        | Native::TemporalPlainDateDaysInYearGetter
-        | Native::TemporalPlainDateMonthsInYearGetter
-        | Native::TemporalPlainDateInLeapYearGetter
-        | Native::TemporalPlainDateToString
-        | Native::TemporalPlainDateToJSON
-        | Native::TemporalPlainDateToLocaleString
-        | Native::TemporalPlainDateToPlainDateTime
-        | Native::TemporalPlainDateToPlainMonthDay
-        | Native::TemporalPlainDateToPlainYearMonth
-        | Native::TemporalPlainDateValueOf => 0.0,
-        Native::TemporalPlainDateToZonedDateTime => 1.0,
-        Native::TemporalZonedDateTime => 2.0,
-        Native::TemporalZonedDateTimeFrom => 1.0,
-        Native::TemporalZonedDateTimeCompare => 2.0,
-        Native::TemporalZonedDateTimeEquals
-        | Native::TemporalZonedDateTimeWithTimeZone
-        | Native::TemporalZonedDateTimeWith
-        | Native::TemporalZonedDateTimeWithCalendar => 1.0,
-        Native::TemporalZonedDateTimeWithPlainTime => 0.0,
-        Native::TemporalZonedDateTimeEpochNanosecondsGetter
-        | Native::TemporalZonedDateTimeTimeZoneIdGetter
-        | Native::TemporalZonedDateTimeCalendarIdGetter
-        | Native::TemporalZonedDateTimeYearGetter
-        | Native::TemporalZonedDateTimeMonthGetter
-        | Native::TemporalZonedDateTimeMonthCodeGetter
-        | Native::TemporalZonedDateTimeDayGetter
-        | Native::TemporalZonedDateTimeHourGetter
-        | Native::TemporalZonedDateTimeMinuteGetter
-        | Native::TemporalZonedDateTimeSecondGetter
-        | Native::TemporalZonedDateTimeMillisecondGetter
-        | Native::TemporalZonedDateTimeMicrosecondGetter
-        | Native::TemporalZonedDateTimeNanosecondGetter
-        | Native::TemporalZonedDateTimeEraGetter
-        | Native::TemporalZonedDateTimeEraYearGetter
-        | Native::TemporalZonedDateTimeDayOfWeekGetter
-        | Native::TemporalZonedDateTimeDayOfYearGetter
-        | Native::TemporalZonedDateTimeWeekOfYearGetter
-        | Native::TemporalZonedDateTimeYearOfWeekGetter
-        | Native::TemporalZonedDateTimeDaysInWeekGetter
-        | Native::TemporalZonedDateTimeDaysInMonthGetter
-        | Native::TemporalZonedDateTimeDaysInYearGetter
-        | Native::TemporalZonedDateTimeMonthsInYearGetter
-        | Native::TemporalZonedDateTimeInLeapYearGetter
-        | Native::TemporalZonedDateTimeEpochMillisecondsGetter
-        | Native::TemporalZonedDateTimeHoursInDayGetter
-        | Native::TemporalZonedDateTimeOffsetGetter
-        | Native::TemporalZonedDateTimeOffsetNanosecondsGetter
-        | Native::TemporalZonedDateTimeToString
-        | Native::TemporalZonedDateTimeToJSON
-        | Native::TemporalZonedDateTimeToLocaleString => 0.0,
-        Native::TemporalInstant => 1.0,
-        Native::TemporalInstantFrom
-        | Native::TemporalInstantFromEpochMilliseconds
-        | Native::TemporalInstantFromEpochNanoseconds => 1.0,
-        Native::TemporalInstantCompare => 2.0,
-        Native::TemporalInstantEpochNanosecondsGetter
-        | Native::TemporalInstantEpochMillisecondsGetter
-        | Native::TemporalInstantToString
-        | Native::TemporalInstantToJSON
-        | Native::TemporalInstantValueOf => 0.0,
-        Native::TemporalInstantEquals
-        | Native::TemporalInstantAdd
-        | Native::TemporalInstantSubtract
-        | Native::TemporalInstantRound
-        | Native::TemporalInstantSince
-        | Native::TemporalInstantUntil => 1.0,
-        Native::TemporalInstantToZonedDateTimeISO => 1.0,
-        Native::Symbol => 0.0,
-        Native::SymbolFor | Native::SymbolKeyFor => 1.0,
-        Native::SymbolToString | Native::SymbolValueOf => 0.0,
-        Native::SymbolDescriptionGetter => 0.0,
-        Native::SymbolToPrimitive => 1.0,
-        Native::StringToLocaleLowerCase | Native::StringToLocaleUpperCase => 0.0,
-        Native::StringValues => 0.0,
-        Native::StringLocaleCompare => 1.0,
-        Native::StringFromCharCode | Native::StringFromCodePoint | Native::StringRaw => 1.0,
-        Native::RegExp => 2.0,
-        Native::RegExpCompile => 2.0,
-        Native::RegExpEscape => 1.0,
-        Native::RegExpLegacyGetter => 0.0,
-        Native::RegExpLegacySetter => 1.0,
-        Native::ObjectPrototypeToLocaleString | Native::ObjectPrototypeValueOf => 0.0,
-        Native::ObjectPrototypeToString => 0.0,
-        Native::ObjectPrototypeDefineGetter | Native::ObjectPrototypeDefineSetter => 2.0,
-        Native::ObjectPrototypeProtoGetter => 0.0,
-        Native::ObjectPrototypeProtoSetter => 1.0,
-        Native::ObjectPrototypeLookupGetter
-        | Native::ObjectPrototypeLookupSetter
-        | Native::ObjectPrototypeHasOwnProperty
-        | Native::ObjectPrototypePropertyIsEnumerable
-        | Native::ObjectPrototypeIsPrototypeOf => 1.0,
-        Native::Map
-        | Native::Set
-        | Native::WeakMap
-        | Native::WeakSet
-        | Native::WeakRefDeref
-        | Native::MapSizeGetter
-        | Native::SetSizeGetter => 0.0,
-        Native::MapGet | Native::MapHas | Native::MapDelete | Native::MapForEach => 1.0,
-        Native::MapSet => 2.0,
-        Native::MapClear | Native::MapKeys | Native::MapValues | Native::MapEntries => 0.0,
-        Native::MapGroupBy => 2.0,
-        Native::MapGetOrInsert | Native::MapGetOrInsertComputed => 2.0,
-        Native::WeakMapGet | Native::WeakMapHas | Native::WeakMapDelete => 1.0,
-        Native::WeakSetAdd | Native::WeakSetHas | Native::WeakSetDelete => 1.0,
-        Native::WeakMapSet | Native::WeakMapGetOrInsert | Native::WeakMapGetOrInsertComputed => 2.0,
-        Native::WeakRef => 1.0,
-        Native::MathMax
-        | Native::MathMin
-        | Native::MathPow
-        | Native::MathAtan2
-        | Native::MathHypot
-        | Native::MathImul => 2.0,
-        Native::MathRandom => 0.0,
-        Native::MathAbs
-        | Native::MathAcos
-        | Native::MathAcosh
-        | Native::MathAsin
-        | Native::MathAsinh
-        | Native::MathAtan
-        | Native::MathAtanh
-        | Native::MathCbrt
-        | Native::MathCeil
-        | Native::MathClz32
-        | Native::MathCos
-        | Native::MathCosh
-        | Native::MathExp
-        | Native::MathExpm1
-        | Native::MathF16Round
-        | Native::MathFloor
-        | Native::MathFround
-        | Native::MathLog
-        | Native::MathLog10
-        | Native::MathLog1p
-        | Native::MathLog2
-        | Native::MathRound
-        | Native::MathSign
-        | Native::MathSin
-        | Native::MathSinh
-        | Native::MathSqrt
-        | Native::MathSumPrecise
-        | Native::MathTan
-        | Native::MathTanh
-        | Native::MathTrunc => 1.0,
-        Native::SetAdd
-        | Native::SetHas
-        | Native::SetDelete
-        | Native::SetForEach
-        | Native::SetDifference
-        | Native::SetIntersection
-        | Native::SetSymmetricDifference
-        | Native::SetUnion
-        | Native::SetIsDisjointFrom
-        | Native::SetIsSubsetOf
-        | Native::SetIsSupersetOf => 1.0,
-        Native::SetSpeciesGetter => 0.0,
-        Native::SetClear | Native::SetKeys | Native::SetValues | Native::SetEntries => 0.0,
-        Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
-        Native::TypedArrayFrom => 1.0,
-        Native::Uint8Array
-        | Native::Uint8ClampedArray
-        | Native::Uint16Array
-        | Native::Uint32Array
-        | Native::Int8Array
-        | Native::Int16Array
-        | Native::Int32Array
-        | Native::BigInt64Array
-        | Native::BigUint64Array
-        | Native::Float16Array
-        | Native::Float32Array
-        | Native::Float64Array => 3.0,
-        Native::ArrayBuffer
-        | Native::SharedArrayBuffer
-        | Native::ArrayBufferIsView
-        | Native::DetachArrayBuffer => 1.0,
-        Native::Iterator => 0.0,
-        Native::IteratorFrom => 1.0,
-        Native::IteratorConcat => 0.0,
-        Native::IteratorZip | Native::IteratorZipKeyed => 1.0,
-        Native::IteratorMap
-        | Native::IteratorFilter
-        | Native::IteratorTake
-        | Native::IteratorDrop
-        | Native::IteratorFlatMap
-        | Native::IteratorReduce
-        | Native::IteratorForEach
-        | Native::IteratorEvery
-        | Native::IteratorFind
-        | Native::IteratorSome => 1.0,
-        Native::IteratorToArray => 0.0,
-        Native::IteratorDispose | Native::IteratorProtocolNext | Native::IteratorProtocolReturn => {
-            0.0
-        }
-        Native::IteratorHelperNext | Native::IteratorHelperReturn => 0.0,
-        Native::IteratorPrototypeConstructorGetter | Native::IteratorPrototypeToStringTagGetter => {
-            0.0
-        }
-        Native::IteratorPrototypeConstructorSetter | Native::IteratorPrototypeToStringTagSetter => {
-            1.0
-        }
-        Native::ArrayIteratorNext
-        | Native::IteratorNext
-        | Native::StringIteratorNext
-        | Native::RegExpStringIteratorNext
-        | Native::IteratorSelf
-        | Native::AsyncIteratorSelf
-        | Native::AsyncIteratorDispose => 0.0,
-        Native::GeneratorNext
-        | Native::GeneratorReturn
-        | Native::GeneratorThrow
-        | Native::AsyncGeneratorNext
-        | Native::AsyncGeneratorReturn
-        | Native::AsyncGeneratorThrow => 1.0,
-        Native::AtomicsAdd
-        | Native::AtomicsAnd
-        | Native::AtomicsOr
-        | Native::AtomicsSub
-        | Native::AtomicsXor
-        | Native::AtomicsExchange
-        | Native::AtomicsNotify => 3.0,
-        Native::AtomicsCompareExchange => 4.0,
-        Native::AtomicsIsLockFree => 1.0,
-        Native::AtomicsLoad => 2.0,
-        Native::AtomicsStore => 3.0,
-        Native::AtomicsWait | Native::AtomicsWaitAsync => 4.0,
-        Native::AtomicsPause => 0.0,
-        Native::AsyncDisposableStack
-        | Native::AsyncDisposableStackMove
-        | Native::AsyncDisposableStackDisposeAsync
-        | Native::AsyncDisposableStackDisposed => 0.0,
-        Native::AsyncDisposableStackUse | Native::AsyncDisposableStackDefer => 1.0,
-        Native::AsyncDisposableStackAdopt => 2.0,
-        Native::AsyncFunction | Native::GeneratorFunction | Native::AsyncGeneratorFunction => 1.0,
-        Native::ArrayBufferSlice
-        | Native::SharedArrayBufferSlice
-        | Native::ArrayBufferSliceToImmutable => 2.0,
-        Native::SharedArrayBufferGrow => 1.0,
-        Native::ArrayBufferResize => 1.0,
-        Native::ArrayBufferTransfer
-        | Native::ArrayBufferTransferToFixedLength
-        | Native::ArrayBufferTransferToImmutable
-        | Native::ArrayBufferByteLengthGetter
-        | Native::ArrayBufferDetachedGetter
-        | Native::ArrayBufferImmutableGetter
-        | Native::ArrayBufferMaxByteLengthGetter
-        | Native::ArrayBufferResizableGetter
-        | Native::SharedArrayBufferByteLengthGetter
-        | Native::SharedArrayBufferGrowableGetter
-        | Native::SharedArrayBufferMaxByteLengthGetter
-        | Native::ArrayBufferSpecies => 0.0,
-        Native::ArraySpecies => 0.0,
-        Native::ArrayOf
-        | Native::ArrayPop
-        | Native::ArrayShift
-        | Native::ArrayFlat
-        | Native::ArrayReverse
-        | Native::ArrayToReversed
-        | Native::ArrayToString
-        | Native::ArrayToLocaleString
-        | Native::ArrayKeys
-        | Native::ArrayValues
-        | Native::ArrayEntries => 0.0,
-        Native::ArrayJoin
-        | Native::ArrayConcat
-        | Native::ArrayMap
-        | Native::ArrayFilter
-        | Native::ArraySome
-        | Native::ArrayEvery
-        | Native::ArrayFind
-        | Native::ArrayFindIndex
-        | Native::ArrayFindLast
-        | Native::ArrayFindLastIndex
-        | Native::ArrayGroup
-        | Native::ArrayGroupToMap
-        | Native::ArrayIncludes
-        | Native::ArrayIndexOf
-        | Native::ArrayLastIndexOf
-        | Native::ArrayFlatMap
-        | Native::ArrayAt
-        | Native::ArraySort
-        | Native::ArrayForEach
-        | Native::ArrayReduce
-        | Native::ArrayReduceRight
-        | Native::ArrayPush
-        | Native::ArrayUnshift
-        | Native::ArrayFill
-        | Native::ArrayToSorted => 1.0,
-        Native::ArrayCopyWithin
-        | Native::ArrayToSpliced
-        | Native::ArrayWith
-        | Native::ArraySlice
-        | Native::ArraySplice => 2.0,
-        Native::ObjectKeys
-        | Native::ObjectValues
-        | Native::ObjectEntries
-        | Native::ObjectGetOwnPropertyNames
-        | Native::ObjectGetOwnPropertySymbols
-        | Native::ObjectGetOwnPropertyDescriptors
-        | Native::ObjectFreeze
-        | Native::ObjectSeal
-        | Native::ObjectPreventExtensions
-        | Native::ObjectIsFrozen
-        | Native::ObjectIsSealed
-        | Native::ObjectIsExtensible
-        | Native::ObjectGetPrototypeOf => 1.0,
-        Native::ObjectHasOwn | Native::ForInKeyIsEnumerable => 2.0,
-        Native::ObjectGetOwnPropertyDescriptor | Native::ObjectIs => 2.0,
-        Native::ObjectCreate => 2.0,
-        Native::ObjectDefineProperties | Native::ObjectAssign => 2.0,
-        Native::ObjectFromEntries => 1.0,
-        Native::ObjectDefineProperty => 3.0,
-        Native::ObjectGroupBy => 2.0,
-        Native::ObjectSetPrototypeOf => 2.0,
-        Native::JsonParse => 2.0,
-        Native::JsonStringify => 3.0,
-        Native::JsonRawJson | Native::JsonIsRawJson => 1.0,
-        Native::RegExpSymbolMatch => 1.0,
-        Native::RegExpSymbolSearch => 1.0,
-        Native::RegExpSymbolReplace => 2.0,
-        Native::RegExpSymbolMatchAll | Native::StringMatchAll => 1.0,
-        Native::RegExpSymbolSplit => 2.0,
-        Native::RegExpExec | Native::RegExpTest => 1.0,
-        Native::RegExpToString => 0.0,
-        Native::RegExpFlags
-        | Native::RegExpGlobal
-        | Native::RegExpIgnoreCase
-        | Native::RegExpMultiline
-        | Native::RegExpDotAll
-        | Native::RegExpUnicode
-        | Native::RegExpUnicodeSets
-        | Native::RegExpSticky
-        | Native::RegExpHasIndices
-        | Native::RegExpSource => 0.0,
-        Native::RegExpSpecies => 0.0,
-        Native::ReflectHas | Native::ReflectDeleteProperty | Native::ReflectSetPrototypeOf => 2.0,
-        Native::ReflectApply => 3.0,
-        Native::ReflectDefineProperty => 3.0,
-        Native::ReflectConstruct => 2.0,
-        Native::ReflectGet => 2.0,
-        Native::ReflectSet => 3.0,
-        Native::ReflectGetOwnPropertyDescriptor => 2.0,
-        Native::ReflectGetPrototypeOf
-        | Native::ReflectIsExtensible
-        | Native::ReflectOwnKeys
-        | Native::ReflectPreventExtensions => 1.0,
-        _ => return None,
-    })
+    match native_lengths::ROW_LENGTHS[kind as usize] {
+        Some(length) => Some(length as f64),
+        None => None,
+    }
 }
 
 pub(super) use crate::heap::{PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
@@ -1105,8 +415,9 @@ pub(super) struct AggregateRecord {
 }
 
 #[derive(Clone, Copy, Debug)]
+/// A combinator element function's place in its aggregate. The aggregate itself is the
+/// function's environment, which keeps it alive exactly as long as the function.
 pub(super) struct AggregateJob {
-    pub(super) aggregate: Value,
     pub(super) index: usize,
     pub(super) rejected: bool,
 }
@@ -1174,7 +485,6 @@ impl PromiseRuntime {
                 .chain(record.values.iter().copied())
                 .chain(record.keys.iter().flatten().copied())
         });
-        edges!(self.aggregate_jobs, |job| [job.aggregate]);
         edges!(self.reaction_capabilities, |capability| [capability.0, capability.1]);
     }
 }
@@ -2094,26 +1404,8 @@ impl<H: Host> Vm<H> {
             crate::module_identity::normalize(std::path::Path::new(&module.name)),
             locals.clone(),
         );
-        match self.resolve_static_module_links(
-            p,
-            module,
-            locals,
-            plan.reexports.clone(),
-            &mut active,
-        )? {
-            StaticModuleGraph::Linked {
-                exports,
-                incomplete: false,
-                ..
-            } => self.module_namespace_from_static(exports).map(Some),
-            StaticModuleGraph::Linked {
-                incomplete: true, ..
-            }
-            | StaticModuleGraph::LinkError => self
-                .syntax_error_result(p, "module export could not be resolved unambiguously")
-                .map(Some),
-            StaticModuleGraph::Unsupported => Ok(None),
-        }
+        let graph = self.resolve_static_module_links(p, module, locals, plan.reexports.clone(), &mut active)?;
+        self.static_graph_namespace(p, graph)
     }
 
     fn root_module_local_exports(
@@ -2302,8 +1594,7 @@ impl<H: Host> Vm<H> {
                         offset: 0,
                     }),
                     buffer,
-                    length,
-                    length_tracking: false,
+                    length: crate::heap::ViewLength::fixed(length),
                 });
                 self.module_namespace_default(value)
             }
@@ -2824,10 +2115,7 @@ impl<H: Host> Vm<H> {
         requests?;
         self.advance_dynamic_import_jobs(p, false)?;
         let pending_async_evaluation = self.realm.promise.modules.values().any(|record| {
-            matches!(
-                record.phase(),
-                ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies
-            )
+            record.phase().awaits_async_evaluation()
         });
         if !outer_batch && pending_async_evaluation {
             self.drain_jobs(p)?;
@@ -3223,7 +2511,18 @@ impl<H: Host> Vm<H> {
         module: &ModuleSource,
         active: &mut ActiveModuleExports,
     ) -> Result<Option<Value>, JsError> {
-        match self.resolve_static_module_graph(p, module.clone(), active)? {
+        let graph = self.resolve_static_module_graph(p, module.clone(), active)?;
+        self.static_graph_namespace(p, graph)
+    }
+
+    /// The namespace object of a statically linked module graph: `None` when the graph is
+    /// beyond static linking, a SyntaxError when an export is missing or ambiguous.
+    fn static_graph_namespace(
+        &mut self,
+        p: &ResidualProgram,
+        graph: StaticModuleGraph,
+    ) -> Result<Option<Value>, JsError> {
+        match graph {
             StaticModuleGraph::Linked {
                 exports,
                 incomplete: false,
@@ -4349,10 +3648,7 @@ impl<H: Host> Vm<H> {
             {
                 continue;
             }
-            if matches!(
-                phase,
-                ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies
-            ) {
+            if phase.awaits_async_evaluation() {
                 return Ok(true);
             }
             let cycle_root_phase = cycle_root
@@ -5244,7 +4540,7 @@ impl<H: Host> Vm<H> {
         active: &mut ActiveModuleExports,
     ) -> Result<StaticModuleGraph, JsError> {
         let mut links = StaticModuleLinks::default();
-        if links.add_locals(locals.clone()) != StaticModuleAdd::Added {
+        if links.add_locals(locals) != StaticModuleAdd::Added {
             return Ok(StaticModuleGraph::LinkError);
         }
         let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
@@ -5555,7 +4851,13 @@ impl<H: Host> Vm<H> {
             return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
         }
         let then_atom = self.runtime_atoms.then;
-        let then = match self.get_property(p, value, then_atom) {
+        // A `then` that reads as plain data (`plain_named_load`), as an intrinsic promise's
+        // does, is the value [[Get]] would answer, without its general lookup.
+        let read = match self.plain_named_load(value, then_atom) {
+            Some(then) => Ok(then),
+            None => self.get_property(p, value, then_atom),
+        };
+        let then = match read {
             Ok(then) => then,
             // Cancellation must unwind the active job, not become a guest
             // rejection or an allocated Error during thenable assimilation.
@@ -5705,75 +5007,43 @@ impl<H: Host> Vm<H> {
         intrinsic
     }
 
-    /// Whether the last `PromiseSpeciesProof` answers `promise`: SpeciesConstructor(promise,
-    /// %Promise%) then reads `constructor` as the realm's `%Promise%` from the prototype data
-    /// slot it was found in, and that constructor's own `@@species` still holds the intrinsic
-    /// getter. A receiver of the proved shape and prototype finds `constructor` where the walk
-    /// did while the prototype layout epoch holds (`plain_proved_get`); the two slots are read
-    /// again, as a data write to either changes no layout.
+    /// Whether the `PromiseSpeciesProof` answers `promise`: a receiver of the proved shape and
+    /// prototype, with no side descriptors, under the value epoch the proof was made in.
     #[inline]
     fn promise_species_proved(&self, promise: Value) -> bool {
-        let Some(proof) = self.promise_species_proof.get() else {
+        let proofs = self.promise_species_proof.borrow();
+        let Some(proof) = proofs.as_ref().filter(|proof| proof.watches.iter().all(|watch| watch.is_published())) else {
             return false;
         };
         let Some(data) = self.heap.ordinary_object(promise) else {
             return false;
         };
-        if data.shape() != proof.shape
-            || data.proto() != proof.prototype
-            || data.has_side_descriptors()
-            || proof.epoch != crate::heap::prototype_layout_epoch()
-            || proof.realm != self.realm.globals
-        {
-            return false;
-        }
-        let (Some(holder), Some(constructor)) =
-            (self.heap.ordinary_object(proof.holder), self.object_data(proof.constructor))
-        else {
-            return false;
-        };
-        // SAFETY: the proof's walk found `constructor` in this data slot of the holder's shape,
-        // which the epoch keeps.
-        let found = unsafe { self.heap.property_get_shaped(holder, proof.holder_slot as usize) };
-        found == Some(proof.constructor)
-            && constructor.shape() == proof.constructor_shape
-            && self.heap.property_get(constructor, proof.species_slot) == Some(proof.getter)
+        data.shape() == proof.shape
+            && data.proto() == proof.prototype
+            && !data.has_side_descriptors()
+            && proof.realm == self.realm.globals
     }
 
     /// Records the `PromiseSpeciesProof` of `promise`, whose `constructor` read found the
-    /// realm's `%Promise%` with its intrinsic `@@species` getter: where the read's proof found
-    /// the constructor, and the getter's slot, when both were proved under this epoch.
-    fn record_promise_species_proof(&self, promise: Value, constructor: Value) {
+    /// realm's `%Promise%` with its intrinsic `@@species` getter, where the read's proof found
+    /// the constructor inherited from a prototype: the holder and the constructor become
+    /// watched prototypes, whose writes retire the proof.
+    fn record_promise_species_proof(&mut self, promise: Value, constructor: Value) {
         use super::symbol_load_proof::SymbolLoadAnswer;
-        let epoch = crate::heap::prototype_layout_epoch();
-        let (Some(data), Some(constructor_data)) = (self.heap.ordinary_object(promise), self.object_data(constructor))
+        let Some(data) = self.heap.ordinary_object(promise) else {
+            return;
+        };
+        let (shape, key) = (data.shape(), PropertyKey::string(self.runtime_atoms.constructor));
+        let Some(SymbolLoadAnswer::Inherited { prototype, holder, .. }) =
+            self.symbol_load_proofs.answer(shape, key, crate::heap::prototype_layout_epoch())
         else {
             return;
         };
-        let key = PropertyKey::string(self.runtime_atoms.constructor);
-        let Some(SymbolLoadAnswer::Inherited { prototype, holder, slot }) = self.symbol_load_proofs.answer(data.shape(), key, epoch)
-        else {
-            return;
-        };
-        let constructor_shape = constructor_data.shape();
-        let Some(species_slot) = self.proved_species_slot(constructor_shape, epoch) else {
-            return;
-        };
-        let Some(getter) = self.heap.property_get(constructor_data, species_slot) else {
-            return;
-        };
-        self.promise_species_proof.set(Some(PromiseSpeciesProof {
-            shape: data.shape(),
-            prototype,
-            epoch,
-            realm: self.realm.globals,
-            holder,
-            holder_slot: slot,
-            constructor,
-            constructor_shape,
-            species_slot,
-            getter,
-        }));
+        self.heap.mark_prototype(holder);
+        self.heap.mark_prototype(constructor);
+        let watch = |object| self.heap.object(object).and_then(|data| crate::heap::watch_prototype_values(data.exact_shape()));
+        *self.promise_species_proof.borrow_mut() = watch(holder).zip(watch(constructor))
+            .map(|(holder, constructor)| PromiseSpeciesProof { shape, prototype, realm: self.realm.globals, watches: [holder, constructor] });
     }
 
     pub(super) fn promise_then(

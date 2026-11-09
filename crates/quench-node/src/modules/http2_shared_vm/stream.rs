@@ -19,8 +19,8 @@ use quench_runtime::{RootId, RootedError};
 
 /// A stream's `kState.flags`.
 pub(super) mod stream_flags {
-    pub(in super::super) const READY: u32 = 0x1;
-    pub(in super::super) const CLOSED: u32 = 0x2;
+    pub(crate) use crate::modules::http2_shared_vm::session::session_flags::READY;
+    pub(crate) use crate::modules::http2_shared_vm::session::session_flags::CLOSED;
     pub(in super::super) const HEADERS_SENT: u32 = 0x4;
     pub(in super::super) const HEAD_REQUEST: u32 = 0x8;
     pub(in super::super) const ABORTED: u32 = 0x10;
@@ -39,11 +39,11 @@ pub(super) enum RstPolicy {
 /// The statuses whose responses carry no payload.
 const STATUS_NO_CONTENT: f64 = 204.0;
 const STATUS_RESET_CONTENT: f64 = 205.0;
-const STATUS_NOT_MODIFIED: f64 = 304.0;
+pub(crate) const STATUS_NOT_MODIFIED: f64 = 304.0;
 const NO_PAYLOAD_STATUSES: [f64; 3] = [STATUS_NO_CONTENT, STATUS_RESET_CONTENT, STATUS_NOT_MODIFIED];
-const STATUS_CONTINUE: f64 = 100.0;
-const STATUS_SWITCHING_PROTOCOLS: f64 = 101.0;
-const INFORMATIONAL: std::ops::Range<f64> = 100.0..200.0;
+use crate::modules::http2_shared_vm::compat::STATUS_CONTINUE;
+use crate::modules::http2_shared_vm::compat::STATUS_SWITCHING_PROTOCOLS;
+use crate::modules::http2_shared_vm::compat::INFORMATIONAL;
 /// nghttp2's default stream weight, which `state` reports.
 const DEFAULT_WEIGHT: f64 = 16.0;
 /// `priority()`'s deprecation (RFC 9113 deprecated priority signals).
@@ -108,9 +108,9 @@ members!(Member, "http2Stream", [
 ]);
 
 pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
-    let duplex = crate::modules::stream_shared_vm::intrinsics(c)?.class(crate::modules::stream_shared_vm::Class::Duplex);
+    let duplex = crate::modules::stream_shared_vm::intrinsic(c, |i| i.class(crate::modules::stream_shared_vm::Class::Duplex))?;
     let stream = constructor(c, Member::Construct, "Http2Stream")?;
-    crate::modules::http_shared_vm::inherit(c, stream, duplex)?;
+    crate::modules::stream_shared_vm::inherit(c, stream, duplex)?;
     let prototype = get(c, stream, "prototype")?;
     accessors(c, prototype, &[
         ("bufferSize", Member::BufferSize, None),
@@ -149,7 +149,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
     super::set_class(c, Class::Http2Stream, stream)?;
 
     let server = constructor(c, Member::ServerConstruct, "ServerHttp2Stream")?;
-    crate::modules::http_shared_vm::inherit(c, server, stream)?;
+    crate::modules::stream_shared_vm::inherit(c, server, stream)?;
     let prototype = get(c, server, "prototype")?;
     accessors(c, prototype, &[("pushAllowed", Member::PushAllowed, None)])?;
     super::class_methods(c, prototype, &[
@@ -162,7 +162,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
     super::set_class(c, Class::ServerHttp2Stream, server)?;
 
     let client = constructor(c, Member::ClientConstruct, "ClientHttp2Stream")?;
-    crate::modules::http_shared_vm::inherit(c, client, stream)?;
+    crate::modules::stream_shared_vm::inherit(c, client, stream)?;
     super::set_class(c, Class::ClientHttp2Stream, client)?;
 
     let maybe_destroy = closure(c, Member::MaybeDestroy, &[])?;
@@ -475,7 +475,7 @@ fn initialize(c: &mut Context<'_>, this: RootId, session: RootId, options: RootI
     put_bool(c, options, "allowHalfOpen", true)?;
     put_bool(c, options, "decodeStrings", false)?;
     put_bool(c, options, "autoDestroy", false)?;
-    let duplex = crate::modules::stream_shared_vm::intrinsics(c)?.class(crate::modules::stream_shared_vm::Class::Duplex);
+    let duplex = crate::modules::stream_shared_vm::intrinsic(c, |i| i.class(crate::modules::stream_shared_vm::Class::Duplex))?;
     c.call_rooted(duplex, this, &[options])?;
     call_method(c, this, "cork", &[])?;
     put_slot(c, this, Slot::Session, session)?;

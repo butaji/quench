@@ -160,22 +160,15 @@ impl<H: Host> Vm<H> {
             object,
             buffer,
             length,
-            length_tracking,
             ..
         }) = self.heap.get(view)
         else {
             return 0;
         };
         if self.array_buffer_detached(*buffer) {
-            0
-        } else if *length_tracking {
-            self.array_buffer_byte_length(*buffer)
-                .saturating_sub(object.offset)
-        } else if self.array_buffer_out_of_bounds(*buffer, object.offset, *length) {
-            0
-        } else {
-            *length
+            return 0;
         }
+        length.within(object.offset, 1, self.array_buffer_byte_length(*buffer)).unwrap_or(0)
     }
 
     pub(crate) fn embedding_uint8_array(&mut self, bytes: &[u8]) -> Result<Value, JsError> {
@@ -194,8 +187,7 @@ impl<H: Host> Vm<H> {
                 offset: 0,
             }),
             buffer: self.heap.root_value(buffer_root).unwrap(),
-            length,
-            length_tracking: false,
+            length: crate::heap::ViewLength::fixed(length),
         });
         self.heap.release_root(buffer_root);
         Ok(view)
@@ -221,7 +213,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The backing buffer of an ArrayBuffer or view and the byte range it currently covers.
-    fn embedding_buffer_range(&self, value: Value) -> Option<(Value, std::ops::Range<usize>)> {
+    pub(super) fn embedding_buffer_range(&self, value: Value) -> Option<(Value, std::ops::Range<usize>)> {
         let (buffer, offset, byte_length) = match self.heap.get(value)? {
             Cell::ArrayBuffer { bytes, .. } => (value, 0, bytes.len()),
             Cell::TypedArray { object, buffer, kind, .. } => {
@@ -251,7 +243,7 @@ impl<H: Host> Vm<H> {
     /// another value, or a detached or immutable buffer, which accept no writes.
     pub(crate) fn embedding_with_buffer_bytes_mut<T>(&mut self, value: Value, f: impl FnOnce(&mut [u8]) -> T) -> Option<T> {
         let (buffer, range) = self.embedding_buffer_range(value)?;
-        let Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. } = self.heap.get_mut(buffer)? else {
+        let Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. } = self.heap.buffer_bytes_mut(buffer)? else {
             return None;
         };
         let mut bytes = bytes.make_mut();
@@ -265,36 +257,35 @@ impl<H: Host> Vm<H> {
     /// Run `f` over the bytes a typed array or DataView currently views, without copying
     /// them; empty once detached.
     pub(crate) fn embedding_with_view_bytes<T>(&self, value: Value, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
-        let (buffer, offset, byte_length) = match self.heap.get(value)? {
-            Cell::TypedArray {
-                object,
-                buffer,
-                kind,
-                ..
-            } => (
-                *buffer,
-                object.offset,
-                self.typed_array_length(value)?.checked_mul(kind.width())?,
-            ),
-            Cell::DataView { object, buffer, .. } => (
-                *buffer,
-                object.offset,
-                self.embedding_view_bytes_length(value),
-            ),
-            _ => return None,
-        };
-        let Cell::ArrayBuffer {
-            bytes, detached, ..
-        } = self.heap.get(buffer)?
-        else {
+        if matches!(self.heap.get(value)?, Cell::ArrayBuffer { .. }) {
             return None;
-        };
-        if *detached {
-            return Some(f(&[]));
         }
-        let end = offset.checked_add(byte_length)?;
-        let bytes = bytes.read();
-        Some(f(bytes.get(offset..end)?))
+        self.embedding_with_buffer_bytes(value, f)
+    }
+
+    /// Run `f` over the bytes `within` a view and a writable buffer's bytes at once: the input read
+    /// in place unless a write to the output could reach it; `None` past the view's end.
+    pub(crate) fn embedding_with_view_and_buffer_bytes_mut<T>(&mut self, input: Value, within: std::ops::Range<usize>, output: Value, f: impl FnOnce(&[u8], &mut [u8]) -> T) -> Option<T> {
+        if matches!(self.heap.get(input)?, Cell::ArrayBuffer { .. }) {
+            return None;
+        }
+        let (buffer, range) = self.embedding_buffer_range(input)?;
+        let Cell::ArrayBuffer { bytes, detached, .. } = self.heap.get(buffer)? else { return None };
+        let length = if *detached { 0 } else { range.len() };
+        if within.start > within.end || within.end > length {
+            return None;
+        }
+        let within = range.start + within.start..range.start + within.end;
+        if within.is_empty() {
+            return self.embedding_with_buffer_bytes_mut(output, |to| f(&[], to));
+        }
+        let Some(held) = bytes.unaliased_handle() else {
+            let copy = bytes.read().get(within)?.to_vec();
+            return self.embedding_with_buffer_bytes_mut(output, |to| f(&copy, to));
+        };
+        let from = held.read();
+        let from = from.get(within)?;
+        self.embedding_with_buffer_bytes_mut(output, |to| f(from, to))
     }
 
     /// `typed_array_get` of a non-BigInt typed array, which allocates nothing: the element,
@@ -303,21 +294,11 @@ impl<H: Host> Vm<H> {
     /// (ws's frame masking) converts through no float. `None` for any other object.
     #[inline]
     pub(super) fn typed_array_number_element(&self, object: Value, index: usize) -> Option<Value> {
-        let Some(Cell::TypedArray { kind, object: view_object, buffer, length, length_tracking }) = self.heap.get(object)
-        else {
-            return None;
-        };
-        let kind = *kind;
+        let view = self.typed_array_view(object)?;
+        let kind = view.kind;
         if kind.is_bigint() {
             return None;
         }
-        let view = TypedArrayView {
-            kind,
-            buffer: *buffer,
-            offset: view_object.offset,
-            length: *length,
-            length_tracking: *length_tracking,
-        };
         let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(view.buffer) else {
             return Some(Value::UNDEFINED);
         };
@@ -339,6 +320,32 @@ impl<H: Host> Vm<H> {
                 Value::number(Self::typed_array_number_of(kind, &element))
             }
         })
+    }
+
+    /// A lane loop's view of the typed array `object`'s elements: its first element's address,
+    /// element count and kind, which native code reads (and, `writable`, replaces) in place
+    /// until the loop calls out. Only an attached buffer of Number elements this heap holds
+    /// qualifies, and to write, one the buffer owns alone (`BufferBytes::lane_mut`), so no
+    /// store copies or moves it; anything else stays on the general path.
+    pub(super) fn lane_typed_array_elements(&mut self, object: Value, writable: bool) -> Option<(*mut u8, usize, TypedArrayKind)> {
+        let view = self.typed_array_view(object)?;
+        if view.kind.is_bigint() || view.kind == TypedArrayKind::Float16 {
+            return None;
+        }
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get_mut(view.buffer) else {
+            return None;
+        };
+        let (base, byte_length) = if writable {
+            let store = bytes.lane_mut()?;
+            (store.as_mut_ptr(), store.len())
+        } else {
+            match bytes.read() {
+                crate::heap::BufferRead::Borrowed(store) => (store.as_ptr().cast_mut(), store.len()),
+                _ => return None,
+            }
+        };
+        let length = view.length_within(byte_length);
+        Some((base.wrapping_add(if length == 0 { 0 } else { view.offset }), length, view.kind))
     }
 
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
@@ -395,44 +402,20 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn typed_array_length(&self, object: Value) -> Option<usize> {
-        let (buffer, offset, length, tracking, kind) = match self.heap.get(object) {
-            Some(Cell::TypedArray {
-                buffer,
-                object,
-                length,
-                length_tracking,
-                kind,
-                ..
-            }) => (*buffer, object.offset, *length, *length_tracking, *kind),
+        let (buffer, offset, length, kind) = match self.heap.get(object) {
+            Some(Cell::TypedArray { buffer, object, length, kind }) => (*buffer, object.offset, *length, *kind),
             _ => return None,
         };
-        if self.array_buffer_detached(buffer) {
-            return Some(0);
-        }
-        if tracking {
-            return Some(match self.heap.get(buffer) {
-                Some(Cell::ArrayBuffer { bytes, .. }) => {
-                    bytes.len().saturating_sub(offset) / kind.width()
-                }
-                _ => 0,
-            });
-        }
-        Some(
-            if self.array_buffer_out_of_bounds(buffer, offset, length * kind.width()) {
-                0
-            } else {
-                length
-            },
-        )
+        Some(match self.heap.get(buffer) {
+            Some(Cell::ArrayBuffer { bytes, detached: false, .. }) => {
+                length.within(offset, kind.width(), bytes.len()).unwrap_or(0)
+            }
+            _ => 0,
+        })
     }
 
     pub(super) fn typed_array_length_is_variable(&self, object: Value) -> bool {
-        let Some(Cell::TypedArray {
-            buffer,
-            length_tracking,
-            ..
-        }) = self.heap.get(object)
-        else {
+        let Some(Cell::TypedArray { buffer, length, .. }) = self.heap.get(object) else {
             return false;
         };
         matches!(
@@ -441,7 +424,7 @@ impl<H: Host> Vm<H> {
                 shared,
                 resizable: true,
                 ..
-            }) if !shared || *length_tracking
+            }) if !shared || length.is_tracking()
         )
     }
 
@@ -451,25 +434,16 @@ impl<H: Host> Vm<H> {
             object,
             kind,
             length,
-            length_tracking,
             ..
         }) = self.heap.get(object)
         else {
             return false;
         };
-        let detached = self.array_buffer_detached(*buffer);
-        
-        if *length_tracking {
-            match self.heap.get(*buffer) {
-                Some(Cell::ArrayBuffer { bytes, .. }) => detached || object.offset > bytes.len(),
-                _ => true,
+        match self.heap.get(*buffer) {
+            Some(Cell::ArrayBuffer { bytes, detached: false, .. }) => {
+                length.within(object.offset, kind.width(), bytes.len()).is_none()
             }
-        } else {
-            self.array_buffer_out_of_bounds(
-                *buffer,
-                object.offset,
-                length.saturating_mul(kind.width()),
-            )
+            _ => true,
         }
     }
 
@@ -599,16 +573,8 @@ impl<H: Host> Vm<H> {
     /// frame masking stores each byte. False leaves the store to the general write.
     #[inline]
     fn typed_array_set_integer(&mut self, object: Value, index: usize, integer: i32) -> bool {
-        let Some(Cell::TypedArray { kind, object: view_object, buffer, length, length_tracking }) = self.heap.get(object)
-        else {
+        let Some(view) = self.typed_array_view(object) else {
             return false;
-        };
-        let view = TypedArrayView {
-            kind: *kind,
-            buffer: *buffer,
-            offset: view_object.offset,
-            length: *length,
-            length_tracking: *length_tracking,
         };
         // The element's bytes in the buffer's native order, as `typed_array_element_bytes`
         // writes them.
@@ -620,7 +586,7 @@ impl<H: Host> Vm<H> {
             TypedArrayKind::Uint32 | TypedArrayKind::Int32 => encoded[..4].copy_from_slice(&(integer as u32).to_ne_bytes()),
             _ => return false,
         }
-        let Some(Cell::ArrayBuffer { bytes: store, detached: false, .. }) = self.heap.get_mut(view.buffer) else {
+        let Some(Cell::ArrayBuffer { bytes: store, detached: false, .. }) = self.heap.buffer_bytes_mut(view.buffer) else {
             return false;
         };
         let Some(store) = store.lane_mut() else {
@@ -651,7 +617,7 @@ impl<H: Host> Vm<H> {
     /// current length, or a detached or shrunken buffer, writes nothing.
     fn typed_array_write_view(&mut self, view: TypedArrayView, index: usize, value: &TypedArrayElement) {
         let encoded = Self::typed_array_element_bytes(view.kind, value);
-        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get_mut(view.buffer) else {
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.buffer_bytes_mut(view.buffer) else {
             return;
         };
         // An owned store no other cell shares is written in place (`BufferBytes::lane_mut`);
@@ -671,12 +637,11 @@ impl<H: Host> Vm<H> {
     /// read, where `typed_array_length` and the buffer checks would each make their own.
     fn typed_array_view(&self, object: Value) -> Option<TypedArrayView> {
         match self.heap.get(object) {
-            Some(Cell::TypedArray { kind, object, buffer, length, length_tracking }) => Some(TypedArrayView {
+            Some(Cell::TypedArray { kind, object, buffer, length }) => Some(TypedArrayView {
                 kind: *kind,
                 buffer: *buffer,
                 offset: object.offset,
                 length: *length,
-                length_tracking: *length_tracking,
             }),
             _ => None,
         }
@@ -898,13 +863,7 @@ impl<H: Host> Vm<H> {
         };
         let mut target = bytes.make_mut();
         let target = &mut target[target_offset..target_end];
-        for (from, to) in source.chunks_exact(source_width).zip(target.chunks_exact_mut(target_width)) {
-            let mut element = [0; size_of::<u64>()];
-            element[..source_width].copy_from_slice(from);
-            let number = Self::typed_array_number_of(source_kind, &element);
-            let encoded = Self::typed_array_element_bytes(target_kind, &TypedArrayElement::Number(number));
-            to.copy_from_slice(&encoded[..target_width]);
-        }
+        Self::typed_array_convert_elements(&source, source_kind, target, target_kind);
         true
     }
 
@@ -922,6 +881,8 @@ impl<H: Host> Vm<H> {
         }
     }
 }
+
+mod element_conversion;
 
 #[cfg(test)]
 mod backing_address_tests {
@@ -962,25 +923,22 @@ struct TypedArrayView {
     kind: TypedArrayKind,
     buffer: Value,
     offset: usize,
-    length: usize,
-    length_tracking: bool,
+    length: crate::heap::ViewLength,
 }
 
 impl TypedArrayView {
+    /// The elements an attached buffer of `byte_length` bytes holds, as
+    /// `Vm::typed_array_length` derives them: a length-tracking view covers the buffer past its
+    /// offset, a fixed one covers none of it once the buffer shrank below its end.
+    #[inline(always)]
+    fn length_within(self, byte_length: usize) -> usize {
+        self.length.within(self.offset, self.kind.width(), byte_length).unwrap_or(0)
+    }
+
     /// The byte offset of element `index` in an attached buffer of `byte_length` bytes, or
-    /// `None` past the array's length as `Vm::typed_array_length` derives it: a
-    /// length-tracking view covers the buffer past its offset, a fixed one covers none of it
-    /// once the buffer shrank below its end.
+    /// `None` past the array's length (`length_within`).
     fn element(self, index: usize, byte_length: usize) -> Option<usize> {
-        let width = self.kind.width();
-        let length = if self.length_tracking {
-            byte_length.saturating_sub(self.offset) / width
-        } else if self.offset.saturating_add(self.length * width) > byte_length {
-            0
-        } else {
-            self.length
-        };
-        (index < length).then(|| self.offset + index * width)
+        (index < self.length_within(byte_length)).then(|| self.offset + index * self.kind.width())
     }
 }
 

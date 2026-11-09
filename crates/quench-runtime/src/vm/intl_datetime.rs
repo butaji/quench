@@ -20,7 +20,7 @@ const SECONDS_PER_HOUR: i64 = 3_600;
 const MILLISECONDS_PER_HOUR: i64 = SECONDS_PER_HOUR * MILLISECONDS_PER_SECOND;
 const HOURS_PER_DAY_I64: i64 = 24;
 const MILLISECONDS_PER_DAY: i64 = MILLISECONDS_PER_HOUR * HOURS_PER_DAY_I64;
-const SECONDS_PER_MINUTE: i32 = 60;
+use crate::units::SECONDS_PER_MINUTE;
 const MINUTES_PER_HOUR: i32 = 60;
 const DEFAULT_TIME_ZONE_OFFSET_MINUTES: i32 = -300;
 const TIME_ZONE_SIGN_LENGTH: usize = 1;
@@ -444,7 +444,7 @@ impl<H: Host> Vm<H> {
                 Value::TRUE,
             )?;
         }
-        let mut resolved_locale = locale.clone();
+        let mut resolved_locale = locale;
         if self
             .date_time_option(resolved, "calendar")
             .and_then(|value| self.string_value(value))
@@ -652,7 +652,7 @@ impl<H: Host> Vm<H> {
                     DateTimeDefaults::TemporalZonedDateTime(ZONED_DATE_TIME_DEFAULTS),
                     Some((
                         instant.epoch_nanoseconds,
-                        instant.time_zone.to_string(),
+                        instant.time_zone.clone(),
                         calendar.to_string(),
                     )),
                 ),
@@ -1948,11 +1948,7 @@ fn date_time_fields_at_time_clip(milliseconds: f64, zone: Option<&str>) -> Optio
 }
 
 fn time_zone_offset_minutes(zone: &str) -> Option<i32> {
-    let sign = match zone.as_bytes().first()? {
-        b'+' => 1,
-        b'-' => -1,
-        _ => return None,
-    };
+    let sign = quench_temporal::offset_sign(zone)?;
     let digits = &zone[TIME_ZONE_SIGN_LENGTH..];
     let (hours, minutes) = match digits.len() {
         TIME_ZONE_HOUR_DIGITS => (digits, "00"),

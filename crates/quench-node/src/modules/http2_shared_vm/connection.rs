@@ -117,7 +117,7 @@ const STREAM_ID_STEP: u32 = 2;
 const MAX_STREAM_ID: u32 = !frame::RESERVED_BIT;
 /// A window is replenished once half of it was consumed, as nghttp2 does.
 const WINDOW_UPDATE_DIVISOR: i64 = 2;
-const MILLISECONDS_PER_SECOND: f64 = 1000.0;
+use crate::modules::net_socket_options::MILLISECONDS_PER_SECOND;
 
 /// nghttp2's stream states, as `Http2Stream.state.state` reports them.
 #[derive(Clone, Copy)]
@@ -1016,7 +1016,7 @@ pub(super) fn server_initiated(id: u32) -> bool {
 /// Whether a head's `:status` is informational (1xx), as a response that is not final.
 fn is_informational(fields: &[Field]) -> bool {
     const INFORMATIONAL: u8 = b'1';
-    const STATUS_DIGITS: usize = 3;
+    use crate::modules::http_shared_vm::parser::STATUS_DIGITS;
     fields
         .iter()
         .find(|field| field.name == b":status")

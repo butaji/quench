@@ -92,6 +92,16 @@ impl Usage {
 }
 
 impl Algorithm {
+    /// An OKP algorithm's OpenSSL key type and the name its keys generate under.
+    fn okp_key(self) -> (openssl::pkey::Id, &'static str) {
+        match self {
+            Algorithm::Ed25519 => (openssl::pkey::Id::ED25519, "ED25519"),
+            Algorithm::Ed448 => (openssl::pkey::Id::ED448, "ED448"),
+            Algorithm::X25519 => (openssl::pkey::Id::X25519, "X25519"),
+            _ => (openssl::pkey::Id::X448, "X448"),
+        }
+    }
+
     fn name(self) -> &'static str {
         ALGORITHMS[self as usize].1
     }
@@ -199,7 +209,7 @@ const GCM_DEFAULT_TAG_BITS: u32 = 128;
 const AES_BLOCK_BYTES: usize = 16;
 /// AES-CTR's counter length bounds, in bits.
 const CTR_MAX_LENGTH_BITS: u32 = 128;
-const BITS_PER_BYTE: u32 = u8::BITS;
+use crate::modules::crypto_secret_job_shared_vm::BITS_PER_BYTE;
 
 /// A CryptoKey's algorithm, as the native layer needs it.
 #[derive(Clone)]
@@ -926,7 +936,7 @@ fn generate_key_body(c: &mut Context<'_>, call: Call, args: &[RootId]) -> Outcom
     match kind {
         Algorithm::Hmac => {
             let hash = hash_member(c, &normalized, "HmacKeyGenParams")?;
-            let length = optional_number_member(c, &normalized, "length")?.map(|length| length as u32).unwrap_or(hash.block_bits());
+            let length = optional_number_member(c, &normalized, "length")?.map(|length| length as u32).unwrap_or_else(|| hash.block_bits());
             check_usages(c, kind, &usages, kind.usages().0)?;
             if length == 0 {
                 return Err(operation_failed(c));
@@ -981,12 +991,7 @@ fn generate_pair(c: &mut Context<'_>, normalized: &Normalized, extractable: bool
         algorithm.curve = Some(curve);
         Generation::Ec { curve: openssl_curve(curve), explicit: false }
     } else {
-        Generation::Named(match kind {
-            Algorithm::Ed25519 => "ED25519",
-            Algorithm::Ed448 => "ED448",
-            Algorithm::X25519 => "X25519",
-            _ => "X448",
-        })
+        Generation::Named(kind.okp_key().1)
     };
     check_usages(c, kind, &usages, &allowed)?;
     let private_usage = filter_usages(&usages, private_usages);
@@ -1197,12 +1202,7 @@ fn import_asymmetric(c: &mut Context<'_>, format: KeyFormat, data: Option<Vec<u8
             if kind.is_ec() {
                 ec_public_from_raw(curve.unwrap_or_default(), &bytes).ok_or_else(|| failed(c))?
             } else if kind.is_okp() {
-                let id = match kind {
-                    Algorithm::Ed25519 => openssl::pkey::Id::ED25519,
-                    Algorithm::Ed448 => openssl::pkey::Id::ED448,
-                    Algorithm::X25519 => openssl::pkey::Id::X25519,
-                    _ => openssl::pkey::Id::X448,
-                };
+                let (id, _) = kind.okp_key();
                 let key = openssl::pkey::PKey::public_key_from_raw_bytes(&bytes, id).map_err(|_| failed(c))?;
                 OwnedKey::Public(key)
             } else {

@@ -1,59 +1,66 @@
-//! Enumerable string-key projections indexed by immutable shape ID. Each projection is
-//! derived once per shape epoch; shape mutation creates a new ID, and existing shape
-//! invalidation transitions clear the table before IDs can be reused or renumbered.
+//! Memoized enumerable string keys of a shape: what `Vm::shape_enumerable_keys` reads from a
+//! non-dictionary shape, with each key's slot, for objects whose attributes the shape alone
+//! decides (no side-table descriptors). Such a shape never changes, so the answer holds
+//! for the shape's life, as V8's enum cache lives on its map: only shape compaction, which
+//! renumbers shapes, clears the entries (`Vm::invalidate_field_caches`). Its keys are string
+//! atoms, which outlive every collection.
 
-use super::{Atom, Value};
+use super::Atom;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+/// Sets of `ENUMERABLE_KEY_MEMO_WAYS` entries: a power of two. A request serializes and
+/// enumerates a few dozen distinct object shapes; 256 sets hold them.
+const ENUMERABLE_KEY_MEMO_SETS: usize = 1 << 8;
+/// Entries per set. A for-in reads the receiver's shape and each prototype's, so two shapes
+/// meeting in one set read each other out on every loop under one way: a `{a, b, c}` literal
+/// whose shape shared `Object.prototype`'s set walked both keys lists per for-in (15.4k Ir for
+/// three keys).
+const ENUMERABLE_KEY_MEMO_WAYS: usize = 2;
 
 /// A shape's enumerable string keys in OrdinaryOwnPropertyKeys order, with their slots.
 pub(super) type EnumerableSlots = Rc<[(Atom, u32)]>;
 
-/// Hot slot metadata and compiler-private read-only views are separate contiguous columns.
-/// Each column grows only through its highest populated shape ID; undefined marks a view
-/// that has not been materialized. Collection retires weak views; shape invalidation
-/// retires both columns together.
-#[derive(Default)]
 pub(super) struct EnumerableKeyMemo {
-    entries: RefCell<Vec<Option<EnumerableSlots>>>,
-    snapshots: RefCell<Vec<Value>>,
+    entries: RefCell<Box<[Option<(u32, EnumerableSlots)>]>>,
+}
+
+/// Empty until the first record, like `shape_memo::DirectMappedTable`: a program that never
+/// enumerates a shape costs no entries.
+impl Default for EnumerableKeyMemo {
+    fn default() -> Self {
+        Self { entries: RefCell::default() }
+    }
 }
 
 impl EnumerableKeyMemo {
-    pub(super) fn get(&self, shape: u32) -> Option<EnumerableSlots> {
-        self.entries.borrow().get(shape as usize)?.clone()
+    /// The entries of `shape`'s set.
+    fn set(shape: u32) -> std::ops::Range<usize> {
+        let first = (shape as usize & (ENUMERABLE_KEY_MEMO_SETS - 1)) * ENUMERABLE_KEY_MEMO_WAYS;
+        first..first + ENUMERABLE_KEY_MEMO_WAYS
     }
 
+    pub(super) fn get(&self, shape: u32) -> Option<EnumerableSlots> {
+        let entries = self.entries.borrow();
+        entries.get(Self::set(shape))?.iter().find_map(|entry| match entry {
+            Some((recorded, slots)) if *recorded == shape => Some(slots.clone()),
+            _ => None,
+        })
+    }
+
+    /// Records `shape` first in its set; the entries before it move one way along and the
+    /// last leaves.
     pub(super) fn record(&self, shape: u32, slots: EnumerableSlots) {
         let mut entries = self.entries.borrow_mut();
-        let index = shape as usize;
-        if entries.len() <= index {
-            entries.resize_with(index + 1, || None);
+        if entries.is_empty() {
+            *entries = (0..ENUMERABLE_KEY_MEMO_SETS * ENUMERABLE_KEY_MEMO_WAYS).map(|_| None).collect();
         }
-        entries[index] = Some(slots);
-    }
-
-    pub(super) fn snapshot(&self, shape: u32) -> Option<Value> {
-        let value = *self.snapshots.borrow().get(shape as usize)?;
-        (!value.is_undefined()).then_some(value)
-    }
-
-    pub(super) fn record_snapshot(&self, shape: u32, snapshot: Value) {
-        let mut snapshots = self.snapshots.borrow_mut();
-        let index = shape as usize;
-        if snapshots.len() <= index {
-            snapshots.resize(index + 1, Value::UNDEFINED);
-        }
-        snapshots[index] = snapshot;
-    }
-
-    /// No lookup can observe a swept handle: collection retires the entire weak view column.
-    pub(super) fn clear_snapshots(&self) {
-        self.snapshots.borrow_mut().clear();
+        let set = &mut entries[Self::set(shape)];
+        set.rotate_right(1);
+        set[0] = Some((shape, slots));
     }
 
     pub(super) fn clear(&self) {
-        self.entries.borrow_mut().clear();
-        self.clear_snapshots();
+        self.entries.borrow_mut().iter_mut().for_each(|entry| *entry = None);
     }
 }

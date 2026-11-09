@@ -4,7 +4,7 @@ const OFFSET_SECOND_DIGITS: usize = 2;
 const COMPACT_HOUR_DIGITS: usize = OFFSET_HOUR_DIGITS;
 const COMPACT_MINUTE_DIGITS: usize = COMPACT_HOUR_DIGITS + OFFSET_MINUTE_DIGITS;
 const COMPACT_SECOND_DIGITS: usize = COMPACT_MINUTE_DIGITS + OFFSET_SECOND_DIGITS;
-const SECONDS_PER_MINUTE: i32 = 60;
+use crate::units::SECONDS_PER_MINUTE;
 const MINUTES_PER_HOUR: i32 = SECONDS_PER_MINUTE;
 const SECONDS_PER_HOUR: i32 = MINUTES_PER_HOUR * SECONDS_PER_MINUTE;
 const OFFSET_MAX_HOUR: u8 = 23;
@@ -109,6 +109,15 @@ pub fn offset_seconds(value: &str) -> i32 {
     sign * (hour * SECONDS_PER_HOUR + minute * SECONDS_PER_MINUTE + second)
 }
 
+/// The sign an offset string opens with: `+` is east of UTC, `-` west.
+pub fn offset_sign(value: &str) -> Option<i32> {
+    match value.as_bytes().first()? {
+        b'+' => Some(1),
+        b'-' => Some(-1),
+        _ => None,
+    }
+}
+
 pub fn offset_minutes(value: &str) -> Option<i32> {
     if matches!(value, "UTC" | "Z") {
         return Some(0);
@@ -116,11 +125,7 @@ pub fn offset_minutes(value: &str) -> Option<i32> {
     let tail = value.get(1..)?;
     let start = tail.find(['+', '-']).map_or(0, |index| index + 1);
     let value = value.get(start..)?;
-    let sign = match value.as_bytes().first()? {
-        b'+' => 1,
-        b'-' => -1,
-        _ => return None,
-    };
+    let sign = offset_sign(value)?;
     let digits = &value[1..];
     let (hour, minute) = digits.split_once(':').map_or(
         (

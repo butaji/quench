@@ -1,15 +1,13 @@
 use crate::{civil_from_days, days_from_civil, days_in_month, IsoDate};
 
-const NANOSECONDS_PER_DAY: i128 = 86_400_000_000_000;
+use crate::units::{DAYS_PER_WEEK, NANOSECONDS_PER_DAY, NANOSECONDS_PER_SECOND};
 const NANOSECONDS_PER_WEEK: i128 = 604_800_000_000_000;
-const DAYS_PER_WEEK: i128 = 7;
-const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
 const DURATION_FIELD_COUNT: usize = 10;
-const YEARS_FIELD: usize = 0;
-const MONTHS_FIELD: usize = 1;
-const WEEKS_FIELD: usize = 2;
-const DAYS_FIELD: usize = 3;
-const HOURS_FIELD: usize = 4;
+use crate::duration::YEARS_FIELD;
+use crate::duration::MONTHS_FIELD;
+use crate::duration::WEEKS_FIELD;
+use crate::duration::DAYS_FIELD;
+use crate::duration::HOURS_FIELD;
 const YEARS_UNIT: usize = YEARS_FIELD;
 const MONTHS_UNIT: usize = MONTHS_FIELD;
 const WEEKS_UNIT: usize = WEEKS_FIELD;

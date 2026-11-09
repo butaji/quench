@@ -196,11 +196,7 @@ impl<H: Host> Vm<H> {
             let left = super::temporal_plain_date_time_conversion::to_time(self, p, values[0])?;
             let right = super::temporal_plain_date_time_conversion::to_time(self, p, values[1])?;
             let ordering = left.cmp(&right);
-            return Ok(Value::number(match ordering {
-                std::cmp::Ordering::Less => -1.0,
-                std::cmp::Ordering::Equal => 0.0,
-                std::cmp::Ordering::Greater => 1.0,
-            }));
+            return Ok(Value::number(f64::from(ordering as i8)));
         }
         if native == Native::TemporalPlainTime {
             return Err(self.type_error(p, "Temporal.PlainTime requires new".into()));
@@ -483,7 +479,7 @@ impl<H: Host> Vm<H> {
             let largest_atom = self.intern_atom("largestUnit");
             let largest_value = self.get_property(p, options, largest_atom)?;
             if !largest_value.is_undefined() {
-                largest_unit = self.to_string(p, largest_value)?.to_string();
+                largest_unit = self.to_string(p, largest_value)?;
             }
             let increment_atom = self.intern_atom("roundingIncrement");
             let increment_value = self.get_property(p, options, increment_atom)?;
@@ -493,16 +489,16 @@ impl<H: Host> Vm<H> {
             let rounding_atom = self.intern_atom("roundingMode");
             let rounding_value = self.get_property(p, options, rounding_atom)?;
             if !rounding_value.is_undefined() {
-                rounding_mode = self.to_string(p, rounding_value)?.to_string();
+                rounding_mode = self.to_string(p, rounding_value)?;
             }
             let smallest_atom = self.intern_atom("smallestUnit");
             let smallest_value = self.get_property(p, options, smallest_atom)?;
             if !smallest_value.is_undefined() {
-                smallest_unit = self.to_string(p, smallest_value)?.to_string();
+                smallest_unit = self.to_string(p, smallest_value)?;
             }
         }
         if largest_unit == "auto" {
-            largest_unit = DEFAULT_DIFFERENCE_LARGEST_UNIT.to_owned();
+            DEFAULT_DIFFERENCE_LARGEST_UNIT.clone_into(&mut largest_unit);
         }
         largest_unit = largest_unit
             .strip_suffix('s')
@@ -543,7 +539,7 @@ impl<H: Host> Vm<H> {
                     }
                     fractional_digits = Some(number as usize);
                 } else {
-                    let text = self.to_string(p, fractional_value)?.to_string();
+                    let text = self.to_string(p, fractional_value)?;
                     if text != "auto" {
                         return Err(self.range_error(p, "Invalid fractionalSecondDigits".into()));
                     }
@@ -552,12 +548,12 @@ impl<H: Host> Vm<H> {
             let rounding_atom = self.intern_atom("roundingMode");
             let rounding_value = self.get_property(p, options, rounding_atom)?;
             if !rounding_value.is_undefined() {
-                rounding_mode = self.to_string(p, rounding_value)?.to_string();
+                rounding_mode = self.to_string(p, rounding_value)?;
             }
             let smallest_atom = self.intern_atom("smallestUnit");
             let smallest_value = self.get_property(p, options, smallest_atom)?;
             if !smallest_value.is_undefined() {
-                let unit = self.to_string(p, smallest_value)?.to_string();
+                let unit = self.to_string(p, smallest_value)?;
                 let unit = unit.strip_suffix('s').unwrap_or(&unit);
                 if !PLAIN_TIME_SMALLEST_UNITS.contains(&unit) {
                     return Err(self.range_error(p, "Invalid smallestUnit".into()));

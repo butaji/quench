@@ -5,7 +5,7 @@ mod platform {
     use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
 
     const STDIN_FD: libc::c_int = 0;
-    const READ_CHUNK_BYTES: usize = 64 * 1024;
+    use crate::modules::tty_shared_vm::READ_CHUNK_BYTES;
 
     #[derive(Default)]
     pub(crate) struct State {

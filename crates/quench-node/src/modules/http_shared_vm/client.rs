@@ -59,8 +59,7 @@ crate::modules::host_members::members!(Member, "httpClient", [
 
 /// The methods whose requests carry no body by default.
 const BODYLESS_METHODS: [&str; 6] = ["GET", "HEAD", "DELETE", "OPTIONS", "TRACE", "CONNECT"];
-/// The port a request defaults to without an agent's.
-const DEFAULT_PORT: f64 = 80.0;
+use crate::modules::http_shared_vm::agent::DEFAULT_PORT;
 /// The largest timer duration (`TIMEOUT_MAX`).
 const TIMEOUT_MAX: f64 = 2_147_483_647.0;
 /// The bytes a request path may hold (`INVALID_PATH_REGEX` rejects the rest).
@@ -68,7 +67,7 @@ const PATH_BYTES: std::ops::RangeInclusive<u16> = 0x21..=0xff;
 
 pub(crate) fn build(c: &mut Context<'_>, outgoing: RootId) -> Outcome {
     let class = super::constructor(c, Member::Construct, "ClientRequest")?;
-    super::inherit(c, class, outgoing)?;
+    crate::modules::stream_shared_vm::inherit(c, class, outgoing)?;
     let prototype = get(c, class, "prototype")?;
     super::methods(c, prototype, &[
         ("_finish", Member::Finish),
@@ -288,7 +287,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             put_bool(c, called, "0", true)?;
             let (error, socket) = (at(0), at(1));
             if c.truthy_rooted(error)? {
-                let nop = crate::modules::stream_shared_vm::intrinsics(c)?.nop;
+                let nop = crate::modules::stream_shared_vm::intrinsic(c, |i| i.nop)?;
                 let emit_error = function(c, super::outgoing::Member::EmitError, "", &[request, error, nop])?;
                 next_tick(c, emit_error, &[])?;
             } else {
@@ -968,8 +967,8 @@ pub(crate) fn on_incoming(c: &mut Context<'_>, socket: RootId, response: RootId,
         put_bool(c, response, "upgrade", true)?;
         return Ok(HeadOutcome::Upgrade);
     }
-    const STATUS_CONTINUE: f64 = 100.0;
-    const STATUS_NOT_MODIFIED: f64 = 304.0;
+    use crate::modules::http2_shared_vm::compat::STATUS_CONTINUE;
+    use crate::modules::http2_shared_vm::stream::STATUS_NOT_MODIFIED;
     let status = number(c, response, "statusCode")?;
     if is_informational(status as u16) {
         let null = c.null();

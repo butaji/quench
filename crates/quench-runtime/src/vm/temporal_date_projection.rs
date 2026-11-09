@@ -3,7 +3,7 @@ use super::temporal_date::{
 };
 use super::*;
 
-const DEFAULT_REFERENCE_ISO_YEAR: i32 = 1972;
+use crate::vm::temporal_date_parse::DEFAULT_REFERENCE_ISO_YEAR;
 const DEFAULT_REFERENCE_ISO_DAY: u32 = 1;
 const MIN_SUPPORTED_ISO_MONTH: i32 = 4;
 const MAX_SUPPORTED_ISO_MONTH: i32 = 9;
@@ -277,7 +277,7 @@ impl<H: Host> Vm<H> {
         if !self.heap.is_string(value) {
             return Err(self.type_error(p, "Invalid calendar".into()));
         }
-        let text = self.to_string(p, value)?.to_string();
+        let text = self.to_string(p, value)?;
         temporal_date_parse::parse_calendar_identifier_name(&text)
             .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))
     }
@@ -413,11 +413,7 @@ impl<H: Host> Vm<H> {
             ) => (ly, lm, ld).cmp(&(ry, rm, rd)),
             _ => unreachable!("calendar comparison operands are not branded"),
         };
-        Ok(Value::number(match ordering {
-            std::cmp::Ordering::Less => -1.0,
-            std::cmp::Ordering::Equal => 0.0,
-            std::cmp::Ordering::Greater => 1.0,
-        }))
+        Ok(Value::number(f64::from(ordering as i8)))
     }
 
     fn temporal_plain_month_day_native(
@@ -525,7 +521,7 @@ impl<H: Host> Vm<H> {
         reference_year: i32,
     ) -> Result<Value, JsError> {
         let changes = args.first().copied().unwrap_or(Value::UNDEFINED);
-        self.validate_plain_month_day_changes(p, changes)?;
+        self.validate_temporal_with_fields(p, changes)?;
         let original_calendar_fields = if calendar == "iso8601" {
             None
         } else {
@@ -561,7 +557,7 @@ impl<H: Host> Vm<H> {
         let month_code = if month_code_value.is_undefined() {
             None
         } else {
-            Some(self.to_string(p, month_code_value)?.to_string())
+            Some(self.to_string(p, month_code_value)?)
         };
         if calendar != "iso8601" && month.is_some() && month_code.is_none() {
             return Err(self.type_error(p, "Missing monthCode".into()));
@@ -596,7 +592,7 @@ impl<H: Host> Vm<H> {
             let month_code = if month_code_value.is_undefined() {
                 original_fields.month_code.clone()
             } else {
-                self.to_string(p, month_code_value)?.to_string()
+                self.to_string(p, month_code_value)?
             };
             let calendar_year = if year_value.is_undefined() {
                 original_fields.year
@@ -678,7 +674,7 @@ impl<H: Host> Vm<H> {
         self.temporal_plain_month_day_construct(p, &args, constructor)
     }
 
-    fn validate_plain_month_day_changes(
+    fn validate_temporal_with_fields(
         &mut self,
         p: &ResidualProgram,
         changes: Value,
@@ -997,7 +993,7 @@ impl<H: Host> Vm<H> {
         ),
         JsError,
     > {
-        self.validate_plain_year_month_changes(p, changes)?;
+        self.validate_temporal_with_fields(p, changes)?;
         let (era, era_year) = self.read_calendar_era_fields(p, changes, calendar)?;
         let month_atom = self.intern_atom("month");
         let month_value = self.get_property(p, changes, month_atom)?;
@@ -1007,7 +1003,7 @@ impl<H: Host> Vm<H> {
         let month_code = if month_code.is_undefined() {
             None
         } else {
-            Some(self.to_string(p, month_code)?.to_string())
+            Some(self.to_string(p, month_code)?)
         };
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, changes, year_atom)?;
@@ -1050,36 +1046,6 @@ impl<H: Host> Vm<H> {
             calendar,
             args.get(1).copied().unwrap_or(Value::UNDEFINED),
         )
-    }
-
-    fn validate_plain_year_month_changes(
-        &mut self,
-        p: &ResidualProgram,
-        changes: Value,
-    ) -> Result<(), JsError> {
-        if !self.is_object_like(changes)
-            || self.heap.array(changes).is_some()
-            || matches!(
-                self.heap.get(changes),
-                Some(
-                    Cell::TemporalPlainDate { .. }
-                        | Cell::TemporalPlainDateTime { .. }
-                        | Cell::TemporalPlainMonthDay { .. }
-                        | Cell::TemporalPlainYearMonth { .. }
-                        | Cell::TemporalZonedDateTime { .. }
-                )
-            )
-        {
-            return Err(self.type_error(p, "Invalid fields".into()));
-        }
-        let calendar_atom = self.intern_atom("calendar");
-        let calendar = self.get_property(p, changes, calendar_atom)?;
-        let time_zone_atom = self.intern_atom("timeZone");
-        let time_zone = self.get_property(p, changes, time_zone_atom)?;
-        if !calendar.is_undefined() || !time_zone.is_undefined() {
-            return Err(self.type_error(p, "Invalid fields".into()));
-        }
-        Ok(())
     }
 
     fn temporal_calendar_projection_from(
@@ -1189,7 +1155,7 @@ impl<H: Host> Vm<H> {
         let month_code_text = if month_code.is_undefined() {
             None
         } else {
-            Some(self.to_string(p, month_code)?.to_string())
+            Some(self.to_string(p, month_code)?)
         };
         let month_code = month_code_text
             .as_deref()
@@ -1347,14 +1313,7 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
             })
             .transpose()?;
-        let month = match (month, month_code) {
-            (Some(month), Some(code)) if month != code => {
-                return Err(self.range_error(p, "month and monthCode must agree".into()));
-            }
-            (Some(month), _) => month,
-            (None, Some(code)) => code,
-            (None, None) => return Err(self.type_error(p, "Missing month".into())),
-        };
+        let month = self.temporal_month(p, month, month_code)?;
         if month < 1 || day < 1 {
             return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
         }
@@ -1457,14 +1416,7 @@ impl<H: Host> Vm<H> {
         let month_code = month_code
             .map(|code| self.calendarized_month_code(p, code, &calendar, year, constrain))
             .transpose()?;
-        let month = match (month, month_code) {
-            (Some(month), Some(code)) if month != code => {
-                return Err(self.range_error(p, "Conflicting month fields".into()));
-            }
-            (Some(month), _) => month,
-            (None, Some(code)) => code,
-            (None, None) => return Err(self.type_error(p, "Missing month".into())),
-        };
+        let month = self.temporal_month(p, month, month_code)?;
         if month <= 0 {
             return Err(self.range_error(p, "Invalid PlainYearMonth".into()));
         }
@@ -1558,7 +1510,7 @@ impl<H: Host> Vm<H> {
         match self.heap.get(value) {
             None if value.is_undefined() => Ok("iso8601".into()),
             _ if self.heap.is_string(value)  => {
-                let text = self.to_string(p, value)?.to_string();
+                let text = self.to_string(p, value)?;
                 temporal_date_parse::calendar_identifier_from_string(&text)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))
             }

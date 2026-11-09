@@ -13,6 +13,7 @@ snapshot_enum!(iterator_kind: IteratorKind {
     SetEntries, Protocol, RegExpStringMatchAll, IntlSegments, Map, Filter, Take, Drop, FlatMap, Concat,
     Zip, Generator, AsyncFromSync, AsyncGenerator,
 });
+snapshot_enum!(helper_phase: HelperPhase { Fresh, Running, Idle });
 snapshot_enum!(prototype_lookup: PrototypeLookupState { Ordinary, Setup, Ready });
 snapshot_enum!(structured_serialization: StructuredSerialization { Ordinary, Forbidden, TransferRequired });
 snapshot_enum!(symbol_kind: SymbolKind { Public, HostPrivate });
@@ -169,10 +170,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         inline_properties,
         arena_start,
         arguments_map,
-        arguments_object,
-        raw_json,
-        error_data,
-        module_namespace,
+        brand,
         external_address,
         boxed_primitive,
         structured_serialization: serialization,
@@ -181,11 +179,9 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         deferred_module,
         private_elements,
         stack_data,
-        indexed_descriptors,
-        length_descriptor,
-        side_descriptors,
-        // A restored heap's prototypes watch nothing (`Heap::forget_prototypes`).
-        watch: _,
+        element_facts,
+        // A restored heap gives each prototype a new watch (`Heap::register_restored_prototypes`); its code holds no global value.
+        watch: _, global_values: _,
     } = extras;
     if external_address.is_some() {
         return Err(SnapshotError::unsupported("an object whose address an embedder observed"));
@@ -197,9 +193,9 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     if let Some(map) = arguments_map {
         writer.u16s(map);
     }
-    for flag in [*arguments_object, *raw_json, *error_data, *module_namespace, *structured_transfer_forbidden, *indexed_descriptors, *length_descriptor, *side_descriptors] {
-        writer.bool(flag);
-    }
+    writer.u8(*brand as u8);
+    writer.bool(*structured_transfer_forbidden);
+    writer.u8(element_facts.0);
     writer.option_value(*boxed_primitive);
     structured_serialization::write(writer, *serialization);
     writer.len(module_bindings.len());
@@ -233,8 +229,13 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     );
     let arena_start = reader.u32()?;
     let arguments_map = if reader.bool()? { Some(reader.u16s()?) } else { None };
-    let [arguments_object, raw_json, error_data, module_namespace, structured_transfer_forbidden, indexed_descriptors, length_descriptor, side_descriptors] =
-        [reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?, reader.bool()?];
+    let brand = ObjectBrand::from_u8(reader.u8()?).ok_or_else(|| SnapshotError("invalid snapshot object brand".into()))?;
+    let structured_transfer_forbidden = reader.bool()?;
+    let element_facts = reader.u8()?;
+    if element_facts & !ElementFacts::ALL != 0 {
+        return Err(SnapshotError("invalid snapshot element facts".into()));
+    }
+    let element_facts = ElementFacts(element_facts);
     let boxed_primitive = reader.option_value()?;
     let structured_serialization = structured_serialization::read(reader)?;
     let module_bindings = read_list(reader, |reader| Ok((reader.u32()?, ProgramId::from_raw(reader.u32()?), reader.u16()?)))?;
@@ -251,10 +252,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         inline_properties,
         arena_start,
         arguments_map,
-        arguments_object,
-        raw_json,
-        error_data,
-        module_namespace,
+        brand,
         external_address: None,
         boxed_primitive,
         structured_serialization,
@@ -263,11 +261,19 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         deferred_module,
         private_elements,
         stack_data,
-        indexed_descriptors,
-        length_descriptor,
-        side_descriptors,
-        watch: Default::default(),
+        element_facts,
+        watch: Default::default(), global_values: None,
     })
+}
+
+fn write_view_length(writer: &mut Writer, length: ViewLength) {
+    writer.bool(length.is_tracking());
+    writer.u64(length.get().unwrap_or(0) as u64);
+}
+
+fn read_view_length(reader: &mut Reader<'_>) -> SnapshotResult<ViewLength> {
+    let (tracking, length) = (reader.bool()?, reader.u64()? as usize);
+    Ok(ViewLength::new(length, tracking))
 }
 
 fn write_module_source(writer: &mut Writer, module: &crate::ModuleSource) {
@@ -429,7 +435,7 @@ impl FunctionRecord {
 impl IteratorRecord {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         let Self { object, source, kind, index, done, ext } = self;
-        let IteratorExt { position_high, next_method, helper, helper_running, helper_started, generator } = ext;
+        let IteratorExt { position_high, next_method, helper, helper_phase, generator } = ext;
         write_object(writer, object)?;
         writer.value(*source);
         iterator_kind::write(writer, *kind);
@@ -437,8 +443,7 @@ impl IteratorRecord {
         writer.bool(*done);
         writer.u32(*position_high);
         writer.option_value(*next_method);
-        writer.bool(*helper_running);
-        writer.bool(*helper_started);
+        helper_phase::write(writer, *helper_phase);
         helper.snap(writer)?;
         generator.snap(writer)
     }
@@ -453,8 +458,7 @@ impl IteratorRecord {
             ext: IteratorExt {
                 position_high: reader.u32()?,
                 next_method: reader.option_value()?,
-                helper_running: reader.bool()?,
-                helper_started: reader.bool()?,
+                helper_phase: helper_phase::read(reader)?,
                 helper: Snap::unsnap(reader)?,
                 generator: Snap::unsnap(reader)?,
             },
@@ -557,41 +561,39 @@ impl Cell {
                 writer.bool(*resizable);
                 writer.bool(*immutable);
             }
-            Self::TypedArray { kind, object, buffer, length, length_tracking } => {
+            Self::TypedArray { kind, object, buffer, length } => {
                 writer.u8(tag::TYPED_ARRAY);
                 typed_array_kind::write(writer, *kind);
                 write_object(writer, &object.object)?;
                 writer.u64(object.offset as u64);
                 writer.value(*buffer);
-                writer.u64(*length as u64);
-                writer.bool(*length_tracking);
+                write_view_length(writer, *length);
             }
-            Self::DataView { object, buffer, length, length_tracking } => {
+            Self::DataView { object, buffer, length } => {
                 writer.u8(tag::DATA_VIEW);
                 write_object(writer, &object.object)?;
                 writer.u64(object.offset as u64);
                 writer.value(*buffer);
-                writer.u64(*length as u64);
-                writer.bool(*length_tracking);
+                write_view_length(writer, *length);
             }
             Self::Map { object, entries } => {
                 writer.u8(tag::MAP);
                 write_object(writer, object)?;
-                let (slots, live, iterators) = entries.snapshot_parts()?;
+                let (slots, hashes, live, iterators) = entries.snapshot_parts()?;
                 writer.len(slots.len());
                 for (key, value) in slots {
                     writer.value(*key);
                     writer.value(*value);
                 }
-                writer.len(live);
+                hashes.iter().for_each(|&hash| writer.u32(hash)); writer.len(live);
                 writer.values(iterators);
             }
             Self::Set { object, entries } => {
                 writer.u8(tag::SET);
                 write_object(writer, object)?;
-                let (slots, live, iterators) = entries.snapshot_parts()?;
+                let (slots, hashes, live, iterators) = entries.snapshot_parts()?;
                 writer.values(slots);
-                writer.len(live);
+                hashes.iter().for_each(|&hash| writer.u32(hash)); writer.len(live);
                 writer.values(iterators);
             }
             Self::ShadowRealm { object, caller_global, realm_global } => {
@@ -603,8 +605,8 @@ impl Cell {
             Self::WeakMap { object, entries } => {
                 writer.u8(tag::WEAK_MAP);
                 write_object(writer, object)?;
-                writer.len(entries.ordered.len());
-                for (key, value) in &entries.ordered {
+                writer.len(entries.len());
+                for (key, value) in entries.iter() {
                     writer.value(*key);
                     writer.value(*value);
                 }
@@ -612,7 +614,7 @@ impl Cell {
             Self::WeakSet { object, entries } => {
                 writer.u8(tag::WEAK_SET);
                 write_object(writer, object)?;
-                writer.values(entries);
+                writer.values(&entries.to_vec());
             }
             Self::WeakRef { object, target } => {
                 writer.u8(tag::WEAK_REF);
@@ -664,7 +666,7 @@ impl Cell {
             }
             Self::BigInt(value) => {
                 writer.u8(tag::BIGINT);
-                writer.bytes(&value.to_signed_bytes_le());
+                writer.bytes(&value.to_num().to_signed_bytes_le());
             }
             Self::Symbol(SymbolData { description, kind }) => {
                 writer.u8(tag::SYMBOL);
@@ -715,8 +717,8 @@ impl Cell {
             Self::ArrayFromAsyncState(_) | Self::AwaitState(_) => {
                 return Err(SnapshotError::unsupported("a suspended async operation"));
             }
-            Self::WasmTag { declarations, ty } if crate::vm::js_tag_type() == (declarations.clone(), *ty) => {
-                writer.u8(tag::JS_TAG);
+            Self::WasmTag { object, declarations, ty } if crate::vm::js_tag_type() == (declarations.clone(), *ty) => {
+                writer.u8(tag::JS_TAG); write_object(writer, object)?;
             }
             Self::WasmBits64(_)
             | Self::WasmV128(_)
@@ -767,29 +769,27 @@ impl Cell {
                     kind,
                     object: Box::new(BufferViewObject { object: read_object(reader)?, offset: reader.u64()? as usize }),
                     buffer: reader.value()?,
-                    length: reader.u64()? as usize,
-                    length_tracking: reader.bool()?,
+                    length: read_view_length(reader)?,
                 }
             }
             tag::DATA_VIEW => Self::DataView {
                 object: Box::new(BufferViewObject { object: read_object(reader)?, offset: reader.u64()? as usize }),
                 buffer: reader.value()?,
-                length: reader.u64()? as usize,
-                length_tracking: reader.bool()?,
+                length: read_view_length(reader)?,
             },
             tag::MAP => {
                 let object = boxed_object(reader)?;
                 let slots = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
-                let live = reader.len()?;
-                let iterators = reader.values()?;
-                Self::Map { object, entries: Box::new(crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators)) }
+                let hashes = (0..slots.len()).map(|_| reader.u32()).collect::<SnapshotResult<_>>()?;
+                let (live, iterators) = (reader.len()?, reader.values()?);
+                Self::Map { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, hashes, live, iterators).into() }
             }
             tag::SET => {
                 let object = boxed_object(reader)?;
                 let slots = reader.values()?;
-                let live = reader.len()?;
-                let iterators = reader.values()?;
-                Self::Set { object, entries: Box::new(crate::heap::CollectionEntries::from_snapshot_parts(slots, live, iterators)) }
+                let hashes = (0..slots.len()).map(|_| reader.u32()).collect::<SnapshotResult<_>>()?;
+                let (live, iterators) = (reader.len()?, reader.values()?);
+                Self::Set { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, hashes, live, iterators).into() }
             }
             tag::SHADOW_REALM => Self::ShadowRealm {
                 object: boxed_object(reader)?,
@@ -799,10 +799,9 @@ impl Cell {
             tag::WEAK_MAP => {
                 let object = boxed_object(reader)?;
                 let ordered = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
-                let indices = ordered.iter().enumerate().map(|(index, (key, _))| (*key, index)).collect();
-                Self::WeakMap { object, entries: Box::new(WeakMapEntries { ordered, indices }) }
+                Self::WeakMap { object, entries: Box::new(WeakMapEntries::from_entries(ordered)) }
             }
-            tag::WEAK_SET => Self::WeakSet { object: boxed_object(reader)?, entries: Box::new(reader.values()?) },
+            tag::WEAK_SET => Self::WeakSet { object: boxed_object(reader)?, entries: Box::new(WeakSetEntries::from_entries(reader.values()?)) },
             tag::WEAK_REF => Self::WeakRef {
                 object: boxed_object(reader)?,
                 target: reader.option_value()?.map(|value| WeakHandle { value }),
@@ -843,8 +842,8 @@ impl Cell {
                 }
                 Self::Environment { parent, function, slots: EnvironmentSlots(slots), scope: EnvironmentScopeRef::read_snapshot(reader)? }
             }
-            tag::JS_TAG => crate::vm::js_tag_cell(),
-            tag::BIGINT => Self::BigInt(Box::new(num_bigint::BigInt::from_signed_bytes_le(reader.bytes()?))),
+            tag::JS_TAG => crate::vm::js_tag_cell(boxed_object(reader)?),
+            tag::BIGINT => Self::bigint(num_bigint::BigInt::from_signed_bytes_le(reader.bytes()?)),
             tag::SYMBOL => Self::Symbol(SymbolData {
                 description: reader.option_string()?.map(String::into_boxed_str),
                 kind: symbol_kind::read(reader)?,
@@ -940,9 +939,10 @@ impl EnvironmentScopeRef {
 
 // A suspended generator or iterator helper: its saved activation is plain data, whose program
 // counter names the same instruction of the same function record once restored.
-use crate::vm::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, CallContext, Completion, GeneratorRecord};
+use crate::vm::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, CallContext, Completion, GeneratorRecord, GeneratorState};
 
 snapshot_enum!(async_generator_operation: AsyncGeneratorOperation { Next, Return, Throw });
+snapshot_enum!(generator_state: GeneratorState { Suspended, Executing, Completed, AwaitingReturn });
 snapshot_enum!(iterator_zip_mode: IteratorZipMode { Shortest, Longest, Strict });
 
 macro_rules! snap_via_enum {
@@ -960,12 +960,13 @@ macro_rules! snap_via_enum {
 }
 snap_via_enum! {
     AsyncGeneratorOperation => async_generator_operation;
+    GeneratorState => generator_state;
     IteratorZipMode => iterator_zip_mode;
 }
 
 snap_struct!(AsyncGeneratorRequest { operation, promise, value });
 snap_struct!(crate::vm::ActiveIterator { iterator, done });
-snap_struct!(GeneratorRecord { continuation, realm, done, running, requests });
+snap_struct!(GeneratorRecord { continuation, realm, state, requests });
 
 
 /// `CallContext` tags, in declaration order.
@@ -1057,7 +1058,7 @@ impl Snap for IteratorHelper {
         match self {
             Self::RegExpStringMatchAll { input, global, unicode } => {
                 writer.u8(helper_tag::REGEXP_STRING_MATCH_ALL);
-                input.snap(writer)?;
+                writer.value(*input);
                 writer.bool(*global);
                 writer.bool(*unicode);
             }
@@ -1108,7 +1109,7 @@ impl Snap for IteratorHelper {
     fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         Ok(match reader.u8()? {
             helper_tag::REGEXP_STRING_MATCH_ALL => Self::RegExpStringMatchAll {
-                input: Snap::unsnap(reader)?,
+                input: reader.value()?,
                 global: reader.bool()?,
                 unicode: reader.bool()?,
             },

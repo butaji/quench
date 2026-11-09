@@ -18,7 +18,7 @@ const MASK_BYTE_BITS: u32 = u8::BITS;
 /// Bytes in a WebSocket mask (RFC 6455, section 5.3).
 const MASK_BYTES: usize = std::mem::size_of::<u32>();
 /// Node's `fill` results lib/buffer.js turns into errors.
-const FILL_INVALID_VALUE: f64 = -1.0;
+pub(crate) const FILL_INVALID_VALUE: f64 = -1.0;
 const FILL_OUT_OF_BOUNDS: f64 = -2.0;
 /// `atob` failure results (lib/buffer.js `atob`).
 const ATOB_REMAINDER: f64 = -1.0;
@@ -407,11 +407,7 @@ fn view_bytes(c: &mut Context<'_>, value: RootId) -> Vec<u8> {
 /// `normalizeCompareVal`: memcmp's sign, or the length order when the prefix is equal.
 fn compare_bytes(source: &[u8], target: &[u8], source_length: usize, target_length: usize) -> f64 {
     let ordering = source.cmp(target).then(source_length.cmp(&target_length));
-    match ordering {
-        std::cmp::Ordering::Less => -1.0,
-        std::cmp::Ordering::Equal => 0.0,
-        std::cmp::Ordering::Greater => 1.0,
-    }
+    f64::from(ordering as i8)
 }
 
 pub(crate) fn compare(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {

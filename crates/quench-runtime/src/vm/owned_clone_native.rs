@@ -63,25 +63,23 @@ impl<H: Host> Vm<H> {
                 object,
                 buffer,
                 length,
-                length_tracking,
             }) => Some(Metadata::View {
                 kind: format!("{:?}", kind),
                 buffer: *buffer,
                 offset: object.offset,
-                length: *length,
-                tracking: *length_tracking,
+                length: length.get().unwrap_or(0),
+                tracking: length.is_tracking(),
             }),
             Some(Cell::DataView {
                 object,
                 buffer,
                 length,
-                length_tracking,
             }) => Some(Metadata::View {
                 kind: "DataView".into(),
                 buffer: *buffer,
                 offset: object.offset,
-                length: *length,
-                tracking: *length_tracking,
+                length: length.get().unwrap_or(0),
+                tracking: length.is_tracking(),
             }),
             _ => None,
         })
@@ -145,14 +143,14 @@ impl<H: Host> Vm<H> {
                 let proto = self.intrinsic_builtin_prototype(Native::Map);
                 self.heap.alloc(Cell::Map {
                     object: Box::new(Self::empty_object(proto)),
-                    entries: Box::default(),
+                    entries: Default::default(),
                 })
             }
             Node::Set(_) => {
                 let proto = self.intrinsic_builtin_prototype(Native::Set);
                 self.heap.alloc(Cell::Set {
                     object: Box::new(Self::empty_object(proto)),
-                    entries: Box::default(),
+                    entries: Default::default(),
                 })
             }
             Node::Date(n) => {
@@ -226,8 +224,7 @@ impl<H: Host> Vm<H> {
                             offset: *offset,
                         }),
                         buffer,
-                        length: *length,
-                        length_tracking: *tracking,
+                        length: crate::heap::ViewLength::new(*length, *tracking),
                     })
                 } else {
                     let kind = match kind.as_str() {
@@ -265,8 +262,7 @@ impl<H: Host> Vm<H> {
                             offset: *offset,
                         }),
                         buffer,
-                        length: *length,
-                        length_tracking: *tracking,
+                        length: crate::heap::ViewLength::new(*length, *tracking),
                     })
                 }
             }

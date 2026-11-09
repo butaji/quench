@@ -177,7 +177,7 @@ impl<H: Host> Vm<H> {
         let calendar = if calendar.is_undefined() {
             "iso8601".to_owned()
         } else if self.heap.is_string(calendar) {
-            let value = self.to_string(p, calendar)?.to_string();
+            let value = self.to_string(p, calendar)?;
             super::temporal_date_parse::parse_calendar_identifier_name(&value)
                 .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
         } else {
@@ -543,7 +543,7 @@ impl<H: Host> Vm<H> {
                     if !self.is_string(value) && !self.is_object_like(value) {
                         return Err(self.type_error(p, "Invalid offset".into()));
                     }
-                    offset = Some(self.to_string(p, value)?.to_string());
+                    offset = Some(self.to_string(p, value)?.clone());
                 }
             }
             time[index] = self.plain_date_field(p, bag, name)?;
@@ -554,7 +554,7 @@ impl<H: Host> Vm<H> {
             if value.is_undefined() {
                 None
             } else if self.is_string(value) {
-                Some(self.to_string(p, value)?.to_string())
+                Some(self.to_string(p, value)?)
             } else {
                 return Err(self.type_error(p, "Invalid time zone".into()));
             }
@@ -641,14 +641,7 @@ impl<H: Host> Vm<H> {
             .month_code
             .map(|month| self.calendarized_month_code(p, month, &fields.calendar, year, constrain))
             .transpose()?;
-        let month = match (fields.month, month_code) {
-            (Some(month), Some(code)) if month != code => {
-                return Err(self.range_error(p, "month and monthCode must agree".into()));
-            }
-            (Some(month), _) => month,
-            (None, Some(code)) => code,
-            (None, None) => return Err(self.type_error(p, "Missing month".into())),
-        };
+        let month = self.temporal_month(p, fields.month, month_code)?;
         if month < 1 || day < 1 {
             return Err(self.range_error(p, "Invalid PlainDateTime".into()));
         }
@@ -742,11 +735,7 @@ impl<H: Host> Vm<H> {
         let left_key = (left.0.year, left.0.month, left.0.day, left.1);
         let right_key = (right.0.year, right.0.month, right.0.day, right.1);
         let ordering = left_key.cmp(&right_key);
-        Ok(Value::number(match ordering {
-            std::cmp::Ordering::Less => -1.0,
-            std::cmp::Ordering::Equal => 0.0,
-            std::cmp::Ordering::Greater => 1.0,
-        }))
+        Ok(Value::number(f64::from(ordering as i8)))
     }
 
     pub(super) fn temporal_plain_date_time_constructor(
@@ -1034,7 +1023,7 @@ impl<H: Host> Vm<H> {
                 }
                 "era" => {
                     era_was_provided = true;
-                    era_value = Some(self.to_string(p, value)?.to_string());
+                    era_value = Some(self.to_string(p, value)?.clone());
                 }
                 "eraYear" => {
                     era_year_was_provided = true;
@@ -1070,7 +1059,7 @@ impl<H: Host> Vm<H> {
             if value.is_undefined() {
                 "constrain".to_owned()
             } else {
-                self.to_string(p, value)?.to_string()
+                self.to_string(p, value)?
             }
         };
         if !matches!(overflow.as_str(), "constrain" | "reject") {
@@ -1227,7 +1216,7 @@ impl<H: Host> Vm<H> {
             if value.is_undefined() {
                 "compatible"
             } else {
-                let mode = self.to_string(p, value)?.to_string();
+                let mode = self.to_string(p, value)?;
                 if !super::temporal_zoned_date_time::DISAMBIGUATION_OPTIONS.contains(&mode.as_str())
                 {
                     return Err(self.range_error(p, "Invalid disambiguation".into()));

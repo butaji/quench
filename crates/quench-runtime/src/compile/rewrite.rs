@@ -3,6 +3,8 @@ use crate::bytecode::{
     FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction,
 };
 use super::liveness::{RegisterSet, register_bit};
+mod copies;
+use copies::forward_move_sources;
 
 #[derive(Clone, Copy)]
 struct Rule {
@@ -72,7 +74,8 @@ fusion_recipes! {
                 return None;
             }
             let local = u16::try_from(first.local_slot()).ok()?;
-            second.set_b(crate::bytecode::FieldBase::local(local)?.0);
+            // A local past the packed field domain keeps the pair.
+            second.try_set_b(crate::bytecode::FieldBase::local(local)?.0)?;
             Some(second)
         };
     ProducerMove: [
@@ -158,9 +161,7 @@ pub(super) fn apply(
     while rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
-    // Read once: every function's rewrite asks, and the process environment does not change.
-    static REWRITE_STATS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *REWRITE_STATS.get_or_init(|| std::env::var_os("QUENCH_REWRITE_STATS").is_some()) {
+    if crate::trace::Channel::Rewrite.on() {
         eprintln!(
             "{{\"kind\":\"quench-rewrite\",\"input\":{input},\"output\":{},\"changed_passes\":{changed_passes},\"scans\":{}}}",
             function.code.len(),
@@ -224,14 +225,14 @@ fn remove_dead_moves(
         .filter(|entry| entry.local < function.params)
         .fold(0, |mask, entry| mask | register_bit(entry.register));
     let mut changed = Vec::new();
-    for (pc, &is_protected) in protected.iter().enumerate().take(function.code.len()) {
+    for (pc, is_protected) in (0..function.code.len()).map(|pc| (pc, protected.contains(pc))) {
         let mov = function.code[pc];
         if mov.op() != Op::Move || mov.is_wide() || is_protected {
             continue;
         }
         let destination = register_bit(mov.result_register());
         if destination & parameter_storage != 0
-            || liveness::live_out(function, &analysis.live, pc, mov.as_wide()) & destination != 0
+            || liveness::live_out(&analysis.successors, &analysis.live, pc) & destination != 0
         {
             continue;
         }
@@ -266,10 +267,10 @@ fn hand_on(
 /// only the handler roots `add_suspended_exception_roots` adds after a call move, to the
 /// instruction that now follows it.
 fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
-    let (mut transfers, mut live) = match liveness.take() {
-        Some(CodeFacts::Live(analysis)) => (Some(analysis.transfers), Some(analysis.live)),
-        Some(CodeFacts::Transfers(transfers)) => (Some(transfers), None),
-        None => (None, None),
+    let (mut transfers, mut live, successors) = match liveness.take() {
+        Some(CodeFacts::Live(analysis)) => (Some(analysis.transfers), Some(analysis.live), Some(analysis.successors)),
+        Some(CodeFacts::Transfers(transfers)) => (Some(transfers), None, None),
+        None => (None, None, None),
     };
     let old = std::mem::take(&mut function.code);
     let mut code = Vec::with_capacity(old.len());
@@ -306,11 +307,9 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
         (Some(mut transfers), Some(mut live)) => {
             transfers.truncate(function.code.len());
             liveness::add_suspended_exception_roots(function, &mut live);
-            debug_assert!(
-                liveness::analyze_transfers(function, &transfers) == live,
-                "liveness handed past dropped Nops matches the code"
-            );
-            Some(CodeFacts::Live(CodeLiveness { transfers, live }))
+            let successors = successors.expect("live facts carry their successors").relocated(&map);
+            debug_assert!(liveness::analyze_transfers(function, &transfers) == live && successors == crate::bytecode::Successors::of_code(function), "facts handed past dropped Nops match the code");
+            Some(CodeFacts::Live(CodeLiveness { successors, transfers, live }))
         }
         (Some(mut transfers), None) => {
             transfers.truncate(function.code.len());
@@ -325,6 +324,8 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
 struct CodeLiveness {
     transfers: Vec<(RegisterSet, RegisterSet)>,
     live: Vec<RegisterSet>,
+    /// The code's successor table, which in-place `Move` and producer rewrites leave intact.
+    successors: crate::bytecode::Successors,
 }
 
 /// What a pass hands the next about the code as it stands. A pass that leaves the code
@@ -357,37 +358,35 @@ impl CodeLiveness {
             }
             None => liveness::transfers(function, methods, field_sites, superinstructions)?,
         };
-        let live = liveness::analyze_transfers(function, &transfers);
-        Some(Self { transfers, live })
+        let successors = crate::bytecode::Successors::of_code(function);
+        let live = liveness::analyze_successors(function, &transfers, &successors);
+        Some(Self { transfers, live, successors })
     }
 
-    /// The liveness of the code after `coalesce_distant_producer_moves` coalesced `spans`. A
-    /// span is a block (one entry, falling through, no handler) where nothing between the
-    /// producer and the move touches either register, so only the live sets after the producer
-    /// change: `src` is no longer read there and `dst` holds the value instead, live up to the
-    /// move exactly when it is live after it. The producer's own live set is unchanged.
-    fn coalesced(
-        self,
-        spans: &[CoalescedSpan],
-        changed: &[usize],
+    /// Updates the facts for one span `coalesce_distant_producer_moves` coalesced. A span is a
+    /// block (one entry, falling through, no handler) where nothing between the producer and
+    /// the move touches either register, so only the live sets after the producer change:
+    /// `src` is no longer read there and `dst` holds the value instead, live up to the move
+    /// exactly when it is live after it. The producer's own live set is unchanged.
+    fn coalesce(
+        &mut self,
+        span: &CoalescedSpan,
         function: &BcFunction,
         methods: &(impl liveness::MethodArguments + ?Sized),
         field_sites: &[FieldSite],
         superinstructions: &[Superinstruction],
-    ) -> CodeFacts {
-        let mut live = self.live;
-        for span in spans {
-            for live in &mut live[span.producer + 1..=span.target] {
-                *live = (*live & !span.source) | span.destination_out;
-            }
+    ) {
+        for live in &mut self.live[span.producer + 1..=span.target] {
+            *live = (*live & !span.source) | span.destination_out;
         }
-        let mut transfers = self.transfers;
-        update_transfers(&mut transfers, changed, function, methods, field_sites, superinstructions);
-        debug_assert!(
-            liveness::analyze_transfers(function, &transfers) == live,
-            "coalesced liveness matches the code"
+        update_transfers(
+            &mut self.transfers,
+            &[span.producer, span.target],
+            function,
+            methods,
+            field_sites,
+            superinstructions,
         );
-        CodeFacts::Live(Self { transfers, live })
     }
 
     /// The facts to hand on after the instructions at `changed` were rewritten in place.
@@ -470,7 +469,7 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
             Op::JumpFalse => Op::JumpTrue,
             _ => continue,
         };
-        if protected[pc + 1]
+        if protected.contains(pc + 1)
             || skipped.op() != Op::Jump
             || branch.jump_target() as usize != pc + 2
             || skipped.jump_target() as usize <= pc + 1
@@ -490,8 +489,9 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
 /// a move. Writing `dst` earlier is unobservable when the span between the two is one
 /// handler-free basic block that neither reads nor writes `dst` or `src`, `src` is dead
 /// after the move, and neither register is promoted local storage (which legacy
-/// `f.arguments` reflection reads). Spans coalesced in one pass are disjoint, so each
-/// candidate's liveness facts are unaffected by the others.
+/// `f.arguments` reflection reads). Each coalesced span updates the transfer masks and live
+/// sets it changes before the next move is read (`CodeLiveness::coalesce`), so spans may
+/// nest and chain within one pass.
 fn coalesce_distant_producer_moves(
     function: &mut BcFunction,
     methods: &(impl liveness::MethodArguments + ?Sized),
@@ -507,11 +507,10 @@ fn coalesce_distant_producer_moves(
     {
         return false;
     }
-    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
+    let Some(mut analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
     else {
         return false;
     };
-    let CodeLiveness { transfers, live } = &analysis;
     let protected = protected_positions(
         &function.code,
         &function.wide,
@@ -523,64 +522,43 @@ fn coalesce_distant_producer_moves(
         .local_registers
         .iter()
         .fold(0, |mask, entry| mask | register_bit(entry.register));
-    let mut claimed_until = 0;
     let mut changed = Vec::new();
-    let mut spans = Some(Vec::new());
+    // A move of a register onto itself may have kept the register live upstream, so after
+    // one is dropped the live sets are derived anew and no span is coalesced on stale ones.
+    let mut live_exact = true;
     for target in 0..function.code.len() {
         let mov = function.code[target];
-        if mov.op() != Op::Move || mov.is_wide() || protected[target] {
+        if mov.op() != Op::Move || mov.is_wide() || protected.contains(target) {
             continue;
         }
         let (source, destination) = (mov.register_b(), mov.result_register());
         let pair = register_bit(source) | register_bit(destination);
-        // A move of a register onto itself changes nothing anything could observe. Its read
-        // may have kept the register live upstream, so the liveness is derived anew.
         if source == destination {
             function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
             changed.push(target);
-            spans = None;
+            live_exact = false;
             continue;
         }
-        if pair.count_ones() != 2
+        if !live_exact
+            || pair.count_ones() != 2
             || pair & storage != 0
-            || liveness::live_out(function, live, target, mov.as_wide()) & register_bit(source)
+            || liveness::live_out(&analysis.successors, &analysis.live, target) & register_bit(source)
                 != 0
         {
             continue;
         }
-        // Spans coalesced earlier in this pass end before `claimed_until`, so the
-        // instructions scanned here still have the masks recorded in `transfers`.
-        let Some(producer) = (claimed_until..target).rev().find(|&pc| {
-            let (read, written) = transfers[pc];
-            (read | written) & pair != 0
-        }) else {
+        let Some(producer) = block_producer(function, &protected, &analysis.transfers, target, pair) else {
             continue;
         };
         let instruction = function.code[producer];
-        if instruction.is_wide() {
-            continue;
-        }
-        let span_is_block = (producer + 1..=target).all(|pc| !protected[pc])
-            && (producer..target).all(|pc| {
-                let instruction = fixed_width(function.code[pc], &function.wide);
-                let op = instruction.op();
-                matches!(
-                    op.control_flow_layout(),
-                    crate::bytecode::ControlFlowLayout::Fallthrough
-                        | crate::bytecode::ControlFlowLayout::Call
-                ) && !instruction.returns_from_frame()
-            })
-            && function
-                .handlers
-                .iter()
-                .all(|handler| handler.end as usize <= producer || handler.start as usize > target);
-        if !span_is_block
+        if instruction.is_wide()
+            || !function.handlers.iter().all(|handler| handler.end as usize <= producer || handler.start as usize > target)
             || !fuses(instruction.op(), Op::Move, |recipe| {
                 matches!(recipe, Recipe::ProducerMove)
             })
             || instruction.result_register() != source
-            || transfers[producer].1 != register_bit(source)
-            || transfers[producer].0 & pair != 0
+            || analysis.transfers[producer].1 != register_bit(source)
+            || analysis.transfers[producer].0 & pair != 0
         {
             continue;
         }
@@ -588,24 +566,52 @@ fn coalesce_distant_producer_moves(
         retargeted.set_result_register(destination);
         function.code[producer] = retargeted;
         function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
-        claimed_until = target + 1;
         changed.extend([producer, target]);
-        if let Some(spans) = &mut spans {
-            spans.push(CoalescedSpan {
-                producer,
-                target,
-                source: register_bit(source),
-                destination_out: register_bit(destination) & live[target + 1],
-            });
+        let span = CoalescedSpan {
+            producer,
+            target,
+            source: register_bit(source),
+            destination_out: register_bit(destination) & analysis.live[target + 1],
+        };
+        analysis.coalesce(&span, function, methods, field_sites, superinstructions);
+    }
+    if live_exact {
+        debug_assert!(
+            liveness::analyze_transfers(function, &analysis.transfers) == analysis.live,
+            "coalesced liveness matches the code"
+        );
+        *current = Some(CodeFacts::Live(analysis));
+        return !changed.is_empty();
+    }
+    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
+}
+
+/// The producer a `Move` at `target` of a register in `pair` coalesces with: the nearest
+/// instruction before it that reads or writes either register, when everything from it to
+/// the move is one basic block (no instruction after it is a jump target or handler boundary,
+/// and none from it to the move leaves the block).
+fn block_producer(
+    function: &BcFunction,
+    protected: &crate::bitset::BitSet,
+    transfers: &[(RegisterSet, RegisterSet)],
+    target: usize,
+    pair: RegisterSet,
+) -> Option<usize> {
+    for pc in (0..target).rev() {
+        if protected.contains(pc + 1) {
+            return None;
+        }
+        let instruction = fixed_width(function.code[pc], &function.wide);
+        if !instruction.op().control_flow_layout().only_falls_through() || instruction.returns_from_frame()
+        {
+            return None;
+        }
+        let (read, written) = transfers[pc];
+        if (read | written) & pair != 0 {
+            return Some(pc);
         }
     }
-    match spans {
-        Some(spans) if !changed.is_empty() => {
-            *current = Some(analysis.coalesced(&spans, &changed, function, methods, field_sites, superinstructions));
-            true
-        }
-        _ => hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current),
-    }
+    None
 }
 
 /// A `src = producer; ...; dst = Move src` that `coalesce_distant_producer_moves` turned into
@@ -615,88 +621,6 @@ struct CoalescedSpan {
     target: usize,
     source: RegisterSet,
     destination_out: RegisterSet,
-}
-
-/// Lets the instruction after a `Move` read the move's source in place of its destination when
-/// the move feeds only that instruction: `d = Move s; x(d)` becomes `Nop; x(s)`, the forward
-/// counterpart of `coalesce_distant_producer_moves`. The consumer must be reachable only through
-/// the move, `d` dead after it and not promoted local storage (whose writes legacy `f.arguments`
-/// reflection reads), and neither instruction inside a handler region. Only register, operand
-/// and field-base fields are rewritten; the consumer's use and definition masks confirm that the
-/// rewrite trades `d` for `s` and changes nothing else it reads or writes.
-fn forward_move_sources(
-    function: &mut BcFunction,
-    methods: &(impl liveness::MethodArguments + ?Sized),
-    field_sites: &[FieldSite],
-    superinstructions: &[Superinstruction],
-    current: &mut Option<CodeFacts>,
-) -> bool {
-    if !function
-        .code
-        .iter()
-        .any(|instruction| instruction.op() == Op::Move)
-    {
-        return false;
-    }
-    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
-    else {
-        return false;
-    };
-    let CodeLiveness { transfers, live } = &analysis;
-    let protected = protected_positions(
-        &function.code,
-        &function.wide,
-        &function.handlers,
-        function.parameter_end_pc,
-        &function.binding_sites,
-    );
-    let storage = function
-        .local_registers
-        .iter()
-        .fold(0, |mask, entry| mask | register_bit(entry.register));
-    let in_handler = |pc: usize| {
-        function
-            .handlers
-            .iter()
-            .any(|handler| handler.start as usize <= pc && pc < handler.end as usize)
-    };
-    let mut changed = Vec::new();
-    let mut pc = 0;
-    while pc + 1 < function.code.len() {
-        let (mov, consumer) = (function.code[pc], function.code[pc + 1]);
-        let candidate = mov.op() == Op::Move && !mov.is_wide() && !consumer.is_wide();
-        let rewritten = candidate
-            .then(|| {
-                let (source, destination) = (mov.register_b(), mov.result_register());
-                let (read, written) = transfers[pc + 1];
-                let viable = source != destination
-                    && !protected[pc + 1]
-                    && !in_handler(pc)
-                    && !in_handler(pc + 1)
-                    && register_bit(destination) & storage == 0
-                    && read & register_bit(destination) != 0
-                    && liveness::live_out(function, live, pc + 1, consumer.as_wide())
-                        & register_bit(destination)
-                        == 0;
-                let rewritten = substitute_register_read(consumer, destination, source)?;
-                let expected = (read & !register_bit(destination)) | register_bit(source);
-                (viable
-                    && liveness::uses(rewritten.as_wide(), methods, field_sites, superinstructions)
-                        == expected
-                    && liveness::definitions(rewritten.as_wide(), superinstructions) == written)
-                    .then_some(rewritten)
-            })
-            .flatten();
-        if let Some(rewritten) = rewritten {
-            function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
-            function.code[pc + 1] = rewritten;
-            changed.extend([pc, pc + 1]);
-            pc += 2;
-        } else {
-            pc += 1;
-        }
-    }
-    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
 }
 
 /// `instruction` reading register `to` wherever a register, operand or field-base field reads
@@ -737,7 +661,7 @@ pub(super) fn return_through_shared_returns(function: &mut BcFunction) {
     let decoded = function.instructions().collect::<Vec<_>>();
     for pc in 1..decoded.len() {
         let (producer, next) = (decoded[pc - 1], decoded[pc]);
-        if boundaries[pc]
+        if boundaries.contains(pc)
             || next.op() != Op::Return
             || !fuses(producer.op(), Op::Return, |recipe| {
                 matches!(recipe, Recipe::ReturnResult)
@@ -846,7 +770,7 @@ fn rewrite_super_window(
         let replacement = SUPER_RULES.iter().find_map(|rule| {
             let width = rule.pattern.len();
             let window = old.get(index..index + width)?;
-            if (1..width).any(|offset| protected[index + offset])
+            if (1..width).any(|offset| protected.contains(index + offset))
                 || window.iter().any(|instruction| instruction.is_wide())
                 || window
                     .iter()
@@ -919,12 +843,12 @@ pub(super) fn protected_positions(
     handlers: &[crate::bytecode::Handler],
     parameter_end_pc: u32,
     binding_sites: &[crate::bytecode::BindingSite],
-) -> Vec<bool> {
+) -> crate::bitset::BitSet {
     let mut protected = region_boundaries(code.len(), handlers, parameter_end_pc, binding_sites);
     for instruction in code {
         let instruction = fixed_width(*instruction, wide);
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
-            protected[instruction.jump_target() as usize] = true;
+            protected.insert(instruction.jump_target() as usize);
         }
     }
     protected
@@ -945,23 +869,23 @@ fn region_boundaries(
     handlers: &[crate::bytecode::Handler],
     parameter_end_pc: u32,
     binding_sites: &[crate::bytecode::BindingSite],
-) -> Vec<bool> {
-    let mut protected = vec![false; length + 1];
+) -> crate::bitset::BitSet {
+    let mut protected = crate::bitset::BitSet::new(length + 1);
     for handler in handlers {
-        protected[handler.start as usize] = true;
-        protected[handler.end as usize] = true;
-        protected[handler.target as usize] = true;
+        protected.insert(handler.start as usize);
+        protected.insert(handler.end as usize);
+        protected.insert(handler.target as usize);
         if let Some(target) = handler.return_target {
-            protected[target as usize] = true;
+            protected.insert(target as usize);
         }
     }
     if parameter_end_pc != 0 {
-        protected[parameter_end_pc as usize] = true;
+        protected.insert(parameter_end_pc as usize);
     }
     // A site's resume PC belongs to the preceding operation. Preserve this
     // boundary so fusion cannot merge that operation with its successor.
     for site in binding_sites {
-        protected[site.resume_pc as usize] = true;
+        protected.insert(site.resume_pc as usize);
     }
     protected
 }
@@ -987,7 +911,7 @@ fn rewrite_once(
     let analysis = has_pair
         .then(|| CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions))
         .flatten();
-    let live = analysis.as_ref().map(|analysis| &analysis.live);
+    let (mut transfers, live) = analysis.map_or((None, None), |CodeLiveness { transfers, live, successors }| (Some(transfers), Some((live, successors))));
     let old = std::mem::take(&mut function.code);
     let protected = protected_positions(
         &old,
@@ -996,9 +920,15 @@ fn rewrite_once(
         function.parameter_end_pc,
         &function.binding_sites,
     );
-    // Decoded once for the rules that record their sources.
-    let positions = function.source_positions.iter().collect::<Vec<_>>();
+    // Decoded at most once, for the rules that record their sources.
+    let positions = std::cell::OnceCell::new();
+    let positions = || positions.get_or_init(|| function.source_positions.iter().collect::<Vec<_>>()).as_slice();
     let mut code = Vec::with_capacity(old.len());
+    // A kept instruction keeps its transfer masks, which name registers and not positions, and
+    // moves to a pc no later than its old one, so the masks move down in place; only a pair's
+    // replacement, at these pcs, derives its own (mandreel `global_init`: a second table of
+    // 20 MB at a cold load's peak).
+    let mut replaced = Vec::new();
     let mut map = vec![0usize; old.len() + 1];
     let mut index = 0;
     let mut changed = false;
@@ -1011,18 +941,18 @@ fn rewrite_once(
         }
         let rewritten = old
             .get(index + 1)
-            .filter(|second| !protected[index + 1] && !old[index].is_wide() && !second.is_wide())
+            .filter(|second| !protected.contains(index + 1) && !old[index].is_wide() && !second.is_wide())
             .and_then(|second| {
                 let first = old[index];
                 let mut rules = rules_for(first.op(), second.op()).peekable();
                 rules.peek()?;
                 // The same control-flow facts justify frame roots and every
                 // removed register write. An unavailable map keeps the pair.
-                let live = live.as_ref()?;
+                let (live, successors) = live.as_ref()?;
                 let original_definitions =
                     liveness::definitions(first.as_wide(), superinstructions)
                         | liveness::definitions(second.as_wide(), superinstructions);
-                let live_out = liveness::live_out(function, live, index + 1, second.as_wide());
+                let live_out = liveness::live_out(successors, live, index + 1);
                 rules.find_map(|rule| {
                     let replacement = apply_rule(*rule, first, *second, field_sites, &positions, index)?;
                     let removed_definitions = original_definitions
@@ -1032,10 +962,12 @@ fn rewrite_once(
             });
         if let Some(instruction) = rewritten {
             map[index + 1] = code.len();
+            replaced.push(code.len());
             code.push(instruction);
             index += 2;
             changed = true;
         } else {
+            transfers.iter_mut().for_each(|transfers| transfers[code.len()] = transfers[index]);
             code.push(old[index]);
             index += 1;
         }
@@ -1043,12 +975,12 @@ fn rewrite_once(
     map[old.len()] = code.len();
     if !changed {
         function.code = old;
-        if let Some(analysis) = analysis {
-            *current = Some(CodeFacts::Live(analysis));
+        if let (Some(transfers), Some((live, successors))) = (transfers, live) {
+            *current = Some(CodeFacts::Live(CodeLiveness { transfers, live, successors }));
         }
         return false;
     }
-    *current = None;
+    drop(live);
     relocate(
         &mut code,
         &mut function.wide,
@@ -1060,21 +992,30 @@ fn rewrite_once(
         &old,
     );
     function.code = code;
+    *current = transfers.map(|mut transfers| {
+        transfers.truncate(function.code.len());
+        for pc in replaced {
+            let replacement = fixed_width(function.code[pc], &function.wide);
+            transfers[pc] = liveness::transfer(replacement, methods, field_sites.as_slice(), superinstructions);
+        }
+        CodeFacts::Transfers(transfers)
+    });
     true
 }
 
-fn apply_rule(
+fn apply_rule<'p>(
     rule: Rule,
     first: Instr,
     second: Instr,
     field_sites: &mut SiteTable<'_, FieldSite>,
-    positions: &[crate::bytecode::SourcePosition],
+    positions: &impl Fn() -> &'p [crate::bytecode::SourcePosition],
     pc: usize,
 ) -> Option<Instr> {
     let replacement = apply_recipe(rule.recipe, first, second, field_sites)?;
     let replacement = sound_replacement(first, second, replacement)?;
     if matches!(rule.recipe, Recipe::GetSetThis)
         && let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
+            let positions = positions();
             let at = |pc: usize| {
                 positions
                     .partition_point(|p| p.pc as usize <= pc)
@@ -1254,6 +1195,26 @@ mod tests {
     }
 
     #[test]
+    fn local_field_keeps_the_pair_for_a_local_past_the_packed_field() {
+        // Each captured binding and its function take a local, so the bindings declared after
+        // them lie past what a packed field base holds; a field read of one (`hasOwn.call`)
+        // must keep its load (Node oracle: no error).
+        let bindings = (0..3000)
+            .map(|index| format!("var c{index} = {index}; function f{index}() {{ return c{index}; }}\n"))
+            .collect::<String>();
+        let source = format!(
+            r#"(function () {{ 'use strict';
+{bindings}var hasOwn = Object.prototype.hasOwnProperty;
+var side = {{ A: true }}, leap = {{ B: true }};
+for (var type in leap) {{ if (hasOwn.call(leap, type)) side[type] = leap[type]; }}
+if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
+}})();"#
+        );
+        let program = crate::Engine::specialize(&source, "local-field-wide.js").unwrap();
+        crate::Runtime::new(crate::SystemHost).execute(&program).unwrap();
+    }
+
+    #[test]
     fn wide_jump_targets_are_protected_and_relocated() {
         for op in [Op::Jump, Op::JumpTrue, Op::JumpFalse] {
             let mut wide = vec![WideInstruction::new(op, 0, 0, 0, 3)];
@@ -1263,7 +1224,7 @@ mod tests {
                 Instr::new(Op::Return, 0, 0, 0, 0),
                 Instr::new(Op::Return, 0, 0, 0, 0),
             ];
-            assert!(protected_positions(&old, &wide, &[], 0, &[])[3]);
+            assert!(protected_positions(&old, &wide, &[], 0, &[]).contains(3));
             let mut code = vec![old[0], old[2], old[3]];
             let mut parameter_end = 0;
             relocate(

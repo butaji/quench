@@ -1,4 +1,3 @@
-use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::*;
 
 const BYTE_OFFSET_ARGUMENT: usize = 1;
@@ -92,10 +91,7 @@ impl<H: Host> Vm<H> {
                 }
                 let prototype = if let Some(root) = new_target_root {
                     let new_target = self.heap.root_value(root).unwrap();
-                    let native = TYPED_ARRAY_INSTALLS
-                        .iter()
-                        .find_map(|(candidate, native, _)| (*candidate == kind).then_some(*native))
-                        .expect("typed array kinds have constructor rows");
+                    let native = kind.native();
                     self.native_constructor_prototype(p, new_target, native)?
                         .expect("typed array constructors have intrinsic prototypes")
                 } else {
@@ -106,7 +102,7 @@ impl<H: Host> Vm<H> {
                 if buffer_source {
                     let offset_value = offset
                         .and_then(|root| self.heap.root_value(root))
-                        .unwrap_or(Value::number(0.0));
+                        .unwrap_or_else(|| Value::number(0.0));
                     let offset = self.buffer_to_index(
                         p,
                         offset_value,
@@ -174,8 +170,7 @@ impl<H: Host> Vm<H> {
                             offset,
                         }),
                         buffer: source,
-                        length,
-                        length_tracking: resizable && requested_length.is_none(),
+                        length: crate::heap::ViewLength::new(length, resizable && requested_length.is_none()),
                     }));
                 }
 
@@ -215,8 +210,7 @@ impl<H: Host> Vm<H> {
                         offset: 0,
                     }),
                     buffer: self.heap.root_value(buffer_root).unwrap(),
-                    length,
-                    length_tracking: false,
+                    length: crate::heap::ViewLength::fixed(length),
                 });
                 let target_root = self.heap.root(typed_array);
                 target = Some(target_root);
@@ -272,10 +266,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn typed_array_proto(&self, kind: TypedArrayKind) -> Value {
-        let native = TYPED_ARRAY_INSTALLS
-            .iter()
-            .find_map(|(candidate, native, _)| (*candidate == kind).then_some(*native))
-            .expect("typed array kinds have constructor rows");
+        let native = kind.native();
         if let Some(prototype) = self
             .realm
             .intrinsics
@@ -383,10 +374,7 @@ impl<H: Host> Vm<H> {
             }
         }
         if constructor.is_undefined() {
-            let native = TYPED_ARRAY_INSTALLS
-                .iter()
-                .find_map(|(candidate, native, _)| (*candidate == kind).then_some(*native))
-                .unwrap_or(Native::Uint8Array);
+            let native = kind.native();
             constructor = self.native_value(native);
         }
         if !self.is_constructable(constructor) {
@@ -469,7 +457,7 @@ impl<H: Host> Vm<H> {
         {
             // Prepare the derived lookup for repeated array-like element reads.
             // Getters still run normally; mutations select a new immutable shape.
-            self.shape_entries(shape);
+            self.shape_entry_count(shape);
         }
         Ok(TypedArrayInitialization::ArrayLike(length))
     }

@@ -8,7 +8,6 @@
 
 use super::*;
 use cranelift_codegen::entity::SecondaryMap;
-use smallvec::SmallVec;
 use cranelift_codegen::ir::InstBuilderBase;
 
 pub(super) struct FrameFlow {
@@ -50,56 +49,24 @@ impl FrameEffect {
     fn known_call(self) -> bool { self.0 != 0 && self.0 & Self::ROOT == 0 }
 }
 
-/// Two inline words cover small native frames without allocation; larger frames
-/// grow normally. Word operations process membership in contiguous batches.
-const INLINE_REGISTER_WORDS: usize = 2;
-const REGISTER_WORD_BITS: usize = u64::BITS as usize;
-
+/// Membership of a frame's registers, one bit each (`crate::bitset::BitSet`).
 #[derive(Clone)]
-struct RegisterSet(SmallVec<[u64; INLINE_REGISTER_WORDS]>);
+struct RegisterSet(crate::bitset::BitSet);
 
 impl RegisterSet {
-    fn new(count: u16) -> Self {
-        Self(std::iter::repeat_n(0, usize::from(count).div_ceil(REGISTER_WORD_BITS)).collect())
-    }
+    fn new(count: u16) -> Self { Self(crate::bitset::BitSet::new(usize::from(count))) }
 
-    fn clear(&mut self) { self.0.fill(0); }
+    fn clear(&mut self) { self.0.clear(); }
 
-    fn insert(&mut self, register: u16) {
-        let register = usize::from(register);
-        self.0[register / REGISTER_WORD_BITS] |= 1 << (register % REGISTER_WORD_BITS);
-    }
+    fn insert(&mut self, register: u16) { self.0.insert(usize::from(register)); }
 
-    fn contains(&self, register: u16) -> bool {
-        let register = usize::from(register);
-        self.0[register / REGISTER_WORD_BITS] & (1 << (register % REGISTER_WORD_BITS)) != 0
-    }
+    fn contains(&self, register: u16) -> bool { self.0.contains(usize::from(register)) }
 
-    fn subtract(&mut self, other: &Self) {
-        for (word, other) in self.0.iter_mut().zip(&other.0) { *word &= !other; }
-    }
+    fn subtract(&mut self, other: &Self) { self.0.subtract(&other.0); }
 
-    fn union(&mut self, other: &Self) -> bool {
-        let mut changed = false;
-        for (word, other) in self.0.iter_mut().zip(&other.0) {
-            let next = *word | other;
-            changed |= next != *word;
-            *word = next;
-        }
-        changed
-    }
+    fn union(&mut self, other: &Self) -> bool { self.0.union_with(&other.0) }
 
-    fn iter(&self) -> impl Iterator<Item = u16> + '_ {
-        self.0.iter().enumerate().flat_map(|(index, word)| {
-            let mut remaining = *word;
-            std::iter::from_fn(move || {
-                if remaining == 0 { return None; }
-                let bit = remaining.trailing_zeros() as usize;
-                remaining &= remaining - 1;
-                Some((index * REGISTER_WORD_BITS + bit) as u16)
-            })
-        })
-    }
+    fn iter(&self) -> impl Iterator<Item = u16> + '_ { self.0.iter().map(|register| register as u16) }
 }
 
 impl FrameFlow {
@@ -350,7 +317,7 @@ mod tests {
         const SOURCE_OFFSET: u32 = 42;
         const OWNER_TAG: u32 = 7;
         const OWNER_LABEL: u32 = 0;
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         for (tagged, conservative) in [(false, false), (true, false), (false, true), (true, true)] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.extend([AbiParam::new(types::I64); 3]);
@@ -472,13 +439,14 @@ mod tests {
 
     #[test]
     fn register_bitsets_batch_joins_and_kills_across_inline_and_spilled_words() {
-        for count in [0, 1, REGISTER_WORD_BITS as u16, (REGISTER_WORD_BITS * INLINE_REGISTER_WORDS + 1) as u16, u16::MAX] {
+        use crate::bitset::{INLINE_WORDS, WORD_BITS};
+        for count in [0, 1, WORD_BITS as u16, (WORD_BITS * INLINE_WORDS + 1) as u16, u16::MAX] {
             let mut left = RegisterSet::new(count);
             let mut right = RegisterSet::new(count);
             for register in 0..count {
                 if register % 2 == 0 { left.insert(register); } else { right.insert(register); }
             }
-            assert_eq!(left.0.spilled(), usize::from(count) > REGISTER_WORD_BITS * INLINE_REGISTER_WORDS);
+            assert_eq!(left.0.spilled(), usize::from(count) > WORD_BITS * INLINE_WORDS);
             assert_eq!(left.union(&right), count > 1);
             assert!(!left.union(&right));
             assert_eq!(left.iter().collect::<Vec<_>>(), (0..count).collect::<Vec<_>>());
@@ -510,7 +478,7 @@ mod tests {
     #[test]
     #[cfg(feature = "aot")]
     fn scalar_effect_preserves_uncommitted_values_outside_its_footprint() {
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 2]);
         signature.returns.push(AbiParam::new(types::I64));
@@ -555,7 +523,7 @@ mod tests {
 
     #[test]
     fn register_values_cross_cfg_backedges_without_canonical_spills() {
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.push(AbiParam::new(types::I64));
         signature.returns.push(AbiParam::new(types::I64));
@@ -626,7 +594,7 @@ mod tests {
 
     #[test]
     fn semantic_call_commits_then_resumes_from_changed_canonical_inputs() {
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
         signature.params.extend([AbiParam::new(types::I64); 2]);
         signature.returns.push(AbiParam::new(types::I64));
@@ -674,7 +642,7 @@ mod tests {
 
     #[test]
     fn overlapping_frame_views_decline_promotion_before_mutation() {
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         for derived in [false, true] {
             let mut signature = Signature::new(isa.default_call_conv());
             signature.params.push(AbiParam::new(types::I64));

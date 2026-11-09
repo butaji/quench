@@ -33,14 +33,14 @@ impl Phase {
 
 const PHASE: &str = "phase";
 const DELAY: &str = "delay";
-const VALUE: &str = "value";
+pub(crate) use crate::modules::keys::VALUE;
 const OPTIONS: &str = "options";
 const TICKS: &str = "ticks";
-const WAITERS: &str = "waiters";
-const HANDLE: &str = "handle";
-const SIGNAL: &str = "signal";
-const LISTENER: &str = "listener";
-const ABORT_EVENT: &str = "abort";
+pub(crate) use crate::modules::keys::WAITERS;
+pub(crate) use crate::modules::keys::HANDLE;
+pub(crate) use crate::modules::keys::SIGNAL;
+pub(crate) use crate::modules::keys::LISTENER;
+use crate::modules::keys::ABORT_EVENT;
 
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
     c.get_named_property_rooted(object, name)

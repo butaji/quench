@@ -2,18 +2,13 @@ use smallvec::SmallVec;
 
 pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
 /// Internal global bindings, which compiled code loads by name and no source text can
-/// declare: the for-in key list and its per-key enumerability check, iterator closing and
-/// `with` scope exit (`WITH_ENTER_BINDING` enters).
-pub(crate) const FOR_IN_KEYS_BINDING: &str = "\0quench:for-in-keys";
-pub(crate) const FOR_IN_KEY_IS_ENUMERABLE_BINDING: &str = "\0quench:for-in-key-is-enumerable";
+/// declare: iterator closing and `with` scope exit (`WITH_ENTER_BINDING` enters).
 pub(crate) const ITERATOR_CLOSE_BINDING: &str = "\0quench:iterator-close";
 /// The intrinsic a `super` access reads its home's parent with (`Native::ReflectGetPrototypeOf`).
 pub(crate) const SUPER_BASE_BINDING: &str = "\0quench:super-base";
 pub(crate) const WITH_EXIT_BINDING: &str = "\0quench:with-exit";
 /// Every internal global the realm installs on its global object.
-pub(crate) const INTERNAL_GLOBAL_BINDINGS: [&str; 5] = [
-    FOR_IN_KEYS_BINDING,
-    FOR_IN_KEY_IS_ENUMERABLE_BINDING,
+pub(crate) const INTERNAL_GLOBAL_BINDINGS: [&str; 3] = [
     ITERATOR_CLOSE_BINDING,
     WITH_ENTER_BINDING,
     WITH_EXIT_BINDING,
@@ -42,8 +37,6 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
         INTRINSIC_DISPOSABLE_STACK_BINDING => Native::DisposableStack,
         // The iteration helpers each realm also installs on its global object.
         ITERATOR_CLOSE_BINDING => Native::IteratorClose,
-        FOR_IN_KEYS_BINDING => Native::ForInKeys,
-        FOR_IN_KEY_IS_ENUMERABLE_BINDING => Native::ForInKeyIsEnumerable,
         _ => return None,
     })
 }
@@ -60,57 +53,31 @@ pub(crate) const INTRINSIC_DISPOSABLE_STACK_BINDING: &str = "\0quench:intrinsic-
 /// The engine-internal global a `with` statement calls to enter its object scope.
 pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
-/// The `Unary` operator a template literal substitution compiles to: ToString (ECMA-262
-/// 13.15.5.1 step 5), which no source operator spells. It extends oxc's operator numbering.
-pub(crate) const UNARY_TO_STRING: u32 = oxc_ast::ast::UnaryOperator::Delete as u32 + 1;
-/// The names `typeof` yields (ECMA-262 13.5.3.1), indexed as `typeof_name_index` (vm/coercion.rs) classifies
-/// values.
-pub(crate) const TYPEOF_NAMES: [&str; 8] =
-    ["undefined", "object", "boolean", "number", "string", "bigint", "symbol", "function"];
-/// The `Unary` operators that compare `typeof` of their operand with a name in
-/// `TYPEOF_NAMES` (`typeof x === "function"`): this plus the name's index tests equality,
-/// and that plus `TYPEOF_NAMES.len()` inequality. The comparison of two strings that
-/// `typeof` and a literal would make has no effects, so it needs neither string.
-pub(crate) const UNARY_TYPEOF_IS: u32 = UNARY_TO_STRING + 1;
-const UNARY_TYPEOF_TESTS: u32 = 2 * TYPEOF_NAMES.len() as u32;
-
-/// The `UNARY_TYPEOF_IS` operator testing `typeof x` against `name`, negated for an
-/// inequality; `None` when no value's `typeof` is `name`.
-pub(crate) fn typeof_test_operator(name: &str, negated: bool) -> Option<u32> {
-    let index = typeof_name_index(name)? as u32;
-    Some(UNARY_TYPEOF_IS + index + if negated { TYPEOF_NAMES.len() as u32 } else { 0 })
-}
-
-/// The `Unary` operator giving the index in `TYPEOF_NAMES` of the name `typeof` yields for
-/// its operand, as an integer: `switch (typeof x)` with string cases compares it with each
-/// case's index (`FunctionCompiler::switch_statement`), as `typeof x === "name"` would
-/// compare the two strings, and like that comparison it needs neither string.
-pub(crate) const UNARY_TYPEOF_INDEX: u32 = UNARY_TYPEOF_IS + UNARY_TYPEOF_TESTS;
-
-/// The index in `TYPEOF_NAMES` of `name`, if some value's `typeof` is `name`.
-pub(crate) fn typeof_name_index(name: &str) -> Option<usize> {
-    TYPEOF_NAMES.iter().position(|candidate| *candidate == name)
-}
-
-/// The name index and negation a `UNARY_TYPEOF_IS` operator tests.
-#[inline(always)]
-pub(crate) fn typeof_test(operator: u32) -> Option<(usize, bool)> {
-    let offset = operator.checked_sub(UNARY_TYPEOF_IS).filter(|offset| *offset < UNARY_TYPEOF_TESTS)?;
-    let names = TYPEOF_NAMES.len() as u32;
-    Some(((offset % names) as usize, offset >= names))
-}
 pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 
 pub type Atom = u32;
 pub type Register = u16;
 
+mod source_text_snapshot;
 mod atoms;
 mod control_flow;
 pub(crate) mod initialization;
+mod initializer_stores;
+pub(crate) use initializer_stores::{InitializerConstant, InitializerStore, InitializerValue};
+mod environment_clone;
+pub use environment_clone::{EnvironmentClone, EnvironmentClones};
+pub(crate) use environment_clone::Resets;
+mod field_store;
+pub(crate) use field_store::{FieldStore, StoreReceiver, field_store_op};
 mod instruction;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
 mod numeric_ops;
+mod op_classes;
+mod unary_operators;
+pub(crate) use unary_operators::*;
+mod source_positions;
+pub(crate) use source_positions::SourcePositions;
 pub(crate) use atoms::{AtomSequence, AtomTable};
 
 /// Infix of the compiler's hidden atom for a named function expression's own binding:
@@ -119,12 +86,12 @@ pub(crate) const SELF_BINDING_MARKER: &str = "\0quench:self-binding:";
 /// Prefix of the compiler's hidden local for a block-scoped binding renamed apart from a
 /// same-named binding of its function: `{BLOCK_BINDING_MARKER}{name}`.
 pub(crate) const BLOCK_BINDING_MARKER: &str = "\0quench:block-binding:";
-
+/// Separates the count `hidden_local` appends to a repeated hidden name; no source name has it.
+pub(crate) const HIDDEN_LOCAL_SUFFIX: char = '\0';
 /// The name a hidden renamed block binding has in source; other names are unchanged.
 pub(crate) fn source_binding_name(name: &str) -> &str {
-    name.strip_prefix(BLOCK_BINDING_MARKER).unwrap_or(name)
+    name.strip_prefix(BLOCK_BINDING_MARKER).map_or(name, |name| name.split(HIDDEN_LOCAL_SUFFIX).next().unwrap_or(name))
 }
-
 /// Whether a local named `name` must live in its function's environment whatever its
 /// captures: other hidden bindings (lexical `this`, `new.target`, home objects, private
 /// names, ...) are reached by name, not only through capture slots. A renamed block binding
@@ -138,12 +105,12 @@ pub(crate) const HOME_BINDING_PREFIX: &str = "\0quench:home:";
 /// Whether the runtime finds local `name` by name from outside its own activation, so a
 /// closure that never captures it may still read it: a home object (`HOME_BINDING_PREFIX`),
 /// or a compiler binding its function's environment declares (`declares_environment_atom`),
-/// which by-name loads of compiler bindings resolve.
-pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: bool) -> bool {
+/// which by-name loads of compiler bindings resolve (asked lazily: it scans the atoms).
+pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl FnOnce() -> bool) -> bool {
     name.starts_with(HOME_BINDING_PREFIX)
-        || (declared_in_environment && local_name_requires_environment(name))
+        || (local_name_requires_environment(name) && declared_in_environment())
 }
-pub(crate) use control_flow::{ControlEdge, branch_table_entries, for_each_instruction_successor};
+pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, for_each_instruction_successor, reachable_from};
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
@@ -412,7 +379,7 @@ impl ImmediateRole {
             | Self::WasmReferenceTarget
             | Self::WasmNonNullCheck
             | Self::WasmGcTypeIndex
-            | Self::WasmStructFieldIndex
+            | Self::WasmGcField
             | Self::WasmExceptionFieldIndex
             | Self::WasmI64BinaryOperator
             | Self::WasmI64UnaryOperator
@@ -509,7 +476,7 @@ pub(crate) enum ImmediateRole {
     WasmReferenceTarget,
     WasmNonNullCheck,
     WasmGcTypeIndex,
-    WasmStructFieldIndex,
+    WasmGcField,
     WasmExceptionFieldIndex,
     WasmI64BinaryOperator,
     WasmI64UnaryOperator,
@@ -689,6 +656,15 @@ impl ImmediateLayout {
         imm & Self::LANE_CALL_RESULT_UNUSED_FLAG == 0
     }
 
+    /// A lane `Call` record whose result only the `Await` right after it reads
+    /// (`derive_lane_view`). Lane call records carry no eval flags, so the flag reuses the
+    /// parameter-eval bit; a settling callee there needs no promise for a primitive result.
+    pub(crate) const LANE_CALL_RESULT_AWAITED_FLAG: u32 = Self::PARAMETER_EVAL_FLAG;
+
+    pub(crate) const fn lane_call_result_awaited(imm: u32) -> bool {
+        imm & Self::LANE_CALL_RESULT_AWAITED_FLAG != 0
+    }
+
     pub(crate) const fn direct_eval(imm: u32) -> bool {
         imm & Self::DIRECT_EVAL_FLAG != 0
     }
@@ -762,7 +738,6 @@ macro_rules! opcodes {
         #[quench_macros::native_operation_exports(19, "quench_js_op_")]
         pub enum Op { $($name),+ }
 
-        opcodes!(@table $d; $($name),+);
 
         #[allow(dead_code)]
         impl Op {
@@ -837,15 +812,6 @@ macro_rules! opcodes {
             }
         }
     };
-    (@table $d:tt; $($name:ident),+) => {
-        /// Generate a semantic handler table from the complete opcode catalog.
-        macro_rules! opcode_table {
-            ($d handler:ident, $d host:ty, $d backward:expr, $d acc:expr) => {
-                [$($d handler::<$d host, { crate::bytecode::Op::$name as u16 }, { $d backward }, { $d acc }>()),+]
-            };
-        }
-        pub(crate) use opcode_table;
-    };
     (@layout $layout:ident) => { ImmediateLayout::$layout };
     (@result $result:ident) => { ResultLayout::$result };
     (@flow $flow:ident) => { ControlFlowLayout::$flow };
@@ -874,6 +840,8 @@ pub(crate) enum JsDenotation {
     FieldStore,
     NumericBinary,
     NumericUnary,
+    /// ToString of each register of a window, concatenated in order.
+    StringConcatenation,
     CapturedValue,
     PlainLocalLoad,
     PlainLocalStore,
@@ -930,6 +898,10 @@ opcodes!($;
     SuperCallCheck => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
     IteratorCleanupPush => Effect::CONTROL; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Unused),
     IteratorCleanupPop => Effect::CONTROL; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
+    // `a` = the next key of the for-in state `b` (`Vm::for_in_next`) that is still an enumerable property; to `imm` once none is left.
+    ForInNext => CALL_EFFECT; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(ResultRegister, Register, Unused),
+    // `a` = the for-in state over `b` (`Vm::for_in_start`): its key snapshot, at the first key.
+    ForInStart => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     SetFunctionName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
     SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning FunctionNamePrefix, @ Register, @ fields(Register, Register, Unused),
     InitializeTdz => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Unused, Unused, Unused),
@@ -951,6 +923,9 @@ opcodes!($;
     Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     IncDec => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Unused),
     Unary => READ_THROW; layout Scalar; meaning UnaryOperator; js NumericUnary, @ Returnable, @ fields(ResultRegister, Register, Unused),
+    // `a` = ToString of each register of the window `b` of `c` registers, concatenated in
+    // order: a template literal's string (ECMA-262 13.15.5.1), made at once.
+    StringConcat => READ_THROW; layout Scalar; meaning Unused; js StringConcatenation, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     Delete => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Register),
     CheckPrivate => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
     PrivateIn => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -1126,20 +1101,20 @@ opcodes!($;
     WasmRefEq => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
     WasmStructNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmStructNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmStructFieldIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmStructFieldIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmStructFieldIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmStructFieldIndex, @ Register, @ fields(Register, Register, Unused),
+    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(Register, Register, Unused),
 
     WasmArrayNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Register, Register),
     WasmArrayNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmArrayNewFixed => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmArrayLen => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
 
-    WasmArrayGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArrayGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArrayGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArraySet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
+    WasmArrayGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArrayGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArrayGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArraySet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(Register, Register, Register),
     WasmExternalConversion => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmExternalConversion, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmArrayFill => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
     WasmArrayCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
@@ -1167,10 +1142,8 @@ opcodes!($;
     // `GetIndex` read it.
     ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
     ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Register, Unused),
-
-    // An engine-private enumeration operation, not a guest function call.
-    ForInKeyIsEnumerable => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    ForInKeys => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
+    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
 );
 
 const _: () = {
@@ -1312,10 +1285,7 @@ fn has_backward_branch(code: &[Instr], wide: &[WideInstruction]) -> bool {
         } else {
             packed.as_wide()
         };
-        matches!(
-            instruction.op().control_flow_layout(),
-            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump
-        ) && instruction.jump_target() as usize <= pc
+        instruction.op().control_flow_layout().jumps() && instruction.jump_target() as usize <= pc
     })
 }
 
@@ -1344,11 +1314,13 @@ pub(crate) struct DeclaredAtomSets {
 pub(crate) enum RootSlotRule {
     /// The binding itself.
     Binding,
-    /// A Script's global lexical binding: the slot itself outside a dynamic script's
-    /// evaluation, the realm's record during one.
-    GlobalLexical,
-    /// A global var or module import, which reads go through.
-    Projection,
+    /// A Script's global lexical binding of this name: the slot itself until the realm
+    /// retains the name, the realm's record from then on.
+    GlobalLexical(Atom),
+    /// A global var of this name: a property of the global object, which reads go through.
+    GlobalVar(Atom),
+    /// A module import, which reads go through.
+    Import,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -1447,7 +1419,7 @@ pub struct Function {
     pub binding_sites: crate::heap::ThinBoxSlice<BindingSite>,
     pub(crate) source_positions: SourcePositions,
     /// The plan of each CloneEnv instruction.
-    pub environment_clones: crate::heap::ThinBoxSlice<EnvironmentClone>,
+    pub environment_clones: EnvironmentClones,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
@@ -1455,7 +1427,7 @@ pub struct Function {
     /// Fixed-width view of `code`, derived once the function proves hot.
     pub(crate) decoded: HotDecoding,
     /// Lazily derived `plain_local_slots`; never serialized.
-    pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<bool>>,
+    pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<u64>>,
     /// Lazily derived `declared_atoms`; never serialized.
     pub(crate) declared_atom_sets: std::cell::OnceCell<Box<DeclaredAtomSets>>,
     /// Lazily derived `activation_bindings_observable`; never serialized.
@@ -1490,7 +1462,7 @@ pub struct Function {
 // once compiled sit behind thin slices. `code`, `wide` and `source_positions` stay as the
 // compiler builds them: its passes rewrite them, and its rewrite loop measured slower when
 // their layout changed.
-const _: () = assert!(size_of::<Function>() == 408);
+const _: () = assert!(size_of::<Function>() == 400);
 
 /// The facts about a function that are read before its first call: when its closure is
 /// made, by `IsConstructor` and brand checks, by `Function.prototype.toString`, and by an
@@ -1859,228 +1831,6 @@ impl RegisterRoots {
     }
 }
 
-
-/// A function's source positions in increasing pc order, each delta-coded against the one
-/// before it as LEB128 varints: the pc advance, the line change (zigzag), then the column,
-/// as a change (zigzag) on the same line and absolute on a new one. Most entries take three
-/// bytes, a quarter of a `SourcePosition`, and a function keeps one per source location
-/// change while it compiles and for as long as it lives.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct SourcePositions {
-    bytes: Vec<u8>,
-    /// The final entry, which the next one is coded against.
-    last: Option<SourcePosition>,
-    /// Where decoding may start, made on the first lookup of a table longer than one interval
-    /// (`SourcePositions::at`): a stack trace through a large function otherwise decoded its
-    /// table from the start for every frame (Babel: about 20K instructions a frame).
-    checkpoints: std::cell::OnceCell<Box<[SourcePositionCheckpoint]>>,
-}
-
-/// The entries between two `SourcePositions` checkpoints.
-const SOURCE_POSITION_CHECKPOINT_INTERVAL: usize = 32;
-
-/// A point decoding may resume from: the byte offset of an entry, the entry before it
-/// (which it is coded against) and the entry's own pc.
-#[derive(Clone, Copy, Debug)]
-struct SourcePositionCheckpoint {
-    offset: usize,
-    previous: SourcePosition,
-    pc: u32,
-}
-
-/// Two tables are equal when their entries are; the checkpoints are a memo of them.
-impl PartialEq for SourcePositions {
-    fn eq(&self, other: &Self) -> bool {
-        self.bytes == other.bytes && self.last == other.last
-    }
-}
-impl Eq for SourcePositions {}
-
-/// The payload bits of one LEB128 byte; the high bit marks a continuation.
-const LEB128_PAYLOAD_BITS: u32 = 7;
-const LEB128_CONTINUATION: u8 = 1 << LEB128_PAYLOAD_BITS;
-
-impl SourcePositions {
-    pub(crate) fn last(&self) -> Option<SourcePosition> {
-        self.last
-    }
-
-    /// The coded entries and the final one, as a residual stores them
-    /// (`BinaryWriter::source_positions`).
-    pub(crate) fn encoded(&self) -> (&[u8], Option<SourcePosition>) {
-        (&self.bytes, self.last)
-    }
-
-    /// The table a residual stored (`encoded`); validation judges it against its function.
-    pub(crate) fn from_encoded(bytes: Vec<u8>, last: Option<SourcePosition>) -> Self {
-        Self { bytes, last, checkpoints: std::cell::OnceCell::new() }
-    }
-
-    /// Appends `position`. Compiled code orders positions by pc; a decoded table keeps any
-    /// order exactly, for validation to judge.
-    pub(crate) fn push(&mut self, position: SourcePosition) {
-        let previous = self.last.unwrap_or(SourcePosition { pc: 0, line: 0, column: 0 });
-        let line_change = i64::from(position.line) - i64::from(previous.line);
-        self.write(u64::from(position.pc.wrapping_sub(previous.pc)));
-        self.write(zigzag(line_change));
-        self.write(if line_change == 0 {
-            zigzag(i64::from(position.column) - i64::from(previous.column))
-        } else {
-            u64::from(position.column)
-        });
-        self.last = Some(position);
-        // The checkpoints exist only once a lookup made them.
-        if self.checkpoints.get().is_some() {
-            self.checkpoints = std::cell::OnceCell::new();
-        }
-    }
-
-    /// An empty table with room for `bytes` coded bytes.
-    pub(crate) fn with_capacity(bytes: usize) -> Self {
-        Self { bytes: Vec::with_capacity(bytes), last: None, checkpoints: std::cell::OnceCell::new() }
-    }
-
-    /// The bytes the entries are coded in.
-    pub(crate) fn coded_len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    #[inline(always)]
-    fn write(&mut self, mut value: u64) {
-        // Most deltas fit one byte.
-        if value < u64::from(LEB128_CONTINUATION) {
-            self.bytes.push(value as u8);
-            return;
-        }
-        loop {
-            let byte = (value & u64::from(!LEB128_CONTINUATION)) as u8;
-            value >>= LEB128_PAYLOAD_BITS;
-            if value == 0 {
-                self.bytes.push(byte);
-                return;
-            }
-            self.bytes.push(byte | LEB128_CONTINUATION);
-        }
-    }
-
-    pub(crate) fn iter(&self) -> SourcePositionIter<'_> {
-        self.iter_from(0, SourcePosition { pc: 0, line: 0, column: 0 })
-    }
-
-    fn iter_from(&self, offset: usize, previous: SourcePosition) -> SourcePositionIter<'_> {
-        SourcePositionIter { bytes: &self.bytes[offset..], previous }
-    }
-
-    /// The position in effect at `pc`: the last entry at or before it, decoded from the last
-    /// checkpoint at or before it.
-    pub(crate) fn at(&self, pc: u32) -> Option<SourcePosition> {
-        let checkpoints = self.checkpoints.get_or_init(|| self.make_checkpoints());
-        let start = checkpoints.partition_point(|checkpoint| checkpoint.pc <= pc);
-        let mut iter = match start.checked_sub(1) {
-            Some(index) => self.iter_from(checkpoints[index].offset, checkpoints[index].previous),
-            None => self.iter(),
-        };
-        let mut found = None;
-        for position in iter.by_ref() {
-            if position.pc > pc {
-                break;
-            }
-            found = Some(position);
-        }
-        found
-    }
-
-    /// A checkpoint at every `SOURCE_POSITION_CHECKPOINT_INTERVAL`th entry after the first;
-    /// none for a table shorter than one interval, which decodes as fast from its start.
-    fn make_checkpoints(&self) -> Box<[SourcePositionCheckpoint]> {
-        let mut checkpoints = Vec::new();
-        let mut iter = self.iter();
-        let mut entry = 0;
-        loop {
-            let offset = self.bytes.len() - iter.bytes.len();
-            let previous = iter.previous;
-            let Some(position) = iter.next() else { break };
-            if entry > 0 && entry % SOURCE_POSITION_CHECKPOINT_INTERVAL == 0 {
-                checkpoints.push(SourcePositionCheckpoint { offset, previous, pc: position.pc });
-            }
-            entry += 1;
-        }
-        checkpoints.into_boxed_slice()
-    }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.bytes.shrink_to_fit();
-    }
-
-    pub(crate) fn capacity_bytes(&self) -> usize {
-        self.bytes.capacity()
-    }
-}
-
-impl FromIterator<SourcePosition> for SourcePositions {
-    fn from_iter<I: IntoIterator<Item = SourcePosition>>(positions: I) -> Self {
-        let mut table = Self::default();
-        for position in positions {
-            table.push(position);
-        }
-        table
-    }
-}
-
-fn zigzag(value: i64) -> u64 {
-    ((value << 1) ^ (value >> (i64::BITS - 1))) as u64
-}
-
-fn unzigzag(value: u64) -> i64 {
-    (value >> 1) as i64 ^ -((value & 1) as i64)
-}
-
-/// Decodes a `SourcePositions` table in order.
-#[derive(Clone)]
-pub(crate) struct SourcePositionIter<'a> {
-    bytes: &'a [u8],
-    previous: SourcePosition,
-}
-
-impl SourcePositionIter<'_> {
-    fn read(&mut self) -> u64 {
-        let mut value = 0;
-        let mut shift = 0;
-        while let Some((&byte, rest)) = self.bytes.split_first() {
-            self.bytes = rest;
-            // A stored table is validated after decoding; an overlong varint decodes to junk
-            // the validation rejects rather than shifting past the value's width.
-            value |= u64::from(byte & !LEB128_CONTINUATION).checked_shl(shift).unwrap_or(0);
-            if byte & LEB128_CONTINUATION == 0 {
-                break;
-            }
-            shift += LEB128_PAYLOAD_BITS;
-        }
-        value
-    }
-}
-
-impl Iterator for SourcePositionIter<'_> {
-    type Item = SourcePosition;
-
-    fn next(&mut self) -> Option<SourcePosition> {
-        if self.bytes.is_empty() {
-            return None;
-        }
-        let previous = self.previous;
-        let pc = previous.pc.wrapping_add(self.read() as u32);
-        let line_change = unzigzag(self.read());
-        let column = self.read();
-        let column = if line_change == 0 {
-            (i64::from(previous.column) + unzigzag(column)) as u32
-        } else {
-            column as u32
-        };
-        let line = (i64::from(previous.line) + line_change) as u32;
-        self.previous = SourcePosition { pc, line, column };
-        Some(self.previous)
-    }
-}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlainLocalContextIneligibility {
     RootFunction,
@@ -2211,10 +1961,10 @@ impl Function {
         }
         let has_legacy_environment_access = self.code.iter().any(|instruction| {
             instruction.op() == Op::MakeClosure && !selective
-                || matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal) && !selective
+                || instruction.op().addresses_env_local() && !selective
         }) || self.wide.iter().any(|instruction| {
             instruction.op() == Op::MakeClosure && !selective
-                || matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal) && !selective
+                || instruction.op().addresses_env_local() && !selective
         });
         if has_legacy_environment_access {
             return Some(PlainLocalContextIneligibility::LegacyCaptureLayout);
@@ -2235,30 +1985,23 @@ impl Function {
     /// temporal dead zone (`initialization`). Compilation specializes these slots'
     /// operations, validation re-derives the same proof, and the interpreter memoizes it in
     /// `plain_locals` to read plain local operands directly.
-    pub(crate) fn plain_local_slots(&self, superinstructions: &[Superinstruction]) -> Vec<bool> {
-        let mut plain = vec![false; usize::from(self.locals)];
+    pub(crate) fn plain_local_slots(&self, superinstructions: &[Superinstruction]) -> crate::bitset::BitSet {
+        let locals = usize::from(self.locals);
         if !self.plain_local_context_is_safe() {
-            return plain;
+            return crate::bitset::BitSet::new(locals);
         }
-        let mut dead_zone = vec![false; usize::from(self.locals)];
-        for instruction in self.instructions() {
-            if instruction.op() == Op::InitializeTdz
-                && let Some(slot) = dead_zone.get_mut(instruction.local_slot())
-            {
-                *slot = true;
+        let plain = crate::bitset::BitSet::from_fn(locals, |slot| self.plain_local_slot_is_safe(slot));
+        let mut dead_zone = crate::bitset::BitSet::new(locals);
+        for instruction in self.instructions().filter(|instruction| instruction.op() == Op::InitializeTdz) {
+            if plain.contains(instruction.local_slot()) {
+                dead_zone.insert(instruction.local_slot());
             }
         }
-        for (slot, plain) in plain.iter_mut().enumerate() {
-            *plain = self.plain_local_slot_is_safe(slot);
-        }
-        for (slot, dead_zone) in dead_zone.iter_mut().enumerate() {
-            *dead_zone &= plain[slot];
-        }
-        let initialized = initialization::initialized_before_reads(self, superinstructions, &dead_zone, &[]);
-        for (slot, plain) in plain.iter_mut().enumerate() {
-            *plain &= !dead_zone[slot] || initialized[slot];
-        }
-        plain
+        let initialized =
+            initialization::initialized_before_reads(self, superinstructions, &dead_zone, &Default::default());
+        crate::bitset::BitSet::from_fn(locals, |slot| {
+            plain.contains(slot) && (!dead_zone.contains(slot) || initialized.contains(slot))
+        })
     }
 
     fn declared_atoms(&self) -> &DeclaredAtomSets {
@@ -2373,10 +2116,7 @@ impl Function {
             || self.inherited_with_scope
             || !self.binding_sites.is_empty()
             || self.instructions().any(|instruction| {
-                matches!(
-                    instruction.op(),
-                    Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-                ) && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
+                instruction.op().loads_name() && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
                     tables
                         .atom_name(atom)
                         .is_none_or(|name| name.starts_with('\0') && !is_intrinsic_name(name))
@@ -2510,7 +2250,7 @@ impl Function {
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
     pub(crate) fn suspends(&self) -> bool {
         self.instructions()
-            .any(|instruction| matches!(instruction.op(), Op::Await | Op::Yield | Op::YieldStar))
+            .any(|instruction| instruction.op().suspends())
     }
 
     /// The function's `CallPlan`, derived on first use.
@@ -2576,7 +2316,7 @@ impl Function {
             let kept_arguments = self.kept_arguments();
             let forwards_arguments = kept_arguments == Some(KeptArguments::Forwards);
             let addresses_locals = self.instructions().any(|instruction| {
-                matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv)
+                instruction.op().captures_environment()
                     || instruction.addressed_local_slots().next().is_some()
             });
             let reaches_only_forwarded_arguments = kept_arguments.is_some()
@@ -2623,7 +2363,7 @@ impl Function {
                             || (op == Op::GetField
                                 && instruction.addressed_local_slots().eq(instruction.local_field_base()))
                             // The window keeps every value passed, which these answer.
-                            || matches!(op, Op::ArgumentsLength | Op::ArgumentGet))
+                            || op.reads_arguments())
                 });
             CallPlan {
                 environment_activation,
@@ -2727,12 +2467,9 @@ impl Function {
         let parameter = |register: Register| (register < self.params).then_some(register);
         let mut fallbacks: SmallVec<[Option<f64>; 4]> = smallvec::smallvec![None; usize::from(self.params)];
         let mut stores = Vec::new();
-        // The temporaries primitive constants were loaded into, latest last.
-        let mut temporaries: SmallVec<[(Register, InitializerConstant); 4]> = SmallVec::new();
+        let mut temporaries = initializer_stores::Temporaries::default();
         let mut pc = 0;
-        let store = |instruction: &WideInstruction| {
-            matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict).then_some(())
-        };
+        let store = |instruction: &WideInstruction| instruction.stores_to_this().then_some(());
         loop {
             let at = |offset: usize| instructions.get(pc + offset);
             let target = |offset: usize| (pc + offset) as u32;
@@ -2781,22 +2518,12 @@ impl Function {
                     });
                     pc += 1;
                 }
-                // `this.f = k` of a temporary a primitive constant was loaded into.
-                set if store(set).is_some()
-                    && let Some(&(_, constant)) = temporaries.iter().rev().find(|(register, _)| *register == set.register_a()) =>
-                {
-                    stores.push(InitializerStore { atom: set.imm(), site: set.c(), value: InitializerValue::Constant(constant) });
+                // `this.f = k` or `this.f = p op k` of a temporary (`Temporaries::value`).
+                set if store(set).is_some() && let Some(value) = temporaries.value(set.register_a()) => {
+                    stores.push(InitializerStore { atom: set.imm(), site: set.c(), value });
                     pc += 1;
                 }
-                // A primitive constant loaded into a temporary, which writes nothing else.
-                load if load.op() == Op::LoadConst
-                    && load.result_flags() == 0
-                    && load.result_register() >= self.params
-                    && let Some(constant) = constants.get(load.constant_index()).and_then(InitializerConstant::of) =>
-                {
-                    temporaries.push((load.result_register(), constant));
-                    pc += 1;
-                }
+                written if temporaries.write(written, self.params, &fallbacks, constants) => pc += 1,
                 _ => break,
             }
         }
@@ -2808,8 +2535,8 @@ impl Function {
                 (undefined_load(completion) && completion.returns_from_frame())
                     || (completion.op() == Op::Return
                         && completion.register_a() >= self.params
-                        && match temporaries.iter().rev().find(|(register, _)| *register == completion.register_a()) {
-                            Some((_, constant)) => *constant == InitializerConstant::Undefined,
+                        && match temporaries.value(completion.register_a()) {
+                            Some(value) => value == InitializerValue::Constant(InitializerConstant::Undefined),
                             None => self.initial_register == InitialRegister::Undefined,
                         })
             }
@@ -2845,7 +2572,7 @@ impl Function {
             && !self.local_slot_uses_environment(usize::from(slot))
             && !self.has_dynamic_scope_access()
             && self.instructions().all(|instruction| {
-                matches!(instruction.op(), Op::ArgumentsLength | Op::ArgumentGet)
+                instruction.op().reads_arguments()
                     || !instruction
                         .addressed_local_slots()
                         .any(|addressed| addressed == slot)
@@ -3066,7 +2793,7 @@ impl Function {
         let mut forwarded = false;
         let mut passes = SmallVec::<[usize; 2]>::new();
         for (pc, instruction) in instructions.iter().enumerate() {
-            if matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv) {
+            if instruction.op().captures_environment() {
                 return None;
             }
             if !instruction
@@ -3075,14 +2802,14 @@ impl Function {
             {
                 continue;
             }
-            let loads = matches!(instruction.op(), Op::LoadLocal | Op::LoadLocalPlain);
+            let loads = instruction.op().loads_frame_local();
             let feeds_forwarding_call = loads
                 && instructions.get(pc + 1).is_some_and(|next| {
                     next.op() == Op::CallForwardingArguments
                         && next.call_window().last() == Some(instruction.result_register())
                 });
             let reads_kept_values =
-                matches!(instruction.op(), Op::ArgumentsLength | Op::ArgumentGet);
+                instruction.op().reads_arguments();
             if feeds_forwarding_call || reads_kept_values {
                 forwarded = true;
             } else if loads {
@@ -3105,7 +2832,7 @@ impl Function {
         if !self.handlers.is_empty() {
             return false;
         }
-        let mut reached = vec![false; instructions.len()];
+        let mut reached = crate::bitset::BitSet::new(instructions.len());
         let mut work = Vec::new();
         for &pass in passes {
             crate::bytecode::for_each_instruction_successor(pass, instructions[pass], |next| work.push(next));
@@ -3114,7 +2841,7 @@ impl Function {
             let Some(instruction) = instructions.get(pc) else {
                 continue;
             };
-            if std::mem::replace(&mut reached[pc], true) {
+            if !reached.insert(pc) {
                 continue;
             }
             if instruction.addressed_local_slots().any(|addressed| addressed == slot) {
@@ -3145,7 +2872,7 @@ impl Function {
     /// [`WITH_ENTER_BINDING`] in the owning program's atom table.
     pub(crate) fn contains_with_statement(&self, is_with_enter: impl Fn(usize) -> bool) -> bool {
         self.instructions().any(|instruction| {
-            matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
+            instruction.op().is_throwing_name_load()
                 && usize::try_from(instruction.atom_index()).is_ok_and(&is_with_enter)
         })
     }
@@ -3178,13 +2905,9 @@ impl Function {
     /// The memoized `plain_local_slots` projection for this residual's atoms.
     #[inline(always)]
     pub(crate) fn plain_local(&self, tables: &impl FactTables, slot: usize) -> bool {
-        self.plain_locals
-            .get_or_init(|| {
-                self.plain_local_slots(tables.superinstructions()).into()
-            })
-            .get(slot)
-            .copied()
-            .unwrap_or(false)
+        let words =
+            self.plain_locals.get_or_init(|| self.plain_local_slots(tables.superinstructions()).words().to_vec().into());
+        crate::bitset::words_contain(words, slot)
     }
 
     pub(crate) fn plain_local_slot_is_safe(&self, slot: usize) -> bool {
@@ -3319,10 +3042,10 @@ impl LexicalBindingKind {
     }
 }
 
-pub(crate) fn private_identity_label(identity: &str) -> Option<String> {
+pub(crate) fn private_identity_label(identity: &str) -> Option<&str> {
     let identity = identity.strip_prefix("\0quench:private:")?;
     let (_, label) = identity.rsplit_once(':')?;
-    (!label.is_empty()).then(|| label.to_owned())
+    (!label.is_empty()).then_some(label)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3353,10 +3076,17 @@ pub(crate) struct ObjectSite {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LiteralStep {
     Constant(u32),
+    /// A Number that is an int32 (`Value::integer`), held in the step: the elements of a
+    /// bundle's data tables (text-encoding indexes: about 80K in JetStream web-ssr's) then
+    /// neither enter nor search the constant table.
+    Int(i32),
     /// An array of the given number of elements.
     Array(u32),
     /// An object of an object site's keys, one value each.
     Object(u32),
+    /// The value of the JSON text at this byte of the program's source: a data script's
+    /// literal (`compile::data_literal`), which the source holds in place of its tree.
+    Json(u32),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3533,16 +3263,6 @@ impl Operand {
     pub(crate) fn register_index(self) -> Option<Register> {
         (self.kind() == Some(OperandKind::Register)).then_some(self.payload())
     }
-}
-
-/// A CloneEnv plan. The clone owns the `fresh` slots, copied from the source
-/// environment, and the `reset` slots, cleared: block bindings out of scope at
-/// the clone's site, whose next scope entry initializes them again. Every other
-/// slot is shared with its owner. Both lists are sorted local slots.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct EnvironmentClone {
-    pub fresh: Vec<u16>,
-    pub reset: Vec<u16>,
 }
 
 #[derive(Clone, Debug)]
@@ -3734,6 +3454,9 @@ impl ProgramKind {
 #[derive(Clone, Debug)]
 pub(crate) enum SourceText {
     Shared(std::sync::Arc<str>),
+    /// The text of a guest string the program compiled from (an eval's source), shared with
+    /// that string's storage.
+    Local(std::rc::Rc<str>),
     Static(&'static str),
     Kept(KeptText),
 }
@@ -3801,6 +3524,7 @@ impl std::ops::Deref for SourceText {
     fn deref(&self) -> &str {
         match self {
             Self::Shared(text) => text,
+            Self::Local(text) => text,
             Self::Static(text) => text,
             Self::Kept(text) => text,
         }
@@ -3837,59 +3561,6 @@ pub(crate) struct ProgramSource {
     pub(crate) call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
 }
 
-/// A static item at a fixed place in the executable image, from which a snapshot measures the
-/// embedded text a program retains (`SourceText::Static`): within one linked image the offset
-/// between two statics is fixed, and a snapshot is read only by the build that wrote it.
-static SNAPSHOT_TEXT_ANCHOR: u8 = 0;
-
-/// The bytes at each end of embedded text that a snapshot checks before using the text.
-const SNAPSHOT_TEXT_EDGE: usize = 32;
-
-impl SourceText {
-    pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        match self {
-            // A snapshot outlives the entry's mapping, so it keeps its own copy of kept text.
-            Self::Shared(_) | Self::Kept(_) => {
-                writer.u8(0);
-                writer.str(self);
-            }
-            Self::Static(text) => {
-                writer.u8(1);
-                let anchor = std::ptr::addr_of!(SNAPSHOT_TEXT_ANCHOR) as usize as i64;
-                writer.u64((text.as_ptr() as usize as i64).wrapping_sub(anchor) as u64);
-                writer.len(text.len());
-                let edge = SNAPSHOT_TEXT_EDGE.min(text.len());
-                writer.bytes(&text.as_bytes()[..edge]);
-                writer.bytes(&text.as_bytes()[text.len() - edge..]);
-            }
-        }
-    }
-
-    pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        Ok(match reader.u8()? {
-            0 => Self::Shared(std::sync::Arc::from(reader.str()?)),
-            1 => {
-                let offset = reader.u64()? as i64;
-                let len = reader.len()?;
-                let head = reader.bytes()?;
-                let tail = reader.bytes()?;
-                let anchor = std::ptr::addr_of!(SNAPSHOT_TEXT_ANCHOR) as usize as i64;
-                let address = anchor.wrapping_add(offset) as usize as *const u8;
-                // SAFETY: the snapshot was written by this build (its header names the runtime
-                // ABI and the host keys it by the executable's identity), whose image holds the
-                // embedded text at this offset from the anchor; its edges are checked below.
-                let bytes = unsafe { std::slice::from_raw_parts(address, len) };
-                if &bytes[..head.len()] != head || &bytes[len - tail.len()..] != tail {
-                    return Err(crate::snapshot::SnapshotError("snapshot embedded text moved".into()));
-                }
-                // SAFETY: the text was a `&'static str` of this image when written.
-                Self::Static(unsafe { std::str::from_utf8_unchecked(bytes) })
-            }
-            _ => return Err(crate::snapshot::SnapshotError("invalid snapshot source text".into())),
-        })
-    }
-}
-
 impl ProgramSource {
     /// Project admitted facts with a retained wrapper body, without reparsing it.
     #[cfg(feature = "aot")]
@@ -3911,6 +3582,7 @@ impl ProgramSource {
 
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // `line_starts` is a memo of `text`, made again on the first line read.
+        crate::vm::freeze_source_call_sites(self);
         let Self { text, typescript, base, line_offset, column_offset, line_starts: _, call_sites } = self;
         text.write_snapshot(writer);
         writer.bool(*typescript);
@@ -4089,6 +3761,8 @@ pub struct ResidualProgram {
     pub(crate) superinstructions: Vec<Superinstruction>,
     /// How its functions can be compiled again from source, when they can.
     pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
+    /// Each nested first-call stub's scopes, by stub id, which an encoding keeps with the stubs.
+    pub(crate) first_call_scopes: crate::compile::first_call::FirstCallStubs,
     /// The records a decoded program keeps encoded until their functions' first read.
     pub(crate) encoded_records: Option<std::rc::Rc<EncodedRecords>>,
     /// Whether the program is known to be valid (`ValidationProof`).
@@ -4163,15 +3837,9 @@ impl Clone for ValidationProof {
 #[inline(never)]
 fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) -> bool {
     code.iter().all(|instruction| {
-        !matches!(
-            instruction.op(),
-            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreEnvLocal
-        ) || instruction.local_slot() < usize::from(locals)
+        !instruction.op().addresses_local_slot() || instruction.local_slot() < usize::from(locals)
     }) && wide.iter().all(|instruction| {
-        !matches!(
-            instruction.op(),
-            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreEnvLocal
-        ) || instruction.local_slot() < usize::from(locals)
+        !instruction.op().addresses_local_slot() || instruction.local_slot() < usize::from(locals)
     })
 }
 
@@ -4179,6 +3847,14 @@ impl ResidualProgram {
     /// Original compiler text used by diagnostics and Function.prototype.toString.
     pub fn source_text(&self) -> Option<&str> {
         self.source.as_ref().map(|source| source.text.as_ref())
+    }
+
+    /// The source from compiled byte `start` on, where a data script's literal starts
+    /// (`LiteralStep::Json`); `None` when the program keeps no text there.
+    pub(crate) fn data_literal_text(&self, start: u32) -> Option<&str> {
+        let source = self.source.as_ref()?;
+        let text: &str = source.text.as_ref();
+        text.get(start.checked_sub(source.base)? as usize..)
     }
 
     /// Resolve source-derived native error descriptions before publication.
@@ -4238,9 +3914,6 @@ impl ResidualProgram {
             let function = self.lower_unlowered(unlowered);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
-        }
-        if purpose == RecordUse::Kept {
-            crate::compile::compile_phase_boundary(crate::compile::CompilePhase::FirstCall);
         }
         let deferred = self
             .encoded_records
@@ -4344,14 +4017,9 @@ impl ResidualProgram {
             .register_roots
             .masks
             .get_or_init(|| {
-                crate::compile::liveness::analyze(
-                    function,
-                    self,
-                    &self.field_sites,
-                    &self.superinstructions,
-                )
-                .map(|masks| std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks)))
-                .expect("a covered function's liveness is derivable")
+                crate::compile::liveness::RegisterMasks::of(function, self, &self.field_sites, &self.superinstructions)
+                    .map(std::rc::Rc::new)
+                    .expect("a covered function's liveness is derivable")
             });
         Some(masks)
     }
@@ -4380,18 +4048,6 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 132;
-    pub const RUNTIME_ABI_FINGERPRINT: u64 = {
-        const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
-        const FORMAT_VERSION_SHIFT: u32 = 16;
-        const DERIVED_FACT_COUNT_SHIFT: u32 = u8::BITS;
-        assert!(DERIVED_FACT_COUNT <= u8::MAX as u32);
-        assert!(CALL_PLAN_FLAG_COUNT <= u8::MAX as u32);
-        ABI_SIGNATURE | ((Self::FORMAT_VERSION as u64) << FORMAT_VERSION_SHIFT)
-            | ((DERIVED_FACT_COUNT as u64) << DERIVED_FACT_COUNT_SHIFT)
-            | CALL_PLAN_FLAG_COUNT as u64
-    };
-
     /// Whether the entry uses module semantics, including an import-only bootstrap.
     pub fn is_module(&self) -> bool {
         self.kind == ProgramKind::Module
@@ -4416,9 +4072,9 @@ impl ResidualProgram {
         };
         let declaration = root.slot_declaration(slot);
         if declaration.global_var && !self.root_variables_are_local() {
-            RootSlotRule::Projection
+            RootSlotRule::GlobalVar(root.local_atoms[slot])
         } else if declaration.global_lexical && self.kind == ProgramKind::Script {
-            RootSlotRule::GlobalLexical
+            RootSlotRule::GlobalLexical(root.local_atoms[slot])
         } else {
             RootSlotRule::Binding
         }
@@ -4537,61 +4193,3 @@ mod disassemble;
 #[cfg(test)]
 mod tests;
 mod validate;
-
-/// A store of an initializing body (`Function::initializer_stores`): the field `atom`, at
-/// cache site `site`, takes `value`.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct InitializerStore {
-    pub(crate) atom: u32,
-    pub(crate) site: u16,
-    pub(crate) value: InitializerValue,
-}
-
-/// What an initializer store gives its field.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum InitializerValue {
-    /// Parameter `parameter` as passed, or the Number `fallback` where it is falsy.
-    Parameter { parameter: u16, fallback: Option<f64> },
-    /// A primitive constant, whatever is passed: `this.id = 0`, `this.parent = void 0`.
-    Constant(InitializerConstant),
-}
-
-impl InitializerStore {
-    /// The parameter the store reads, if any.
-    pub(crate) fn parameter(&self) -> Option<u16> {
-        match self.value {
-            InitializerValue::Parameter { parameter, .. } => Some(parameter),
-            InitializerValue::Constant(_) => None,
-        }
-    }
-}
-
-/// The constants an initializer store writes: those whose value needs no heap cell.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum InitializerConstant {
-    Number(f64),
-    Boolean(bool),
-    Null,
-    Undefined,
-}
-
-impl InitializerConstant {
-    fn of(constant: &Constant) -> Option<Self> {
-        Some(match constant {
-            Constant::Number(number) => Self::Number(*number),
-            Constant::Boolean(boolean) => Self::Boolean(*boolean),
-            Constant::Null => Self::Null,
-            Constant::Undefined => Self::Undefined,
-            _ => return None,
-        })
-    }
-
-    pub(crate) fn value(self) -> crate::value::Value {
-        match self {
-            Self::Number(number) => crate::value::Value::number(number),
-            Self::Boolean(boolean) => crate::value::Value::boolean(boolean),
-            Self::Null => crate::value::Value::NULL,
-            Self::Undefined => crate::value::Value::UNDEFINED,
-        }
-    }
-}

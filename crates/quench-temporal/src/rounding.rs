@@ -1,4 +1,4 @@
-const ROUNDING_TIE_FACTOR: i128 = 2;
+use crate::units::ROUNDING_TIE_FACTOR;
 
 /// Rounds `value` to a multiple of a positive `quantum` using Temporal's
 /// rounding modes, returning the rounded quotient.

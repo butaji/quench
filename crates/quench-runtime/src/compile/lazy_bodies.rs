@@ -9,7 +9,12 @@
 //! for any body. The function itself compiles from its real body. A body that fails an
 //! early check alone makes the compilation fail, and the program compiles again eagerly,
 //! so its diagnostics are the eager ones.
+mod reparse;
+pub(super) use reparse::{Nesting, reparse};
 use oxc_allocator::Allocator;
+mod parse_arena;
+pub(super) use parse_arena::{arena, release_after, sized_arena};
+pub(crate) use parse_arena::release_warm_arena;
 use oxc_ast::ast::{
     Argument, CallExpression, Expression, ExpressionStatement, Function, FunctionBody,
     IdentifierReference, Program, Statement,
@@ -142,8 +147,8 @@ pub(super) fn passes_early_checks(source: &str, source_type: SourceType) -> bool
     !parsed.stack_exhausted
         && parsed.diagnostics.is_empty()
         && super::stack::validate(&parsed.program).is_ok()
-        && super::early::regexp_early_error(&parsed.program).is_none()
-        && super::annex_b_targets::invalid_target(&parsed.program).is_none()
+        && super::early::regexp_early_error(&parsed).is_none()
+        && super::annex_b_targets::invalid_parsed_target(&parsed).is_none()
         && oxc_semantic::SemanticBuilder::new()
             .with_check_syntax_error(true)
             .build(&parsed.program)
@@ -165,12 +170,12 @@ pub(super) fn validates_alone(source: &str, source_type: SourceType, candidate: 
     passes_early_checks(&format!("{strict}{prefix}{snippet}{suffix}"), source_type)
 }
 
-/// Checks, under `QUENCH_LAZY_BODIES_VERIFY`, that validating each candidate of `source`
+/// Checks, under `QUENCH_TRACE=lazy-bodies`, that validating each candidate of `source`
 /// alone loses no early error: the program passes the early checks exactly when it does
 /// with the bodies that validated alone emptied (directives kept, offsets kept).
 #[cfg(feature = "verify-replay")]
 pub(super) fn verify(name: &str, source: &str, program: &Program<'_>) {
-    if std::env::var_os("QUENCH_LAZY_BODIES_VERIFY").is_none() {
+    if !crate::trace::Channel::LazyBodies.on() {
         return;
     }
     let source_type = program.source_type;
@@ -200,28 +205,20 @@ pub(super) fn verify(name: &str, source: &str, program: &Program<'_>) {
     );
 }
 
-/// The environment switch that compiles function bodies eagerly, for measuring the lazy ones
-/// against them. Lazy is the default: cold `import typescript` 101-103 -> 68.2 MB max RSS, and
-/// JetStream memory-first max RSS within +2.3% on all 16 rows (2026-10-28, x86_64 4 vCPU).
-const EAGER_FUNCTION_BODIES_ENV: &str = "QUENCH_EAGER_FUNCTION_BODIES";
-
-/// Whether a program compiles with lazy function bodies.
-pub(super) fn enabled() -> bool {
-    std::env::var_os(EAGER_FUNCTION_BODIES_ENV).is_none()
-}
-
 /// The name a stand-in body calls (see the module documentation).
 const STAND_IN_CALLEE: &str = "eval";
 
 /// `source` parsed as a compilation parses it, with the bodies of functions starting at or
-/// after `lazy_from` parsed lazily when set.
+/// after `lazy_from` parsed lazily when set, each checked by `check` before it is released.
 pub(super) fn parse<'a>(
     allocator: &'a Allocator,
     source: &'a str,
     source_type: SourceType,
     lazy_from: Option<u32>,
+    check: Option<oxc_parser::LazyBodyCheck>,
+    inherited_strict: bool,
 ) -> oxc_parser::ParserReturn<'a> {
-    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from);
+    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, inherited_strict);
     if !parsed.lazy_function_bodies.is_empty() {
         let starts: FxHashSet<u32> = parsed.lazy_function_bodies.iter().copied().collect();
         stand_in(allocator, &mut parsed.program, &starts);
@@ -271,182 +268,83 @@ impl<'a> VisitMut<'a> for StandIns<'_, 'a> {
     }
 }
 
-/// Arena bytes reserved per source byte for a parse: the whole program's parse reserves as
-/// much (`Compiler::specialize_with_mode_and_private_names`), and pages it does not touch
-/// cost no memory.
-const ARENA_BYTES_PER_SOURCE_BYTE: usize = 6;
-
-/// The arena for parsing `text` again.
-pub(super) fn arena(text: &str) -> Allocator {
-    Allocator::with_capacity(text.len().saturating_mul(ARENA_BYTES_PER_SOURCE_BYTE))
-}
-
-/// A function's text parsed again alone, with every position an offset into the program's
-/// text.
-pub(super) struct Reparsed<'a> {
-    pub(super) program: Program<'a>,
-}
-
-impl<'a> Reparsed<'a> {
-    /// The function parsed again.
-    pub(super) fn function(&self) -> Option<&Function<'a>> {
-        Self::function_of(&self.program)
-    }
-
-    fn function_of<'p>(program: &'p Program<'a>) -> Option<&'p Function<'a>> {
-        match program.body.first()? {
-            Statement::FunctionDeclaration(function) => Some(function),
-            Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
-                Expression::FunctionExpression(function) => Some(function),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-}
-
-/// Which bodies inside a function parsed again are released.
-pub(super) enum Nesting<'s> {
-    /// Those the parser releases (`ParseOptions::lazy_function_bodies`): a load's.
-    Parse,
-    /// Those of the given starts, in the program's text, the load released: a replay's,
-    /// which compiles as the load did whatever the parser's choices.
-    Recorded(&'s FxHashSet<u32>),
-}
-
-/// `text`, a function's source at `offset` wrapped for the context it is compiled in, parsed
-/// again with the bodies inside it released as `nesting` says; positions move by `delta`
-/// into the program's text.
-pub(super) fn reparse<'a>(
-    allocator: &'a Allocator,
-    text: &'a str,
-    offset: u32,
-    delta: u32,
-    source_type: SourceType,
-    nesting: Nesting<'_>,
-) -> Option<Reparsed<'a>> {
-    let lazy_from = matches!(nesting, Nesting::Parse).then_some(offset + 1);
-    let mut parsed = parse(allocator, text, source_type, lazy_from);
-    if let Nesting::Recorded(starts) = nesting {
-        // The function's own body compiles from this parse.
-        let own = Reparsed::function_of(&parsed.program).and_then(|function| function.body.as_ref()).map(|body| body.span.start);
-        let inside: FxHashSet<u32> = starts
-            .iter()
-            .map(|start| start.wrapping_sub(delta))
-            .filter(|start| *start > offset && (*start as usize) < text.len() && Some(*start) != own)
-            .collect();
-        stand_in(allocator, &mut parsed.program, &inside);
-    }
-    // The early checks passed before code generation (`body_facts`); the depth of the tree
-    // is checked again here, where the function compiles.
-    if parsed.stack_exhausted || !parsed.diagnostics.is_empty() || super::stack::validate(&parsed.program).is_err() {
-        return None;
-    }
-    oxc_ast_visit::VisitMut::visit_program(&mut super::replay::ShiftSpans(delta), &mut parsed.program);
-    Some(Reparsed { program: parsed.program })
-}
-
 /// What the whole program's analysis would have found inside its lazily parsed bodies, with
 /// every position an offset into the program's text.
 #[derive(Default)]
 pub(super) struct BodyFacts {
-    /// Private names, numbered on from the program's (`private_name_ids`).
+    /// Private names, numbered from 0 in source order; a compilation numbers them on from
+    /// the program's (`private_name_ids`).
     pub(super) private_name_ids: rustc_hash::FxHashMap<(u32, u32), u32>,
     pub(super) private_name_labels: rustc_hash::FxHashMap<(u32, u32), String>,
-    /// Function expressions whose `prototype` no program text observes (`call_only`).
+    /// Function expressions whose `prototype` no program text observes (`call_only`), unless
+    /// `call_only_deferred`.
     pub(super) prototype_unobservable: FxHashSet<u32>,
+    /// The functions may compile on first call: their call-only facts wait for the
+    /// compilation that reads them (`call_only::deferred`), unless their load compiles them.
+    pub(super) call_only_deferred: bool,
+    /// The functions whose call-only facts are found, by source range.
+    pub(super) call_only_found: Vec<(u32, u32)>,
     next_private_id: u32,
+    /// Some body failed an early check alone.
+    pub(super) failed: bool,
+    /// Each body's free names (`first_call::free_names`).
+    pub(super) free_names: super::first_call::FreeNames,
     #[cfg(feature = "aot")]
     pub(super) native_source_requests: Option<(bool, Vec<super::NativeSourceKey>)>,
 }
 
-/// The facts of the bodies of `program` (the program `source` parsed lazily, its bodies
-/// starting at `starts`) and of the bodies inside them, each body parsed alone in turn,
-/// when every one passes the early checks a compilation applies. They are gathered before
-/// code generation: an analysis per function between the records code generation keeps
-/// left the heap their holes (JetStream +2-3% max RSS).
-pub(super) fn body_facts(
-    source: &str,
-    program: &Program<'_>,
-    starts: &[u32],
-    source_type: SourceType,
-    root_strict: bool,
-    first_private_id: u32,
-    #[cfg(feature = "aot")] native_specialization: Option<bool>,
-    #[cfg(feature = "aot")] global_script_calls: &[(String, String)],
-) -> Option<BodyFacts> {
-    let mut facts = BodyFacts {
-        next_private_id: first_private_id,
-        #[cfg(feature = "aot")]
-        native_source_requests: native_specialization.map(|mode| (mode, Vec::new())),
-        ..BodyFacts::default()
-    };
-    for function in lazy_functions(program, starts, root_strict, 0) {
-        check_alone(source, function, source_type, &mut facts, #[cfg(feature = "aot")] global_script_calls)?;
+impl BodyFacts {
+    /// No facts yet, the call-only ones `deferred` or not.
+    pub(super) fn deferring(call_only_deferred: bool) -> Self {
+        Self { call_only_deferred, ..Self::default() }
     }
-    Some(facts)
-}
 
-/// The functions of `program` whose bodies start at one of `starts`, positions moved by
-/// `delta`.
-fn lazy_functions(program: &Program<'_>, starts: &[u32], strict: bool, delta: u32) -> Vec<LazyFunction> {
-    if starts.is_empty() {
-        return Vec::new();
-    }
-    let mut lazy = LazyFunctions { starts: starts.iter().copied().collect(), strict, found: Vec::new() };
-    oxc_ast_visit::Visit::visit_program(&mut lazy, program);
-    for function in &mut lazy.found {
-        function.start = function.start.wrapping_add(delta);
-        function.end = function.end.wrapping_add(delta);
-    }
-    lazy.found
-}
-
-/// Checks `function`'s source parsed alone, adding its facts, then the bodies inside it.
-fn check_alone(source: &str, function: LazyFunction, source_type: SourceType, facts: &mut BodyFacts, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) -> Option<()> {
-    let snippet = &source[function.start as usize..function.end as usize];
-    let (text, offset) = text_alone(snippet, plain_wrapper(function.expression), function.inherited_strict, source_type);
-    let delta = function.start.wrapping_sub(offset);
-    let strict = function.inherited_strict || source_type.is_module();
-    let inside = {
-        let allocator = arena(&text);
-        let parsed = parse(&allocator, &text, source_type, Some(offset + 1));
-        if parsed.stack_exhausted
-            || !parsed.diagnostics.is_empty()
-            || super::stack::validate(&parsed.program).is_err()
-            || super::early::regexp_early_error(&parsed.program).is_some()
-            || super::annex_b_targets::invalid_target(&parsed.program).is_some()
-            || !super::early::program_early_errors(&parsed.program, strict).1.is_empty()
+    /// Checks one function the parser hands over before releasing its body
+    /// (`ParseOptions::lazy_body_check`), alone with the strictness it inherits and the
+    /// bodies inside it whole, and adds its facts. The facts are gathered before code
+    /// generation: an analysis per function between the records code generation keeps left
+    /// the heap their holes (JetStream +2-3% max RSS).
+    pub(super) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) {
+        if self.failed {
+            return;
+        }
+        // Its early errors are OXC's alone: the program carries the strictness the body
+        // inherits as a directive, which `early::program_early_errors` exists to supply where
+        // OXC cannot see it (a whole program in inherited strict code).
+        if super::stack::validate(program).is_err()
+            || call_assignment_targets && super::annex_b_targets::invalid_target(program).is_some()
         {
-            return None;
+            self.failed = true;
+            return;
         }
-        let built = oxc_semantic::SemanticBuilder::new().with_check_syntax_error(true).build(&parsed.program);
+        let built = oxc_semantic::SemanticBuilder::new().with_check_syntax_error(true).build(program);
         if !built.diagnostics.is_empty() {
-            return None;
+            self.failed = true;
+            return;
         }
         #[cfg(feature = "aot")]
-        if let Some((specialized, requests)) = &mut facts.native_source_requests {
-            requests.extend(super::Engine::native_source_requests(&parsed.program, built.semantic.scoping(), *specialized, global_script_calls));
+        if let Some((specialized, requests)) = &mut self.native_source_requests {
+            requests.extend(super::Engine::native_source_requests(program, built.semantic.scoping(), *specialized, global_script_calls));
         }
-        let shift = |(start, end): (u32, u32)| (start.wrapping_add(delta), end.wrapping_add(delta));
-        let first_id = facts.next_private_id;
-        for (span, id) in super::private_name_ids(&built.semantic) {
-            facts.private_name_ids.insert(shift(span), first_id + id);
-            facts.next_private_id = facts.next_private_id.max(first_id + id + 1);
-        }
-        facts.private_name_labels.extend(super::private_name_labels(&built.semantic).into_iter().map(|(span, label)| (shift(span), label)));
-        facts.prototype_unobservable.extend(
-            super::call_only::prototype_unobservable_functions(&built.semantic, &parsed.program)
-                .into_iter()
-                .map(|start| start.wrapping_add(delta)),
-        );
-        let program_strict = source_type.is_module() || has_use_strict(&parsed.program.directives);
-        lazy_functions(&parsed.program, &parsed.lazy_function_bodies, program_strict, delta)
-    };
-    for function in inside {
-        check_alone(source, function, source_type, facts, #[cfg(feature = "aot")] global_script_calls)?;
+        self.add_facts(&built.semantic, program, in_function);
     }
-    Some(())
+
+    /// Adds the facts of a checked body: its private names, its free names, and its
+    /// call-only facts unless they wait for a compilation that may never come.
+    fn add_facts(&mut self, semantic: &oxc_semantic::Semantic<'_>, program: &oxc_ast::ast::Program<'_>, in_function: bool) {
+        let first_id = self.next_private_id;
+        for (span, id) in super::private_name_ids(semantic) {
+            self.private_name_ids.insert(span, first_id + id);
+            self.next_private_id = self.next_private_id.max(first_id + id + 1);
+        }
+        self.private_name_labels.extend(super::private_name_labels(semantic));
+        let free_names = super::first_call::free_names(program, semantic.scoping());
+        if !self.call_only_deferred || super::call_only::compiles_at_load(program, in_function && free_names.is_none(), self.next_private_id != first_id) {
+            self.prototype_unobservable.extend(super::call_only::prototype_unobservable_functions(semantic, program));
+            self.call_only_found.push((program.span.start, program.span.end));
+        }
+        self.free_names.extend(free_names);
+    }
 }
 
 /// A function's source wrapped to parse alone in its context: `wrapper` gives it the
@@ -589,66 +487,4 @@ impl<'a> oxc_ast_visit::Visit<'a> for LazyFunctions {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{syntax_valid, syntax_valid_whole as valid_whole};
-    use oxc_span::SourceType;
-
-    #[test]
-    fn lazy_syntax_check_agrees_with_the_whole_program() {
-        let sources = [
-            "function f() { return 1 }",
-            "function f() { let a; let a; }",
-            "function f() { var x = 010; }",
-            "'use strict'; function f() { var x = 010; }",
-            "function f() { 'use strict'; with (a) {} }",
-            "class C { m() { function g() { with (a) {} } } }",
-            "var g = function () { return arguments }; function h(a, a) {}",
-            "'use strict'; function h(a, a) {}",
-            "function f() { function g() { break; } }",
-            "function f() { yield: 1 } function* g() { function h() { var yield; } }",
-            "(function () { function f() { return } })()",
-            "function f() { import.meta }",
-            "function f() { return \"\\u0061\" } let s = '\\u0062'",
-            "function f() { await: 1 }",
-            "class C { #p = 1; m() { return function () { return this.#p } } }",
-            "class C { m() { return function () { return this.#q } } }",
-        ];
-        for source in sources {
-            for source_type in [SourceType::cjs(), SourceType::mjs(), SourceType::script()] {
-                assert_eq!(
-                    syntax_valid(source, source_type),
-                    valid_whole(source, source_type),
-                    "{source_type:?}: {source}"
-                );
-            }
-        }
-    }
-
-    /// Compares the two checks on every `.js`, `.cjs` and `.mjs` file under
-    /// `QUENCH_SYNTAX_CORPUS`, as scripts, CommonJS and modules.
-    #[test]
-    #[ignore = "reads a corpus named by QUENCH_SYNTAX_CORPUS"]
-    fn lazy_syntax_check_agrees_on_a_corpus() {
-        let root = std::env::var_os("QUENCH_SYNTAX_CORPUS").expect("QUENCH_SYNTAX_CORPUS");
-        let mut pending = vec![std::path::PathBuf::from(root)];
-        let (mut files, mut differ) = (0usize, Vec::new());
-        while let Some(path) = pending.pop() {
-            if path.is_dir() {
-                pending.extend(std::fs::read_dir(&path).into_iter().flatten().flatten().map(|entry| entry.path()));
-                continue;
-            }
-            if !path.extension().is_some_and(|extension| matches!(extension.to_str(), Some("js" | "cjs" | "mjs"))) {
-                continue;
-            }
-            let Ok(source) = std::fs::read_to_string(&path) else { continue };
-            files += 1;
-            for source_type in [SourceType::cjs(), SourceType::mjs()] {
-                if syntax_valid(&source, source_type) != valid_whole(&source, source_type) {
-                    differ.push(format!("{source_type:?} {}", path.display()));
-                }
-            }
-        }
-        eprintln!("files={files} differ={}", differ.len());
-        assert!(differ.is_empty(), "{differ:#?}");
-    }
-}
+mod tests;

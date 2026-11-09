@@ -202,6 +202,11 @@ const STRING_RECEIVERS: [StringReceiver; Native::COUNT as usize] = {
     table
 };
 
+/// Whether `native` is one of the HTML string methods (`STRING_HTML_METHODS`).
+pub(super) fn is_string_html_method(native: Native) -> bool {
+    string_html_method(native).is_some()
+}
+
 fn string_html_method(native: Native) -> Option<&'static StringHtmlMethod> {
     STRING_HTML_METHODS
         .iter()
@@ -550,13 +555,13 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc_string(text))
             }
             Native::StringLocaleCompare => {
-                let other = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let other = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let collation = self.locale_compare_collation(
                     p,
                     args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     args.get(2).copied().unwrap_or(Value::UNDEFINED),
                 )?;
-                Ok(Value::number(collation.compare(&receiver.to_string(), &other)))
+                Ok(Value::number(collation.compare(receiver.host_string(), other.host_string())))
             }
             Native::StringConcat => {
                 let mut text = receiver;
@@ -601,14 +606,7 @@ impl<H: Host> Vm<H> {
             kind: IteratorKind::String,
             index: 0,
             done: false,
-            ext: crate::heap::IteratorExt {
-                position_high: 0,
-                next_method: None,
-                helper: None,
-                helper_running: false,
-                helper_started: false,
-                generator: None,
-            },
+            ext: crate::heap::IteratorExt::default(),
         }))
     }
 
@@ -659,18 +657,14 @@ impl<H: Host> Vm<H> {
             let input = vm.coerce_js_string(p, this)?;
             let limit = vm.regexp_split_limit(p, limit)?;
             let separator_string = vm.coerce_js_string(p, separator)?;
-            let parts = if limit == 0 {
-                Vec::new()
-            } else if separator.is_undefined() {
-                vec![input]
+            // The parts go straight into the array's backing, with no intermediate list.
+            let mut values = crate::heap::ArrayElements::new();
+            let parts = values.make_mut();
+            if separator.is_undefined() {
+                if limit != 0 { parts.push(vm.heap.alloc_string(input)); }
             } else {
-                input.split_units(separator_string.units())
-            };
-            let values = parts
-                .into_iter()
-                .take(limit)
-                .map(|part| vm.heap.alloc_string(part))
-                .collect::<Vec<_>>();
+                input.split_runs(separator_string.units(), limit, |run| parts.push(vm.heap.alloc_unit_run(run)));
+            }
             Ok(vm.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(vm.array_proto),

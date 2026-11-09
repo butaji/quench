@@ -2414,7 +2414,7 @@ fn native_graph_rejects_conflicting_module_tables_before_harness_or_entry_effect
     let harness = crate::NativeJsProgram::compile_eager(harness).unwrap();
     for (modules, message) in [
         (vec![entry.clone()], "duplicates the entry module"),
-        (vec![dependency.clone(), dependency.clone()], "duplicate native module identity"),
+        (vec![dependency.clone(), dependency], "duplicate native module identity"),
         (vec![harness.clone()], "wrong parse goal"),
     ] {
         let mut runtime = Runtime::new(TestHost::default());

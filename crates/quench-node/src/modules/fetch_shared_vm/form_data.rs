@@ -27,21 +27,21 @@ members!(Member, "fetchFormData", [
 /// A form's and an iterator's fields.
 mod field {
     pub(super) const ENTRIES: &str = "entries";
-    pub(super) const TARGET: &str = "target";
-    pub(super) const KIND: &str = "kind";
-    pub(super) const INDEX: &str = "index";
+    pub(crate) use crate::modules::keys::TARGET;
+    pub(crate) use crate::modules::keys::KIND;
+    pub(crate) use crate::modules::keys::INDEX;
 }
 use field::*;
 
 /// What an iterator yields.
-const KEYS: f64 = 0.0;
-const VALUES: f64 = 1.0;
+pub(crate) const KEYS: f64 = 0.0;
+pub(crate) const VALUES: f64 = 1.0;
 const ENTRY_PAIRS: f64 = 2.0;
 /// The multipart boundary's prefix and the digits of its random suffix.
 const BOUNDARY_PREFIX: &str = "----formdata-undici-0";
 const BOUNDARY_DIGITS: usize = 11;
 const DEFAULT_FILE_TYPE: &str = "application/octet-stream";
-const CRLF: &str = "\r\n";
+pub(crate) use crate::modules::keys::CRLF;
 
 const MEMBERS: [ClassMember<Member>; 10] = [
     ClassMember::Method("append", Member::Append, 2),
@@ -97,7 +97,7 @@ fn set_entries(c: &mut Context<'_>, state: RootId, entries: &[(RootId, RootId)])
 
 fn initialize(c: &mut Context<'_>, object: RootId) -> Outcome {
     let list = c.array_rooted(&[])?;
-    let state = record(c, &[(ENTRIES, list)])?;
+    let state = record(c, &[ENTRIES], &[list])?;
     private_slot::write(c, object, Slot::FormData, state)?;
     Ok(state)
 }
@@ -147,7 +147,7 @@ fn iterator(c: &mut Context<'_>, this: RootId, kind: f64) -> Outcome {
     c.set_prototype_rooted(object, prototype)?;
     let kind = c.number(kind);
     let index = c.number(0.0);
-    let state = record(c, &[(TARGET, this), (KIND, kind), (INDEX, index)])?;
+    let state = record(c, &[TARGET, KIND, INDEX], &[this, kind, index])?;
     private_slot::write(c, object, Slot::FormDataIterator, state)?;
     Ok(object)
 }
@@ -247,7 +247,7 @@ pub(crate) fn parse_multipart(c: &mut Context<'_>, bytes: &[u8], boundary: &str)
                 name = header_parameter(value, "name");
                 filename = header_parameter(value, "filename");
             } else if header.trim().eq_ignore_ascii_case("content-type") {
-                kind = value.trim().to_owned();
+                value.trim().clone_into(&mut kind);
             }
         }
         let Some(name) = name else { return Ok(None) };

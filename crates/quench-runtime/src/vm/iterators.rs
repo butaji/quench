@@ -2,7 +2,7 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::promise::PromiseState;
 use super::property_key::PropertyKey;
 use super::*;
-use crate::heap::IteratorZipMode;
+use crate::heap::{HelperPhase, IteratorZipMode};
 
 /// Registered iterators of one Map or Set before registration first prunes the finished and
 /// collected ones (`Vm::collection_iterator`); below it the registry stays as appended.
@@ -25,20 +25,6 @@ impl From<JsError> for IteratorHelperFailure {
     }
 }
 
-/// Where arrays of one shape, whose prototype is `Array.prototype`, find what their
-/// iteration calls (`Vm::array_iteration_intact`) under one `prototype_layout_epoch`: no own
-/// `@@iterator`, that method in a data slot of `Array.prototype` and `next` in a data slot of
-/// `%ArrayIteratorPrototype%`. Both prototypes were marked when the proof was made, so a
-/// change to either's layout advances the epoch; shape compaction advances it too, so a proof
-/// never names a renumbered shape. The slots' values may change in place, so each use reads them.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct ArrayIterationProof {
-    shape: u32,
-    epoch: u64,
-    method_slot: usize,
-    next_slot: usize,
-}
-
 /// The slots of an iterator result's shape (`Vm::iterator_result`): `value`, then `done`.
 const ITERATOR_RESULT_VALUE_SLOT: usize = 0;
 const ITERATOR_RESULT_DONE_SLOT: usize = 1;
@@ -53,14 +39,14 @@ pub(super) enum IterationStep {
 }
 
 impl<H: Host> Vm<H> {
-    /// ArrayAccumulation of a spread element: every value `source` iterates is appended to the
-    /// literal `array`.
+    /// ArrayAccumulation of a spread: each value `source` iterates is appended to literal `array`.
     pub(super) fn spread_into_array(
         &mut self,
         p: &ResidualProgram,
         array: Value,
         source: Value,
     ) -> Result<(), JsError> {
+        if self.share_spread_elements(array, source) { return Ok(()); }
         if let Some(values) = self.intact_iteration_values(source) {
             if self.append_literal_elements(array, &values) {
                 return Ok(());
@@ -163,65 +149,6 @@ impl<H: Host> Vm<H> {
         }
         let proto = data.proto();
         proto.is_null() || self.plain_property_lookup(proto, key) == Some(None)
-    }
-
-    /// Whether GetIterator on `source` calls the realm's intrinsic `Array.prototype.values`
-    /// and each step of the iterator it makes calls the intrinsic
-    /// `%ArrayIteratorPrototype%.next`, every Get on the way reading a data property: an
-    /// ordinary Array with no own `@@iterator` whose prototype is `Array.prototype`, which
-    /// holds that method as an own data property, as `%ArrayIteratorPrototype%` holds `next`.
-    /// A proof for the receiver's shape under the current `prototype_layout_epoch` names the
-    /// slots to read (`ArrayIterationProof`).
-    pub(super) fn array_iteration_intact(&mut self, source: Value) -> bool {
-        let Some(array) = self.heap.array(source) else {
-            return false;
-        };
-        if array.is_arguments_object() || array.has_side_descriptors() || array.proto() != self.array_proto {
-            return false;
-        }
-        let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
-        let proof = match self.array_iteration_proof {
-            Some(proof) if proof.shape == shape && proof.epoch == epoch => proof,
-            _ => match self.prove_array_iteration(shape, epoch) {
-                Some(proof) => proof,
-                None => return false,
-            },
-        };
-        let intrinsic = |vm: &Self, holder: Value, slot: usize, native: Native| {
-            vm.object_data(holder)
-                .and_then(|data| vm.heap.property_get(data, slot))
-                .is_some_and(|value| vm.is_current_realm_native(value, native))
-        };
-        intrinsic(self, self.array_proto, proof.method_slot, Native::ArrayValues)
-            && intrinsic(self, self.array_iterator_proto, proof.next_slot, Native::ArrayIteratorNext)
-    }
-
-    /// `array_iteration_intact`'s lookups past its proof, recording where they found the
-    /// properties once both prototypes they read are marked prototypes, so a later change to
-    /// either's layout advances the epoch and retires the proof.
-    #[cold]
-    #[inline(never)]
-    fn prove_array_iteration(&mut self, shape: u32, epoch: u64) -> Option<ArrayIterationProof> {
-        let method = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Iterator)?);
-        let next = PropertyKey::string(self.runtime_atoms.next);
-        let data_slot = |vm: &Self, holder: Value, key: PropertyKey| {
-            let data = vm.object_data(holder)?;
-            let slot = vm.property_shape_slot(data.shape(), key)?;
-            (!vm.slot_attributes(data, slot)?.accessor).then_some(slot)
-        };
-        if self.property_shape_slot(shape, method).is_some() {
-            return None;
-        }
-        let method_slot = data_slot(self, self.array_proto, method)?;
-        let next_slot = data_slot(self, self.array_iterator_proto, next)?;
-        let proof = ArrayIterationProof { shape, epoch, method_slot, next_slot };
-        self.heap.mark_prototype(self.array_proto);
-        self.heap.mark_prototype(self.array_iterator_proto);
-        // Marking an object that was no prototype yet leaves the epoch where it was.
-        if crate::heap::prototype_layout_epoch() == epoch {
-            self.array_iteration_proof = Some(proof);
-        }
-        Some(proof)
     }
 
     pub(super) fn iterator_step_value(
@@ -1019,14 +946,7 @@ impl<H: Host> Vm<H> {
             kind,
             index: 0,
             done: false,
-            ext: crate::heap::IteratorExt {
-                position_high: 0,
-                next_method: None,
-                helper: None,
-                helper_running: false,
-                helper_started: false,
-                generator: None,
-            },
+            ext: crate::heap::IteratorExt::default(),
         });
         let registered = match self.heap.get_mut(source) {
             Some(Cell::Map { entries, .. }) => entries.register_iterator(iterator),
@@ -1089,14 +1009,7 @@ impl<H: Host> Vm<H> {
                 kind,
                 index: 0,
                 done: false,
-                ext: crate::heap::IteratorExt {
-                    position_high: 0,
-                    next_method: None,
-                    helper: None,
-                    helper_running: false,
-                    helper_started: false,
-                    generator: None,
-                },
+                ext: crate::heap::IteratorExt::default(),
             }))
         })();
         self.heap.release_root(root);
@@ -1198,12 +1111,8 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: crate::heap::IteratorExt {
-                position_high: 0,
                 next_method: Some(next_method),
-                helper: None,
-                helper_running: false,
-                helper_started: false,
-                generator: None,
+                ..Default::default()
             },
         });
         self.heap.release_root(next_root);
@@ -1235,12 +1144,8 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: crate::heap::IteratorExt {
-                position_high: 0,
-                next_method: None,
                 helper: Some(Box::new(helper)),
-                helper_running: false,
-                helper_started: false,
-                generator: None,
+                ..Default::default()
             },
         });
         Ok(iterator)
@@ -1265,7 +1170,7 @@ impl<H: Host> Vm<H> {
             Some(IteratorRecord {
                 source, done, ext, ..
             }) if let Some(helper) = &ext.helper => {
-                (*source, helper.as_ref().clone(), ext.helper_running, *done)
+                (*source, helper.as_ref().clone(), ext.helper_phase == HelperPhase::Running, *done)
             }
             _ => return Err(self.type_error(p, "iterator helper receiver is invalid".into())),
         };
@@ -1275,12 +1180,7 @@ impl<H: Host> Vm<H> {
         if running {
             return Err(self.type_error(p, "iterator helper is already executing".into()));
         }
-        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.helper_running = true;
-        }
-        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.helper_started = true;
-        }
+        self.set_helper_phase(iterator, HelperPhase::Running);
         let result = match state {
             IteratorHelper::RegExpStringMatchAll { .. } => Err(self
                 .type_error(p, "RegExp string iterator is not a helper".into())
@@ -1334,10 +1234,14 @@ impl<H: Host> Vm<H> {
                 Err(error)
             }
         };
-        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.helper_running = false;
-        }
+        self.set_helper_phase(iterator, HelperPhase::Idle);
         result
+    }
+
+    fn set_helper_phase(&mut self, iterator: Value, phase: HelperPhase) {
+        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(iterator) {
+            ext.helper_phase = phase;
+        }
     }
 
     pub(super) fn iterator_helper_return(
@@ -1349,7 +1253,6 @@ impl<H: Host> Vm<H> {
             Some(IteratorRecord {
                 source, done, ext, ..
             }) if let Some(helper) = &ext.helper => {
-                let (helper_running, helper_started) = (&ext.helper_running, &ext.helper_started);
                 let active = match helper.as_ref() {
                     IteratorHelper::Concat { active, .. } => active.iter().copied().collect(),
                     IteratorHelper::Zip {
@@ -1365,7 +1268,7 @@ impl<H: Host> Vm<H> {
                     } => vec![*source, *inner],
                     _ => vec![*source],
                 };
-                (*done, *helper_running, *helper_started, active)
+                (*done, ext.helper_phase == HelperPhase::Running, ext.helper_phase != HelperPhase::Fresh, active)
             }
             _ => return Err(self.type_error(p, "iterator helper receiver is invalid".into())),
         };
@@ -1375,9 +1278,7 @@ impl<H: Host> Vm<H> {
         if running {
             return Err(self.type_error(p, "iterator helper is already executing".into()));
         }
-        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.helper_running = true;
-        }
+        self.set_helper_phase(iterator, HelperPhase::Running);
         let result = (|| {
             if !started {
                 self.mark_iterator_done(iterator);
@@ -1387,9 +1288,7 @@ impl<H: Host> Vm<H> {
             close_result?;
             self.iterator_result(Value::UNDEFINED, true)
         })();
-        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.helper_running = false;
-        }
+        self.set_helper_phase(iterator, HelperPhase::Idle);
         result
     }
 
@@ -1924,11 +1823,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .map(|value| self.heap.root(value))
             .collect::<Vec<_>>();
-        let mut roots = iterator_roots
-            .iter()
-            .chain(&key_roots)
-            .copied()
-            .collect::<Vec<_>>();
+        let mut padding_roots = Vec::new();
         let result = (|| {
             let padding = match self.iterator_zip_padding(
                 p,
@@ -1952,7 +1847,7 @@ impl<H: Host> Vm<H> {
                     .filter_map(|root| self.heap.root_value(*root))
                     .collect::<Vec<_>>()
             });
-            roots.extend(padding.iter().copied().map(|value| self.heap.root(value)));
+            padding_roots.extend(padding.iter().copied().map(|value| self.heap.root(value)));
             let opened = vec![true; iterators.len()];
             self.iterator_helper(
                 p,
@@ -1968,9 +1863,9 @@ impl<H: Host> Vm<H> {
                 },
             )
         })();
-        roots.into_iter().for_each(|root| {
+        for root in iterator_roots.into_iter().chain(key_roots).chain(padding_roots) {
             self.heap.release_root(root);
-        });
+        }
         result
     }
 
@@ -2807,14 +2702,7 @@ impl<H: Host> Vm<H> {
             kind: IteratorKind::AsyncFromSync,
             index: 0,
             done: false,
-            ext: crate::heap::IteratorExt {
-                position_high: 0,
-                next_method: None,
-                helper: None,
-                helper_running: false,
-                helper_started: false,
-                generator: None,
-            },
+            ext: crate::heap::IteratorExt::default(),
         }))
     }
 
@@ -2848,14 +2736,7 @@ impl<H: Host> Vm<H> {
             kind,
             index: 0,
             done: false,
-            ext: crate::heap::IteratorExt {
-                position_high: 0,
-                next_method: None,
-                helper: None,
-                helper_running: false,
-                helper_started: false,
-                generator: None,
-            },
+            ext: crate::heap::IteratorExt::default(),
         }))
     }
 
@@ -2941,9 +2822,7 @@ impl<H: Host> Vm<H> {
             _ => (iterator, false),
         };
         let result = self.call_value(p, method, receiver, args)?;
-        if !self.is_object_like(result) {
-            return Err(self.type_error(p, "iterator next result is not an object".into()));
-        }
+        self.require_iterator_result(p, result)?;
         if !async_from_sync {
             return Ok(result);
         }
@@ -3096,11 +2975,7 @@ impl<H: Host> Vm<H> {
                         return Err(vm.type_error(p, "iterator next method is not callable".into()));
                     }
                     let result = vm.call_value(p, method, this, args)?;
-                    if !vm.is_object_like(result) {
-                        return Err(
-                            vm.type_error(p, "iterator next result is not an object".into())
-                        );
-                    }
+                    vm.require_iterator_result(p, result)?;
                     return Ok(result);
                 }
             };
@@ -3129,7 +3004,7 @@ impl<H: Host> Vm<H> {
                                 input,
                                 global,
                                 unicode,
-                            } => (input.clone(), *global, *unicode),
+                            } => (*input, *global, *unicode),
                             _ => {
                                 return Err(
                                     vm.type_error(p, "invalid RegExp string iterator".into())
@@ -3139,15 +3014,14 @@ impl<H: Host> Vm<H> {
                     }
                     _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
                 };
-                let input_value = vm.heap.alloc_string(input.clone());
-                let result = vm.regexp_exec_value(p, source, input_value)?;
+                let result = vm.regexp_exec_value(p, source, input)?;
                 if result.is_null() {
                     if let Some(IteratorRecord { done, .. }) = vm.heap.iterator_mut(this) {
                         *done = true;
                     }
                     return vm.iterator_result(Value::UNDEFINED, true);
                 }
-                return vm.with_call_roots([source, result], |vm| {
+                return vm.with_call_roots([source, result, input], |vm| {
                     if global {
                         let matched_atom = vm.intern_atom("0");
                         let matched = vm.get_property(p, result, matched_atom)?;
@@ -3155,11 +3029,8 @@ impl<H: Host> Vm<H> {
                             let last_index_atom = vm.intern_atom("lastIndex");
                             let last_index = vm.get_property(p, source, last_index_atom)?;
                             let index = vm.regexp_to_length_value(p, last_index)?;
-                            let next = super::regexp::advance_string_index_units(
-                                input.units(),
-                                index,
-                                unicode,
-                            );
+                            let units = vm.heap.string(input).expect("the input is a string").units();
+                            let next = super::regexp::advance_string_index_units(units, index, unicode);
                             vm.set_property_with_program_mode(
                                 p,
                                 source,
@@ -3191,9 +3062,7 @@ impl<H: Host> Vm<H> {
             }
             if kind == IteratorKind::AsyncFromSync {
                 let result = vm.iterator_next_with_args(p, source, args)?;
-                if !vm.is_object_like(result) {
-                    return Err(vm.type_error(p, "iterator next result is not an object".into()));
-                }
+                vm.require_iterator_result(p, result)?;
                 return vm.async_from_sync_result(p, this, result, true);
             }
             // Collection iterators skip deleted slots, so they record where they stopped.
@@ -3203,35 +3072,18 @@ impl<H: Host> Vm<H> {
                     vm.array_iterator_item(p, this, source, kind, index)?
                 }
                 _ => match (kind, vm.heap.get(source)) {
+                    // A string iterator's position is the code unit its next code point
+                    // starts at, so each step reads one code point.
                     (IteratorKind::String, _) if let Some(text) = vm.heap.string(source) => {
                         let units = text.units();
-                        {
-                            let mut element = 0;
-                            let mut offset = 0;
-                            let mut selected = None;
-                            while offset < units.len() {
-                                let end = if units.get(offset + 1).is_some_and(|low| {
-                                    crate::unicode::decode_surrogate_pair(units.at(offset), low)
-                                        .is_some()
-                                }) {
-                                    offset + 2
-                                } else {
-                                    offset + 1
-                                };
-                                if element == index {
-                                    let value = vm.heap.alloc_string(
-                                        super::wtf16::JsString::from_unit_run(
-                                            units.slice(offset..end),
-                                        ),
-                                    );
-                                    selected = Some((value, None));
-                                    break;
-                                }
-                                element += 1;
-                                offset = end;
-                            }
-                            selected
-                        }
+                        let run = (index < units.len()).then(|| {
+                            let pair = units.get(index + 1).is_some_and(|low| {
+                                crate::unicode::decode_surrogate_pair(units.at(index), low).is_some()
+                            });
+                            next_position = index + 1 + usize::from(pair);
+                            super::wtf16::JsString::from_unit_run(units.slice(index..next_position))
+                        });
+                        run.map(|run| (vm.heap.alloc_string(run), None))
                     }
                     (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
                         entries.next_live(index).map(|(slot, (key, _))| {
@@ -3443,7 +3295,7 @@ impl<H: Host> Vm<H> {
                 IterationStep::Array
             }
             Some(IteratorRecord { kind: IteratorKind::Generator, ext, .. })
-                if ext.generator.as_ref().is_some_and(|record| !record.running)
+                if ext.generator.as_ref().is_some_and(|record| !record.is_executing())
                     && self.is_current_realm_native(method, Native::GeneratorNext) =>
             {
                 IterationStep::Generator

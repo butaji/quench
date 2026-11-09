@@ -290,7 +290,6 @@ node_bindings! {
         method "streamFromWholeRead" (0) => crate::modules::stream_shared_vm::from::whole_read,
         method "streamFromRead" (0) => crate::modules::stream_shared_vm::from::read,
         method "streamFromDestroy" (2) => crate::modules::stream_shared_vm::from::destroy,
-        method "streamFromFirstAsyncValue" (1) => crate::modules::stream_shared_vm::from::first_async_value,
         method "streamFromRejected" (1) => crate::modules::stream_shared_vm::from::rejected,
         method "streamFromAsyncValue" (1) => crate::modules::stream_shared_vm::from::async_value,
         method "streamFromAsyncResult" (1) => crate::modules::stream_shared_vm::from::async_result,
@@ -2330,8 +2329,8 @@ node_bindings! {
         method "timerUnref" (0) => crate::modules::timers_shared_vm::timer_unref,
         method "immediateRef" (0) => crate::modules::timers_shared_vm::immediate_ref,
         method "immediateUnref" (0) => crate::modules::timers_shared_vm::immediate_unref,
-        method "timerHasRef" (0) => crate::modules::timers_shared_vm::timer_has_ref,
-        method "immediateHasRef" (0) => crate::modules::timers_shared_vm::immediate_has_ref,
+        method "timerHasRef" (0) => crate::modules::timers_shared_vm::handle_has_ref,
+        method "immediateHasRef" (0) => crate::modules::timers_shared_vm::handle_has_ref,
         method "timersPromiseSetTimeout" (2) => crate::modules::timers_shared_vm::promise_set_timeout,
         method "timersPromiseSetImmediate" (1) => crate::modules::timers_shared_vm::promise_set_immediate,
         method "timersPromiseSchedulerWait" (1) => crate::modules::timers_shared_vm::scheduler_wait,
@@ -2557,23 +2556,16 @@ impl quench_runtime::Host for NodeHost {
         self.shared_state.borrow().async_hooks.observes_job_boundaries()
     }
 
-    /// The code a run touched since the last collection leaves the resident set after each
-    /// collection, and before a full one; what still runs comes back from the page cache. The
-    /// collector's code and the program's are then resident one at a time, and the program's
-    /// only as much of it as ran since the last collection (V8-v7 RegExp max RSS, static
-    /// x86_64 unbolted, 2026-10-18: 7244-7500 -> 7136-7328 KiB at every collection's end;
-    /// Splay 39800 -> 38988 KiB with the release before full collections).
-    /// The allocator's free pages, which the collection's sweep just freed, leave with them
-    /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
-    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). Under every policy the
-    /// small-object allocator's empty pages leave too, past what its recent intervals took
-    /// (`quench_alloc::release_empty_pages`): a server's collections empty pages of every
+    /// A collection boundary's releases (`resident_pages::release_at_collection`): under
+    /// memory-first the code a run touched and the system allocator's free pages leave at
+    /// every boundary; the default keeps the code, which the run executes again right after,
+    /// and paces the system allocator's trim. Under every policy the small-object allocator's
+    /// empty pages leave too, past what its recent intervals took, at most once per its purge
+    /// delay (`quench_alloc::release_empty_pages`): a server's collections empty pages of every
     /// phase's short-lived objects, which otherwise stayed resident beside the heap's next
     /// peak (board load, glibc production, same host, 3 runs each, 2026-10-27, final peak
     /// RSS: fastify 41.7-45.3 -> 39.4-40.8 MB, hono 43.0-49.4 -> 38.4-41.1 MB, throughput
-    /// within noise). A policy that returns pages at collections (memory-first) releases at
-    /// every boundary; the default paces it (`resident_pages::release_at_collection`). Every
-    /// policy counts the collection for the release before output
+    /// within noise). Every policy counts the collection for the release before output
     /// (`resident_pages::note_collection`).
     fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
         crate::host::resident_pages::release_at_collection(policy.returns_pages_at_collections());
@@ -2834,6 +2826,19 @@ impl quench_runtime::Host for NodeHost {
                 previous.0,
             );
         }
+    }
+
+    fn enter_unobserved_job(&mut self, entered: bool) -> Option<quench_runtime::HostExecutionContext> {
+        crate::modules::async_hooks_shared_vm::enter_unobserved_job(&self.shared_state, entered)
+            .map(quench_runtime::HostExecutionContext)
+    }
+
+    fn end_unobserved_job(&mut self) -> Vec<quench_runtime::RootId> {
+        crate::modules::async_hooks_shared_vm::end_unobserved_job(&self.shared_state)
+    }
+
+    fn leave_unobserved_job(&mut self) -> Vec<quench_runtime::RootId> {
+        crate::modules::async_hooks_shared_vm::leave_unobserved_job(&self.shared_state)
     }
 
     fn release_job_context(
@@ -3197,7 +3202,7 @@ impl NodeHost {
         } else {
             referrer_path
         };
-        let base = referrer_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let base = referrer_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
         let file_url = if specifier
             .get(..5)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))

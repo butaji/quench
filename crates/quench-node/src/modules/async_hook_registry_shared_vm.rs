@@ -21,13 +21,7 @@ impl HookKind {
         Self::PromiseResolve,
     ];
     pub(super) fn index(self) -> usize {
-        match self {
-            Self::Init => 0,
-            Self::Before => 1,
-            Self::After => 2,
-            Self::Destroy => 3,
-            Self::PromiseResolve => 4,
-        }
+        self as usize
     }
     fn name(self) -> &'static str {
         match self {

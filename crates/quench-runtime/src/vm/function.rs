@@ -344,56 +344,52 @@ impl<H: Host> Vm<H> {
     /// layer was peeled within `CALL_FORWARDING_DEPTH`; the target may still be anything,
     /// which the caller checks before making the call itself, and otherwise makes the
     /// original call.
-    pub(super) fn forwarded_call<'a>(
+    /// With `args` the caller owns (`SmallVec`), as an applied list's copied elements, a
+    /// bound function's bound arguments lead the values it passes on (10.4.1.1); borrowed
+    /// arguments (`&[Value]`) leave such a call to the original call.
+    pub(super) fn forwarded_call<A: ForwardedArgs>(
         &self,
         mut callee: Value,
         mut receiver: Value,
-        mut args: &'a [Value],
-    ) -> Option<(Value, Value, &'a [Value])> {
+        mut args: A,
+    ) -> Option<Forwarded<A>> {
+        let mut through_call = false;
         for depth in 0..CALL_FORWARDING_DEPTH {
             match self.heap.function(callee) {
                 Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) => {
                     let (target, this, bound) = self.bound_function_parts(*env)?;
-                    if !bound.is_empty() {
+                    if !args.prepend(bound) {
                         return None;
                     }
                     (callee, receiver) = (target, this);
                 }
                 Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }) => {
+                    through_call |= depth == 0;
                     callee = receiver;
-                    receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
-                    args = args.get(1..).unwrap_or_default();
+                    receiver = args.shift();
                 }
-                _ => return (depth != 0).then_some((callee, receiver, args)),
+                record => {
+                    let kind = record.map(|record| record.kind);
+                    return (depth != 0).then_some(Forwarded { callee, receiver, args, kind, through_call });
+                }
             }
         }
         None
     }
 
-    /// `forwarded_call` of a call whose `args` the caller owns, as an applied list's copied
-    /// elements: a bound function's bound arguments then lead the values it passes on
-    /// (ECMA-262 10.4.1.1), which `forwarded_call` leaves to the original call.
-    pub(super) fn forwarded_list_call<const N: usize>(
-        &self,
-        mut callee: Value,
-        mut receiver: Value,
-        mut args: smallvec::SmallVec<[Value; N]>,
-    ) -> Option<(Value, Value, smallvec::SmallVec<[Value; N]>)> {
-        for depth in 0..CALL_FORWARDING_DEPTH {
-            match self.heap.function(callee) {
-                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) => {
-                    let (target, this, bound) = self.bound_function_parts(*env)?;
-                    args.insert_many(0, bound.iter().copied());
-                    (callee, receiver) = (target, this);
-                }
-                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }) => {
-                    callee = receiver;
-                    receiver = if args.is_empty() { Value::UNDEFINED } else { args.remove(0) };
-                }
-                _ => return (depth != 0).then_some((callee, receiver, args)),
-            }
-        }
-        None
+    /// A plain call forwarding without an observable step of its own (`forwarded_call`) to a
+    /// user function the loop pushes in place, with the forwarded receiver and arguments
+    /// (`lane_function_call`): `f.call(thisArg, ...args)`, a bound function without bound arguments.
+    #[inline(never)]
+    pub(super) fn try_forwarded_user_call(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize,
+        callee: Value) -> Option<Result<StepResult, JsError>> {
+        // Only a call passing a register window forwards its values (not `CallArray`'s array).
+        if !matches!(i.op().immediate_layout(), crate::bytecode::ImmediateLayout::CallWindowWithEvalFlags) { return None; }
+        let window: *const [Value] = self.register_window(f, i.call_window());
+        // SAFETY: the window lies in the caller frame, which callee setup only reads.
+        let forwarded = self.forwarded_call(callee, self.read(f, i.register_c()), unsafe { &*window })?;
+        let target = self.in_loop_call_target(p, forwarded.callee)?;
+        self.push_in_loop_call(p, f, pc, target, forwarded.callee, forwarded.receiver, forwarded.args, i.result_register())
     }
 
     /// A bound function's target, bound `this` and bound arguments, read from the
@@ -458,4 +454,45 @@ fn native_function_source(name: &str) -> String {
         ""
     };
     format!("function {source_name}() {{ [native code] }}")
+}
+
+/// The call a forwarding call makes (`Vm::forwarded_call`), with the facts the walk read on
+/// the way, so no caller reads them again.
+pub(super) struct Forwarded<A> {
+    pub(super) callee: Value,
+    pub(super) receiver: Value,
+    pub(super) args: A,
+    /// The callee's kind; `None` for a callee that is no function.
+    pub(super) kind: Option<FunctionKind>,
+    /// Whether the outermost layer was `Function.prototype.call`.
+    pub(super) through_call: bool,
+}
+
+/// The arguments a forwarded call passes on (`Vm::forwarded_call`).
+pub(super) trait ForwardedArgs {
+    /// Removes the first argument, `undefined` when there is none.
+    fn shift(&mut self) -> Value;
+    /// Puts `bound` before the arguments; `false` when this list cannot hold them.
+    fn prepend(&mut self, bound: &[Value]) -> bool;
+}
+
+impl ForwardedArgs for &[Value] {
+    fn shift(&mut self) -> Value {
+        let first = self.first().copied().unwrap_or(Value::UNDEFINED);
+        *self = self.get(1..).unwrap_or_default();
+        first
+    }
+    fn prepend(&mut self, bound: &[Value]) -> bool {
+        bound.is_empty()
+    }
+}
+
+impl<const N: usize> ForwardedArgs for smallvec::SmallVec<[Value; N]> {
+    fn shift(&mut self) -> Value {
+        if self.is_empty() { Value::UNDEFINED } else { self.remove(0) }
+    }
+    fn prepend(&mut self, bound: &[Value]) -> bool {
+        self.insert_many(0, bound.iter().copied());
+        true
+    }
 }

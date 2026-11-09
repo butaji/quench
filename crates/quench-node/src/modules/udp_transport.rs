@@ -6,7 +6,7 @@ use std::{
     net::{SocketAddr, UdpSocket},
     rc::Rc,
 };
-pub(crate) const IPV6_ONLY: u32 = 1;
+pub(crate) use crate::modules::tcp_owned::IPV6_ONLY;
 pub(crate) const REUSE_ADDR: u32 = super::util_system_error_shared_vm::UV_UDP_REUSEADDR as u32;
 pub(crate) const REUSE_PORT: u32 = 64; // libuv UV_UDP_REUSEPORT, deps/uv/include/uv.h.
 pub(crate) const DATAGRAM_CAPACITY: usize = u16::MAX as usize;
@@ -218,10 +218,7 @@ impl<T> Endpoint<T> {
             match self.send_bytes(&bytes, destination) {
                 Ok(sent) => return Ok(Submission::Synchronous { token, sent }),
                 Err(error)
-                    if matches!(
-                        error.kind(),
-                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                    ) => {}
+                    if crate::io_transient::is_transient(error.kind()) => {}
                 Err(error) => return Err((token, error)),
             }
         }
@@ -235,7 +232,7 @@ impl<T> Endpoint<T> {
     pub(crate) fn poll_send(&mut self) -> Option<(T, usize, io::Result<usize>)> {
         let pending = self.pending.front()?;
         let result = self.send_bytes(&pending.bytes, pending.destination);
-        if matches!(&result,Err(error)if matches!(error.kind(),io::ErrorKind::WouldBlock|io::ErrorKind::Interrupted))
+        if matches!(&result,Err(error)if crate::io_transient::is_transient(error.kind()))
         {
             return None;
         }
@@ -257,10 +254,7 @@ impl<T> Endpoint<T> {
                 Ok(Some((bytes, address)))
             }
             Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                ) =>
+                if crate::io_transient::is_transient(error.kind()) =>
             {
                 Ok(None)
             }

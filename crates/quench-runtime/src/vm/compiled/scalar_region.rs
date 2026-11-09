@@ -62,17 +62,12 @@ pub(crate) fn lower_regions(
     let constants: Vec<_> = program
         .constants
         .iter()
-        .map(|value| match value {
-            crate::bytecode::Constant::Number(number) => Value::number(*number),
-            _ => Value::UNDEFINED,
-        })
+        .map(|constant| super::facts::immediate(constant).filter(|value| value.as_number().is_some())
+            .unwrap_or(Value::UNDEFINED))
         .collect();
     let mut leaders = std::collections::BTreeSet::new();
     for instruction in &decoded {
-        if matches!(
-            instruction.op().control_flow_layout(),
-            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump
-        ) {
+        if instruction.op().control_flow_layout().jumps() {
             leaders.insert(instruction.jump_target() as usize);
         }
     }
@@ -138,7 +133,7 @@ pub(crate) fn lower_regions(
             // an entry-record transfer. Keep its existing numeric region;
             // field binding needs shared inputs or a longer arithmetic chain.
             && (region.fields.len() != 1 || arithmetic > 1)
-            && let Some((native, _)) = osr_loop::lower(&region, &observation, isa, None, false)
+            && let Some((native, _)) = osr_loop::lower(&region, &observation, isa, None)
         {
             Some(ScalarRegion {
                 frame: region.entry_registers().collect(),
@@ -256,10 +251,7 @@ pub(super) fn emit_entry(
                 JsFieldReceiver::Register(i32::from(register) * word_bytes as i32)
             }
             FieldReceiver::Field(parent) => {
-                assert!(
-                    parent < index,
-                    "entry field paths are ordered by dependency"
-                );
+                assert!(parent < index, "entry field paths are ordered by dependency");
                 JsFieldReceiver::Value(builder.ins().stack_load(
                     isa.pointer_type(),
                     types::I64,
@@ -267,6 +259,8 @@ pub(super) fn emit_entry(
                     offset(parent),
                 ))
             }
+            // Scalar ranges hold no capture reads (`scalar`), so no path roots at one.
+            FieldReceiver::Capture(_) => unreachable!("scalar regions read no captures"),
         };
         let (address, _) = emit_js_cached_field_slot(
             builder,
@@ -379,7 +373,7 @@ mod tests {
             "bound-fields.js",
         )
         .unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let arithmetic = Rc::new(std::cell::Cell::new(0_u64));
         let mut code = Vec::new();
         let mut operands = Vec::new();
@@ -441,7 +435,6 @@ mod tests {
             let (native, _) = lower_js_general_dispatch(
                 &program,
                 id as u32,
-                false,
                 &*isa,
                 JsGeneralCallout::Dynamic,
                 &plans,
@@ -483,7 +476,7 @@ mod tests {
             "typed-fields.js",
         )
         .unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let regions = lower_regions(&program, 1, &*isa);
         let region = regions
             .iter()
@@ -521,7 +514,7 @@ mod tests {
             "field-copy.js",
         )
         .unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         assert!(lower_regions(&program, 1, &*isa).is_empty());
     }
 
@@ -532,7 +525,7 @@ mod tests {
             "field-increment.js",
         )
         .unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let regions = lower_regions(&program, 1, &*isa);
         assert!(!regions.is_empty());
         assert!(regions.iter().all(|region| region.fields.is_empty()));
@@ -544,7 +537,7 @@ mod tests {
             "function subject(o, other, x) { const v=(x+1)*(x-1); const left=o.left; o=other; const right=o.right; const sum=left+right; return sum+v; }",
             "changing-fields.js",
         ).unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         assert!(
             lower_regions(&program, 1, &*isa)
                 .iter()
@@ -569,7 +562,7 @@ mod tests {
                     .is_some_and(|name| &program.atoms[name as usize] == "region")
             })
             .unwrap();
-        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
         let regions = lower_regions(&program, id as u32, &*isa);
         let region = regions
             .iter()

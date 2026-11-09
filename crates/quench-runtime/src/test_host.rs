@@ -21,9 +21,11 @@ pub(crate) type Install = fn(&mut NativeContext<'_, TestHost>) -> Result<(), Roo
 /// A test host's dynamic-import resolution (`Host::resolve_dynamic_import`), by specifier.
 pub(crate) type Resolve = Rc<dyn Fn(&str) -> Result<Option<ModuleSource>, ModuleLoadError>>;
 
-/// The `$262` global the Test262 harness creates realms through.
-const TEST262_GLOBALS: &[HostGlobal] =
-    &[HostGlobal { name: "$262", capability: CapabilityId::CreateRealm }];
+/// The `$262` global as the Test262 host provides it: realms and the IsHTMLDDA object.
+const TEST262_GLOBALS: &[HostGlobal] = &[
+    HostGlobal { name: "$262", capability: CapabilityId::CreateRealm },
+    HostGlobal { name: "$262", capability: CapabilityId::IsHTMLDDA },
+];
 
 /// A unit test's host. Clones share what it wrote and its state, so a test keeps a clone
 /// to read them after the runtime takes the host.
@@ -174,4 +176,13 @@ impl Host for TestHost {
     fn has_module_source(&self, module: &ModuleSource) -> bool {
         self.module_source.is_some_and(|module_source| module_source(module))
     }
+}
+
+/// Runs `run` on a thread with the stack the runtime is made for (`WORKER_STACK_SIZE`): the
+/// default test thread's 2 MiB overflows on unoptimized frames before the stack guard fires.
+pub(crate) fn on_worker_stack<R: Send>(run: impl FnOnce() -> R + Send) -> R {
+    std::thread::scope(|scope| {
+        let worker = std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE);
+        worker.spawn_scoped(scope, run).unwrap().join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
 }

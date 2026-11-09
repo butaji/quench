@@ -261,7 +261,7 @@ mod tests {
         let values = [Rc::from("alpha"), Rc::from(""), Rc::from("λ")];
         let table = AtomTable::from_rcs(&values);
         assert_eq!(table.iter().collect::<Vec<_>>(), ["alpha", "", "λ"]);
-        let cloned = table.clone();
+        let cloned = table;
         assert_eq!(&cloned[2], "λ");
     }
 

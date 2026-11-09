@@ -267,7 +267,7 @@ impl<H: Host> Vm<H> {
 
             let minimum_fraction = minimum_fraction.unwrap_or(DEFAULT_MINIMUM_FRACTION_DIGITS);
             let maximum_fraction =
-                maximum_fraction.unwrap_or(DEFAULT_MAXIMUM_FRACTION_DIGITS.max(minimum_fraction));
+                maximum_fraction.unwrap_or_else(|| DEFAULT_MAXIMUM_FRACTION_DIGITS.max(minimum_fraction));
             if maximum_fraction < minimum_fraction {
                 return Err(vm.range_error(
                     p,

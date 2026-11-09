@@ -2,31 +2,83 @@
 
 use crate::bytecode::Atom;
 use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 use std::rc::Rc;
 
-/// A function's capturable bindings at one position: its base bindings (locals and compiler
-/// bindings, which change only as locals are added) under the lexical bindings in effect
-/// there. The base is shared by every position with the same locals, so a closure inside a
-/// block of a large function costs the block's bindings, not the function's.
+/// A function's base bindings (locals and compiler bindings), shared by every position in
+/// it. Locals are only appended, so each binding carries the local count from which it is
+/// visible, and a position sees the bindings below its own count.
+#[derive(Default)]
+pub(super) struct BaseBindings(RefCell<FxHashMap<Atom, (u32, u16)>>);
+
+impl BaseBindings {
+    /// Binds `atom` from local count `from`, unless it is already bound: an earlier position
+    /// keeps seeing what it saw.
+    pub(super) fn bind(&self, atom: Atom, from: u32, slot: u16) -> bool {
+        match self.0.borrow_mut().entry(atom) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.get().1 == slot,
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert((from, slot));
+                true
+            }
+        }
+    }
+}
+
+/// The base bindings visible at one position: those bound below local count `visible`, and
+/// the parameter context's own `arguments`, which no local shadows.
+#[derive(Clone)]
+pub(super) struct CaptureBase {
+    pub(super) bindings: Rc<BaseBindings>,
+    pub(super) visible: u32,
+    pub(super) arguments: Option<(Atom, u16)>,
+}
+
+impl CaptureBase {
+    fn get(&self, atom: Atom) -> Option<u16> {
+        if let Some((name, slot)) = self.arguments
+            && name == atom
+        {
+            return Some(slot);
+        }
+        let bindings = self.bindings.0.borrow();
+        bindings.get(&atom).filter(|(from, _)| *from < self.visible).map(|(_, slot)| *slot)
+    }
+
+    fn entries(&self) -> Vec<(Atom, u16)> {
+        let bindings = self.bindings.0.borrow();
+        bindings
+            .iter()
+            .filter(|(atom, (from, _))| *from < self.visible && self.arguments.is_none_or(|(name, _)| name != **atom))
+            .map(|(atom, (_, slot))| (*atom, *slot))
+            .chain(self.arguments)
+            .collect()
+    }
+}
+
+/// One lexical scope's bindings over those around it: `Some` binds or rebinds a name, `None`
+/// hides one the scopes around it bind. A scope's layer depends on its own bindings alone, so
+/// every position inside it shares one.
+pub(super) type CaptureLayer = FxHashMap<Atom, Option<u16>>;
+
+/// A function's capturable bindings at one position: its base bindings under the layers of
+/// the lexical scopes in effect there, innermost last. The base and each layer are shared by
+/// every position that sees them, so a closure costs the scopes it is nested in, not the
+/// bindings they hold.
 pub(super) struct CaptureScope {
-    base: Rc<FxHashMap<Atom, u16>>,
-    /// Lexical bindings over the base: `Some` binds or rebinds a name, `None` hides a base
-    /// binding the lexical scopes shadow without rebinding.
-    overlay: FxHashMap<Atom, Option<u16>>,
+    base: CaptureBase,
+    layers: Vec<Rc<CaptureLayer>>,
 }
 
 impl CaptureScope {
-    pub(super) fn new(base: Rc<FxHashMap<Atom, u16>>) -> Self {
-        Self {
-            base,
-            overlay: FxHashMap::default(),
-        }
+    pub(super) fn new(base: CaptureBase) -> Self {
+        Self { base, layers: Vec::new() }
     }
 
-    pub(super) fn get(&self, atom: &Atom) -> Option<&u16> {
-        match self.overlay.get(atom) {
-            Some(slot) => slot.as_ref(),
-            None => self.base.get(atom),
+    pub(super) fn get(&self, atom: &Atom) -> Option<u16> {
+        match self.layers.iter().rev().find_map(|layer| layer.get(atom)) {
+            Some(slot) => *slot,
+            None => self.base.get(*atom),
         }
     }
 
@@ -34,36 +86,38 @@ impl CaptureScope {
         self.get(atom).is_some()
     }
 
-    pub(super) fn insert(&mut self, atom: Atom, slot: u16) {
-        self.overlay.insert(atom, Some(slot));
+    pub(super) fn push_layer(&mut self, layer: Rc<CaptureLayer>) {
+        self.layers.push(layer);
     }
 
-    pub(super) fn remove(&mut self, atom: &Atom) {
-        if self.contains_key(atom) {
-            self.overlay.insert(*atom, None);
-        }
-    }
-
-    /// Every binding once: the overlay's, then the base's it leaves visible.
-    pub(super) fn iter(&self) -> impl Iterator<Item = (&Atom, &u16)> {
-        self.overlay
+    /// Every binding once: the innermost layer's first, then the base's they leave visible.
+    pub(super) fn iter(&self) -> impl Iterator<Item = (Atom, u16)> + '_ {
+        let mut seen = rustc_hash::FxHashSet::default();
+        let layered: Vec<_> = self
+            .layers
             .iter()
-            .filter_map(|(atom, slot)| slot.as_ref().map(|slot| (atom, slot)))
-            .chain(
-                self.base
-                    .iter()
-                    .filter(|(atom, _)| !self.overlay.contains_key(atom)),
-            )
+            .rev()
+            .flat_map(|layer| layer.iter())
+            .filter(|(atom, _)| seen.insert(**atom))
+            .filter_map(|(atom, slot)| slot.map(|slot| (*atom, slot)))
+            .collect();
+        layered
+            .into_iter()
+            .chain(self.base.entries().into_iter().filter(move |(atom, _)| !seen.contains(atom)))
     }
 
-    pub(super) fn keys(&self) -> impl Iterator<Item = &Atom> {
+    pub(super) fn keys(&self) -> impl Iterator<Item = Atom> + '_ {
         self.iter().map(|(atom, _)| atom)
     }
 }
 
 impl FromIterator<(Atom, u16)> for CaptureScope {
     fn from_iter<I: IntoIterator<Item = (Atom, u16)>>(bindings: I) -> Self {
-        Self::new(Rc::new(bindings.into_iter().collect()))
+        let base = BaseBindings::default();
+        for (atom, slot) in bindings {
+            base.0.borrow_mut().insert(atom, (0, slot));
+        }
+        Self::new(CaptureBase { bindings: Rc::new(base), visible: 1, arguments: None })
     }
 }
 
@@ -126,7 +180,7 @@ impl ScopeChain {
                 let found = levels
                     .iter()
                     .enumerate()
-                    .find_map(|(depth, scope)| scope.get(&atom).map(|slot| (depth, *slot)));
+                    .find_map(|(depth, scope)| scope.get(&atom).map(|slot| (depth, slot)));
                 if let (Some(memo), Some((depth, slot))) = (memo, found) {
                     memo.borrow_mut().insert(atom, (depth as u32, slot));
                 }

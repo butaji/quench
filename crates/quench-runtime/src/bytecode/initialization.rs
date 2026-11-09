@@ -3,8 +3,10 @@
 //! with its dead zone closed, on every path and every handler edge, observes no TDZ and can
 //! be read and written as a plain frame local.
 
+use crate::bitset::BitSet;
+
 use super::{
-    ControlEdge, FieldLayout, Function, ImmediateRole, InstructionField, Op, Operand,
+    ControlEdge, Function, ImmediateRole, InstructionField, Op, Operand,
     OperandKind, Superinstruction, WideInstruction,
 };
 
@@ -21,34 +23,6 @@ enum Access {
     Opaque,
 }
 
-/// Dense candidate bitsets, one row per program point.
-struct Rows {
-    words: usize,
-    bits: Vec<u64>,
-}
-
-impl Rows {
-    fn new(points: usize, words: usize) -> Self {
-        Self { words, bits: vec![0; points * words] }
-    }
-
-    fn row(&self, point: usize) -> &[u64] {
-        &self.bits[point * self.words..(point + 1) * self.words]
-    }
-
-    /// Joins `state` into `point`'s row; true when the row grew.
-    fn join(&mut self, point: usize, state: &[u64]) -> bool {
-        let row = &mut self.bits[point * self.words..(point + 1) * self.words];
-        let mut grew = false;
-        for (word, incoming) in row.iter_mut().zip(state) {
-            let next = *word | incoming;
-            grew |= next != *word;
-            *word = next;
-        }
-        grew
-    }
-}
-
 /// Of `candidates`, the slots that no read can reach while maybe-uninitialized. Function
 /// entry leaves a slot initialized unless `uninitialized_at_entry` names it, as for a
 /// register that replaces a slot and starts with whatever its pooled frame held; after that
@@ -56,22 +30,11 @@ impl Rows {
 pub(crate) fn initialized_before_reads(
     function: &Function,
     superinstructions: &[Superinstruction],
-    candidates: &[bool],
-    uninitialized_at_entry: &[bool],
-) -> Vec<bool> {
-    let mut proven = candidates.to_vec();
-    let dense: Vec<Option<usize>> = {
-        let mut next = 0;
-        candidates
-            .iter()
-            .map(|&candidate| {
-                candidate.then(|| {
-                    next += 1;
-                    next - 1
-                })
-            })
-            .collect()
-    };
+    candidates: &BitSet,
+    uninitialized_at_entry: &BitSet,
+) -> BitSet {
+    let mut proven = candidates.clone();
+    let dense = dense_indices(candidates);
     let count = dense.iter().flatten().count();
     if count == 0 {
         return proven;
@@ -81,14 +44,11 @@ pub(crate) fn initialized_before_reads(
     let blocks = BasicBlocks::of(function, &decoded);
     // States are kept per basic block, not per instruction: a row per instruction grows with
     // code length times candidates (lucide-react's 1.2 MB bundle: tens of MiB, TOD-140).
-    let mut maybe_uninitialized = Rows::new(blocks.count, words);
+    let mut maybe_uninitialized = crate::bitset::BitRows::new(blocks.count, count);
     let mut entry = vec![0; words];
-    for (slot, index) in dense.iter().enumerate() {
-        if let Some(index) = index
-            && uninitialized_at_entry.get(slot) == Some(&true)
-        {
-            entry[index / u64::BITS as usize] |= 1 << (index % u64::BITS as usize);
-        }
+    let entering = dense.iter().enumerate().filter(|(slot, _)| uninitialized_at_entry.contains(*slot));
+    for index in entering.filter_map(|(_, index)| *index) {
+        entry[index / u64::BITS as usize] |= 1 << (index % u64::BITS as usize);
     }
     maybe_uninitialized.join(0, &entry);
     let mut state = vec![0; words];
@@ -100,7 +60,7 @@ pub(crate) fn initialized_before_reads(
             state.copy_from_slice(maybe_uninitialized.row(block));
             let mut pc = start;
             while let Some(&instruction) = decoded.get(pc) {
-                abrupt.copy_from_slice(&state);
+                if blocks.interruptible(pc) { abrupt.copy_from_slice(&state); }
                 let mut apply = |slot: usize, access: Access, state: &mut [u64], abrupt: &mut [u64]| {
                     let Some(Some(index)) = dense.get(slot).copied() else {
                         return;
@@ -109,9 +69,9 @@ pub(crate) fn initialized_before_reads(
                     match access {
                         Access::Uninitialize => state[word] |= bit,
                         Access::Initialize => state[word] &= !bit,
-                        Access::Read if state[word] & bit != 0 => proven[slot] = false,
+                        Access::Read if state[word] & bit != 0 => proven.remove(slot),
                         Access::Read => {}
-                        Access::Opaque => proven[slot] = false,
+                        Access::Opaque => proven.remove(slot),
                     }
                     abrupt[word] |= state[word];
                 };
@@ -136,7 +96,7 @@ pub(crate) fn initialized_before_reads(
                     }),
                 }
                 let mut falls_through = false;
-                function.for_each_successor(pc, instruction, |successor, edge| {
+                blocks.successors.at(pc).for_each(|(successor, edge)| {
                     if blocks.continues(pc, successor, edge) {
                         falls_through = true;
                         return;
@@ -145,9 +105,8 @@ pub(crate) fn initialized_before_reads(
                         ControlEdge::Normal => &state,
                         ControlEdge::Handler => &abrupt,
                     };
-                    if let Some(block) = blocks.at(successor) {
-                        changed |= maybe_uninitialized.join(block, incoming);
-                    }
+                    // A later block takes its gain in this sweep; only a loop asks for another.
+                    if let Some(target) = blocks.at(successor) { changed |= maybe_uninitialized.join(target, incoming) & (target <= block); }
                 });
                 if !falls_through {
                     break;
@@ -157,6 +116,19 @@ pub(crate) fn initialized_before_reads(
         }
     }
     proven
+}
+
+/// Each candidate slot's index among the candidates.
+fn dense_indices(candidates: &BitSet) -> Vec<Option<usize>> {
+    let mut next = 0;
+    (0..candidates.len())
+        .map(|slot| {
+            candidates.contains(slot).then(|| {
+                next += 1;
+                next - 1
+            })
+        })
+        .collect()
 }
 
 /// The basic blocks of a function's decoded code. A block starts at the entry, at every
@@ -169,44 +141,51 @@ struct BasicBlocks {
     /// The block starting at each pc, with one entry past the end for the function's end.
     block_at: Vec<Option<u32>>,
     count: usize,
+    /// Every pc's successors, listed once for all the passes over the blocks.
+    successors: super::Successors,
 }
 
 impl BasicBlocks {
     fn of(function: &Function, decoded: &[WideInstruction]) -> Self {
+        let successors = super::Successors::of(function, decoded);
         let end = decoded.len();
-        let mut leader = vec![false; end + 1];
-        leader[0] = true;
-        for (pc, &instruction) in decoded.iter().enumerate() {
+        let mut leader = BitSet::new(end + 1);
+        leader.insert(0);
+        for pc in 0..end {
             let mut only_falls_through = true;
             let mut falls_through = false;
-            function.for_each_successor(pc, instruction, |successor, edge| {
+            successors.at(pc).for_each(|(successor, edge)| {
                 if successor == pc + 1 && edge == ControlEdge::Normal {
                     falls_through = true;
                 } else {
                     only_falls_through = false;
-                    if let Some(leader) = leader.get_mut(successor) {
-                        *leader = true;
-                    }
+                    leader.checked_insert(successor);
                 }
             });
             if !(only_falls_through && falls_through) {
-                leader[pc + 1] = true;
+                leader.insert(pc + 1);
             }
         }
         let mut starts = Vec::new();
         let mut block_at = vec![None; end + 1];
-        for (pc, _) in leader.iter().enumerate().filter(|(_, leader)| **leader) {
+        for pc in leader.iter() {
             block_at[pc] = Some(starts.len() as u32);
             starts.push(pc);
         }
         let count = starts.len();
         // The function's end is a join point no instruction follows.
         starts.retain(|&pc| pc < end);
-        Self { starts, block_at, count }
+        Self { starts, block_at, count, successors }
     }
 
     fn at(&self, pc: usize) -> Option<usize> {
         self.block_at.get(pc).copied().flatten().map(|block| block as usize)
+    }
+
+    /// Whether a handler can interrupt the instruction at `pc`: only then are the states it
+    /// passes through (`abrupt`) read, so only then are they gathered.
+    fn interruptible(&self, pc: usize) -> bool {
+        self.successors.at(pc).any(|(_, edge)| edge == ControlEdge::Handler)
     }
 
     /// Whether control from `pc` to `successor` stays inside `pc`'s block.
@@ -216,12 +195,9 @@ impl BasicBlocks {
 }
 
 /// The local slots `instruction` touches, in execution order.
-fn accesses(instruction: WideInstruction, uninitialized_at_entry: &[bool], mut access: impl FnMut(usize, Access)) {
+fn accesses(instruction: WideInstruction, uninitialized_at_entry: &BitSet, mut access: impl FnMut(usize, Access)) {
     for &field in InstructionField::ALL {
-        if matches!(
-            instruction.op().field_layout(field),
-            FieldLayout::Operand | FieldLayout::NumericIndexOperand
-        ) {
+        if instruction.op().field_layout(field).holds_operand() {
             let operand = Operand(instruction.field_value(field));
             if operand.kind() == Some(OperandKind::Local) {
                 access(usize::from(operand.payload()), Access::Read);
@@ -240,7 +216,7 @@ fn accesses(instruction: WideInstruction, uninitialized_at_entry: &[bool], mut a
             // For a slot uninitialized at entry the question is only whether a value was
             // written: a plain slot's assigning store never meets a dead zone
             // (`plain_local_slots`).
-            Op::StoreLocalPlain if uninitialized_at_entry.get(slot) == Some(&true) => {
+            Op::StoreLocalPlain if uninitialized_at_entry.contains(slot) => {
                 access(slot, Access::Initialize)
             }
             Op::StoreLocal | Op::StoreLocalPlain => access(

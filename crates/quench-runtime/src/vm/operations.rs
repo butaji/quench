@@ -1,6 +1,10 @@
 use super::*;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
+mod number_operators;
+pub(crate) use number_operators::static_number_binary;
+use number_operators::*;
+
 /// Shared Number/BigInt content mismatch diagnostic.
 pub(super) const MIXED_BIGINT_TYPES: &str =
     "Cannot mix BigInt and other types, use explicit conversions";
@@ -56,6 +60,17 @@ macro_rules! number_relations {
                 match self {
                     $(Self::$relation => stage.$stage_method(left, right)),+
                 }
+            }
+
+            /// A relational operator's answer for totally ordered operands; `None` for equality.
+            pub(super) fn of_ordering(self, ordering: std::cmp::Ordering) -> Option<bool> {
+                Some(match self {
+                    Self::LessThan => ordering.is_lt(),
+                    Self::LessEqual => ordering.is_le(),
+                    Self::GreaterThan => ordering.is_gt(),
+                    Self::GreaterEqual => ordering.is_ge(),
+                    Self::Equal | Self::NotEqual => return None,
+                })
             }
         }
     };
@@ -296,10 +311,6 @@ macro_rules! number_bitwise {
         pub(super) enum NumberBitwise { $($operation),+ }
 
         impl NumberBitwise {
-            #[cfg(feature = "aot")]
-            pub(super) const fn operator(self) -> u32 {
-                match self { $(Self::$operation => BinaryOperator::$operator as u32,)+ }
-            }
             /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]
             pub(super) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
@@ -326,12 +337,6 @@ macro_rules! number_bitwise {
                 (instruction == Op::Binary)
                     .then(|| Self::from_operator(operator))
                     .flatten()
-            }
-
-            /// Whether this operation produces a signed Int32 from signed Int32
-            /// inputs, which is the current entry guard's proof domain.
-            pub(super) const fn in_signed_int32_domain(self) -> bool {
-                matches!(self, Self::And | Self::Or | Self::Xor)
             }
 
             #[inline(always)]
@@ -506,34 +511,6 @@ impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
     }
 }
 
-/// A comparison operator applied to two numbers, or to two integers, which compare as the
-/// numbers they denote.
-#[inline(always)]
-fn number_comparison<T: PartialOrd>(op: u32, a: T, b: T) -> bool {
-    NumberRelation::from_operator(op)
-        .expect("comparison operators end at GreaterEqualThan")
-        .apply(&mut PartialOrderStage, a, b)
-}
-
-const FIRST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::Addition as u32;
-const LAST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::BitwiseAnd as u32;
-const NUMERIC_BINARY_OPERATOR_COUNT: usize =
-    (LAST_NUMERIC_BINARY_OPERATOR - FIRST_NUMERIC_BINARY_OPERATOR + 1) as usize;
-const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] = [
-    BinaryOperator::Addition,
-    BinaryOperator::Subtraction,
-    BinaryOperator::Multiplication,
-    BinaryOperator::Division,
-    BinaryOperator::Remainder,
-    BinaryOperator::Exponential,
-    BinaryOperator::ShiftLeft,
-    BinaryOperator::ShiftRight,
-    BinaryOperator::ShiftRightZeroFill,
-    BinaryOperator::BitwiseOR,
-    BinaryOperator::BitwiseXOR,
-    BinaryOperator::BitwiseAnd,
-];
-
 /// Binary operator `op` of two integers where the integers alone decide its result: a
 /// comparison's boolean through the shared relation definition, or the integer operators'
 /// result (`numeric_integer_result`); `None` for any other operator and for a result the
@@ -574,35 +551,6 @@ pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool
     // Equality, strict equality and the relational operators agree with IEEE 754
     // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
     Some(number_comparison(op, left.as_number()?, right.as_number()?))
-}
-
-#[inline(always)]
-fn numeric_binary_operator(immediate: u32) -> Option<BinaryOperator> {
-    let index = immediate.checked_sub(FIRST_NUMERIC_BINARY_OPERATOR)? as usize;
-    let operator = *NUMERIC_BINARY_OPERATORS.get(index)?;
-    (operator as u32 == immediate).then_some(operator)
-}
-
-#[inline(always)]
-fn is_numeric_binary_operator(immediate: u32) -> bool {
-    (FIRST_NUMERIC_BINARY_OPERATOR..=LAST_NUMERIC_BINARY_OPERATOR).contains(&immediate)
-}
-
-#[inline(always)]
-fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64 {
-    if let Some(operation) = NumberArithmetic::from_operator(operator as u32) {
-        return number_arithmetic_result(operation, left, right);
-    }
-    if let Some(operation) = NumberBitwise::from_operator(operator as u32) {
-        let left = number_to_u32(left) as i32;
-        let right = number_to_u32(right) as i32;
-        return number_bitwise_f64_result(operation, left, right);
-    }
-    match operator {
-        BinaryOperator::Remainder => number_remainder(left, right),
-        BinaryOperator::Exponential => exponentiate(left, right),
-        _ => unreachable!("numeric operator table only contains numeric operators"),
-    }
 }
 
 /// Number remainder after operand conversion. Also callable by the shared native
@@ -744,7 +692,7 @@ fn numeric_integer_arithmetic_result(operation: NumberArithmetic, left: i32, rig
             && int32_zero_product_sign!(left, right, |l, r| l | r, |signs| signs < 0) =>
                 Value::number(-0.0),
         Some(integer) => Value::integer(integer),
-        None => Value::number(number_arithmetic_result(operation, f64::from(left), f64::from(right))),
+        None => Value::overflowed_integer(number_arithmetic_result(operation, f64::from(left), f64::from(right))),
     }
 }
 
@@ -847,6 +795,13 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
     // lane's integer handlers free of saved registers.
     let (left, right) = (left.as_int()?, right.as_int()?);
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
+}
+
+/// `integer_operator` of a right operand the caller proved an integer: only the left's tag
+/// is tested.
+#[inline(always)]
+pub(super) fn integer_constant_operator<const OP: u32>(left: Value, right: i32) -> Option<Value> {
+    numeric_integer_result(numeric_binary_operator(OP)?, left.as_int()?, right)
 }
 
 #[inline(always)]
@@ -996,7 +951,9 @@ impl<H: Host> Vm<H> {
         self.check_execution_interrupt()?;
         // A Number-only unary Math call neither allocates nor enters guest code. Its
         // ignored receiver and trailing arguments need no roots on that path.
-        let result = if let Some(value) = super::number::math_unary_call(native, args) {
+        let result = if let Some(value) =
+            native.is_math_function().then(|| super::number::math_unary_call(native, args)).flatten()
+        {
             Ok(value)
         } else {
             self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
@@ -1014,6 +971,31 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// The family whose entry runs `native` (`NativeFamily`): the native alone decides it, so
+    /// each native's is derived once, on its first call, and read after.
+    #[inline(always)]
+    fn native_family_of(&mut self, native: Native) -> NativeFamily {
+        let index = native as usize;
+        if let Some(&family) = self.native_families.get(index)
+            && family != NativeFamily::Unresolved
+        {
+            return family;
+        }
+        self.resolve_native_family(native)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn resolve_native_family(&mut self, native: Native) -> NativeFamily {
+        let family = Self::native_family(native);
+        let index = native as usize;
+        if self.native_families.len() <= index {
+            self.native_families.resize(index + 1, NativeFamily::Unresolved);
+        }
+        self.native_families[index] = family;
+        family
+    }
+
     fn call_native_dispatch(
         &mut self,
         p: &ResidualProgram,
@@ -1021,108 +1003,57 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        // A JavaScript call of a Wasm export takes no family test first: calls across the
-        // boundary are a hot path (JetStream richards-wasm).
-        if native == Native::WasmExportedFunction {
-            return self.call_wasm_exported_function(p, args);
+        match self.native_family_of(native) {
+            NativeFamily::WasmExport => self.call_wasm_exported_function(p, args),
+            NativeFamily::Generator => self.generator_prototype_method(p, native, this, args),
+            NativeFamily::ArrayCallback => self.array_callback_native(p, native, this, args),
+            NativeFamily::StringHtml => self
+                .string_html_method(p, native, this, args)
+                .expect("an HTML method's family is its own"),
+            NativeFamily::Finalization => self.call_finalization_registry_native(p, native, this, args),
+            NativeFamily::Disposal => self.call_disposal_native(p, native, this, args),
+            NativeFamily::Collection => self.call_collection_native(p, native, this, args),
+            NativeFamily::WasmJs => self.call_wasm_js_native(p, native, this, args),
+            NativeFamily::ShadowRealm => self.shadow_realm_native(p, native, this, args),
+            NativeFamily::ShadowRealmCalled => {
+                Err(self.type_error(p, "ShadowRealm constructor requires 'new'".into()))
+            }
+            NativeFamily::WeakCalled => {
+                let constructor = match native {
+                    Native::WeakMap => "WeakMap",
+                    Native::WeakSet => "WeakSet",
+                    _ => "WeakRef",
+                };
+                Err(self.type_error(p, format!("Constructor {constructor} requires 'new'")))
+            }
+            NativeFamily::TypedArray => self
+                .maybe_call_typed_array_native(p, native, this, args)
+                .expect("a typed array method's family is its own"),
+            NativeFamily::TypedArrayCalled => {
+                Err(self.type_error(p, "typed array constructor requires new".into()))
+            }
+            NativeFamily::Atomics => self.atomics_native(p, native, args),
+            NativeFamily::Test262Agent => self.call_test262_agent(p, args),
+            NativeFamily::BigInt => self.bigint_native(p, native, this, args),
+            NativeFamily::Promise => self.call_promise_native(p, native, this, args),
+            NativeFamily::AsyncFromSyncValue => self.async_from_sync_value(args),
+            NativeFamily::AsyncFromSyncValueRejected => self.async_from_sync_value_rejected(p, args),
+            NativeFamily::AsyncGeneratorReturnFulfilled => self.async_generator_return_fulfilled(p, args),
+            NativeFamily::AsyncGeneratorReturnRejected => self.async_generator_return_rejected(p, args),
+            NativeFamily::AsyncGeneratorDelegateReturnStart => {
+                self.async_generator_delegate_return_start(p, args)
+            }
+            NativeFamily::ObjectStatic => self.call_object_native(p, native, args),
+            NativeFamily::LazyDataProperty => self.lazy_data_property_access(p, this, args),
+            NativeFamily::ProxyRevoke => {
+                let callee = self
+                    .active_native_callable()
+                    .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
+                self.proxy_revoke(callee)
+            }
+            NativeFamily::DataView => self.data_view_native(p, native, this, args),
+            NativeFamily::Table | NativeFamily::Unresolved => self.call_native_table(p, native, this, args),
         }
-        // Nor does a generator's resumption, once per value a `for-of` or spread draws from it
-        // (`call_collection_native` routes these alike).
-        if matches!(native, Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow) {
-            return self.generator_prototype_method(p, native, this, args);
-        }
-        // The string and RegExp methods belong to none of the families below.
-        if native.is_string_regexp_or_math() {
-            return self.call_native_table(p, native, this, args);
-        }
-        if let Some(result) = self.string_html_method(p, native, this, args) {
-            return result;
-        }
-        if Self::is_finalization_native(native) {
-            return self.call_finalization_registry_native(p, native, this, args);
-        }
-        if Self::is_disposal_native(native) {
-            return self.call_disposal_native(p, native, this, args);
-        }
-        if Self::is_collection_native(native) {
-            return self.call_collection_native(p, native, this, args);
-        }
-        if super::wasm_js::is_wasm_js_native(native) {
-            return self.call_wasm_js_native(p, native, this, args);
-        }
-        if matches!(
-            native,
-            Native::ShadowRealmEvaluate
-                | Native::ShadowRealmImportValue
-                | Native::ShadowRealmImportValueFulfilled
-                | Native::ShadowRealmWrappedFunction
-        ) {
-            return self.shadow_realm_native(p, native, this, args);
-        }
-        if native == Native::ShadowRealm {
-            return Err(self.type_error(p, "ShadowRealm constructor requires 'new'".into()));
-        }
-        if matches!(native, Native::WeakMap | Native::WeakSet | Native::WeakRef) {
-            let constructor = match native {
-                Native::WeakMap => "WeakMap",
-                Native::WeakSet => "WeakSet",
-                Native::WeakRef => "WeakRef",
-                _ => unreachable!(),
-            };
-            return Err(self.type_error(
-                p,
-                format!("Constructor {constructor} requires 'new'"),
-            ));
-        }
-        if let Some(result) = self.maybe_call_typed_array_native(p, native, this, args) {
-            return result;
-        }
-        if native.is_typed_array_constructor() {
-            return Err(self.type_error(p, "typed array constructor requires new".into()));
-        }
-        if native.is_atomics_native() {
-            return self.atomics_native(p, native, args);
-        }
-        if native == Native::Test262Agent {
-            return self.call_test262_agent(p, args);
-        }
-        if native.is_bigint_native() {
-            return self.bigint_native(p, native, this, args);
-        }
-        if native.is_promise_native() {
-            return self.call_promise_native(p, native, this, args);
-        }
-        if native == Native::AsyncFromSyncValue {
-            return self.async_from_sync_value(args);
-        }
-        if native == Native::AsyncFromSyncValueRejected {
-            return self.async_from_sync_value_rejected(p, args);
-        }
-        if native == Native::AsyncGeneratorReturnFulfilled {
-            return self.async_generator_return_fulfilled(p, args);
-        }
-        if native == Native::AsyncGeneratorReturnRejected {
-            return self.async_generator_return_rejected(p, args);
-        }
-        if native == Native::AsyncGeneratorDelegateReturnStart {
-            return self.async_generator_delegate_return_start(p, args);
-        }
-        if native.is_object_static() {
-            return self.call_object_native(p, native, args);
-        }
-        if native == Native::LazyDataProperty {
-            return self.lazy_data_property_access(p, this, args);
-        }
-        if native == Native::ProxyRevoke {
-            let callee = self
-                .active_native_callable()
-                .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
-            return self.proxy_revoke(callee);
-        }
-        if native.is_data_view_native() {
-            return self.data_view_native(p, native, this, args);
-        }
-        self.call_native_table(p, native, this, args)
     }
 
     /// The natives no family above claims, by kind.
@@ -2164,7 +2095,8 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(
                 p,
                 if self.is_bigint(left) && self.is_bigint(right) {
-                    "BigInt operation is not supported"
+                    // `>>>` is the one numeric operator BigInt lacks.
+                    "BigInts have no unsigned right shift, use >> instead"
                 } else {
                     MIXED_BIGINT_TYPES
                 }
@@ -2172,14 +2104,14 @@ impl<H: Host> Vm<H> {
             ));
         };
         match result {
-            Ok(value) => Ok(self.heap.alloc(Cell::bigint(value))),
+            Ok(value) => Ok(self.heap.alloc_bigint(value)),
             Err(crate::bigint::Error::DivisionByZero) => {
                 Err(self.range_error(p, "Division by zero".into()))
             }
             Err(crate::bigint::Error::NegativeExponent) => {
                 Err(self.range_error(p, "Exponent must be positive".into()))
             }
-            Err(crate::bigint::Error::ExponentTooLarge) => {
+            Err(crate::bigint::Error::TooLarge) => {
                 Err(self.range_error(p, "Maximum BigInt size exceeded".into()))
             }
         }
@@ -2190,47 +2122,34 @@ impl<H: Host> Vm<H> {
     }
 
     /// BigInt operator `op` of two BigInt values: the result, or the error it raises. `None`
-    /// when an operand is not a BigInt or the operator has no BigInt meaning.
+    /// when an operand is not a BigInt or the operator has no BigInt meaning. Inline, so the
+    /// result is written where its caller allocates it.
+    #[inline(always)]
     fn bigint_operation(
         &self,
         op: u32,
         left: Value,
         right: Value,
-    ) -> Option<Result<num_bigint::BigInt, crate::bigint::Error>> {
+    ) -> Option<Result<crate::bigint::JsBigInt, crate::bigint::Error>> {
         const EXPONENTIAL: u32 = BinaryOperator::Exponential as u32;
+        use crate::bigint::Bitwise;
         let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
             (self.heap.get(left), self.heap.get(right))
         else {
             return None;
         };
-        let (left, right): (&num_bigint::BigInt, &num_bigint::BigInt) = (left, right);
-        let nonzero_divisor = || {
-            if right.sign() == num_bigint::Sign::NoSign {
-                Err(crate::bigint::Error::DivisionByZero)
-            } else {
-                Ok(right)
-            }
-        };
         Some(match op {
-            ADDITION => Ok(left + right),
-            SUBTRACTION => Ok(left - right),
-            MULTIPLICATION => Ok(left * right),
-            DIVISION => nonzero_divisor().map(|right| left / right),
-            REMAINDER => nonzero_divisor().map(|right| left % right),
-            EXPONENTIAL => {
-                if right.sign() == num_bigint::Sign::Minus {
-                    Err(crate::bigint::Error::NegativeExponent)
-                } else {
-                    u32::try_from(right.magnitude())
-                        .map(|exponent| left.pow(exponent))
-                        .map_err(|_| crate::bigint::Error::ExponentTooLarge)
-                }
-            }
-            SHIFT_LEFT => crate::bigint::shift(left, right, true),
-            SHIFT_RIGHT => crate::bigint::shift(left, right, false),
-            BITWISE_OR => Ok(left | right),
-            BITWISE_XOR => Ok(left ^ right),
-            BITWISE_AND => Ok(left & right),
+            ADDITION => Ok(left.add(right)),
+            SUBTRACTION => Ok(left.sub(right)),
+            MULTIPLICATION => left.mul(right),
+            DIVISION => left.div_rem(right, true),
+            REMAINDER => left.div_rem(right, false),
+            EXPONENTIAL => left.pow(right),
+            SHIFT_LEFT => left.shift(right, true),
+            SHIFT_RIGHT => left.shift(right, false),
+            BITWISE_OR => Ok(left.bitwise(right, Bitwise::Or)),
+            BITWISE_XOR => Ok(left.bitwise(right, Bitwise::Xor)),
+            BITWISE_AND => Ok(left.bitwise(right, Bitwise::And)),
             _ => return None,
         })
     }
@@ -2239,7 +2158,7 @@ impl<H: Host> Vm<H> {
     /// allocated, or `None`.
     pub(super) fn bigint_binary_value(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
         let value = self.bigint_operation(op, left, right)?.ok()?;
-        Some(self.heap.alloc(Cell::bigint(value)))
+        Some(self.heap.alloc_bigint(value))
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
@@ -2247,13 +2166,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let (left, right) = (self.heap.string(left)?, self.heap.string(right)?);
         let ordering = left.units().cmp(&right.units());
-        Some(match NumberRelation::from_operator(op)? {
-            NumberRelation::LessThan => ordering.is_lt(),
-            NumberRelation::LessEqual => ordering.is_le(),
-            NumberRelation::GreaterThan => ordering.is_gt(),
-            NumberRelation::GreaterEqual => ordering.is_ge(),
-            NumberRelation::Equal | NumberRelation::NotEqual => return None,
-        })
+        NumberRelation::from_operator(op)?.of_ordering(ordering)
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.
@@ -2264,36 +2177,29 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let ordering = left.cmp(right);
-        Some(match NumberRelation::from_operator(op)? {
-            NumberRelation::LessThan => ordering.is_lt(),
-            NumberRelation::LessEqual => ordering.is_le(),
-            NumberRelation::GreaterThan => ordering.is_gt(),
-            NumberRelation::GreaterEqual => ordering.is_ge(),
-            NumberRelation::Equal | NumberRelation::NotEqual => return None,
-        })
+        NumberRelation::from_operator(op)?.of_ordering(ordering)
     }
 
-    #[cold]
     #[inline(never)]
-    /// String concatenation for `+` once at least one operand is a string: an interned
-    /// result of joining two string values directly, or coercing the operands and interning
-    /// their joined text when either operand is not already a string.
+    /// String concatenation for `+` once at least one operand is a string: the cached result
+    /// when the dynamic-string cache knows the pair, otherwise both operands' string values
+    /// joined.
     fn concatenate(
         &mut self,
         p: &ResidualProgram,
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        if let Some(value) = self.intern_dynamic_concat(left, right) {
+        if let Some(value) = self.intern_dynamic_concat(left, right).or_else(|| self.short_ascii_concat(left, right)) {
             #[cfg(feature = "profile-aggregate")]
             self.profile.string_concat(true);
             return Ok(value);
         }
         #[cfg(feature = "profile-aggregate")]
         self.profile.string_concat(false);
-        let mut text = self.coerce_js_string(p, left)?;
-        text.push_js_string(&self.coerce_js_string(p, right)?);
-        Ok(self.intern_dynamic_value(text))
+        // Not interned: hashing the result would read every unit of a growing `out += n`.
+        let text = self.coerce_js_string(p, left)?.concat(&self.coerce_js_string(p, right)?);
+        Ok(self.heap.alloc_string(text))
     }
 
     /// `+` of two operands that become strings without guest code, Numbers and strings,
@@ -2334,12 +2240,12 @@ impl<H: Host> Vm<H> {
             return Ok(Self::integrity_bool(result));
         }
         let answer = match op {
-            0 => self.equal(p, left, right)?,
-            1 => !self.equal(p, left, right)?,
-            2 => self.strict_equal(left, right),
-            3 => !self.strict_equal(left, right),
-            20 => self.has_property(p, right, left)?,
-            21 => self.instanceof(p, left, right)?,
+            op if op == BinaryOperator::Equality as u32 => self.equal(p, left, right)?,
+            op if op == BinaryOperator::Inequality as u32 => !self.equal(p, left, right)?,
+            op if op == BinaryOperator::StrictEquality as u32 => self.strict_equal(left, right),
+            op if op == BinaryOperator::StrictInequality as u32 => !self.strict_equal(left, right),
+            op if op == BinaryOperator::In as u32 => self.has_property(p, right, left)?,
+            op if op == BinaryOperator::Instanceof as u32 => self.instanceof(p, left, right)?,
             _ => return Ok(Value::number(self.numeric(p, op, left, right)?)),
         };
         Ok(if answer { Value::TRUE } else { Value::FALSE })
@@ -2398,9 +2304,9 @@ impl<H: Host> Vm<H> {
         let Some(Cell::BigInt(integer)) = self.heap.get(input) else {
             return None;
         };
-        let integer: &num_bigint::BigInt = integer;
-        let next = if decrement { integer - 1_u8 } else { integer + 1_u8 };
-        Some(self.heap.alloc(Cell::bigint(next)))
+        let one = crate::bigint::JsBigInt::from(1_u8);
+        let next = if decrement { integer.sub(&one) } else { integer.add(&one) };
+        Some(self.heap.alloc_bigint(next))
     }
 
     /// Shared numeric update after ToNumeric, used by bytecode and native hosts.
@@ -2478,6 +2384,8 @@ impl<H: Host> Vm<H> {
                     // Operands of one type compare as `===` does.
                     _ if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) => l == r,
                     (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) => left == right,
+                    // Two distinct Symbols, as a kind tag (`x.kind == Kind.A`) compares.
+                    (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => false,
                     _ if self.is_object_like(left) && self.is_object_like(right) => false,
                     _ => return None,
                 },
@@ -2645,4 +2553,108 @@ pub(super) fn equality_operator(op: u32) -> Option<(bool, bool)> {
     );
     let offset = op.wrapping_sub(EQUALITY);
     (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))
+}
+
+/// The entry that runs a native's call (`Vm::call_native_dispatch`), one per family of
+/// natives that share an implementation; `Table` for the natives no family claims.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub(super) enum NativeFamily {
+    /// Not derived yet (`Vm::native_families`).
+    Unresolved,
+    WasmExport,
+    Generator,
+    ArrayCallback,
+    StringHtml,
+    Finalization,
+    Disposal,
+    Collection,
+    WasmJs,
+    ShadowRealm,
+    ShadowRealmCalled,
+    WeakCalled,
+    TypedArray,
+    TypedArrayCalled,
+    Atomics,
+    Test262Agent,
+    BigInt,
+    Promise,
+    AsyncFromSyncValue,
+    AsyncFromSyncValueRejected,
+    AsyncGeneratorReturnFulfilled,
+    AsyncGeneratorReturnRejected,
+    AsyncGeneratorDelegateReturnStart,
+    ObjectStatic,
+    LazyDataProperty,
+    ProxyRevoke,
+    DataView,
+    Table,
+}
+
+impl<H: Host> Vm<H> {
+/// `native`'s family, by the families' own membership tests in their precedence order: the
+/// string, RegExp and Math methods belong to none of the families after them.
+fn native_family(native: Native) -> NativeFamily {
+    use NativeFamily as F;
+    match native {
+        Native::WasmExportedFunction => return F::WasmExport,
+        Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => return F::Generator,
+        _ => {}
+    }
+    if native.is_string_regexp_or_math() {
+        return F::Table;
+    }
+    if native.is_array_callback() {
+        return F::ArrayCallback;
+    }
+    if super::string::is_string_html_method(native) {
+        return F::StringHtml;
+    }
+    if Self::is_finalization_native(native) {
+        return F::Finalization;
+    }
+    if Self::is_disposal_native(native) {
+        return F::Disposal;
+    }
+    if Self::is_collection_native(native) {
+        return F::Collection;
+    }
+    if super::wasm_js::is_wasm_js_native(native) {
+        return F::WasmJs;
+    }
+    match native {
+        Native::ShadowRealmEvaluate
+        | Native::ShadowRealmImportValue
+        | Native::ShadowRealmImportValueFulfilled
+        | Native::ShadowRealmWrappedFunction => return F::ShadowRealm,
+        Native::ShadowRealm => return F::ShadowRealmCalled,
+        Native::WeakMap | Native::WeakSet | Native::WeakRef => return F::WeakCalled,
+        _ => {}
+    }
+    if native.is_typed_array_method() || native.is_typed_array_iterator() {
+        return F::TypedArray;
+    }
+    if native.is_typed_array_constructor() {
+        return F::TypedArrayCalled;
+    }
+    if native.is_atomics_native() {
+        return F::Atomics;
+    }
+    match native {
+        Native::Test262Agent => return F::Test262Agent,
+        _ if native.is_bigint_native() => return F::BigInt,
+        _ if native.is_promise_native() => return F::Promise,
+        Native::AsyncFromSyncValue => return F::AsyncFromSyncValue,
+        Native::AsyncFromSyncValueRejected => return F::AsyncFromSyncValueRejected,
+        Native::AsyncGeneratorReturnFulfilled => return F::AsyncGeneratorReturnFulfilled,
+        Native::AsyncGeneratorReturnRejected => return F::AsyncGeneratorReturnRejected,
+        Native::AsyncGeneratorDelegateReturnStart => return F::AsyncGeneratorDelegateReturnStart,
+        _ if native.is_object_static() => return F::ObjectStatic,
+        Native::LazyDataProperty => return F::LazyDataProperty,
+        Native::ProxyRevoke => return F::ProxyRevoke,
+        _ if native.is_data_view_native() => return F::DataView,
+        _ => {}
+    }
+    F::Table
+}
 }

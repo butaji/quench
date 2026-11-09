@@ -40,13 +40,13 @@ members!(Member, "fetchRequest", [
 
 /// A request's fields.
 pub(crate) mod field {
-    pub(crate) const METHOD: &str = "method";
-    pub(crate) const URL: &str = "url";
-    pub(crate) const HEADERS: &str = "headers";
-    pub(crate) const HEADERS_STATE: &str = "headersState";
-    pub(crate) const BODY: &str = "body";
-    pub(crate) const SIGNAL: &str = "signal";
-    pub(crate) const REDIRECT: &str = "redirect";
+    pub(crate) use crate::modules::keys::METHOD;
+    pub(crate) use crate::modules::keys::URL;
+    pub(crate) use crate::modules::keys::HEADERS;
+    pub(crate) use crate::modules::keys::HEADERS_STATE;
+    pub(crate) use crate::modules::keys::BODY;
+    pub(crate) use crate::modules::keys::SIGNAL;
+    pub(crate) use crate::modules::keys::REDIRECT;
     pub(crate) const MODE: &str = "mode";
     pub(crate) const CREDENTIALS: &str = "credentials";
     pub(crate) const CACHE: &str = "cache";
@@ -140,7 +140,7 @@ fn follow_signal(c: &mut Context<'_>, parent: RootId) -> Outcome {
         return Ok(signal);
     }
     let listener = function(c, Member::FollowAbort, "abort", &[signal, parent])?;
-    let options = literal(c, &[])?;
+    let options = literal(c, &[], &[])?;
     let once = c.boolean(true);
     put(c, options, "once", once)?;
     let kind = c.string_rooted("abort");
@@ -187,7 +187,7 @@ fn method(c: &mut Context<'_>, value: RootId) -> Result<String, RootedError> {
     if method == PATCH_LOWERCASE {
         let warning = c.string_rooted(PATCH_WARNING);
         let code = c.string_rooted(PATCH_WARNING_CODE);
-        let options = literal(c, &[("code", code)])?;
+        let options = literal(c, &["code"], &[code])?;
         let process = c.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("fetch has no process"))?;
         let emit = get(c, process, "emitWarning")?;
         c.call_rooted(emit, process, &[warning, options])?;
@@ -209,7 +209,7 @@ pub(crate) fn construct(c: &mut Context<'_>, this: RootId, input: RootId, init: 
         return Err(type_error(c, "Request constructor: Expected init (\"Argument 2\") to be an object."));
     }
     let input_state = private_slot::read(c, input, Slot::Request)?;
-    let state = record(c, &[])?;
+    let state = record(c, &[], &[])?;
     let (url, parent_signal) = match input_state {
         Some(source) => {
             for name in [METHOD, REDIRECT, MODE, CREDENTIALS, CACHE, REFERRER, REFERRER_POLICY, INTEGRITY, KEEPALIVE, DUPLEX] {
@@ -360,7 +360,7 @@ fn clone(c: &mut Context<'_>, this: RootId) -> Outcome {
         return Err(type_error(c, "Request.clone: Body has already been consumed."));
     }
     let object = super::bare_instance(c, super::table::REQUEST)?;
-    let copy = record(c, &[])?;
+    let copy = record(c, &[], &[])?;
     for name in [METHOD, URL, REDIRECT, MODE, CREDENTIALS, CACHE, REFERRER, REFERRER_POLICY, INTEGRITY, KEEPALIVE, DUPLEX] {
         let value = get(c, state, name)?;
         put(c, copy, name, value)?;
@@ -465,7 +465,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
                 };
                 fields.push((name, value));
             }
-            let data = literal(c, &fields)?;
+            let data = super::literal_fields(c, &fields)?;
             custom_inspect(c, this, "Request", data, args)
         }
         Member::FollowAbort => {

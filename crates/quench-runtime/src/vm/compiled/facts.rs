@@ -12,13 +12,17 @@
 //! never the body. Constants, definitions and joins use the one `crate::typed_ir` lattice.
 
 use crate::bytecode::{Constant, ControlFlowLayout, Op, Operand, OperandKind, Register, WideInstruction};
-use crate::value::Value;
 use crate::typed_ir::Type;
 use cranelift_codegen::bitset::CompoundBitSet;
 use std::num::NonZeroUsize;
 
 /// Scratch storage spills for larger functions without limiting region size.
 const INLINE_ANALYSIS_ITEMS: usize = 16;
+
+/// A guarded block input contract the fixed point keeps: the register holds the type on
+/// entry to the leader, which every native edge into it proves (`Lowering::conform`) and
+/// every in-loop definition preserves (`loop_int32`).
+pub(super) type Contract = (usize, Register, Type);
 
 /// The registers' types on entry to each block leader; `None` at a PC that leads no block or
 /// that no path from the entry reaches.
@@ -30,11 +34,13 @@ pub(super) struct Facts {
     reached: CompoundBitSet,
     /// Join of the entry's backedge inputs, without the unknown external input.
     backedge: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]>,
+    contracts: Vec<Contract>,
 }
 
 impl Facts {
     pub(super) fn reached(&self, pc: usize) -> bool { self.reached.contains(pc) }
     pub(super) fn backedge(&self) -> &[Type] { &self.backedge }
+
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
     /// the PC table stores element offsets, including reachable zero-register rows.
     pub(super) fn at(&self, pc: usize) -> Option<&[Type]> {
@@ -92,17 +98,29 @@ impl Facts {
 
     fn merge(&mut self, pc: usize, incoming: &[Type]) -> bool {
         let Some(slot) = self.offsets.get_mut(pc) else { return false };
-        let Some(offset) = *slot else {
-            *slot = NonZeroUsize::new(self.types.len() + 1);
-            self.types.extend_from_slice(incoming);
-            return true;
+        let (start, mut changed) = match *slot {
+            None => {
+                *slot = NonZeroUsize::new(self.types.len() + 1);
+                self.types.extend_from_slice(incoming);
+                (self.types.len() - incoming.len(), true)
+            }
+            Some(offset) => {
+                let start = offset.get() - 1;
+                let mut changed = false;
+                for (known, incoming) in self.types[start..start + self.registers].iter_mut().zip(incoming) {
+                    let joined = known.join(*incoming);
+                    changed |= joined != *known;
+                    *known = joined;
+                }
+                (start, changed)
+            }
         };
-        let start = offset.get() - 1;
-        let mut changed = false;
-        for (known, incoming) in self.types[start..start + self.registers].iter_mut().zip(incoming) {
-            let joined = known.join(*incoming);
-            changed |= joined != *known;
-            *known = joined;
+        for &(_, register, required) in self.contracts.iter().filter(|(at, _, _)| *at == pc) {
+            let known = &mut self.types[start + usize::from(register)];
+            if !known.is_subtype(required) {
+                *known = required;
+                changed = true;
+            }
         }
         changed
     }
@@ -122,45 +140,21 @@ fn register(operand: Operand) -> Option<Register> {
     (operand.kind()? == OperandKind::Register).then(|| operand.register_index()).flatten()
 }
 
-/// The value a constant denotes where it is an immediate (no heap allocation): numbers,
-/// booleans, `null` and `undefined`.
-pub(super) fn immediate(constant: &Constant) -> Option<Value> {
-    match constant {
-        Constant::Number(number) => Some(Value::number(*number)),
-        Constant::Boolean(value) => Some(Value::boolean(*value)),
-        Constant::Null => Some(Value::NULL),
-        Constant::Undefined => Some(Value::UNDEFINED),
-        _ => None,
-    }
-}
-
-/// A numeric constant is a static semantic value, regardless of machine view.
-pub(super) fn constant_number(constants: &[Constant], operand: Operand) -> Option<f64> {
-    (operand.kind() == Some(OperandKind::Constant)).then_some(())?;
-    constants.get(usize::from(operand.payload())).and_then(immediate).and_then(Value::as_number)
-}
-
 /// The semantic type of an operand, independent of its selected machine view.
-pub(super) fn operand_type(constants: &[Constant], operand: Operand, register_type: impl Fn(Register) -> Type) -> Type {
+pub(in crate::vm) fn operand_type(constants: &[Constant], operand: Operand, register_type: impl Fn(Register) -> Type) -> Type {
     match operand.kind() {
         Some(OperandKind::Register) => register_type(operand.payload()),
-        Some(OperandKind::Constant) => constants.get(usize::from(operand.payload())).and_then(immediate)
-            .map_or(Type::ANY, Type::immediate),
+        Some(OperandKind::Constant) => constants.get(usize::from(operand.payload())).map_or(Type::ANY, constant_type),
         _ => Type::ANY,
     }
 }
 
-fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
+pub(super) fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
     for register in operands.into_iter().filter_map(register) {
         if !types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)) {
             set(types, register, Type::NUMBER);
         }
     }
-}
-
-/// Whether an immediate is an int32 Number in its tagged encoding.
-pub(super) fn is_int32(value: Value) -> bool {
-    Type::immediate(value).is_subtype(Type::INT32)
 }
 
 /// Proves each register operand int32: the instruction leaves where one is not.
@@ -176,6 +170,15 @@ fn set(types: &mut [Type], register: Register, ty: Type) {
     }
 }
 
+/// Whether a binary `operator` yields a Boolean however it completes: an equality, a
+/// relation, `instanceof` or `in`.
+pub(super) fn boolean_binary(operator: u32) -> bool {
+    use oxc_ast::ast::BinaryOperator;
+    super::super::operations::equality_operator(operator).is_some()
+        || super::super::operations::NumberRelation::from_operator(operator).is_some()
+        || [BinaryOperator::Instanceof, BinaryOperator::In].iter().any(|relation| *relation as u32 == operator)
+}
+
 /// Applies `instruction` to `types`; returns where control goes next. A call continues where
 /// the region makes native calls (`native_calls`), past which no object keeps its shape.
 fn transfer(
@@ -188,8 +191,7 @@ fn transfer(
     let op = instruction.op();
     match op {
         Op::LoadConst => {
-            let ty = constants.get(instruction.constant_index()).and_then(immediate)
-                .map_or(Type::ANY, Type::immediate);
+            let ty = constants.get(instruction.constant_index()).map_or(Type::ANY, constant_type);
             set(types, instruction.result_register(), ty);
             Flow::Next
         }
@@ -204,52 +206,24 @@ fn transfer(
             set(types, instruction.result_register(), Type::INT32);
             Flow::Next
         }
-        _ if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary => {
-            let operator = instruction.binary_operator();
-            match super::super::operations::NumberBitwise::from_js_instruction(op, operator) {
-                Some(bitwise) => {
-                    // ToInt32 of any Number runs natively; anything else leaves.
-                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
-                    let right = constant_number(constants, instruction.operand_c());
-                    let result = if bitwise.result_is_int32(right) { Type::INT32 } else { Type::NUMBER };
-                    if !instruction.returns_from_frame() {
-                        set(types, instruction.result_register(), result);
-                    }
-                }
-                None if super::super::operations::NumberArithmetic::from_js_instruction(op, operator).is_some() => {
-                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
-                    if !instruction.returns_from_frame() {
-                        set(types, instruction.result_register(), Type::NUMBER);
-                    }
-                }
-                None if super::super::operations::NumberRelation::from_operator(operator).is_some() => {
-                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
-                    if !instruction.returns_from_frame() {
-                        set(types, instruction.result_register(), Type::language(crate::ValueType::Boolean));
-                    }
-                }
-                None => {
-                    for register in written(instruction) {
-                        set(types, register, Type::ANY);
-                    }
-                }
-            }
-            if instruction.returns_from_frame() { Flow::Leaves } else { Flow::Next }
-        }
+        _ if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary => binary::numeric_binary(types, instruction, constants, written),
         Op::JumpBinaryFalse if super::nullish_comparison(constants, instruction,
             |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_some() => {
             Flow::To(instruction.jump_target() as usize)
         }
         Op::JumpBinaryFalse => {
+            // An equality, loose or strict, and `instanceof` decide operands of any type
+            // (`lane_region::relation`: two objects compare by identity) and prove nothing of
+            // them; every other relation compares Numbers.
             let operands = [instruction.operand_b(), instruction.operand_c()];
-            let integer = operands.iter().all(|operand| operand_type(constants, *operand,
-                |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_subtype(Type::INT32));
-            if integer { prove_int32(types, operands); } else { prove_number(types, operands); }
+            let operand_types = operands.map(|operand| operand_type(constants, operand,
+                |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)));
+            let operator = instruction.binary_operator_field();
+            let numeric = super::super::operations::NumberRelation::from_operator(operator).is_some()
+                && super::super::operations::equality_operator(operator).is_none();
+            if operand_types.iter().all(|ty| ty.is_subtype(Type::INT32)) { prove_int32(types, operands); }
+            else if numeric { prove_number(types, operands); }
             Flow::To(instruction.jump_target() as usize)
-        }
-        Op::Call if super::guarded_call_instruction(instruction) => {
-            set(types, instruction.result_register(), Type::ANY);
-            Flow::Next
         }
         Op::Call if native_calls => {
             for ty in types.iter_mut() {
@@ -263,9 +237,9 @@ fn transfer(
                 set(types, register, Type::ANY);
             }
             match op.control_flow_layout() {
-                ControlFlowLayout::Fallthrough if matches!(op, Op::Nop | Op::LoadThis | Op::LoadCapture
-                    | Op::GetField | Op::GetIndex | Op::SetField | Op::SetFieldStrict
-                    | Op::SetThisField | Op::SetThisFieldStrict | Op::SetIndex) => Flow::Next,
+                ControlFlowLayout::Fallthrough if matches!((op.is_named_field_access(), op), (true, _)
+                    | (_, Op::Nop | Op::LoadThis | Op::LoadCapture | Op::GetIndex
+                    | Op::SetIndex)) => Flow::Next,
                 ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
                     Flow::To(instruction.jump_target() as usize)
                 }
@@ -285,9 +259,11 @@ pub(super) fn analyze(
     written: &dyn Fn(WideInstruction) -> Vec<Register>,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
     native_calls: bool,
+    contracts: &[Contract],
 ) -> Facts {
     let mut facts = Facts { offsets: vec![None; instructions.len()], types: Vec::new(), registers: initial.len(),
-        reached: CompoundBitSet::with_capacity(instructions.len()), backedge: smallvec::SmallVec::new() };
+        reached: CompoundBitSet::with_capacity(instructions.len()), backedge: smallvec::SmallVec::new(),
+        contracts: contracts.to_vec() };
     let mut pending = smallvec::SmallVec::<[usize; INLINE_ANALYSIS_ITEMS]>::new();
     let mut types = smallvec::SmallVec::<[Type; INLINE_ANALYSIS_ITEMS]>::new();
     if entry < instructions.len() && facts.merge(entry, initial) {
@@ -346,7 +322,7 @@ pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitS
     while !candidates.is_empty() {
         let mut inputs = initial.to_vec();
         for register in candidates.iter() { inputs[register] = Type::INT32; }
-        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls);
+        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, &[]);
         let mut rejected: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
         for register in candidates.iter() {
             if facts.backedge().get(register) != Some(&Type::INT32) { rejected.insert(register); }
@@ -364,6 +340,30 @@ pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitS
     None
 }
 
+/// Prove int32 header contracts of inner loops by induction: each candidate (a loop header
+/// and a register) holds an int32 there when every definition in its loop's body yields one
+/// under all the contracts. Rejecting one removes it from the next iteration's hypothesis.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Contract, std::ops::RangeInclusive<usize>)>,
+    instructions: &[WideInstruction], leaders: &CompoundBitSet, constants: &[Constant],
+    written: &dyn Fn(WideInstruction) -> Vec<Register>, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
+    native_calls: bool) -> Option<Facts> {
+    while !candidates.is_empty() {
+        let contracts: Vec<Contract> = candidates.iter().map(|(contract, _)| *contract).collect();
+        let facts = analyze(entry, initial, instructions, leaders, constants, written, own_shape, native_calls, &contracts);
+        let mut rejected = vec![false; candidates.len()];
+        facts.for_each_definition(instructions, leaders, constants, written, native_calls, |pc, register, ty| {
+            for (index, ((_, candidate, required), body)) in candidates.iter().enumerate() {
+                if *candidate == register && body.contains(&pc) && !ty.is_subtype(*required) { rejected[index] = true; }
+            }
+        });
+        if !rejected.contains(&true) { return Some(facts); }
+        let mut index = 0;
+        candidates.retain(|_| { index += 1; !rejected[index - 1] });
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,7 +374,6 @@ mod tests {
             "function caller(f, value) { f(value); return value; }", "shape-call.js").unwrap();
         let function = program.function(1);
         let call = function.instructions().find(|instruction| instruction.op() == Op::Call).unwrap();
-        assert!(!super::super::guarded_call_instruction(call));
         let null = Type::language(crate::ValueType::Null);
         for ty in [Type::direct_object(7), Type::direct_object(7).join(null),
             Type::direct_object(7).join(Type::NULLISH), Type::INT32, Type::ANY] {
@@ -395,7 +394,7 @@ mod tests {
         let instructions: Vec<_> = function.instructions().collect();
         let leaders = super::super::lane_region::leaders(&instructions);
         let edges: Vec<_> = instructions.iter().enumerate().filter_map(|(pc, instruction)|
-            matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            instruction.op().control_flow_layout().jumps()
                 .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc).map(|target| (target, pc))).collect();
         let header = edges.iter().map(|(header, _)| *header).min().unwrap();
         let back = edges.iter().filter(|(target, _)| *target == header).map(|(_, pc)| *pc).max().unwrap();
@@ -470,3 +469,12 @@ mod tests {
         assert!(facts.types.is_empty());
     }
 }
+
+#[path = "facts/immediates.rs"] mod immediates;
+#[path = "facts/written.rs"] mod written;
+#[path = "facts/binary.rs"] mod binary;
+pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32, is_int32_number};
+pub(in crate::vm) use binary::{generic_operator, heap_primitive_binary};
+
+#[cfg(test)]
+#[path = "facts/decode_ratchet.rs"] mod decode_ratchet;

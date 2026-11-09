@@ -111,7 +111,7 @@ fn parallel_mark_matches_serial_verifier(heap: &mut Heap) {
     // this root in the legacy space so those paths remain covered.
     let root = heap.alloc(Cell::Set {
         object: Box::new(plain_object()),
-        entries: Box::new(children.clone().into()),
+        entries: CollectionEntries::from_hashed(children.iter().map(|&child| (child, 0))).into(),
     });
 
     heap.collect([root]);
@@ -173,10 +173,10 @@ fn parallel_full_mark_follows_records_and_ephemerons_like_the_serial_mark() {
         // A value that is itself a key, whose own value waits for it in a later round.
         let nested_value = heap.alloc(Cell::Error("nested".into()));
         let mut entries = WeakMapEntries::default();
-        entries.insert(object_key, object_value);
-        entries.insert(array_key, array_value);
-        entries.insert(lost_key, lost_value);
-        entries.insert(object_value, nested_value);
+        entries.insert((object_key, object_value));
+        entries.insert((array_key, array_value));
+        entries.insert((lost_key, lost_value));
+        entries.insert((object_value, nested_value));
         let map = heap.alloc(Cell::WeakMap {
             object: Box::new(plain_object()),
             entries: Box::new(entries),
@@ -257,7 +257,7 @@ fn minor_collection_handles_old_weak_cells(heap: &mut Heap) {
     let old_key = heap.alloc(Cell::Object(plain_object()));
     let old_value = heap.alloc(Cell::Object(plain_object()));
     let mut entries = WeakMapEntries::default();
-    entries.insert(old_key, old_value);
+    entries.insert((old_key, old_value));
     let map = heap.alloc(Cell::WeakMap {
         object: Box::new(plain_object()),
         entries: Box::new(entries),
@@ -271,7 +271,7 @@ fn minor_collection_handles_old_weak_cells(heap: &mut Heap) {
     let key = heap.alloc(Cell::Object(plain_object()));
     let value = heap.alloc(Cell::Object(plain_object()));
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
-        entries.insert(key, value);
+        entries.insert((key, value));
     }
     let referent = heap.alloc(Cell::Object(plain_object()));
     let target = heap.weak_handle(referent).unwrap();
@@ -389,7 +389,7 @@ fn scope_slot_owners_survive_collection_and_release() {
             with_objects: Box::default(),
         }),
     });
-    let slots = heap.clone_environment_slots(owner, &[0], &[]).unwrap();
+    let slots = heap.clone_environment_slots(owner, &[0], crate::bytecode::Resets::listed(&[])).unwrap();
     let view = heap.alloc(Cell::Environment {
         parent: Value::NULL,
         function: 0,
@@ -521,7 +521,7 @@ fn weak_map_values_follow_ephemeron_key_reachability() {
     let key = heap.alloc(Cell::Object(plain_object()));
     let value = heap.alloc(Cell::Error("value".into()));
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
-        entries.insert(key, value);
+        entries.insert((key, value));
     }
     let map_root = heap.root(weak_map);
     let key_root = heap.root(key);
@@ -548,7 +548,7 @@ fn weak_map_array_keys_follow_direct_record_liveness() {
     let value = heap.alloc(Cell::Error("value".into()));
     assert!(key.direct_array_index().is_some());
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
-        entries.insert(key, value);
+        entries.insert((key, value));
     }
 
     let map_root = heap.root(weak_map);
@@ -583,7 +583,7 @@ fn object_space_identity_does_not_alias_legacy_slot_identity() {
     assert_ne!(map, key);
 
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
-        entries.insert(key, value);
+        entries.insert((key, value));
     }
     heap.collect([map, key]);
     assert!(heap.is_live(map));
@@ -952,17 +952,11 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     let external = heap.alloc(Cell::WasmExtern(value));
     let descriptor = heap.alloc(Cell::WasmBits64(!bits));
     let owner = heap.alloc(Cell::WasmGc {
-        declarations: Box::new(declarations),
+        declarations,
         ty: 0,
-        fields: Box::new(WasmGcFields {
-            values: vec![external],
-            descriptor: Some(descriptor),
-        }),
+        fields: WasmGcFields::try_new(1, Some(descriptor), |_| Some(external)).unwrap(),
     });
-    let tag = heap.alloc(Cell::WasmTag {
-        declarations: crate::WasmTypes::default(),
-        ty: 0,
-    });
+    let tag = heap.alloc(Cell::WasmTag { object: Box::new(plain_object()), declarations: crate::WasmTypes::default(), ty: 0 });
     let exception = heap.alloc(Cell::WasmException {
         tag,
         payload: Box::new(vec![owner]),
@@ -1046,7 +1040,7 @@ fn weak_map_with_live_key_does_not_activate_an_unreachable_map() {
     let key = heap.alloc(Cell::Object(plain_object()));
     let value = heap.alloc(Cell::Object(plain_object()));
     let mut entries = WeakMapEntries::default();
-    entries.insert(key, value);
+    entries.insert((key, value));
     let map = heap.alloc(Cell::WeakMap {
         object: Box::new(plain_object()),
         entries: Box::new(entries),
@@ -1063,8 +1057,8 @@ fn weak_map_cycles_do_not_bootstrap_unreachable_keys() {
     let left = heap.alloc(Cell::Object(plain_object()));
     let right = heap.alloc(Cell::Object(plain_object()));
     let mut entries = WeakMapEntries::default();
-    entries.insert(left, right);
-    entries.insert(right, left);
+    entries.insert((left, right));
+    entries.insert((right, left));
     let map = heap.alloc(Cell::WeakMap {
         object: Box::new(plain_object()),
         entries: Box::new(entries),
@@ -1086,13 +1080,13 @@ fn weak_map_activation_observes_keys_marked_before_and_after_the_map() {
         let inner_key = heap.alloc(Cell::Object(plain_object()));
         let value = heap.alloc(Cell::Object(plain_object()));
         let mut inner_entries = WeakMapEntries::default();
-        inner_entries.insert(inner_key, value);
+        inner_entries.insert((inner_key, value));
         let inner = heap.alloc(Cell::WeakMap {
             object: Box::new(plain_object()),
             entries: Box::new(inner_entries),
         });
         let mut outer_entries = WeakMapEntries::default();
-        outer_entries.insert(outer_key, inner);
+        outer_entries.insert((outer_key, inner));
         let outer = heap.alloc(Cell::WeakMap {
             object: Box::new(plain_object()),
             entries: Box::new(outer_entries),
@@ -1123,7 +1117,7 @@ fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections()
     for _ in 0..3 {
         let value = heap.alloc(Cell::Object(plain_object()));
         let mut entries = WeakMapEntries::default();
-        entries.insert(key, value);
+        entries.insert((key, value));
         maps.push(heap.alloc(Cell::WeakMap {
             object: Box::new(plain_object()),
             entries: Box::new(entries),
@@ -1165,7 +1159,7 @@ fn dense_storage_reads_writes_and_native_views_share_the_owner_checks() {
         assert_eq!(EnvironmentSlots::native_storage_view(empty_storage), empty.native_dense_view());
         let mut heap = Heap::new();
         let owner = heap.alloc_environment(Value::NULL, 1, slots.clone(), EnvironmentScopeRef::of_program(0)).0;
-        let shared = slots.iteration_copy(owner, &[], &[], |_, _| unreachable!()).unwrap();
+        let shared = slots.iteration_copy(owner, &[], crate::bytecode::Resets::listed(&[]), |_, _| unreachable!()).unwrap();
         let shared_storage = shared.dense_storage().unwrap();
         assert_eq!(EnvironmentSlots::read_storage(shared_storage, 0), None);
         assert_eq!(EnvironmentSlots::write_storage(shared_storage, 0, Value::TRUE), None);
@@ -1199,7 +1193,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     let mut values = (0..width).map(|slot| Value::number(slot as f64)).collect::<Vec<_>>();
     values[width - 1] = kept;
     let owner = environment(&mut heap, values.into());
-    let first = heap.clone_environment_slots(owner, &[3], &[5]).unwrap();
+    let first = heap.clone_environment_slots(owner, &[3], crate::bytecode::Resets::listed(&[5])).unwrap();
     // A length and owner, then the fresh and reset slots, each with its index.
     assert_eq!((first.len(), first.0.len()), (width, 6));
     assert!(first.dense_storage().is_none());
@@ -1214,7 +1208,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     assert_eq!(heap.environment_slot(owner, 3), Some(Value::number(3.0)));
     assert_eq!(heap.environment_slot(owner, 7), Some(Value::number(70.0)));
     // A copy of a copy shares the first copy's own slots and the original's others.
-    let second = heap.clone_environment_slots(first, &[], &[]).unwrap();
+    let second = heap.clone_environment_slots(first, &[], crate::bytecode::Resets::listed(&[])).unwrap();
     assert_eq!(second.0.len(), 6);
     let second = environment(&mut heap, second);
     assert_eq!(heap.environment_slot_owner(second, 3), Some(first));
@@ -1226,7 +1220,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     assert!(matches!(heap.get(kept), Some(Cell::Error(_))));
     // A narrow environment's copy stays dense.
     let narrow = environment(&mut heap, vec![Value::TRUE; 2].into());
-    assert_eq!(heap.clone_environment_slots(narrow, &[0], &[]).unwrap().0.len(), 2);
+    assert_eq!(heap.clone_environment_slots(narrow, &[0], crate::bytecode::Resets::listed(&[])).unwrap().0.len(), 2);
 }
 
 /// The owners remembered for the next minor collection, of every family these tests use.
@@ -1307,7 +1301,7 @@ fn promoted_cells_remember_their_young_children() {
         |heap| {
             heap.alloc(Cell::Set {
                 object: Box::new(plain_object()),
-                entries: Box::new(Vec::<Value>::new().into()),
+                entries: Default::default(),
             })
         },
         |heap| heap.alloc(Cell::Error("young child".into())),
@@ -1384,7 +1378,7 @@ fn weak_entries_of_aged_keys_and_targets_are_pruned_when_they_die() {
         }
         let [key, value, referent] = [(); 3].map(|()| heap.alloc(Cell::Object(plain_object())));
         if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
-            entries.insert(key, value);
+            entries.insert((key, value));
         }
         let target = heap.weak_handle(referent).unwrap();
         if let Some(Cell::WeakRef { target: slot, .. }) = heap.get_mut(weak_ref) {
@@ -1413,7 +1407,7 @@ fn ephemeron_values_of_young_rooted_keys_survive_until_promoted() {
         }
         let [key, value] = [(); 2].map(|()| heap.alloc(Cell::Object(plain_object())));
         if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
-            entries.insert(key, value);
+            entries.insert((key, value));
         }
         for _ in 0..=PromotionAge::Second.minors() {
             collect_minor(&mut heap, [map, key]);
@@ -1787,8 +1781,7 @@ fn named_property_publication_retires_readers_for_every_record_family() {
                 } })),
                 Family::Iterator => Cell::Iterator(Box::new(IteratorRecord {
                     object, source: Value::NULL, kind: IteratorKind::Array, index: 0, done: false,
-                    ext: IteratorExt { position_high: 0, next_method: None, helper: None,
-                        helper_running: false, helper_started: false, generator: None },
+                    ext: IteratorExt::default(),
                 })),
                 Family::Date => Cell::Date { object: Box::new(object), milliseconds: 0.0 },
             };
@@ -1873,7 +1866,7 @@ fn memory_census_distinguishes_sparse_environment_storage_from_logical_slots() {
     let slots = EnvironmentSlots::from_values(std::iter::repeat_n(Value::UNDEFINED, width));
     let (owner, _) = heap.alloc_environment(Value::UNDEFINED, 0, slots, EnvironmentScopeRef::of_program(0));
     let Some(Cell::Environment { slots, .. }) = heap.get(owner) else { unreachable!() };
-    let sparse = slots.iteration_copy(owner, &[], &[], |_, _| None).unwrap();
+    let sparse = slots.iteration_copy(owner, &[], crate::bytecode::Resets::listed(&[]), |_, _| None).unwrap();
     assert!(sparse.dense().is_none());
     let sparse_bytes = sparse.0.allocated_bytes();
     let (copy, _) = heap.alloc_environment(owner, 0, sparse, EnvironmentScopeRef::of_program(0));

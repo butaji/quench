@@ -106,7 +106,7 @@ fn closing_response(status: u16) -> String {
 
 pub(crate) fn build_response(c: &mut Context<'_>, outgoing: RootId) -> Outcome {
     let class = super::constructor(c, Member::ResponseConstruct, "ServerResponse")?;
-    super::inherit(c, class, outgoing)?;
+    crate::modules::stream_shared_vm::inherit(c, class, outgoing)?;
     let prototype = get(c, class, "prototype")?;
     super::methods(c, prototype, &[("_finish", Member::ResponseFinish)])?;
     put_number(c, prototype, "statusCode", f64::from(STATUS_OK))?;
@@ -130,7 +130,7 @@ pub(crate) fn build_server(c: &mut Context<'_>) -> Outcome {
     let net = class(c, Class::Net)?;
     let net_server = get(c, net, "Server")?;
     let class = super::constructor(c, Member::ServerConstruct, "Server")?;
-    super::inherit(c, class, net_server)?;
+    crate::modules::stream_shared_vm::inherit(c, class, net_server)?;
     let prototype = get(c, class, "prototype")?;
     install_server_methods(c, prototype)?;
     Ok(class)
@@ -852,7 +852,7 @@ fn socket_error(c: &mut Context<'_>, server: RootId, socket: RootId, state: Root
         let listener = get(c, state, "onError")?;
         remove_listener(c, socket, "error", listener)?;
     }
-    let nop = crate::modules::stream_shared_vm::intrinsics(c)?.nop;
+    let nop = crate::modules::stream_shared_vm::intrinsic(c, |i| i.nop)?;
     if listener_count(c, socket, "error")? == 0.0 {
         on(c, socket, "error", nop)?;
     }

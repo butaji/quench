@@ -75,17 +75,24 @@ pub(super) unsafe fn run<H: Host>(
     if !lane_activation_room(unsafe { vm(cx) }, target) {
         return None;
     }
+    let (storage, slot, previous) = unsafe { writable_binding(target) }?;
+    let value = lane_concatenation(cx, previous, chunk)?;
+    // SAFETY: no guest code or collection can have changed this initialized binding.
+    unsafe { crate::heap::EnvironmentSlots::write_storage(storage, slot, value) }
+        .expect("admitted capture remains initialized without guest effects");
+    Some(Value::TRUE)
+}
+
+/// The initialized mutable capture named by the recognized body's load/store pair.
+/// Its storage remains stable until guest code or collection runs.
+unsafe fn writable_binding(target: &ScriptCallTarget) -> Option<(*const usize, usize, Value)> {
     let slots = capture_stores(target.capture)?;
-    // SAFETY: the recognized load's immediate stays in its original record.
+    // SAFETY: AppendsCapture preparation proves the load and its capture immediate.
     let imm = unsafe { &*(*target.view).records().add(LOAD_CAPTURE_PC) }.imm();
     let slot = usize::from(ImmediateLayout::capture_slot(imm));
-    // SAFETY: capture_stores proves direct writes; dense_plain_mut rejects TDZ/markers.
-    // Retain a pointer rather than a borrow across allocation; no collection runs here.
-    let binding = unsafe { &mut *slots }.dense_plain_mut(slot)? as *mut Value;
-    let value = lane_concatenation(cx, unsafe { *binding }, chunk)?;
-    // SAFETY: no guest code or collection can have changed this initialized binding.
-    unsafe { *binding = value };
-    Some(Value::TRUE)
+    // SAFETY: capture_stores admits direct writes; the shared read rejects TDZ/markers.
+    let previous = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, slot) }?;
+    Some((slots, slot, previous))
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 //! A compiled program's owned bytes (`ProgramFootprint`): what the collector weighs a
-//! reclaimable program by, and what `QUENCH_MEMORY` attributes, one JSON line per program.
+//! reclaimable program by, and what `QUENCH_TRACE=memory` attributes, one JSON line per program.
 use crate::bytecode::{
     Atom, BindingSite, Constant, EnvironmentClone, FieldSite, Function, FunctionSlot, Handler,
     Instr,
@@ -49,11 +49,12 @@ fn layout_bytes(function: &Function) -> usize {
         + function.selective_capture_slots.as_deref().map_or(0, slice_bytes::<u16>)
         + slice_bytes::<BindingSite>(&function.binding_sites)
         + slice_bytes::<EnvironmentClone>(&function.environment_clones)
+        + slice_bytes::<u16>(function.environment_clones.owned())
 }
 
 /// A compiled program's owned bytes by part: its function records and each per-function and
 /// program-wide table at capacity. The collector weighs a reclaimable program by its total
-/// (`Heap::charge_reclaimable_program`); `QUENCH_MEMORY` reports the parts.
+/// (`Heap::charge_reclaimable_program`); `QUENCH_TRACE=memory` reports the parts.
 pub(crate) struct ProgramFootprint {
     source: usize,
     function_records: usize,
@@ -137,6 +138,18 @@ impl ProgramFootprint {
             footprint.constants,
             footprint.sites,
             footprint.register_roots,
+        );
+    }
+}
+
+/// The arena a compilation parsed its program into, reported when `QUENCH_TRACE=memory` is set.
+#[cfg(feature = "profile-memory")]
+pub(super) fn report_parse_arena(allocator: &oxc_allocator::Allocator) {
+    if crate::trace::Channel::Memory.on() {
+        eprintln!(
+            "{{\"kind\":\"quench-oxc-memory\",\"used\":{},\"capacity\":{}}}",
+            allocator.used_bytes(),
+            allocator.capacity(),
         );
     }
 }

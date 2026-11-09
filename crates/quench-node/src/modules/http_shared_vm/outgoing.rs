@@ -15,9 +15,9 @@ use quench_runtime::{BuiltinBrand, RootId, RootedError};
 
 /// Node's `getDefaultHighWaterMark()` for byte streams.
 pub(crate) const DEFAULT_HIGH_WATER_MARK: f64 = 64.0 * 1024.0;
-const CRLF: &str = "\r\n";
+use crate::modules::keys::CRLF;
 /// The radix of a chunk-size line.
-const CHUNK_SIZE_RADIX: u32 = 16;
+pub(crate) const CHUNK_SIZE_RADIX: u32 = 16;
 
 crate::modules::host_members::members!(Member, "httpOutgoing", [
     Construct,
@@ -75,7 +75,7 @@ pub(crate) fn build(c: &mut Context<'_>) -> Outcome {
     let stream_module = crate::modules::stream_shared_vm::module(c)?;
     let stream = get(c, stream_module, "Stream")?;
     let class = super::constructor(c, Member::Construct, "OutgoingMessage")?;
-    super::inherit(c, class, stream)?;
+    crate::modules::stream_shared_vm::inherit(c, class, stream)?;
     let prototype = get(c, class, "prototype")?;
     super::accessors(c, prototype, &[
         ("errored", Member::Errored, None),
@@ -388,7 +388,7 @@ pub(crate) fn initialize(c: &mut Context<'_>, this: RootId, options: RootId) -> 
     put(c, this, "_header", null)?;
     put_slot(c, this, Slot::OutHeaders, null)?;
     put_number(c, this, "_keepAliveTimeout", 0.0)?;
-    let nop = crate::modules::stream_shared_vm::intrinsics(c)?.nop;
+    let nop = crate::modules::stream_shared_vm::intrinsic(c, |i| i.nop)?;
     put(c, this, "_onPendingData", nop)?;
     put_slot(c, this, Slot::Errored, null)?;
     let options_given = !is_nullish(c, options);
@@ -853,7 +853,7 @@ pub(crate) fn store_header(c: &mut Context<'_>, this: RootId, first_line: String
             state.header.push_str("Connection: keep-alive\r\n");
             let timeout = number(c, this, "_keepAliveTimeout")?;
             if timeout > 0.0 && truthy_member(c, this, "_defaultKeepAlive")? {
-                const MILLISECONDS_PER_SECOND: f64 = 1000.0;
+                use crate::modules::net_socket_options::MILLISECONDS_PER_SECOND;
                 let seconds = (timeout / MILLISECONDS_PER_SECOND).floor();
                 let max_requests = get(c, this, "_maxRequestsPerSocket")?;
                 let max_requests = c.rooted_value(max_requests).and_then(|value| value.as_number()).unwrap_or(0.0).trunc();
@@ -1078,7 +1078,7 @@ fn length_mismatch(c: &mut Context<'_>, written: f64, expected: f64) -> RootedEr
 
 /// `write_(msg, chunk, encoding, callback, fromEnd)`.
 fn write_chunk(c: &mut Context<'_>, this: RootId, chunk: RootId, encoding: RootId, callback: RootId, from_end: bool) -> Result<bool, RootedError> {
-    let callback = if c.is_callable_rooted(callback)? { callback } else { crate::modules::stream_shared_vm::intrinsics(c)?.nop };
+    let callback = if c.is_callable_rooted(callback)? { callback } else { crate::modules::stream_shared_vm::intrinsic(c, |i| i.nop)? };
     if is_null(c, chunk) {
         return Err(crate::modules::stream_shared_vm::errors::throw(
             c,
@@ -1191,7 +1191,7 @@ fn end(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
                 c,
                 crate::modules::stream_shared_vm::errors::StreamError::WriteAfterEnd,
             )?;
-            let callback = if c.is_callable_rooted(callback)? { callback } else { crate::modules::stream_shared_vm::intrinsics(c)?.nop };
+            let callback = if c.is_callable_rooted(callback)? { callback } else { crate::modules::stream_shared_vm::intrinsic(c, |i| i.nop)? };
             on_error(c, this, error, callback)?;
             return Ok(this);
         }

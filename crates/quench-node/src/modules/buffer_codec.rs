@@ -181,19 +181,10 @@ pub(crate) fn hex_decode(input: &[u8]) -> Vec<u8> {
         if pair.len() < 2 {
             break;
         }
-        let (Some(hi), Some(lo)) = (hex_digit(pair[0]), hex_digit(pair[1])) else {
+        let (Some(hi), Some(lo)) = (char::from(pair[0]).to_digit(16), char::from(pair[1]).to_digit(16)) else {
             break;
         };
-        out.push((hi << 4) | lo);
+        out.push(((hi << 4) | lo) as u8);
     }
     out
-}
-
-fn hex_digit(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }

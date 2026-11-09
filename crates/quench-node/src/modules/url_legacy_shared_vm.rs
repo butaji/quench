@@ -189,10 +189,10 @@ impl Legacy {
         let mut hash = self.hash.clone().unwrap_or_default();
         let mut host = String::new();
         if has_text(&self.host) {
-            host = auth.clone() + self.host.as_deref().unwrap_or_default();
+            host = auth + self.host.as_deref().unwrap_or_default();
         } else if has_text(&self.hostname) {
             let hostname = self.hostname.as_deref().unwrap_or_default();
-            host = if hostname.contains(':') && !is_ipv6(hostname) { format!("{auth}[{hostname}]") } else { auth.clone() + hostname };
+            host = if hostname.contains(':') && !is_ipv6(hostname) { format!("{auth}[{hostname}]") } else { auth + hostname };
             if has_text(&self.port) {
                 host.push(':');
                 host.push_str(self.port.as_deref().unwrap_or_default());
@@ -223,7 +223,7 @@ impl Legacy {
                 }
                 host = format!("//{host}");
             } else if protocol.starts_with("file") {
-                host = "//".to_owned();
+                "//".clone_into(&mut host);
             }
         }
         search = search.replace('#', "%23");
@@ -376,7 +376,7 @@ fn parse(c: &mut Context<'_>, url: &mut Legacy, input: &str, request: &ParseRequ
         let lower = protocol.to_lowercase();
         url.protocol = Some(lower.clone());
         lower_protocol = Some(lower);
-        rest = rest[protocol.len()..].to_owned();
+        rest.drain(..protocol.len());
     }
     let lower = lower_protocol.as_deref();
     let hostless = lower.is_some_and(|protocol| HOSTLESS.contains(&protocol));
@@ -384,7 +384,7 @@ fn parse(c: &mut Context<'_>, url: &mut Legacy, input: &str, request: &ParseRequ
     if request.slashes_denote_host || lower.is_some() || has_auth_host(&rest) {
         slashes = rest.starts_with("//");
         if slashes && !(lower.is_some() && hostless) {
-            rest = rest[2..].to_owned();
+            rest.drain(..2);
             url.slashes = Some(true);
         }
     }
@@ -503,7 +503,8 @@ fn parse_authority(c: &mut Context<'_>, url: &mut Legacy, rest: String, input: &
     let port = url.port.clone().filter(|port| !port.is_empty()).map(|port| format!(":{port}")).unwrap_or_default();
     url.host = Some(format!("{hostname}{port}"));
     if ipv6 {
-        hostname = hostname[1..hostname.len() - 1].to_owned();
+        hostname.pop();
+        hostname.remove(0);
         if !rest.starts_with('/') {
             rest.insert(0, '/');
         }
@@ -549,14 +550,14 @@ fn decode_uri_component(c: &mut Context<'_>, text: &str) -> Result<String, Roote
 fn resolve_object(c: &mut Context<'_>, source: &Legacy, relative: &Legacy) -> Result<Legacy, RootedError> {
     let mut result = source.clone();
     let mut relative = relative.clone();
-    result.hash = relative.hash.clone();
+    result.hash.clone_from(&relative.hash);
     if relative.href.as_deref() == Some("") {
         result.href = Some(result.format(c)?);
         return Ok(result);
     }
     if relative.slashes == Some(true) && !has_text(&relative.protocol) {
         let protocol = result.protocol.clone();
-        result = relative.clone();
+        result = relative;
         result.protocol = protocol;
         if slashed(result.protocol.as_deref()) && has_text(&result.hostname) && !has_text(&result.pathname) {
             result.pathname = Some("/".to_owned());
@@ -567,11 +568,11 @@ fn resolve_object(c: &mut Context<'_>, source: &Legacy, relative: &Legacy) -> Re
     }
     if has_text(&relative.protocol) && relative.protocol != result.protocol {
         if !slashed(relative.protocol.as_deref()) {
-            let mut copy = relative.clone();
+            let mut copy = relative;
             copy.href = Some(copy.format(c)?);
             return Ok(copy);
         }
-        result.protocol = relative.protocol.clone();
+        result.protocol.clone_from(&relative.protocol);
         let file = matches!(relative.protocol.as_deref(), Some("file" | "file:"));
         if !has_text(&relative.host) && !file && !relative.protocol.as_deref().is_some_and(|protocol| HOSTLESS.contains(&protocol)) {
             let mut parts: Vec<String> = relative.pathname.clone().unwrap_or_default().split('/').map(str::to_owned).collect();
@@ -597,14 +598,14 @@ fn resolve_object(c: &mut Context<'_>, source: &Legacy, relative: &Legacy) -> Re
             }
             result.pathname = Some(parts.join("/"));
         } else {
-            result.pathname = relative.pathname.clone();
+            result.pathname.clone_from(&relative.pathname);
         }
-        result.search = relative.search.clone();
-        result.query = relative.query.clone();
+        result.search.clone_from(&relative.search);
+        result.query.clone_from(&relative.query);
         result.host = Some(relative.host.clone().unwrap_or_default());
-        result.auth = relative.auth.clone();
+        result.auth.clone_from(&relative.auth);
         result.hostname = if has_text(&relative.hostname) { relative.hostname.clone() } else { relative.host.clone() };
-        result.port = relative.port.clone();
+        result.port.clone_from(&relative.port);
         if has_text(&result.pathname) || has_text(&result.search) {
             result.path = Some(format!("{}{}", result.pathname.as_deref().unwrap_or_default(), result.search.as_deref().unwrap_or_default()));
         }
@@ -659,32 +660,32 @@ fn resolve_object(c: &mut Context<'_>, source: &Legacy, relative: &Legacy) -> Re
             if result.host != relative.host {
                 result.auth = None;
             }
-            result.host = relative.host.clone();
-            result.port = relative.port.clone();
+            result.host.clone_from(&relative.host);
+            result.port.clone_from(&relative.port);
         }
         if relative.hostname.is_some() {
             if result.hostname != relative.hostname {
                 result.auth = None;
             }
-            result.hostname = relative.hostname.clone();
+            result.hostname.clone_from(&relative.hostname);
         }
-        result.search = relative.search.clone();
-        result.query = relative.query.clone();
+        result.search.clone_from(&relative.search);
+        result.query.clone_from(&relative.query);
         source_path = relative_path;
     } else if !relative_path.is_empty() {
         source_path.pop();
         source_path.extend(relative_path);
-        result.search = relative.search.clone();
-        result.query = relative.query.clone();
+        result.search.clone_from(&relative.search);
+        result.query.clone_from(&relative.query);
     } else if relative.search.is_some() {
         if no_leading_slashes {
             let host = if source_path.is_empty() { None } else { Some(source_path.remove(0)) };
-            result.hostname = host.clone();
+            result.hostname.clone_from(&host);
             result.host = host;
             split_auth_in_host(&mut result);
         }
-        result.search = relative.search.clone();
-        result.query = relative.query.clone();
+        result.search.clone_from(&relative.search);
+        result.query = relative.query;
         if result.pathname.is_some() || result.search.is_some() {
             result.path = Some(format!("{}{}", result.pathname.as_deref().unwrap_or_default(), result.search.as_deref().unwrap_or_default()));
         }
@@ -751,7 +752,7 @@ fn resolve_object(c: &mut Context<'_>, source: &Legacy, relative: &Legacy) -> Re
         result.path = Some(format!("{}{}", result.pathname.as_deref().unwrap_or_default(), result.search.as_deref().unwrap_or_default()));
     }
     if has_text(&relative.auth) {
-        result.auth = relative.auth.clone();
+        result.auth.clone_from(&relative.auth);
     }
     result.slashes = if result.slashes == Some(true) { Some(true) } else { relative.slashes };
     result.href = Some(result.format(c)?);
@@ -765,7 +766,7 @@ fn split_auth_in_host(result: &mut Legacy) {
         let mut parts = host.split('@');
         result.auth = parts.next().map(str::to_owned);
         let rest = parts.next().map(str::to_owned);
-        result.host = rest.clone();
+        result.host.clone_from(&rest);
         result.hostname = rest;
     }
 }

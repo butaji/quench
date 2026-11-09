@@ -11,7 +11,7 @@ const ARGUMENTS_NAME: &str = "arguments";
 
 use crate::bytecode::initialization;
 use crate::bytecode::{
-    WITH_ENTER_BINDING, EvalBindingLocation, FieldLayout, Function, ImmediateRole, Instr, InstructionField, Op,
+    WITH_ENTER_BINDING, EvalBindingLocation, Function, ImmediateRole, Instr, InstructionField, Op,
     Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, ThrownValueSlot, WideInstruction,
 };
 
@@ -53,7 +53,7 @@ pub(super) fn drop_unread_self_binding<'a>(
         instruction.addressed_local_slots().any(|addressed| addressed == slot)
     }) || function.handlers.iter().any(|handler| {
         matches!(handler.slot, Some(ThrownValueSlot::Local(local)) if local == slot) || handler.return_slot == Some(slot)
-    }) || function.environment_clones.iter().any(|plan| plan.fresh.contains(&slot) || plan.reset.contains(&slot))
+    }) || function.environment_clones.mentions(slot)
         || function.binding_sites.iter().any(|site| {
             site.bindings.iter().any(|binding| matches!(binding.location, EvalBindingLocation::Local(local) if local == slot))
         });
@@ -66,13 +66,13 @@ pub(super) fn drop_unread_self_binding<'a>(
 /// `undefined_constant` is the program's constant index of `undefined`.
 pub(super) fn promote<'a>(
     function: &mut Function,
-    mut eligible: Vec<bool>,
+    mut eligible: crate::bitset::BitSet,
     superinstructions: &[Superinstruction],
     undefined_constant: u32,
     atom_name: impl Fn(usize) -> Option<&'a str>,
 ) {
     // A by-name read inside `with` resolves a local through its frame slot.
-    if !eligible.contains(&true)
+    if eligible.is_empty()
         || function.contains_with_statement(|atom| atom_name(atom) == Some(WITH_ENTER_BINDING))
     {
         return;
@@ -81,7 +81,7 @@ pub(super) fn promote<'a>(
     // `arguments` (`Function::reflects_live_parameters`), which keep their slot.
     for (slot, atom) in function.local_atoms.iter().enumerate() {
         if atom_name(*atom as usize) == Some(ARGUMENTS_NAME) {
-            eligible[slot] = false;
+            eligible.remove(slot);
         }
     }
     // Parameters arrive in their slots, and these slots are named outside the code: the
@@ -90,7 +90,7 @@ pub(super) fn promote<'a>(
     // unobservable clones, leaving their plans unreferenced). A handler's thrown value
     // follows its slot into a register (`ThrownValueSlot::Register`).
     let parameters = usize::from(function.params).min(eligible.len());
-    eligible[..parameters].fill(false);
+    (0..parameters).for_each(|slot| eligible.remove(slot));
     let cloned = function
         .instructions()
         .chain(
@@ -107,8 +107,7 @@ pub(super) fn promote<'a>(
                 }),
         )
         .filter(|instruction| instruction.op() == Op::CloneEnv)
-        .map(|instruction| instruction.environment_clone_index())
-        .collect::<Vec<_>>();
+        .map(|instruction| instruction.environment_clone_index());
     let named = function
         .arguments_slot
         .into_iter()
@@ -119,12 +118,7 @@ pub(super) fn promote<'a>(
                 .iter()
                 .filter_map(|handler| handler.return_slot),
         )
-        .chain(
-            cloned
-                .iter()
-                .filter_map(|&index| function.environment_clones.get(index))
-                .flat_map(|plan| plan.fresh.iter().chain(&plan.reset).copied()),
-        )
+        .chain(function.environment_clones.named_slots(cloned.into_iter()))
         .chain(function.binding_sites.iter().flat_map(|site| {
             site.bindings.iter().filter_map(|binding| match binding.location {
                 EvalBindingLocation::Local(slot) => Some(slot),
@@ -132,15 +126,11 @@ pub(super) fn promote<'a>(
             })
         }));
     for slot in named {
-        if let Some(eligible) = eligible.get_mut(usize::from(slot)) {
-            *eligible = false;
-        }
+        eligible.remove(usize::from(slot));
     }
-    let mut exclude = |slot: usize| {
-        if let Some(eligible) = eligible.get_mut(slot) {
-            *eligible = false;
-        }
-    };
+    let mut exclude = |slot: usize| eligible.remove(slot);
+    // The atoms by-name accesses resolve; a local of one of them keeps its slot.
+    let mut by_name = Vec::new();
     for instruction in function.instructions() {
         if instruction.op().immediate_role() == ImmediateRole::SuperinstructionIndex {
             for member in superinstructions[instruction.superinstruction_index()].code {
@@ -165,12 +155,7 @@ pub(super) fn promote<'a>(
                 | Op::StoreName
                 | Op::StoreResolvedName
         ) {
-            let atom = instruction.atom_index();
-            for (slot, local) in function.local_atoms.iter().enumerate() {
-                if *local == atom {
-                    exclude(slot);
-                }
-            }
+            by_name.push(instruction.atom_index());
         }
         if let Some(target) = instruction.numeric_local_target() {
             exclude(usize::from(target));
@@ -194,6 +179,8 @@ pub(super) fn promote<'a>(
             exclude(slot);
         }
     }
+    by_name.sort_unstable(); by_name.dedup();
+    function.local_atoms.iter().enumerate().filter(|(_, local)| by_name.binary_search(local).is_ok()).for_each(|(slot, _)| exclude(slot));
     // New registers follow the existing ones while liveness still covers the function and
     // operands can name them. A function whose registers already outnumber what liveness
     // covers has no root map to keep (`ROOT_MAP_REGISTERS`), so only the operand domain
@@ -202,11 +189,9 @@ pub(super) fn promote<'a>(
     let uncovered = function.registers >= ROOT_MAP_REGISTERS;
     // A slot no instruction or handler names (a local compilation already promoted) needs no
     // register: nothing reads or writes it, and each register costs every activation a fill.
-    let mut accessed = vec![false; eligible.len()];
+    let mut accessed = crate::bitset::BitSet::new(eligible.len());
     let mut access = |slot: usize| {
-        if let Some(accessed) = accessed.get_mut(slot) {
-            *accessed = true;
-        }
+        accessed.checked_insert(slot);
     };
     for instruction in function.instructions() {
         instruction.addressed_local_slots().for_each(|slot| access(usize::from(slot)));
@@ -219,8 +204,8 @@ pub(super) fn promote<'a>(
     let mut next = function.registers;
     let mut registers: Vec<Option<Register>> = vec![None; eligible.len()];
     for (slot, register) in registers.iter_mut().enumerate() {
-        if eligible[slot]
-            && accessed[slot]
+        if eligible.contains(slot)
+            && accessed.contains(slot)
             && (uncovered || next < ROOT_MAP_REGISTERS)
             && next <= Operand::PAYLOAD_MASK
             && next <= REGISTER_MASK
@@ -236,7 +221,7 @@ pub(super) fn promote<'a>(
     let register = |slot: usize| registers.get(slot).copied().flatten();
     // A frame slot starts undefined, a register only once written (`prepare_registers_for`):
     // a promoted slot some read can reach before any store gets `undefined` on entry.
-    let promoted: Vec<bool> = registers.iter().map(Option::is_some).collect();
+    let promoted = crate::bitset::BitSet::from_fn(registers.len(), |slot| registers[slot].is_some());
     let written_first = initialization::initialized_before_reads(
         function,
         superinstructions,
@@ -247,7 +232,7 @@ pub(super) fn promote<'a>(
     let mut code = Vec::with_capacity(old.len());
     for (slot, target) in registers.iter().enumerate() {
         if let Some(target) = *target
-            && !written_first[slot]
+            && !written_first.contains(slot)
         {
             let load = WideInstruction::new(Op::LoadConst, target, 0, 0, undefined_constant);
             code.push(encode(load, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));
@@ -285,10 +270,7 @@ pub(super) fn promote<'a>(
                     changed = true;
                 }
                 for field in [InstructionField::B, InstructionField::C] {
-                    if !matches!(
-                        instruction.op().field_layout(field),
-                        FieldLayout::Operand | FieldLayout::NumericIndexOperand
-                    ) {
+                    if !instruction.op().field_layout(field).holds_operand() {
                         continue;
                     }
                     let operand = Operand(instruction.field_value(field));

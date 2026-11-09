@@ -1,11 +1,11 @@
 use super::*;
 
-const NANOSECONDS_PER_DAY: i128 = 86_400_000_000_000;
-const NANOSECONDS_PER_HOUR: i128 = 3_600_000_000_000;
-const NANOSECONDS_PER_MINUTE: i128 = 60_000_000_000;
-const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
-const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
-const NANOSECONDS_PER_MICROSECOND: i128 = 1_000;
+use crate::units::NANOSECONDS_PER_DAY;
+use crate::vm::temporal_instant_difference::NANOSECONDS_PER_HOUR;
+use crate::vm::temporal_instant_difference::NANOSECONDS_PER_MINUTE;
+use crate::units::NANOSECONDS_PER_SECOND;
+use crate::units::NANOSECONDS_PER_MILLISECOND;
+use crate::vm::temporal_instant_difference::NANOSECONDS_PER_MICROSECOND;
 const SUBSECOND_COMPONENTS_PER_UNIT: u32 = 1_000;
 const MAX_FRACTIONAL_SECOND_DIGITS: usize = 9;
 const TIME_STRING_UNITS: [(&str, i128); 5] = [
@@ -15,7 +15,7 @@ const TIME_STRING_UNITS: [(&str, i128); 5] = [
     ("microsecond", NANOSECONDS_PER_MICROSECOND),
     ("nanosecond", 1),
 ];
-const CALENDAR_NAME_OPTIONS: [&str; 4] = ["auto", "always", "never", "critical"];
+pub(crate) const CALENDAR_NAME_OPTIONS: [&str; 4] = ["auto", "always", "never", "critical"];
 
 pub(super) struct TemporalStringOptions {
     fractional_second_digits: Option<usize>,
@@ -80,7 +80,7 @@ pub(super) fn read_options<H: Host>(
         }
         Some(digits as usize)
     } else {
-        let digits = vm.to_string(p, fractional_value)?.to_string();
+        let digits = vm.to_string(p, fractional_value)?;
         if digits != "auto" {
             return Err(vm.range_error(p, "Invalid fractionalSecondDigits".into()));
         }
@@ -139,7 +139,7 @@ fn read_string_option<H: Host>(
     if value.is_undefined() {
         Ok(None)
     } else {
-        vm.to_string(p, value).map(|value| Some(value.to_string()))
+        vm.to_string(p, value).map(Some)
     }
 }
 

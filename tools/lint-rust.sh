@@ -17,6 +17,7 @@ if [[ -z "$rg_bin" ]]; then
 fi
 
 tools/check-boundaries.sh
+cargo run --quiet -p quench-lint
 
 cargo fmt --all -- --check
 # The host implementation is covered by its dedicated Node oracle; the

@@ -1,10 +1,6 @@
 use std::cmp::Ordering;
 use crate::heap::ProtoLink;
 
-use crate::bigint::{
-    IEEE754_EXPONENT_BIAS, IEEE754_FRACTION_BITS, IEEE754_MAX_EXPONENT_BITS,
-    IEEE754_SUBNORMAL_EXPONENT,
-};
 use num_bigint::{BigInt, Sign};
 
 impl<H: Host> Vm<H> {
@@ -253,6 +249,11 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
+        // A primitive is no instance, decided before `prototype` is read
+        // (OrdinaryHasInstance step 3): a value outside the heap, or a string.
+        if value.direct_object_index().is_none() && (value.heap_index().is_none() || self.heap.is_string(value)) {
+            return Some(false);
+        }
         // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
         // never a dictionary's, so the slot exists.
         let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
@@ -262,9 +263,6 @@ impl<H: Host> Vm<H> {
         let target = ProtoLink::object_record(prototype.direct_object_index()?);
         let mut object = match value.direct_object_index() {
             Some(record) => self.heap.object_record_by_id(record),
-            // A primitive has no prototype chain to hold the prototype: a value outside the
-            // heap, or a string.
-            None if value.heap_index().is_none() || self.heap.is_string(value) => return Some(false),
             // Another object kind (an array, a function, a typed array, a Buffer) starts from
             // its own link; a proxy's [[GetPrototypeOf]] may run its trap, which the walk makes.
             None => self.ordinary_link_holder(value)?,
@@ -562,11 +560,11 @@ fn compare_bigint_string(heap: &Heap, left: Value, right: Value) -> Option<Optio
     match (heap.get(left), heap.get(right)) {
         (Some(Cell::BigInt(bigint)), None) if let Some(string) = heap.string(right) => Some(
             crate::bigint::parse_string(string.host_string())
-                .map(|right| bigint.as_ref().cmp(&right)),
+                .map(|right| bigint.cmp(&crate::bigint::JsBigInt::from(&right))),
         ),
         (None, Some(Cell::BigInt(bigint))) if let Some(string) = heap.string(left) => Some(
             crate::bigint::parse_string(string.host_string())
-                .map(|left| left.cmp(bigint)),
+                .map(|left| crate::bigint::JsBigInt::from(&left).cmp(bigint)),
         ),
         _ => None,
     }
@@ -581,10 +579,10 @@ fn compare_bigint_values(heap: &Heap, left: Value, right: Value) -> Option<Optio
     ) {
         (Some(Cell::BigInt(left)), Some(Cell::BigInt(right)), _, _) => Some(Some(left.cmp(right))),
         (Some(Cell::BigInt(bigint)), _, _, Some(number)) => {
-            Some(bigint_number_ordering(bigint, number))
+            Some(bigint_number_ordering(&bigint.to_num(), number))
         }
         (_, Some(Cell::BigInt(bigint)), Some(number), _) => {
-            Some(bigint_number_ordering(bigint, number).map(Ordering::reverse))
+            Some(bigint_number_ordering(&bigint.to_num(), number).map(Ordering::reverse))
         }
         _ => None,
     }
@@ -619,20 +617,7 @@ fn bigint_number_ordering(integer: &BigInt, number: f64) -> Option<Ordering> {
 }
 
 fn compare_positive_bigint_number(integer: BigInt, number: f64) -> Ordering {
-    let bits = number.to_bits();
-    let exponent_bits = ((bits >> IEEE754_FRACTION_BITS) & IEEE754_MAX_EXPONENT_BITS) as i32;
-    let fraction_mask = (1_u64 << IEEE754_FRACTION_BITS) - 1;
-    let significand = bits & fraction_mask;
-    let significand = if exponent_bits == 0 {
-        significand
-    } else {
-        significand | (1_u64 << IEEE754_FRACTION_BITS)
-    };
-    let exponent = if exponent_bits == 0 {
-        IEEE754_SUBNORMAL_EXPONENT
-    } else {
-        exponent_bits - (IEEE754_EXPONENT_BIAS + IEEE754_FRACTION_BITS as i32)
-    };
+    let (significand, exponent) = crate::float_layout::binary64_parts(number);
     let significand = BigInt::from(significand);
     if exponent >= 0 {
         integer.cmp(&(significand << exponent as usize))

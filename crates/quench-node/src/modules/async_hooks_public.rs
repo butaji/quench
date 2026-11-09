@@ -337,6 +337,7 @@ pub(crate) fn scope(
     let previous = call(c, storage, "getStore", &[])?;
     let no = c.boolean(false);
     let state = c.record_rooted(
+        false,
         &["storage", "previous", "disposed"],
         &[storage, previous, no],
     )?;
@@ -445,6 +446,7 @@ pub(crate) fn resource_bind(
     validate_function(c, function, "fn")?;
     let receiver = arg(c, args, 1);
     let bound_data = c.record_rooted(
+        false,
         &["resource", "function", "receiver"],
         &[this, function, receiver],
     )?;

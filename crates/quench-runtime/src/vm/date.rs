@@ -1,6 +1,9 @@
 use super::*;
 
 mod legacy_parse;
+mod local_zone;
+pub use local_zone::local_timezone_changed;
+use local_zone::local_timezone;
 use crate::host::{CapabilityId, HostContext};
 use chrono::{
     DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, Offset, TimeZone,
@@ -57,10 +60,10 @@ const DATE_PROTOTYPE_METHODS: &[(&str, Native)] = &[
     ("toTemporalInstant", Native::DateToTemporalInstant),
 ];
 const DATE_PROTOTYPE_ALIASES: &[(&str, &str)] = &[("toGMTString", "toUTCString")];
-const SECONDS_PER_MINUTE: i32 = 60;
+use crate::units::SECONDS_PER_MINUTE;
 const LEGACY_DATE_YEAR_OFFSET: i32 = 1900;
 const MONTHS_PER_YEAR: f64 = 12.0;
-const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
+use crate::units::MILLISECONDS_PER_SECOND;
 const MILLISECONDS_PER_MINUTE: f64 = 60_000.0;
 const MILLISECONDS_PER_HOUR: f64 = 3_600_000.0;
 const HOURS_PER_DAY: f64 = 24.0;
@@ -523,10 +526,20 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// A Date getter's call on a Date (`date_reads`), which raises nothing; `None` for any
+    /// other receiver, whose TypeError the general call raises.
+    pub(super) fn plain_date_get(&self, native: Native, receiver: Value) -> Option<Value> {
+        let Some(Cell::Date { milliseconds, .. }) = self.heap.get(receiver) else {
+            return None;
+        };
+        date_getter(native, *milliseconds).map(Value::number)
+    }
+
     pub(super) fn date_construct_native(
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
+        new_target: Value,
     ) -> Result<Value, JsError> {
         let milliseconds = if args.len() < DATE_CONSTRUCTOR_MULTI_ARGUMENT_THRESHOLD {
             match args.first().copied() {
@@ -556,10 +569,10 @@ impl<H: Host> Vm<H> {
             }
             make_date_milliseconds(parts, false)
         };
-        let prototype_atom = self.prototype_atom();
-        let native_date = self.native_value(Native::Date);
+        // OrdinaryCreateFromConstructor(NewTarget, "%Date.prototype%") follows the time value,
+        // so the object is born with its final prototype in NewTarget's realm.
         let prototype = self
-            .own_property(native_date, prototype_atom)
+            .native_constructor_prototype(p, new_target, Native::Date)?
             .unwrap_or(self.object_proto);
         Ok(self.heap.alloc(Cell::Date {
             milliseconds,
@@ -587,8 +600,10 @@ fn date_utc_constructor_value<H: Host>(
     Ok(make_date_milliseconds(components, true))
 }
 
-fn date_getter(native: Native, milliseconds: f64) -> Option<f64> {
-    if !matches!(
+/// Whether `native` is a Date getter (`date_getter`): it reads its receiver's time value and
+/// the host's time zone rules, and runs no guest code.
+pub(super) fn date_reads(native: Native) -> bool {
+    matches!(
         native,
         Native::DateGetTime
             | Native::DateValueOf
@@ -610,7 +625,11 @@ fn date_getter(native: Native, milliseconds: f64) -> Option<f64> {
             | Native::DateGetUTCSeconds
             | Native::DateGetUTCMilliseconds
             | Native::DateGetYear
-    ) {
+    )
+}
+
+fn date_getter(native: Native, milliseconds: f64) -> Option<f64> {
+    if !date_reads(native) {
         return None;
     }
     if native == Native::DateGetTime || native == Native::DateValueOf {
@@ -729,13 +748,6 @@ pub(super) fn date_local(milliseconds: f64) -> Option<DateTime<FixedOffset>> {
     Utc.timestamp_millis_opt(timestamp)
         .single()
         .map(|date| date.with_timezone(&offset))
-}
-
-fn local_timezone() -> Option<chrono_tz::Tz> {
-    std::env::var("TZ")
-        .ok()
-        .map(|zone| zone.strip_prefix(':').unwrap_or(&zone).to_owned())
-        .and_then(|zone| zone.parse().ok())
 }
 
 fn local_offset_at(timestamp: i64) -> Option<i32> {

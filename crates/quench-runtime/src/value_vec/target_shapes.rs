@@ -22,6 +22,15 @@ impl TargetShape {
     }
 }
 
+impl super::ValueArena {
+    /// Whether `slot` of `shape` already holds pointees of any shape, so a store's target
+    /// joins nothing (`TargetShape::ANY` is the top).
+    #[inline(always)]
+    pub(crate) fn slot_target_settled(&self, shape: u32, slot: usize) -> bool {
+        self.tracking && slot < self.shape_length(shape) && self.targets.get(self.slot_owner(shape, slot)) == TargetShape::ANY
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,10 +88,12 @@ pub(super) struct TargetShapes {
 }
 
 impl TargetShapes {
+    #[inline(always)]
     pub(super) fn get(&self, owner: u32) -> TargetShape {
         self.targets.get(owner as usize).copied().unwrap_or(TargetShape::NONE)
     }
 
+    #[inline(never)]
     fn set(&mut self, owner: u32, target: TargetShape) {
         let index = owner as usize;
         if let Some(shape) = self.get(owner).shape() {
@@ -109,8 +120,10 @@ impl TargetShapes {
         }
     }
 
+    #[inline(always)]
     pub(super) fn join(&mut self, owner: u32, incoming: TargetShape) -> bool {
         let held = self.get(owner);
+        if held == incoming || held == TargetShape::ANY { return false; }
         let joined = held.join(incoming);
         if joined == held { return false; }
         self.set(owner, joined);
@@ -121,6 +134,7 @@ impl TargetShapes {
         if self.get(owner) != TargetShape::NONE { self.set(owner, TargetShape::NONE); }
     }
 
+    #[inline(always)]
     pub(super) fn depart(&mut self, shape: u32, mut retire: impl FnMut(u32)) {
         while let Some(owner) = self.heads.get(shape as usize).copied().flatten() {
             let owner = owner.get() - 1;

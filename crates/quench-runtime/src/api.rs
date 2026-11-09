@@ -265,7 +265,7 @@ impl<H: Host> Runtime<H> {
         program: &ResidualProgram,
         write_host: impl FnOnce(&H, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
     ) -> Result<Vec<u8>, String> {
-        program.validate_unless_proven().map_err(|error| error.to_string())?;
+        program.validate_unless_proven()?;
         self.vm.initialize_for_snapshot(program).map_err(|error| error.to_string())?;
         // A restored heap starts as a full collection leaves it, every cell old: garbage the
         // snapshot kept would stay until the next full collection.
@@ -282,7 +282,7 @@ impl<H: Host> Runtime<H> {
         entry: &ResidualProgram,
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> Result<ResidualProgram, String> {
-        entry.validate_unless_proven().map_err(|error| error.to_string())?;
+        entry.validate_unless_proven()?;
         self.vm.restore_snapshot(snapshot, entry, read_host).map_err(|error| error.0)
     }
 
@@ -8686,6 +8686,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                       var object = { toString: function () { return String(this); } };
                       String(object);
                     });
+                    // JSON.parse is iterative, as V8's: deep nesting is bounded by memory.
                     check(function () {
                       var nesting = 10000;
                       JSON.parse('['.repeat(nesting) + '0' + ']'.repeat(nesting));
@@ -8710,8 +8711,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                         "true",
                         "Maximum call stack size exceeded",
                         "42",
-                        "true",
-                        "Maximum call stack size exceeded",
+                        "returned",
                         "42",
                     ],
                 );

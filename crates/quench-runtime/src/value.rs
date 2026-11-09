@@ -166,11 +166,7 @@ impl Value {
         let upper = self.0 & !LOWER_WORD;
         let lower = self.0 as u32;
         if upper == TAG_INT {
-            let integer = lower as i32;
-            let limit = 1i32 << (NARROW_INTEGER_BITS - 1);
-            return (-limit..limit)
-                .contains(&integer)
-                .then_some(((integer as u32) << NARROW_CODE_SHIFT) | NARROW_INTEGER_FLAG);
+            return Self::narrow_integer(lower as i32);
         }
         // The code of the value's tag plus its family bits; only an upper word the code names
         // exactly is narrow, which also rejects numbers and family bits on a constant.
@@ -179,6 +175,15 @@ impl Value {
         let code = base + ((self.0 & HEAP_FAMILY_BITS) >> HEAP_FAMILY_SHIFT) as usize;
         (NARROW_UPPER_WORDS[code] == upper && lower >> NARROW_INDEX_BITS == 0)
             .then_some(lower << NARROW_INDEX_SHIFT | (code as u32) << NARROW_CODE_SHIFT)
+    }
+
+    /// The narrow form of the integer `integer`, when it has one (`to_narrow`).
+    #[inline(always)]
+    pub(crate) fn narrow_integer(integer: i32) -> Option<u32> {
+        let limit = 1i32 << (NARROW_INTEGER_BITS - 1);
+        (-limit..limit)
+            .contains(&integer)
+            .then_some(((integer as u32) << NARROW_CODE_SHIFT) | NARROW_INTEGER_FLAG)
     }
 
     /// `to_narrow`, testing a direct object handle first: a new object's values
@@ -286,7 +291,11 @@ impl ValueLayout {
     pub(crate) const DIRECT_ARRAY_TAG: u64 = TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT;
     /// Tag and family bits that distinguish a direct ordinary-object record.
     pub(crate) const DIRECT_OBJECT_TAG: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;
+    /// Tag and family bits that distinguish a direct function record.
+    pub(crate) const DIRECT_FUNCTION_TAG: u64 = TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS;
     pub(crate) const HEAP_FAMILY_MASK: u64 = HEAP_FAMILY_MASK;
+    /// Tag and family bits that distinguish a direct string record.
+    pub(crate) const DIRECT_STRING_TAG: u64 = TAG_HEAP | DIRECT_STRING_HANDLE_BITS;
     pub(crate) const CANONICAL_NAN: u64 = CANONICAL_NAN;
     /// A tag field is the bits at and above this shift.
     pub(crate) const TAG_SHIFT: u32 = TAG_SHIFT;
@@ -374,6 +383,14 @@ impl Value {
         } else {
             value.to_bits()
         })
+    }
+
+    /// `number` of a value an `i32` operation overflowed to: outside the `i32` integers and
+    /// never NaN, so `number` stores its bits as they are; inline, where `number` is a call.
+    #[inline(always)]
+    pub(crate) fn overflowed_integer(value: f64) -> Self {
+        debug_assert_eq!(Self::number(value).0, value.to_bits());
+        Self(value.to_bits())
     }
 
     #[inline(always)]
@@ -676,6 +693,23 @@ impl Value {
         (self.0 & TAG_MASK) == TAG_HEAP
     }
 
+    /// Appends the heap values of `values` to `out`, in order: a branch-free compaction that
+    /// writes every value into reserved space and advances past the heap ones only.
+    #[inline(always)]
+    pub(crate) fn extend_heap_values(out: &mut Vec<Value>, values: &[Value]) {
+        out.reserve(values.len());
+        let start = out.len();
+        let mut kept = 0;
+        for &value in values {
+            // SAFETY: `kept` never passes the values read so far, so every write lands
+            // within the `values.len()` slots reserved past `start`.
+            unsafe { out.as_mut_ptr().add(start + kept).write(value) };
+            kept += usize::from(value.is_heap());
+        }
+        // SAFETY: the first `kept` slots past `start` were written above.
+        unsafe { out.set_len(start + kept) };
+    }
+
     pub(crate) fn is_deleted(self) -> bool {
         self.0 == TAG_DELETED
     }
@@ -729,21 +763,10 @@ pub(crate) fn number_to_u32(value: f64) -> u32 {
     }
     // At or above 2^63 the value is an integer: its significand times a power of two of
     // at least 2^11, whose low 32 bits are the significand's shifted, or none past 2^32.
-    let bits = value.to_bits();
-    let exponent = ((bits >> F64_FRACTION_BITS) & F64_EXPONENT_MASK) as i64
-        - i64::from(F64_EXPONENT_BIAS)
-        - i64::from(F64_FRACTION_BITS);
-    let significand = (bits & F64_FRACTION_MASK) | (1 << F64_FRACTION_BITS);
-    let low = if exponent >= i64::from(u32::BITS) { 0 } else { (significand << exponent) as u32 };
+    let (significand, exponent) = crate::float_layout::binary64_parts(value);
+    let low = if exponent.unsigned_abs() >= u32::BITS { 0 } else { (significand << exponent) as u32 };
     if value.is_sign_negative() { low.wrapping_neg() } else { low }
 }
-
-/// The explicit fraction bits of a binary64.
-const F64_FRACTION_BITS: u32 = f64::MANTISSA_DIGITS - 1;
-const F64_FRACTION_MASK: u64 = (1 << F64_FRACTION_BITS) - 1;
-/// The biased exponent field above the fraction, below the sign bit.
-const F64_EXPONENT_MASK: u64 = (1 << (u64::BITS - 1 - F64_FRACTION_BITS)) - 1;
-const F64_EXPONENT_BIAS: i32 = f64::MAX_EXP - 1;
 
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

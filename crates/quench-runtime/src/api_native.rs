@@ -211,6 +211,13 @@ pub enum ValueType {
     Function,
 }
 
+impl ValueType {
+    /// Whether the type is `undefined` or `null`.
+    pub fn is_nullish(self) -> bool {
+        matches!(self, ValueType::Undefined | ValueType::Null)
+    }
+}
+
 /// The bytes an ArrayBuffer or view names. `kind` is the view's specific brand
 /// (`ArrayBuffer`, `SharedArrayBuffer`, `DataView` or a typed-array constructor brand).
 #[derive(Clone, Copy, Debug)]
@@ -234,11 +241,6 @@ pub enum IntactBuiltin {
     StringIncludes,
     RegExpTest,
     RegExpExec,
-}
-
-impl IntactBuiltin {
-    /// Every builtin a proof covers (`Vm::embedding_builtins_intact`).
-    pub(crate) const ALL: [Self; 4] = [Self::StringCharCodeAt, Self::StringIncludes, Self::RegExpTest, Self::RegExpExec];
 }
 
 /// Builtin internal-slot brands, independent of prototypes and guest property hooks.
@@ -708,10 +710,7 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<Option<(RootId, RootId)>, RootedError> {
         let result = self.vm.embedding_proxy_details(root);
         let details = result.map_err(|error| self.error(error))?;
-        Ok(
-            details
-                .map(|(target, handler)| (self.scoped_value(target), self.scoped_value(handler))),
-        )
+        Ok(details.map(|(target, handler)| (self.scoped_value(target), self.scoped_value(handler))))
     }
 
     /// The immutable display name of an ordinary function, without public getters.
@@ -1771,9 +1770,7 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Copy the raw bytes from a typed array or DataView without per-index guest property reads.
     pub fn view_bytes_rooted(&self, root: RootId) -> Option<Vec<u8>> {
-        self.vm
-            .root_value(root)
-            .and_then(|value| self.vm.embedding_view_bytes(value))
+        self.vm.root_value(root).and_then(|value| self.vm.embedding_view_bytes(value))
     }
 
     /// Run `f` over the bytes of an ArrayBuffer, SharedArrayBuffer, typed array or
@@ -1788,17 +1785,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
         let value = self.vm.root_value(root)?;
         self.vm.embedding_with_buffer_bytes_mut(value, f)
     }
-
     /// Run `f` over the bytes a typed array or DataView views, without copying them.
     pub fn with_view_bytes_rooted<T>(&self, root: RootId, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
         self.vm.root_value(root).and_then(|value| self.vm.embedding_with_view_bytes(value, f))
     }
+    /// Run `f` over the bytes `within` a view and a writable buffer's bytes at once.
+    pub fn with_view_and_buffer_bytes_mut_rooted<T>(&mut self, input: RootId, within: std::ops::Range<usize>, output: RootId, f: impl FnOnce(&[u8], &mut [u8]) -> T) -> Option<T> {
+        let (input, output) = (self.vm.root_value(input)?, self.vm.root_value(output)?);
+        self.vm.embedding_with_view_and_buffer_bytes_mut(input, within, output, f)
+    }
 
     /// Snapshot at most `maximum` original bytes of an ArrayBuffer or buffer view.
     pub fn bytes_prefix_rooted(&self, root: RootId, maximum: usize) -> Option<Vec<u8>> {
-        self.vm
-            .root_value(root)
-            .and_then(|value| self.vm.embedding_bytes_prefix(value, maximum))
+        self.vm.root_value(root).and_then(|value| self.vm.embedding_bytes_prefix(value, maximum))
     }
 
     /// Check callability without coercion or invoking guest code.
@@ -1859,9 +1858,9 @@ impl<'a, H: Host> NativeContext<'a, H> {
     }
 
     /// The ordinary object `{ [names[0]]: values[0], ... }`, made at its final shape
-    /// (`Vm::create_embedding_record`): what an object literal of those names makes.
-    pub fn record_rooted(&mut self, names: &'static [&'static str], values: &[RootId]) -> Result<RootId, RootedError> {
-        let result = self.vm.create_embedding_record(names, values);
+    /// (`Vm::create_embedding_record`), as an object literal makes it, or with a null prototype.
+    pub fn record_rooted(&mut self, null_prototype: bool, names: &'static [&'static str], values: &[RootId]) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_record(null_prototype, names, values);
         self.completion(result)
     }
 
@@ -2071,12 +2070,7 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub fn plain_enumerable_entries_rooted(&mut self, object: RootId) -> Option<Vec<(String, RootId)>> {
         let object = self.vm.root_value(object)?;
         let entries = self.vm.plain_enumerable_entries(object)?;
-        Some(
-            entries
-                .into_iter()
-                .map(|(key, value)| (key, self.scoped_value(value)))
-                .collect(),
-        )
+        Some(entries.into_iter().map(|(key, value)| (key, self.scoped_value(value))).collect())
     }
 
     /// Capture an object template (`Vm::capture_object_template`) of `template`'s graph,

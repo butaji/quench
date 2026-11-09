@@ -108,7 +108,7 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
 }
 
 pub(crate) fn platform() -> String {
-    std::env::var("QUENCH_PLATFORM").unwrap_or_else(|_| current_platform().into())
+    current_platform().into()
 }
 
 pub(crate) fn architecture() -> &'static str {
@@ -631,7 +631,7 @@ fn sample_performance_origins() -> Option<(f64, f64)> {
     #[cfg(unix)]
     {
         const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
-        const MICROS_PER_SECOND: f64 = 1_000_000.0;
+        use crate::modules::report_configuration_shared_vm::MICROS_PER_SECOND;
         let mut time: libc::timespec = unsafe { std::mem::zeroed() };
         if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) } != 0 {
             return None;

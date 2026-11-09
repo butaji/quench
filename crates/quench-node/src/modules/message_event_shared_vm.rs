@@ -71,7 +71,7 @@ const INTERFACES: [Interface; 3] = [
 const EVENTS: [Event; 3] = [Event::Message, Event::Close, Event::Error];
 
 /// Web IDL's integer moduli.
-const UNSIGNED_SHORT_MODULUS: f64 = 65536.0;
+pub(crate) const UNSIGNED_SHORT_MODULUS: f64 = 65536.0;
 const UNSIGNED_LONG_MODULUS: f64 = 4294967296.0;
 /// `initMessageEvent(type, bubbles, cancelable, data, origin, lastEventId, source, ports)`:
 /// where its init members start.
@@ -102,7 +102,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
     let global = c.global_root()?;
     let symbol = get(c, global, "Symbol")?;
     let tag = get(c, symbol, "toStringTag")?;
-    let table = record(c, &[])?;
+    let table = record(c, &[], &[])?;
     for kind in EVENTS {
         let interface = kind.interface();
         let constructor = crate::modules::host_members::constructor(c, interface.construct, interface.name)?;
@@ -222,7 +222,7 @@ fn convert(c: &mut Context<'_>, interface: &Interface, name: &str, kind: Kind, v
 
 /// The interface's fields from `init`, as the event's slots.
 fn fields(c: &mut Context<'_>, interface: &Interface, init: RootId) -> Outcome {
-    let state = record(c, &[])?;
+    let state = record(c, &[], &[])?;
     for &(name, kind) in interface.fields {
         let value = if is_nullish(c, init) { c.undefined() } else { get(c, init, name)? };
         let value = convert(c, interface, name, kind, value)?;
@@ -281,7 +281,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
         Member::InitMessageEvent => {
             let state = slots(c, this, Event::Message)?;
             let interface = Event::Message.interface();
-            let init = record(c, &[])?;
+            let init = record(c, &[], &[])?;
             for (index, &(name, _)) in interface.fields.iter().enumerate() {
                 let value = arg(c, args, INIT_MESSAGE_FIELDS_START + index);
                 put(c, init, name, value)?;

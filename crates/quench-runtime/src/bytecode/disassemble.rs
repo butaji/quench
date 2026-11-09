@@ -197,11 +197,7 @@ fn write_immediate(output: &mut String, instruction: WideInstruction) -> fmt::Re
         | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags => {
             let window = instruction.call_window();
             write!(output, " args={}+{}", window.base, window.count)?;
-            if matches!(
-                instruction.op().immediate_layout(),
-                ImmediateLayout::CallWindowWithEvalFlags
-                    | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
-            ) {
+            if instruction.op().is_call_with_eval_flags() {
                 write!(
                     output,
                     " direct-eval={} parameter-eval={}",
@@ -258,7 +254,7 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::WasmInstanceSlot
         | ImmediateRole::WasmI32Immediate
         | ImmediateRole::WasmAtomicOperator
-        | ImmediateRole::WasmStructFieldIndex
+        | ImmediateRole::WasmGcField
         | ImmediateRole::WasmExceptionFieldIndex
         | ImmediateRole::WasmGcTypeIndex
         | ImmediateRole::WasmNonNullCheck
@@ -404,7 +400,7 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
             " operator={:?}",
             crate::wasm::integer::I64UnaryOperator::from_tag(instruction.imm())
         ),
-        ImmediateRole::WasmStructFieldIndex => write!(output, " field={}", instruction.imm()),
+        ImmediateRole::WasmGcField => write!(output, " field={:?}", crate::wasm::gc::GcField::from_tag(instruction.imm())),
         ImmediateRole::WasmExceptionFieldIndex => write!(output, " payload={}", instruction.imm()),
         ImmediateRole::WasmGcTypeIndex => write!(output, " type={}", instruction.imm()),
         ImmediateRole::WasmNonNullCheck => write!(

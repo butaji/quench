@@ -7,7 +7,7 @@ impl<H: Host> Vm<H> {
         tag: Value,
         payload: Vec<Value>,
     ) -> Result<Value, JsError> {
-        let Some(Cell::WasmTag { declarations, ty }) = self.heap.get(tag) else {
+        let Some(Cell::WasmTag { declarations, ty, .. }) = self.heap.get(tag) else {
             return Err(JsError::validation("invalid Wasm exception tag".into()));
         };
         let shape = declarations
@@ -79,9 +79,79 @@ impl<H: Host> Vm<H> {
     }
 }
 
+impl<H: Host> Vm<H> {
+    /// `new WebAssembly.Tag({ parameters })`: a fresh tag whose payload has those types.
+    pub(super) fn construct_wasm_tag(
+        &mut self,
+        p: &ResidualProgram,
+        descriptor: Value,
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(descriptor) {
+            return Err(self.type_error(p, "WebAssembly.Tag(): descriptor must be an object".into()));
+        }
+        let atom = self.intern_atom("parameters");
+        let parameters = self.get_property(p, descriptor, atom)?;
+        let parameters = self.create_list_from_array_like(p, parameters, super::operations::ArrayLikeElementKind::Any)?;
+        let mut types = Vec::with_capacity(parameters.len());
+        for parameter in parameters {
+            let name = self.to_string(p, parameter)?;
+            let Some(ty) = tag_parameter_type(&name) else {
+                return Err(self.type_error(p, "WebAssembly.Tag(): invalid parameter type".into()));
+            };
+            types.push(ty);
+        }
+        let declarations = crate::WasmTypes::from_functions([wasmparser::FuncType::new(types, [])]);
+        Ok(self.heap.alloc(Cell::WasmTag { object: Box::new(Self::empty_object(self.wasm_js.tag)), declarations, ty: 0 }))
+    }
+}
+
+/// The value types a `WebAssembly.Tag` descriptor's parameters name.
+fn tag_parameter_type(name: &str) -> Option<wasmparser::ValType> {
+    Some(match name {
+        "i32" => wasmparser::ValType::I32,
+        "i64" => wasmparser::ValType::I64,
+        "f32" => wasmparser::ValType::F32,
+        "f64" => wasmparser::ValType::F64,
+        "v128" => wasmparser::ValType::V128,
+        _ => return super::wasm_js::descriptor_reference_type(name).map(wasmparser::ValType::Ref),
+    })
+}
+
+/// `WebAssembly.JSTag`'s type: a tag whose one `externref` parameter carries a JavaScript
+/// exception through Wasm. Every realm makes the same one.
+pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
+    let declarations = crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+        [wasmparser::ValType::EXTERNREF],
+        [],
+    )]);
+    (declarations, 0)
+}
+
+/// `WebAssembly.JSTag`'s cell (`js_tag_type`), with its object part.
+pub(crate) fn js_tag_cell(object: Box<crate::heap::Object>) -> Cell {
+    let (declarations, ty) = js_tag_type();
+    Cell::WasmTag { object, declarations, ty }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `new WebAssembly.Tag` reads its descriptor's parameter types; an unknown one, or a
+    /// descriptor that is no object, is a TypeError.
+    #[test]
+    fn constructed_tags_read_their_parameter_types() {
+        let source = r#"
+            new WebAssembly.Tag({ parameters: ['i32', 'i64', 'f32', 'f64', 'v128', 'externref', 'anyfunc'] });
+            for (const descriptor of [{ parameters: ['none'] }, 1]) {
+                let typed = true;
+                try { new WebAssembly.Tag(descriptor); } catch (error) { typed = !(error instanceof TypeError); }
+                if (typed) throw 'an invalid descriptor was accepted';
+            }
+        "#;
+        let program = crate::Engine::specialize(source, "tag.js").unwrap();
+        crate::Runtime::new(crate::test_host::TestHost::default()).execute(&program).unwrap();
+    }
 
     #[test]
     fn exception_transport_keeps_identity_classification_and_owned_payload_through_gc() {
@@ -90,10 +160,7 @@ mod tests {
             [wasmparser::ValType::I64],
             [],
         )]);
-        let tag = vm.heap.alloc(Cell::WasmTag {
-            declarations,
-            ty: 0,
-        });
+        let tag = vm.heap.alloc(Cell::WasmTag { object: Box::new(crate::heap::Object::new(Value::NULL)), declarations, ty: 0 });
         let bits = vm.heap.alloc(Cell::WasmBits64(0x7ffc_1234_5678_9abc));
         let exception = vm.wasm_exception_new(tag, vec![bits]).unwrap();
         let handle = vm.root(exception);

@@ -1,6 +1,9 @@
 use super::*;
 use crate::heap::PrivateBrand;
 
+mod increment;
+pub(super) use increment::{integer_increment, number_increment};
+
 // Publish the current resume PC only while a binding-site consumer runs.
 macro_rules! with_binding_site_pc {
     ($vm:expr, $frame:expr, $resume_pc:expr, $action:expr) => {{
@@ -57,7 +60,7 @@ impl<H: Host> Vm<H> {
         // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
         // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
         // exhaustion accounting, so they are never inlined as user calls.
-        if !matches!(i.op(), Op::Call | Op::CallArray)
+        if !i.op().is_ordinary_call()
             || i.direct_eval()
             || self.direct_eval
             || self.parameter_eval
@@ -75,10 +78,10 @@ impl<H: Host> Vm<H> {
         if i.op() == Op::Call && i.call_window().count == 0 {
             let generator = self.read(f, i.register_c());
             if self.steps_as_generator(generator, callee) {
-                return self.try_in_loop_generator_step(f, pc, callee, generator, i.result_register(), false);
+                return self.try_in_loop_generator_step(f, pc, callee, generator, i.a(), false);
             }
         }
-        let entry = self.in_loop_call_entry(p, callee)?;
+        let Some(entry) = self.in_loop_call_entry(p, callee) else { return self.try_forwarded_user_call(p, f, i, pc, callee) };
         let target = (entry.program, entry.function, entry.env);
         if entry.push == super::InLoopPush::Settles {
             // Settling calls consume the ordinary register window and cannot take
@@ -96,7 +99,7 @@ impl<H: Host> Vm<H> {
             callee,
             target.1,
         );
-        self.profile.call_source(0);
+        self.profile.call_source(CallSource::Dynamic);
         let window = i.call_window();
         // CallArray's input is an already materialized argument array. Copy its
         // indexed values before pushing the frame, just as `Vm::step` does. The
@@ -148,6 +151,19 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// A plain construction the loop pushes in place (`inline_construct_target`), its receiver bound.
+    pub(super) fn try_inline_construct(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize)
+        -> Option<Result<StepResult, JsError>> {
+        let (crate::bytecode::ConstructArguments::Registers(window), false) = (i.construct_arguments(), i.is_super_construct())
+            else { return None };
+        let callee = self.read(f, i.register_b());
+        let (program, id, env, this) = self.inline_construct_target(p, f, callee)?;
+        let arguments: *const [Value] = self.register_window(f, window);
+        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+        self.push_in_loop_activation(p, f, pc, (program, id, env), callee, this, unsafe { &*arguments },
+            i.result_register(), CallCompletion::Constructor(this))
+    }
+
     /// A field read's `getter`, a user function the loop may push in place, run as the next
     /// in-loop activation with receiver `this` and no arguments, writing `destination`.
     #[inline(never)]
@@ -182,11 +198,29 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         f: usize,
         pc: usize,
+        target: (ProgramId, u32, Value),
+        callee: Value,
+        this: Value,
+        arguments: &[Value],
+        destination: crate::bytecode::Register,
+    ) -> Option<Result<StepResult, JsError>> {
+        self.push_in_loop_activation(p, f, pc, target, callee, this, arguments, destination, CallCompletion::Value)
+    }
+
+    /// `push_in_loop_call` completing as `completion`: a construction's (`Constructor`) is
+    /// pushed with its target bound (`construct_target`), as [[Construct]] enters its body.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn push_in_loop_activation(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        pc: usize,
         (program, id, env): (ProgramId, u32, Value),
         callee: Value,
         this: Value,
         arguments: &[Value],
         destination: crate::bytecode::Register,
+        completion: CallCompletion,
     ) -> Option<Result<StepResult, JsError>> {
         let caller_program = self.active_program;
         let callee_residual = if program == caller_program {
@@ -199,22 +233,15 @@ impl<H: Host> Vm<H> {
         if callee_residual.is_some() {
             self.set_active_program(program);
         }
-        let call_guard = self.push_general_user_frame(
-            callee_residual.as_deref().unwrap_or(p),
-            id,
-            env,
-            this,
-            arguments,
-            CallContext::user_function(id, callee),
-        );
+        let constructs = matches!(completion, CallCompletion::Constructor(_));
+        if constructs { self.construct_target = Some(ConstructionTarget { callee, new_target: callee }); }
+        let call_guard = self.push_general_user_frame(callee_residual.as_deref().unwrap_or(p), id, env, this, arguments,
+            CallContext::user_function(id, callee));
+        if constructs { self.construct_target = None; }
         if call_guard.is_err() {
             self.set_active_program(caller_program);
         }
-        Some(call_guard.map(|call_guard| StepResult::PushFrame {
-            destination,
-            call_guard,
-            completion: CallCompletion::Value,
-        }))
+        Some(call_guard.map(|call_guard| StepResult::PushFrame { destination, call_guard, completion }))
     }
 
     /// The program, function and environment of `callee` when it is a user function of a
@@ -236,20 +263,20 @@ impl<H: Host> Vm<H> {
     fn in_loop_call_entry(&mut self, p: &ResidualProgram, callee: Value) -> Option<super::InLoopCallTarget> {
         let Some(heap_index) = callee.heap_index() else {
             #[cfg(feature = "profile-lane-exits")]
-            super::lane_exits::call_eligibility(2);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NonHeapCallee);
             return None;
         };
         let index = heap_index as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
         let cached = self.call_targets[index];
         if cached.callee == callee {
             #[cfg(feature = "profile-lane-exits")]
-            super::lane_exits::call_eligibility(0);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::PositiveCacheHit);
             return Some(cached);
         }
         let target = self.resolve_in_loop_call_target(p, callee, index);
         #[cfg(feature = "profile-lane-exits")]
         if target.is_some() {
-            super::lane_exits::call_eligibility(1);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::PositiveResolution);
         } else {
             self.record_call_eligibility_miss(p, callee);
         }
@@ -259,15 +286,15 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "profile-lane-exits")]
     fn record_call_eligibility_miss(&self, p: &ResidualProgram, callee: Value) {
         let Some(record) = self.heap.function(callee) else {
-            super::lane_exits::call_eligibility(3);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NativeOrWrongRealmOrNonCallable);
             return;
         };
         let FunctionKind::User(program, function) = &record.kind else {
-            super::lane_exits::call_eligibility(3);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NativeOrWrongRealmOrNonCallable);
             return;
         };
         if record.realm != self.realm.globals {
-            super::lane_exits::call_eligibility(3);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NativeOrWrongRealmOrNonCallable);
             return;
         }
         let Some(owner) = (if *program == self.active_program {
@@ -275,7 +302,7 @@ impl<H: Host> Vm<H> {
         } else {
             self.programs.residual(*program)
         }) else {
-            super::lane_exits::call_eligibility(4);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::MissingProgramOrFunction);
             return;
         };
         let unsupported = owner.function_get(*function as usize).is_none_or(|body| {
@@ -286,10 +313,10 @@ impl<H: Host> Vm<H> {
             || owner.kind == crate::bytecode::ProgramKind::Wasm
             || unsupported
         {
-            super::lane_exits::call_eligibility(5);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::UnsupportedCallPlan);
         } else {
             // Keep this bucket conservative if a new resolver rejection is added.
-            super::lane_exits::call_eligibility(4);
+            super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::MissingProgramOrFunction);
         }
     }
 
@@ -369,7 +396,7 @@ impl<H: Host> Vm<H> {
         // only `apply` takes as its list.
         let forwarded = if i.op() == Op::Call { self.forwarded_call(callee, target, window) } else { None };
         let arguments = match forwarded {
-            Some((forwarded_target, forwarded_this, forwarded_arguments)) => {
+            Some(super::function::Forwarded { callee: forwarded_target, receiver: forwarded_this, args: forwarded_arguments, .. }) => {
                 (target, this) = (forwarded_target, forwarded_this);
                 forwarded_arguments
             }
@@ -426,7 +453,7 @@ impl<H: Host> Vm<H> {
             },
         };
         let resolved = self.in_loop_call_target(p, target)?;
-        self.profile.call_source(0);
+        self.profile.call_source(CallSource::Dynamic);
         self.profile.call_target(1, arguments.len());
         self.push_in_loop_call(p, f, pc, resolved, target, this, arguments, i.result_register())
     }
@@ -521,9 +548,9 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::Nop => {}
             Op::CloneEnv => {
-                let plan = &p.function(self.frames[f].function as usize).environment_clones
-                    [i.environment_clone_index()];
-                self.clone_frame_environment(f, &plan.fresh, &plan.reset)?;
+                let clones = &p.function(self.frames[f].function as usize).environment_clones;
+                let plan = &clones[i.environment_clone_index()];
+                self.clone_frame_environment(f, &plan.fresh, clones.resets(plan))?;
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
@@ -732,6 +759,7 @@ impl<H: Host> Vm<H> {
                 let callee = self.frames[f].context.callee().unwrap_or(Value::UNDEFINED);
                 self.write(f, i.result_register(), callee);
             }
+            Op::CallFirstChunk => self.call_first_chunk(p, f, i, *pc)?,
             Op::LoadImportMeta => {
                 let program = self.frames[f].program;
                 let import_meta = if let Some(value) = self.programs.import_meta(program) {
@@ -1051,23 +1079,13 @@ impl<H: Host> Vm<H> {
                 let value = self.to_numeric(p, self.read(f, i.register_b()))?;
                 self.write(f, i.result_register(), value);
             }
-            Op::ForInKeys => {
-                let keys = self.object_for_in_snapshot(p, self.read(f, i.register_b()))?;
-                self.write(f, i.result_register(), keys);
-            }
-            Op::ForInKeyIsEnumerable => {
-                let enumerable = self.object_for_in_key_is_enumerable(
-                    p, self.read(f, i.register_b()), self.read(f, i.register_c()),
-                )?;
-                self.write(f, i.result_register(), Value::boolean(enumerable));
-            }
             Op::CopyDataProperties => self.copy_data_properties(
                 p,
                 self.read(f, i.register_a()),
                 self.read(f, i.register_b()),
                 self.read(f, i.register_c()),
             )?,
-            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray => {
+            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart => {
                 let [a, b] = value_step_operands(i).map(|register| register.map(|register| self.read(f, register)));
                 if let Some(value) = self.value_step(p, i, a, b)? {
                     self.write(f, i.result_register(), value);
@@ -1076,11 +1094,7 @@ impl<H: Host> Vm<H> {
             Op::RequireObjectCoercible => {
                 self.require_object_coercible(p, self.read(f, i.register_b()))?;
             }
-            Op::RequireIteratorResult => {
-                if !self.is_object_like(self.read(f, i.register_b())) {
-                    return Err(self.type_error(p, "iterator next result is not an object".into()));
-                }
-            }
+            Op::RequireIteratorResult => self.require_iterator_result(p, self.read(f, i.register_b()))?,
             Op::SuperCallCheck => self.check_super_call(p)?,
             Op::IteratorCleanupPush => self.frames[f].active_iterators.push(ActiveIterator {
                 iterator: i.register_a(),
@@ -1241,7 +1255,7 @@ impl<H: Host> Vm<H> {
                     i.atom_index(),
                     value,
                     i.cache_site_index(),
-                    i.op() == Op::SetFieldStrict,
+                    i.op().field_store().is_some_and(|store| store.strict),
                 )?;
             }
             Op::DefinePropertyRecord => {
@@ -1290,7 +1304,7 @@ impl<H: Host> Vm<H> {
                     i.atom_index(),
                     self.read(f, i.register_a()),
                     i.cache_site_index(),
-                    i.op() == Op::SetThisFieldStrict,
+                    i.op().field_store().is_some_and(|store| store.strict),
                 )?;
             }
             Op::SetIndex => {
@@ -1369,14 +1383,12 @@ impl<H: Host> Vm<H> {
                 };
                 self.write(f, i.result_register(), value);
             }
+            Op::StringConcat => {
+                let v = self.frame_string_concat(p, f, i.register_window())?;
+                self.write(f, i.result_register(), v);
+            }
             Op::Unary => {
-                let operator = i.unary_operator();
-                let operand = self.read(f, i.register_b());
-                let v = if operator == super::coercion::LOGICAL_NOT {
-                    self.logical_not(operand)
-                } else {
-                    self.unary(p, operator, operand)?
-                };
+                let v = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
                 }
@@ -1398,26 +1410,20 @@ impl<H: Host> Vm<H> {
                 self.frames[f].pc_is_resume = true;
                 self.maybe_collect(p);
             }
-            Op::JumpFalse => {
+            Op::JumpFalse | Op::JumpTrue => {
                 let value = self.read(f, i.register_a());
                 let truthy = self.truthy(value);
                 #[cfg(feature = "profile-aggregate")]
                 self.profile
                     .branch_value(value.profile_kind() as usize, truthy);
-                if !truthy {
+                if truthy == (i.op() == Op::JumpTrue) {
                     *pc = i.jump_target() as usize;
                 }
             }
-            Op::JumpTrue => {
-                let value = self.read(f, i.register_a());
-                let truthy = self.truthy(value);
-                #[cfg(feature = "profile-aggregate")]
-                self.profile
-                    .branch_value(value.profile_kind() as usize, truthy);
-                if truthy {
-                    *pc = i.jump_target() as usize;
-                }
-            }
+            Op::ForInNext => match self.for_in_next(p, self.read(f, i.register_b()))? {
+                Some(key) => self.write(f, i.result_register(), key),
+                None => *pc = i.jump_target() as usize,
+            },
             Op::JumpBinaryFalse => {
                 let operator = i.binary_operator_field();
                 let left_operand = i.operand_b();
@@ -1437,7 +1443,7 @@ impl<H: Host> Vm<H> {
                 {
                     return result;
                 }
-                self.profile.call_source(0);
+                self.profile.call_source(CallSource::Dynamic);
                 let window = i.call_window();
                 // A spread argument array is read before any call state changes, since
                 // reading it can fail; register windows are copied only on the paths that
@@ -1520,7 +1526,7 @@ impl<H: Host> Vm<H> {
                     self.direct_eval = previous_direct_eval;
                     self.parameter_eval = previous_parameter_eval;
                     result?;
-                    self.profile.terminal_call(0);
+                    self.profile.terminal_call(TerminalCall::Function);
                     return Ok(StepResult::TailCall);
                 }
                 if terminal
@@ -1551,7 +1557,7 @@ impl<H: Host> Vm<H> {
                     )?;
                     self.direct_eval = previous_direct_eval;
                     self.parameter_eval = previous_parameter_eval;
-                    self.profile.terminal_call(0);
+                    self.profile.terminal_call(TerminalCall::Function);
                     return Ok(StepResult::TailCall);
                 }
                 let discarded_wasm_frame =
@@ -1605,7 +1611,7 @@ impl<H: Host> Vm<H> {
                 self.direct_eval = previous_direct_eval;
                 self.parameter_eval = previous_parameter_eval;
                 if i.returns_from_frame() {
-                    self.profile.terminal_call(0);
+                    self.profile.terminal_call(TerminalCall::Function);
                     return Ok(StepResult::Return(value));
                 }
                 self.write(f, i.result_register(), value);
@@ -1615,7 +1621,7 @@ impl<H: Host> Vm<H> {
                     && p.kind == crate::bytecode::ProgramKind::Wasm
                     && !i.returns_from_frame()
                 {
-                    self.profile.call_source(1);
+                    self.profile.call_source(CallSource::Known);
                     if let Some(result) =
                         self.call_compiled(f, u32::from(i.known_function_index()), i.call_window())
                     {
@@ -1637,7 +1643,7 @@ impl<H: Host> Vm<H> {
                         completion: CallCompletion::Value,
                     });
                 }
-                self.profile.call_source(1);
+                self.profile.call_source(CallSource::Known);
                 let window = i.call_window();
                 let function_index = i.known_function_index();
                 let argument_start = usize::from(window.base);
@@ -1681,7 +1687,7 @@ impl<H: Host> Vm<H> {
                         args,
                         CallContext::Internal,
                     )?;
-                    self.profile.terminal_call(0);
+                    self.profile.terminal_call(TerminalCall::Function);
                     return Ok(StepResult::TailCall);
                 }
                 let value = self.call_user_maybe_async(
@@ -1693,25 +1699,25 @@ impl<H: Host> Vm<H> {
                     CallContext::Internal,
                 )?;
                 if i.returns_from_frame() {
-                    self.profile.terminal_call(0);
+                    self.profile.terminal_call(TerminalCall::Function);
                     return Ok(StepResult::Return(value));
                 }
                 self.write(f, i.result_register(), value);
             }
             Op::CallMethod => {
-                self.profile.call_source(2);
+                self.profile.call_source(CallSource::Method);
                 let this = self.read(f, i.register_b());
                 self.frames[f].pc = *pc;
                 self.frames[f].pc_is_resume = true;
                 let value = self.call_method_site_safe(p, f, i.method_site_index(), this)?;
                 if i.returns_from_frame() {
-                    self.profile.terminal_call(1);
+                    self.profile.terminal_call(TerminalCall::Method);
                     return Ok(StepResult::Return(value));
                 }
                 self.write(f, i.result_register(), value);
             }
             Op::CallThisMethod => {
-                self.profile.call_source(3);
+                self.profile.call_source(CallSource::ThisMethod);
                 let method_site = i.method_site_index();
                 let path = p.method_sites[method_site].receiver_path;
                 let this = if let Some((atom, cache)) = path {
@@ -1723,57 +1729,16 @@ impl<H: Host> Vm<H> {
                 self.frames[f].pc_is_resume = true;
                 let value = self.call_method_site_safe(p, f, method_site, this)?;
                 if i.returns_from_frame() {
-                    self.profile.terminal_call(2);
+                    self.profile.terminal_call(TerminalCall::ThisMethod);
                     return Ok(StepResult::Return(value));
                 }
                 self.write(f, i.result_register(), value);
             }
             Op::Construct => {
-                self.profile.call_source(4);
-                // A construction whose result is returned is pushed too; its caller returns
-                // the constructed value (see `PendingGeneralCall::returns`).
-                if allow_inline_calls
-                    && !i.is_super_construct()
-                    && let crate::bytecode::ConstructArguments::Registers(window) =
-                        i.construct_arguments()
-                {
-                    let callee = self.read(f, i.register_b());
-                    if let Some((program, id, env, this)) = self.inline_construct_target(p, f, callee) {
-                        let arguments: *const [Value] = self.register_window(f, window);
-                        self.frames[f].pc = *pc;
-                        self.frames[f].pc_is_resume = true;
-                        self.construct_target = Some(ConstructionTarget { callee, new_target: callee });
-                        // A constructor of another program is pushed in its own, as
-                        // `push_in_loop_call` pushes a call; the loop's `PushFrame` saves and
-                        // restores the caller's.
-                        let caller_program = self.active_program;
-                        let callee_residual = if program == caller_program {
-                            None
-                        } else {
-                            self.programs.get(program)
-                        };
-                        if callee_residual.is_some() {
-                            self.set_active_program(program);
-                        }
-                        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-                        let pushed = self.push_general_user_frame(
-                            callee_residual.as_deref().unwrap_or(p),
-                            id,
-                            env,
-                            this,
-                            unsafe { &*arguments },
-                            CallContext::user_function(id, callee),
-                        );
-                        self.construct_target = None;
-                        if pushed.is_err() && callee_residual.is_some() {
-                            self.set_active_program(caller_program);
-                        }
-                        return Ok(StepResult::PushFrame {
-                            destination: i.result_register(),
-                            call_guard: pushed?,
-                            completion: CallCompletion::Constructor(this),
-                        });
-                    }
+                self.profile.call_source(CallSource::Construct);
+                // A returned construction is pushed too; its caller returns it (`PendingGeneralCall::returns`).
+                if allow_inline_calls && let Some(step) = self.try_inline_construct(p, f, i, *pc) {
+                    return step;
                 }
                 let args = match i.construct_arguments() {
                     crate::bytecode::ConstructArguments::Array(register) => {
@@ -1883,29 +1848,25 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The `++`/`--` step: one, negated for a decrement.
-fn increment_delta(is_decrement: bool) -> f64 {
-    if is_decrement { -1.0 } else { 1.0 }
-}
-
-/// `++`/`--` of a Number operand, staying an integer while the result fits; `None` for any
-/// other operand, whose conversion may run guest code or allocate.
-#[inline(always)]
-pub(super) fn number_increment(input: Value, is_decrement: bool) -> Option<Value> {
-    if let Some(integer) = input.as_int() {
-        let next = if is_decrement {
-            integer.checked_sub(1)
-        } else {
-            integer.checked_add(1)
-        };
-        return Some(next.map_or_else(
-            || Value::number(f64::from(integer) + increment_delta(is_decrement)),
-            Value::integer,
-        ));
+impl<H: Host> Vm<H> {
+    /// The frame call-like instruction `i` of frame `caller` pushes, as its step pushes it:
+    /// callee, argument window, receiver and completion. `getter` and `this` are what the step
+    /// found running: a getter read's function, and a construction's or getter's receiver.
+    /// Frame recovery (`compiled::recover_call`) rebuilds a native activation's frame from it.
+    pub(super) fn pushed_frame(&self, caller: usize, i: WideInstruction, getter: Value, this: Value)
+        -> (Value, crate::bytecode::RegisterWindow, Value, CallCompletion) {
+        match i.op() {
+            Op::Construct => {
+                let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else {
+                    unreachable!("a pushed construction passes registers")
+                };
+                (self.read(caller, i.register_b()), window, this, CallCompletion::Constructor(this))
+            }
+            // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
+            Op::GetField => (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value),
+            _ => (self.read(caller, i.register_b()), i.call_window(), self.read(caller, i.register_c()), CallCompletion::Value),
+        }
     }
-    input
-        .as_number()
-        .map(|number| Value::number(number + increment_delta(is_decrement)))
 }
 
 /// The operand registers `Vm::value_step` reads for `i`: `AppendArray`'s array and optional
@@ -1918,7 +1879,7 @@ pub(super) fn value_step_operands(i: WideInstruction) -> [Option<crate::bytecode
 }
 
 impl<H: Host> Vm<H> {
-    /// `ToPropertyKey`, `GetIterator`, `IteratorClose` or `AppendArray` of its operand values
+    /// `ToPropertyKey`, `GetIterator`, `ForInStart`, `IteratorClose` or `AppendArray` of its operand values
     /// (`value_step_operands`): the value it writes to its result register, if any. The
     /// general step and a frameless activation's (`lane_step_beside_activations`) share it.
     pub(super) fn value_step(
@@ -1932,6 +1893,7 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::ToPropertyKey => self.to_property_key(p, operand).map(Some),
             Op::GetIterator => self.get_iterator(p, operand).map(Some),
+            Op::ForInStart => self.for_in_start(p, operand).map(Some),
             Op::IteratorClose => self.iterator_close(p, operand).map(Some),
             Op::AppendArray => {
                 let array = a.expect("AppendArray names its array");

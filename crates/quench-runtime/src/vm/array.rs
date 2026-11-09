@@ -152,37 +152,6 @@ impl<H: Host> Vm<H> {
         Ok(Value::number(new_length as f64))
     }
 
-    /// `shift` of a non-empty array of `length` whose every index is an ordinary own data
-    /// element and whose `length` is writable, so shifting consults no prototype accessor
-    /// and runs no guest code: one vector removal. Exceptional descriptors, holes, mapped
-    /// arguments and integrity states leave `None`, for the ordered property algorithm.
-    fn shift_dense(&mut self, object: Value, length: usize) -> Option<Value> {
-        let dense = length > 0
-            && self.heap.sparse_length(object).is_none()
-            && self.heap.array(object).is_some_and(|data| {
-                let elements = data.elements();
-                data.is_extensible()
-                    && !data.is_arguments_object()
-                    && !data.has_indexed_descriptors()
-                    && elements.len() == length
-                    && elements.iter().all(|value| !value.is_deleted())
-            });
-        let writable_length = self
-            .property_attributes(object, super::property_key::PropertyKey::string(self.length_atom))
-            .is_some_and(|attributes| attributes.writable);
-        if !dense || !writable_length {
-            return None;
-        }
-        let elements = self.heap.array_elements_mut(object).expect("dense array guard");
-        Some(super::index::mutable_array_elements(elements).remove(0))
-    }
-
-    /// `shift` of an array as `shift_dense` makes it, which observes nothing.
-    pub(super) fn plain_array_shift(&mut self, this: Value) -> Option<Value> {
-        let length = self.own_array_length(this)?;
-        self.shift_dense(this, length)
-    }
-
     pub(super) fn delete_array_like_property(
         &mut self,
         p: &ResidualProgram,
@@ -322,7 +291,7 @@ impl<H: Host> Vm<H> {
         let moved_present = self
             .heap
             .array_elements(this)
-            .is_some_and(|elements| elements[start..].iter().all(|value| !value.is_deleted()));
+            .is_some_and(|elements| self.holes_unobserved(this, &elements[start..]));
         let new_length = (length - delete_count)
             .checked_add(items.len())
             .filter(|length| *length <= MAX_ARRAY_LENGTH)?;
@@ -619,7 +588,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn dense_array_length(&self, this: Value) -> Option<usize> {
         let object = self.heap.array(this)?;
         if object.holds_ordinary_elements() {
-            return self.heap.sparse_length(this).is_none().then(|| object.elements().len());
+            return Some(object.elements().len());
         }
         if object.has_indexed_descriptors()
             || object.is_frozen()
@@ -695,9 +664,48 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// `push(value)` onto a direct array whose elements are ordinary and dense
+    /// (`Object::holds_ordinary_elements`) and whose prototypes hold no index
+    /// (`chain_holds_no_index`, a held proof that a change to any of them retires): OrdinarySet
+    /// of the index at its length defines a plain element there, and `length` grows by one,
+    /// so the steps are one append. `None` leaves any other call to `array_push_dense`.
+    #[inline(always)]
+    pub(super) fn array_push_one(&mut self, this: Value, value: Value) -> Option<Value> {
+        let object = self.heap.record_array(this)?;
+        let length = object.elements().len();
+        if !object.holds_ordinary_elements() || length >= MAX_ARRAY_LENGTH || !self.chain_holds_no_index(object.proto())
+        {
+            return None;
+        }
+        self.heap.push_array_element(this, value)?;
+        Some(Value::length(length + 1))
+    }
+
+    /// `pop()` of a direct array whose elements are ordinary and dense, as
+    /// `array_push_one` admits it: an empty one answers `undefined`; one whose last element is
+    /// present removes it, as the generic steps' Get, DeletePropertyOrThrow and `length` set
+    /// do. `None` for a hole, which its prototypes answer, and for any other receiver.
+    #[inline(always)]
+    pub(super) fn array_pop_one(&mut self, this: Value) -> Option<Value> {
+        let object = self.heap.record_array(this)?;
+        if !object.holds_ordinary_elements() {
+            return None;
+        }
+        match object.elements().last() {
+            None => Some(Value::UNDEFINED),
+            Some(last) if last.is_deleted() => None,
+            // Removing stores no reference, which the write barrier passes.
+            Some(_) => super::index::mutable_array_elements(
+                self.heap.record_array_store_mut(this, Value::UNDEFINED)?.elements_mut(),
+            )
+            .pop(),
+        }
+    }
+
     /// `push` onto a dense array (`dense_array_length`) as one append, when each appended
-    /// index stores plainly (`array_indices_store_plainly`).
+    /// index stores plainly (`array_indices_store_plainly`); one value first as `array_push_one`.
     pub(super) fn array_push_dense(&mut self, this: Value, args: &[Value]) -> Option<Value> {
+        if let [value] = *args && let Some(length) = self.array_push_one(this, value) { return Some(length); }
         let length = self.dense_array_length(this)?;
         let final_length = length.checked_add(args.len())?;
         if final_length > MAX_ARRAY_LENGTH {
@@ -814,16 +822,13 @@ impl<H: Host> Vm<H> {
 
     /// `pop` of a dense array (`dense_array_length`) as one removal, when its last element
     /// is present: the generic steps read that own data element, delete it and shorten
-    /// `length` by one.
+    /// `length` by one; a receiver `array_pop_one` admits takes its steps.
     pub(super) fn array_pop_dense(&mut self, this: Value) -> Option<Value> {
+        if self.heap.record_array(this).is_some_and(|object| object.holds_ordinary_elements()) { return self.array_pop_one(this); }
         let length = self.dense_array_length(this)?;
-        let Some(last) = length.checked_sub(1) else {
-            return Some(Value::UNDEFINED);
-        };
+        let Some(last) = length.checked_sub(1) else { return Some(Value::UNDEFINED) };
         let object = self.heap.array_mut(this)?;
-        if object.elements()[last].is_deleted() {
-            return None;
-        }
+        if object.elements()[last].is_deleted() { return None; }
         super::index::mutable_array_elements(object.elements_mut()).pop()
     }
 
@@ -1048,7 +1053,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether `value` is this realm's `Array`, the constructor ArrayCreate stands for.
-    fn realm_array_constructor(&self, value: Value) -> bool {
+    pub(super) fn realm_array_constructor(&self, value: Value) -> bool {
         matches!(
             self.heap.function(value),
             Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), realm, .. }) if *realm == self.realm.globals

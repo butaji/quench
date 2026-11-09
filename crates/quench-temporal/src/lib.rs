@@ -5,10 +5,22 @@ mod duration_total;
 mod offset;
 mod rounding;
 
+/// Calendar and clock unit facts every Temporal and Date operation shares.
+pub mod units {
+    pub const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
+    pub const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
+    pub const NANOSECONDS_PER_DAY: i128 = 86_400_000_000_000;
+    pub const SECONDS_PER_MINUTE: i32 = 60;
+    pub const DAYS_PER_WEEK: i128 = 7;
+    pub const ISO_DAYS_PER_WEEK: i64 = 7;
+    /// Half-way rounding compares twice a remainder against its increment.
+    pub const ROUNDING_TIE_FACTOR: i128 = 2;
+}
+
 pub use duration::parse_duration;
 pub use duration_total::{relative_duration_nanoseconds, total_duration};
 pub use offset::{
-    offset_minutes, offset_seconds, valid_date_time_offset, valid_string_offset,
+    offset_minutes, offset_seconds, offset_sign, valid_date_time_offset, valid_string_offset,
     valid_timezone_offset,
 };
 pub use rounding::round_temporal_nanoseconds;
@@ -157,7 +169,7 @@ const DAYS_BEFORE_LAST_400_YEAR_DAY: i64 = 146_096;
 const DAYS_PER_MONTH_TRANSFORM_CYCLE: i64 = 153;
 const MONTH_TRANSFORM_DIVISOR: i64 = 5;
 const ISO_MONTHS_PER_YEAR: i64 = 12;
-const ISO_DAYS_PER_WEEK: i64 = 7;
+use units::ISO_DAYS_PER_WEEK;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IsoDate {

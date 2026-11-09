@@ -188,6 +188,8 @@ pub struct KeyAlgorithm {
     name: &'static std::ffi::CStr,
     pub family: KeyFamily,
     has_key_type: bool,
+    /// The length of a raw public key, where the algorithm fixes one.
+    pub raw_public_len: Option<usize>,
 }
 impl KeyAlgorithm {
     pub fn name(&self) -> &'static str {
@@ -217,141 +219,169 @@ const KEY_ALGORITHMS: &[KeyAlgorithm] = &[
         name: c"RSA",
         family: KeyFamily::Other,
         has_key_type: true,
+        raw_public_len: None,
     },
     KeyAlgorithm {
         name: c"RSA-PSS",
         family: KeyFamily::Other,
         has_key_type: true,
+        raw_public_len: None,
     },
     KeyAlgorithm {
         name: c"DSA",
         family: KeyFamily::Other,
         has_key_type: true,
+        raw_public_len: None,
     },
     KeyAlgorithm {
         name: c"DH",
         family: KeyFamily::Other,
         has_key_type: true,
+        raw_public_len: None,
     },
     KeyAlgorithm {
         name: c"EC",
         family: KeyFamily::Other,
         has_key_type: true,
+        raw_public_len: None,
     },
     KeyAlgorithm {
         name: c"Ed25519",
         family: KeyFamily::EdDSA,
         has_key_type: true,
+        raw_public_len: None,
     },
     KeyAlgorithm {
         name: c"Ed448",
         family: KeyFamily::EdDSA,
         has_key_type: true,
+        raw_public_len: None,
     },
     KeyAlgorithm {
         name: c"X25519",
         family: KeyFamily::Xdh,
         has_key_type: true,
+        raw_public_len: None,
     },
     KeyAlgorithm {
         name: c"X448",
         family: KeyFamily::Xdh,
         has_key_type: true,
+        raw_public_len: None,
     },
     KeyAlgorithm {
         name: c"SM2",
         family: KeyFamily::Other,
         has_key_type: false,
+        raw_public_len: None,
     },
     KeyAlgorithm {
         name: c"ML-DSA-44",
         family: KeyFamily::MlDsa,
         has_key_type: true,
+        raw_public_len: Some(1312),
     },
     KeyAlgorithm {
         name: c"ML-DSA-65",
         family: KeyFamily::MlDsa,
         has_key_type: true,
+        raw_public_len: Some(1952),
     },
     KeyAlgorithm {
         name: c"ML-DSA-87",
         family: KeyFamily::MlDsa,
         has_key_type: true,
+        raw_public_len: Some(2592),
     },
     KeyAlgorithm {
         name: c"ML-KEM-512",
         family: KeyFamily::MlKem,
         has_key_type: true,
+        raw_public_len: Some(800),
     },
     KeyAlgorithm {
         name: c"ML-KEM-768",
         family: KeyFamily::MlKem,
         has_key_type: true,
+        raw_public_len: Some(1184),
     },
     KeyAlgorithm {
         name: c"ML-KEM-1024",
         family: KeyFamily::MlKem,
         has_key_type: true,
+        raw_public_len: Some(1568),
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHA2-128f",
         family: KeyFamily::SlhDsa,
         has_key_type: true,
+        raw_public_len: Some(32),
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHA2-128s",
         family: KeyFamily::SlhDsa,
         has_key_type: true,
+        raw_public_len: Some(32),
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHA2-192f",
         family: KeyFamily::SlhDsa,
         has_key_type: true,
+        raw_public_len: Some(48),
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHA2-192s",
         family: KeyFamily::SlhDsa,
         has_key_type: true,
+        raw_public_len: Some(48),
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHA2-256f",
         family: KeyFamily::SlhDsa,
         has_key_type: true,
+        raw_public_len: Some(64),
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHA2-256s",
         family: KeyFamily::SlhDsa,
         has_key_type: true,
+        raw_public_len: Some(64),
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHAKE-128f",
         family: KeyFamily::SlhDsa,
         has_key_type: true,
+        raw_public_len: Some(32),
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHAKE-128s",
         family: KeyFamily::SlhDsa,
         has_key_type: true,
+        raw_public_len: Some(32),
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHAKE-192f",
         family: KeyFamily::SlhDsa,
         has_key_type: true,
+        raw_public_len: Some(48),
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHAKE-192s",
         family: KeyFamily::SlhDsa,
         has_key_type: true,
+        raw_public_len: Some(48),
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHAKE-256f",
         family: KeyFamily::SlhDsa,
         has_key_type: true,
+        raw_public_len: Some(64),
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHAKE-256s",
         family: KeyFamily::SlhDsa,
         has_key_type: true,
+        raw_public_len: Some(64),
     },
 ];
 pub fn key_algorithm(name: &str) -> Option<&'static KeyAlgorithm> {
@@ -410,6 +440,11 @@ pub fn secure_heap_used() -> usize {
     } else {
         0
     }
+}
+
+/// Whether a key is an RSA key, with or without the PSS restriction.
+pub(crate) fn is_rsa(id: openssl::pkey::Id) -> bool {
+    matches!(id, openssl::pkey::Id::RSA | openssl::pkey::Id::RSA_PSS)
 }
 
 #[cfg(test)]

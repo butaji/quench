@@ -6,7 +6,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-const DEFAULT_PROMPT: &str = "> ";
+use crate::modules::keys::DEFAULT_PROMPT;
 /// The prompt while lines are buffered (Node's `...` with its trailing space).
 const CONTINUATION_PROMPT: &str = "... ";
 const RESOURCE_PREFIX: &str = "REPL";
@@ -281,7 +281,7 @@ pub(crate) fn construct(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
     put(c, interface_options, "terminal", terminal_value)?;
     put(c, interface_options, "prompt", prompt)?;
     let interface = interface_constructor(c)?;
-    let target = c.new_target_rooted().unwrap_or(match cache(c, SERVER_CACHE) {
+    let target = c.new_target_rooted().unwrap_or_else(|| match cache(c, SERVER_CACHE) {
         Some(constructor) => constructor,
         None => interface,
     });

@@ -1,5 +1,7 @@
 use super::*;
 
+mod in_place;
+
 fn is_ecma_whitespace(unit: u16) -> bool {
     matches!(
         unit,
@@ -97,37 +99,13 @@ impl<H: Host> Vm<H> {
         if let Some(value) = self.string_search_in_place(native, receiver, args) {
             return Some(value);
         }
+        if let Some(value) = self.substring_in_place(native, receiver, args) {
+            return Some(value);
+        }
         let result = self.call_primitive_native(p, native, receiver, args).ok();
         // A string method reads its receiver as text, which it may make on demand.
         self.heap.charge_materialized_text();
         result
-    }
-
-    /// `indexOf`, `includes` or `startsWith` of a flat string receiver searching for a flat
-    /// string, from a position left out or passed as an integer: every conversion the
-    /// method makes is then the value itself, so the search reads the units in place, as
-    /// `call_primitive_native` would after copying them. `None` leaves any other call to it.
-    fn string_search_in_place(&self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
-        if !matches!(native, Native::StringIndexOf | Native::StringIncludes | Native::StringStartsWith) {
-            return None;
-        }
-        let [search, rest @ ..] = args else {
-            return None;
-        };
-        let text = self.heap.string(receiver)?.existing_flat()?.view();
-        let needle = self.heap.string(*search)?.existing_flat()?.view();
-        let length = text.len();
-        // A position below zero reads as zero and one past the end as the end, for all three.
-        let position = match rest.first() {
-            None => 0,
-            Some(position) if position.is_undefined() => 0,
-            Some(position) => usize::try_from(position.as_int()?).unwrap_or(0).min(length),
-        };
-        Some(match native {
-            Native::StringIndexOf => Value::number(text.find(needle, position).map_or(-1.0, |index| index as f64)),
-            Native::StringIncludes => Value::boolean(text.find(needle, position).is_some()),
-            _ => Value::boolean(text.slice(position..length).starts_with(needle)),
-        })
     }
 
     pub(super) fn call_primitive_native(
@@ -266,34 +244,12 @@ impl<H: Host> Vm<H> {
                 );
                 Ok(self.heap.alloc_string(value))
             }
-            Native::StringSlice => {
+            Native::StringSlice | Native::StringSubstring => {
                 let text = self.string_receiver_text(this)?;
-                let units = text.units();
-                let length = units.len() as i64;
-                let normalize = |value: i64| {
-                    if value < 0 {
-                        (length + value).max(0)
-                    } else {
-                        value.min(length)
-                    }
-                };
-                let start = normalize(self.argument_integer(p, args, 0, 0)?);
-                let end = normalize(self.argument_integer(p, args, 1, length)?);
-                if start >= end {
-                    return self.string_from_units(&[]);
-                }
-                self.string_substring(&text, start as usize..end as usize)
-            }
-            Native::StringSubstring => {
-                let text = self.string_receiver_text(this)?;
-                let units = text.units();
-                let length = units.len() as i64;
-                let mut start = self.argument_integer(p, args, 0, 0)?.clamp(0, length);
-                let mut end = self.argument_integer(p, args, 1, length)?.clamp(0, length);
-                if start > end {
-                    std::mem::swap(&mut start, &mut end);
-                }
-                self.string_substring(&text, start as usize..end as usize)
+                let length = text.units().len() as i64;
+                let start = self.argument_integer(p, args, 0, 0)?;
+                let end = self.argument_integer(p, args, 1, length)?;
+                self.string_substring(&text, in_place::substring_range(native, length, start, end))
             }
             Native::StringSubstr => {
                 let text = self.string_receiver_text(this)?;
@@ -358,7 +314,7 @@ impl<H: Host> Vm<H> {
                 let text = receiver.units();
                 let result = if native == Native::StringIndexOf {
                     let start = self
-                        .to_number(p, args.get(1).copied().unwrap_or(Value::number(0.0)))?
+                        .to_number(p, args.get(1).copied().unwrap_or_else(|| Value::number(0.0)))?
                         .max(0.0)
                         .trunc() as usize;
                     receiver.find_units(search.units(), start)
@@ -367,7 +323,7 @@ impl<H: Host> Vm<H> {
                         p,
                         args.get(1)
                             .copied()
-                            .unwrap_or(Value::number(text.len() as f64)),
+                            .unwrap_or_else(|| Value::number(text.len() as f64)),
                     )?;
                     let position = if position.is_nan() {
                         text.len()
@@ -645,9 +601,7 @@ impl<H: Host> Vm<H> {
                     return Err(self.range_error(p, "Invalid radix".into()));
                 }
                 if radix == 10 || !number.is_finite() {
-                    return Ok(self.heap.alloc_string(
-                        super::number::number_to_decimal(number).into(),
-                    ));
+                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_number(number)));
                 }
                 Ok(self.heap.alloc_string(
                     super::string_extra::number_to_radix(number, radix).into(),
@@ -717,27 +671,13 @@ impl<H: Host> Vm<H> {
             .alloc_string(super::wtf16::JsString::from_units(units)))
     }
 
-    /// The string of the one code unit `unit`, when it is ASCII: the one made last, until a
-    /// collection (`Vm::ascii_unit_strings`). Strings have no identity, so sharing one is
-    /// unobservable.
+    /// The string of the one code unit `unit`, when it is ASCII (`Heap::ascii_unit_strings`).
     pub(super) fn ascii_unit_string(&mut self, unit: u16) -> Option<Value> {
-        let index = usize::from(unit);
-        if index >= super::ASCII_UNITS {
-            return None;
-        }
-        let strings = self
-            .ascii_unit_strings
-            .get_or_insert_with(|| Box::new([Value::UNDEFINED; super::ASCII_UNITS]));
-        if !strings[index].is_undefined() {
-            return Some(strings[index]);
-        }
-        let byte = [unit as u8];
+        let byte = u8::try_from(unit).ok().filter(u8::is_ascii)?;
+        let byte = [byte];
         // SAFETY: an ASCII byte is UTF-8.
         let text = super::wtf16::JsString::from_str(unsafe { std::str::from_utf8_unchecked(&byte) });
-        let value = self.heap.alloc_string(text);
-        if let Some(strings) = &mut self.ascii_unit_strings {
-            strings[index] = value;
-        }
-        Some(value)
+        Some(self.heap.alloc_string(text))
     }
 }
+

@@ -1,5 +1,7 @@
-use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::*;
+#[path = "array_construction.rs"]
+mod array_construction;
+mod shortcut;
 
 /// The shapes an ordinary closure's own properties step through as `Vm::closure_in_realm`
 /// defines them, each with its final attributes: `length`, then `name`, then for a
@@ -151,32 +153,16 @@ impl<H: Host> Vm<H> {
         self.atom_string_kept(atom, keep)
     }
 
-    /// `atom`'s string, kept for the next request when `keep` holds. Program atoms are kept
-    /// always; a dynamic atom is kept only where its kind bounds how many there can be, as a
-    /// function's name is.
+    /// `atom`'s string: the one the heap records as spelling it (`Heap::atom_string`), or a
+    /// new one registered there. A kept string is a root; program atoms are kept always, a
+    /// dynamic atom only where its kind bounds how many there can be, as a function's name
+    /// is. Any other atom's string lives as long as something else holds it.
     fn atom_string_kept(&mut self, atom: Atom, keep: bool) -> Value {
-        if keep {
-            if let Some(&value) = self.atom_strings.get(&atom) {
-                return value;
-            }
-            let value = self.heap.alloc_string(self.atom_value(atom));
-            self.atom_strings.insert(atom, value);
+        if let Some(value) = self.heap.atom_string(atom, keep) {
             return value;
-        }
-        if let Some(&value) = self.atom_strings.get(&atom) {
-            return value;
-        }
-        let slot = atom as usize & (super::ATOM_STRING_CACHE_SIZE - 1);
-        if let Some(recent) = &self.recent_atom_strings
-            && recent[slot].0 == atom
-        {
-            return recent[slot].1;
         }
         let value = self.heap.alloc_string(self.atom_value(atom));
-        self.recent_atom_strings
-            .get_or_insert_with(|| {
-                Box::new([(super::NO_RECENT_ATOM, Value::UNDEFINED); super::ATOM_STRING_CACHE_SIZE])
-            })[slot] = (atom, value);
+        self.heap.register_string_atom(value, atom, keep);
         value
     }
 
@@ -321,7 +307,7 @@ impl<H: Host> Vm<H> {
                         | Native::WasmInstance
                         | Native::WasmMemory
                         | Native::WasmTable
-                        | Native::WasmGlobal
+                        | Native::WasmGlobal | Native::WasmTag
                         | Native::WasmCompileError
                         | Native::WasmLinkError
                         | Native::WasmRuntimeError
@@ -462,12 +448,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let intrinsic = match (function_plan.is_async, function_plan.is_generator) {
-            (true, true) => Native::AsyncGeneratorFunction,
-            (false, true) => Native::GeneratorFunction,
-            (true, false) => Native::AsyncFunction,
-            (false, false) => Native::Function,
-        };
+        let intrinsic = Native::function_constructor(function_plan.is_async, function_plan.is_generator);
         let function_object_prototype = self.realm.intrinsics.builtin_prototypes[&(realm, intrinsic)];
         let plan_name = function_plan.name.or(function_plan.inferred_name);
         // Names are the compiled functions' own, so keeping each one's string is bounded by
@@ -513,11 +494,8 @@ impl<H: Host> Vm<H> {
             .is_none_or(|parent| parent == super::ROOT_FUNCTION_ID)
         {
             let program = self.active_program;
-            self.function_values.entry((program, id)).or_default().push(
-                self.heap
-                    .weak_handle(function)
-                    .expect("new closure is live"),
-            );
+            let handle = self.heap.weak_handle(function).expect("new closure is live");
+            self.function_values.record((program, id), [handle]);
         }
         if let Some(shapes) = recorded_shapes {
             let constructor = match (prototype, shapes.prototype) {
@@ -712,10 +690,8 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        // Guest code observes the frame stack; a native's construction reaches it only through
-        // the calls, errors and collections that make deferred activations frames first.
-        if !self.constructs_beside_activations(callee) {
-            self.materialize_deferred_lane();
+        if let Some(constructed) = self.construction_shortcut(p, callee, new_target, args) {
+            return constructed;
         }
         self.with_call_roots(
             std::iter::once(callee)
@@ -1017,8 +993,7 @@ impl<H: Host> Vm<H> {
 
     /// The slot of `constructor`'s own `prototype` data property `key` in its `shape`; `None`
     /// for an accessor or no such property. Out of line and of plain values: a construct the
-    /// lane inlines this lookup into passes it no address of its stack, which would keep its
-    /// dispatch from being a sibling call (`tools/check-lane-tail-calls.sh`).
+    /// lane inlines this lookup into passes it no address of its stack.
     #[inline(never)]
     fn prototype_data_slot(&self, constructor: Value, shape: u32, key: PropertyKey) -> Option<usize> {
         self.property_attributes(constructor, key)
@@ -1078,20 +1053,18 @@ impl<H: Host> Vm<H> {
         Ok(self.realm_object_prototype(realm))
     }
 
-    fn array_prototype_from_new_target(
-        &mut self,
-        p: &ResidualProgram,
-        new_target: Value,
-    ) -> Result<Value, JsError> {
-        let prototype = self.constructor_prototype_value(p, new_target)?;
-        if self.object_data(prototype).is_some() {
-            return Ok(prototype);
+    /// `realm`'s `Array.prototype`. The active realm's is the field that follows it
+    /// (`Vm::realm_prototype_field`), read without the table.
+    #[inline(always)]
+    pub(super) fn array_prototype_for_realm(&self, realm: Value) -> Value {
+        if realm == self.realm.globals {
+            return self.array_proto;
         }
-        let realm = self.function_realm(p, new_target)?;
-        Ok(self.array_prototype_for_realm(realm))
+        self.array_prototype_in_table(realm)
     }
 
-    pub(super) fn array_prototype_for_realm(&self, realm: Value) -> Value {
+    #[inline(never)]
+    fn array_prototype_in_table(&self, realm: Value) -> Value {
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -1190,9 +1163,7 @@ impl<H: Host> Vm<H> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
-            let Some(intrinsic) = TYPED_ARRAY_INSTALLS
-                .iter()
-                .find_map(|(_, candidate, name)| (*candidate == native).then_some(*name))
+            let Some(intrinsic) = TypedArrayKind::of_constructor(native).map(TypedArrayKind::name)
                 .or_else(|| match native {
                     Native::Object => Some("Object"),
                     Native::Function => Some("Function"),
@@ -1293,10 +1264,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        if let Some(&(kind, _, name)) = TYPED_ARRAY_INSTALLS
-            .iter()
-            .find(|(_, candidate, _)| *candidate == native)
-        {
+        if let Some(kind) = TypedArrayKind::of_constructor(native) {
+            let name = kind.name();
             return self.construct_typed_array_with_new_target(
                 p,
                 args,
@@ -1351,7 +1320,7 @@ impl<H: Host> Vm<H> {
                     ProxyKind::Object
                 };
                 Ok(self.heap.alloc(Cell::Proxy {
-                    object: Box::new(Self::empty_object(self.object_proto)),
+                    object: Box::new(crate::heap::Object::proxy(self.object_proto)),
                     kind,
                     target,
                     handler,
@@ -1385,7 +1354,7 @@ impl<H: Host> Vm<H> {
             }
             Native::Promise => self.construct_promise(p, args),
             Native::RegExp => self.construct_regexp_native(p, args, Some(new_target)),
-            Native::Date => self.date_construct_native(p, args),
+            Native::Date => self.date_construct_native(p, args, new_target),
             Native::IntlNumberFormat => self.intl_number_format_construct(p, args, new_target),
             Native::IntlCollator => self.intl_collator_construct(p, args, new_target),
             Native::IntlPluralRules => self.intl_plural_rules_construct(p, args, new_target),
@@ -1432,14 +1401,14 @@ impl<H: Host> Vm<H> {
                 self.box_primitive_object(value)
             }
             Native::Number => {
-                let argument = args.first().copied().unwrap_or(Value::number(0.0));
+                let argument = args.first().copied().unwrap_or_else(|| Value::number(0.0));
                 let primitive = if self.is_object_like(argument) {
                     self.to_primitive(p, argument, "number")?
                 } else {
                     argument
                 };
                 let number = match self.heap.get(primitive) {
-                    Some(Cell::BigInt(value)) => crate::bigint::to_f64(value),
+                    Some(Cell::BigInt(value)) => value.to_f64(),
                     _ => self.to_number(p, primitive)?,
                 };
                 let value = Value::number(number);
@@ -1459,45 +1428,5 @@ impl<H: Host> Vm<H> {
             }
             _ => Err(JsError("native is not constructible".into())),
         }
-    }
-
-    /// `new Array(length)` of a Number `length` with `prototype` (ECMA-262 23.1.1.1 step 5):
-    /// an array of that length whose elements are all absent; `None` for a length that is no
-    /// array length, which throws a RangeError. Out of line: the lane makes it too
-    /// (`lane_native_construct`), whose frame then holds none of its temporaries.
-    #[inline(never)]
-    pub(super) fn array_of_length(&mut self, prototype: Value, length: f64) -> Option<Value> {
-        if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > f64::from(u32::MAX) {
-            return None;
-        }
-        let array = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()),
-        });
-        self.heap.sparse_set_length(array, length as usize);
-        Some(array)
-    }
-
-    fn construct_array_native(
-        &mut self,
-        p: &ResidualProgram,
-        args: &[Value],
-        new_target: Value,
-    ) -> Result<Value, JsError> {
-        let prototype = self.array_prototype_from_new_target(p, new_target)?;
-        if let [length] = args
-            && let Some(length) = length.as_number()
-        {
-            return match self.array_of_length(prototype, length) {
-                Some(array) => Ok(array),
-                None => Err(self.range_error(p, "Invalid array length".into())),
-            };
-        }
-
-        Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(prototype),
-                args.to_vec(),
-            ),
-        }))
     }
 }

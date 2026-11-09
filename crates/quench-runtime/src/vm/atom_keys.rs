@@ -1,22 +1,14 @@
 use super::wtf16::JsString;
-use super::wtf16::Units;
+use super::wtf16::{str_text_hash, table_hash, Units};
 use super::*;
-use std::hash::Hasher;
 
 impl<H: Host> Vm<H> {
     pub(super) fn atom_hash_units(units: Units<'_>) -> u64 {
-        match units {
-            Units::Ascii(bytes) => atom_hash_ascii(bytes),
-            Units::Wide(units) => atom_hash_wide(units.len(), units.iter().copied()),
-        }
+        table_hash(units.text_hash())
     }
 
     pub(super) fn atom_hash_str(text: &str) -> u64 {
-        // ASCII text is its own UTF-16: one unit per byte, hashed without transcoding.
-        if text.is_ascii() {
-            return atom_hash_ascii(text.as_bytes());
-        }
-        atom_hash_wide(text.encode_utf16().count(), text.encode_utf16())
+        table_hash(str_text_hash(text))
     }
 
     /// The name of `index`, an atom the VM appended after its program's (`atom_text`).
@@ -54,21 +46,37 @@ impl<H: Host> Vm<H> {
         self.insert_dynamic_atom(JsString::from_unit_run(units), hash)
     }
 
-    pub(super) fn lookup_js_atom(&self, name: &JsString) -> Option<Atom> {
-        let hash = Self::atom_hash_units(name.units());
-        self.find_atom(hash, |atom| self.atom_units_equal(atom, name.units()))
+    pub(super) fn intern_js_atom(&mut self, name: &JsString) -> Atom {
+        let units = name.units();
+        let hash = Self::atom_hash_units(units);
+        if let Some(atom) = self.find_atom(hash, |atom| self.atom_units_equal(atom, units)) {
+            return atom;
+        }
+        self.insert_dynamic_atom(name.clone(), hash)
     }
 
-    /// `lookup_js_atom` of the heap string `key`, memoized by the string's identity
-    /// (`NameAtomMemo::string_atom`); `None` for any other value or a name with no atom.
+    pub(super) fn lookup_js_atom(&self, name: &JsString) -> Option<Atom> {
+        let units = name.units();
+        self.find_atom(Self::atom_hash_units(units), |atom| self.atom_units_equal(atom, units))
+    }
+
+    /// `lookup_js_atom` of the heap string `key`, found once per string record and then
+    /// read from it (`Heap::string_atom`); `None` for any other value or a name with no atom.
     #[inline]
     pub(super) fn lookup_string_atom(&self, key: Value) -> Option<Atom> {
-        let epoch = self.heap.collection_epoch();
-        if let Some(atom) = self.name_atom_memo.string_atom(key, epoch) {
+        if let Some(atom) = self.heap.string_atom(key) {
             return Some(atom);
         }
-        let atom = self.lookup_js_atom(self.heap.string(key)?)?;
-        self.name_atom_memo.record_string(key, epoch, atom);
+        self.heap.is_string(key).then(|| self.find_string_atom(key))?
+    }
+
+    /// `lookup_string_atom` of a string with no atom recorded yet, found by its text hash.
+    #[inline(never)]
+    fn find_string_atom(&self, key: Value) -> Option<Atom> {
+        let units = self.heap.string(key)?.units();
+        let hash = table_hash(self.heap.string_hash(key)?);
+        let atom = self.find_atom(hash, |atom| self.atom_units_equal(atom, units))?;
+        self.heap.record_string_atom(key, atom);
         Some(atom)
     }
 
@@ -137,65 +145,45 @@ pub(super) enum AtomText<'a> {
     Js(&'a JsString),
 }
 
-/// The code units an atom hash folds into each hasher word: one unit per 16-bit lane.
-const HASH_UNITS_PER_WORD: usize = (u64::BITS / u16::BITS) as usize;
-
-/// The hash of an atom spelled by `len` UTF-16 `units`: its length, then each whole group of
-/// `HASH_UNITS_PER_WORD` units as one word (the first unit in the lowest lane), then each
-/// remaining unit. Every spelling of the same units hashes alike (`atom_hash_ascii`).
-fn atom_hash_wide(len: usize, units: impl Iterator<Item = u16>) -> u64 {
-    let mut hasher = rustc_hash::FxHasher::default();
-    hasher.write_usize(len);
-    let (mut word, mut filled) = (0u64, 0usize);
-    for unit in units {
-        word |= u64::from(unit) << (filled as u32 * u16::BITS);
-        filled += 1;
-        if filled == HASH_UNITS_PER_WORD {
-            hasher.write_u64(word);
-            (word, filled) = (0, 0);
-        }
-    }
-    for lane in 0..filled {
-        hasher.write_u16((word >> (lane as u32 * u16::BITS)) as u16);
-    }
-    hasher.finish()
-}
-
-/// `atom_hash_wide` of ASCII `bytes`, each byte one unit, widened a word at a time.
-fn atom_hash_ascii(bytes: &[u8]) -> u64 {
-    let mut hasher = rustc_hash::FxHasher::default();
-    hasher.write_usize(bytes.len());
-    let (words, remainder) = bytes.as_chunks::<HASH_UNITS_PER_WORD>();
-    for word in words {
-        hasher.write_u64(widen_ascii_word(u32::from_le_bytes(*word)));
-    }
-    for &byte in remainder {
-        hasher.write_u16(u16::from(byte));
-    }
-    hasher.finish()
-}
-
-/// Four ASCII bytes (the first lowest) as four UTF-16 units in 16-bit lanes: the high pair
-/// moves to the upper 32 bits, then each byte of each pair to its own lane.
-fn widen_ascii_word(bytes: u32) -> u64 {
-    /// The low 16 bits of each 32-bit half.
-    const PAIR_LANES: u64 = 0x0000_FFFF_0000_FFFF;
-    /// The low byte of each 16-bit lane.
-    const UNIT_LANES: u64 = 0x00FF_00FF_00FF_00FF;
-    let pairs = (u64::from(bytes) | (u64::from(bytes) << u16::BITS)) & PAIR_LANES;
-    (pairs | (pairs << u8::BITS)) & UNIT_LANES
-}
-
 #[cfg(test)]
 mod tests {
-    /// ASCII text hashes as its UTF-16 units do, at every length around a word boundary.
+    use crate::test_host::TestHost;
+    use crate::Engine;
+    use std::{cell::RefCell, rc::Rc};
+
+    /// Equal texts held narrow and wide (an ASCII tail sliced from wide text) are one key to an
+    /// indexed Map and Set, and to an object, whatever storage made them.
     #[test]
-    fn ascii_and_wide_hashes_agree() {
-        let text = "abcdefghijklmnopq";
-        for len in 0..=text.len() {
-            let ascii = &text.as_bytes()[..len];
-            let wide: Vec<u16> = ascii.iter().map(|&byte| u16::from(byte)).collect();
-            assert_eq!(super::atom_hash_ascii(ascii), super::atom_hash_wide(len, wide.into_iter()));
+    fn equal_texts_in_any_storage_are_one_key() {
+        let source = r#"
+          const tail = "a".repeat(100), wide = ("é" + tail).slice(1);
+          const m = new Map(), s = new Set(), o = {};
+          for (let i = 0; i < 20; i++) { m.set("x" + i, i); s.add("x" + i); }
+          m.set(tail, "found"); s.add(tail); o[tail] = "prop";
+          print([wide === tail, m.get(wide), s.has(wide), o[wide], m.get("ü" + tail)].join());
+        "#;
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = super::Vm::new(TestHost::writing_to(output.clone()));
+        vm.execute(&Engine::specialize(source, "string-keys.js").unwrap()).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["true,found,true,prop,"]);
+    }
+
+    #[test]
+    fn similar_short_keys_find_their_atom_in_about_one_comparison() {
+        // `d0`..`d255` differ only in late units; a weak hash shares their table control bits.
+        let mut vm = super::Vm::new(crate::test_host::TestHost::default());
+        let source = "var o = {}; for (var i = 0; i < 256; i++) o['d' + i] = i;";
+        vm.execute(&crate::Engine::specialize(source, "keys.js").unwrap()).unwrap();
+        let mut comparisons = 0;
+        for index in 0..256 {
+            let name = super::JsString::from_str(&format!("d{index}"));
+            let hash = super::Vm::<crate::test_host::TestHost>::atom_hash_units(name.units());
+            let found = vm.find_atom(hash, |atom| {
+                comparisons += 1;
+                vm.atom_units_equal(atom, name.units())
+            });
+            assert!(found.is_some(), "d{index} is interned");
         }
+        assert!(comparisons < 256 * 5 / 4, "{comparisons} comparisons for 256 lookups");
     }
 }

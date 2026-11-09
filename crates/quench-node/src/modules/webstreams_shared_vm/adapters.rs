@@ -75,13 +75,13 @@ mod field {
     pub(super) const CLEANUP: &str = "cleanup";
     pub(super) const BACKPRESSURE: &str = "backpressurePromise";
     pub(super) const CLOSE: &str = "closed";
-    pub(super) const READER: &str = "reader";
-    pub(super) const WRITER: &str = "writer";
+    pub(crate) use crate::modules::keys::READER;
+    pub(crate) use crate::modules::keys::WRITER;
     pub(super) const READABLE_CLOSED: &str = "readableClosed";
     pub(super) const WRITABLE_CLOSED: &str = "writableClosed";
     pub(super) const DECODE_STRINGS: &str = "decodeStrings";
     pub(super) const CALLBACK: &str = "callback";
-    pub(super) const ERROR: &str = "error";
+    pub(crate) use crate::modules::keys::ERROR;
 }
 use field::*;
 
@@ -122,7 +122,7 @@ fn known_internal_error(c: &mut Context<'_>, cause: RootId) -> Outcome {
     if ZLIB_FAILURES.contains(&code.as_str()) || code == ZLIB_VERSION_ERROR || code.starts_with(BROTLI_ERROR_PREFIX) {
         let global = c.global_root()?;
         let type_error = get(c, global, "TypeError")?;
-        let options = literal(c, &[("cause", cause)])?;
+        let options = literal(c, &["cause"], &[cause])?;
         let undefined = c.undefined();
         let error = c.construct_rooted(type_error, type_error, &[undefined, options])?;
         let code = c.string_rooted(&code);
@@ -175,7 +175,7 @@ fn methods(c: &mut Context<'_>, state: RootId, members: &[(&str, Member)]) -> Ou
 }
 
 fn high_water_strategy(c: &mut Context<'_>, brand: Brand, high_water_mark: RootId) -> Outcome {
-    let init = literal(c, &[("highWaterMark", high_water_mark)])?;
+    let init = literal(c, &["highWaterMark"], &[high_water_mark])?;
     construct_web(c, brand, &[init])
 }
 
@@ -201,7 +201,7 @@ pub(crate) fn readable_from_node(c: &mut Context<'_>, node: RootId, options: Roo
     } else {
         high_water_strategy(c, Brand::ByteLengthStrategy, high_water_mark)?
     };
-    let state = record(c, &[(NODE, node)])?;
+    let state = record(c, &[NODE], &[node])?;
     put_flag(c, state, OBJECT_MODE, object_mode)?;
     put_flag(c, state, CANCELED, false)?;
     call(c, node, "pause", &[])?;
@@ -234,9 +234,9 @@ pub(crate) fn writable_from_node(c: &mut Context<'_>, node: RootId) -> Outcome {
     let strategy = if c.truthy_rooted(object_mode)? {
         high_water_strategy(c, Brand::CountStrategy, high_water_mark)?
     } else {
-        literal(c, &[("highWaterMark", high_water_mark)])?
+        literal(c, &["highWaterMark"], &[high_water_mark])?
     };
-    let state = record(c, &[(NODE, node)])?;
+    let state = record(c, &[NODE], &[node])?;
     let callback = function(c, Member::SinkFinished, "", &[state])?;
     let cleanup = finished(c, node, callback)?;
     put(c, state, CLEANUP, cleanup)?;
@@ -310,8 +310,8 @@ fn validate_encoding(c: &mut Context<'_>, encoding: RootId) -> Done {
 }
 
 /// The options a Node stream wrapping a web stream is constructed with.
-fn node_options(c: &mut Context<'_>, state: RootId, options: RootId, entries: &[(&str, RootId)], handlers: &[(&str, Member)]) -> Outcome {
-    let object = literal(c, entries)?;
+fn node_options(c: &mut Context<'_>, state: RootId, options: RootId, names: &'static [&'static str], values: &[RootId], handlers: &[(&str, Member)]) -> Outcome {
+    let object = literal(c, names, values)?;
     for name in ["highWaterMark", "signal"] {
         let value = get(c, options, name)?;
         put(c, object, name, value)?;
@@ -345,13 +345,13 @@ fn node_readable_from_web(c: &mut Context<'_>, args: &[RootId]) -> Outcome {
     validate_boolean(c, object_mode, "options.objectMode")?;
     let reader = readable::default_reader(c, stream)?;
     let reader = slots(c, reader)?;
-    let state = record(c, &[(READER, reader)])?;
+    let state = record(c, &[READER], &[reader])?;
     put_flag(c, state, READABLE_CLOSED, false)?;
     let node_options = node_options(
         c,
         state,
         options,
-        &[("objectMode", object_mode), ("encoding", encoding)],
+        &["objectMode", "encoding"], &[object_mode, encoding],
         &[("read", Member::NodeRead), ("destroy", Member::NodeDestroy)],
     )?;
     let readable_class = class(c, "Readable")?;
@@ -387,7 +387,7 @@ fn node_writable_from_web(c: &mut Context<'_>, args: &[RootId]) -> Outcome {
     validate_boolean(c, object_mode, "options.objectMode")?;
     validate_boolean(c, decode_strings, "options.decodeStrings")?;
     let writer = writable::writer(c, stream)?;
-    let state = record(c, &[(WRITER, writer)])?;
+    let state = record(c, &[WRITER], &[writer])?;
     put_flag(c, state, WRITABLE_CLOSED, false)?;
     put_flag(c, state, OBJECT_MODE, c.rooted_value(object_mode).and_then(|v| v.as_bool()) == Some(true))?;
     let decode = c.truthy_rooted(decode_strings)?;
@@ -396,7 +396,7 @@ fn node_writable_from_web(c: &mut Context<'_>, args: &[RootId]) -> Outcome {
         c,
         state,
         options,
-        &[("objectMode", object_mode), ("decodeStrings", decode_strings)],
+        &["objectMode", "decodeStrings"], &[object_mode, decode_strings],
         &[("writev", Member::NodeWritev), ("write", Member::NodeWrite), ("destroy", Member::NodeDestroy), ("final", Member::NodeFinal)],
     )?;
     let writable_class = class(c, "Writable")?;
@@ -429,7 +429,7 @@ fn duplex_from_pair(c: &mut Context<'_>, args: &[RootId]) -> Outcome {
     let writer = writable::writer(c, writable_stream)?;
     let reader = readable::default_reader(c, readable_stream)?;
     let reader = slots(c, reader)?;
-    let state = record(c, &[(WRITER, writer), (READER, reader)])?;
+    let state = record(c, &[WRITER, READER], &[writer, reader])?;
     put_flag(c, state, WRITABLE_CLOSED, false)?;
     put_flag(c, state, READABLE_CLOSED, false)?;
     put_flag(c, state, OBJECT_MODE, c.rooted_value(object_mode).and_then(|v| v.as_bool()) == Some(true))?;
@@ -439,7 +439,7 @@ fn duplex_from_pair(c: &mut Context<'_>, args: &[RootId]) -> Outcome {
         c,
         state,
         options,
-        &[("allowHalfOpen", allow_half_open), ("objectMode", object_mode), ("encoding", encoding), ("decodeStrings", decode_strings)],
+        &["allowHalfOpen", "objectMode", "encoding", "decodeStrings"], &[allow_half_open, object_mode, encoding, decode_strings],
         &[
             ("writev", Member::NodeWritev),
             ("write", Member::NodeWrite),
@@ -506,7 +506,7 @@ fn reader_read(c: &mut Context<'_>, state: RootId) -> Outcome {
         return super::rejected_with(c, WebError::InvalidState("The reader is not attached to a stream"));
     }
     let promise = deferred(c)?;
-    let request = new_request(c, ReadSteps::Default, &[(PROMISE, promise)])?;
+    let request = new_request(c, ReadSteps::Default, &[PROMISE, crate::modules::keys::KIND], &[promise])?;
     readable::default_reader_read(c, reader, request)?;
     Ok(promise)
 }
@@ -562,7 +562,7 @@ fn node_destroy(c: &mut Context<'_>, state: RootId, error: RootId, callback: Roo
             readable::cancel(c, stream, error)?
         });
     }
-    let captures = record(c, &[(CALLBACK, callback), (ERROR, error)])?;
+    let captures = record(c, &[CALLBACK, ERROR], &[callback, error])?;
     let remaining = c.number(pending.len() as f64);
     put(c, captures, "remaining", remaining)?;
     for promise in pending {
@@ -585,7 +585,7 @@ pub(crate) fn member(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome
         Member::DuplexToWeb => {
             let duplex = arg(c, args, 0);
             let (readable, writable) = pair_from_duplex(c, duplex)?;
-            literal(c, &[("writable", writable), ("readable", readable)])
+            literal(c, &["writable", "readable"], &[writable, readable])
         }
         Member::ReadableFromWeb => node_readable_from_web(c, args),
         Member::WritableFromWeb => node_writable_from_web(c, args),
@@ -790,7 +790,7 @@ pub(crate) fn member(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome
             let [state] = captured(c)?;
             let (chunk, encoding, callback) = (arg(c, args, 0), arg(c, args, 1), arg(c, args, 2));
             let chunk = convert_chunk(c, state, chunk, encoding)?;
-            let captures = record(c, &[("chunk", chunk), (CALLBACK, callback)])?;
+            let captures = record(c, &["chunk", CALLBACK], &[chunk, callback])?;
             let ready = writer_ready(c, state)?;
             react(c, ready, Member::NodeWriteReady, Member::NodeWriteDone, &[state, captures])?;
             Ok(c.undefined())
@@ -815,7 +815,7 @@ pub(crate) fn member(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome
         Member::NodeWritev => {
             let [state] = captured(c)?;
             let (chunks, callback) = (arg(c, args, 0), arg(c, args, 1));
-            let captures = record(c, &[("chunks", chunks), (CALLBACK, callback)])?;
+            let captures = record(c, &["chunks", CALLBACK], &[chunks, callback])?;
             let ready = writer_ready(c, state)?;
             react(c, ready, Member::NodeWritevReady, Member::NodeWritevDone, &[state, captures])?;
             Ok(c.undefined())
@@ -844,7 +844,7 @@ pub(crate) fn member(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome
             let callback = arg(c, args, 0);
             if !flag(c, state, WRITABLE_CLOSED)? {
                 let closed = writer_close(c, state)?;
-                let captures = record(c, &[(CALLBACK, callback)])?;
+                let captures = record(c, &[CALLBACK], &[callback])?;
                 let fulfilled = function(c, Member::NodeWritevDone, "", &[state, captures])?;
                 then(c, closed, fulfilled, fulfilled)?;
             }
@@ -948,10 +948,10 @@ pub(crate) fn member(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome
 
 /// A pump's fields (pipeline's `pumpToWeb`).
 mod pump {
-    pub(super) const ITERATOR: &str = "iterator";
-    pub(super) const SYNC: &str = "sync";
-    pub(super) const WRITER: &str = "writer";
-    pub(super) const STREAM: &str = "stream";
+    pub(crate) use crate::modules::keys::ITERATOR;
+    pub(crate) use crate::modules::keys::SYNC;
+    pub(crate) use crate::modules::keys::WRITER;
+    pub(crate) use crate::modules::keys::STREAM;
     pub(super) const FINISH: &str = "finish";
     pub(super) const END: &str = "end";
 }
@@ -969,7 +969,7 @@ pub(crate) fn pump_to_web(c: &mut Context<'_>, readable: RootId, writable: RootI
     let stream = slots(c, writable)?;
     let writer = writable::writer(c, stream)?;
     let end = c.boolean(end);
-    let state = record(c, &[(pump::WRITER, writer), (pump::STREAM, stream), (pump::FINISH, finish), (pump::END, end)])?;
+    let state = record(c, &[pump::WRITER, pump::STREAM, pump::FINISH, pump::END], &[writer, stream, finish, end])?;
     if let Err(error) = super::attempt(pump_open(c, state, readable))? {
         pump_abort(c, state, error)?;
     }

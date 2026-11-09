@@ -141,15 +141,16 @@ fn merge_runs<T: Copy, E>(
 }
 
 impl<H: Host> Vm<H> {
-    /// The comparator's order of `left` and `right`, which the caller keeps reachable.
+    /// The order a prepared comparator (`Vm::with_prepared_callback`, receiver `undefined`)
+    /// gives `left` and `right`, which the caller keeps reachable.
     pub(super) fn compare_sort_callback(
         &mut self,
         p: &ResidualProgram,
-        comparator: Value,
+        comparator: &mut super::PreparedCallback<H>,
         left: Value,
         right: Value,
     ) -> Result<Ordering, JsError> {
-        let result = self.call_value(p, comparator, Value::UNDEFINED, &[left, right])?;
+        let result = self.call_prepared(p, comparator, &[left, right])?;
         let number = self.with_call_roots([result], |vm| vm.to_number(p, result))?;
         Ok(if number < 0.0 {
             Ordering::Less

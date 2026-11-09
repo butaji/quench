@@ -6,6 +6,9 @@ use crate::heap::AwaitState;
 /// What an await reaction resumes with, read from its `AwaitState`.
 #[derive(Clone, Copy, Debug)]
 struct AwaitResume {
+    /// The spent state itself, whose reaction is running: the activation's next await
+    /// suspends into it again (`Vm::await_again`).
+    state: Value,
     promise: Value,
     generator: Option<Value>,
     rejected: bool,
@@ -26,31 +29,37 @@ impl<H: Host> Vm<H> {
         resume_register: Option<u16>,
         promise: Value,
     ) -> Continuation {
-        self.release_dead_registers(&mut frame);
-        Continuation::suspend(frame, completion, resume_register, promise)
+        let live_registers = self.release_dead_registers(&mut frame);
+        let mut continuation = Continuation::suspend(frame, completion, resume_register, promise);
+        continuation.live_registers = live_registers;
+        continuation
     }
 
-    fn release_dead_registers(&self, frame: &mut super::Frame) {
-        let Some(mask) = self
+    /// Clears the registers dead at `frame`'s suspension and returns the live ones, when
+    /// liveness covers its function.
+    fn release_dead_registers(&self, frame: &mut super::Frame) -> Option<crate::compile::liveness::RegisterSet> {
+        let mask = self
             .programs
             .residual(frame.program)
-            .and_then(|program| program.register_root_mask(frame.function, frame.pc))
-        else {
-            return;
-        };
+            .and_then(|program| program.register_root_mask(frame.function, frame.pc))?;
         // The mask covers the first `RegisterSet::BITS` registers; every later one is dead.
         type RegisterSet = crate::compile::liveness::RegisterSet;
         let covered = frame.registers.len().min(RegisterSet::BITS as usize);
         let (low, high) = frame.registers.split_at_mut(covered);
         high.fill(Value::UNDEFINED);
-        let mut dead = !mask & RegisterSet::MAX.checked_shr(RegisterSet::BITS - covered as u32).unwrap_or(0);
-        // Dead registers come in runs (a statement's temporaries), each cleared as one span.
-        while dead != 0 {
-            let start = dead.trailing_zeros();
-            let end = start + (dead >> start).trailing_ones();
-            low[start as usize..end as usize].fill(Value::UNDEFINED);
-            dead &= RegisterSet::MAX.checked_shl(end).unwrap_or(0);
+        // Dead registers come in runs (a statement's temporaries), each cleared as one span,
+        // found a machine word of the mask at a time.
+        for (word, registers) in low.chunks_mut(u64::BITS as usize).enumerate() {
+            let live = (mask >> (word * u64::BITS as usize)) as u64;
+            let mut dead = !live & u64::MAX >> (u64::BITS as usize - registers.len());
+            while dead != 0 {
+                let start = dead.trailing_zeros();
+                let end = start + (dead >> start).trailing_ones();
+                registers[start as usize..end as usize].fill(Value::UNDEFINED);
+                dead &= u64::MAX.checked_shl(end).unwrap_or(0);
+            }
         }
+        Some(mask)
     }
 
     pub(super) fn call_user_maybe_async(
@@ -127,6 +136,16 @@ impl<H: Host> Vm<H> {
             .thrown_value()
             .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
         self.promise_settle(p, promise, PromiseState::Rejected, reason)
+    }
+
+    /// The rooted promise of a settling lane call (`LaneStack::settling`), made now for a call
+    /// that deferred it to its awaiting caller: something other than the await may read it.
+    /// Without lifecycle hooks, which settling calls exclude, making it runs no guest code.
+    pub(super) fn settling_root(&mut self, root: Option<crate::heap::RootId>) -> crate::heap::RootId {
+        root.unwrap_or_else(|| {
+            let promise = self.promise_object().expect("a promise without lifecycle hooks runs no guest code");
+            self.heap.root(promise)
+        })
     }
 
     /// The promise an async call pushed in place settles (`PendingGeneralCall::completion`),
@@ -211,6 +230,27 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// `enqueue_async_resume` of an async function's activation that awaits again from the
+    /// reaction of its last await, `resume`: its spent state takes the continuation, as a
+    /// fresh one would. That reaction was the state's only one and is running, so nothing
+    /// else names the state, and an activation keeps one state for all its awaits.
+    fn await_again(
+        &mut self,
+        p: &ResidualProgram,
+        resume: AwaitResume,
+        continuation: Continuation,
+        source: Value,
+    ) -> Result<(), JsError> {
+        let realm = self.realm.globals;
+        let state = self.heap.await_state_mut(resume.state).expect("a running await reaction keeps its state");
+        debug_assert!(state.continuation.is_none() && state.generator.is_none() && !state.yielded);
+        state.continuation = Some(Box::new(continuation));
+        state.realm = realm;
+        self.with_call_roots([resume.state, source], |vm| {
+            vm.attach_await_reactions(p, resume.state, resume.promise, None, source)
+        })
+    }
+
     fn attach_await_reactions(
         &mut self,
         p: &ResidualProgram,
@@ -279,12 +319,14 @@ impl<H: Host> Vm<H> {
         rejected: bool,
         value: Value,
     ) -> Result<Value, JsError> {
+        let spent = state;
         let Some(state) = self.heap.await_state_mut(state) else {
             return Err(JsError("await reaction without its state".into()));
         };
         let continuation = state.continuation.take().map(|continuation| *continuation);
         let realm = state.realm;
         let resume = AwaitResume {
+            state: spent,
             promise: state.promise,
             generator: state.generator,
             rejected,
@@ -321,7 +363,7 @@ impl<H: Host> Vm<H> {
             (None, Some(generator)) if resume.yielded => {
                 if !resume.rejected {
                     if let Some(record) = self.generator_record_mut(generator) {
-                        record.running = false;
+                        record.stop();
                     }
                     let result = self.iterator_result(value, false)?;
                     return self.promise_resolve_value(p, resume.promise, result);
@@ -348,7 +390,7 @@ impl<H: Host> Vm<H> {
         let active_program = self.replace_active_program(continuation.frame.program);
         let result =
             self.resume_async_continuation_in_program(&program, resume, continuation, value);
-        self.set_active_program(active_program);
+        self.restore_active_program(active_program);
         result
     }
 
@@ -363,7 +405,7 @@ impl<H: Host> Vm<H> {
             && let Some(generator) = resume.generator
             && let Some(record) = self.generator_record_mut(generator)
         {
-            record.running = true;
+            record.state = super::activation::GeneratorState::Executing;
         }
         let resume_register = continuation.resume_register;
         let mut frame = continuation.resume(self.with_stack.len());
@@ -406,7 +448,7 @@ impl<H: Host> Vm<H> {
             | super::FrameOutcome::ConstructComplete { value, .. } => {
                 self.pool_frame(frame);
                 if let Some(generator) = resume.generator {
-                    self.finish_async_generator(p, generator, resume.promise, value, true)?;
+                    self.finish_async_generator(p, generator, resume.promise, value)?;
                 } else {
                     self.promise_resolve_value(p, resume.promise, value)?;
                 }
@@ -422,14 +464,18 @@ impl<H: Host> Vm<H> {
                     Some(destination),
                     resume.promise,
                 );
-                self.enqueue_async_resume(
-                    p,
-                    Some(continuation),
-                    resume.promise,
-                    resume.generator,
-                    value,
-                    false,
-                )?;
+                if resume.generator.is_none() {
+                    self.await_again(p, resume, continuation, value)?;
+                } else {
+                    self.enqueue_async_resume(
+                        p,
+                        Some(continuation),
+                        resume.promise,
+                        resume.generator,
+                        value,
+                        false,
+                    )?;
+                }
             }
             super::FrameOutcome::Await {
                 frame: Some(frame), ..

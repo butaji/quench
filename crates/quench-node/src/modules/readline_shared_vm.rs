@@ -6,6 +6,7 @@
 //! the legacy `readline.Interface` exposes those as `_`-prefixed members.
 
 use super::stream_shared_vm::{
+    inherit,
     arg, call_method, captures, closure, emit, get, is_nullish, is_string, is_undefined, next_tick, number, on, once,
     put, put_bool, put_number, remove_listener, truthy_member, Class, Context, Outcome,
 };
@@ -15,94 +16,8 @@ use quench_runtime::{DescriptorFields, RootId, RootedError, ValueType};
 const MODULE_CACHE: &str = "\0builtin:readline";
 const PROMISES_CACHE: &str = "\0builtin:readline/promises";
 
-/// The symbols an interface keys its private state and internal methods with.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Slot {
-    SawReturnAt,
-    SawKeyPress,
-    PreviousKey,
-    SubstringSearch,
-    UndoStack,
-    RedoStack,
-    KillRing,
-    KillRingCursor,
-    Prompt,
-    LineBuffer,
-    Decoder,
-    LineObjectStream,
-    QuestionCallback,
-    OldPrompt,
-    QuestionReject,
-    Question,
-    QuestionCancel,
-    SetRawMode,
-    OnLine,
-    WriteToOutput,
-    AddHistory,
-    RefreshLine,
-    NormalWrite,
-    InsertString,
-    Line,
-    HistoryNext,
-    HistoryPrev,
-    GetDisplayPos,
-    MoveCursor,
-    TtyWrite,
-    DeleteLeft,
-    DeleteRight,
-    DeleteLineLeft,
-    DeleteLineRight,
-    KeypressDecoder,
-    EscapeDecoder,
-}
-
-impl Slot {
-    /// The symbol's description, which for the legacy-aliased slots is also the alias.
-    fn description(self) -> &'static str {
-        match self {
-            Self::SawReturnAt => "_sawReturnAt",
-            Self::SawKeyPress => "_sawKeyPress",
-            Self::PreviousKey => "_previousKey",
-            Self::SubstringSearch => "kSubstringSearch",
-            Self::UndoStack => "_undoStack",
-            Self::RedoStack => "_redoStack",
-            Self::KillRing => "_killRing",
-            Self::KillRingCursor => "_killRingCursor",
-            Self::Prompt => "_prompt",
-            Self::LineBuffer => "_line_buffer",
-            Self::Decoder => "_decoder",
-            Self::LineObjectStream => "line object stream",
-            Self::QuestionCallback => "_questionCallback",
-            Self::OldPrompt => "_oldPrompt",
-            Self::QuestionReject => "_questionReject",
-            Self::Question => "kQuestion",
-            Self::QuestionCancel => "kQuestionCancel",
-            Self::SetRawMode => "_setRawMode",
-            Self::OnLine => "_onLine",
-            Self::WriteToOutput => "_writeToOutput",
-            Self::AddHistory => "_addHistory",
-            Self::RefreshLine => "_refreshLine",
-            Self::NormalWrite => "_normalWrite",
-            Self::InsertString => "_insertString",
-            Self::Line => "_line",
-            Self::HistoryNext => "_historyNext",
-            Self::HistoryPrev => "_historyPrev",
-            Self::GetDisplayPos => "_getDisplayPos",
-            Self::MoveCursor => "_moveCursor",
-            Self::TtyWrite => "_ttyWrite",
-            Self::DeleteLeft => "_deleteLeft",
-            Self::DeleteRight => "_deleteRight",
-            Self::DeleteLineLeft => "_deleteLineLeft",
-            Self::DeleteLineRight => "_deleteLineRight",
-            Self::KeypressDecoder => "keypress-decoder",
-            Self::EscapeDecoder => "escape-decoder",
-        }
-    }
-
-    fn cache_key(self) -> String {
-        format!("\0readline:{}", self.description())
-    }
-}
+mod slot;
+use slot::Slot;
 
 /// The internal methods: their slot, operation and arity, in Node's class order.
 const METHODS: [(Slot, &str); 17] = [
@@ -148,14 +63,13 @@ const MIN_CRLF_DELAY: f64 = 100.0;
 const ESCAPE_CODE_TIMEOUT: f64 = 500.0;
 /// The columns a tab stop spans by default.
 const TAB_SIZE: f64 = 8.0;
-const DEFAULT_PROMPT: &str = "> ";
+pub(crate) use crate::modules::keys::DEFAULT_PROMPT;
 /// The lines the async iterator buffers before pausing the input.
 const ITERATOR_HIGH_WATER_MARK: f64 = 1024.0;
 /// `historyIndex` when no history entry is shown.
 const NO_HISTORY_ENTRY: f64 = -1.0;
 
-const LINE_FEED: u16 = b'\n' as u16;
-const CARRIAGE_RETURN: u16 = b'\r' as u16;
+use quench_runtime::units::{CARRIAGE_RETURN, LINE_FEED};
 const TAB: u16 = b'\t' as u16;
 /// The first code point outside the Basic Multilingual Plane: two UTF-16 units.
 const SUPPLEMENTARY_PLANE: u32 = 0x10000;
@@ -861,7 +775,7 @@ fn initialize(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<(), 
     put_number(c, this, "escapeCodeTimeout", ESCAPE_CODE_TIMEOUT)?;
     put_number(c, this, "tabSize", TAB_SIZE)?;
     super::stream_shared_vm::module(c)?;
-    let emitter = super::stream_shared_vm::intrinsics(c)?.class(Class::Emitter);
+    let emitter = super::stream_shared_vm::intrinsic(c, |i| i.class(Class::Emitter))?;
     c.call_rooted(emitter, this, &[])?;
     let undefined = c.undefined();
     let (mut history, mut history_size, mut remove_duplicates, mut crlf_delay, mut signal) =
@@ -1910,7 +1824,7 @@ pub(crate) fn async_iterator(c: &mut Context<'_>, this: RootId, _: &[RootId]) ->
         put(c, iterator, name, method)?;
     }
     let itself = c.host_function_named(crate::host::shared_vm::operation!("readlineIteratorSelf"), "[Symbol.asyncIterator]")?;
-    let key = super::stream_shared_vm::intrinsics(c)?.slot(super::stream_shared_vm::Slot::AsyncIterator);
+    let key = super::stream_shared_vm::intrinsic(c, |i| i.slot(super::stream_shared_vm::Slot::AsyncIterator))?;
     c.set_property_rooted(iterator, key, itself, iterator)?;
     put_slot(c, this, Slot::LineObjectStream, iterator)?;
     Ok(iterator)
@@ -2355,14 +2269,6 @@ fn accessor(c: &mut Context<'_>, target: RootId, key: RootId, getter: RootId, se
     Ok(())
 }
 
-fn subclass(c: &mut Context<'_>, constructor: RootId, parent: RootId) -> Outcome {
-    let prototype = get(c, constructor, "prototype")?;
-    let parent_prototype = get(c, parent, "prototype")?;
-    c.set_prototype_rooted(prototype, parent_prototype)?;
-    c.set_prototype_rooted(constructor, parent)?;
-    Ok(prototype)
-}
-
 /// `internal/readline/interface`'s `Interface`, over `InterfaceConstructor`.
 fn base_interface(c: &mut Context<'_>) -> Outcome {
     let cache = "\0readline:Interface";
@@ -2371,11 +2277,11 @@ fn base_interface(c: &mut Context<'_>) -> Outcome {
         return Ok(class);
     }
     super::stream_shared_vm::module(c)?;
-    let emitter = super::stream_shared_vm::intrinsics(c)?.class(Class::Emitter);
+    let emitter = super::stream_shared_vm::intrinsic(c, |i| i.class(Class::Emitter))?;
     let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("readlineInterfaceConstructor"), "InterfaceConstructor")?;
-    subclass(c, constructor, emitter)?;
+    inherit(c, constructor, emitter)?;
     let class = c.host_constructor_named(crate::host::shared_vm::operation!("readlineInterfaceConstructor"), "Interface")?;
-    let prototype = subclass(c, class, constructor)?;
+    let prototype = inherit(c, class, constructor)?;
     let getter = c.host_function_named(crate::host::shared_vm::operation!("readlineColumns"), "get columns")?;
     let key = text(c, "columns");
     accessor(c, prototype, key, getter, None)?;
@@ -2394,9 +2300,9 @@ fn base_interface(c: &mut Context<'_>) -> Outcome {
     for (which, operation) in LATE_METHODS {
         slot_method(c, prototype, which, operation)?;
     }
-    let iterator = super::stream_shared_vm::intrinsics(c)?.slot(super::stream_shared_vm::Slot::AsyncIterator);
+    let iterator = super::stream_shared_vm::intrinsic(c, |i| i.slot(super::stream_shared_vm::Slot::AsyncIterator))?;
     method(c, prototype, iterator, "readlineAsyncIterator", "[Symbol.asyncIterator]", false)?;
-    let dispose = super::stream_shared_vm::intrinsics(c)?.slot(super::stream_shared_vm::Slot::Dispose);
+    let dispose = super::stream_shared_vm::intrinsic(c, |i| i.slot(super::stream_shared_vm::Slot::Dispose))?;
     method(c, prototype, dispose, "readlineDispose", "[Symbol.dispose]", true)?;
     let retained = c.retain(class)?;
     shared.borrow_mut().builtin_cache.insert(cache.to_owned(), retained);
@@ -2407,7 +2313,7 @@ fn base_interface(c: &mut Context<'_>) -> Outcome {
 fn legacy_interface(c: &mut Context<'_>, base: RootId) -> Outcome {
     let data = c.array_rooted(&[])?;
     let class = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("readlineLegacyConstructor"), "Interface", data)?;
-    let prototype = subclass(c, class, base)?;
+    let prototype = inherit(c, class, base)?;
     let question = c.host_function_named(crate::host::shared_vm::operation!("readlineQuestion"), "question")?;
     let key = text(c, "question");
     c.define_data_property_rooted(prototype, key, question, true, true, true)?;
@@ -2416,7 +2322,7 @@ fn legacy_interface(c: &mut Context<'_>, base: RootId) -> Outcome {
     c.define_data_property_rooted(question, custom, promised, true, true, true)?;
     let base_prototype = get(c, base, "prototype")?;
     for (which, _) in METHODS.iter().chain(LATE_METHODS.iter()) {
-        if matches!(which, Slot::Question | Slot::QuestionCancel) {
+        if which.is_question() {
             continue;
         }
         let name = text(c, which.description());
@@ -2432,7 +2338,7 @@ fn legacy_interface(c: &mut Context<'_>, base: RootId) -> Outcome {
         accessor(c, prototype, name, getter, Some(setter))?;
     }
     for (which, _) in METHODS.iter().chain(LATE_METHODS.iter()) {
-        if matches!(which, Slot::Question | Slot::QuestionCancel) {
+        if which.is_question() {
             continue;
         }
         let key = slot(c, *which)?;
@@ -2500,7 +2406,7 @@ pub(crate) fn promises_module(c: &mut Context<'_>) -> Outcome {
     }
     let base = base_interface(c)?;
     let interface = c.host_constructor_named(crate::host::shared_vm::operation!("readlinePromisesConstructor"), "Interface")?;
-    let prototype = subclass(c, interface, base)?;
+    let prototype = inherit(c, interface, base)?;
     named_method(c, prototype, "question", "readlineQuestionPromise", false)?;
     let readline = c.host_constructor_named(crate::host::shared_vm::operation!("readlineReadline"), "Readline")?;
     let readline_prototype = get(c, readline, "prototype")?;

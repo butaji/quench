@@ -35,16 +35,17 @@ profile-allocator = []
 profile-gc-time = []
 # Counts, by opcode, the instructions the lane leaves to the general loop; reported at exit.
 profile-lane-exits = []
-# Reads the collection pacing knobs from the environment (measurement builds only).
-gc-tuning = []
 reference = []
 # Test-only measurements of shared primitives; workflow and evidence: Linear TOD-9.
 bench-primitives = []
 # Opt-in allocator routing for direct backing-growth measurements only.
 bench-alloc-routes = ["bench-primitives"]
 # Recompiles each replayable function after its program loads and logs any difference
-# (`QUENCH_REPLAY_LOG`); verification builds only.
+# (`QUENCH_TRACE=replay=<path>`); verification builds only.
 verify-replay = []
+# Every tier threshold at its floor, so short programs (Test262) run compiled code; the
+# results must equal the interpreter's. Verification builds only.
+tier-stress = []
 
 [dependencies]
 object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"], optional = true }

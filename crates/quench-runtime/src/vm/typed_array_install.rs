@@ -27,45 +27,6 @@ pub(super) const UINT8_ARRAY_STATIC_METHODS: &[(&str, Native)] = &[
     ("fromHex", Native::Uint8ArrayFromHex),
 ];
 
-pub(super) const TYPED_ARRAY_INSTALLS: &[(TypedArrayKind, Native, &str)] = &[
-    (TypedArrayKind::Uint8, Native::Uint8Array, "Uint8Array"),
-    (
-        TypedArrayKind::Uint8Clamped,
-        Native::Uint8ClampedArray,
-        "Uint8ClampedArray",
-    ),
-    (TypedArrayKind::Uint16, Native::Uint16Array, "Uint16Array"),
-    (TypedArrayKind::Uint32, Native::Uint32Array, "Uint32Array"),
-    (TypedArrayKind::Int8, Native::Int8Array, "Int8Array"),
-    (TypedArrayKind::Int16, Native::Int16Array, "Int16Array"),
-    (TypedArrayKind::Int32, Native::Int32Array, "Int32Array"),
-    (
-        TypedArrayKind::BigInt64,
-        Native::BigInt64Array,
-        "BigInt64Array",
-    ),
-    (
-        TypedArrayKind::BigUint64,
-        Native::BigUint64Array,
-        "BigUint64Array",
-    ),
-    (
-        TypedArrayKind::Float16,
-        Native::Float16Array,
-        "Float16Array",
-    ),
-    (
-        TypedArrayKind::Float32,
-        Native::Float32Array,
-        "Float32Array",
-    ),
-    (
-        TypedArrayKind::Float64,
-        Native::Float64Array,
-        "Float64Array",
-    ),
-];
-
 pub(super) const TYPED_ARRAY_CALLBACK_METHODS: &[(&str, Native, Native)] = &[
     ("forEach", Native::TypedArrayForEach, Native::ArrayForEach),
     ("map", Native::TypedArrayMap, Native::ArrayMap),
@@ -110,9 +71,8 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(typed_array, "prototype", typed_array_proto)?;
         self.set_builtin_value_named(typed_array_proto, "constructor", typed_array)?;
         self.install_typed_array_species(typed_array, typed_array_proto, global)?;
-        self.set_builtin_value_named(global, "TypedArray", typed_array)?;
 
-        for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
+        for &crate::heap::TypedArrayRow { kind, native, name, .. } in &crate::heap::TYPED_ARRAYS {
             let constructor = self.native_with_realm(native, Value::NULL, global);
             self.object_data_mut(constructor)
                 .expect("typed array constructor")

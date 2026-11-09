@@ -352,9 +352,9 @@ impl<H: Host> Vm<H> {
             let collation = self_
                 .collator_collation(this)
                 .ok_or_else(|| self_.type_error(p, "not an Intl object".into()))?;
-            let left = self_.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-            let right = self_.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-            Ok(Value::number(collation.compare(&left, &right)))
+            let left = self_.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+            let right = self_.coerce_js_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+            Ok(Value::number(collation.compare(left.host_string(), right.host_string())))
         })
     }
 
@@ -627,7 +627,7 @@ fn normalize_collator_locale(
         && let Some(value) = ext_value("kf")
         && let Some(value) = value.first()
     {
-        case_first = value.clone();
+        case_first.clone_from(value);
     }
     if !overrides.ignore_punctuation {
         ignore_punctuation = locale.starts_with("th-") || locale == "th";

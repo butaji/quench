@@ -277,11 +277,7 @@ impl<H: Host> Vm<H> {
             self.temporal_instant_input(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let right =
             self.temporal_instant_input(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-        let order = match left.cmp(&right) {
-            std::cmp::Ordering::Less => -1.0,
-            std::cmp::Ordering::Equal => 0.0,
-            std::cmp::Ordering::Greater => 1.0,
-        };
+        let order = f64::from(left.cmp(&right) as i8);
         Ok(Value::number(order))
     }
 
@@ -464,7 +460,7 @@ impl<H: Host> Vm<H> {
         if !self.is_string(value) && !self.is_object_like(value) {
             return Err(self.type_error(p, "Invalid Instant input".into()));
         }
-        let text = self.to_string(p, value)?.to_string();
+        let text = self.to_string(p, value)?;
         super::temporal_plain_date_time_conversion::validate_annotations(self, p, &text)?;
         let Some(epoch) =
             super::temporal_zoned_date_time::parse_iso_instant_epoch_nanoseconds(&text)

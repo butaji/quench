@@ -206,7 +206,7 @@ fn validate_options(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
 ) -> Result<(), RootedError> {
-    const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
+    use crate::modules::util_shared_vm::MAX_SAFE_INTEGER;
     let Some(number) = context
         .rooted_value(value)
         .and_then(|value| value.as_number())

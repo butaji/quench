@@ -1,11 +1,11 @@
 use super::*;
 
-pub(super) const DURATION_YEARS_FIELD: usize = 0;
-pub(super) const DURATION_MONTHS_FIELD: usize = 1;
-pub(super) const DURATION_WEEKS_FIELD: usize = 2;
-pub(super) const DURATION_DAYS_FIELD: usize = 3;
+pub(crate) const DURATION_YEARS_FIELD: usize = 0;
+pub(crate) const DURATION_MONTHS_FIELD: usize = 1;
+pub(crate) const DURATION_WEEKS_FIELD: usize = 2;
+pub(crate) const DURATION_DAYS_FIELD: usize = 3;
 pub(super) const DURATION_HOURS_FIELD: usize = 4;
-pub(super) const DAYS_PER_WEEK: i128 = 7;
+pub(super) use crate::units::DAYS_PER_WEEK;
 pub(super) const NANOS_PER_DAY: i128 = 86_400_000_000_000;
 pub(super) const TIME_UNIT_NANOSECOND_SCALES: [i128; 6] = [
     3_600_000_000_000,
@@ -17,6 +17,22 @@ pub(super) const TIME_UNIT_NANOSECOND_SCALES: [i128; 6] = [
 ];
 
 impl<H: Host> Vm<H> {
+    /// The month a property bag names through `month`, `monthCode` or both, which must agree.
+    pub(super) fn temporal_month(
+        &mut self,
+        p: &ResidualProgram,
+        month: Option<i32>,
+        month_code: Option<i32>,
+    ) -> Result<i32, JsError> {
+        match (month, month_code) {
+            (Some(month), Some(code)) if month != code => {
+                Err(self.range_error(p, "month and monthCode must agree".into()))
+            }
+            (Some(month), _) | (None, Some(month)) => Ok(month),
+            (None, None) => Err(self.type_error(p, "Missing month".into())),
+        }
+    }
+
     pub(super) fn temporal_plain_date_arithmetic(
         &mut self,
         p: &ResidualProgram,

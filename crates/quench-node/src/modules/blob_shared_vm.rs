@@ -50,16 +50,15 @@ const FILE: &str = "File";
 
 /// A Blob's slots.
 mod field {
-    pub(super) const HANDLE: &str = "handle";
-    pub(super) const LENGTH: &str = "length";
-    pub(super) const TYPE: &str = "type";
+    pub(crate) use crate::modules::keys::HANDLE;
+    pub(super) use quench_runtime::property_names::LENGTH;
+    pub(crate) use crate::modules::keys::TYPE;
     pub(super) const FILE: &str = "file";
-    pub(super) const NAME: &str = "name";
+    pub(crate) use crate::modules::keys::NAME;
     pub(super) const LAST_MODIFIED: &str = "lastModified";
-    /// A read in progress: the chunks left and those read.
-    pub(super) const CHUNKS: &str = "chunks";
-    pub(super) const NEXT: &str = "next";
-    pub(super) const CONTROLLER: &str = "controller";
+    pub(crate) use crate::modules::keys::CHUNKS;
+    pub(crate) use crate::modules::keys::NEXT;
+    pub(crate) use crate::modules::keys::CONTROLLER;
     pub(super) const PENDING: &str = "pendingPulls";
 }
 use field::*;
@@ -75,14 +74,14 @@ const EOL: &str = "\n";
 /// The printable ASCII range a MIME type may use (`disallowedTypeCharacters`).
 const TYPE_CHARACTERS: std::ops::RangeInclusive<u16> = 0x20..=0x7E;
 /// A UUID's bytes, version nibble and RFC 4122 variant bits.
-const UUID_BYTES: usize = 16;
-const UUID_VERSION_BYTE: usize = 6;
-const UUID_VARIANT_BYTE: usize = 8;
-const UUID_VERSION_4: u8 = 0x40;
+pub(crate) const UUID_BYTES: usize = 16;
+pub(crate) const UUID_VERSION_BYTE: usize = 6;
+pub(crate) const UUID_VARIANT_BYTE: usize = 8;
+pub(crate) const UUID_VERSION_4: u8 = 0x40;
 const UUID_VERSION_MASK: u8 = 0x0F;
-const UUID_VARIANT_RFC4122: u8 = 0x80;
+pub(crate) const UUID_VARIANT_RFC4122: u8 = 0x80;
 const UUID_VARIANT_MASK: u8 = 0x3F;
-const UUID_GROUP_ENDS: [usize; 4] = [4, 6, 8, 10];
+pub(crate) const UUID_GROUP_ENDS: [usize; 4] = [4, 6, 8, 10];
 
 const BLOB_MEMBERS: [ClassMember<Member>; 7] = [
     ClassMember::Getter("type", Member::Type),
@@ -113,7 +112,7 @@ pub(crate) fn classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedErr
 }
 
 fn build(c: &mut Context<'_>) -> Outcome {
-    let table = record(c, &[])?;
+    let table = record(c, &[], &[])?;
     let blob = class(c, Member::BlobConstruct, BLOB, 0, Member::BlobInspect)?;
     let prototype = get(c, blob, "prototype")?;
     install(c, prototype, &BLOB_MEMBERS)?;
@@ -145,8 +144,7 @@ fn class(c: &mut Context<'_>, member: Member, name: &str, length: u32, inspect: 
     Ok(constructor)
 }
 
-/// The private slot holding a Blob's record.
-const SLOT: &str = "\0slot:Blob";
+use crate::modules::keys::SLOT;
 
 fn slot(c: &mut Context<'_>, value: RootId) -> Result<Option<RootId>, RootedError> {
     crate::modules::private_slots::read(c, value, SLOT)
@@ -175,7 +173,7 @@ fn normalize_type(c: &mut Context<'_>, value: RootId) -> Outcome {
 /// The Blob slots over `handle`.
 fn blob_record(c: &mut Context<'_>, handle: RootId, length: f64, kind: RootId) -> Outcome {
     let length = c.number(length);
-    record(c, &[(HANDLE, handle), (LENGTH, length), (TYPE, kind)])
+    record(c, &[HANDLE, LENGTH, TYPE], &[handle, length, kind])
 }
 
 /// `createBlob(handle, length, type)`: a new Blob over `handle`.
@@ -324,7 +322,7 @@ fn array_buffer(c: &mut Context<'_>, state: RootId) -> Outcome {
     let views = chunks.into_iter().map(|chunk| c.uint8_array_from_rooted(chunk)).collect::<Result<Vec<_>, _>>()?;
     let views = c.array_rooted(&views)?;
     let zero = c.number(0.0);
-    let read = record(c, &[(CHUNKS, views), (NEXT, zero)])?;
+    let read = record(c, &[CHUNKS, NEXT], &[views, zero])?;
     read_step(c, read, promise)?;
     Ok(promise)
 }
@@ -356,7 +354,7 @@ fn stream(c: &mut Context<'_>, state: RootId) -> Outcome {
     let views = c.array_rooted(&views)?;
     let zero = c.number(0.0);
     let pending = c.array_rooted(&[])?;
-    let read = record(c, &[(CHUNKS, views), (NEXT, zero), (PENDING, pending)])?;
+    let read = record(c, &[CHUNKS, NEXT, PENDING], &[views, zero, pending])?;
     let source = c.object_rooted()?;
     let kind = c.string_rooted("bytes");
     put(c, source, "type", kind)?;
@@ -423,9 +421,9 @@ fn inspect_blob(c: &mut Context<'_>, this: RootId, args: &[RootId], file: bool) 
     let data = if file {
         let name = get(c, state, NAME)?;
         let modified = get(c, state, LAST_MODIFIED)?;
-        literal(c, &[("size", size), ("type", kind), ("name", name), ("lastModified", modified)])?
+        literal(c, &["size", "type", "name", "lastModified"], &[size, kind, name, modified])?
     } else {
-        literal(c, &[("size", size), ("type", kind)])?
+        literal(c, &["size", "type"], &[size, kind])?
     };
     custom_inspect(c, this, if file { FILE } else { BLOB }, data, args)
 }

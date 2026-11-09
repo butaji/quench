@@ -1,11 +1,10 @@
 use super::temporal_date::{self, IsoDate};
 use super::*;
 
-const DURATION_YEARS_FIELD: usize = 0;
-const DURATION_MONTHS_FIELD: usize = 1;
-const DURATION_WEEKS_FIELD: usize = 2;
-const DURATION_DAYS_FIELD: usize = 3;
-const MONTHS_PER_YEAR: i128 = 12;
+use crate::vm::temporal_date_arithmetic::{
+    DURATION_DAYS_FIELD, DURATION_MONTHS_FIELD, DURATION_WEEKS_FIELD, DURATION_YEARS_FIELD,
+};
+pub(crate) const MONTHS_PER_YEAR: i128 = 12;
 const DAYS_PER_WEEK: i64 = 7;
 
 const DATE_DIFFERENCE_ROUNDING_INCREMENT_LIMIT: f64 = 1_000_000_000.0;
@@ -18,6 +17,13 @@ pub(super) enum DateUnit {
     Month,
     Week,
     Day,
+}
+
+impl DateUnit {
+    /// Whether the unit is counted in calendar months (a year is twelve of them).
+    fn counts_months(self) -> bool {
+        matches!(self, DateUnit::Year | DateUnit::Month)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -40,17 +46,21 @@ struct DateDifferenceOptions {
     rounding_mode: DateRoundingMode,
 }
 
-struct YearMonthDifferenceOptions {
-    largest: DateUnit,
-    smallest: DateUnit,
-    increment: f64,
-    rounding_mode: DateRoundingMode,
-}
-
 enum ParsedOption<T> {
     Missing,
     Valid(T),
     Invalid,
+}
+
+impl<T> ParsedOption<T> {
+    /// The option's value, `default` when missing, `None` when invalid.
+    fn resolve(self, default: T) -> Option<T> {
+        match self {
+            Self::Missing => Some(default),
+            Self::Valid(value) => Some(value),
+            Self::Invalid => None,
+        }
+    }
 }
 
 impl<H: Host> Vm<H> {
@@ -65,7 +75,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let settings = self.year_month_difference_options(p, options)?;
         if !matches!(calendar.as_str(), "iso8601" | "gregory")
-            && matches!(settings.largest, DateUnit::Year | DateUnit::Month)
+            && settings.largest.counts_months()
             && settings.smallest == DateUnit::Month
             && settings.increment == 1.0
             && is_trunc(settings.rounding_mode)
@@ -122,9 +132,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         options: Value,
-    ) -> Result<YearMonthDifferenceOptions, JsError> {
+    ) -> Result<DateDifferenceOptions, JsError> {
         if options.is_undefined() {
-            return Ok(YearMonthDifferenceOptions::default());
+            return Ok(DateDifferenceOptions::YEAR_MONTH);
         }
         if !self.is_object_like(options) {
             return Err(self.type_error(p, "Invalid options".into()));
@@ -186,7 +196,7 @@ impl<H: Host> Vm<H> {
         let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let settings = self.plain_date_difference_options(p, options)?;
         if !matches!(calendar.as_str(), "iso8601" | "gregory")
-            && matches!(settings.largest, DateUnit::Year | DateUnit::Month)
+            && settings.largest.counts_months()
             && matches!(settings.smallest, DateUnit::Auto | DateUnit::Day)
             && settings.increment == 1.0
             && is_trunc(settings.rounding_mode)
@@ -238,7 +248,7 @@ impl<H: Host> Vm<H> {
         options: Value,
     ) -> Result<DateDifferenceOptions, JsError> {
         if options.is_undefined() {
-            return Ok(DateDifferenceOptions::default());
+            return Ok(DateDifferenceOptions::DATE);
         }
         if !self.is_object_like(options) {
             return Err(self.type_error(p, "Options must be an object".into()));
@@ -261,7 +271,7 @@ impl<H: Host> Vm<H> {
         if value.is_undefined() {
             return Ok(ParsedOption::Missing);
         }
-        let name = self.to_string(p, value)?.to_string();
+        let name = self.to_string(p, value)?;
         Ok(match parse_date_unit(&name) {
             Some(unit) => ParsedOption::Valid(unit),
             None => ParsedOption::Invalid,
@@ -291,7 +301,7 @@ impl<H: Host> Vm<H> {
         if value.is_undefined() {
             return Ok(ParsedOption::Missing);
         }
-        let mode = self.to_string(p, value)?.to_string();
+        let mode = self.to_string(p, value)?;
         Ok(match parse_date_rounding_mode(&mode) {
             Some(mode) => ParsedOption::Valid(mode),
             None => ParsedOption::Invalid,
@@ -299,26 +309,13 @@ impl<H: Host> Vm<H> {
     }
 }
 
-impl Default for DateDifferenceOptions {
-    fn default() -> Self {
-        Self {
-            largest: DateUnit::Day,
-            smallest: DateUnit::Auto,
-            increment: 1.0,
-            rounding_mode: DateRoundingMode::Trunc,
-        }
-    }
-}
-
-impl Default for YearMonthDifferenceOptions {
-    fn default() -> Self {
-        Self {
-            largest: DateUnit::Year,
-            smallest: DateUnit::Month,
-            increment: 1.0,
-            rounding_mode: DateRoundingMode::Trunc,
-        }
-    }
+impl DateDifferenceOptions {
+    /// A plain date difference's defaults: whole days, truncated.
+    const DATE: Self =
+        Self { largest: DateUnit::Day, smallest: DateUnit::Auto, increment: 1.0, rounding_mode: DateRoundingMode::Trunc };
+    /// A year-month difference's defaults: years and months, truncated to the month.
+    const YEAR_MONTH: Self =
+        Self { largest: DateUnit::Year, smallest: DateUnit::Month, increment: 1.0, rounding_mode: DateRoundingMode::Trunc };
 }
 
 fn year_month_difference_settings<H: Host>(
@@ -328,7 +325,7 @@ fn year_month_difference_settings<H: Host>(
     smallest: ParsedOption<DateUnit>,
     increment: f64,
     rounding_mode: ParsedOption<DateRoundingMode>,
-) -> Result<YearMonthDifferenceOptions, JsError> {
+) -> Result<DateDifferenceOptions, JsError> {
     let largest = match largest {
         ParsedOption::Missing | ParsedOption::Valid(DateUnit::Auto) => DateUnit::Year,
         ParsedOption::Valid(unit @ (DateUnit::Year | DateUnit::Month)) => unit,
@@ -343,18 +340,14 @@ fn year_month_difference_settings<H: Host>(
             return Err(vm.range_error(p, "Invalid smallestUnit".into()));
         }
     };
-    let rounding_mode = match rounding_mode {
-        ParsedOption::Missing => DateRoundingMode::Trunc,
-        ParsedOption::Valid(mode) => mode,
-        ParsedOption::Invalid => return Err(vm.range_error(p, "Invalid roundingMode".into())),
-    };
+    let rounding_mode = rounding_mode.resolve(DateRoundingMode::Trunc).ok_or_else(|| vm.range_error(p, "Invalid roundingMode".into()))?;
     if !increment.is_finite()
         || !(1.0..=DATE_DIFFERENCE_ROUNDING_INCREMENT_LIMIT).contains(&increment)
         || !valid_date_unit_order(largest, smallest)
     {
         return Err(vm.range_error(p, "Invalid difference options".into()));
     }
-    Ok(YearMonthDifferenceOptions {
+    Ok(DateDifferenceOptions {
         largest,
         smallest,
         increment,
@@ -364,7 +357,7 @@ fn year_month_difference_settings<H: Host>(
 
 fn year_month_difference_fields(
     total_months: f64,
-    settings: &YearMonthDifferenceOptions,
+    settings: &DateDifferenceOptions,
 ) -> (f64, f64) {
     if settings.smallest == DateUnit::Year {
         return (
@@ -387,10 +380,7 @@ fn year_month_difference_fields(
         settings.rounding_mode,
     );
     if months.abs() >= MONTHS_PER_YEAR as f64 {
-        (
-            years + months.signum(),
-            months - months.signum() * MONTHS_PER_YEAR as f64,
-        )
+        (years + months.signum(), months - months.signum() * MONTHS_PER_YEAR as f64)
     } else {
         (years, months)
     }
@@ -434,21 +424,9 @@ fn validate_date_difference_options<H: Host>(
     increment: f64,
     rounding_mode: ParsedOption<DateRoundingMode>,
 ) -> Result<DateDifferenceOptions, JsError> {
-    let largest = match largest {
-        ParsedOption::Missing => DateUnit::Auto,
-        ParsedOption::Valid(unit) => unit,
-        ParsedOption::Invalid => return Err(vm.range_error(p, "Invalid largestUnit".into())),
-    };
-    let smallest = match smallest {
-        ParsedOption::Missing => DateUnit::Auto,
-        ParsedOption::Valid(unit) => unit,
-        ParsedOption::Invalid => return Err(vm.range_error(p, "Invalid smallestUnit".into())),
-    };
-    let rounding_mode = match rounding_mode {
-        ParsedOption::Missing => DateRoundingMode::Trunc,
-        ParsedOption::Valid(mode) => mode,
-        ParsedOption::Invalid => return Err(vm.range_error(p, "Invalid roundingMode".into())),
-    };
+    let largest = largest.resolve(DateUnit::Auto).ok_or_else(|| vm.range_error(p, "Invalid largestUnit".into()))?;
+    let smallest = smallest.resolve(DateUnit::Auto).ok_or_else(|| vm.range_error(p, "Invalid smallestUnit".into()))?;
+    let rounding_mode = rounding_mode.resolve(DateRoundingMode::Trunc).ok_or_else(|| vm.range_error(p, "Invalid roundingMode".into()))?;
     if !increment.is_finite()
         || !(1.0..=DATE_DIFFERENCE_ROUNDING_INCREMENT_LIMIT).contains(&increment)
     {
@@ -518,7 +496,7 @@ fn iso_date_difference(start: IsoDate, end: IsoDate, largest: DateUnit) -> Optio
         fields[DURATION_YEARS_FIELD] = count as f64;
         cursor = next;
     }
-    if matches!(largest, DateUnit::Year | DateUnit::Month) {
+    if largest.counts_months() {
         let months = i128::from(end.year - cursor.year) * MONTHS_PER_YEAR
             + i128::from(end.month as i32 - cursor.month as i32);
         let (count, next) = fit_largest(cursor, end, months, 1)?;

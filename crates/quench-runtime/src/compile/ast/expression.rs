@@ -1,4 +1,5 @@
 use super::destructure::AssignmentReference;
+use super::static_constants::StaticKey;
 use super::*;
 
 /// The false edges of a test (`FunctionCompiler::condition`); most tests have one.
@@ -6,10 +7,8 @@ pub(super) type ConditionExits = smallvec::SmallVec<[usize; 2]>;
 
 /// The TypeError message for assigning an immutable binding, as V8 words it.
 const ASSIGNMENT_TO_CONSTANT: &str = "Assignment to constant variable.";
-/// The implicit binding `ArgumentsLength` and `ArgumentGet` read, and the property the
-/// former reads.
-const ARGUMENTS: &str = "arguments";
-const LENGTH: &str = "length";
+use crate::compile::early::ARGUMENTS;
+use crate::property_names::LENGTH;
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn expression(&mut self, expression: &Expression<'_>) -> Register {
         self.expression_with_debug_name(expression, None)
@@ -301,7 +300,7 @@ impl FunctionCompiler<'_, '_> {
         };
         let atom = lexical.unwrap_or(atom);
         if (self.with_depth == self.inherited_with_depth || lexical.is_some() || compiler_binding)
-            && (self.function_scope.contains(&atom) || lexical.is_some() || compiler_binding)
+            && (self.frame_var(atom) || lexical.is_some() || compiler_binding)
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             if let Some(register) = self.local_register(atom) {
@@ -401,7 +400,7 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         if (self.with_depth == self.inherited_with_depth || lexical.is_some() || compiler_binding)
-            && (self.function_scope.contains(&atom) || lexical.is_some() || compiler_binding)
+            && (self.frame_var(atom) || lexical.is_some() || compiler_binding)
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             if let Some(register) = self.local_register(atom) {
@@ -463,7 +462,7 @@ impl FunctionCompiler<'_, '_> {
             .local_slots
             .get(&atom)
             .is_some_and(|slot| usize::from(*slot) < self.parameter_local_count);
-        !parameter_binding && !self.annex_b_collisions.contains(&declaration_start)
+        !parameter_binding && !self.annex_b_collisions.contains(declaration_start)
     }
 
     pub(super) fn has_immutable_capture(&mut self, atom: Atom) -> bool {
@@ -688,30 +687,18 @@ impl FunctionCompiler<'_, '_> {
             } else {
                 self.expression(object)
             };
-        if let Some(index) = Self::literal_index_key(key) {
-            let (dst, index) = (self.reg(), self.literal(Constant::Number(f64::from(index))));
-            self.emit(Op::GetIndex, dst, object, index, 0);
-            return dst;
-        }
-        if let Expression::StringLiteral(value) = key
-            && !matches!(
-                super::super::string::constant(value),
-                Constant::StringUnits(_)
-            )
-        {
-            let (dst, atom, cache) = (
-                self.reg(),
-                self.owner.atom(value.value.as_str()),
-                self.owner.cache_site(),
-            );
-            self.emit(
-                Op::GetField,
-                dst,
-                FieldBase::register(object).0,
-                cache,
-                atom,
-            );
-            return dst;
+        match self.static_property_key(key) {
+            Some(StaticKey::Index(index)) => {
+                let (dst, index) = (self.reg(), self.literal(Constant::Number(f64::from(index))));
+                self.emit(Op::GetIndex, dst, object, index, 0);
+                return dst;
+            }
+            Some(StaticKey::Name(_)) => {
+                let dst = self.reg();
+                self.static_field_read(dst, object, key);
+                return dst;
+            }
+            None => {}
         }
         let key = self.last_operand(key);
         let dst = self.reg();
@@ -805,15 +792,23 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn binary(&mut self, value: &BinaryExpression<'_>) -> Register {
+        if let Some(constant) = self.static_binary(value) {
+            return self.literal(constant);
+        }
         if let Some(test) = self.typeof_test(value) {
             return test;
         }
-        let left = if let Some(constant) = binding_time::expression(&value.left) {
-            self.constant_operand(constant)
-        } else {
-            Operand::register(self.expression(&value.left))
+        let (left, right) = self.binary_operands(value);
+        self.emit_binary(value.operator as u32, left, right)
+    }
+
+    /// The operands of `value`: a static one as a constant, a register local as itself.
+    fn binary_operands(&mut self, value: &BinaryExpression<'_>) -> (Operand, Operand) {
+        let left = match self.static_value(&value.left) {
+            Some(constant) => self.constant_operand(constant),
+            None => Operand::register(self.expression(&value.left)),
         };
-        let right = if let Some(constant) = binding_time::expression(&value.right) {
+        let right = if let Some(constant) = self.static_value(&value.right) {
             self.constant_operand(constant)
         } else if let Expression::Identifier(identifier) = &value.right
             && let Some(operand) = self.local_operand(identifier.name.as_str())
@@ -822,7 +817,7 @@ impl FunctionCompiler<'_, '_> {
         } else {
             Operand::register(self.last_operand(&value.right))
         };
-        self.emit_binary(value.operator as u32, left, right)
+        (left, right)
     }
     pub(super) fn constant_operand(&mut self, constant: Constant) -> Operand {
         let index = self.owner.constant(constant);
@@ -914,22 +909,7 @@ impl FunctionCompiler<'_, '_> {
             if let Some(test) = self.typeof_test(binary) {
                 return self.emit(Op::JumpFalse, test, 0, 0, 0);
             }
-            let left = if let Some(constant) = binding_time::expression(&binary.left)
-            {
-                self.constant_operand(constant)
-            } else {
-                Operand::register(self.expression(&binary.left))
-            };
-            let right =
-                if let Some(constant) = binding_time::expression(&binary.right) {
-                    self.constant_operand(constant)
-                } else if let Expression::Identifier(identifier) = &binary.right
-                    && let Some(operand) = self.local_operand(identifier.name.as_str())
-                {
-                    operand
-                } else {
-                    Operand::register(self.last_operand(&binary.right))
-                };
+            let (left, right) = self.binary_operands(binary);
             let (operator, left, right) = constant_right(binary.operator as u32, left, right);
             return self.emit(Op::JumpBinaryFalse, operator as u16, left.0, right.0, 0);
         }
@@ -987,3 +967,4 @@ fn constant_right(op: u32, left: Operand, right: Operand) -> (u32, Operand, Oper
         None => (op, left, right),
     }
 }
+

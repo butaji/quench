@@ -5,6 +5,16 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
 
+mod append_buffer;
+mod short_ascii;
+mod concat_all;
+mod search;
+pub(super) use concat_all::JsStringBuilder;
+mod split;
+mod text_hash;
+pub(crate) use text_hash::{str_text_hash, table_hash, TextHash};
+use append_buffer::{AppendBuffer, APPEND_BUFFER_MIN_UNITS};
+
 /// Bytes of text made on demand since the collector last took them. A string is charged its
 /// flat bytes when allocated; text made later is charged here, so collections follow the
 /// memory programs materialize.
@@ -62,7 +72,14 @@ fn wide_units(text: &str, length: usize) -> Rc<[u16]> {
 /// Text made on demand and not yet charged, which the caller now charges.
 #[inline(always)]
 pub(crate) fn take_materialized_text() -> MaterializedText {
-    MATERIALIZED.with(|total| total.replace(MaterializedText::default()))
+    // Most allocations made no text: they read the ledger without writing it.
+    MATERIALIZED.with(|total| {
+        let text = total.get();
+        if text != MaterializedText::default() {
+            total.set(MaterializedText::default());
+        }
+        text
+    })
 }
 
 /// Heap-owned JavaScript string. Its code units are authoritative: one byte each when every
@@ -105,6 +122,12 @@ pub(crate) enum FlatUnits {
     /// storage. Its units may all be ASCII (the tail of a text whose only wide units lie
     /// before it), so, like `Wide`, it is never taken to be ASCII.
     WideSlice(Rc<WideSlice>),
+    /// The first `length` units of an ASCII append buffer (`AppendBuffer`): text built by
+    /// appends, which later appends extend in place past this string's end.
+    AsciiPrefix(Rc<AppendBuffer<u8>>, u32),
+    /// The first `length` units of a UTF-16 append buffer. As with `WideSlice`, its units
+    /// may all be ASCII (a wide slice's text appended to), so it is never taken to be ASCII.
+    WidePrefix(Rc<AppendBuffer<u16>>, u32),
 }
 
 /// The units `range` of shared `Wide` storage; never a slice of a slice.
@@ -138,13 +161,6 @@ pub(crate) struct ShortAscii {
 pub(crate) const SHORT_ASCII_CAPACITY: usize = 3 * size_of::<usize>() - 2;
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(size_of::<FlatUnits>() == 3 * size_of::<usize>());
-
-impl ShortAscii {
-    pub(crate) fn as_str(&self) -> &str {
-        // SAFETY: only `FlatUnits::ascii` fills the bytes, from ASCII text.
-        unsafe { std::str::from_utf8_unchecked(&self.bytes[..usize::from(self.length)]) }
-    }
-}
 
 impl FlatUnits {
     /// ASCII `text` in its canonical storage.
@@ -188,6 +204,7 @@ impl FlatUnits {
             Self::AsciiSlice(slice) => slice.range.len(),
             Self::Wide(units) => units.len(),
             Self::WideSlice(slice) => slice.range.len(),
+            Self::AsciiPrefix(_, length) | Self::WidePrefix(_, length) => *length as usize,
         }
     }
 
@@ -202,6 +219,8 @@ impl FlatUnits {
             Self::Wide(units) => units.get(index).copied(),
             Self::WideSlice(slice) => (index < slice.range.len())
                 .then(|| slice.units[slice.range.start + index]),
+            Self::AsciiPrefix(buffer, length) => buffer.prefix(*length).get(index).map(|byte| u16::from(*byte)),
+            Self::WidePrefix(buffer, length) => buffer.prefix(*length).get(index).copied(),
         }
     }
 
@@ -215,12 +234,14 @@ impl FlatUnits {
             }
             Self::Wide(units) => Units::Wide(units),
             Self::WideSlice(slice) => Units::Wide(&slice.units[slice.range.clone()]),
+            Self::AsciiPrefix(buffer, length) => Units::Ascii(buffer.prefix(*length)),
+            Self::WidePrefix(buffer, length) => Units::Wide(buffer.prefix(*length)),
         }
     }
 
     /// Whether the units are known to be ASCII; a wide slice may be, but is not known to be.
     pub(crate) fn is_ascii(&self) -> bool {
-        !matches!(self, Self::Wide(_) | Self::WideSlice(_))
+        !matches!(self, Self::Wide(_) | Self::WideSlice(_) | Self::WidePrefix(..))
     }
 
     /// The shared wide storage these units view and the units they cover.
@@ -228,7 +249,7 @@ impl FlatUnits {
         match self {
             Self::Wide(units) => Some((units, 0..units.len())),
             Self::WideSlice(slice) => Some((&slice.units, slice.range.clone())),
-            Self::Short(_) | Self::Ascii(_) | Self::AsciiSlice(_) => None,
+            Self::Short(_) | Self::Ascii(_) | Self::AsciiSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) => None,
         }
     }
 
@@ -237,8 +258,13 @@ impl FlatUnits {
         match self {
             Self::Ascii(text) => Some((text, 0..text.len())),
             Self::AsciiSlice(slice) => Some((&slice.text, slice.range.clone())),
-            Self::Short(_) | Self::Wide(_) | Self::WideSlice(_) => None,
+            Self::Short(_) | Self::Wide(_) | Self::WideSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) => None,
         }
+    }
+
+    /// The string of these units' `range`, as `JsString::substring`.
+    pub(crate) fn substring(&self, range: Range<usize>) -> JsString {
+        JsString::from_flat(self.run(range))
     }
 
     /// The units `range` of these, sharing ASCII storage when the run is too long to hold
@@ -279,6 +305,12 @@ impl FlatUnits {
             (Self::AsciiSlice(left), Self::AsciiSlice(right)) => Rc::ptr_eq(left, right),
             (Self::Wide(left), Self::Wide(right)) => Rc::ptr_eq(left, right),
             (Self::WideSlice(left), Self::WideSlice(right)) => Rc::ptr_eq(left, right),
+            (Self::AsciiPrefix(left, left_length), Self::AsciiPrefix(right, right_length)) => {
+                Rc::ptr_eq(left, right) && left_length == right_length
+            }
+            (Self::WidePrefix(left, left_length), Self::WidePrefix(right, right_length)) => {
+                Rc::ptr_eq(left, right) && left_length == right_length
+            }
             _ => false,
         }
     }
@@ -384,29 +416,6 @@ impl<'a> Units<'a> {
         prefix.len() <= self.len() && self.slice(0..prefix.len()) == prefix
     }
 
-    /// The first index at or after `start` where `search` occurs.
-    pub(crate) fn find(self, search: Units<'_>, start: usize) -> Option<usize> {
-        if search.is_empty() {
-            return Some(start.min(self.len()));
-        }
-        if search.len() > self.len() {
-            return None;
-        }
-        let last = self.len() - search.len();
-        if let (Self::Ascii(haystack), Units::Ascii(needle)) = (self, search) {
-            if start > last {
-                return None;
-            }
-            if let [unit] = needle {
-                return memchr::memchr(*unit, &haystack[start..]).map(|offset| start + offset);
-            }
-            return memchr::memmem::find(&haystack[start..], needle).map(|offset| start + offset);
-        }
-        let first = search.at(0);
-        (start..=last).find(|index| {
-            self.at(*index) == first && self.slice(*index..*index + search.len()) == search
-        })
-    }
 }
 
 impl PartialEq for Units<'_> {
@@ -617,11 +626,7 @@ impl JsStringInner {
 
     /// A flat `Wide` string's host text, if `host` has made it.
     fn cached_host(&self) -> Option<&str> {
-        // SAFETY: a shared read; a `Host` is never replaced once written (`host`).
-        match unsafe { (*self.aside.get()).as_deref() } {
-            Some(Aside::Host(host)) => Some(host),
-            Some(Aside::Rope(..)) | None => None,
-        }
+        self.existing_host().map(|host| &**host)
     }
 
     /// A flat `Wide` string's host text, made by `make` on first use.
@@ -676,9 +681,9 @@ impl JsStringInner {
 /// rope node: a node and the separate halves it keeps alive cost more than copying a short
 /// piece, and a rope's leaves then hold at least this many units each.
 const ROPE_LEAF_MAX_UNITS: usize = 512;
-/// A flat left side at most this long takes a short right side by copy, so text built by
-/// appends stays flat until it is long; past it, an append copies at most a leaf. Each such
-/// append copies the whole prefix, so the bound is the most an append copies: from 8192,
+/// A flat string at most this long prepended to a rope joins the rope's flat left leaf by
+/// copy (`JsString::push_js_string`). Each copy takes the whole prefix, so the bound is the
+/// most a prepend copies: from 8192,
 /// pdfjs 12.67G -> 9.42G instructions with max RSS 84.8 -> 86.8 MB, and web-ssr's built
 /// text 89.8 -> 100.9 MB (Bun without its JIT: 88.8 and 124.3 MB; 512 saved 2% more on
 /// pdfjs for 3.5 MB more on web-ssr; JetStream, Linux x86_64, 2026-10-19).
@@ -702,111 +707,6 @@ fn checked_string_length(current: usize, additional: usize) -> Result<usize, Str
         .ok_or(StringBuildError::InvalidLength)
 }
 
-/// Parts a builder holds before it allocates: a replacement's prefix, substitution and
-/// rest, or a short join, need no allocation beside the result.
-const BUILDER_INLINE_PARTS: usize = 4;
-
-struct StringPart {
-    units: FlatUnits,
-    range: Range<usize>,
-}
-
-/// A transient concatenation plan, not a guest rope. Slices retain only the
-/// canonical storage. Overflow stops storage growth, but callers still
-/// perform all replacement effects before finish reports the error.
-pub(super) struct JsStringBuilder {
-    parts: smallvec::SmallVec<[StringPart; BUILDER_INLINE_PARTS]>,
-    length: Result<usize, StringBuildError>,
-}
-
-impl Default for JsStringBuilder {
-    fn default() -> Self {
-        Self {
-            parts: smallvec::SmallVec::new(),
-            length: Ok(0),
-        }
-    }
-}
-
-impl JsStringBuilder {
-    pub(super) fn append(&mut self, string: &JsString) {
-        let units = string.flat();
-        let length = units.view().len();
-        self.append_units(units.clone(), 0..length);
-    }
-
-    pub(super) fn append_slice(&mut self, string: &JsString, range: Range<usize>) {
-        self.append_units(string.flat().clone(), range);
-    }
-
-    fn append_units(&mut self, units: FlatUnits, range: Range<usize>) {
-        if range.is_empty() {
-            return;
-        }
-        let Ok(current) = self.length else {
-            return;
-        };
-        self.length = checked_string_length(current, range.len());
-        if self.length.is_err() {
-            self.parts.clear();
-            return;
-        }
-        if let Some(previous) = self.parts.last_mut()
-            && previous.units.same_storage(&units) && previous.range.end == range.start {
-                previous.range.end = range.end;
-                return;
-            }
-        if self.parts.try_reserve(1).is_err() {
-            self.length = Err(StringBuildError::Allocation);
-            self.parts.clear();
-            return;
-        }
-        self.parts.push(StringPart { units, range });
-    }
-
-    pub(super) fn finish(self) -> Result<JsString, StringBuildError> {
-        let length = self.length?;
-        if self.parts.iter().all(|part| part.units.is_ascii()) {
-            return Ok(JsString::from_flat(FlatUnits::ascii_with(length, |output| {
-                let mut written = 0;
-                for part in &self.parts {
-                    if let Units::Ascii(bytes) = part.units.view().slice(part.range.clone()) {
-                        output[written..written + bytes.len()].write_copy_of_slice(bytes);
-                        written += bytes.len();
-                    }
-                }
-                assert_eq!(written, output.len(), "the parts fill the string's length");
-            })));
-        }
-        let mut storage = Rc::<[u16]>::new_uninit_slice(length);
-        let output = Rc::get_mut(&mut storage).expect("a new allocation is unshared");
-        let mut written = 0;
-        for part in &self.parts {
-            let units = part.units.view().slice(part.range.clone());
-            let target = &mut output[written..written + units.len()];
-            match units {
-                Units::Ascii(bytes) => {
-                    for (unit, byte) in target.iter_mut().zip(bytes) {
-                        unit.write(u16::from(*byte));
-                    }
-                }
-                Units::Wide(units) => {
-                    target.write_copy_of_slice(units);
-                }
-            }
-            written += units.len();
-        }
-        assert_eq!(written, length, "the parts fill the string's length");
-        // SAFETY: the parts wrote every unit.
-        let storage = unsafe { storage.assume_init() };
-        // Wide parts can contribute only ASCII units; such text is stored narrow.
-        if storage.iter().all(|unit| is_ascii_unit(*unit)) {
-            return Ok(JsString::from_units(&storage));
-        }
-        Ok(JsString::from_flat(FlatUnits::Wide(storage)))
-    }
-}
-
 impl JsString {
     /// Non-materializing shape for aggregate diagnostics: inline flat, shared flat, or rope.
     #[cfg(feature = "profile-aggregate")]
@@ -820,10 +720,10 @@ impl JsString {
 
     fn from_flat(units: FlatUnits) -> Self {
         let repr = match units {
-            FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) => {
+            FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::AsciiPrefix(..) => {
                 Repr::Flat(units)
             }
-            FlatUnits::Wide(_) | FlatUnits::WideSlice(_) => {
+            FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) => {
                 Repr::Shared(Rc::new(JsStringInner::flat(units)))
             }
         };
@@ -837,10 +737,8 @@ impl JsString {
     /// The string a rope node holds.
     fn from_node(node: Rc<JsStringInner>) -> Self {
         match node.flat.get() {
-            Some(units @ (FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_))) => Self {
-                repr: Repr::Flat(units.clone()),
-            },
-            Some(FlatUnits::Wide(_) | FlatUnits::WideSlice(_)) | None => Self { repr: Repr::Shared(node) },
+            Some(units) if units.is_ascii() => Self { repr: Repr::Flat(units.clone()) },
+            Some(_) | None => Self { repr: Repr::Shared(node) },
         }
     }
 
@@ -889,7 +787,15 @@ impl JsString {
     /// The units `range` of this string (`String.prototype.slice` and its kin). A long ASCII
     /// result shares this string's storage; any other result is copied.
     pub(crate) fn substring(&self, range: Range<usize>) -> Self {
-        Self::from_flat(self.flat().run(range))
+        self.flat().substring(range)
+    }
+
+    /// Number::toString(10) of `value`, written on the stack: text this short is held inline.
+    pub(crate) fn from_number(value: f64) -> Self {
+        let mut text = crate::number_to_string::Short::new();
+        crate::number_to_string::write(value, &mut text);
+        // SAFETY: `write` appends ASCII only.
+        Self::from_flat(FlatUnits::ascii(unsafe { std::str::from_utf8_unchecked(&text) }))
     }
 
     pub(crate) fn from_str(text: &str) -> Self {
@@ -1039,7 +945,7 @@ impl JsString {
             return host.to_owned();
         }
         match (self.flat(), &self.repr) {
-            (wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_)), Repr::Shared(inner)) => {
+            (wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..)), Repr::Shared(inner)) => {
                 inner.cached_host().map_or_else(
                     || {
                         let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
@@ -1061,7 +967,9 @@ impl JsString {
             FlatUnits::Short(text) => text.as_str(),
             FlatUnits::Ascii(text) => text,
             FlatUnits::AsciiSlice(slice) => &slice.text[slice.range.clone()],
-            wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_)) => match &self.repr {
+            // SAFETY: an ASCII buffer holds only ASCII bytes, which are UTF-8.
+            FlatUnits::AsciiPrefix(buffer, length) => unsafe { std::str::from_utf8_unchecked(buffer.prefix(*length)) },
+            wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..)) => match &self.repr {
                 Repr::Shared(inner) => inner.host(|| {
                     let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
                     Rc::<str>::from(String::from_utf16_lossy(units))
@@ -1072,15 +980,18 @@ impl JsString {
     }
 
     /// Bytes of flat units this string holds; a rope owns only its node until it flattens.
+    #[inline]
     pub(crate) fn flat_unit_bytes(&self) -> usize {
         let flat = match &self.repr {
             Repr::Flat(units) => Some(units),
             Repr::Shared(inner) => inner.flat.get(),
         };
         match flat {
-            // A wide slice holds its record; the units belong to the storage it shares, which
-            // its root was charged for.
+            // A slice holds its record; its root was charged for the units it shares.
+            Some(FlatUnits::AsciiSlice(_)) => std::mem::size_of::<AsciiSlice>(),
             Some(FlatUnits::WideSlice(_)) => std::mem::size_of::<WideSlice>(),
+            Some(FlatUnits::AsciiPrefix(buffer, length)) => buffer.charge(*length),
+            Some(FlatUnits::WidePrefix(buffer, length)) => buffer.charge(*length),
             Some(units) => match units.view() {
                 Units::Ascii(bytes) => bytes.len(),
                 Units::Wide(units) => std::mem::size_of_val(units),
@@ -1089,6 +1000,17 @@ impl JsString {
         }
     }
 
+    /// The unit of a one-unit string, which is ASCII held inline (`FlatUnits::Short`) when
+    /// its unit is ASCII; `None` for any other string.
+    #[inline(always)]
+    pub(crate) fn single_ascii_unit(&self) -> Option<u8> {
+        match &self.repr {
+            Repr::Flat(FlatUnits::Short(short)) if short.length == 1 => Some(short.bytes[0]),
+            _ => None,
+        }
+    }
+
+    #[inline]
     pub(crate) fn len(&self) -> usize {
         match &self.repr {
             Repr::Flat(units) => units.len(),
@@ -1112,6 +1034,10 @@ impl JsString {
             // As an ASCII slice: the storage belongs to the string sliced.
             FlatUnits::WideSlice(_) => {
                 std::mem::size_of::<WideSlice>() + self.existing_host().map_or(0, |host| host.len())
+            }
+            FlatUnits::AsciiPrefix(buffer, length) => buffer.charge(*length),
+            FlatUnits::WidePrefix(buffer, length) => {
+                buffer.charge(*length) + self.existing_host().map_or(0, |host| host.len())
             }
         }
     }
@@ -1155,6 +1081,8 @@ impl JsString {
                 Rc::as_ptr(&slice.units) as *const u16 as usize,
                 RC_HEADER_BYTES + std::mem::size_of_val(&*slice.units),
             ),
+            FlatUnits::AsciiPrefix(buffer, _) => buffer.storage(),
+            FlatUnits::WidePrefix(buffer, _) => buffer.storage(),
         };
         let host_storage = self.existing_host().map(|host| {
             (
@@ -1165,6 +1093,21 @@ impl JsString {
         (unit_storage, host_storage)
     }
 
+    /// This string then `text`. Text built by ASCII appends is made in place of the copy
+    /// `push_js_string` takes: `text` written past this string's end in its append buffer.
+    #[inline(always)]
+    pub(crate) fn concat(&self, text: &Self) -> Self {
+        if let (Repr::Flat(FlatUnits::AsciiPrefix(buffer, length)), Some(Units::Ascii(bytes))) =
+            (&self.repr, text.existing_flat().map(FlatUnits::view))
+            && let Some(length) = buffer.append(*length, bytes.iter().copied())
+        {
+            return Self { repr: Repr::Flat(FlatUnits::AsciiPrefix(buffer.clone(), length)) };
+        }
+        let mut joined = self.clone();
+        joined.push_js_string(text);
+        joined
+    }
+
     pub(crate) fn push_js_string(&mut self, text: &Self) {
         if self.len() == 0 {
             *self = text.clone();
@@ -1173,55 +1116,100 @@ impl JsString {
         if text.len() == 0 {
             return;
         }
+        if self.append_in_place(text) {
+            return;
+        }
         let short = |piece: &Self| piece.len() <= ROPE_LEAF_MAX_UNITS;
-        // Two flat pieces the policy below joins: one copy of each, straight into the joined
-        // storage when both are ASCII (a template literal's pieces, a key built from parts,
-        // a rope's last leaf and the text appended to it).
-        let joined = |left: &Self, right: &Self| {
-            if let (Some(Units::Ascii(head)), Some(Units::Ascii(tail))) =
-                (left.existing_flat().map(FlatUnits::view), right.existing_flat().map(FlatUnits::view))
-            {
-                let units = FlatUnits::ascii_with(head.len() + tail.len(), |bytes| {
-                    let (start, end) = bytes.split_at_mut(head.len());
-                    start.write_copy_of_slice(head);
-                    end.write_copy_of_slice(tail);
-                });
-                return Self { repr: Repr::Flat(units) };
-            }
-            let mut flat = JsStringBuilder::default();
-            flat.append(left);
-            flat.append(right);
-            flat.finish()
-                .expect("a copied concatenation is within the string length limit")
-        };
         let rope = |left: &Self, right: &Self| {
             Self::shared(JsStringInner::concat(left.node(), right.node()))
         };
         // A flattened rope joins as the flat text it holds.
-        if self.existing_flat().is_some()
-            && text.existing_flat().is_some()
-            && short(text)
-            && self.len() <= FLAT_PREFIX_MAX_UNITS
-        {
-            *self = joined(self, text);
+        if self.existing_flat().is_some() && text.existing_flat().is_some() && short(text) {
+            *self = Self::extended(self, text);
             return;
         }
         // The QuickJS policy: a short flat piece joins the flat side it meets, whether that
         // is the other operand or the facing half of a rope operand.
         *self = match (self.rope_halves(), text.rope_halves()) {
-            (None, None) if short(text) && self.len() <= FLAT_PREFIX_MAX_UNITS => {
-                joined(self, text)
-            }
             (Some((left, right)), None) if short(text) && right.is_flat() && short(&right) => {
-                rope(&left, &joined(&right, text))
+                rope(&left, &Self::extended(&right, text))
             }
             (None, Some((left, right)))
                 if self.len() <= FLAT_PREFIX_MAX_UNITS && left.is_flat() && short(&left) =>
             {
-                rope(&joined(self, &left), &right)
+                rope(&Self::joined(self, &left), &right)
             }
             _ => rope(self, text),
         };
+    }
+
+    /// Flat `left` then flat `right`, which is short: copied into storage of their exact
+    /// length while `left` is short too, else into an append buffer later appends extend.
+    fn extended(left: &Self, right: &Self) -> Self {
+        if left.len() <= APPEND_BUFFER_MIN_UNITS {
+            return Self::joined(left, right);
+        }
+        match (left.units(), right.units()) {
+            (Units::Ascii(head), Units::Ascii(tail)) => {
+                let buffer = AppendBuffer::made_of(head.iter().copied(), tail.iter().copied());
+                let length = stored_length(buffer.filled());
+                Self::from_flat(FlatUnits::AsciiPrefix(buffer, length))
+            }
+            (head, tail) => {
+                let buffer = AppendBuffer::made_of(head.iter(), tail.iter());
+                let length = stored_length(buffer.filled());
+                Self::from_flat(FlatUnits::WidePrefix(buffer, length))
+            }
+        }
+    }
+
+    /// Two flat pieces in one copy, straight into the joined storage when both are ASCII (a
+    /// template literal's pieces, a key built from parts, a rope's last leaf and the text
+    /// appended to it).
+    fn joined(left: &Self, right: &Self) -> Self {
+        if let (Repr::Flat(FlatUnits::Short(head)), Repr::Flat(FlatUnits::Short(tail))) = (&left.repr, &right.repr)
+            && let Some(joined) = head.joined(tail)
+        {
+            return Self { repr: Repr::Flat(FlatUnits::Short(joined)) };
+        }
+        if let (Some(Units::Ascii(head)), Some(Units::Ascii(tail))) =
+            (left.existing_flat().map(FlatUnits::view), right.existing_flat().map(FlatUnits::view))
+        {
+            let units = FlatUnits::ascii_with(head.len() + tail.len(), |bytes| {
+                let (start, end) = bytes.split_at_mut(head.len());
+                start.write_copy_of_slice(head);
+                end.write_copy_of_slice(tail);
+            });
+            return Self { repr: Repr::Flat(units) };
+        }
+        let mut flat = JsStringBuilder::default();
+        flat.append(left);
+        flat.append(right);
+        flat.finish()
+            .expect("a copied concatenation is within the string length limit")
+    }
+
+    /// Appends flat `text` into this string's append buffer past its end, when this string
+    /// ends where the buffer does and `text` fits: an ASCII prefix only grows its length.
+    fn append_in_place(&mut self, text: &Self) -> bool {
+        let Some(tail) = text.existing_flat().map(FlatUnits::view) else {
+            return false;
+        };
+        if let (Repr::Flat(FlatUnits::AsciiPrefix(buffer, length)), Units::Ascii(bytes)) = (&mut self.repr, tail) {
+            return buffer.append(*length, bytes.iter().copied()).map(|appended| *length = appended).is_some();
+        }
+        let Some(FlatUnits::WidePrefix(buffer, length)) = self.existing_flat() else {
+            return false;
+        };
+        let appended = match tail {
+            Units::Ascii(bytes) => buffer.append(*length, bytes.iter().map(|byte| u16::from(*byte))),
+            Units::Wide(units) => buffer.append(*length, units.iter().copied()),
+        };
+        let Some(length) = appended else {
+            return false;
+        };
+        *self = Self::from_flat(FlatUnits::WidePrefix(buffer.clone(), length));
+        true
     }
 
     pub(crate) fn repeat(&self, count: usize) -> Self {
@@ -1243,33 +1231,6 @@ impl JsString {
 
     pub(crate) fn find_units(&self, search: Units<'_>, start: usize) -> Option<usize> {
         self.units().find(search, start)
-    }
-
-    pub(crate) fn split_units(&self, separator: Units<'_>) -> Vec<Self> {
-        let units = self.units();
-        if separator.is_empty() {
-            return (0..units.len())
-                .map(|index| Self::from_unit_run(units.slice(index..index + 1)))
-                .collect();
-        }
-        let mut parts = Vec::new();
-        let mut cursor = 0;
-        if let (Units::Ascii(haystack), Units::Ascii(needle)) = (units, separator) {
-            // One searcher serves every match; occurrences come back non-overlapping, as split
-            // consumes them.
-            for offset in memchr::memmem::find_iter(haystack, needle) {
-                parts.push(Self::from_unit_run(units.slice(cursor..offset)));
-                cursor = offset + needle.len();
-            }
-            parts.push(Self::from_unit_run(units.slice(cursor..units.len())));
-            return parts;
-        }
-        while let Some(offset) = units.find(separator, cursor) {
-            parts.push(Self::from_unit_run(units.slice(cursor..offset)));
-            cursor = offset + separator.len();
-        }
-        parts.push(Self::from_unit_run(units.slice(cursor..units.len())));
-        parts
     }
 }
 
@@ -1299,11 +1260,7 @@ impl Eq for JsString {}
 
 impl Hash for JsString {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hashed by units, so a slice and a copy of the same text agree.
-        match self.units() {
-            Units::Ascii(bytes) => bytes.hash(state),
-            Units::Wide(units) => units.hash(state),
-        }
+        state.write_u32(self.units().text_hash());
     }
 }
 
@@ -1368,21 +1325,6 @@ mod tests {
     }
 
     #[test]
-    fn concatenation_plan_preserves_units_and_merges_adjacent_slices() {
-        let source = JsString::from_units(&[0xD800, b'a' as u16, 0xDC00]);
-        let mut plan = super::JsStringBuilder::default();
-        plan.append_slice(&source, 0..1);
-        plan.append_slice(&source, 1..3);
-        assert_eq!(plan.parts.len(), 1);
-        plan.append(&source);
-        drop(source);
-        assert_eq!(
-            plan.finish().unwrap().units(),
-            &[0xD800, b'a' as u16, 0xDC00, 0xD800, b'a' as u16, 0xDC00]
-        );
-    }
-
-    #[test]
     fn preserves_lone_surrogates_until_host_conversion() {
         let value = JsString::from_units(&[0xD800, b'a' as u16, 0xDC00]);
         assert_eq!(value.units(), &[0xD800, b'a' as u16, 0xDC00]);
@@ -1424,7 +1366,8 @@ mod tests {
             value.find_units(super::Units::Wide(&[b'|' as u16]), 0),
             Some(1)
         );
-        let parts = value.split_units(super::Units::Wide(&[b'|' as u16]));
+        let mut parts = Vec::new();
+        value.split_runs(super::Units::Wide(&[b'|' as u16]), usize::MAX, |run| parts.push(JsString::from_unit_run(run)));
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].units(), &[0xD800]);
         assert_eq!(parts[1].units(), &[0xDC00]);

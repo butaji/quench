@@ -19,6 +19,10 @@ const FIRST_LOCAL_STORAGE_ID: u64 = 1;
 pub(super) enum StoreContext {
     Resource(u64),
     Job(u64),
+    /// The frame of a Promise job that captured no stores and no resource, by the depth of
+    /// such jobs a nested drain runs inside one another: it starts empty, and what an
+    /// `enterWith` puts in it is released when the job ends.
+    Unobserved(u32),
 }
 impl From<u64> for StoreContext {
     fn from(id: u64) -> Self {
@@ -176,7 +180,7 @@ impl SharedAsyncHooksState {
     pub(super) fn default_trigger_async_id(&self) -> f64 {
         self.default_trigger_async_id
             .filter(|id| id.partial_cmp(&0.0) != Some(std::cmp::Ordering::Less))
-            .unwrap_or(self.identity.current_async_id() as f64)
+            .unwrap_or_else(|| self.identity.current_async_id() as f64)
     }
 
     pub(crate) fn retain_store(&mut self, store: RootId) {

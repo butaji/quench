@@ -134,7 +134,7 @@ const VARINT_PAYLOAD_BITS: u32 = 7;
 const VARINT_PAYLOAD_MASK: u8 = 0x7F;
 const VARINT_CONTINUATION: u8 = 0x80;
 
-const DESERIALIZATION_ERROR: &str = "Unable to deserialize cloned data.";
+pub const DESERIALIZATION_ERROR: &str = "Unable to deserialize cloned data.";
 const VERSION_ERROR: &str = "Unable to deserialize cloned data due to invalid or unsupported version.";
 const DETACHED_MESSAGE: &str = "An ArrayBuffer is detached and could not be cloned.";
 
@@ -519,7 +519,7 @@ impl<H: Host> ReadHooks<H> for MessageHooks {
             Some(backing) => {
                 let backing = backing.clone_for_agent();
                 let (maximum, growable) = (backing.maximum(), backing.growable());
-                let bytes = crate::heap::BufferBytes::from_shared(backing.clone());
+                let bytes = crate::heap::BufferBytes::from_shared(backing);
                 vm.new_array_buffer_cell(bytes, true, maximum, growable, false)
             }
             None => Value::UNDEFINED,
@@ -737,7 +737,7 @@ impl<H: Host> Vm<H> {
         match self.heap.get(value) {
             Some(Cell::BigInt(value)) => {
                 put_tag(&output, tag::BIGINT);
-                put_bigint_contents(&output, value);
+                put_bigint_contents(&output, &value.to_num());
                 Ok(())
             }
             Some(Cell::TypedArray { buffer, .. } | Cell::DataView { buffer, .. }) => {
@@ -911,7 +911,7 @@ impl<H: Host> Vm<H> {
             match self.heap.get(inner) {
                 Some(Cell::BigInt(value)) => {
                     put_tag(output, tag::BIGINT_OBJECT);
-                    put_bigint_contents(output, value);
+                    put_bigint_contents(output, &value.to_num());
                 }
                 _ if let Some(text) = self.heap.string(inner) => {
                     put_tag(output, tag::STRING_OBJECT);
@@ -1152,8 +1152,8 @@ impl<H: Host> Vm<H> {
         view: Value,
     ) -> Result<(), JsError> {
         let (subtag, offset, byte_length, length_tracking, buffer) = match self.heap.get(view) {
-            Some(Cell::TypedArray { kind, object, buffer, length, length_tracking }) => {
-                let (kind, offset, length, length_tracking, buffer) = (*kind, object.offset, *length, *length_tracking, *buffer);
+            Some(Cell::TypedArray { kind, object, buffer, length }) => {
+                let (kind, offset, length, buffer) = (*kind, object.offset, *length, *buffer);
                 // Only views on live resizable buffers can be out of bounds (V8's
                 // `IsOutOfBounds`).
                 let out_of_bounds = !self.array_buffer_detached(buffer)
@@ -1165,16 +1165,16 @@ impl<H: Host> Vm<H> {
                 }
                 let subtag = VIEW_TAGS.iter().find(|(candidate, _)| *candidate == kind).map(|(_, tag)| *tag).unwrap();
                 // Length-tracking views carry no fixed length.
-                let byte_length = if length_tracking { 0 } else { length * kind.width() };
-                (subtag, offset, byte_length, length_tracking, buffer)
+                let byte_length = length.get().map_or(0, |length| length * kind.width());
+                (subtag, offset, byte_length, length.is_tracking(), buffer)
             }
-            Some(Cell::DataView { object, buffer, length, length_tracking }) => {
-                let (offset, length, length_tracking, buffer) = (object.offset, *length, *length_tracking, *buffer);
-                let required = if length_tracking { 0 } else { length };
+            Some(Cell::DataView { object, buffer, length }) => {
+                let (offset, length, buffer) = (object.offset, *length, *buffer);
+                let required = length.get().unwrap_or(0);
                 if self.array_buffer_resizable(buffer) && self.array_buffer_out_of_bounds(buffer, offset, required) {
                     return Err(self.uncloneable_with(program, hooks, view));
                 }
-                (DATA_VIEW_TAG, offset, required, length_tracking, buffer)
+                (DATA_VIEW_TAG, offset, required, length.is_tracking(), buffer)
             }
             _ => unreachable!("dispatched as a view"),
         };
@@ -1480,10 +1480,10 @@ impl<H: Host> Vm<H> {
                 let id = Self::wire_reserve_id(deserializer);
                 let collection = if map {
                     let prototype = self.intrinsic_builtin_prototype(Native::Map);
-                    self.heap.alloc(Cell::Map { object: Box::new(Self::empty_object(prototype)), entries: Box::default() })
+                    self.heap.alloc(Cell::Map { object: Box::new(Self::empty_object(prototype)), entries: Default::default() })
                 } else {
                     let prototype = self.intrinsic_builtin_prototype(Native::Set);
-                    self.heap.alloc(Cell::Set { object: Box::new(Self::empty_object(prototype)), entries: Box::default() })
+                    self.heap.alloc(Cell::Set { object: Box::new(Self::empty_object(prototype)), entries: Default::default() })
                 };
                 let root = self.wire_add_object(deserializer, id, collection);
                 let end = if map { tag::END_JS_MAP } else { tag::END_JS_SET };
@@ -1650,8 +1650,7 @@ impl<H: Host> Vm<H> {
             self.heap.alloc(Cell::DataView {
                 object: Box::new(crate::heap::BufferViewObject { object: Self::empty_object(prototype), offset }),
                 buffer,
-                length: byte_length,
-                length_tracking,
+                length: crate::heap::ViewLength::new(byte_length, length_tracking),
             })
         } else {
             let kind = valid(VIEW_TAGS.iter().find(|(_, tag)| *tag == subtag).map(|(kind, _)| *kind))?;
@@ -1663,8 +1662,7 @@ impl<H: Host> Vm<H> {
                 kind,
                 object: Box::new(crate::heap::BufferViewObject { object: Self::empty_object(prototype), offset }),
                 buffer,
-                length: byte_length / kind.width(),
-                length_tracking,
+                length: crate::heap::ViewLength::new(byte_length / kind.width(), length_tracking),
             })
         };
         self.wire_add_object(deserializer, id, view);
@@ -1895,20 +1893,7 @@ impl<H: Host> Vm<H> {
                 if self.array_buffer_resizable(*buffer) {
                     return "Object";
                 }
-                match kind {
-                    TypedArrayKind::Int8 => "Int8Array",
-                    TypedArrayKind::Uint8 => "Uint8Array",
-                    TypedArrayKind::Uint8Clamped => "Uint8ClampedArray",
-                    TypedArrayKind::Int16 => "Int16Array",
-                    TypedArrayKind::Uint16 => "Uint16Array",
-                    TypedArrayKind::Int32 => "Int32Array",
-                    TypedArrayKind::Uint32 => "Uint32Array",
-                    TypedArrayKind::Float16 => "Float16Array",
-                    TypedArrayKind::Float32 => "Float32Array",
-                    TypedArrayKind::Float64 => "Float64Array",
-                    TypedArrayKind::BigInt64 => "BigInt64Array",
-                    TypedArrayKind::BigUint64 => "BigUint64Array",
-                }
+                kind.name()
             }
             Some(Cell::DataView { .. }) => "DataView",
             Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",

@@ -1,4 +1,3 @@
-use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::typed_array_install::{TYPED_ARRAY_BASE_METHODS, TYPED_ARRAY_CALLBACK_METHODS};
 use super::typed_array_install::{UINT8_ARRAY_PROTOTYPE_METHODS, UINT8_ARRAY_STATIC_METHODS};
 use super::*;
@@ -240,7 +239,7 @@ impl<H: Host> Vm<H> {
             (self.realm.globals, Native::Uint8Array),
             self.uint8_array_proto,
         );
-        for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
+        for &crate::heap::TypedArrayRow { kind, native, name, .. } in &crate::heap::TYPED_ARRAYS {
             if kind != TypedArrayKind::Uint8 {
                 self.install_typed_array_kind(program, kind, native, name)?;
             }
@@ -687,7 +686,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::TypedArray {
             buffer,
             object,
-            length_tracking,
+            length: view_length,
             kind,
             ..
         }) = self.heap.get(this)
@@ -695,7 +694,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         };
         let (buffer, offset, length_tracking, kind) =
-            (*buffer, object.offset, *length_tracking, *kind);
+            (*buffer, object.offset, view_length.is_tracking(), *kind);
         let length = self.typed_array_length(this).unwrap_or_default();
         let begin = self.typed_array_relative_index(p, args.first(), length)?;
         let end_arg = args.get(1).filter(|value| !value.is_undefined());
@@ -777,17 +776,20 @@ impl<H: Host> Vm<H> {
         values: &mut [RootId],
         comparator: Option<RootId>,
     ) -> Result<(), JsError> {
-        super::sort::try_stable_sort_by(values, |left, right| {
-            if let Some(comparator) = comparator {
-                let comparator = self.heap.root_value(comparator).unwrap();
-                let left = self.heap.root_value(*left).unwrap();
-                let right = self.heap.root_value(*right).unwrap();
-                self.compare_sort_callback(p, comparator, left, right)
-            } else {
+        let Some(comparator) = comparator else {
+            return super::sort::try_stable_sort_by(values, |left, right| {
                 let left = self.heap.root_value(*left).unwrap();
                 let right = self.heap.root_value(*right).unwrap();
                 Ok(self.typed_array_sort_compare(left, right))
-            }
+            });
+        };
+        let comparator = self.heap.root_value(comparator).unwrap();
+        self.with_prepared_callback(comparator, Value::UNDEFINED, |vm, prepared| {
+            super::sort::try_stable_sort_by(values, |left, right| {
+                let left = vm.heap.root_value(*left).unwrap();
+                let right = vm.heap.root_value(*right).unwrap();
+                vm.compare_sort_callback(p, prepared, left, right)
+            })
         })
     }
 
@@ -825,7 +827,7 @@ impl<H: Host> Vm<H> {
                 index
             };
             let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-            let converted = if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64)
+            let converted = if kind.is_bigint()
             {
                 let value = self.to_bigint(p, value)?;
                 self.heap.alloc(Cell::bigint(value))
@@ -909,10 +911,7 @@ impl<H: Host> Vm<H> {
         kind: TypedArrayKind,
         length: usize,
     ) -> Result<Value, JsError> {
-        let name = TYPED_ARRAY_INSTALLS
-            .iter()
-            .find_map(|(candidate, _, name)| (*candidate == kind).then_some(*name))
-            .unwrap_or("Uint8Array");
+        let name = kind.name();
         self.construct_typed_array_native(p, &[Value::number(length as f64)], kind, name)
     }
 
@@ -948,10 +947,7 @@ impl<H: Host> Vm<H> {
         let Some(kind) = self.typed_array_kind(this) else {
             return Value::UNDEFINED;
         };
-        let name = TYPED_ARRAY_INSTALLS
-            .iter()
-            .find_map(|(candidate, _, name)| (*candidate == kind).then_some(*name))
-            .unwrap_or("Uint8Array");
+        let name = kind.name();
         self.heap.alloc_string(name.into())
     }
 
@@ -1060,34 +1056,19 @@ impl<H: Host> Vm<H> {
             buffer,
             object,
             length,
-            length_tracking,
             kind,
             ..
         }) = self.heap.get(this)
         else {
             return None;
         };
-        let (buffer, offset, length, length_tracking, kind) =
-            (*buffer, object.offset, *length, *length_tracking, *kind);
-        let (buffer_length, detached) = match self.heap.get(buffer) {
-            Some(Cell::ArrayBuffer {
-                bytes, detached, ..
-            }) => (bytes.len(), *detached),
-            _ => (0, true),
+        let (buffer, offset, length, kind) = (*buffer, object.offset, *length, *kind);
+        let view_length = match self.heap.get(buffer) {
+            Some(Cell::ArrayBuffer { bytes, detached: false, .. }) => length.within(offset, kind.width(), bytes.len()),
+            _ => None,
         };
-        let out_of_bounds = detached
-            || if length_tracking {
-                offset > buffer_length
-            } else {
-                offset.saturating_add(length.saturating_mul(kind.width())) > buffer_length
-            };
-        let view_length = if detached || out_of_bounds {
-            0
-        } else if length_tracking {
-            buffer_length.saturating_sub(offset) / kind.width()
-        } else {
-            length
-        };
+        let out_of_bounds = view_length.is_none();
+        let view_length = view_length.unwrap_or(0);
         Some(match native {
             Native::TypedArrayBufferGetter => buffer,
             Native::TypedArrayByteOffsetGetter if !out_of_bounds => {

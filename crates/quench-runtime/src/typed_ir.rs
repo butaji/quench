@@ -9,6 +9,8 @@
 use crate::{Value, ValueType};
 
 mod int_range;
+mod representation;
+pub(crate) use representation::Representation;
 mod slot_type;
 pub(crate) use slot_type::SlotType;
 pub(crate) use int_range::IntRange;
@@ -17,15 +19,8 @@ pub(crate) use int_range::IntRange;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reentry { Closed, Possible }
 
-/// The Ershov division of a source fact. Location and Site fix an address or
-/// feedback index, never the contents read from it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BindingTime {
-    Static,
-    Location,
-    Site,
-    Dynamic,
-}
+mod binding;
+pub(crate) use binding::{BindingTime, Division, Proof};
 
 /// One authority for a semantic type. Refined cases determine their language
 /// bits; storing those bits alongside the payload would duplicate the fact.
@@ -208,38 +203,6 @@ impl Type {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Representation {
-    Int32,
-    Float64,
-    Tagged,
-}
-
-impl Representation {
-    /// Implicit views supported by the shared emitter. Narrowing and unboxing
-    /// require explicit checked operations, never a register assignment.
-    pub(crate) fn can_receive(self, source: Self) -> bool {
-        self == source || self == Self::Tagged || (self == Self::Float64 && source == Self::Int32)
-    }
-    pub(crate) fn accepts(self, ty: Type) -> bool {
-        ty != Type::NEVER
-            && match self {
-                Self::Int32 => ty.is_subtype(Type::INT32),
-                Self::Float64 => ty.is_subtype(Type::NUMBER),
-                Self::Tagged => true,
-            }
-    }
-}
-
-/// Proof obligations are part of IR, not inferred from the selected encoding.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Proof {
-    Static,
-    CanonicalValue,
-    EntryGuard,
-    Definition,
-}
-
 /// A checked machine projection is an obligation for the backend, not an
 /// int32 semantic refinement. Publication must discharge its defining checks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -272,7 +235,11 @@ impl Fact {
         self.verify().then_some(VerifiedFact(self))
     }
     pub(crate) fn verify(self) -> bool {
-        (match self.projection {
+        self.projection_holds() && self.binding_proved()
+    }
+
+    fn projection_holds(self) -> bool {
+        match self.projection {
             Projection::Exact => self.representation.accepts(self.ty),
             Projection::CheckedDefinitions => {
                 self.binding == BindingTime::Dynamic
@@ -280,18 +247,22 @@ impl Fact {
                     && self.representation == Representation::Int32
                     && self.ty.is_subtype(Type::NUMBER) && self.ty != Type::NEVER
             }
-        })
-            && match self.binding {
-                BindingTime::Static => self.proof == Proof::Static && self.ty.without_object_shape() == self.ty
-                    && self.ty.function_identity().is_none() && self.ty.body_index().is_none(),
-                BindingTime::Location | BindingTime::Site => {
-                    self.proof == Proof::EntryGuard
-                        || (self.proof == Proof::CanonicalValue
-                            && self.ty == Type::ANY
-                            && self.representation == Representation::Tagged)
-                }
-                BindingTime::Dynamic => self.proof == Proof::Definition,
+        }
+    }
+
+    fn binding_proved(self) -> bool {
+        match self.binding {
+            BindingTime::Static => self.proof == Proof::Static && self.ty.without_object_shape() == self.ty
+                && self.ty.function_identity().is_none() && self.ty.body_index().is_none(),
+            BindingTime::Location | BindingTime::Site => {
+                self.proof == Proof::EntryGuard
+                    || (self.proof == Proof::CanonicalValue
+                        && self.ty == Type::ANY
+                        && self.representation == Representation::Tagged)
             }
+            BindingTime::Stable => self.proof == Proof::Dependency,
+            BindingTime::Dynamic => self.proof == Proof::Definition,
+        }
     }
 
     pub(crate) fn number(
@@ -368,6 +339,7 @@ mod tests {
         assert_eq!(Type::immediate(Value::direct_function(7)), Type::ANY,
             "tag bits and source annotations cannot manufacture a function proof");
     }
+
 
     #[test]
     fn joins_do_not_turn_bigint_or_unknown_into_number() {

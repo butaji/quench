@@ -173,7 +173,7 @@ impl Heap {
         &self,
         environment: Value,
         fresh: &[u16],
-        reset: &[u16],
+        reset: crate::bytecode::Resets<'_>,
     ) -> Option<EnvironmentSlots> {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
@@ -463,10 +463,23 @@ impl Heap {
         if stored.heap_index().is_some() {
             return self.get_mut(value);
         }
+        self.get_mut_unbarriered(value)
+    }
+
+    /// `get_mut` for a write that adds no edge from the cell, past the write barrier.
+    #[inline(always)]
+    fn get_mut_unbarriered(&mut self, value: Value) -> Option<&mut Cell> {
         let HeapReference::LegacySlot(index) = value.heap_reference()? else {
             return None;
         };
         self.slots.get_mut(index as usize)?.cell.as_mut()
+    }
+
+    /// The ArrayBuffer `value`, mutably, for a write of its bytes: bytes hold no heap
+    /// reference, so the write passes no write barrier. `None` for any other value.
+    #[inline(always)]
+    pub(crate) fn buffer_bytes_mut(&mut self, value: Value) -> Option<&mut Cell> {
+        self.get_mut_unbarriered(value).filter(|cell| matches!(cell, Cell::ArrayBuffer { .. }))
     }
 
     /// `record_array_mut` for a store of `stored` into the array's elements.
@@ -643,6 +656,20 @@ impl Heap {
         Some(result)
     }
 
+    /// Appends `value` to the direct array `array`'s elements, as `grow_array_elements` grows
+    /// them, through the write barrier of that one store (`record_array_store_mut`).
+    #[inline(always)]
+    pub(crate) fn push_array_element(&mut self, array: Value, value: Value) -> Option<()> {
+        let elements = self.record_array_store_mut(array, value)?.elements_mut().make_mut();
+        let capacity = elements.capacity();
+        elements.push(value);
+        let grown = elements.capacity() - capacity;
+        if grown != 0 {
+            self.charge_payload_growth(grown * size_of::<Value>());
+        }
+        Some(())
+    }
+
     /// `record_array`, mutably.
     #[inline(always)]
     pub(crate) fn record_array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
@@ -689,6 +716,11 @@ impl Heap {
         self.object_records.base_ptr()
     }
 
+    /// The base of the function record reservation (`NATIVE_FUNCTION_LAYOUT`).
+    pub(crate) fn function_record_base(&self) -> Option<*const FunctionRecord> {
+        self.function_records.base_ptr()
+    }
+
     /// Object mark blocks used by no-safepoint native write-barrier guards.
     pub(crate) fn native_object_mark_blocks(&self) -> (*const u8, usize) {
         self.object_records.native_mark_blocks()
@@ -708,6 +740,11 @@ impl Heap {
     /// reborrow the same allocation provenance rather than a shared header view.
     pub(crate) const PROPERTY_BUFFER_OFFSET: usize = std::mem::offset_of!(Self, properties)
         + crate::value_vec::ValueArena::BUFFER_OFFSET;
+
+    /// Offsets of the charged allocation weight and the weight a collection is due at
+    /// (`Heap::should_collect`), which native back edges compare to reach a safepoint.
+    pub(crate) const ALLOCATED_OFFSET: usize = std::mem::offset_of!(Self, allocated);
+    pub(crate) const COLLECT_AT_OFFSET: usize = std::mem::offset_of!(Self, collect_at);
 
     /// The object of an object, array or promise record, whose field reads the field cache
     /// answers by shape alone (a promise's internal slots change no object operation). A

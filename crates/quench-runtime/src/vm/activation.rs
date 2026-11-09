@@ -49,6 +49,9 @@ pub(crate) enum CallCompletion {
     Constructor(Value),
     Promise(crate::heap::RootId),
     Generator(super::generator::GeneratorResume),
+    /// A lane's array iteration whose callback became this frame: its return steps and
+    /// finishes the iteration (`Vm::finish_array_step`), which yields the method's value.
+    ArrayStep(Box<super::array_indexed::ArrayStepCall>),
 }
 
 impl CallCompletion {
@@ -62,6 +65,18 @@ impl CallCompletion {
 
     #[inline(always)]
     pub(super) fn is_generator(&self) -> bool { matches!(self, Self::Generator(_)) }
+
+    /// Whether the call's value is made on the general path from what the callee returns:
+    /// an async callee's promise settles there, an array step's iteration finishes there.
+    #[inline(always)]
+    pub(super) fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_)) }
+
+    #[inline(always)]
+    pub(super) fn take_array_step(&mut self) -> Option<Box<super::array_indexed::ArrayStepCall>> {
+        if !matches!(self, Self::ArrayStep(_)) { return None; }
+        let Self::ArrayStep(step) = std::mem::replace(self, Self::Value) else { unreachable!() };
+        Some(step)
+    }
 
     #[inline(always)]
     pub(super) fn take_promise(&mut self) -> Option<crate::heap::RootId> {
@@ -133,6 +148,10 @@ pub(crate) struct Continuation {
     pub completion: Completion,
     pub resume_register: Option<u16>,
     pub promise: Value,
+    /// The registers live at the suspension, when liveness covers the function and every
+    /// other register was cleared there (`Vm::suspend_activation`): only these can name a
+    /// cell, so the GC traces them alone. `None` traces every register.
+    pub(super) live_registers: Option<crate::compile::liveness::RegisterSet>,
 }
 
 impl std::fmt::Debug for Continuation {
@@ -147,16 +166,85 @@ impl std::fmt::Debug for Continuation {
     }
 }
 
+/// Where a generator is in its life. Its continuation is kept apart: an async generator
+/// that awaits a yielded value keeps it in the record while executing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GeneratorState {
+    /// Not running and not finished: `next`, `return` and `throw` may resume it.
+    Suspended,
+    /// Running, or (async) busy with a request whose await has not settled: requests queue.
+    Executing,
+    /// Finished: every resumption completes at once.
+    Completed,
+    /// Finished, but (async) awaiting the value of a `return`: requests queue, and the
+    /// generator is completed again once the await settles.
+    AwaitingReturn,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct GeneratorRecord {
     pub(crate) continuation: Option<Continuation>,
     pub(crate) realm: Value,
-    pub(crate) done: bool,
-    pub(crate) running: bool,
+    pub(crate) state: GeneratorState,
     pub(crate) requests: VecDeque<AsyncGeneratorRequest>,
 }
 
 impl GeneratorRecord {
+    /// A generator about to run its body from `continuation`.
+    pub(crate) fn new(continuation: Continuation, realm: Value) -> Self {
+        Self { continuation: Some(continuation), realm, state: GeneratorState::Suspended, requests: VecDeque::new() }
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_executing(&self) -> bool {
+        matches!(self.state, GeneratorState::Executing | GeneratorState::AwaitingReturn)
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_completed(&self) -> bool {
+        self.state == GeneratorState::Completed
+    }
+
+    /// The continuation a resumption runs, taken: a suspended generator executes from it,
+    /// while one that has not started and receives an `abrupt` completion closes without
+    /// running.
+    pub(crate) fn take_for_resume(&mut self, abrupt: bool) -> Option<Continuation> {
+        let continuation = self.continuation.take();
+        if self.state == GeneratorState::Suspended
+            && continuation
+                .as_ref()
+                .is_some_and(|continuation| !abrupt || !matches!(continuation.completion, Completion::GeneratorStart))
+        {
+            self.state = GeneratorState::Executing;
+        }
+        continuation
+    }
+
+    /// The end of a run that did not finish the generator: executing becomes suspended, a
+    /// completed generator awaiting a return is completed again, and a completed one stays so.
+    pub(crate) fn stop(&mut self) {
+        match self.state {
+            GeneratorState::Executing => self.state = GeneratorState::Suspended,
+            GeneratorState::AwaitingReturn => self.state = GeneratorState::Completed,
+            GeneratorState::Suspended | GeneratorState::Completed => {}
+        }
+    }
+
+    /// An async `return` starts awaiting its value: the generator is busy until it settles,
+    /// and keeps whether it had already completed.
+    pub(crate) fn await_return(&mut self) {
+        self.state = match self.state {
+            GeneratorState::Completed => GeneratorState::AwaitingReturn,
+            _ => GeneratorState::Executing,
+        };
+    }
+
+    /// The generator finished: it drops its continuation.
+    pub(crate) fn complete(&mut self) {
+        self.state = GeneratorState::Completed;
+        self.continuation = None;
+    }
+
     pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
         out.push(self.realm);
         if let Some(continuation) = &self.continuation {
@@ -190,7 +278,7 @@ impl Continuation {
         promise: Value,
     ) -> Self {
         frame.js_jit_interpreter_started = None;
-        Self { frame, completion, resume_register, promise }
+        Self { frame, completion, resume_register, promise, live_registers: None }
     }
 
     /// The suspended frame, ready to push: it continues after its suspending instruction,
@@ -214,17 +302,32 @@ impl Continuation {
         self.frame.program
     }
 
-    /// Its edges, appended to `out` a slice at a time: the GC traces every suspended frame
-    /// this way, where a chained iterator pushes value by value.
+    /// Its edges, appended to `out`: the GC traces every suspended frame this way. Locals and
+    /// registers contribute only their heap values, and registers only the live ones where
+    /// the suspension knows them (`live_registers`): each other one would cost the mark a
+    /// push and a pop to find it names no cell.
     pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
         let frame = &self.frame;
         out.extend(frame.context.callee());
         out.extend_from_slice(&frame.original_arguments);
         out.extend_from_slice(&frame.with_objects);
         out.extend([frame.env, frame.this]);
-        out.extend_from_slice(&frame.locals);
+        Value::extend_heap_values(out, &frame.locals);
         out.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
-        out.extend_from_slice(&frame.registers);
+        match self.live_registers {
+            Some(mut live) => {
+                while live != 0 {
+                    let register = live.trailing_zeros() as usize;
+                    live &= live - 1;
+                    if let Some(&value) = frame.registers.get(register)
+                        && value.is_heap()
+                    {
+                        out.push(value);
+                    }
+                }
+            }
+            None => Value::extend_heap_values(out, &frame.registers),
+        }
         out.extend(match self.completion {
             Completion::GeneratorStart => None,
             Completion::Return(value)
@@ -299,6 +402,7 @@ impl Snap for Continuation {
             completion,
             resume_register: Snap::unsnap(reader)?,
             promise: Snap::unsnap(reader)?,
+            live_registers: None,
         })
     }
 }
