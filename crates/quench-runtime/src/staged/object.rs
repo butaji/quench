@@ -99,14 +99,17 @@ pub(crate) fn proto_link<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
 }
 
 /// The id of the object record `link` names, or `miss` where it names none
-/// (`ProtoLink::object_record_id`): one unsigned compare of the link past the range's base.
+/// (`ProtoLink::object_record_id`). The range starts at a multiple of its power-of-two span,
+/// so a link in it is the base in its high bits, one mask and compare, and holds the id in
+/// its low bits, a mask that addresses the record without the subtracted base.
 #[inline(always)]
 pub(crate) fn proto_object_record_id<S: Stage>(stage: &mut S, link: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let id = stage.add_imm(link, u64::from(OBJECT.proto_record_base).wrapping_neg());
-    let span = stage.constant(u64::from(OBJECT.proto_record_end - OBJECT.proto_record_base));
-    let inside = stage.ult(id, span);
+    const SPAN: u32 = OBJECT.proto_record_end - OBJECT.proto_record_base;
+    const _: () = assert!(SPAN.is_power_of_two() && OBJECT.proto_record_base.is_multiple_of(SPAN));
+    let high = stage.and_imm(link, !u64::from(SPAN - 1));
+    let inside = stage.eq_imm(high, u64::from(OBJECT.proto_record_base));
     stage.guard(inside, miss)?;
-    Some(id)
+    Some(stage.and_imm(link, u64::from(SPAN - 1)))
 }
 
 /// The address of object record `id` in the record table at `records`.

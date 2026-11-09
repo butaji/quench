@@ -212,6 +212,19 @@ fn a_narrow_decode_inverts_every_narrow_encoding() {
     }
 }
 
+/// The interpreter's u32 reading of a prototype link (`ProtoLink::object_record_id`) names
+/// the record the staged rule names, at and around every range boundary.
+#[test]
+fn a_prototype_link_names_the_object_record_the_staged_rule_names() {
+    use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+    let edges = [0, OBJECT.proto_record_base, OBJECT.proto_record_end, OBJECT.proto_mask];
+    for link in edges.iter().flat_map(|edge| [edge.wrapping_sub(1), *edge, edge + 1]).filter(|link| *link <= OBJECT.proto_mask) {
+        let staged = super::object::proto_object_record_id(&mut Concrete::new(std::ptr::null()), u64::from(link), ());
+        let interpreter = crate::heap::ProtoLink::from_bits(link).object_record_id();
+        assert_eq!(interpreter.map(u64::from), staged, "link {link:#x}");
+    }
+}
+
 /// Hand-written decodes of the object and narrow layouts outside `staged`, per native-tier
 /// file: each is a second home of a rule `staged` owns (AGENTS.md, manifesto 4). The counts
 /// only go down; a new decode belongs in `staged` as an operation every tier runs.

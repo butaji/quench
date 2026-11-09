@@ -1438,6 +1438,9 @@ impl ProtoLink {
         Self(Object::encode_proto(prototype))
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_bits(bits: u32) -> Self { Self(bits) }
+
     /// The link as the object header encodes it (`OBJECT.proto_mask`).
     #[inline(always)]
     pub(crate) fn bits(self) -> u32 {
@@ -1456,8 +1459,9 @@ impl ProtoLink {
         // The object range starts at a power of two above its own power-of-two span, so a
         // link in it holds the record id in its low bits: a mask, which addresses the record
         // without the subtracted base as a 64-bit displacement.
-        let mut stage = crate::staged::Concrete::new(std::ptr::null());
-        crate::staged::object::proto_object_record_id(&mut stage, u64::from(self.0), ()).map(|id| id as u32)
+        // `staged::object::proto_object_record_id` over u32, which keeps hot readers' registers free.
+        let span = RECORD_SPACE_CAPACITY as u32;
+        (self.0 & !(span - 1) == PROTO_OBJECT_RECORD_BASE).then_some(self.0 & (span - 1))
     }
 
     /// The prototype this link names, decoded (`Object::encode_proto`'s inverse).
