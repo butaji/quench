@@ -369,7 +369,7 @@ fn field_path(
     sites: &[FieldSite],
     held: &std::collections::BTreeMap<Register, FieldPath>,
 ) -> Option<FieldPath> {
-    (instruction.op() == Op::GetField && instruction.result_flags() == 0).then_some(())?;
+    (instruction.op().is_get_field() && instruction.result_flags() == 0).then_some(())?;
     let from = |base: FieldBase| -> Option<FieldPath> {
         if base == FieldBase::THIS {
             return Some(FieldPath { root: FieldReceiver::This, steps: Vec::new() });
@@ -443,7 +443,7 @@ fn held_registers(
         .filter(|register| {
             !crate::compile::liveness::register_in(header_live, usize::from(*register))
                 && definitions(*register).next().is_some()
-                && definitions(*register).all(|instruction| instruction.op() == Op::GetField)
+                && definitions(*register).all(|instruction| instruction.op().is_get_field())
         })
         .collect();
     // A path through a register still pending waits for it; a register whose definitions
@@ -513,7 +513,7 @@ struct IdentityBranch {
 /// identity compares one constant. Loose equality against null or undefined matches either
 /// nullish value; Abstract Equality does not coerce an object when the other operand is null.
 fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<IdentityBranch> {
-    if instruction.op() != Op::JumpBinaryFalse {
+    if !instruction.op().is_jump_binary_false() {
         return None;
     }
     let (strict, negated) =
@@ -561,7 +561,7 @@ fn tagged_registers_with_failure(
     let numeric_uses: std::collections::BTreeSet<Register> = instructions
         .iter()
         .copied()
-        .filter(|instruction| instruction.op() != Op::Move)
+        .filter(|instruction| !instruction.op().is_move())
         .flat_map(number_reads)
         .collect();
     let mut tagged: std::collections::BTreeSet<Register> = instructions
@@ -571,7 +571,7 @@ fn tagged_registers_with_failure(
             instructions
                 .iter()
                 .filter(|instruction| {
-                    (instruction.op() == Op::Unary
+                    (instruction.op().is_unary()
                         && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX)
                         || number_comparison(**instruction).is_some()
                 })
@@ -595,7 +595,7 @@ fn tagged_registers_with_failure(
                 .iter()
                 .rev()
                 .find(|candidate| candidate.defined_register() == Some(instruction.register_b()))
-                .is_some_and(|definition| definition.op() == Op::GetField)
+                .is_some_and(|definition| definition.op().is_get_field())
             {
                 return Vec::new();
             }
@@ -622,7 +622,7 @@ fn tagged_registers_with_failure(
                         break;
                     }
                     let numeric_move_alias = instructions.iter().any(|candidate| {
-                        candidate.op() == Op::Move
+                        candidate.op().is_move()
                             && candidate.register_b() == value
                             && numeric_uses.contains(&candidate.result_register())
                     });
@@ -637,7 +637,7 @@ fn tagged_registers_with_failure(
                     else {
                         break;
                     };
-                    if definition.op() != Op::Move {
+                    if !definition.op().is_move() {
                         break;
                     }
                     moved_argument = true;
@@ -650,7 +650,7 @@ fn tagged_registers_with_failure(
             registers
         }))
         .chain(instructions.iter().filter_map(|instruction| {
-            if instruction.op() != Op::LoadConst {
+            if !instruction.op().is_load_const() {
                 return None;
             }
             constants
@@ -661,17 +661,17 @@ fn tagged_registers_with_failure(
         }))
         .chain(held.iter().copied())
         // A field receiver the region's field reads give holds an object.
-        .chain(instructions.iter().filter(|instruction| instruction.op() == Op::GetField).filter_map(|instruction| {
+        .chain(instructions.iter().filter(|instruction| instruction.op().is_get_field()).filter_map(|instruction| {
             let receiver = object_reads(*instruction)?;
             let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(receiver)).peekable();
-            (definitions.peek().is_some() && definitions.all(|definition| definition.op() == Op::GetField)).then_some(receiver)
+            (definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())).then_some(receiver)
         }))
         // A branch on a value only field reads give tests its truthiness tagged
         // (`Lowering::tagged_truthiness`): a field may hold an object.
         .chain(instructions.iter().filter(|instruction| instruction.op().is_truthiness_jump()).filter_map(|instruction| {
             let value = instruction.register_a();
             let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
-            (definitions.peek().is_some() && definitions.all(|definition| definition.op() == Op::GetField)).then_some(value)
+            (definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())).then_some(value)
         }))
         // A store whose receiver the region redefines passes its receiver, and a value only
         // field reads give (which may be an object), tagged to the VM's cached store
@@ -683,7 +683,7 @@ fn tagged_registers_with_failure(
         .chain(instructions.iter().filter(|instruction| admitted_store(instruction.op())).filter_map(|instruction| {
             let value = instruction.register_a();
             let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
-            (definitions.peek().is_some() && definitions.all(|definition| definition.op() == Op::GetField)).then_some(value)
+            (definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())).then_some(value)
         }))
         .collect();
     loop {
@@ -692,7 +692,7 @@ fn tagged_registers_with_failure(
             let Some(result) = number_definition(instruction) else {
                 continue;
             };
-            if instruction.op() == Op::Move {
+            if instruction.op().is_move() {
                 let source = instruction.register_b();
                 if tagged.contains(&result) || tagged.contains(&source) {
                     tagged.insert(result);
@@ -824,7 +824,7 @@ pub(crate) struct InlineCallee<'a> {
 /// fused: the read of the site's path into the result register, then the `SetThisField`.
 /// `None` for any other instruction.
 fn inlined_set_this(instruction: WideInstruction, sites: &[FieldSite]) -> Option<Vec<WideInstruction>> {
-    (instruction.op() == Op::GetField && instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER)
+    (instruction.op().is_get_field() && instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER)
         .then_some(())?;
     // A site's base names a register of the callee in the site table, which renaming does not
     // reach: the read runs as one named read per step from the renamed base.
@@ -845,7 +845,7 @@ fn inlined_set_this(instruction: WideInstruction, sites: &[FieldSite]) -> Option
 /// the computation and the `Return` it makes.
 pub(super) fn inlined_returning(instruction: WideInstruction) -> bool {
     instruction.result_flags() == crate::bytecode::RETURN_REGISTER
-        && instruction.op() != Op::Return
+        && !instruction.op().is_return()
         && instruction.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
         && instruction.defined_register().is_some()
 }
@@ -945,7 +945,7 @@ fn admitted_store(op: Op) -> bool {
 /// cannot rename names every register.
 fn mentions(instruction: WideInstruction, register: Register, sites: &[FieldSite]) -> bool {
     // Only a GetField carries a field lookup immediate, so the op is checked first.
-    if instruction.op() == Op::GetField && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) {
+    if instruction.op().is_get_field() && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) {
         return instruction.result_register() == register
             || field_base(instruction, sites).is_none_or(|base| base.register_index() == Some(register));
     }
@@ -1034,7 +1034,7 @@ pub(super) fn inline_region<'a>(
     let mut checked_reads: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
     let captured = receivers::captured(caller, mask(header)?);
     for (offset, instruction) in caller.iter().copied().enumerate() {
-        if instruction.op() != Op::Call {
+        if !instruction.op().is_call() {
             continue;
         }
         let pc = header + offset as u32;
@@ -1046,7 +1046,7 @@ pub(super) fn inline_region<'a>(
         let read_offset = (0..offset).rev().find(|index| caller[*index].defined_register() == Some(function_register))?;
         let read = header + read_offset as u32;
         let definition = caller[read_offset];
-        let capture = (definition.op() == Op::LoadCapture
+        let capture = (definition.op().is_load_capture()
             && definition.capture_depth() == 0 && definition.result_flags() == 0)
             .then(|| definition.capture_slot());
         let mut callee_path = if capture.is_some() { None } else {
@@ -1111,7 +1111,7 @@ pub(super) fn inline_region<'a>(
         // A captured call may bind undefined to the global receiver. Keep this slice
         // receiver-independent; recovery still performs the ordinary binding below.
         if capture.is_some() {
-            body().all(|instruction| instruction.op() != Op::GetField
+            body().all(|instruction| !instruction.op().is_get_field()
                 || field_base(instruction, sites) != Some(FieldBase::THIS)).then_some(())?;
         }
         // A parameter read as an object is bound to the caller register its argument was
@@ -1183,7 +1183,7 @@ pub(super) fn inline_region<'a>(
         for (index, instruction) in site.callee.instructions.iter().enumerate() {
             flat.push(header + length);
             if site.reached.contains(index) {
-                length += if instruction.op() == Op::Return {
+                length += if instruction.op().is_return() {
                     2
                 } else if inlined_returning(*instruction) {
                     3
@@ -1269,7 +1269,7 @@ pub(super) fn inline_region<'a>(
             }
             let origin = Origin::Inlined { frame: index, pc: callee_pc as u32 };
             let set = frame_mask(callee_pc)?;
-            if instruction.op() == Op::Return {
+            if instruction.op().is_return() {
                 instructions.push(WideInstruction::new(Op::Move, site.result, register(instruction.register_a()), 0, 0));
                 instructions.push(WideInstruction::new(Op::Jump, 0, 0, 0, continuation));
                 origins.extend([origin, origin]);
@@ -1293,7 +1293,7 @@ pub(super) fn inline_region<'a>(
             for instruction in parts {
                 // A callee's own capture reads its environment, which its identity guard fixes
                 // and no instruction of the region stores: the entry snapshots it.
-                let instruction = if instruction.op() == Op::LoadCapture {
+                let instruction = if instruction.op().is_load_capture() {
                     (instruction.capture_depth() == 0 && instruction.capture_slot() < CALLEE_CAPTURE).then_some(())?;
                     let capture = (usize::from(index), instruction.capture_slot());
                     let position = callee_captures.iter().position(|existing| *existing == capture).unwrap_or_else(|| {
@@ -1307,7 +1307,7 @@ pub(super) fn inline_region<'a>(
                 };
                 // The callee's `this` is the call's receiver, a caller register: its store of a
                 // `this` field is a store to that register's object.
-                let renamed_instruction = if instruction.op() == Op::SetThisField {
+                let renamed_instruction = if instruction.op().is_set_this_field() {
                     let store = renamed(WideInstruction::new(Op::SetField, instruction.a(), 0, instruction.c(), instruction.imm()), &register, frame.receiver, &target)?;
                     WideInstruction::new(Op::SetField, store.a(), frame.receiver, store.c(), store.imm())
                 } else {
@@ -1642,13 +1642,13 @@ fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
 /// Fused numeric mask truthiness. Other arithmetic/heap truthiness stays on its
 /// existing path; both operands must satisfy the region's Number guards.
 fn bitwise_condition(instruction: WideInstruction) -> Option<NumberBitwise> {
-    (instruction.op() == Op::JumpBinaryFalse).then_some(())?;
+    (instruction.op().is_jump_binary_false()).then_some(())?;
     NumberBitwise::from_operator(instruction.binary_operator_field())
         .filter(|operation| *operation == NumberBitwise::And)
 }
 
 fn number_comparison(instruction: WideInstruction) -> Option<super::super::operations::NumberRelation> {
-    (instruction.op() == Op::Binary)
+    (instruction.op().is_binary())
         .then(|| super::super::operations::NumberRelation::from_operator(instruction.binary_operator()))
         .flatten()
 }
@@ -1845,7 +1845,7 @@ fn lifetime_instruction(instruction: WideInstruction) -> bool {
         | Op::RequireObjectCoercible | Op::Jump | Op::JumpFalse | Op::JumpTrue
         | Op::JumpBinaryFalse)
         || instruction.field_store_register().is_some()
-        || (instruction.op() == Op::GetField
+        || (instruction.op().is_get_field()
             && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { base, .. })
                 if base == FieldBase::THIS || base.register_index().is_some()))
 }
@@ -1896,7 +1896,7 @@ fn admit_lifetime_roles(
             } else {
                 let offset = definition.checked_sub(flow.entry_count())?;
                 let instruction = *flow.instructions.get(offset)?;
-                if instruction.op() != Op::Move || instruction.result_flags() != 0 {
+                if !instruction.op().is_move() || instruction.result_flags() != 0 {
                     return None;
                 }
                 array_root(flow, values, flow.header + offset as u32, instruction.register_b(), visiting)?
@@ -1919,17 +1919,17 @@ fn admit_lifetime_roles(
         if let Some(receiver) = object_reads(*instruction) {
             let root = match array_root(&flow, &values, header + offset as u32, receiver, &mut BTreeSet::new()) {
                 Some(root) => root,
-                None if instruction.op() == Op::GetIndex
+                None if instruction.op().is_get_index()
                     && values.reaching[offset].get(&receiver).is_some_and(|definitions| {
                         !definitions.is_empty() && definitions.iter().all(|definition| {
                             definition.checked_sub(flow.entry_count())
                                 .and_then(|index| flow.instructions.get(index))
-                                .is_some_and(|definition| definition.op() == Op::GetIndex)
+                                .is_some_and(|definition| definition.op().is_get_index())
                         })
                     }) => continue,
                 None => return None,
             };
-            let base = if instruction.op() == Op::GetIndex { Operand::register(root).0 } else { root };
+            let base = if instruction.op().is_get_index() { Operand::register(root).0 } else { root };
             *instruction = WideInstruction::new(instruction.op(), instruction.a(), base, instruction.c(), instruction.imm());
         }
     }
@@ -2085,7 +2085,7 @@ fn admit_register_roles(
         Err(failure_offset) => {
             if crate::trace::Channel::OsrReject.on() {
                 for (offset, instruction) in instructions.iter().copied().enumerate().filter(|(_, instruction)| {
-                    instruction.op() == Op::JumpBinaryFalse
+                    instruction.op().is_jump_binary_false()
                 }) {
                     let operand = |operand: Operand| {
                         let constant = (operand.kind() == Some(OperandKind::Constant))
@@ -2141,7 +2141,7 @@ fn admit_register_roles(
         .filter_map(|instruction| instruction.defined_register())
         .collect();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
-        if instruction.op() == Op::GetField {
+        if instruction.op().is_get_field() {
             let path = field_path(instruction, sites, &rooted).ok_or_else(|| {
                 RegionAnalysisFailure::at(
                     RegionRejection::UnsupportedInstruction(Op::GetField),
@@ -2192,7 +2192,7 @@ fn admit_register_roles(
                     })
                 };
                 if instructions.iter().any(|candidate| {
-                    candidate.op() == Op::GetField
+                    candidate.op().is_get_field()
                         && matches!(candidate.field_lookup(), Some(FieldLookup::Atom { atom: read, .. }) if read == atom)
                         && !current(candidate)
                 }) {
@@ -2204,7 +2204,7 @@ fn admit_register_roles(
                 // rewrites. A read of the name through that receiver reads the current slot
                 // (`stored_fixed`); any other read of it could alias and keep a stale value.
                 if instructions.iter().any(|candidate| {
-                    candidate.op() == Op::GetField
+                    candidate.op().is_get_field()
                         && matches!(candidate.field_lookup(), Some(FieldLookup::Atom { atom: read, .. }) if read == atom)
                         && !field_path(*candidate, sites, &rooted)
                             .is_some_and(|path| path.steps.len() == 1 && path.root == receiver)
@@ -2229,7 +2229,7 @@ fn admit_register_roles(
                 .iter()
                 .rev()
                 .find(|candidate| candidate.defined_register() == Some(callee_register))
-                .is_some_and(|definition| definition.op() == Op::GetField)
+                .is_some_and(|definition| definition.op().is_get_field())
             {
                 return Err(RegionAnalysisFailure::at(
                     RegionRejection::UnsupportedInstruction(instruction.op()),
@@ -2243,7 +2243,7 @@ fn admit_register_roles(
         }
         if admit(&mut admission, instruction, constants, &tagged, &defined_registers, &dynamic_arrays).is_none() {
             if crate::trace::Channel::OsrReject.on() {
-                let constant = (instruction.op() == Op::LoadConst)
+                let constant = (instruction.op().is_load_const())
                     .then(|| constants.get(instruction.constant_index()).copied());
                 let result = instruction.defined_register();
                 eprintln!(
@@ -2720,7 +2720,7 @@ pub(super) fn number_reads(instruction: WideInstruction) -> Vec<Register> {
 fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
     let instruction = region.instructions[offset];
     let pc = region.header + offset as u32;
-    let strict_number_test = instruction.op() == Op::JumpBinaryFalse
+    let strict_number_test = instruction.op().is_jump_binary_false()
         && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
         && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand|
             operand.kind() == Some(OperandKind::Constant) && region.constants.contains_key(&usize::from(operand.payload())));
@@ -2731,7 +2731,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         Type::NUMBER
     };
     let mut reads: Vec<_> = number_reads(instruction).into_iter().map(|register| (register, expected)).collect();
-    if instruction.op() == Op::Unary && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX {
+    if instruction.op().is_unary() && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX {
         reads.push((instruction.register_b(), Type::ANY));
     }
     if let Some(register) = object_reads(instruction) {
@@ -2916,7 +2916,7 @@ fn representations(
             let slot = region.captures[index];
             if region.instructions.iter()
                 .enumerate()
-                .filter(|(_, instruction)| instruction.op() == Op::LoadCapture && instruction.capture_slot() == slot)
+                .filter(|(_, instruction)| instruction.op().is_load_capture() && instruction.capture_slot() == slot)
                 .all(|(offset, _)| region.tagged_definition(offset as u32))
             {
                 return Representation::Tagged;
@@ -2983,7 +2983,7 @@ fn representations(
         let mut changed = false;
         for (offset, instruction) in region.instructions.iter().enumerate() {
             let pc = region.header + offset as u32;
-            if instruction.op() != Op::Move || webs_representation[webs.defined(region, pc)] != Representation::Tagged {
+            if !instruction.op().is_move() || webs_representation[webs.defined(region, pc)] != Representation::Tagged {
                 continue;
             }
             let source = webs.read(region, pc, instruction.register_b());
@@ -3157,7 +3157,7 @@ pub(super) fn verify_region<'a>(
             definition_types[region.entry_count() + offset] = result;
             changed |= joined != values[root].ty;
             values[root].ty = joined;
-            if instruction.op() == Op::LoadConst && definition_counts[root] == 1 {
+            if instruction.op().is_load_const() && definition_counts[root] == 1 {
                 values[root].binding = BindingTime::Static;
                 values[root].proof = Proof::Static;
                 values[root].projection = Projection::Exact;
@@ -3168,7 +3168,7 @@ pub(super) fn verify_region<'a>(
     for (offset, instruction) in region.instructions.iter().copied().enumerate() {
         if !webs.reachable[offset] { continue; }
         let pc = region.header + offset as u32;
-        let numeric = instruction.op() != Op::Move
+        let numeric = !instruction.op().is_move()
             && !region.identity_branches.contains_key(&pc);
         if numeric && matches!(instruction.op(), Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse) {
             for operand in [instruction.operand_b(), instruction.operand_c()] {
@@ -3811,7 +3811,7 @@ fn counted_loops(
     (region.header..=region.backedge)
         .filter_map(|backedge| {
             let instruction = region.instructions[(backedge - region.header) as usize];
-            (instruction.op() == Op::Jump).then_some(())?;
+            (instruction.op().is_jump()).then_some(())?;
             let header = instruction.jump_target();
             (region.header..backedge).contains(&header).then_some(())?;
             (header..=backedge).all(|pc| webs.reachable[(pc - region.header) as usize]).then_some(())?;
@@ -3846,7 +3846,7 @@ fn counted_loop(
         let target = instruction.jump_target();
         if (pc + 1..=backedge).contains(&target) {
             branched = true;
-        } else if instruction.op() == Op::JumpBinaryFalse && test.is_none() && !branched && !(header..=backedge).contains(&target) {
+        } else if instruction.op().is_jump_binary_false() && test.is_none() && !branched && !(header..=backedge).contains(&target) {
             test = Some(pc);
         } else {
             return None;
@@ -4022,7 +4022,7 @@ fn counted_loop(
         }
         if jumps(instruction) && (pc + 1..=backedge).contains(&instruction.jump_target()) {
             pending.entry(instruction.jump_target()).or_default().push(state.clone());
-            reached = instruction.op() != Op::Jump;
+            reached = !instruction.op().is_jump();
         }
     }
     if let Some(others) = pending.remove(&backedge) {
@@ -4369,7 +4369,7 @@ impl Resident {
             }
         }
         for (index, slot) in region.captures.iter().enumerate() {
-            let loads = |instruction: &WideInstruction| instruction.op() == Op::LoadCapture && instruction.capture_slot() == *slot;
+            let loads = |instruction: &WideInstruction| instruction.op().is_load_capture() && instruction.capture_slot() == *slot;
             if !read_hot(&loads) {
                 resident.captures[index] = Some(resident.values);
                 resident.values += 1;
@@ -4819,7 +4819,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let region = self.region;
         let stores_int32 = (region.header..=region.backedge).all(|pc| {
             let instruction = region.instructions[(pc - region.header) as usize];
-            instruction.op() != Op::SetIndex || {
+            !instruction.op().is_set_index() || {
                 let web = self.webs.read(region, pc, instruction.register_a());
                 // A web without a number definition (an object, a string) is not an int32.
                 self.values[web].is_some_and(|fact| fact.representation == Representation::Int32)
@@ -4833,7 +4833,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .instructions
             .iter()
             .filter(|instruction| {
-                instruction.op() == Op::GetIndex
+                instruction.op().is_get_index()
                     && !region.tagged.contains(&instruction.result_register())
                     && element_representation(instruction, self.observation) == Representation::Int32
             })
@@ -5990,7 +5990,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let next = pc + 1;
         let offset = (next - self.region.header) as usize;
         let read = self.region.instructions[offset];
-        (read.op() == Op::GetIndex
+        (read.op().is_get_index()
             && read.operand_c().register_index() == Some(register)
             && self.straight[offset]
             && !self.proved(next))
@@ -6972,7 +6972,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         }
                     }
                 };
-                let jump_when = instruction.op() == Op::JumpTrue;
+                let jump_when = instruction.op().is_jump_true();
                 self.branch(pc, instruction.jump_target(), truthy, jump_when)
             }
             _ => None,
@@ -7060,7 +7060,7 @@ mod tests {
         let function = program.function(1);
         let decoded: Vec<_> = function.instructions().collect();
         let (backedge, header) = decoded.iter().enumerate().find_map(|(pc, instruction)| {
-            (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
+            (instruction.op().is_jump() && (instruction.jump_target() as usize) < pc)
                 .then(|| (pc as u32, instruction.jump_target()))
         }).unwrap();
         let constants: Vec<_> = program.constants.iter()
@@ -7087,7 +7087,7 @@ mod tests {
         let function = program.function(1);
         let instructions: Vec<_> = function.instructions().collect();
         let (backedge, header) = instructions.iter().enumerate().find_map(|(pc, instruction)|
-            (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
+            (instruction.op().is_jump() && (instruction.jump_target() as usize) < pc)
                 .then(|| (pc as u32, instruction.jump_target()))).unwrap();
         let constants: Vec<_> = program.constants.iter()
             .map(|constant| super::super::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
@@ -7144,7 +7144,7 @@ mod tests {
             let function = program.function(1);
             let instructions: Vec<_> = function.instructions().collect();
             let (backedge, header) = instructions.iter().enumerate().find_map(|(pc, instruction)|
-                (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
+                (instruction.op().is_jump() && (instruction.jump_target() as usize) < pc)
                     .then(|| (pc as u32, instruction.jump_target()))).unwrap();
             let constants: Vec<_> = program.constants.iter()
             .map(|constant| super::super::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
@@ -7215,7 +7215,7 @@ mod tests {
         assert!(lower_verified(verified, &observation, &*isa, None).is_some());
         let mut verified = verify_region(&region, &observation).unwrap();
         let branch = region.instructions.iter().position(|instruction|
-            instruction.op() == Op::JumpBinaryFalse).unwrap();
+            instruction.op().is_jump_binary_false()).unwrap();
         verified.obligations[branch] = DefinitionObligation::NumberLoad;
         assert!(lower_verified(verified, &observation, &*isa, None).is_none());
     }

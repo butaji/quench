@@ -1,4 +1,4 @@
-use {super::*, crate::bytecode::Class};
+use super::*;
 
 mod loop_stack;
 
@@ -1635,7 +1635,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<FrameOutcome> {
         let returned = match self.lane_returned.take() {
             Some(value) => Some(value),
-            None if instruction.op().class().eq(Class::Return) => Some(self.read(frame, instruction.register_a())),
+            None if instruction.op().is_return() => Some(self.read(frame, instruction.register_a())),
             None => None,
         };
         if let Some(value) = returned {
@@ -1646,7 +1646,7 @@ impl<H: Host> Vm<H> {
         if asynchronous {
             return self.lane_stop_awaits(p, frame, Some(instruction), pc);
         }
-        if !instruction.op().class().eq(Class::Yield) {
+        if !instruction.op().is_yield() {
             return None;
         }
         let value = self.read(frame, instruction.register_b());
@@ -1672,7 +1672,7 @@ impl<H: Host> Vm<H> {
         instruction: Option<WideInstruction>,
         pc: usize,
     ) -> Option<FrameOutcome> {
-        let instruction = instruction.filter(|instruction| instruction.op().class().eq(Class::Await))?;
+        let instruction = instruction.filter(|instruction| instruction.op().is_await())?;
         let awaited = self.read(frame, instruction.register_b());
         let value = if self.is_object_like(awaited) {
             self.lane_promise_resolve(p, self.intrinsic_promise_constructor(), awaited)?
@@ -2013,7 +2013,7 @@ impl<H: Host> Vm<H> {
                     }
                     // A `Return` exit of the loop's own entry frame: which native's call into
                     // JavaScript started this nested run.
-                    if instruction.op().class().eq(Class::Return) && pending_calls.is_empty() {
+                    if instruction.op().is_return() && pending_calls.is_empty() {
                         let starter = self.realm.promise.active_native.last().map(|activation| activation.callable);
                         let described = match starter.and_then(|callable| self.heap.function(callable)) {
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
@@ -2028,7 +2028,7 @@ impl<H: Host> Vm<H> {
                         };
                         super::lane_exits::record_detail(format!("Return nested run started by {described}"));
                     }
-                    if instruction.op().class().eq(Class::GetField)
+                    if instruction.op().is_get_field()
                         && let Some(lookup) = instruction.field_lookup()
                     {
                         let (base, atoms) = match lookup {
@@ -2100,7 +2100,7 @@ impl<H: Host> Vm<H> {
                                 },
                             }
                         };
-                        let operator = if instruction.op().class().eq(Class::Binary) { instruction.binary_operator() } else { u32::from(instruction.a()) };
+                        let operator = if instruction.op().is_binary() { instruction.binary_operator() } else { u32::from(instruction.a()) };
                         super::lane_exits::record_detail(format!(
                             "{:?} op{operator} {} {}",
                             instruction.op(),
@@ -2269,7 +2269,7 @@ impl<H: Host> Vm<H> {
                     #[cfg(feature = "profile-aggregate")]
                     self.profile
                         .branch_value(value.profile_kind() as usize, truthy);
-                    if truthy == (ins.op().class().eq(Class::JumpTrue)) {
+                    if truthy == (ins.op().is_jump_true()) {
                         pc = ins.jump_target() as usize;
                         if pc <= instruction_pc {
                             self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);

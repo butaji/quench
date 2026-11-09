@@ -55,6 +55,51 @@ pub(crate) enum Class {
     JumpFalse,
     CloneEnv,
     LoadName,
+    WasmFillRegisters,
+    WasmMemoryAddress,
+    WasmMemoryLoad,
+    WasmMemoryStore,
+    CallArray,
+    CallForwardingArguments,
+    CallSpread,
+    CheckPrivate,
+    CopyDataProperties,
+    CreateRegExpLiteral,
+    DefineField,
+    DefinePrivateField,
+    DefinePropertyRecord,
+    Delete,
+    InitializeTdz,
+    IteratorCleanupPop,
+    IteratorCleanupPush,
+    LoadCallee,
+    LoadEnvLocal,
+    LoadLocal,
+    LoadNameCall,
+    LoadNameTypeof,
+    MakeArray,
+    MakeClosure,
+    MakeConstArray,
+    MakeObject,
+    MakeObject2,
+    MakeObjectLiteral,
+    PrivateIn,
+    RequireIteratorResult,
+    StoreCapture,
+    StoreEnvLocal,
+    StoreLocal,
+    StoreName,
+    StringCaseIndex,
+    SuperConstArrayObject2,
+    ToPropertyKey,
+    WasmBranchTable,
+    WasmGlobalGet,
+    WasmGlobalSet,
+    WasmInstanceBinding,
+    WasmJumpI32NonZero,
+    WasmJumpI32Zero,
+    WasmSimd,
+    WasmSimdShuffle,
 }
 
 impl Class {
@@ -112,12 +157,57 @@ macro_rules! class_of {
     (JumpFalse) => { Class::JumpFalse };
     (CloneEnv) => { Class::CloneEnv };
     (LoadName) => { Class::LoadName };
-    ($other:ident) => { Class::Other };
+    (WasmFillRegisters) => { Class::WasmFillRegisters };
+    (WasmMemoryAddress) => { Class::WasmMemoryAddress };
+    (WasmMemoryLoad) => { Class::WasmMemoryLoad };
+    (WasmMemoryStore) => { Class::WasmMemoryStore };
+    (CallArray) => { Class::CallArray };
+    (CallForwardingArguments) => { Class::CallForwardingArguments };
+    (CallSpread) => { Class::CallSpread };
+    (CheckPrivate) => { Class::CheckPrivate };
+    (CopyDataProperties) => { Class::CopyDataProperties };
+    (CreateRegExpLiteral) => { Class::CreateRegExpLiteral };
+    (DefineField) => { Class::DefineField };
+    (DefinePrivateField) => { Class::DefinePrivateField };
+    (DefinePropertyRecord) => { Class::DefinePropertyRecord };
+    (Delete) => { Class::Delete };
+    (InitializeTdz) => { Class::InitializeTdz };
+    (IteratorCleanupPop) => { Class::IteratorCleanupPop };
+    (IteratorCleanupPush) => { Class::IteratorCleanupPush };
+    (LoadCallee) => { Class::LoadCallee };
+    (LoadEnvLocal) => { Class::LoadEnvLocal };
+    (LoadLocal) => { Class::LoadLocal };
+    (LoadNameCall) => { Class::LoadNameCall };
+    (LoadNameTypeof) => { Class::LoadNameTypeof };
+    (MakeArray) => { Class::MakeArray };
+    (MakeClosure) => { Class::MakeClosure };
+    (MakeConstArray) => { Class::MakeConstArray };
+    (MakeObject) => { Class::MakeObject };
+    (MakeObject2) => { Class::MakeObject2 };
+    (MakeObjectLiteral) => { Class::MakeObjectLiteral };
+    (PrivateIn) => { Class::PrivateIn };
+    (RequireIteratorResult) => { Class::RequireIteratorResult };
+    (StoreCapture) => { Class::StoreCapture };
+    (StoreEnvLocal) => { Class::StoreEnvLocal };
+    (StoreLocal) => { Class::StoreLocal };
+    (StoreName) => { Class::StoreName };
+    (StringCaseIndex) => { Class::StringCaseIndex };
+    (SuperConstArrayObject2) => { Class::SuperConstArrayObject2 };
+    (ToPropertyKey) => { Class::ToPropertyKey };
+    (WasmBranchTable) => { Class::WasmBranchTable };
+    (WasmGlobalGet) => { Class::WasmGlobalGet };
+    (WasmGlobalSet) => { Class::WasmGlobalSet };
+    (WasmInstanceBinding) => { Class::WasmInstanceBinding };
+    (WasmJumpI32NonZero) => { Class::WasmJumpI32NonZero };
+    (WasmJumpI32Zero) => { Class::WasmJumpI32Zero };
+    (WasmSimd) => { Class::WasmSimd };
+    (WasmSimdShuffle) => { Class::WasmSimdShuffle };    ($other:ident) => { Class::Other };
+
 }
 
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Traits(u16);
+pub(crate) struct Traits(u32);
 
 impl Traits {
     pub(crate) const NONE: Self = Self(0);
@@ -139,6 +229,8 @@ impl Traits {
     pub(crate) const INLINABLE: Self = Self(1 << 14);
     /// An op a call's argument setup may run with no repeatable effect.
     pub(crate) const PURE_SETUP: Self = Self(1 << 15);
+    /// A Wasm memory access through the function's memory register.
+    pub(crate) const WASM_MEMORY: Self = Self(1 << 16);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -185,6 +277,12 @@ macro_rules! traits_of {
     (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
     (SetIndex) => { Traits::INLINABLE };
     (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP) };
+    (WasmMemorySize) => { Traits::WASM_MEMORY };
+    (WasmMemoryFill) => { Traits::WASM_MEMORY };
+    (WasmMemoryCopy) => { Traits::WASM_MEMORY };
+    (WasmMemoryAddress) => { Traits::WASM_MEMORY };
+    (WasmMemoryLoad) => { Traits::WASM_MEMORY };
+    (WasmMemoryStore) => { Traits::WASM_MEMORY };
     ($other:ident) => { Traits::NONE };
 }
 

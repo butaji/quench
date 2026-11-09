@@ -2306,7 +2306,7 @@ impl Lowering<'_, '_> {
                 emit_js_guard(&mut self.builder, stored, exit);
                 Some(true)
             }
-            Op::GetField if instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
+            op if op.is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
             Op::GetIndex if plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
                 // of an int32 key, proved once.
@@ -2628,7 +2628,7 @@ impl Lowering<'_, '_> {
     /// `operation` by the interpreter's semantics (`staged::step`) on the emit stage, with
     /// `edges` as its control edges. The lane specializer decides every truthiness itself, so
     /// no step is left unresolved.
-    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation)
+    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, CheckedObject>)
         -> crate::staged::Step<ir::Value, ()> {
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
@@ -4060,7 +4060,12 @@ impl Lowering<'_, '_> {
                     projection
                 }
             };
-            return Some(projection.read(&mut self.builder, field.slot));
+            let step = self.step(state, frame::Edges::Value, crate::staged::Operation::ReadField {
+                base: owner.flatten().unwrap_or(0), slot: field.slot, ty: field.ty, proof: projection });
+            return match step {
+                crate::staged::Step::Value(value) => Some(value),
+                _ => None,
+            };
         }
         // Layout families (`object_slots::field_load_groups`): own fields at one slot of every
         // shape of a family take one shape-set test and one read; a prototype-held slot its own.
@@ -4431,7 +4436,7 @@ impl Lowering<'_, '_> {
                     let ok = self.ins().band(same, admitted);
                     self.ins().brif(ok, matched, &[], next, &[]);
                     self.builder.switch_to_block(matched);
-                    widens.extend(self.store_direct(field, object_bits, object, header.inline, properties, None, value, ty, done, general)?);
+                    widens.extend(self.store_direct(state, field, object_bits, object, header.inline, properties, None, value, ty, done, general)?);
                     self.builder.switch_to_block(next);
                 }
                 self.ins().jump(general, &[]);
@@ -4463,7 +4468,7 @@ impl Lowering<'_, '_> {
         };
         self.ins().brif(ok, direct, &[], general, &[]);
         self.builder.switch_to_block(direct);
-        let widen = self.store_direct(field, object_bits, object, inline, properties, projection, value, ty, done, general)?;
+        let widen = self.store_direct(state, field, object_bits, object, inline, properties, projection, value, ty, done, general)?;
         self.finish_store(state, object_bits, atom, site, value, ty, exit, dynamic_header, general,
             widen.as_slice(), done);
         Some(())
@@ -4475,7 +4480,7 @@ impl Lowering<'_, '_> {
     /// continues at the block returned, which the caller completes by the VM's hit, which
     /// joins its type (`ValueArena::note_slot_value`); a raw store would not.
     #[allow(clippy::too_many_arguments)]
-    fn store_direct(&mut self, field: NativeFieldLoad, object_bits: ir::Value, object: ir::Value, inline: ir::Value,
+    fn store_direct(&mut self, state: &mut State, field: NativeFieldLoad, object_bits: ir::Value, object: ir::Value, inline: ir::Value,
         properties: ir::Value, projection: Option<CheckedObject>, value: ir::Value, ty: Type, done: ir::Block,
         general: ir::Block) -> Option<Option<ir::Block>> {
         let (widen, direct_ty) = if !ty.is_subtype(field.ty) {
@@ -4501,8 +4506,9 @@ impl Lowering<'_, '_> {
                 CheckedObject::prove(&mut self.builder, object, inline, properties, plan, PackedAccess::Reload, general)?
             }
         };
-        let address = projection.arena_address(&mut self.builder, field.slot, general)?;
-        self.ins().store(MemFlagsData::trusted(), value, address, 0);
+        let step = self.step(state, frame::Edges::ValueGuarded { miss: general },
+            crate::staged::Operation::WriteField { base: 0, slot: field.slot, ty: direct_ty, value, proof: projection });
+        if !matches!(step, crate::staged::Step::Value(_)) { return None; }
         self.ins().jump(done, &[]);
         Some(widen)
     }
@@ -5324,7 +5330,7 @@ mod tests {
         let program = crate::Engine::specialize(
             "function write(o, value) { o.value=value; return value; }", "store-proof.js").unwrap();
         let function = program.function(1);
-        let mut fields: BTreeMap<_, _> = function.instructions().filter(|instruction| instruction.op() == Op::SetField)
+        let mut fields: BTreeMap<_, _> = function.instructions().filter(|instruction| instruction.op().is_set_field())
             .map(|instruction| (instruction.cache_site_index(), vec![NativeFieldLoad {
                 shape: 0, holder: None, slot: 0, storage_len: 1, storage: None,
                 ty: Type::INT32, target_shape: None, inherited: None, function_shape: false,

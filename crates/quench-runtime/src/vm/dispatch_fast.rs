@@ -4729,7 +4729,7 @@ fn lane_set_index_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Regist
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = decoded_instruction(body, body.code[pc]);
-    if instruction.op() != Op::SetIndex {
+    if !instruction.op().is_set_index() {
         return Resumed::Exit(exit(ip));
     }
     let strict = body.strict || instruction.boolean_flag().unwrap_or(false);
@@ -8200,7 +8200,7 @@ fn lane_loop_run<H: Host>(
                         let body = unsafe { &*(*cx).code }.function_get(site.function as usize);
                         if let Some((body, packed)) = body.and_then(|body| body.code.get(pc as usize).map(|packed| (body, *packed))) {
                             let instruction = decoded_instruction(body, packed);
-                            if instruction.op() == Op::SetIndex {
+                            if instruction.op().is_set_index() {
                                 let key = r.get(instruction.register_c());
                                 let base = r.get(instruction.register_b());
                                 if let Some(array) = unsafe { vm(cx) }.heap.record_array(base) {
@@ -14944,7 +14944,7 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
         .enumerate()
         .map(|(pc, packed)| {
             let instruction = decoded_instruction(body, *packed);
-            (instruction.op() == Op::Call && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
+            (instruction.op().is_call() && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
             (!(tail_calls && instruction.returns_from_frame())).then_some(())?;
             // SAFETY: the view holds a record per PC; reading its link changes nothing.
             let record = unsafe { &*view.records.get(pc)?.get() };
@@ -15058,7 +15058,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     let leaf_body = leaf_publication.lease().unwrap();
     assert!(leaf_body.calls_only_natively());
     let code = program.function(root_target.function as usize);
-    let pc = code.instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
+    let pc = code.instructions().position(|instruction| instruction.op().is_call()).unwrap();
     let mut direct = vec![None; code.code.len()];
     // Resolve the capture view exactly as production direct-call publication does.
     let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
@@ -18058,86 +18058,86 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
 
 /// The handlers of the jumps (`other_handler`), whose direction decides whether they run a
 /// safepoint, then of the Wasm GC steps (`wasm_gc_handler`).
-const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
-    match op {
-        Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
-        Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
-        Op::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
-        Op::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
-        Op::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
-        Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
-        Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
-        _ => wasm_gc_handler::<H>(op),
+const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
+    match opcode.class() {
+        Class::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
+        Class::Jump => Some(lane_jump_always::<H, BACKWARD>),
+        Class::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
+        Class::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
+        Class::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
+        Class::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
+        Class::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
+        _ => wasm_gc_handler::<H>(opcode),
     }
 }
 
 /// Handlers that neither produce nor read the accumulator, apart from the
 /// branch tests, which read it.
-const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
-    match op {
-        Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
-        Op::StoreName => Some(lane_store_name_first::<H>),
-        Op::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
-        Op::DefineArrayElement => Some(lane_define_array_element::<H>),
-        Op::RequireIteratorResult => Some(lane_require_iterator_result::<H>),
-        Op::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
-        Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
-        Op::LoadThis => Some(lane_load_this::<H>),
-        Op::LoadCallee => Some(lane_load_callee::<H>),
-        Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
-        Op::CloneEnv => Some(lane_clone_env::<H>),
-        Op::GetField => Some(lane_get_field_first::<H>),
-        op if matches!(op.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
-        op if matches!(op.field_store(), Some(FieldStore { receiver: StoreReceiver::This, .. })) => Some(lane_set_this_field_own::<H, false>),
-        Op::ToNumeric => Some(lane_to_numeric::<H>),
-        Op::ToPropertyKey => Some(lane_to_property_key::<H>),
-        Op::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
-        Op::DefinePropertyRecord => Some(lane_define_property_record::<H>),
-        Op::DefineField => Some(lane_define_field::<H>),
-        Op::DefinePrivateField => Some(lane_define_private_field::<H>),
-        Op::CheckPrivate => Some(lane_check_private::<H>),
-        Op::PrivateIn => Some(lane_private_in::<H>),
-        Op::CopyDataProperties => Some(lane_copy_data_properties::<H>),
-        op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
-        Op::IncDec => Some(lane_inc_dec::<H, false>),
-        op if denoted_handler::<H>(op).is_some() => denoted_handler::<H>(op),
-        Op::GetIndex => Some(lane_get_index::<H>),
-        Op::SetIndex => Some(lane_set_index::<H>),
-        Op::LoadCapture => Some(lane_load_capture::<H>),
-        Op::LoadLocalPlain => Some(lane_load_local_plain::<H>),
-        Op::MakeConstArray => Some(lane_make_const_array::<H>),
-        Op::StringCaseIndex => Some(lane_string_case_index::<H>),
-        Op::LoadLocal | Op::LoadEnvLocal => Some(lane_load_local::<H>),
-        Op::StoreCapture => Some(lane_store_capture::<H>),
-        Op::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
-        Op::WasmGlobalGet => Some(lane_global_get::<H>),
-        Op::WasmSimd => Some(lane_wasm_simd::<H>),
-        Op::WasmMemoryLoad => Some(lane_wasm_memory_load::<H>),
-        Op::WasmMemoryAddress => Some(lane_wasm_memory_address::<H>),
-        Op::WasmMemoryStore => Some(lane_wasm_memory_store::<H>),
-        Op::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
-        Op::WasmGlobalSet => Some(lane_global_set::<H>),
-        Op::WasmFillRegisters => Some(lane_fill_registers::<H>),
-        Op::CallKnown => Some(known_call_handler::<H>()),
-        Op::Call => Some(lane_script_call::<H, ANY_ARGC>),
-        Op::CallArray => Some(lane_call_array::<H>),
-        Op::CallSpread => Some(lane_call_spread::<H>),
-        Op::Delete => Some(lane_delete::<H>),
-        Op::Construct => Some(lane_script_construct::<H>),
-        Op::LoadName => Some(lane_load_name_first::<H, LOAD_NAME>),
-        Op::LoadNameCall => Some(lane_load_name_first::<H, LOAD_NAME_CALL>),
-        Op::LoadNameTypeof => Some(lane_load_name_first::<H, LOAD_NAME_TYPEOF>),
-        Op::MakeObject2 => Some(lane_make_object2::<H>),
-        Op::MakeClosure => Some(lane_make_closure::<H>),
-        Op::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
-        Op::MakeArray => Some(lane_make_array::<H>),
-        Op::MakeObject => Some(lane_make_object::<H>),
-        Op::CreateRegExpLiteral => Some(lane_regexp_literal::<H>),
-        Op::CallForwardingArguments => Some(lane_forward_call::<H>),
-        Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
-        Op::Return => Some(lane_return::<H, NOT_LEAF>),
-        Op::Yield => Some(lane_yield::<H>),
-        _ => jump_handler::<H, BACKWARD, ACC>(op),
+const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
+    match opcode.class() {
+        Class::StoreLocalPlain => Some(lane_store_local_plain::<H>),
+        Class::StoreName => Some(lane_store_name_first::<H>),
+        Class::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
+        Class::DefineArrayElement => Some(lane_define_array_element::<H>),
+        Class::RequireIteratorResult => Some(lane_require_iterator_result::<H>),
+        Class::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
+        Class::StoreLocal | Class::StoreEnvLocal => Some(lane_store_local::<H>),
+        Class::LoadThis => Some(lane_load_this::<H>),
+        Class::LoadCallee => Some(lane_load_callee::<H>),
+        Class::InitializeTdz => Some(lane_initialize_tdz::<H>),
+        Class::CloneEnv => Some(lane_clone_env::<H>),
+        Class::GetField => Some(lane_get_field_first::<H>),
+        _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
+        _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::This, .. })) => Some(lane_set_this_field_own::<H, false>),
+        Class::ToNumeric => Some(lane_to_numeric::<H>),
+        Class::ToPropertyKey => Some(lane_to_property_key::<H>),
+        Class::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
+        Class::DefinePropertyRecord => Some(lane_define_property_record::<H>),
+        Class::DefineField => Some(lane_define_field::<H>),
+        Class::DefinePrivateField => Some(lane_define_private_field::<H>),
+        Class::CheckPrivate => Some(lane_check_private::<H>),
+        Class::PrivateIn => Some(lane_private_in::<H>),
+        Class::CopyDataProperties => Some(lane_copy_data_properties::<H>),
+        _ if lane_steps_in_place(opcode) => Some(lane_general_step::<H>),
+        Class::IncDec => Some(lane_inc_dec::<H, false>),
+        _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),
+        Class::GetIndex => Some(lane_get_index::<H>),
+        Class::SetIndex => Some(lane_set_index::<H>),
+        Class::LoadCapture => Some(lane_load_capture::<H>),
+        Class::LoadLocalPlain => Some(lane_load_local_plain::<H>),
+        Class::MakeConstArray => Some(lane_make_const_array::<H>),
+        Class::StringCaseIndex => Some(lane_string_case_index::<H>),
+        Class::LoadLocal | Class::LoadEnvLocal => Some(lane_load_local::<H>),
+        Class::StoreCapture => Some(lane_store_capture::<H>),
+        Class::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
+        Class::WasmGlobalGet => Some(lane_global_get::<H>),
+        Class::WasmSimd => Some(lane_wasm_simd::<H>),
+        Class::WasmMemoryLoad => Some(lane_wasm_memory_load::<H>),
+        Class::WasmMemoryAddress => Some(lane_wasm_memory_address::<H>),
+        Class::WasmMemoryStore => Some(lane_wasm_memory_store::<H>),
+        Class::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
+        Class::WasmGlobalSet => Some(lane_global_set::<H>),
+        Class::WasmFillRegisters => Some(lane_fill_registers::<H>),
+        Class::CallKnown => Some(known_call_handler::<H>()),
+        Class::Call => Some(lane_script_call::<H, ANY_ARGC>),
+        Class::CallArray => Some(lane_call_array::<H>),
+        Class::CallSpread => Some(lane_call_spread::<H>),
+        Class::Delete => Some(lane_delete::<H>),
+        Class::Construct => Some(lane_script_construct::<H>),
+        Class::LoadName => Some(lane_load_name_first::<H, LOAD_NAME>),
+        Class::LoadNameCall => Some(lane_load_name_first::<H, LOAD_NAME_CALL>),
+        Class::LoadNameTypeof => Some(lane_load_name_first::<H, LOAD_NAME_TYPEOF>),
+        Class::MakeObject2 => Some(lane_make_object2::<H>),
+        Class::MakeClosure => Some(lane_make_closure::<H>),
+        Class::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
+        Class::MakeArray => Some(lane_make_array::<H>),
+        Class::MakeObject => Some(lane_make_object::<H>),
+        Class::CreateRegExpLiteral => Some(lane_regexp_literal::<H>),
+        Class::CallForwardingArguments => Some(lane_forward_call::<H>),
+        Class::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
+        Class::Return => Some(lane_return::<H, NOT_LEAF>),
+        Class::Yield => Some(lane_yield::<H>),
+        _ => jump_handler::<H, BACKWARD, ACC>(opcode),
     }
 }
 
@@ -18308,7 +18308,7 @@ fn lane_operand(
             }
         }
         // A case selector reads its run of constants from the context by index.
-        ImmediateRole::ConstantIndex if instruction.op() == Op::StringCaseIndex => {
+        ImmediateRole::ConstantIndex if instruction.op().is_string_case_index() => {
             let start = instruction.imm() as usize;
             constants.get(start..start.checked_add(usize::from(instruction.b()))?)?;
             LaneOperand { imm: instruction.imm() }
@@ -18370,7 +18370,7 @@ fn lane_call_awaited_marked<'live>(
     let Some(&awaited) = decoded.get(pc + 1) else {
         return operand;
     };
-    if call.op() != Op::Call || call.result_flags() != 0 || awaited.op() != Op::Await {
+    if !call.op().is_call() || call.result_flags() != 0 || !awaited.op().is_await() {
         return operand;
     }
     let result = call.result_register();
@@ -18396,7 +18396,7 @@ fn lane_call_result_marked(
     function: &Function,
     pc: usize,
 ) -> LaneOperand {
-    if instruction.op() != Op::Call || !function.register_roots.call_result_dead(pc) {
+    if !instruction.op().is_call() || !function.register_roots.call_result_dead(pc) {
         return operand;
     }
     // SAFETY: a `Call`'s operand is its immediate (`lane_operand`).
@@ -18463,7 +18463,7 @@ fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest>
     let result = decoded[pc].result_register();
     let record = |offset: usize| decoded.get(pc + offset).copied();
     let reads_result = |offset: usize| {
-        record(offset).is_some_and(|read| read.op() == Op::GetField && read.result_flags() == 0 && read.b() == result)
+        record(offset).is_some_and(|read| read.op().is_get_field() && read.result_flags() == 0 && read.b() == result)
     };
     let done = record(FOR_OF_DONE_READ).filter(|_| reads_result(FOR_OF_DONE_READ))?.result_register();
     let test = record(FOR_OF_DONE_TEST).filter(|test| test.a() == done)?;
@@ -19052,7 +19052,7 @@ fn derive_lane_view<'live, H: Host>(
                 || ![ACC_NONE, ACC_B, ACC_C, ACC_PAIR]
                     .into_iter()
                     .any(|acc| serves(records[pc + 2].handler, Op::WasmSelect, acc))
-                || constant.op() != Op::LoadConst
+                || !constant.op().is_load_const()
             {
                 continue;
             }
@@ -19101,7 +19101,7 @@ fn derive_lane_view<'live, H: Host>(
     let record_bytes = size_of::<LaneInstruction>() as isize;
     for (pc, &instruction) in decoded.iter().enumerate() {
         let target = instruction.imm() as usize;
-        if instruction.op() != Op::Jump
+        if !instruction.op().is_jump()
             || jump_direction(records[pc].handler).is_none()
             || entry_jumps.contains(pc)
             || target + 1 >= records.len()
@@ -19377,7 +19377,7 @@ fn derive_lane_view<'live, H: Host>(
                 if carrying_zero_jump(records[pc].handler).is_some() {
                     continue;
                 }
-                if instruction.op() != Op::Jump || entry_jumps.contains(pc) || jump_targets.contains(pc) || pc == 0 {
+                if !instruction.op().is_jump() || entry_jumps.contains(pc) || jump_targets.contains(pc) || pc == 0 {
                     return None;
                 }
                 let then = JumpFusions::<H>::THEN
@@ -19681,7 +19681,7 @@ fn derive_lane_view<'live, H: Host>(
         plain_backward_jump_sites: decoded
             .iter()
             .enumerate()
-            .filter(|(pc, instruction)| instruction.op() == Op::Jump && instruction.jump_target() <= *pc as u32)
+            .filter(|(pc, instruction)| instruction.op().is_jump() && instruction.jump_target() <= *pc as u32)
             .count(),
         osr_rejections: (!osr_rejections.is_empty())
             .then(|| osr_rejections.into_boxed_slice()),
@@ -21200,7 +21200,7 @@ impl<H: Host> Vm<H> {
                     instruction,
                     self.programs.source_name(unsafe { (*cx).program }).unwrap_or_default(),
                     instruction
-                        .filter(|instruction| instruction.op() == Op::GetField)
+                        .filter(|instruction| instruction.op().is_get_field())
                         .and_then(|instruction| code.atoms.get(instruction.imm() as usize)),
                     body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
                     body.source_span.map(|span| span.start),
@@ -22012,7 +22012,7 @@ mod field_pair_census_tests {
         vm.execute(&program).unwrap();
         let read_name = vm.lookup_atom("read").unwrap();
         let function = program.functions.iter().find(|f| f.name == Some(read_name)).unwrap();
-        let instruction = function.instructions().find(|i| i.op() == Op::GetField).unwrap();
+        let instruction = function.instructions().find(|i| i.op().is_get_field()).unwrap();
         let (atom, cache) = match instruction.field_lookup().unwrap() {
             FieldLookup::Atom { atom, cache_site, .. } => (atom, cache_site),
             FieldLookup::Site(index) => program.field_sites.get(index).unwrap().first,

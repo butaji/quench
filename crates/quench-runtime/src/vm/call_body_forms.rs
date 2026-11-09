@@ -67,7 +67,7 @@ fn forwarding_read_body(body: &Function) -> bool {
 /// A `GetField` of `this` or a parameter, into a register past the parameters that the
 /// call's copies leave.
 fn reads_receiver_field(field: WideInstruction, body: &Function, survives_copies: impl Fn(u16) -> bool) -> bool {
-    field.op() == Op::GetField
+    field.op().is_get_field()
         && field.result_flags() == 0
         && field.result_register() >= body.params
         && survives_copies(field.result_register())
@@ -77,7 +77,7 @@ fn reads_receiver_field(field: WideInstruction, body: &Function, survives_copies
 /// A `GetField` of `field`'s value, into another register past the parameters that the
 /// call's copies leave.
 fn reads_method(method: WideInstruction, field: WideInstruction, body: &Function, survives_copies: impl Fn(u16) -> bool) -> bool {
-    method.op() == Op::GetField
+    method.op().is_get_field()
         && method.result_flags() == 0
         && method.result_register() >= body.params
         && method.result_register() != field.result_register()
@@ -89,13 +89,13 @@ fn reads_method(method: WideInstruction, field: WideInstruction, body: &Function
 fn moves_parameters(body: &Function, moves: &[crate::bytecode::Instr], window: u16) -> bool {
     moves.iter().zip(0..body.params).all(|(&packed, parameter)| {
         let moved = decoded_instruction(body, packed);
-        moved.op() == Op::Move && moved.b() == parameter && moved.a() == window + parameter
+        moved.op().is_move() && moved.b() == parameter && moved.a() == window + parameter
     })
 }
 
 /// The call of `method` on `field` with every parameter, returning its completion.
 fn calls_method(call: WideInstruction, method: WideInstruction, field: WideInstruction, body: &Function) -> bool {
-    call.op() == Op::Call
+    call.op().is_call()
         && call.result_flags() == crate::bytecode::RETURN_REGISTER
         && call.b() == method.a()
         && call.c() == field.a()
@@ -110,13 +110,13 @@ fn element_read_body(body: &Function) -> bool {
         return false;
     };
     let [field, element, done] = [field, element, done].map(|packed| decoded_instruction(body, *packed));
-    field.op() == Op::GetField
+    field.op().is_get_field()
         && !field.returns_from_frame()
         && reads_this_or_parameter(FieldBase(field.b()), body)
-        && element.op() == Op::GetIndex
+        && element.op().is_get_index()
         && element.b() == field.a()
         && element.c() < body.params
-        && done.op() == Op::Return
+        && done.op().is_return()
         && done.a() == element.a()
 }
 
@@ -132,7 +132,7 @@ fn leading_pair(body: &Function) -> Option<[WideInstruction; 2]> {
 /// `() => binding` compiles.
 fn capture_read_body(body: &Function) -> bool {
     leading_pair(body).is_some_and(|[load, done]| {
-        load.op() == Op::LoadCapture && !load.returns_from_frame() && done.op() == Op::Return && done.a() == load.a()
+        load.op().is_load_capture() && !load.returns_from_frame() && done.op().is_return() && done.a() == load.a()
     })
 }
 
@@ -142,7 +142,7 @@ fn this_read_body(body: &Function) -> bool {
     !body.is_arrow
         && !body.is_class_constructor
         && leading_pair(body).is_some_and(|[load, done]| {
-            load.op() == Op::LoadThis && !load.returns_from_frame() && done.op() == Op::Return && done.a() == load.a()
+            load.op().is_load_this() && !load.returns_from_frame() && done.op().is_return() && done.a() == load.a()
         })
 }
 

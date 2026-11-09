@@ -25,7 +25,7 @@
 
 use tier_policy::TIERS;
 use super::*;
-use crate::bytecode::{Class, 
+use crate::bytecode::{Class, Traits,
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
     RETURN_REGISTER, WideInstruction,
 };
@@ -8842,16 +8842,7 @@ impl<H: Host> Analysis<'_, H> {
         };
         // The memory register is read only by direct accesses through it.
         if memory_register.is_some_and(|memory| {
-            !direct_access(op)
-                && !matches!(
-                    op,
-                    Op::WasmMemorySize
-                        | Op::WasmMemoryFill
-                        | Op::WasmMemoryCopy
-                        | Op::WasmMemoryAddress
-                        | Op::WasmMemoryLoad
-                        | Op::WasmMemoryStore
-                )
+            !direct_access(op) && !op.traits().has(Traits::WASM_MEMORY)
                 && op != Op::WasmInstanceBinding
                 && crate::bytecode::InstructionField::ALL.iter().any(|field| {
                     op.field_layout(*field).reads_register()
@@ -8970,7 +8961,7 @@ impl<H: Host> Analysis<'_, H> {
                 if value(state, instruction.c())? != Kind::I64 {
                     return None;
                 }
-                if op == Op::WasmMemoryLoad {
+                if op.class().eq(Class::WasmMemoryLoad) {
                     (crate::wasm::memory::MemoryLoad::from_tag(instruction.imm())?
                         == crate::wasm::memory::MemoryLoad::V128Load)
                         .then_some(())?;
@@ -16041,7 +16032,7 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
             let writer = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
-            let store = program.function(writer).instructions().find(|i| i.op() == Op::SetField).unwrap();
+            let store = program.function(writer).instructions().find(|i| i.op().is_set_field()).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
             assert!(!method.dependencies.slots.is_empty());
@@ -16352,7 +16343,7 @@ mod tests {
                 }).unwrap();
             LOOP_INT32_READ_SITE.with(|site| site.set(Some((control_read, 0))));
             let control_store = program.function_get(advance).unwrap().instructions().find_map(|instruction|
-                (instruction.op() == Op::SetField && &program.atoms[instruction.atom_index() as usize] == "control")
+                (instruction.op().is_set_field() && &program.atoms[instruction.atom_index() as usize] == "control")
                     .then(|| instruction.cache_site_index())).unwrap();
             PACKED_RANGE_SITE.with(|site| site.set(Some((control_store, 0))));
             LOOP_INT32_PHIS.with(|count| count.set(0));
