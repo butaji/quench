@@ -1118,22 +1118,9 @@ pub(super) fn emit_dense_element_replace(
     old: ir::Value,
     value: ir::Value,
 ) {
-    use crate::value::ValueLayout;
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let other = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
-        let tag = builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
-        let other = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INT_TAG as i64);
-        builder.ins().uextend(types::I32, other)
-    };
-    let added = other(builder, value);
-    let removed = other(builder, old);
-    let others = builder.ins().load(types::I32, MemFlagsData::trusted(), view.values, crate::heap::OTHERS_FROM_VALUES);
-    let delta = builder.ins().isub(added, removed);
-    let recounted = builder.ins().iadd(others, delta);
-    let unknown = builder.ins().icmp_imm_u(IntCC::Equal, others, i64::from(crate::heap::OTHERS_UNKNOWN));
-    let others = builder.ins().select(unknown, others, recounted);
-    builder.ins().store(MemFlagsData::trusted(), others, view.values, crate::heap::OTHERS_FROM_VALUES);
-    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+    let mut stage = object_slots::Emit { builder, property_values: None };
+    crate::staged::elements::replace_element(&mut stage, view.values, address, old, value);
 }
 
 /// Mark a writable view's backing as holding uncounted other values (`OTHERS_UNKNOWN`), so

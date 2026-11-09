@@ -35,28 +35,13 @@ struct Header {
 /// updates preserve it until the backing's values are counted again.
 pub(crate) const OTHERS_UNKNOWN: u32 = u32::MAX;
 
-/// Whether `value` counts among a backing's others.
-#[inline(always)]
-fn other(value: Value) -> u32 {
-    u32::from(value.as_int().is_none())
-}
+
+use crate::staged::elements::{concrete_other as other, concrete_recount as recounted};
 
 fn others(values: &[Value]) -> u32 {
     values.iter().map(|value| other(*value)).sum()
 }
 
-/// A backing's count of other values once a write added `added` and overwrote `removed`;
-/// `OTHERS_UNKNOWN` stays unknown. For an exact count, the overwritten values are already
-/// counted, and the resulting count fits the backing's u32 length. Subtract first so an
-/// intermediate sum cannot overflow even when the resulting count fits.
-#[inline(always)]
-fn recounted(others: u32, added: u32, removed: u32) -> u32 {
-    if others == OTHERS_UNKNOWN {
-        OTHERS_UNKNOWN
-    } else {
-        others - removed + added
-    }
-}
 
 /// The values start right after the header, at their own alignment.
 const VALUES_OFFSET: usize = size_of::<Header>();
@@ -351,12 +336,7 @@ impl ArrayElements {
     #[inline(always)]
     pub(crate) unsafe fn replace_through(values: NonNull<Value>, index: usize, value: Value) {
         // SAFETY: the caller's contract; the header precedes the values in the allocation.
-        unsafe {
-            let header = values.as_ptr().cast::<u8>().sub(VALUES_OFFSET).cast::<Header>();
-            let slot = values.as_ptr().add(index);
-            (*header).others = recounted((*header).others, other(value), other(*slot));
-            slot.write(value);
-        }
+        unsafe { crate::staged::elements::concrete_replace_element(values.as_ptr(), index, value) }
     }
 
     /// This array's values for writing: its own backing, copied first when shared or young

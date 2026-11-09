@@ -55,6 +55,12 @@ pub(crate) trait Stage {
     fn ult(&mut self, a: Self::Word, b: Self::Word) -> Self::Cond;
     /// A 32-bit word zero-extended to the full word (the full word unchanged).
     fn uextend32(&mut self, a: Self::Word) -> Self::Word;
+    fn sub(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
+    /// `then` where `cond` holds, else `otherwise`, both already computed.
+    fn select(&mut self, cond: Self::Cond, then: Self::Word, otherwise: Self::Word) -> Self::Word;
+    /// Stores the low 32 bits of `value`.
+    fn store_u32(&mut self, base: Self::Word, offset: i32, value: Self::Word);
+    fn store_u64(&mut self, base: Self::Word, offset: i32, value: Self::Word);
     fn not(&mut self, cond: Self::Cond) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
@@ -309,6 +315,20 @@ impl Stage for Concrete {
     fn ult(&mut self, a: u64, b: u64) -> bool { a < b }
     #[inline(always)]
     fn uextend32(&mut self, a: u64) -> u64 { a }
+    #[inline(always)]
+    fn sub(&mut self, a: u64, b: u64) -> u64 { a.wrapping_sub(b) }
+    #[inline(always)]
+    fn select(&mut self, cond: bool, then: u64, otherwise: u64) -> u64 { if cond { then } else { otherwise } }
+    #[inline(always)]
+    fn store_u32(&mut self, base: u64, offset: i32, value: u64) {
+        // SAFETY: a staged operation stores only into a live record or backing at a layout offset.
+        unsafe { ((base as *mut u8).offset(offset as isize) as *mut u32).write(value as u32) }
+    }
+    #[inline(always)]
+    fn store_u64(&mut self, base: u64, offset: i32, value: u64) {
+        // SAFETY: as `store_u32`; values and backings are 8-byte aligned.
+        unsafe { ((base as *mut u8).offset(offset as isize) as *mut u64).write(value) }
+    }
     #[inline(always)]
     fn not(&mut self, cond: bool) -> bool { !cond }
     #[inline(always)]

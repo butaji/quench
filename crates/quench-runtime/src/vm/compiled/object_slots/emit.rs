@@ -43,6 +43,16 @@ impl Stage for Emit<'_, '_> {
     }
     fn eq_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, imm as i64) }
     fn ne_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::NotEqual, a, imm as i64) }
+    fn sub(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().isub(a, b) }
+    fn select(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
+        self.builder.ins().select(cond, then, otherwise)
+    }
+    fn store_u32(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
+        self.builder.ins().istore32(MemFlagsData::trusted(), value, base, offset);
+    }
+    fn store_u64(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
+        self.builder.ins().store(MemFlagsData::trusted(), value, base, offset);
+    }
     fn ult(&mut self, a: ir::Value, b: ir::Value) -> ir::Value {
         self.builder.ins().icmp(IntCC::UnsignedLessThan, a, b)
     }
