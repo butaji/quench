@@ -760,6 +760,18 @@ struct ActivationShape {
     initial: Value,
 }
 
+impl ActivationShape {
+    /// The window of `function`, when its parameters have registers and it keeps no locals.
+    fn of(function: &Function) -> Option<Self> {
+        function.parameter_registers.filter(|_| function.locals == 0).map(|parameters| Self {
+            registers: function.registers,
+            parameters,
+            params: function.params,
+            initial: function.initial_register.value(),
+        })
+    }
+}
+
 /// Storage and guest-call allowance proved before an inlined body runs.
 #[derive(Clone, Copy, Default)]
 pub(super) struct LaneRecoverySpace {
@@ -1551,188 +1563,10 @@ impl CallEntry {
     }
 }
 
-/// Whether `body` is `GetField` of `this` or a parameter, `GetField` of a method of that,
-/// moves of its parameters in order into a call window, and the call of that method on the
-/// first field returning its completion (`CallEntry::ForwardsRead`), as `at(i) { return
-/// this.items.at(i); }` compiles.
-#[cold]
-#[inline(never)]
-fn forwarding_read_body(body: &Function) -> bool {
-    if !body.handlers.is_empty() {
-        return false;
-    }
-    let count = usize::from(body.params);
-    let Some(code) = body.code.get(..count + 3) else {
-        return false;
-    };
-    let decoded: Vec<WideInstruction> =
-        code.iter().map(|packed| decoded_instruction(body, *packed)).collect();
-    let (field, method, call) = (decoded[0], decoded[1], decoded[count + 2]);
-    let base = crate::bytecode::FieldBase(field.b());
-    let window = ImmediateLayout::call_window_base(call.imm());
-    let window_end = u32::from(window) + u32::from(body.params);
-    let survives_copies = |register: u16| {
-        u32::from(register) < u32::from(window) || u32::from(register) >= window_end
-    };
-    field.op() == Op::GetField
-        && field.result_flags() == 0
-        && field.result_register() >= body.params
-        && survives_copies(field.result_register())
-        && base.0 != crate::bytecode::FieldBase::NESTED
-        && base.local_index().is_none()
-        && base.register_index().is_none_or(|register| register < body.params)
-        && method.op() == Op::GetField
-        && method.result_flags() == 0
-        && method.result_register() >= body.params
-        && method.result_register() != field.result_register()
-        && survives_copies(method.result_register())
-        && crate::bytecode::FieldBase(method.b()).register_index() == Some(field.a())
-        && (window == 0 || window >= body.params)
-        && decoded[2..count + 2].iter().zip(0..body.params).all(|(moved, parameter)| {
-            moved.op() == Op::Move && moved.b() == parameter && moved.a() == window + parameter
-        })
-        && call.op() == Op::Call
-        && call.result_flags() == crate::bytecode::RETURN_REGISTER
-        && call.b() == method.a()
-        && call.c() == field.a()
-        && ImmediateLayout::argument_count(call.imm()) == body.params
-}
-
-/// Whether `body` is `GetField` of `this` or a parameter, `GetIndex` of its result by a
-/// parameter, and `Return` of that (`CallEntry::ReadsElement`), as `at(i) { return
-/// this.items[i]; }` compiles.
-fn element_read_body(body: &Function) -> bool {
-    let [field, element, done] = match body.code.get(..3) {
-        Some(&[field, element, done]) => [field, element, done].map(|packed| decoded_instruction(body, packed)),
-        _ => return false,
-    };
-    let base = crate::bytecode::FieldBase(field.b());
-    field.op() == Op::GetField
-        && !field.returns_from_frame()
-        && base.0 != crate::bytecode::FieldBase::NESTED
-        && base.local_index().is_none()
-        && base.register_index().is_none_or(|register| register < body.params)
-        && element.op() == Op::GetIndex
-        && element.b() == field.a()
-        && element.c() < body.params
-        && done.op() == Op::Return
-        && done.a() == element.a()
-}
-
-/// Whether `body` is `LoadCapture` and `Return` of it (`CallEntry::ReadsCapture`), as
-/// `() => binding` compiles.
-fn capture_read_body(body: &Function) -> bool {
-    let [load, done] = match body.code.get(..2) {
-        Some(&[load, done]) => [load, done].map(|packed| decoded_instruction(body, packed)),
-        _ => return false,
-    };
-    load.op() == Op::LoadCapture
-        && !load.returns_from_frame()
-        && done.op() == Op::Return
-        && done.a() == load.a()
-}
-
-/// Whether `body` is `LoadThis` and `Return` of it (`CallEntry::ReadsThis`): a function's own
-/// `this`, which neither an arrow's lexical one nor a constructor's binding complicates.
-fn this_read_body(body: &Function) -> bool {
-    let [load, done] = match body.code.get(..2) {
-        Some(&[load, done]) => [load, done].map(|packed| decoded_instruction(body, packed)),
-        _ => return false,
-    };
-    !body.is_arrow
-        && !body.is_class_constructor
-        && load.op() == Op::LoadThis
-        && !load.returns_from_frame()
-        && done.op() == Op::Return
-        && done.a() == load.a()
-}
-
-/// Whether `body` is a leaf (`CallEntry::Leaf`), and then what its records read of the
-/// context (`LeafForm`): every instruction's lane record writes registers, captures or
-/// nothing, reads no frame state and no activation, and leaves the lane for anything else
-/// (its general path), or activates a getter, which makes the leaf an activation first; no
-/// backward jump, so no safepoint runs in it. That is a register move or constant, a number
-/// or string operation of registers and constants, a capture's load or store, `this`, a
-/// field read or store of no private name through a register or `this`, a global name's
-/// load, a forward jump and the return, of a register, a constant or an operator's value. A
-/// body that keeps frame state (locals, handlers, `arguments`, dynamic scope) is none.
-/// `private` says whether an atom is a private name, whose access the running function
-/// decides (`lane_cached_field_miss`, `lane_private_brand`).
-fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::bytecode::Atom) -> bool) -> Option<LeafForm> {
-    use crate::bytecode::{FieldBase, FieldLookup, Operand, OperandKind};
-    if body.is_generator
-        || body.is_async
-        || body.is_class_constructor
-        || body.derived_constructor
-        || body.rest
-        || body.arguments_slot.is_some()
-        || !body.handlers.is_empty()
-        || body.has_dynamic_scope_access()
-    {
-        return None;
-    }
-    let value_operand = |encoded: u16| matches!(Operand(encoded).kind(), Some(OperandKind::Register | OperandKind::Constant));
-    // A field base reads `this` (`CONTEXT_LEAF`), a register (`PLAIN_LEAF`), or no base a
-    // leaf reads.
-    let field_base = |base: FieldBase| match base {
-        FieldBase::THIS => Some(CONTEXT_LEAF),
-        base => base.register_index().map(|_| PLAIN_LEAF),
-    };
-    let mut form = PLAIN_LEAF;
-    for (pc, instruction) in body.instructions().enumerate() {
-        let reads = match instruction.op() {
-            op if op.is_leaf_value() => PLAIN_LEAF,
-            op if op.is_leaf_jump() => PLAIN_LEAF,
-            op if op.is_leaf_binary() => {
-                if !(value_operand(instruction.b()) && value_operand(instruction.c())) {
-                    return None;
-                }
-                PLAIN_LEAF
-            }
-            op if op.traits().has(Traits::THIS_LEAF) => CONTEXT_LEAF,
-            op if op.addresses_capture() => CAPTURE_LEAF,
-            // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
-            // place (`lane_set_field_in_place`) or on the general path, either of which makes
-            // the leaf an activation first.
-            op if op.is_field_store() => {
-                if private(instruction.imm()) {
-                    return None;
-                }
-                if instruction.field_store_register().is_some() { PLAIN_LEAF } else { CONTEXT_LEAF }
-            }
-            // A global name's first load finds the running function (`lane_load_name_first`),
-            // which makes the leaf an activation first; its later loads read the realm alone.
-            op if op.traits().has(Traits::NAME_LEAF) && body.names_resolve_statically(code) => PLAIN_LEAF,
-            // A returning read requickens by its site's tier in its leaf form
-            // (`lane_returning_field_first`, `LaneView::specialize_leaf_returns`).
-            op if op.traits().has(Traits::FIELD_LEAF) => match instruction.field_lookup()? {
-                FieldLookup::Atom { atom, base, .. } => {
-                    if private(atom) {
-                        return None;
-                    }
-                    field_base(base)?
-                }
-                FieldLookup::Site(index) => {
-                    let site = code.field_sites.get(index)?;
-                    let atoms = [Some(site.first), site.second, site.sink];
-                    if atoms.into_iter().flatten().any(|(atom, _)| private(atom)) {
-                        return None;
-                    }
-                    // A sink stores the value to a field of `this` (`lane_get_field_sink`).
-                    let base = field_base(site.base)?;
-                    if site.sink.is_some() { CONTEXT_LEAF } else { base }
-                }
-            },
-            _ => return None,
-        };
-        if instruction.op().immediate_role() == ImmediateRole::JumpTarget && instruction.imm() as usize <= pc {
-            return None;
-        }
-        // Each form makes its own what the forms before it do, and more.
-        form = form.max(reads);
-    }
-    Some(form)
-}
+// Recognized once per target, as it resolves; no operation runs them.
+#[path = "call_body_forms.rs"]
+mod call_body_forms;
+use call_body_forms::{body_entry, leaf_body};
 
 impl ScriptCallTarget {
     /// No legacy `arguments` reflection observes its activation: a strict function's or an
@@ -2480,6 +2314,14 @@ thread_local! {
     /// dependence through it.
     static LANE_FLOOR: std::cell::Cell<*const std::sync::atomic::AtomicUsize> =
         const { std::cell::Cell::new(std::ptr::null()) };
+}
+
+/// A lane run's raised floor (`Vm::enter_lane_floor`): the VM's floor cell, and the cell and
+/// floor of the run it nests in, which leaving restores.
+struct LaneFloor {
+    cell: *const std::sync::atomic::AtomicUsize,
+    outer_cell: *const std::sync::atomic::AtomicUsize,
+    outer_floor: usize,
 }
 
 /// The running lane's floor.
@@ -8248,16 +8090,8 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     if site.backedge > site.header {
         // SAFETY: the record before the backedge is the loop body's, in the same view.
         let update = unsafe { ip.sub(1) };
-        let handler = unsafe { (*update).handler };
-        let fused: Option<Handler> = if handler == lane_inc_dec::<H, false> as Handler as *const () {
-            Some(lane_inc_dec_jump::<H, false, true>)
-        } else if handler == lane_inc_dec::<H, true> as Handler as *const () {
-            Some(lane_inc_dec_jump::<H, true, true>)
-        } else {
-            None
-        };
-        if let Some(fused) = fused {
-            requicken::<H>(update, fused);
+        if let Some(decrement) = update_direction::<H>(unsafe { (*update).handler }) {
+            requicken::<H>(update, update_jump::<H>(decrement, true));
         }
     }
 }
@@ -11624,27 +11458,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
             let constructs = Self::inline_constructible(body);
-            // A class constructor's calls throw on the general path, so they take a
-            // frame; only its constructions activate frameless (`lane_script_construct`).
-            let entry = if body.is_class_constructor {
-                CallEntry::Frame
-            } else if body.code.first().is_some_and(|packed| {
-                returning_kind(decoded_instruction(body, *packed)) == Some(RETURNING_FIELD)
-            }) {
-                CallEntry::Reads
-            } else if element_read_body(body) {
-                CallEntry::ReadsElement
-            } else if forwarding_read_body(body) {
-                CallEntry::ForwardsRead
-            } else if capture_read_body(body) {
-                CallEntry::ReadsCapture
-            } else if this_read_body(body) {
-                CallEntry::ReadsThis
-            } else if capture_append::recognizes(body, &code.constants) {
-                CallEntry::AppendsCapture
-            } else {
-                CallEntry::Activates
-            };
+            let entry = body_entry(body, &code.constants);
             TargetBody {
                 entry,
                 constructs,
@@ -19836,15 +19650,7 @@ fn derive_lane_view<'live, H: Host>(
     }
     let entries = entries.into_boxed_slice();
     let returns_from_entry = reads_accumulator.first() == Some(&false) && entry_run_returns(&decoded, &exits);
-    let activation = function
-        .parameter_registers
-        .filter(|_| function.locals == 0)
-        .map(|parameters| ActivationShape {
-            registers: function.registers,
-            parameters,
-            params: function.params,
-            initial: function.initial_register.value(),
-        });
+    let activation = ActivationShape::of(function);
     let hinted_records = |names: bool| -> Box<[u32]> {
         decoded
             .iter()
@@ -20684,28 +20490,47 @@ fn specialize_array_literals<H: Host>(records: &mut [LaneInstruction]) {
 /// test, the update, jump and test (`lane_inc_dec_loop`). The jump and test records stay, for
 /// a jump that enters them and for the update's own slow path.
 fn specialize_update_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
-    let updates = [lane_inc_dec::<H, false> as Handler as *const (), lane_inc_dec::<H, true> as Handler as *const ()];
     let jumps = [lane_jump_always::<H, false> as Handler as *const (), lane_jump_always::<H, true> as Handler as *const ()];
     for pc in 0..records.len().saturating_sub(1) {
         let (Some(decrement), Some(backward)) = (
-            updates.iter().position(|&update| update == records[pc].handler),
+            update_direction::<H>(records[pc].handler),
             jumps.iter().position(|&jump| jump == records[pc + 1].handler),
         ) else {
             continue;
         };
-        let fused: Handler = match (decrement == 1, backward == 1) {
-            (false, false) => lane_inc_dec_jump::<H, false, false>,
-            (false, true) => lane_inc_dec_jump::<H, false, true>,
-            (true, false) => lane_inc_dec_jump::<H, true, false>,
-            (true, true) => lane_inc_dec_jump::<H, true, true>,
-        };
+        let fused = update_jump::<H>(decrement, backward == 1);
         let test = decoded[pc + 1].imm() as usize;
         let looped = (backward == 1)
             .then(|| records.get(test))
             .flatten()
             .filter(|test| test.handler == relation_jump_handler::<H, false>(u32::from(test.a), false) as *const ())
-            .map(|test| update_loop_handler::<H>(u32::from(test.a), decrement == 1, test.b == records[pc].a));
+            .map(|test| update_loop_handler::<H>(u32::from(test.a), decrement, test.b == records[pc].a));
         records[pc].handler = looped.unwrap_or(fused) as *const ();
+    }
+}
+
+/// Whether a record running `handler`, an `IncDec`'s own (`lane_inc_dec`), decrements;
+/// `None` for any other record.
+fn update_direction<H: Host>(handler: *const ()) -> Option<bool> {
+    let [increment, decrement] =
+        [lane_inc_dec::<H, false> as Handler as *const (), lane_inc_dec::<H, true> as Handler as *const ()];
+    if handler == increment {
+        Some(false)
+    } else if handler == decrement {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// The fused update and jump (`lane_inc_dec_jump`) of an `IncDec` that decrements or not,
+/// and a jump backward or forward.
+fn update_jump<H: Host>(decrement: bool, backward: bool) -> Handler {
+    match (decrement, backward) {
+        (false, false) => lane_inc_dec_jump::<H, false, false>,
+        (false, true) => lane_inc_dec_jump::<H, false, true>,
+        (true, false) => lane_inc_dec_jump::<H, true, false>,
+        (true, true) => lane_inc_dec_jump::<H, true, true>,
     }
 }
 
@@ -21319,23 +21144,7 @@ impl<H: Host> Vm<H> {
         let view = unsafe { &*view };
         let base = view.records();
         let registers = Registers(self.frames[*frame].registers.as_mut_ptr());
-        // A run that credits loop work keeps the floor raised, so its backward jumps count in
-        // `lane_safepoint` (`LaneContext::backedges_left`).
-        let floor = if self.heap.should_collect() || self.lane_credits_backedges(code, program) {
-            COLLECTION_DUE_FLOOR
-        } else {
-            stack_pointer().saturating_sub(LANE_STACK_SLACK)
-        };
-        // The floor lives in the VM's interrupt state, where a termination request raises it;
-        // entry sets it before reading the request, the request raises it after setting
-        // itself, so one of the two sees the other.
-        let floor_cell: *const std::sync::atomic::AtomicUsize = self.execution_interrupt.lane_floor();
-        let outer_cell = LANE_FLOOR.with(|current| current.replace(floor_cell));
-        // SAFETY: the VM holds its interrupt state for the whole run.
-        let outer_floor = unsafe { &*floor_cell }.swap(floor, std::sync::atomic::Ordering::SeqCst);
-        if self.execution_interrupt.is_termination_requested() {
-            unsafe { &*floor_cell }.store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::SeqCst);
-        }
+        let entered = self.enter_lane_floor(code, program);
         self.lane_stack.refresh_activation_limit();
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
         let mut context = LaneContext {
@@ -21384,7 +21193,7 @@ impl<H: Host> Vm<H> {
             outer: NO_OUTER_WALK,
             frame_storage: NO_FRAME_STORAGE,
             proofs: crate::heap::ArrayStorageProofs::new(),
-            floor: floor_cell,
+            floor: entered.cell,
         };
         let cx: *mut LaneContext<H> = &mut context;
         let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
@@ -21423,19 +21232,46 @@ impl<H: Host> Vm<H> {
                 unsafe { (binding.resume)(outer) };
             }
         }
-        // An enclosing run of this VM keeps a raised floor raised.
-        // SAFETY: as above.
-        let floor = unsafe { &*floor_cell };
-        if self.execution_interrupt.is_termination_requested() {
-            floor.store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::SeqCst);
-        } else {
-            floor.store(outer_floor, std::sync::atomic::Ordering::Relaxed);
-        }
-        LANE_FLOOR.with(|current| current.set(outer_cell));
+        self.leave_lane_floor(entered);
         // SAFETY: as above.
         *frame = unsafe { (*cx).frame };
         // SAFETY: handlers only return records of the active view.
         unsafe { ip.offset_from((*cx).base) as usize }
+    }
+
+    /// Raises the stack floor for a lane run of `program`: below the native stack's slack, or
+    /// at once where a collection is due or the run credits loop work, so its backward jumps
+    /// count in `lane_safepoint` (`LaneContext::backedges_left`). The floor lives in the VM's
+    /// interrupt state, where a termination request raises it; entry sets it before reading
+    /// the request, the request raises it after setting itself, so one of the two sees the
+    /// other.
+    fn enter_lane_floor(&mut self, code: &ResidualProgram, program: ProgramId) -> LaneFloor {
+        let floor = if self.heap.should_collect() || self.lane_credits_backedges(code, program) {
+            COLLECTION_DUE_FLOOR
+        } else {
+            stack_pointer().saturating_sub(LANE_STACK_SLACK)
+        };
+        let cell: *const std::sync::atomic::AtomicUsize = self.execution_interrupt.lane_floor();
+        let outer_cell = LANE_FLOOR.with(|current| current.replace(cell));
+        // SAFETY: the VM holds its interrupt state for the whole run.
+        let outer_floor = unsafe { &*cell }.swap(floor, std::sync::atomic::Ordering::SeqCst);
+        if self.execution_interrupt.is_termination_requested() {
+            unsafe { &*cell }.store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::SeqCst);
+        }
+        LaneFloor { cell, outer_cell, outer_floor }
+    }
+
+    /// Restores the floor `entered` raised: an enclosing run of this VM keeps a raised floor
+    /// raised, and a termination request raises it for good.
+    fn leave_lane_floor(&self, entered: LaneFloor) {
+        // SAFETY: the VM holds its interrupt state for the whole run.
+        let floor = unsafe { &*entered.cell };
+        if self.execution_interrupt.is_termination_requested() {
+            floor.store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::SeqCst);
+        } else {
+            floor.store(entered.outer_floor, std::sync::atomic::Ordering::Relaxed);
+        }
+        LANE_FLOOR.with(|current| current.set(entered.outer_cell));
     }
 
     /// `Vm::call_value` of `callee` from the native a lane called (`LaneNativeCall`), run as
