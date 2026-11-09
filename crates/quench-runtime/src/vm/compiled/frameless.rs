@@ -167,14 +167,14 @@ pub(super) fn emit_activation(
     let fits = emit_fits(builder, (entry, meta), passed.len() as u16, receiver.is_none());
     let registers = builder.ins().ushr_imm_u(meta, i64::from(META_REGISTERS));
     let registers = builder.ins().band_imm_u(registers, i64::from(u16::MAX));
-    let (top, record) = emit_room(builder, payload, exact.context, registers, fits, framed);
+    let (top, end, record) = emit_room(builder, payload, exact.context, registers, fits, framed);
     let (this, constructed) = match receiver {
         Some(receiver) => (emit_this(builder, entry, receiver, record), None),
         None => emit_receiver(builder, payload, (callee, record), framed),
     };
-    emit_window(builder, (arguments, top), passed, registers);
+    emit_window(builder, (arguments, top, end), passed);
     emit_record(builder, record, pc, callee);
-    let status = emit_enter(builder, (payload, exact.context, exact.result_pointer), entry, (top, registers, record, this));
+    let status = emit_enter(builder, (payload, exact.context, exact.result_pointer), entry, (top, end, record, this));
     emit_returned(builder, (payload, arguments), exact, (status, constructed), (destination, next));
 }
 
@@ -271,7 +271,7 @@ fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir:
 /// The window and shadow record of the activation, where the call fits its parameters
 /// (`fits`), the stacks and the native stack have room; else `framed`.
 fn emit_room(builder: &mut FunctionBuilder<'_>, payload: ir::Value, context: ir::Value, registers: ir::Value,
-    fits: ir::Value, framed: ir::Block) -> (ir::Value, ir::Value) {
+    fits: ir::Value, framed: ir::Block) -> (ir::Value, ir::Value, ir::Value) {
     let top = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, native_top));
     let end = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, native_end));
     let bytes = builder.ins().imul_imm_u(registers, size_of::<Value>() as i64);
@@ -291,29 +291,28 @@ fn emit_room(builder: &mut FunctionBuilder<'_>, payload: ir::Value, context: ir:
     let enter = builder.create_block();
     builder.ins().brif(room, enter, &[], framed, &[]);
     builder.switch_to_block(enter);
-    (top, record)
+    (top, next, record)
 }
 
-/// The window's registers: the passed values, then `undefined` up to the register count, as
-/// a plain activation's (`Frame::place_plain_parameters`).
-fn emit_window(builder: &mut FunctionBuilder<'_>, (arguments, top): (ir::Value, ir::Value), passed: &[i32], registers: ir::Value) {
+/// The window's registers, from `top` to `end`: the passed values, then `undefined` up to the
+/// register count, as a plain activation's (`Frame::place_plain_parameters`). The fill walks
+/// one slot pointer, so the loop carries nothing else.
+fn emit_window(builder: &mut FunctionBuilder<'_>, (arguments, top, end): (ir::Value, ir::Value, ir::Value), passed: &[i32]) {
     for (index, offset) in passed.iter().enumerate() {
         let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, *offset);
         builder.ins().store(MemFlagsData::trusted(), value, top, (index * size_of::<Value>()) as i32);
     }
     let (header, body, filled) = (builder.create_block(), builder.create_block(), builder.create_block());
-    let index = builder.append_block_param(header, types::I64);
-    let start = builder.ins().iconst(types::I64, passed.len() as i64);
-    builder.ins().jump(header, &[ir::BlockArg::Value(start)]);
+    let slot = builder.append_block_param(header, types::I64);
+    let undefined = builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
+    let first = builder.ins().iadd_imm_u(top, (passed.len() * size_of::<Value>()) as i64);
+    builder.ins().jump(header, &[ir::BlockArg::Value(first)]);
     builder.switch_to_block(header);
-    let more = builder.ins().icmp(IntCC::UnsignedLessThan, index, registers);
+    let more = builder.ins().icmp(IntCC::UnsignedLessThan, slot, end);
     builder.ins().brif(more, body, &[], filled, &[]);
     builder.switch_to_block(body);
-    let offset = builder.ins().imul_imm_u(index, size_of::<Value>() as i64);
-    let address = builder.ins().iadd(top, offset);
-    let undefined = builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
-    builder.ins().store(MemFlagsData::trusted(), undefined, address, 0);
-    let following = builder.ins().iadd_imm_u(index, 1);
+    builder.ins().store(MemFlagsData::trusted(), undefined, slot, 0);
+    let following = builder.ins().iadd_imm_u(slot, size_of::<Value>() as i64);
     builder.ins().jump(header, &[ir::BlockArg::Value(following)]);
     builder.switch_to_block(filled);
 }
@@ -346,7 +345,7 @@ fn emit_this(builder: &mut FunctionBuilder<'_>, entry: ir::Value, receiver: ir::
 /// Pushes the activation onto the payload, calls the callee's entry at its first PC and pops
 /// it again: its status.
 fn emit_enter(builder: &mut FunctionBuilder<'_>, (payload, context, result): (ir::Value, ir::Value, ir::Value),
-    entry: ir::Value, (top, registers, record, this): (ir::Value, ir::Value, ir::Value, ir::Value)) -> ir::Value {
+    entry: ir::Value, (top, next, record, this): (ir::Value, ir::Value, ir::Value, ir::Value)) -> ir::Value {
     let offset = |field: usize| field as i32;
     let fields = [
         std::mem::offset_of!(JsStepDispatch, capture_values),
@@ -361,8 +360,6 @@ fn emit_enter(builder: &mut FunctionBuilder<'_>, (payload, context, result): (ir
     let captures = [std::mem::offset_of!(CallEntry, capture_values), std::mem::offset_of!(CallEntry, capture_len),
         std::mem::offset_of!(CallEntry, capture_stores)]
         .map(|field| builder.ins().load(types::I64, MemFlagsData::trusted(), entry, offset(field)));
-    let bytes = builder.ins().imul_imm_u(registers, size_of::<Value>() as i64);
-    let next = builder.ins().iadd(top, bytes);
     let pushed = builder.ins().iadd_imm_u(record, size_of::<ShadowRecord>() as i64);
     for (field, value) in fields.iter().zip(captures.into_iter().chain([this, next, pushed])) {
         builder.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
