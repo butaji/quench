@@ -2316,13 +2316,25 @@ impl Lowering<'_, '_> {
     }
 
     /// The guards' leaves to fill, once the entry's shared leave (`entry_conform`) is filled:
-    /// it returns `LaneExit::Entry`, with no register written yet to write back.
+    /// it leaves with the plan's entry leave, with no register written yet to write back.
     fn take_leaves(&mut self) -> Vec<(ir::Block, Vec<RegisterFact>, u32, u32)> {
         if let Some(block) = self.entry_exit.take() {
             self.switch_to(block, true);
-            self.return_at(super::LaneExit::Entry.word());
+            self.return_entry();
         }
         std::mem::take(&mut self.pending)
+    }
+
+    /// The leave of a failed entry proof, before any instruction ran: a lane plan names it
+    /// (`LaneExit::Entry`), so the activation's specialization drops the contract that
+    /// failed; a source-PC region resumes at its entry PC, where its canonical code proves
+    /// the same facts; a Number entry misses, restarting the original call.
+    fn return_entry(&mut self) {
+        match self.completion {
+            Completion::StatusAndPc => self.return_at(super::LaneExit::Entry.word()),
+            Completion::SourcePc => self.return_at(self.coverage.entry() as u64),
+            Completion::Number => self.return_at(0),
+        }
     }
 
     /// Lower the instruction at `pc`; whether control falls through to the next.
@@ -5525,7 +5537,9 @@ mod tests {
             let before = registers.clone();
             let mut word = u64::MAX;
             let status = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast(), &mut word) };
-            assert_eq!((status, word), (NATIVE_JS_STOPPED, 0));
+            // The entry's proof failed: the leave names it (`LaneExit::Entry`, which resumes
+            // at the first record), not a PC the code would continue at.
+            assert_eq!((status, word), (NATIVE_JS_STOPPED, super::super::LaneExit::Entry.word()));
             assert_eq!(registers, before);
         }
     }
