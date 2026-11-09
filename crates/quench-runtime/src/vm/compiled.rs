@@ -2543,24 +2543,13 @@ impl JsGeneralCallout {
 #[cfg(feature = "aot")]
 pub(super) enum NativeStopControl { Unbounded, Unproven }
 
-/// A relocatable typed region and its guarded entry inputs. JIT general
-/// dispatch supplies no static regions; its hot region publisher owns entry.
+/// A typed region, which the caller's body inlines, and its guarded entry inputs. JIT
+/// general dispatch supplies no static regions; its hot region publisher owns entry.
 #[cfg_attr(not(feature = "aot"), allow(dead_code))]
 pub(super) struct StaticRegionEntry<'a> {
     pub(super) range: std::ops::Range<usize>,
-    pub(super) target: StaticRegionTarget,
     pub(super) fields: &'a [FieldUse],
-    /// Complete canonical register footprint of the verified no-GC residual.
-    pub(super) frame: &'a [Register],
-}
-
-#[cfg_attr(not(feature = "aot"), allow(dead_code))]
-#[derive(Clone, Copy)]
-pub(super) enum StaticRegionTarget {
-    Symbol(u32),
-    /// A live address of a scalar region compiled beside its caller.
-    #[cfg(feature = "aot")]
-    Address(usize),
+    pub(super) function: &'a ir::Function,
 }
 
 pub(super) fn lower_js_general_dispatch(
@@ -3712,9 +3701,8 @@ pub(super) fn lower_js_general_dispatch(
     for entry in _scalar_regions {
         let gate = typed_entries.iter().find(|(unit, _, _)| unit.header == entry.range.start)
             .map_or(entries[entry.range.start], |(_, _, fallback)| *fallback);
-        let call = scalar_region::emit_entry(&mut builder, isa, entry, gate,
+        scalar_region::emit_entry(&mut builder, isa, entry, gate,
             context, payload, arguments, result_pointer, &blocks, &entries, invalid_pc, &control);
-        frame_flow.residual(call, entry.frame);
     }
     #[cfg(feature = "aot")]
     let mut typed_returns = Vec::new();
@@ -3762,16 +3750,17 @@ pub(super) fn lower_js_general_dispatch(
     builder.seal_all_blocks();
     builder.into_builder().finalize(isa.frontend_config());
     #[cfg(feature = "aot")]
-    if !typed_entries.is_empty() {
+    if !typed_entries.is_empty() || !_scalar_regions.is_empty() {
         use cranelift_codegen::inline::{Inline, InlineCommand};
-        struct TypedResidual<'a>(&'a [StaticTypedRegionEntry<'a>]);
+        struct TypedResidual<'a>(&'a [StaticTypedRegionEntry<'a>], &'a [StaticRegionEntry<'a>]);
         impl Inline for TypedResidual<'_> {
             fn inline(&mut self, caller: &ir::Function, _: ir::Inst, _: ir::Opcode,
                 callee: ir::FuncRef, _: &[ir::Value]) -> InlineCommand<'_> {
                 let ir::ExternalName::User(name) = caller.dfg.ext_funcs[callee].name else { return InlineCommand::KeepCall };
-                let Some(unit) = self.0.iter().find(|unit|
-                    Some(&caller.params.user_named_funcs()[name]) == unit.function.name.get_user()) else { return InlineCommand::KeepCall; };
-                InlineCommand::Inline { callee: std::borrow::Cow::Borrowed(unit.function), visit_callee: false }
+                let named = |function: &ir::Function| Some(&caller.params.user_named_funcs()[name]) == function.name.get_user();
+                let Some(function) = self.0.iter().map(|unit| unit.function).chain(self.1.iter().map(|entry| entry.function))
+                    .find(|function| named(function)) else { return InlineCommand::KeepCall; };
+                InlineCommand::Inline { callee: std::borrow::Cow::Borrowed(function), visit_callee: false }
             }
         }
         for unit in _typed_regions {
@@ -3781,7 +3770,7 @@ pub(super) fn lower_js_general_dispatch(
         // verified helper calls from the caller's guest/semantic callouts.
         let first_inlined = native.dfg.num_insts();
         let mut context = cranelift_codegen::Context::for_function(native);
-        if !context.inline(TypedResidual(_typed_regions)).map_err(|_| "typed-residual-inlining-failed")? {
+        if !context.inline(TypedResidual(_typed_regions, _scalar_regions)).map_err(|_| "typed-residual-inlining-failed")? {
             return Err("typed-residual-call-not-found");
         }
         native = context.func;

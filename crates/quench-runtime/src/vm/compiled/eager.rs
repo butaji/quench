@@ -195,13 +195,9 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
             return Ok(None);
         }
         let (fallback, operands, table) = self.lower_fallback(function_id, sites, function.code.len(), isa)?;
-        let (mut code, scalar) = self.lower_scalar_regions(program, function_id, isa)?;
-        let scalar_entries: Vec<_> = scalar.iter().zip(&code).map(|(region, compiled)| StaticRegionEntry {
-            range: region.range.clone(),
-            target: StaticRegionTarget::Address(compiled.pointer() as usize),
-            fields: &region.fields,
-            frame: &region.frame,
-        }).collect();
+        let scalar = lower_static_scalar_regions(program, function_id, isa);
+        let scalar_entries: Vec<_> = scalar.iter().map(|region|
+            StaticRegionEntry { range: region.range.clone(), fields: &region.fields, function: &region.function }).collect();
         let units = self.frozen_units(program, function_id, isa);
         let typed_entries: Vec<_> = units.iter().map(|unit|
             StaticTypedRegionEntry { header: unit.header, function: &unit.function }).collect();
@@ -211,7 +207,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
         let callout = JsGeneralCallout::Address(fallback.pointer() as usize);
         let Some((ladder, typed, scalars)) = self.lower_ladder(program, function_id, sites, isa,
             callout, &scalar_entries, &typed_entries) else { return Ok(None) };
-        code.push(fallback);
+        let mut code = vec![fallback];
         code.extend(ladder);
         self.owners.operand_arrays.push(operands);
         self.owners.entry_tables.push(table);
@@ -273,17 +269,6 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
         let fallback = publish_eager_graph(
             lower_eager_fallback(instruction_count, table.as_ptr(), operands.as_ptr(), isa)?, isa)?;
         Ok((fallback, operands, table))
-    }
-
-    fn lower_scalar_regions(&mut self, program: &ResidualProgram, function_id: u32,
-        isa: &dyn cranelift_codegen::isa::TargetIsa,
-    ) -> Result<(Vec<CodeMemory>, Vec<scalar_region::ScalarRegion>), String> {
-        let scalar = lower_static_scalar_regions(program, function_id, isa);
-        let mut code = Vec::with_capacity(scalar.len());
-        for region in &scalar {
-            code.push(publish_eager_graph(region.function.clone(), isa)?);
-        }
-        Ok((code, scalar))
     }
 }
 
