@@ -539,12 +539,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), Value::integer(sum));
                 self.wasm_jump(p, f, i, pc, sum != 0);
             }
-            Op::WasmBranchTable => {
-                // `pc` already names the first entry; out-of-range selectors
-                // take the default entry after the cases.
-                let case = self.read(f, i.register_a()).wasm_bits32().min(i.imm());
-                *pc += case as usize;
-            }
+            Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
             Op::WasmJumpI32Zero => {
                 let taken = self.read(f, i.register_a()).wasm_bits32() == 0;
                 self.wasm_jump(p, f, i, pc, taken);
