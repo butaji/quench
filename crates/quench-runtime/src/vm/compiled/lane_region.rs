@@ -2716,7 +2716,7 @@ impl Lowering<'_, '_> {
     /// `operation` by the interpreter's semantics (`staged::step`) on the emit stage, with
     /// `edges` as its control edges. The lane specializer decides every truthiness itself, so
     /// no step is left unresolved.
-    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<CheckedObject>)
+    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, CheckedObject>)
         -> crate::staged::Step<ir::Value, ()> {
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
@@ -4559,7 +4559,7 @@ impl Lowering<'_, '_> {
                     let ok = self.ins().band(same, admitted);
                     self.ins().brif(ok, matched, &[], next, &[]);
                     self.builder.switch_to_block(matched);
-                    widens.extend(self.store_direct(field, object_bits, object, header.inline, properties, None, value, ty, done, general)?);
+                    widens.extend(self.store_direct(state, field, object_bits, object, header.inline, properties, None, value, ty, done, general)?);
                     self.builder.switch_to_block(next);
                 }
                 self.ins().jump(general, &[]);
@@ -4591,7 +4591,7 @@ impl Lowering<'_, '_> {
         };
         self.ins().brif(ok, direct, &[], general, &[]);
         self.builder.switch_to_block(direct);
-        let widen = self.store_direct(field, object_bits, object, inline, properties, projection, value, ty, done, general)?;
+        let widen = self.store_direct(state, field, object_bits, object, inline, properties, projection, value, ty, done, general)?;
         self.finish_store(state, object_bits, atom, site, value, ty, exit, dynamic_header, general,
             widen.as_slice(), done);
         Some(())
@@ -4603,7 +4603,7 @@ impl Lowering<'_, '_> {
     /// continues at the block returned, which the caller completes by the VM's hit, which
     /// joins its type (`ValueArena::note_slot_value`); a raw store would not.
     #[allow(clippy::too_many_arguments)]
-    fn store_direct(&mut self, field: NativeFieldLoad, object_bits: ir::Value, object: ir::Value, inline: ir::Value,
+    fn store_direct(&mut self, state: &mut State, field: NativeFieldLoad, object_bits: ir::Value, object: ir::Value, inline: ir::Value,
         properties: ir::Value, projection: Option<CheckedObject>, value: ir::Value, ty: Type, done: ir::Block,
         general: ir::Block) -> Option<Option<ir::Block>> {
         let (widen, direct_ty) = if !ty.is_subtype(field.ty) {
@@ -4629,8 +4629,9 @@ impl Lowering<'_, '_> {
                 CheckedObject::prove(&mut self.builder, object, inline, properties, plan, PackedAccess::Reload, general)?
             }
         };
-        let address = projection.arena_address(&mut self.builder, field.slot, general)?;
-        self.ins().store(MemFlagsData::trusted(), value, address, 0);
+        let step = self.step(state, frame::Edges::ValueGuarded { miss: general },
+            crate::staged::Operation::WriteField { base: 0, slot: field.slot, ty: direct_ty, value, proof: projection });
+        if !matches!(step, crate::staged::Step::Value(_)) { return None; }
         self.ins().jump(done, &[]);
         Some(widen)
     }

@@ -140,6 +140,13 @@ pub(crate) trait Frame<S: Stage> {
         None
     }
 
+    /// Write `value` to the proven slot; `None` where the frame has no heap or the slot is
+    /// not writable, leaving the instruction to the host.
+    #[inline(always)]
+    fn field_write(&mut self, _stage: &mut S, _base: Register, _slot: u16, _ty: Type, _value: S::Word, _proof: S::Proof) -> Option<()> {
+        None
+    }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -157,7 +164,7 @@ pub(crate) trait Frame<S: Stage> {
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
-pub(crate) enum Operation<P> {
+pub(crate) enum Operation<W, P> {
     /// Copy register `source` into `destination` with its facts.
     Move { destination: Register, source: Register },
     /// Define `destination` from `constant`.
@@ -178,6 +185,8 @@ pub(crate) enum Operation<P> {
     RequireObjectCoercible { register: Register },
     /// The proven slot `slot` of `base`'s object, under `proof`, as a value (`Frame::field_read`).
     ReadField { base: Register, slot: u16, ty: Type, proof: P },
+    /// Write `value` to the proven slot `slot` of `base`'s object under `proof`.
+    WriteField { base: Register, slot: u16, ty: Type, value: W, proof: P },
 }
 
 /// Which of an instruction's two control edges it takes.
@@ -202,7 +211,7 @@ pub(crate) enum Step<W, C> {
 
 /// Run `operation` on `frame`; its word or where control goes.
 #[inline(always)]
-pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Proof>) -> Step<S::Word, F::Control> {
+pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Move { destination, source } => Step::Value(frame.move_register(stage, destination, source)),
         Operation::LoadConst { destination, constant } => {
@@ -225,6 +234,11 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             Some((value, _)) => Step::Value(value),
             None => Step::Unresolved,
         },
+        Operation::WriteField { base, slot, ty, value, proof } =>
+            match frame.field_write(stage, base, slot, ty, value, proof) {
+                Some(()) => Step::Value(value),
+                None => Step::Unresolved,
+            },
     }
 }
 
