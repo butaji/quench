@@ -7,75 +7,11 @@ use crate::bytecode::{
 /// derives, and the root masks a collection reads.
 pub(crate) use set::RegisterSet; mod set;
 
-mod solve;
+mod solve; mod masks; pub(crate) mod windows;
 pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_successors, analyze_transfers};
+pub(crate) use masks::RegisterMasks;
 use solve::LiveMask;
 
-/// A function's live registers before each instruction (`analyze`), held at the width they
-/// need: most functions use fewer than 64 registers, so their masks take half the space
-/// (V8-v7 RegExp: 95 KiB of masks at its heap's peak, all within 64 registers).
-#[derive(Clone, Debug)]
-pub(crate) enum RegisterMasks {
-    Narrow(Box<[u64]>),
-    Half(Box<[u128]>),
-    Wide(Box<[RegisterSet]>),
-}
-
-impl RegisterMasks {
-    /// `masks` at the narrowest width that holds every one of them.
-    pub(crate) fn new(masks: Vec<RegisterSet>) -> Self {
-        if let Some(narrow) = masks.iter().map(|&mask| u64::try_from(mask).ok()).collect::<Option<Box<[u64]>>>() { return Self::Narrow(narrow); }
-        masks.iter().map(|&mask| mask.as_u128()).collect::<Option<Box<[u128]>>>()
-            .map_or_else(|| Self::Wide(masks.into_boxed_slice()), Self::Half)
-    }
-
-    /// `function`'s masks (`analyze`), solved at the width its registers need, when liveness
-    /// covers it: a wide solve's tables before narrowing were 30 MB at a cold mandreel run's
-    /// peak (`global_init`: 614K instructions over 9 registers).
-    pub(crate) fn of(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> Option<Self> {
-        (function.registers <= ROOT_MAP_REGISTERS).then(|| if u32::from(function.registers) <= u64::BITS {
-            Self::Narrow(live_masks::<u64>(function, methods, fields, superinstructions).into_boxed_slice())
-        } else {
-            Self::new(live_masks::<RegisterSet>(function, methods, fields, superinstructions))
-        })
-    }
-
-    /// The registers live before instruction `pc`, one past the last included.
-    pub(crate) fn get(&self, pc: usize) -> Option<RegisterSet> {
-        match self {
-            Self::Narrow(masks) => masks.get(pc).map(|&mask| RegisterSet::from(mask)),
-            Self::Half(masks) => masks.get(pc).map(|&mask| RegisterSet::from(mask)),
-            Self::Wide(masks) => masks.get(pc).copied(),
-        }
-    }
-
-    /// A missing mask or a register outside its width remains conservatively live.
-    pub(crate) fn is_live(&self, pc: usize, register: Register) -> bool {
-        self.get(pc).is_none_or(|mask| !register_dead(mask, usize::from(register)))
-    }
-
-    #[cfg(feature = "profile-aggregate")]
-    pub(crate) fn len(&self) -> usize {
-        match self {
-            Self::Narrow(masks) => masks.len(),
-            Self::Wide(masks) => masks.len(),
-        }
-    }
-
-    /// The bytes the masks occupy.
-    pub(crate) fn bytes(&self) -> usize {
-        match self {
-            Self::Narrow(masks) => size_of_val::<[u64]>(masks),
-            Self::Half(masks) => size_of_val::<[u128]>(masks),
-            Self::Wide(masks) => size_of_val::<[RegisterSet]>(masks),
-        }
-    }
-
-    #[cfg(feature = "profile-aggregate")]
-    pub(crate) fn iter(&self) -> impl Iterator<Item = RegisterSet> + '_ {
-        (0..self.len()).filter_map(|pc| self.get(pc))
-    }
-}
 /// The registers a `RegisterSet` covers. Liveness, and with it root maps, register promotion
 /// and move coalescing, covers only functions whose registers fit.
 pub(crate) const ROOT_MAP_REGISTERS: u16 = RegisterSet::BITS as u16;
@@ -148,7 +84,7 @@ pub(crate) fn register_roots(function: &Function, methods: &(impl MethodArgument
 
 /// `function`'s live registers before each instruction, solved at the width `M`, which holds
 /// every one of its registers.
-fn live_masks<M: LiveMask>(
+pub(super) fn live_masks<M: LiveMask>(
     function: &Function,
     methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
@@ -196,15 +132,20 @@ pub(super) fn transfers(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> Option<Vec<(RegisterSet, RegisterSet)>> {
-    if function.registers > ROOT_MAP_REGISTERS {
-        return None;
-    }
-    Some(
-        function
-            .instructions()
-            .map(|instruction| transfer(instruction, methods, fields, superinstructions))
-            .collect(),
-    )
+    (function.registers <= ROOT_MAP_REGISTERS).then(|| all_transfers(function, methods, fields, superinstructions))
+}
+
+/// Every instruction's transfers, at the set's width: a body past it is solved per window.
+pub(super) fn all_transfers(
+    function: &Function,
+    methods: &(impl MethodArguments + ?Sized),
+    fields: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) -> Vec<(RegisterSet, RegisterSet)> {
+    function
+        .instructions()
+        .map(|instruction| transfer(instruction, methods, fields, superinstructions))
+        .collect()
 }
 
 /// One instruction's (uses, definitions) register masks, the entry `transfers` records for it.

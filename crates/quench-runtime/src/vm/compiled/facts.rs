@@ -372,7 +372,7 @@ mod tests {
         let program = crate::Engine::specialize(
             "function caller(f, value) { f(value); return value; }", "shape-call.js").unwrap();
         let function = program.function(1);
-        let call = function.instructions().find(|instruction| instruction.op() == Op::Call).unwrap();
+        let call = function.instructions().find(|instruction| instruction.op().is_call()).unwrap();
         let null = Type::language(crate::ValueType::Null);
         for ty in [Type::direct_object(7), Type::direct_object(7).join(null),
             Type::direct_object(7).join(Type::NULLISH), Type::INT32, Type::ANY] {
@@ -395,7 +395,7 @@ mod tests {
         let program = crate::Engine::specialize(
             "function make(C) { return new C(1); }", "construct.js").unwrap();
         let function = program.function(1);
-        let construct = function.instructions().find(|instruction| instruction.op() == Op::Construct).unwrap();
+        let construct = function.instructions().find(|instruction| instruction.op().is_construct()).unwrap();
         let mut types = vec![Type::direct_object(7); usize::from(function.registers)];
         assert!(matches!(transfer(&mut types, construct, &program.constants,
             &super::super::lane_region::writes, true), Flow::Next));
@@ -418,7 +418,7 @@ mod tests {
         // These fixtures initialize the tested homes from their third input.
         // Promoted locals need not retain debugger names in the bytecode.
         let homes: Vec<_> = instructions[..header].iter().filter(|instruction|
-            instruction.op() == Op::Move && instruction.register_b() == 2)
+            instruction.op().is_move() && instruction.register_b() == 2)
             .map(|instruction| instruction.result_register()).take(names.len()).collect();
         assert_eq!(homes.len(), names.len(), "candidate homes {names:?}: {}", program.disassemble());
         let mut initial = vec![Type::ANY; usize::from(function.registers)];

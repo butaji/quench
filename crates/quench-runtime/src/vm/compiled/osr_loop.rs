@@ -425,6 +425,13 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
     nullish_constant.then_some(IdentityBranch { register })
 }
 
+/// Whether `register` has definitions in `instructions` and every one is a field read, which
+/// may give an object.
+fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
+    let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(register)).peekable();
+    definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())
+}
+
 /// Registers whose bytecode definitions must stay tagged because a nullish comparison
 /// branch observes them. Propagate that fact along moves and through constants; other
 /// definitions need a general value denotation before they can be admitted.
@@ -456,8 +463,11 @@ fn tagged_registers_with_failure(
         )
         // An entry array's register; a dynamic array's (one the region defines) is tagged by
         // its values' webs instead (`representations`), as its register may hold Numbers too.
-        .chain(instructions.iter().filter_map(|instruction| array_read(*instruction))
-            .filter(|register| !dynamic_arrays.contains(register)))
+        .chain(instructions.iter().filter_map(|instruction| match instruction.op().class() {
+            Class::GetIndex => instruction.operand_b().register_index(),
+            Class::SetIndex | Class::RequireObjectCoercible => Some(instruction.register_b()),
+            _ => None,
+        }).filter(|register| !dynamic_arrays.contains(register)))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| {
             if !instruction.op().is_ordinary_call() {
                 return Vec::new();
@@ -474,7 +484,7 @@ fn tagged_registers_with_failure(
                 return Vec::new();
             }
             let base = ImmediateLayout::call_window_base(instruction.imm());
-            let count = if instruction.op() == Op::CallArray {
+            let count = if instruction.op().is_call_array() {
                 1
             } else {
                 usize::from(ImmediateLayout::argument_count(instruction.imm()))
@@ -574,8 +584,8 @@ fn tagged_registers_with_failure(
             if !tagged.contains(&result) {
                 continue;
             }
-            match instruction.op() {
-                Op::LoadConst => {
+            match instruction.op().class() {
+                Class::LoadConst => {
                     if constants.get(instruction.constant_index()).is_none() {
                         if crate::trace::Channel::OsrReject.on() {
                             eprintln!(
@@ -586,12 +596,12 @@ fn tagged_registers_with_failure(
                     }
                 }
                 // Entry captures and cached fields can carry arbitrary boxed values.
-                Op::LoadCapture | Op::GetField | Op::GetIndex => {}
-                Op::Binary if number_comparison(instruction).is_some() => {}
+                Class::LoadCapture | Class::GetField | Class::GetIndex => {}
+                Class::Binary if number_comparison(instruction).is_some() => {}
                 // The type-name index is still a boxed Number at bytecode level. Its
                 // lowering reads only immediate tags and exits before the operation for
                 // heap values, whose language type depends on VM metadata.
-                Op::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => {
+                Class::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => {
                     tagged.insert(instruction.register_b());
                 }
                 _ => {
@@ -806,28 +816,14 @@ pub(super) fn renamed(
 /// The registers an instruction reads as objects: a field read's receiver, an indexed
 /// access's array.
 fn object_reads(instruction: WideInstruction) -> Option<Register> {
-    match instruction.op() {
-        Op::GetField => match instruction.field_lookup()? {
+    match instruction.op().class() {
+        Class::GetField => match instruction.field_lookup()? {
             FieldLookup::Atom { base, .. } => base.register_index(),
             _ => None,
         },
-        _ if let Some(array) = array_read(instruction) => Some(array),
-        _ => instruction.field_store_register(),
-    }
-}
-
-/// Whether `register` has definitions in `instructions` and every one is a field read, which
-/// may give an object.
-fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
-    let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(register)).peekable();
-    definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())
-}
-
-/// The register an indexed access, or the coercibility check before one, reads as its array.
-fn array_read(instruction: WideInstruction) -> Option<Register> {
-    match instruction.op() {
-        Op::GetIndex => instruction.operand_b().register_index(),
-        Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
+        Class::GetIndex => instruction.operand_b().register_index(),
+        Class::SetIndex | Class::RequireObjectCoercible => Some(instruction.register_b()),
+        _ if let Some(receiver) = instruction.field_store_register() => Some(receiver),
         _ => None,
     }
 }
@@ -918,10 +914,10 @@ pub(super) fn inline_region<'a>(
     // The names the loop stores: a receiver read through one changes in the loop.
     let caller_stored: std::collections::BTreeSet<crate::bytecode::Atom> = caller
         .iter()
-        .filter_map(|instruction| match instruction.op() {
-            op if admitted_store(op) => Some(instruction.atom_index()),
+        .filter_map(|instruction| match instruction.op().class() {
+            _ if admitted_store(instruction.op()) => Some(instruction.atom_index()),
             // A fused read the bytecode stores into a `this` field (`inlined_set_this`).
-            Op::GetField if instruction.writes_current_this() => match instruction.field_lookup()? {
+            Class::GetField if instruction.writes_current_this() => match instruction.field_lookup()? {
                 FieldLookup::Site(index) => sites.get(index)?.sink.map(|(atom, _)| atom),
                 FieldLookup::Atom { .. } => None,
             },
@@ -1022,7 +1018,7 @@ pub(super) fn inline_region<'a>(
             body().all(|instruction| instruction.defined_register() != Some(parameter)).then_some(())?;
             let argument = window + parameter;
             let moved = (read_offset + 1..offset).rev().find(|index| caller[*index].defined_register() == Some(argument))?;
-            (caller[moved].op() == Op::Move && !defines(caller[moved].register_b())).then_some(())?;
+            (caller[moved].op().is_move() && !defines(caller[moved].register_b())).then_some(())?;
             bound[usize::from(parameter)] = Some(caller[moved].register_b());
             dropped.insert(header + moved as u32);
         }
@@ -1707,11 +1703,7 @@ fn admit_region(
 /// base renames as a register does. A site's lookup names its base in the site table, which
 /// keeps VM slots.
 fn lifetime_instruction(instruction: WideInstruction) -> bool {
-    matches!(instruction.op(),
-        Op::LoadConst | Op::Move | Op::Binary | Op::NumericAdd | Op::NumericMultiply
-        | Op::IncDec | Op::ToNumeric | Op::Unary | Op::GetIndex | Op::SetIndex
-        | Op::RequireObjectCoercible | Op::Jump | Op::JumpFalse | Op::JumpTrue
-        | Op::JumpBinaryFalse)
+    instruction.op().traits().has(crate::bytecode::Traits::LIFETIME_SAFE)
         || instruction.field_store_register().is_some()
         || (instruction.op().is_get_field()
             && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { base, .. })
@@ -2261,8 +2253,8 @@ fn admit(
     defined_registers: &std::collections::BTreeSet<Register>,
     dynamic_arrays: &std::collections::BTreeSet<Register>,
 ) -> Option<()> {
-    match instruction.op() {
-        Op::LoadConst => {
+    match instruction.op().class() {
+        Class::LoadConst => {
             let index = instruction.constant_index();
             if tagged.contains(&instruction.result_register()) {
                 admission.any_constant(index)?;
@@ -2272,7 +2264,7 @@ fn admit(
                 admission.result(instruction)?;
             }
         }
-        Op::Move => {
+        Class::Move => {
             if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
                 admission.tagged(instruction.register_b())?;
@@ -2281,7 +2273,7 @@ fn admit(
                 admission.number(instruction.register_b())?;
             }
         }
-        Op::LoadCapture => {
+        Class::LoadCapture => {
             (instruction.capture_depth() == 0 && instruction.result_flags() == 0).then_some(())?;
             if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
@@ -2293,7 +2285,7 @@ fn admit(
                 admission.captures.push(slot);
             }
         }
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+        Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
             if number_comparison(instruction).is_some() {
                 (instruction.result_flags() == 0).then_some(())?;
                 admission.tagged(instruction.result_register())?;
@@ -2304,16 +2296,16 @@ fn admit(
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
         }
-        Op::ToNumeric => {
+        Class::ToNumeric => {
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
-        Op::IncDec => {
+        Class::IncDec => {
             instruction.boolean_flag()?;
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
-        Op::Unary => {
+        Class::Unary => {
             if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
                 && tagged.contains(&instruction.result_register())
             {
@@ -2326,12 +2318,12 @@ fn admit(
             }
         }
         // An array the entry guard proved is an object passes.
-        Op::RequireObjectCoercible => {
+        Class::RequireObjectCoercible => {
             if !dynamic_arrays.contains(&instruction.register_b()) {
                 admission.array(instruction.register_b(), false)?;
             }
         }
-        Op::GetIndex => {
+        Class::GetIndex => {
             if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
             } else {
@@ -2345,21 +2337,21 @@ fn admit(
             admission.source(instruction.operand_c())?;
         }
         // Its field is the region's (`LoopRegion::field_reads`).
-        Op::GetField => {
+        Class::GetField => {
             if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
             } else {
                 admission.result(instruction)?;
             }
         }
-        Op::SetIndex => {
+        Class::SetIndex => {
             admission.number(instruction.register_a())?;
             if !dynamic_arrays.contains(&instruction.register_b()) {
                 admission.array(instruction.register_b(), true)?;
             }
             admission.number(instruction.register_c())?;
         }
-        op if admitted_store(op) => {
+        _ if admitted_store(instruction.op()) => {
             let value_register = instruction.register_a();
             // An unchanged entry value can be any tagged value. The VM logs a register
             // receiver in the generational barrier before native writes begin.
@@ -2372,7 +2364,7 @@ fn admit(
                 admission.tagged(receiver)?;
             }
         }
-        Op::LoadEnvLocal => {
+        Class::LoadEnvLocal => {
             if instruction.result_flags() != 0
                 || instruction.returns_from_frame()
                 || instruction.numeric_local_target().is_some()
@@ -2387,11 +2379,11 @@ fn admit(
         }
         // The interpreter runs every other instruction at its exact PC, with the whole state
         // written back (binding lookup, calls, allocation, GC, throws).
-        op if exits_before_effects(op) => {}
+        _ if exits_before_effects(instruction.op()) => {}
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
-        Op::Return | Op::Jump => {}
-        Op::JumpBinaryFalse => {
+        Class::Return | Class::Jump => {}
+        Class::JumpBinaryFalse => {
             if let Some(branch) = identity_branch(instruction, constants) {
                 admission.tagged(branch.register)?;
             } else if let Some((register, constant)) = match (
@@ -2441,7 +2433,7 @@ fn admit(
                 return None;
             }
         }
-        Op::JumpFalse | Op::JumpTrue => {
+        Class::JumpFalse | Class::JumpTrue => {
             let register = instruction.register_a();
             // A tagged value's truthiness is decided natively where the value alone
             // decides it; any other value exits.
@@ -2532,19 +2524,19 @@ impl Webs {
 /// The Number registers an instruction reads.
 pub(super) fn number_reads(instruction: WideInstruction) -> Vec<Register> {
     let register = |operand: Operand| operand.register_index();
-    match instruction.op() {
-        Op::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => Vec::new(),
-        Op::Move | Op::IncDec | Op::Unary | Op::ToNumeric => vec![instruction.register_b()],
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => [
+    match instruction.op().class() {
+        Class::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => Vec::new(),
+        Class::Move | Class::IncDec | Class::Unary | Class::ToNumeric => vec![instruction.register_b()],
+        Class::Binary | Class::NumericAdd | Class::NumericMultiply | Class::JumpBinaryFalse => [
             register(instruction.operand_b()),
             register(instruction.operand_c()),
         ]
         .into_iter()
         .flatten()
         .collect(),
-        Op::JumpFalse | Op::JumpTrue => vec![instruction.register_a()],
-        Op::GetIndex => register(instruction.operand_c()).into_iter().collect(),
-        Op::SetIndex => vec![instruction.register_a(), instruction.register_c()],
+        Class::JumpFalse | Class::JumpTrue => vec![instruction.register_a()],
+        Class::GetIndex => register(instruction.operand_c()).into_iter().collect(),
+        Class::SetIndex => vec![instruction.register_a(), instruction.register_c()],
         _ => Vec::new(),
     }
 }
@@ -2569,9 +2561,9 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         reads.push((instruction.register_b(), Type::ANY));
     }
     if let Some(register) = object_reads(instruction) {
-        let dynamic = match instruction.op() {
-            Op::GetField => region.dynamic_field_reads.contains_key(&(offset as u32)),
-            Op::GetIndex => region.dynamic_arrays.contains(&register)
+        let dynamic = match instruction.op().class() {
+            Class::GetField => region.dynamic_field_reads.contains_key(&(offset as u32)),
+            Class::GetIndex => region.dynamic_arrays.contains(&register)
                 || !region.arrays.iter().any(|array| array.register == register),
             _ if instruction.field_store_register().is_some() => region.dynamic_field_stores.contains_key(&(offset as u32)),
             _ => region.dynamic_arrays.contains(&register),

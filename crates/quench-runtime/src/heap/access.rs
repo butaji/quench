@@ -796,7 +796,7 @@ impl Heap {
         self.object_records.for_each_live(|_, object| visit(object));
     }
 
-    pub(crate) fn object_record_by_id(&self, record_id: u32) -> &Object {
+    #[inline(always)] pub(crate) fn object_record_by_id(&self, record_id: u32) -> &Object {
         // SAFETY: direct-object Values name live records, retired after weak pruning.
         unsafe { self.object_records.get_live(record_id) }
     }

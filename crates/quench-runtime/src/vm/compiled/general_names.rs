@@ -3,7 +3,7 @@
 //! step's own cache probe answers it. A lexical declaration, an accessor or a miss takes the
 //! step at the same PC.
 use super::{emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback, JsStepDispatch, ResidualProgram, Vm};
-use crate::bytecode::{Op, WideInstruction};
+use crate::bytecode::WideInstruction;
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_frontend::FunctionBuilder;
@@ -19,7 +19,7 @@ pub(super) fn lower_global_read(
 ) -> bool {
     let Some(destination) = register_offset(instruction.result_register()) else { return false };
     // A call's receiver register reads `undefined` (`Op::LoadNameCall`).
-    let receiver = if instruction.op() == Op::LoadNameCall {
+    let receiver = if instruction.op().is_load_name_call() {
         let Some(receiver) = register_offset(instruction.register_b()) else { return false };
         Some(receiver)
     } else { None };

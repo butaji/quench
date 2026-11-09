@@ -39,7 +39,7 @@ fn spares_chunk(instruction: WideInstruction) -> bool {
 
 /// `null !== chunk`, into a register other than the chunk's.
 fn tests_chunk_is_not_null(test: WideInstruction, constants: &[crate::bytecode::Constant]) -> bool {
-    test.op() == Op::Binary
+    test.op().is_binary()
         && spares_chunk(test)
         && test.binary_operator() == STRICT_INEQUALITY_OPERATOR
         && test.operand_b().register_index() == Some(CHUNK_PARAMETER)
@@ -49,19 +49,19 @@ fn tests_chunk_is_not_null(test: WideInstruction, constants: &[crate::bytecode::
 
 /// A false test jumps over the append to the result.
 fn skips_append_unless(branch: WideInstruction, test: WideInstruction) -> bool {
-    branch.op() == Op::JumpFalse
+    branch.op().is_jump_false()
         && branch.register_a() == test.result_register()
         && branch.jump_target() as usize == RESULT_PC
 }
 
 /// A capture of the body's own environment, into a register other than the chunk's.
 fn loads_own_capture(load: WideInstruction) -> bool {
-    load.op() == Op::LoadCapture && spares_chunk(load) && load.capture_depth() == 0
+    load.op().is_load_capture() && spares_chunk(load) && load.capture_depth() == 0
 }
 
 /// `binding + chunk`, in that order.
 fn appends_chunk(add: WideInstruction, load: WideInstruction) -> bool {
-    add.op() == Op::Binary
+    add.op().is_binary()
         && add.result_flags() == 0
         && add.binary_operator() == oxc_ast::ast::BinaryOperator::Addition as u32
         && add.operand_b().register_index() == Some(load.result_register())
@@ -70,15 +70,15 @@ fn appends_chunk(add: WideInstruction, load: WideInstruction) -> bool {
 
 /// The sum, stored to the capture the load read.
 fn stores_back(store: WideInstruction, add: WideInstruction, load: WideInstruction) -> bool {
-    store.op() == Op::StoreCapture && store.register_a() == add.result_register() && store.imm() == load.imm()
+    store.op().is_store_capture() && store.register_a() == add.result_register() && store.imm() == load.imm()
 }
 
 /// `return true`, whether or not the append ran.
 fn returns_true(result: WideInstruction, done: WideInstruction, constants: &[crate::bytecode::Constant]) -> bool {
-    result.op() == Op::LoadConst
+    result.op().is_load_const()
         && result.result_flags() & !crate::bytecode::RETURN_REGISTER == 0
         && matches!(constants.get(result.constant_index()), Some(crate::bytecode::Constant::Boolean(true)))
-        && done.op() == Op::Return
+        && done.op().is_return()
         && done.register_a() == result.result_register()
 }
 

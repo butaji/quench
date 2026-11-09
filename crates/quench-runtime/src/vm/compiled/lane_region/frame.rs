@@ -29,6 +29,10 @@ pub(super) struct EmitFrame<'a> {
     /// The activation's local slots (`JsStepDispatch::native_locals`), where this region
     /// may read or write them; `None` for a numeric region, whose activation has none.
     pub(super) locals: Option<ir::Value>,
+    /// The running body's dispatch payload, which semantic helpers take.
+    pub(super) payload: ir::Value,
+    /// The helper table a callout addresses.
+    pub(super) helpers: LaneHelpers,
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -132,6 +136,49 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         Some(())
     }
 
+    /// An object literal: the lane's own allocator, whose DELETED answer (a due collection)
+    /// leaves at the proof's miss edge.
+    #[inline(always)]
+    fn allocate_object(&mut self, stage: &mut Emit<'_, '_>, destination: Register, proof: EmitProof) -> Option<ir::Value> {
+        let EmitProof::Allocation { miss } = proof else { return None };
+        let payload = self.payload;
+        let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewObject);
+        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload]);
+        finish_allocation(stage, self, destination, value, miss);
+        Some(value)
+    }
+
+    /// An array literal: the lane's own allocator, with its holes or its written elements.
+    #[inline(always)]
+    fn allocate_array(&mut self, stage: &mut Emit<'_, '_>, destination: Register, length: ir::Value,
+        elements: ir::Value, proof: EmitProof) -> Option<ir::Value> {
+        let EmitProof::Allocation { miss } = proof else { return None };
+        let payload = self.payload;
+        let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewArray);
+        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload, length, elements]);
+        finish_allocation(stage, self, destination, value, miss);
+        Some(value)
+    }
+
+    /// A typed array element: the kind's load, as a Number word.
+    #[inline(always)]
+    fn typed_index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
+        let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
+        Some(super::typed_element(stage.builder, values, length, kind, index, absent, super::typed_read))
+    }
+
+    /// A typed array element store: the kind's conversion, then its width.
+    #[inline(always)]
+    fn typed_index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
+        proof: EmitProof) -> Option<()> {
+        let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
+        super::typed_element(stage.builder, values, length, kind, index, absent, |builder, load, address| {
+            super::typed_write(builder, load, address, value, absent);
+            value
+        });
+        Some(())
+    }
+
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
         let Edges::Branch { miss, .. } = self.edges else { unreachable!("truthiness needs a branch edge") };
@@ -181,6 +228,17 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
         true
     }
+}
+
+/// A literal allocation's DELETED answer (a due collection) leaves at `miss`; otherwise the
+/// literal is the destination's tagged value.
+#[inline(always)]
+fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<'_>, destination: Register,
+    value: ir::Value, miss: ir::Block) {
+    let made = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+    super::super::emit_js_guard(stage.builder, made, miss);
+    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
+        RegisterFact::definition(Type::ANY, Representation::Tagged));
 }
 
 /// ToBoolean of `register` as an i8, from its proved representation; a tagged value whose

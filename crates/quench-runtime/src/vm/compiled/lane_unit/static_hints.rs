@@ -149,7 +149,7 @@ impl Hints {
     fn targets(&self, id: usize, function: &Function) -> Vec<StaticTargets> {
         let mut methods_by_register = vec![None::<Candidates>; usize::from(function.registers)];
         function.instructions().map(|instruction| {
-            let target = (instruction.op() == Op::Call).then(|| methods_by_register[usize::from(instruction.register_b())].as_deref()
+            let target = (instruction.op().is_call()).then(|| methods_by_register[usize::from(instruction.register_b())].as_deref()
                 .map(|candidates| self.narrow(candidates, instruction.call_window().count))).flatten().unwrap_or_default();
             let method = match instruction.op() {
                 Op::GetField => match instruction.field_lookup() {

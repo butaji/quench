@@ -659,7 +659,7 @@ impl<H: Host> Vm<H> {
         } else {
             instruction.as_wide()
         };
-        if instruction.op() != Op::YieldStar {
+        if !instruction.op().is_yield_star() {
             return None;
         }
         let iterator = *continuation

@@ -47,7 +47,7 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
     vm.execute(&program).unwrap();
     let read_name = vm.lookup_atom("read").unwrap();
     let function = program.functions.iter().find(|f| f.name == Some(read_name)).unwrap();
-    let instruction = function.instructions().find(|i| i.op() == Op::GetField).unwrap();
+    let instruction = function.instructions().find(|i| i.op().is_get_field()).unwrap();
     let field = match instruction.field_lookup().unwrap() {
         FieldLookup::Atom { atom, base, cache_site } => FieldSite {
             base, first: (atom, cache_site), second: None,

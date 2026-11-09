@@ -12,7 +12,7 @@ use super::{
     emit_js_payload_word, emit_lane_helper_call, native_entry_signature, Host, JsExactFallback, JsNativeStep,
     JsStepDispatch, ResidualProgram, Vm, CONTEXT_STACK_LIMIT, JS_GENERAL_RETURN_STATUS_BASE,
 };
-use crate::bytecode::{ConstructArguments, Op, WideInstruction};
+use crate::bytecode::{ConstructArguments, WideInstruction};
 use crate::value::ValueLayout;
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
@@ -140,7 +140,7 @@ pub(super) fn emit_call(
     destination: i32,
     framed: ir::Block,
 ) -> Option<()> {
-    let (window, receiver) = if instruction.op() == Op::Construct {
+    let (window, receiver) = if instruction.op().is_construct() {
         let ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
         (!instruction.is_super_construct()).then_some((window, None))?
     } else { (instruction.call_window(), Some(register_offset(instruction.register_c())?)) };

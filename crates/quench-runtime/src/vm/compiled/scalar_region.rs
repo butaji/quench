@@ -81,7 +81,7 @@ pub(super) fn ranges(program: &ResidualProgram, function_id: u32) -> Vec<std::op
         let mut produced = std::collections::BTreeSet::new();
         let mut removes_roundtrip = false;
         for instruction in &decoded[range.clone()] {
-            removes_roundtrip |= instruction.op().class().eq(Class::IncDec)
+            removes_roundtrip |= instruction.op().is_inc_dec()
                 || osr_loop::number_reads(*instruction)
                     .iter()
                     .any(|register| produced.contains(register));

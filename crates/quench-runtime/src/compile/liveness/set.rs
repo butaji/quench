@@ -7,7 +7,7 @@
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, Not, Shl, Shr, Sub};
 
 /// The number of 64-bit words a set holds.
-const WORDS: usize = 4;
+const WORDS: usize = 8;
 /// The words one `u128` spans, the width a half mask keeps.
 const HALF_WORDS: usize = (u128::BITS / u64::BITS) as usize;
 
@@ -93,13 +93,20 @@ impl RegisterSet {
 
 impl From<u64> for RegisterSet {
     #[inline(always)]
-    fn from(word: u64) -> Self { Self([word, 0, 0, 0]) }
+    fn from(word: u64) -> Self {
+        let mut set = Self::default();
+        set.0[0] = word;
+        set
+    }
 }
 
 impl From<u128> for RegisterSet {
     #[inline(always)]
     fn from(bits: u128) -> Self {
-        Self([bits as u64, (bits >> u64::BITS) as u64, 0, 0])
+        let mut set = Self::default();
+        set.0[0] = bits as u64;
+        set.0[1] = (bits >> u64::BITS) as u64;
+        set
     }
 }
 
@@ -232,16 +239,16 @@ mod tests {
     use super::RegisterSet;
 
     #[test]
-    fn a_set_spans_four_words_and_shifts_within_them() {
-        assert_eq!(RegisterSet::BITS, 256);
-        for register in [0, 63, 64, 127, 128, 255] {
+    fn a_set_spans_eight_words_and_shifts_within_them() {
+        assert_eq!(RegisterSet::BITS, 512);
+        for register in [0, 63, 64, 127, 128, 255, 256, 511] {
             let set = RegisterSet::bit(register);
             assert!(set.contains(register));
             assert!(!set.contains(register + 1));
         }
-        assert_eq!(RegisterSet::bit(200).checked_shl(100).map(|set| set.contains(300)), None);
-        assert!(RegisterSet::bit(8).checked_shl(120).is_some_and(|set| set.contains(128)));
-        assert!((RegisterSet::MAX >> 4).contains(251));
+        assert_eq!(RegisterSet::bit(200).checked_shl(400).map(|set| set.contains(600)), None);
+        assert!(RegisterSet::bit(8).checked_shl(300).is_some_and(|set| set.contains(308)));
+        assert_eq!((RegisterSet::MAX >> 4).contains(507), true);
         assert_eq!(u64::try_from(RegisterSet::bit(63)).map(|word| word.count_ones()), Ok(1));
         assert!(u64::try_from(RegisterSet::bit(64)).is_err());
         assert_eq!(RegisterSet::from(u128::MAX).as_u128(), Some(u128::MAX));

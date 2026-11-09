@@ -148,7 +148,7 @@ impl Unit {
         &self, program: &'a crate::ResidualProgram, caller: u32,
     ) -> Option<std::borrow::Cow<'a, crate::compile::liveness::RegisterMasks>> {
         use crate::compile::liveness::{ROOT_MAP_REGISTERS, RegisterMasks, RegisterSet, register_bit};
-        let caller_masks = program.register_root_masks(caller)?;
+        let caller_masks = program.register_root_masks(caller).filter(|masks| !masks.is_windowed())?;
         if self.frames.is_empty() && self.origins.iter().enumerate().all(|(pc, origin)|
             *origin == Origin::Caller(pc as u32)) {
             return Some(std::borrow::Cow::Borrowed(caller_masks));
@@ -165,7 +165,7 @@ impl Unit {
             let call = frame.call as usize;
             let around = parent.get(call)? | (parent.get(call + 1).unwrap_or_default() & !frame.result.map_or_else(RegisterSet::default, |result| register_bit(result - frame.parent_base(&self.frames))));
             suspended.push(outer | around.checked_shl(u32::from(frame.parent_base(&self.frames)))?);
-            callees.push(program.register_root_masks(frame.target.function)?);
+            callees.push(program.register_root_masks(frame.target.function).filter(|masks| !masks.is_windowed())?);
         }
         let mut masks = self.origins.iter().map(|origin| match *origin {
             Origin::Caller(pc) => caller_masks.get(pc as usize),
@@ -183,7 +183,7 @@ impl Unit {
         // A returning instruction continues at the function's terminal `Return` where it has
         // one, whose register then holds its value; otherwise it completes the activation.
         let terminal = self.instructions.len().checked_sub(1)
-            .filter(|terminal| self.instructions[*terminal].op() == Op::Return);
+            .filter(|terminal| self.instructions[*terminal].op().is_return());
         let mut starts = Vec::with_capacity(self.instructions.len() + 1);
         let mut successors = Vec::new();
         for (pc, instruction) in self.instructions.iter().enumerate() {
@@ -283,7 +283,7 @@ fn call_length(alternatives: &[InlinedPlan]) -> u32 {
 /// The canonical caller completion a terminal call may use without replaying the call.
 fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
     code.len().checked_sub(1).filter(|pc|
-        code[*pc].op() == Op::Return && code[*pc].result_flags() == 0)
+        code[*pc].op().is_return() && code[*pc].result_flags() == 0)
 }
 
 /// Whether an inlined callee's `instruction` renames to the unit's registers

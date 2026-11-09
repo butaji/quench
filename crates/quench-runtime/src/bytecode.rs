@@ -1241,8 +1241,7 @@ pub(crate) struct HotDecoding {
 
 impl HotDecoding {
     /// Counts one entry and returns the expanded code once the function is hot.
-    #[inline(always)]
-    pub(crate) fn on_entry(
+    #[inline(always)] pub(crate) fn on_entry(
         &self,
         code: &[Instr],
         wide: &[WideInstruction],
@@ -1572,14 +1571,12 @@ impl FunctionSlot {
         self.record.get().is_none() && self.unlowered.borrow().is_none()
     }
 
-    #[inline(always)]
-    pub(crate) fn header(&self) -> &FunctionHeader {
+    #[inline(always)] pub(crate) fn header(&self) -> &FunctionHeader {
         &self.header
     }
 
     /// The compiled record, when it exists.
-    #[inline(always)]
-    pub(crate) fn record(&self) -> Option<&Function> {
+    #[inline(always)] pub(crate) fn record(&self) -> Option<&Function> {
         self.record.get().map(|function| &**function)
     }
 
@@ -2263,8 +2260,7 @@ impl Function {
     }
 
     /// The function's `CallPlan`, derived on first use.
-    #[inline(always)]
-    pub(crate) fn call_plan(&self, tables: &impl FactTables) -> CallPlan {
+    #[inline(always)] pub(crate) fn call_plan(&self, tables: &impl FactTables) -> CallPlan {
         *self.call_plan.get_or_init(|| self.derive_call_plan(tables))
     }
 
@@ -2441,8 +2437,7 @@ impl Function {
     }
 
     /// The function's `initializer_stores`, derived on first use.
-    #[inline(always)]
-    pub(crate) fn initializer_stores(&self, constants: &[Constant]) -> Option<&[InitializerStore]> {
+    #[inline(always)] pub(crate) fn initializer_stores(&self, constants: &[Constant]) -> Option<&[InitializerStore]> {
         self.initializer
             .get_or_init(|| self.derive_initializer_stores(constants).map(Into::into))
             .as_deref()
@@ -2905,8 +2900,7 @@ impl Function {
     }
 
     /// The memoized `plain_local_slots` projection for this residual's atoms.
-    #[inline(always)]
-    pub(crate) fn plain_local(&self, tables: &impl FactTables, slot: usize) -> bool {
+    #[inline(always)] pub(crate) fn plain_local(&self, tables: &impl FactTables, slot: usize) -> bool {
         let words =
             self.plain_locals.get_or_init(|| self.plain_local_slots(tables.superinstructions()).words().to_vec().into());
         crate::bitset::words_contain(words, slot)
@@ -3164,7 +3158,7 @@ impl FieldBase {
         Self(value)
     }
 
-    pub(crate) fn register_index(self) -> Option<Register> {
+    #[inline(always)] pub(crate) fn register_index(self) -> Option<Register> {
         (self.0 <= REGISTER_MASK).then_some(self.0)
     }
 
@@ -3172,7 +3166,7 @@ impl FieldBase {
         (value <= REGISTER_MASK).then_some(Self(Self::LOCAL_FLAG | value))
     }
 
-    pub(crate) fn local_index(self) -> Option<u16> {
+    #[inline(always)] pub(crate) fn local_index(self) -> Option<u16> {
         (self.0 & Self::LOCAL_FLAG != 0
             && self.0 & !(Self::LOCAL_FLAG | REGISTER_MASK) == 0)
             .then_some(self.0 & REGISTER_MASK)
@@ -3262,7 +3256,7 @@ impl Operand {
         self.0 & Self::PAYLOAD_MASK
     }
 
-    pub(crate) fn register_index(self) -> Option<Register> {
+    #[inline(always)] pub(crate) fn register_index(self) -> Option<Register> {
         (self.kind() == Some(OperandKind::Register)).then_some(self.payload())
     }
 }
@@ -3866,8 +3860,7 @@ impl ResidualProgram {
     }
     /// The record of function `index`, compiled again from source on its first read when
     /// the program released it.
-    #[inline(always)]
-    pub(crate) fn function(&self, index: usize) -> &Function {
+    #[inline(always)] pub(crate) fn function(&self, index: usize) -> &Function {
         let slot = &self.functions[index];
         match slot.record() {
             Some(function) => function,
@@ -3876,8 +3869,7 @@ impl ResidualProgram {
     }
 
     /// `function`, for an index that may lie outside the table.
-    #[inline(always)]
-    pub(crate) fn function_get(&self, index: usize) -> Option<&Function> {
+    #[inline(always)] pub(crate) fn function_get(&self, index: usize) -> Option<&Function> {
         (index < self.functions.len()).then(|| self.function(index))
     }
 
@@ -3990,6 +3982,7 @@ impl ResidualProgram {
     }
 
     /// The registers live at `pc` in `function`, when liveness covers it.
+    #[allow(dead_code)]
     pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::compile::liveness::RegisterSet> {
         self.register_root_masks(function)?.get(pc)
     }

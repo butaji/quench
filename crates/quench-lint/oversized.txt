@@ -2916,7 +2916,6 @@ function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::inline_call 76
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::instruction 298
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::invariant_field_records 55
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::loop_element_write 56
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::number_relation 41
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::require_object_latches 55
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::set_field 71
@@ -5056,7 +5055,6 @@ magic crates/quench-runtime/src/vm/compiled.rs::unrollable_loops 1
 magic crates/quench-runtime/src/vm/compiled/frame_ssa.rs::FrameFlow::recovery_pc 1
 magic crates/quench-runtime/src/vm/compiled/lane_compile.rs::Vm<H>::compile_lane_method 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::binary 1
-magic crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::loop_element_write 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::TypedLoad::width 3
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::lower 2
 magic crates/quench-runtime/src/vm/compiled/lane_unit.rs::Emitter::emit 1
