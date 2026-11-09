@@ -1294,9 +1294,9 @@ pub(super) fn lower(
         native: 0,
         backedge: false,
         pending: Vec::new(),
-        // A static typed region's calls are guarded leaves (`guarded_call_instruction`).
+        // A static typed region's calls are guarded leaves (`guarded_call_instruction`); here any call-like one is native.
         native_calls: completion == Completion::StatusAndPc
-            && unit.instructions.iter().any(|instruction| instruction.op() == Op::Call),
+            && unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call),
         call_budget: None,
         facts: super::facts::Facts::default(),
         live,
