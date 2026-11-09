@@ -3303,7 +3303,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = decoded_instruction(body, body.code[pc]);
-    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::ForInStart | Op::IteratorClose | Op::AppendArray) {
+    if !instruction.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP) {
         return Resumed::Exit(exit(ip));
     }
     let [a, b] = super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
@@ -3364,29 +3364,7 @@ fn lane_in_place<H: Host, T>(
 /// values, runs guest code only through nested calls, and continues (a backward jump in the
 /// general path) or throws: no call, return, `this` binding or environment change the lane caches.
 const fn lane_steps_in_place(op: Op) -> bool {
-    matches!(
-        op,
-        Op::DefineField
-            | Op::DefineComputedField
-            | Op::DefinePrivateField
-            | Op::CheckPrivate
-            | Op::PrivateIn
-            | Op::MarkPrivateName
-            | Op::SetFunctionName
-            | Op::SetFunctionNameKey
-            | Op::SetFunctionDebugName
-            | Op::DefineArrayElement
-            | Op::AppendArray
-            | Op::ToPropertyKey
-            | Op::CopyDataProperties
-            | Op::GetIterator
-            | Op::ForInStart
-            | Op::ForInNext
-            | Op::RequireIteratorResult
-            | Op::IteratorClose
-            | Op::IteratorCleanupPush
-            | Op::IteratorCleanupPop
-    )
+    op.traits().has(crate::bytecode::Traits::LANE_IN_PLACE)
 }
 
 script_handler! {
@@ -18253,17 +18231,8 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
             // A lane call reads its return flag from the field (`lane_call_fits`).
             FieldLayout::ResultRegister
                 if field == InstructionField::A
-                    && (matches!(
-                        op,
-                        Op::Call
-                            | Op::CallForwardingArguments
-                            | Op::Construct
-                            | Op::GetField
-                            | Op::Unary
-                            | Op::MakeObject2
-                            | Op::MakeObjectLiteral
-                            | Op::SuperConstArrayObject2
-                    ) || (op == Op::Binary && instruction.returns_from_frame())) =>
+                    && (op.traits().has(crate::bytecode::Traits::FRAME_RETURNABLE)
+                        || (op.is_binary() && instruction.returns_from_frame())) =>
             {
                 instruction.result_register() < registers
             }

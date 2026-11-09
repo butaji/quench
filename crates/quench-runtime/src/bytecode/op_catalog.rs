@@ -232,6 +232,12 @@ impl Traits {
     pub(crate) const PURE_SETUP: Self = Self(1 << 15);
     /// A Wasm memory access through the function's memory register.
     pub(crate) const WASM_MEMORY: Self = Self(1 << 16);
+    /// A general step that reads and writes only the frame, its registers and heap values.
+    pub(crate) const LANE_IN_PLACE: Self = Self(1 << 17);
+    /// A frame-local step that runs beside frameless activations.
+    pub(crate) const LANE_RESULT_STEP: Self = Self(1 << 18);
+    /// An op whose result may return from the frame instead of the register file.
+    pub(crate) const FRAME_RETURNABLE: Self = Self(1 << 19);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -242,7 +248,7 @@ macro_rules! traits_of {
     (Nop) => { Traits::LEAF_VALUE };
     (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
     (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
+    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_RETURNABLE) };
     (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
     (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE) };
     (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE) };
@@ -266,11 +272,11 @@ macro_rules! traits_of {
     (InitializeThis) => { Traits::NAME_OPERATION };
     (SuperCallCheck) => { Traits::NAME_OPERATION };
     (MakeClosure) => { Traits::MAKES_CLOSURE };
-    (GetField) => { Traits::FIELD_LEAF.union(Traits::RETURNING_FIELD).union(Traits::INLINABLE).union(Traits::PURE_SETUP) };
-    (MakeObject2) => { Traits::RETURNING_OBJECT };
-    (MakeObjectLiteral) => { Traits::RETURNING_OBJECT_LITERAL };
-    (SuperConstArrayObject2) => { Traits::RETURNING_LITERAL };
-    (Call) => { Traits::INLINABLE };
+    (GetField) => { Traits::FIELD_LEAF.union(Traits::RETURNING_FIELD).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_RETURNABLE) };
+    (MakeObject2) => { Traits::RETURNING_OBJECT.union(Traits::FRAME_RETURNABLE) };
+    (MakeObjectLiteral) => { Traits::RETURNING_OBJECT_LITERAL.union(Traits::FRAME_RETURNABLE) };
+    (SuperConstArrayObject2) => { Traits::RETURNING_LITERAL.union(Traits::FRAME_RETURNABLE) };
+    (Call) => { Traits::INLINABLE.union(Traits::FRAME_RETURNABLE) };
     (SetField) => { Traits::INLINABLE };
     (SetThisField) => { Traits::INLINABLE };
     (LoadCapture) => { Traits::INLINABLE };
@@ -284,6 +290,28 @@ macro_rules! traits_of {
     (WasmMemoryAddress) => { Traits::WASM_MEMORY };
     (WasmMemoryLoad) => { Traits::WASM_MEMORY };
     (WasmMemoryStore) => { Traits::WASM_MEMORY };
+    (DefineField) => { Traits::LANE_IN_PLACE };
+    (DefineComputedField) => { Traits::LANE_IN_PLACE };
+    (DefinePrivateField) => { Traits::LANE_IN_PLACE };
+    (CheckPrivate) => { Traits::LANE_IN_PLACE };
+    (PrivateIn) => { Traits::LANE_IN_PLACE };
+    (MarkPrivateName) => { Traits::LANE_IN_PLACE };
+    (SetFunctionName) => { Traits::LANE_IN_PLACE };
+    (SetFunctionNameKey) => { Traits::LANE_IN_PLACE };
+    (SetFunctionDebugName) => { Traits::LANE_IN_PLACE };
+    (DefineArrayElement) => { Traits::LANE_IN_PLACE };
+    (AppendArray) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (ToPropertyKey) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (CopyDataProperties) => { Traits::LANE_IN_PLACE };
+    (GetIterator) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (ForInStart) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (ForInNext) => { Traits::LANE_IN_PLACE };
+    (RequireIteratorResult) => { Traits::LANE_IN_PLACE };
+    (IteratorClose) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
+    (IteratorCleanupPush) => { Traits::LANE_IN_PLACE };
+    (IteratorCleanupPop) => { Traits::LANE_IN_PLACE };
+    (CallForwardingArguments) => { Traits::FRAME_RETURNABLE };
+    (Construct) => { Traits::FRAME_RETURNABLE };
     ($other:ident) => { Traits::NONE };
 }
 
