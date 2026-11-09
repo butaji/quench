@@ -277,20 +277,21 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                 let fallback = fallback_base.checked_add(fallback_definitions.len())
                     .and_then(|index| u32::try_from(index).ok())
                     .ok_or("native fallback symbol count exceeds u32")?;
-                match super::compiled::lower_js_general_dispatch(
-                    program, function_id, &*isa,
-                    super::compiled::JsGeneralCallout::Relocatable { fallback },
-                    &scalar_regions.iter().enumerate().map(|(offset, region)| {
-                        super::compiled::StaticRegionEntry {
-                            range: region.range.clone(),
-                            target: super::compiled::StaticRegionTarget::Symbol(
-                                u32::try_from(scalar_base + scalar_definitions.len() + offset)
-                                    .expect("native scalar symbol index")),
-                            fields: &region.fields,
-                            frame: &region.frame,
-                        }
-                    }).collect::<Vec<_>>(), &units,
-                ) {
+                let scalar_entries: Vec<_> = scalar_regions.iter().enumerate().map(|(offset, region)| {
+                    super::compiled::StaticRegionEntry {
+                        range: region.range.clone(),
+                        target: super::compiled::StaticRegionTarget::Symbol(
+                            u32::try_from(scalar_base + scalar_definitions.len() + offset)
+                                .expect("native scalar symbol index")),
+                        fields: &region.fields,
+                        frame: &region.frame,
+                    }
+                }).collect();
+                match (super::compiled::GeneralDispatchSpecializer {
+                    function_id, isa: &*isa,
+                    callout: super::compiled::JsGeneralCallout::Relocatable { fallback },
+                    scalar_regions: &scalar_entries, typed_regions: &units,
+                }).specialize(program) {
                     Ok((native, _)) => {
                         let table = program.function_count().checked_add(usize::from(has_narrow_table))
                             .and_then(|index| index.checked_add(fallback_tables.len()))

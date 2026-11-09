@@ -2493,16 +2493,43 @@ pub(super) struct StaticTypedRegionEntry<'a> {
     pub(super) function: &'a ir::Function,
 }
 
+/// The general-dispatch specializer: the tagged baseline lowering over the interpreter's
+/// semantic callouts, shared by JIT and AOT. Its residual is the function IR and the
+/// per-PC lowering table; the publication compiles it.
+#[derive(Clone, Copy)]
+pub(super) struct GeneralDispatchSpecializer<'a> {
+    pub(super) function_id: u32,
+    pub(super) isa: &'a dyn cranelift_codegen::isa::TargetIsa,
+    pub(super) callout: JsGeneralCallout,
+    pub(super) scalar_regions: &'a [StaticRegionEntry<'a>],
+    pub(super) typed_regions: &'a [StaticTypedRegionEntry<'a>],
+}
+
+impl GeneralDispatchSpecializer<'_> {
+    pub(super) fn lower(self, program: &ResidualProgram) -> Result<(ir::Function, Vec<u8>), &'static str> {
+        lower_js_general_dispatch(program, self.function_id, self.isa, self.callout,
+            self.scalar_regions, self.typed_regions)
+    }
+}
+
+impl super::specializer::Specializer for GeneralDispatchSpecializer<'_> {
+    type Residual = (ir::Function, Vec<u8>);
+
+    fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
+        self.lower(program).map_err(str::to_owned)
+    }
+}
+
 pub(super) fn compile_js_general_dispatch(
     program: &ResidualProgram,
     function_id: u32,
 ) -> Result<super::js_compiled::JsJitArtifact, &'static str> {
     let isa = super::jit_backend::target_isa()
         .ok_or("target-isa-unavailable")?;
-    let (native, general_dispatch_native_pcs) = lower_js_general_dispatch(
-        program, function_id, &*isa,
-        JsGeneralCallout::Dynamic, &[], &[],
-    )?;
+    let (native, general_dispatch_native_pcs) = GeneralDispatchSpecializer {
+        function_id, isa: &*isa, callout: JsGeneralCallout::Dynamic,
+        scalar_regions: &[], typed_regions: &[],
+    }.lower(program)?;
     let function = program.function_get(function_id as usize).ok_or("missing-function")?;
     let code = compile_native_function(
         native,
@@ -6892,10 +6919,10 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
     ) -> Option<(Vec<CodeMemory>, usize, usize)> {
         let typed = typed_entries.len();
         let scalars = scalar_entries.len();
-        let (specialized, _) = lower_js_general_dispatch(program, function_id, isa,
-            callout, scalar_entries, typed_entries).ok()?;
-        let (general, _) = lower_js_general_dispatch(program, function_id, isa,
-            callout, &[], &[]).ok()?;
+        let (specialized, _) = GeneralDispatchSpecializer { function_id, isa, callout,
+            scalar_regions: scalar_entries, typed_regions: typed_entries }.lower(program).ok()?;
+        let (general, _) = GeneralDispatchSpecializer { function_id, isa, callout,
+            scalar_regions: &[], typed_regions: &[] }.lower(program).ok()?;
         let specialized = publish_eager_graph(specialized, isa).ok()?;
         let general = publish_eager_graph(general, isa).ok()?;
         let threaded = compile_eager_body::<H>(sites, function_id, isa, None).ok()?;
@@ -18323,7 +18350,7 @@ mod tests {
                 vm.execution_interrupt.atomic_flag(), None,
             );
             let vm = vm as *mut Vm<crate::test_host::TestHost>;
-            context.vm = std::ptr::from_mut(vm).cast();
+            context.vm = vm.cast();
             dispatch.bind_native_storage(vm);
             context.program = ProgramId::MAIN;
             let mut result = 0;
