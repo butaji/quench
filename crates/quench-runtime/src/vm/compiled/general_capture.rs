@@ -168,6 +168,12 @@ impl EnvView {
         let Some(crate::heap::Cell::Environment { slots, .. }) = vm.heap.get(frame.env) else { return Self::EMPTY };
         slots.native_dense_view().map_or(Self::EMPTY, |(values, len)| Self { values, len, stores: 0 })
     }
+
+    /// This view with `previous`'s admitted writes where it names the same slots and `kept`
+    /// says its barrier still holds.
+    pub(super) fn kept(self, previous: Self, kept: usize) -> Self {
+        Self { stores: previous.stores & kept & usize::from(previous.values == self.values), ..self }
+    }
 }
 
 /// Lowers the `LoadEnvLocal` or `StoreEnvLocal` at the exact fallback's PC: the binding's own
@@ -358,10 +364,13 @@ pub(super) unsafe extern "C" fn general_closure<H: Host>(vm: u64, residual: u64,
     if vm.frameless.inside(dispatch) || dispatch.lane_context != 0 || vm.heap.should_collect() {
         return Value::DELETED.to_bits();
     }
+    let captured = vm.frames[dispatch.frame].captured;
     let env = vm.promote_frame_environment(dispatch.frame);
     let closure = vm.closure(program, id as u32, env).unwrap_or(Value::DELETED);
     super::super::dispatch_fast::note_allocation(vm);
-    dispatch.refresh_heap_bases(vm, program);
+    // The allocation moves only the record bases; the frame's views change where this
+    // closure first captured it.
+    if captured { dispatch.refresh_object_bases(vm) } else { dispatch.refresh_heap_bases(vm, program) }
     closure.to_bits()
 }
 

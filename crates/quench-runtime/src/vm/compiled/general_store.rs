@@ -139,23 +139,16 @@ fn emit_narrow(builder: &mut FunctionBuilder<'_>, value: ir::Value, classes: [(S
     narrow
 }
 
-/// The helper's store of `value` into `receiver`'s field `atom` at `site` (`lane_field_set`),
-/// else its add by the site's cached transition (`lane_store_miss`) in block `add`, continuing at
-/// `done`; a store neither takes continues at `fallback`.
+/// The helper's store of `value` into `receiver`'s field `atom` at `site`, or its add by the
+/// site's cached transition (`general_field_store`), continuing at `done`; a store neither
+/// takes continues at `fallback`.
 pub(super) fn emit_helper_store(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
-    (receiver, atom, site, value): (ir::Value, Atom, u16, ir::Value), (add, done, fallback): (ir::Block, ir::Block, ir::Block)) {
+    (receiver, atom, site, value): (ir::Value, Atom, u16, ir::Value), (done, fallback): (ir::Block, ir::Block)) {
     let write = builder.ins().iconst(types::I64, (i64::from(atom) << u16::BITS) | i64::from(site));
-    let atom = builder.ins().iconst(types::I64, i64::from(atom));
-    let site = builder.ins().iconst(types::I64, i64::from(site));
     let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_store));
-    let stored = emit_lane_helper_call(builder, payload, helper, &[receiver, atom, site, value]);
+    let stored = emit_lane_helper_call(builder, payload, helper, &[payload, receiver, write, value]);
     let stored = builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-    builder.ins().brif(stored, done, &[], add, &[]);
-    builder.switch_to_block(add);
-    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_add));
-    let added = emit_lane_helper_call(builder, payload, helper, &[payload, receiver, write, value]);
-    let added = builder.ins().icmp_imm_u(IntCC::NotEqual, added, 0);
-    emit_js_guard(builder, added, fallback);
+    emit_js_guard(builder, stored, fallback);
     builder.ins().jump(done, &[]);
 }
 
