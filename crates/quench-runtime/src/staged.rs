@@ -131,6 +131,13 @@ pub(crate) trait Frame<S: Stage> {
     /// `register`'s value from `constant`, with the fact the stage keeps of it.
     fn constant(&mut self, stage: &mut S, constant: Constant) -> (S::Word, Self::Fact);
 
+    /// The proven slot `slot` of `base`'s object, with the fact the read proves; `None` where
+    /// the frame has no heap or the slot is not proved, leaving the instruction to the host.
+    #[inline(always)]
+    fn field_read(&mut self, _stage: &mut S, _base: Register, _slot: u16) -> Option<(S::Word, Self::Fact)> {
+        None
+    }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -167,6 +174,9 @@ pub(crate) enum Operation {
     /// the frame's miss edge, where the interpreter throws the TypeError
     /// (RequireObjectCoercible).
     RequireObjectCoercible { register: Register },
+    /// Define `destination` from the proven slot `slot` of `base`'s object (`Frame::field_read`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    GetField { destination: Register, base: Register, slot: u16 },
 }
 
 /// Which of an instruction's two control edges it takes.
@@ -210,6 +220,13 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
+        Operation::GetField { destination, base, slot } => match frame.field_read(stage, base, slot) {
+            Some((value, fact)) => {
+                frame.write(stage, destination, value, fact);
+                Step::Value(value)
+            }
+            None => Step::Unresolved,
+        },
     }
 }
 
