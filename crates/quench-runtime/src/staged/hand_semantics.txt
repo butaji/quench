@@ -50,7 +50,6 @@ vm/dispatch_frame.rs ToNumeric 1
 # category: value-dependent — opcode value is a generic argument, table key or
 # handler index (Wasm lowering), not a family decision.
 #
-vm/compiled.rs COUNT 1
 vm/compiled/exact_budget.rs NAMES 1
 vm/lane_exits.rs COUNT 6
 vm/lane_exits.rs NAMES 6
@@ -71,13 +70,5 @@ vm/compiled/lane_unit/static_hints.rs DefineField 1
 vm/compiled/lane_unit/static_hints.rs DefinePropertyRecord 1
 vm/compiled/osr_loop.rs Call 1
 vm/compiled/osr_loop.rs GetField 1
-vm/compiled/osr_loop.rs JumpFalse 1
-vm/compiled/osr_loop.rs JumpTrue 1
-vm/compiled/osr_loop.rs Move 1
-vm/operations.rs Binary 5
-vm/operations.rs NumericAdd 3
-vm/operations.rs NumericMultiply 2
-vm/operations.rs Return 1
-vm/operations.rs Unary 3
 vm/specialize.rs Jump 1
 vm/wasm_js.rs LoadCapture 1

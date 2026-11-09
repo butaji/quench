@@ -311,8 +311,10 @@ fn opcode_arms() -> std::collections::BTreeMap<(String, String), usize> {
 
 /// Adds `source`'s opcode names, outside an inline test module, to `arms` under `file`.
 fn count_opcode_names(source: &str, file: &str, arms: &mut std::collections::BTreeMap<(String, String), usize>) {
-    // An inline test module closes the file; its fixtures name opcodes freely.
-    let code = source.split("#[cfg(test)]\nmod tests").next().unwrap();
+    // Any inline test module (whatever its name) closes the production code; its fixtures name
+    // opcodes freely.
+    let code = source.split("\n#[cfg(test)]\nmod ").next().unwrap();
+    let code = code.split("#[cfg(test)]\nmod ").next().unwrap();
     for (at, _) in code.match_indices("Op::") {
         let op: String = code[at + 4..].chars().take_while(char::is_ascii_alphanumeric).collect();
         let qualified = code[..at].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_');

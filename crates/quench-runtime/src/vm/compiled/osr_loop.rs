@@ -2728,7 +2728,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
         && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand|
             operand.kind() == Some(OperandKind::Constant) && region.constants.contains_key(&usize::from(operand.payload())));
-    let expected = if matches!(instruction.op(), Op::Move | Op::JumpFalse | Op::JumpTrue)
+    let expected = if matches!(instruction.op().class(), Class::Move | Class::JumpFalse | Class::JumpTrue)
         || region.identity_branches.contains_key(&pc) || strict_number_test {
         Type::ANY
     } else {
