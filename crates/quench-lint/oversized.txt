@@ -523,7 +523,6 @@ complexity crates/quench-runtime/src/compile/ast/object.rs::FunctionCompiler<'_,
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::statement_at_current_position 46
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::switch_statement 11
 complexity crates/quench-runtime/src/compile/ast/statement.rs::FunctionCompiler<'_,'_>::variables 13
-complexity crates/quench-runtime/src/compile/capture_layout.rs::activation_is_private 11
 complexity crates/quench-runtime/src/compile/class.rs::FunctionCompiler<'_,'_>::emit_instance_fields 18
 complexity crates/quench-runtime/src/compile/class.rs::FunctionCompiler<'_,'_>::lower_class 90
 complexity crates/quench-runtime/src/compile/early.rs::DynamicBodyLexicalState::advance 16
