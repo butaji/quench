@@ -55,6 +55,8 @@ pub struct NativeJsPublicationCounts {
     pub tier_general: usize,
     /// Functions whose entry is the call-threaded body (the AOT tier zero).
     pub tier_call_threaded: usize,
+    /// Whole-program globals the image folds, each checked at its read site.
+    pub frozen_globals: usize,
 }
 
 /// The whole-program assumptions an eager image folded, replayed when it loads.
@@ -62,13 +64,15 @@ pub(crate) struct FrozenAssumptions {
     pub(crate) invalidation: crate::code_dependencies::Invalidation,
     /// Method atoms the code holds unnamed (`StableFacts::atoms`).
     pub(crate) atoms: Box<[crate::bytecode::Atom]>,
+    /// Whole-program globals the code folds (its read-site guards verify them).
+    pub(crate) globals: Box<[crate::bytecode::Atom]>,
     /// Set when any assumption no longer holds; the code leaves at its invalidation point.
     pub(crate) watch: Rc<crate::code_dependencies::PublishedCode<()>>,
 }
 
 impl Clone for FrozenAssumptions {
     fn clone(&self) -> Self {
-        Self { invalidation: self.invalidation.clone(), atoms: self.atoms.clone(), watch: self.watch.clone() }
+        Self { invalidation: self.invalidation.clone(), atoms: self.atoms.clone(), globals: self.globals.clone(), watch: self.watch.clone() }
     }
 }
 
@@ -133,6 +137,12 @@ impl<H: Host> NativeJsProgram<H> {
     /// What this publication lowered: the counters that make an AOT claim
     /// measurable (`native_execution_rejections` covers the runtime half).
     pub fn publication_counts(&self) -> NativeJsPublicationCounts { self.counts }
+
+    /// The whole-program globals the image folded (tests).
+    #[cfg(test)]
+    pub(crate) fn frozen_global_atoms_for_test(&self) -> &[crate::bytecode::Atom] {
+        self.frozen.as_ref().map_or(&[], |frozen| &frozen.globals)
+    }
 
     /// The method atoms the image holds unnamed, replayed at load.
     #[cfg(test)]

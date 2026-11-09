@@ -2599,3 +2599,29 @@ fn a_later_method_cache_name_retires_the_image() {
     runtime.name_method_atom(a);
     assert!(native.frozen_invalidated(), "the subscription retires the image");
 }
+
+#[cfg(feature = "aot")]
+#[test]
+fn a_frozen_image_folds_whole_program_globals_and_guards_a_change() {
+    // `SCALE` is written once at its declaration, so the closed program gives it 3 at
+    // every read. The second call changes it through the global object (not a `StoreName`),
+    // so the read-site guard fails and the shared body computes the guest answer.
+    let source = r#"
+        var SCALE = 3;
+        function scale(x) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + x * SCALE) | 0; } return s; }
+        globalThis.answer = scale(2);
+        globalThis.SCALE = 5;
+        globalThis.answer2 = scale(2);
+        if (globalThis.answer !== 24 || globalThis.answer2 !== 40) throw Error(globalThis.answer + "," + globalThis.answer2);
+    "#;
+    let (program, native) = compile_frozen(source);
+    let counts = native.publication_counts();
+    assert!(counts.frozen_globals >= 1, "no whole-program global folded: {counts:?}");
+    assert!(counts.tier_specialized >= 1, "no specialized tier: {counts:?}");
+    let scale = program.atoms.iter().position(|name| name == "SCALE").unwrap() as crate::bytecode::Atom;
+    assert!(native.frozen_global_atoms_for_test().contains(&scale), "atoms: {:?}", native.frozen_global_atoms_for_test());
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    assert_eq!(runtime.native_execution_rejections(), 0, "counts: {counts:?}");
+}

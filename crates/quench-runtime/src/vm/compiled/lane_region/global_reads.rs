@@ -23,6 +23,23 @@ impl Lowering<'_, '_> {
                     .expect("a Stable fact's dependency proves any type");
                 self.define(state, instruction.result_register(), constant, held);
             }
+            GlobalRead::Frozen { value, ty } => {
+                // Whole-program fact: read the cell once here and require the value the
+                // closed program gives it. A changed binding fails the guard and leaves
+                // to the shared body; the loop then runs the checked constant.
+                let exit = self.guard_exit(state, pc as u32);
+                let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));
+                let site = self.ins().iconst(types::I64, i64::from(instruction.cache_site_index()));
+                let global_get = self.helpers.address(self.builder.ins(), LaneHelper::GlobalGet);
+                let actual = emit_lane_helper_call(&mut self.builder, self.payload, global_get, &[atom, site]);
+                let same = self.ins().icmp_imm_u(IntCC::Equal, actual, value.to_bits() as i64);
+                emit_js_guard(&mut self.builder, same, exit);
+                let constant = self.ins().iconst(types::I64, value.to_bits() as i64);
+                let held = RegisterFact::admit(Fact { ty, representation: Representation::Tagged,
+                    binding: BindingTime::Stable, proof: Proof::Dependency, projection: Projection::Exact })
+                    .expect("a frozen fact proves its immediate type");
+                self.define(state, instruction.result_register(), constant, held);
+            }
             GlobalRead::Stable { .. } | GlobalRead::Dynamic => {
                 let exit = self.guard_exit(state, pc as u32);
                 let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));

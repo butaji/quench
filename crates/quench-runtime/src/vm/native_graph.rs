@@ -145,7 +145,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                 super::compiled::lower_static_typed_regions(program, id as u32, &inline_targets, &*isa,
                     super::compiled::LaneHelpers::Linked(lane_helpers,
                         u32::try_from(program.function_count()).expect("validated native namespace")),
-                    super::compiled::VmFacts::STATIC)
+                    super::compiled::VmFacts::STATIC, &std::collections::BTreeMap::new())
             } else { Vec::new() }).collect();
         if typed_units.iter().any(|units| !units.is_empty()) {
             functions.push(NativeFunction::Import {

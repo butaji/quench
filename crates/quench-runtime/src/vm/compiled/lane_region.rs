@@ -5073,7 +5073,7 @@ mod tests {
         let id = program.functions.iter().position(|body| body.header().name
             .is_some_and(|name| &program.atoms[name as usize] == "subject")).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let region = super::super::lower_static_typed_regions(&program, id as u32, &[], &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC)
+        let region = super::super::lower_static_typed_regions(&program, id as u32, &[], &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC, &std::collections::BTreeMap::new())
             .into_iter().next().expect("typed loop region");
         cranelift_codegen::verify_function(&region.function, &*isa).unwrap();
         if !super::super::FAULT_POLL_SUPPORTED { return; }
@@ -5255,7 +5255,7 @@ mod tests {
                     .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "the Boolean method must inline");
             let isa = super::super::super::jit_backend::target_isa().unwrap();
-            let regions = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC);
+            let regions = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC, &std::collections::BTreeMap::new());
             assert!(!regions.is_empty(), "selected caller header must publish");
             let mut integer_add = false;
             for region in regions {
