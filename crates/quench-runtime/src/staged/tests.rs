@@ -448,3 +448,13 @@ fn a_global_name_read_is_the_host_callout_boundary() {
         Operation::GlobalRead { destination: 0, atom: 0, site: 0, proof: () });
     assert!(matches!(step, Step::Unresolved));
 }
+
+#[test]
+fn the_field_store_helper_is_the_host_callout_boundary() {
+    // The host's cached field-store hit is a callout: the interpreter stage declines it.
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0; 2], heap: None };
+    let step = step(&mut stage, &mut frame,
+        Operation::FieldStoreMiss { object: 0, atom: 0, site: 0, value: 1, proof: () });
+    assert!(matches!(step, Step::Unresolved));
+}

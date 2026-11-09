@@ -4626,11 +4626,9 @@ impl Lowering<'_, '_> {
     /// invalidation word again before it next holds a Stable fact.
     fn store_helper_unbound(&mut self, state: &mut State, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
         state.proofs.stable = false;
-        let atom = self.ins().iconst(types::I64, i64::from(atom));
-        let site = self.ins().iconst(types::I64, i64::from(site));
-        let stored = self.helper_call(LaneHelper::FieldSet, &[object, atom, site, value]);
-        let ok = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-        emit_js_guard(&mut self.builder, ok, exit);
+        let proof = super::EmitProof::FieldStoreMiss { miss: exit };
+        self.step(state, frame::Edges::ValueGuarded { miss: exit },
+            crate::staged::Operation::FieldStoreMiss { object, atom: u32::from(atom), site, value, proof });
     }
 
     fn binary(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {

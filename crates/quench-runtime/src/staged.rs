@@ -207,6 +207,10 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn global_read(&mut self, _stage: &mut S, _destination: Register, _atom: u32, _site: u16, _proof: S::Proof) -> Option<()> { None }
 
+    /// The VM's field-store hit (`LaneHelper::FieldSet`).
+    #[inline(always)]
+    fn field_store_miss(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -268,6 +272,8 @@ pub(crate) enum Operation<W, P> {
     /// The global-name read of `atom` through cache `site`, defined into `destination`; a
     /// miss leaves at the proof's edge.
     GlobalRead { destination: Register, atom: u32, site: u16, proof: P },
+    /// The VM field-store helper for `object.atom = value` through cache `site`.
+    FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
 }
 
 /// Which of an instruction's two control edges it takes.

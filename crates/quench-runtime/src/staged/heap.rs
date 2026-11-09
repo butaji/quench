@@ -13,8 +13,8 @@ pub(super) fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fram
             field_step(stage, frame, field),
         literal @ (Operation::MakeObject { .. } | Operation::MakeArray { .. }) =>
             allocation_step(stage, frame, literal),
-        helper @ (Operation::IndexSetHelper { .. } | Operation::GlobalRead { .. }) =>
-            helper_step(stage, frame, helper),
+        helper @ (Operation::IndexSetHelper { .. } | Operation::GlobalRead { .. }
+            | Operation::FieldStoreMiss { .. }) => helper_step(stage, frame, helper),
         index => index_step(stage, frame, index),
     }
 }
@@ -67,6 +67,11 @@ fn helper_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
         Operation::GlobalRead { destination, atom, site, proof } =>
             match frame.global_read(stage, destination, atom, site, proof) {
                 Some(()) => Step::Value(stage.constant(0)),
+                None => Step::Unresolved,
+            },
+        Operation::FieldStoreMiss { object, atom, site, value, proof } =>
+            match frame.field_store_miss(stage, object, atom, site, value, proof) {
+                Some(()) => Step::Value(value),
                 None => Step::Unresolved,
             },
         _ => Step::Unresolved,

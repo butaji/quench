@@ -66,3 +66,17 @@ pub(super) fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, d
         RegisterFact::definition(Type::ANY, Representation::Tagged));
     Some(())
 }
+
+/// The VM's field-store hit (`LaneHelper::FieldSet`): its false answer leaves at the miss edge.
+pub(super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value,
+    atom: u32, site: u16, value: ir::Value, proof: EmitProof) -> Option<()> {
+    let EmitProof::FieldStoreMiss { miss } = proof else { return None };
+    let payload = frame.payload;
+    let atom = stage.builder.ins().iconst(types::I64, i64::from(atom));
+    let site = stage.builder.ins().iconst(types::I64, i64::from(site));
+    let set = frame.helpers.address(stage.builder.ins(), LaneHelper::FieldSet);
+    let stored = emit_lane_helper_call(stage.builder, payload, set, &[object, atom, site, value]);
+    let ok = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+    emit_js_guard(stage.builder, ok, miss);
+    Some(())
+}
