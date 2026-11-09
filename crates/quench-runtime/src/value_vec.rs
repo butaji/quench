@@ -372,7 +372,6 @@ impl ValueArena {
     }
 
     pub(crate) fn register_shape(&mut self, shape: u32, length: usize) {
-        self.targets.depart(shape, |owner| self.slot_readers.retire(owner));
         self.shape_readers.retire(shape);
         assert!(shape <= SHAPE_MASK, "object shape table exhausted");
         assert!(
@@ -450,10 +449,10 @@ impl ValueArena {
     }
 
     /// Observes an object's initial values and pointee shapes, slot by slot.
-    pub(crate) fn note_shape_values(&mut self, shape: u32, values: &[Value], target: impl Fn(Value) -> TargetShape) {
+    pub(crate) fn note_shape_values(&mut self, shape: u32, values: &[Value]) {
         if !self.tracking { return; }
         for (slot, value) in values.iter().copied().enumerate() {
-            self.note_shape_target(shape, slot, value, target(value));
+            self.note_shape_target(shape, slot, value, TargetShape::unclassified(value));
         }
     }
 
@@ -498,7 +497,6 @@ impl ValueArena {
     #[inline(always)]
     pub(crate) fn note_shape_transition(&mut self, previous: u32, next: u32) {
         if previous != next {
-            self.targets.depart(previous, |owner| self.slot_readers.retire(owner));
             self.shape_readers.retire(previous);
         }
     }
@@ -523,11 +521,6 @@ impl ValueArena {
         let changed = self.targets.join(owner, target);
         if changed { self.slot_readers.retire(owner); }
         self.join_owner_type(owner, SlotType::of(value)) || changed
-    }
-
-    pub(crate) fn slot_target_shape(&self, shape: u32, slot: usize) -> Option<u32> {
-        if !self.tracking || slot >= self.shape_length(shape) { return None; }
-        self.targets.get(self.slot_owner(shape, slot)).shape()
     }
 
     /// Admits the possible writes of a no-reentry raw slot capability before exposing it.

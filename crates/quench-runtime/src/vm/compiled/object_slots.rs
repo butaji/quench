@@ -163,8 +163,6 @@ pub(crate) struct NativeFieldLoad {
     /// The observed slot type (`Heap::slot_type`), not a write-maintained
     /// invariant: a read speculates on it and leaves where its check fails.
     pub(crate) ty: crate::typed_ir::Type,
-    /// Historical pointee shape, not a heap-access proof.
-    pub(crate) target_shape: Option<u32>,
     /// For a holder read, the value its proved immediate prototype holds when the code was
     /// compiled (`Vm::inherited_constant`): a Stable fact. A read takes it while the receiver's
     /// prototype is that one; a change of the value retires the code that took it
@@ -298,7 +296,7 @@ impl NativeFieldLoad {
     pub(super) fn slot_dependency(self) -> Option<crate::code_dependencies::SlotDependency> {
         use crate::typed_ir::Type;
         (self.ty != Type::ANY && self.ty != Type::NEVER).then_some(crate::code_dependencies::SlotDependency {
-            shape: self.holder.unwrap_or(self.shape), slot: self.slot, ty: self.ty, target_shape: self.target_shape,
+            shape: self.holder.unwrap_or(self.shape), slot: self.slot, ty: self.ty,
         })
     }
 
@@ -326,7 +324,7 @@ mod tests {
 
     #[test]
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, target_shape: None, inherited: None, function_shape: false };
+        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, inherited: None, function_shape: false };
         assert!(field.valid());
         for shape in [super::super::super::NO_FIELD_RECEIVER,
             crate::value_vec::DICTIONARY_STORAGE, crate::value_vec::DICTIONARY_STORAGE | 1] {

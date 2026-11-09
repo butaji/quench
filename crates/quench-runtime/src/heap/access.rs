@@ -806,9 +806,6 @@ impl Heap {
         self.properties.slot_observation(shape, slot).ty()
     }
 
-    pub(crate) fn slot_target_shape(&self, shape: u32, slot: usize) -> Option<u32> {
-        self.properties.slot_target_shape(shape, slot)
-    }
     /// Whether `slot` of `shape` already holds any target shape, so no store widens its target.
     pub(crate) fn slot_target_settled(&self, shape: u32, slot: usize) -> bool { self.properties.slot_target_settled(shape, slot) }
 

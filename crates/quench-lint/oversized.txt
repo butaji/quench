@@ -2699,7 +2699,6 @@ function-lines crates/quench-runtime/src/heap/records.rs::RecordSpace<T,CAPACITY
 function-lines crates/quench-runtime/src/heap/snapshot.rs::Heap::read_snapshot 51
 function-lines crates/quench-runtime/src/heap/snapshot.rs::Heap::write_snapshot 44
 function-lines crates/quench-runtime/src/heap/tests.rs::direct_array_records_trace_values_and_release_shared_backing 43
-function-lines crates/quench-runtime/src/heap/tests.rs::linked_target_observations_retire_on_mutation_and_raw_admission 45
 function-lines crates/quench-runtime/src/heap/tests.rs::memory_census_counts_array_allocations_once_across_storage_and_collection 60
 function-lines crates/quench-runtime/src/heap/tests.rs::named_property_publication_retires_readers_for_every_record_family 57
 function-lines crates/quench-runtime/src/heap/tests.rs::object_property_storage_migration_preserves_writes_and_gc_roots 51

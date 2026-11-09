@@ -5450,7 +5450,7 @@ mod tests {
         let mut fields: BTreeMap<_, _> = function.instructions().filter(|instruction| instruction.op() == Op::SetField)
             .map(|instruction| (instruction.cache_site_index(), vec![NativeFieldLoad {
                 shape: 0, holder: None, slot: 0, storage_len: 1, storage: None,
-                ty: Type::INT32, target_shape: None, inherited: None, function_shape: false,
+                ty: Type::INT32, inherited: None, function_shape: false,
             }])).collect();
         assert_eq!(fields.len(), 1, "the test must exercise a profiled store");
         let isa = super::super::super::jit_backend::target_isa().unwrap();
@@ -5480,7 +5480,7 @@ mod tests {
             if instruction.op().class().eq(Class::GetField)
                 && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
                 && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, target_shape: None, inherited: None, function_shape: false }]))
+                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, inherited: None, function_shape: false }]))
             } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
@@ -5509,7 +5509,7 @@ mod tests {
             if instruction.op().class().eq(Class::GetField)
                 && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
                 && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, target_shape: None,
+                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None,
                     ty: Type::ANY, inherited: None, function_shape: false }]))
             } else { None }
         }).collect();
