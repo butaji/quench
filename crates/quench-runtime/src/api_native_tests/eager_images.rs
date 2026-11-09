@@ -211,3 +211,17 @@ fn functions_wider_than_the_stack_map_are_reported_and_fall_back() {
     assert!(native.publication_counts().wide_frame_functions >= 1,
         "{:?}", native.publication_counts());
 }
+
+#[cfg(feature = "aot")]
+#[test]
+fn a_function_past_the_old_width_still_has_a_stack_map() {
+    // Between the old 256-register width and the current 512, the root map must exist.
+    let parameters = (0..300).map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
+    let source = format!("function wide({parameters}) {{ return p0; }}\nwide(1);\n");
+    let program = Engine::specialize(&source, "wide-frame-half.js").unwrap();
+    let options = crate::NativeJsCodegenOptions {
+        backend: crate::NativeJsBackend::Cranelift, ..Default::default() };
+    let native = crate::NativeJsProgram::<TestHost>::compile_eager_with_options(program, options).unwrap();
+    assert_eq!(native.publication_counts().wide_frame_functions, 0,
+        "{:?}", native.publication_counts());
+}
