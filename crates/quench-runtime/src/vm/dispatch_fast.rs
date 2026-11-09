@@ -9292,7 +9292,7 @@ lane_handler! {
 lane_handler! {
     fn lane_float_unary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let input = read::<ACC, ACC_B>(r, i.b, view);
-        let value = if const { matches!(opcode(OP), Op::WasmF64Unary) } {
+        let value = if const { opcode(OP).is_wasm_f64_unary() } {
             let (Some(input), Some(operator)) =
                 (input.bits64(), F64UnaryOperator::from_tag(i.imm()))
             else {
@@ -10137,8 +10137,8 @@ fn offset_mask_jump_handler<H: Host>(first: Op, jump: Op, backward: bool, acc: u
         };
     }
     match first {
-        Op::WasmI32AddImmediate => tested!(WasmI32AddImmediate),
-        Op::WasmI32SubtractImmediate => tested!(WasmI32SubtractImmediate),
+        op if op.is_wasm_i32_add_immediate() => tested!(WasmI32AddImmediate),
+        op if op.is_wasm_i32_subtract_immediate() => tested!(WasmI32SubtractImmediate),
         _ => None,
     }
 }
@@ -12411,12 +12411,12 @@ script_handler! {
     }
 }
 
-/// The by-name load a `LoadName` handler runs for (`Op::LoadName`): a `LoadNameCall` also
+/// The by-name load a `LoadName` handler runs for: a `LoadNameCall` also
 /// writes its call's receiver, and a `LoadNameTypeof` reads an absent global as `undefined`.
 const LOAD_NAME: u8 = 0;
-/// `LOAD_NAME` for `Op::LoadNameCall`.
+/// `LOAD_NAME` for `LoadNameCall`.
 const LOAD_NAME_CALL: u8 = 1;
-/// `LOAD_NAME` for `Op::LoadNameTypeof`.
+/// `LOAD_NAME` for `LoadNameTypeof`.
 const LOAD_NAME_TYPEOF: u8 = 2;
 
 script_handler! {
@@ -18508,7 +18508,7 @@ pub(super) fn memory_register(function: &Function) -> Option<u16> {
         )?;
         instructions()
             .take_while(|instruction| {
-                matches!(instruction.op(), Op::WasmFillRegisters | Op::WasmInstanceBinding)
+                matches!(instruction.op().class(), Class::WasmFillRegisters | Class::WasmInstanceBinding)
             })
             .any(|instruction| instruction.op().is_wasm_instance_binding() && instruction.a() == vector)
             .then_some(vector)
@@ -18533,7 +18533,7 @@ fn lane_writes(instruction: WideInstruction, register: u16) -> bool {
             .b()
             .checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS)
             == Some(register);
-    let filled = op == Op::WasmFillRegisters
+    let filled = op.is_wasm_fill_registers()
         && (instruction.b()..instruction.b().saturating_add(instruction.c())).contains(&register);
     result || optional || filled
 }
@@ -18605,7 +18605,7 @@ fn derive_lane_view<'live, H: Host>(
             let instruction = decoded[pc];
             let op = instruction.op();
             let binds_memory =
-                op == Op::WasmInstanceBinding && Some(instruction.a()) == memory_register;
+                op.is_wasm_instance_binding() && Some(instruction.a()) == memory_register;
             let memory_access = MemoryLoad::from_direct_op(op).is_some()
                 || MemoryStore::from_direct_op(op).is_some();
             let keeps_view = if memory_access {
@@ -18628,7 +18628,7 @@ fn derive_lane_view<'live, H: Host>(
                 accumulator_field(instruction, register)
             });
             // A table is backward when one of its entries jumps back.
-            let backward_jump = if op == Op::WasmBranchTable {
+            let backward_jump = if op.is_wasm_branch_table() {
                     crate::bytecode::branch_table_entries(pc, instruction).any(|entry| {
                         decoded[entry].imm() as usize <= pc
                     })
@@ -18641,7 +18641,7 @@ fn derive_lane_view<'live, H: Host>(
                     handler: lane_instance_binding::<H, true> as Handler,
                     produces: false,
                 })
-            } else if op == Op::WasmF64Unary
+            } else if op.is_wasm_f64_unary()
                 && F64UnaryOperator::from_tag(instruction.imm())
                     == Some(F64UnaryOperator::SquareRoot)
             {
@@ -18661,7 +18661,7 @@ fn derive_lane_view<'live, H: Host>(
             } else if let Some(arith) = float_arithmetic(op, instruction.imm()) {
                 tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten().and_then(|_| {
                     LaneHandler::producer(
-                        FloatArithmetic::<H>::HANDLERS[usize::from(op == Op::WasmF64Binary)]
+                        FloatArithmetic::<H>::HANDLERS[usize::from(op.is_wasm_f64_binary())]
                             [usize::from(arith)][usize::from(acc)],
                     )
                 })
@@ -18693,7 +18693,7 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
-            } else if op == Op::Call && lane_iteration_step(&decoded, pc) {
+            } else if op.is_call() && lane_iteration_step(&decoded, pc) {
                 Some(LaneHandler {
                     handler: match lane_for_of_step(&decoded, pc) {
                         Some(ForOfTest::Emitted) => lane_iterator_step_reads::<H, false> as Handler,
@@ -18702,9 +18702,9 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
-            } else if op == Op::StoreEnvLocal && resolves_names {
+            } else if op.is_store_env_local() && resolves_names {
                 None
-            } else if op == Op::GetField && lane_sinks_field(instruction) {
+            } else if op.is_get_field() && lane_sinks_field(instruction) {
                 Some(LaneHandler {
                     handler: lane_get_field_sink_first::<H> as Handler,
                     produces: false,
@@ -18778,7 +18778,7 @@ fn derive_lane_view<'live, H: Host>(
     // before the fusions below, which then leave each region's first record alone. Only a
     // body with SIMD operators derives the liveness they read.
     let vectors = wasm
-        && decoded.iter().any(|instruction| matches!(instruction.op(), Op::WasmSimd | Op::WasmSimdShuffle));
+        && decoded.iter().any(|instruction| matches!(instruction.op().class(), Class::WasmSimd | Class::WasmSimdShuffle));
     let vector_regions: Box<[vector_region::VectorRegion]> = match vectors.then(live).flatten() {
         Some(live) => vector_region::vector_regions(
             &decoded,
@@ -18958,7 +18958,7 @@ fn derive_lane_view<'live, H: Host>(
             else {
                 continue;
             };
-            if !matches!(first.op(), Op::WasmI32AddImmediate | Op::WasmI32SubtractImmediate)
+            if !matches!(first.op().class(), Class::WasmI32AddImmediate | Class::WasmI32SubtractImmediate)
                 || !mask.op().is_wasm_i32_and_immediate()
                 || mask.b() != first.a()
                 || jump.a() != mask.a()
@@ -19516,7 +19516,7 @@ fn derive_lane_view<'live, H: Host>(
         // accumulator also holds it).
         for pc in 0..records.len().saturating_sub(1) {
             let jump = decoded[pc];
-            if !matches!(jump.op(), Op::WasmJumpI32EqualImmediate | Op::WasmJumpI32NotEqualImmediate)
+            if !matches!(jump.op().class(), Class::WasmJumpI32EqualImmediate | Class::WasmJumpI32NotEqualImmediate)
                 || i32_load(&records, pc + 1).is_none()
             {
                 continue;
@@ -19536,7 +19536,7 @@ fn derive_lane_view<'live, H: Host>(
             else {
                 continue;
             };
-            if !matches!(first.op(), Op::WasmI32Add | Op::WasmI32AddImmediate) {
+            if !matches!(first.op().class(), Class::WasmI32Add | Class::WasmI32AddImmediate) {
                 continue;
             }
             let Some((backward, _)) = plain_served(records[pc + 1].handler, second.op(), &[ACC_NONE, ACC_B, ACC_C])
@@ -19692,48 +19692,25 @@ fn derive_lane_view<'live, H: Host>(
 /// operand: every field read or store's of its receiver, and a global name access's or top-level
 /// `var` capture read's of the global object (`lane_load_global_name`, `lane_load_root_var`).
 fn holds_field_hint(op: Op) -> bool {
-    matches!(op, Op::GetField | Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict | Op::LoadCapture)
-        || is_global_name_access(op)
+    op.is_field_store() || op.is_get_field() || op.is_load_capture() || is_global_name_access(op)
 }
 
 /// Whether an instruction's record is a call site a read memo may answer
 /// (`lane_memoize_read`), whose operand is `call`.
 fn is_script_call(op: Op) -> bool {
-    matches!(
-        op,
-        Op::Call
-            | Op::CallArray
-            | Op::CallForwardingArguments
-            | Op::CallKnown
-            | Op::CallMethod
-            | Op::CallSpread
-            | Op::CallThisMethod
-            | Op::Construct
-    )
+    op.traits().has(crate::bytecode::Traits::SCRIPT_CALL)
 }
 
 /// Whether an instruction is a by-name load (`LOAD_NAME`) or store, whose hint a global
 /// lexical declaration clears (`LaneView::clear_name_hints`).
 fn is_global_name_access(op: Op) -> bool {
-    matches!(op, Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::StoreName)
+    op.traits().has(crate::bytecode::Traits::GLOBAL_NAME_ACCESS)
 }
 
 /// Whether an instruction's record leaves its `call_link` unread: any but a call's, whose
 /// handlers keep their target hint there (`linked_script_call_entry`).
 fn holds_no_call_link(op: Op) -> bool {
-    !matches!(
-        op,
-        Op::Call
-            | Op::CallArray
-            | Op::CallForwardingArguments
-            | Op::CallKnown
-            | Op::CallMethod
-            | Op::CallSpread
-            | Op::CallThisMethod
-            | Op::LoadNameCall
-            | Op::Construct
-            | Op::SuperCallCheck
-    )
+    !op.traits().has(crate::bytecode::Traits::CALL_LINK)
 }
 
 /// Gives each backward `Jump` whose loop the shared compiler admits (`analyze_osr_region`) the
