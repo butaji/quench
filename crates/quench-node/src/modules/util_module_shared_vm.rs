@@ -5,7 +5,7 @@ use crate::host::NodeHost;
 use crate::modules::util_inspect_shared_vm::{self as inspect, DefaultOption};
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError, ValueType};
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+pub(super) type Context<'a> = NativeContext<'a, NodeHost>;
 
 /// The registry key of `util.promisify.custom`.
 pub(crate) const PROMISIFY_CUSTOM: &str = "nodejs.util.promisify.custom";
@@ -116,24 +116,24 @@ pub(crate) const TYPES: &[(&str, BuiltinBrand)] = &[
 /// `util.types` predicates that test the crypto key classes by identity.
 const KEY_TYPES: &[(&str, &str)] = &[("isKeyObject", "KeyObject"), ("isCryptoKey", "CryptoKey")];
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
+pub(super) fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
     c.get_named_property_rooted(object, name)
 }
 
-fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
+pub(super) fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
     let key = c.string_rooted(name);
     c.define_data_property_rooted(object, key, value, true, true, true)?;
     Ok(())
 }
 
-fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
+pub(super) fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
     match args.get(index) {
         Some(value) => *value,
         None => c.undefined(),
     }
 }
 
-fn type_of(c: &Context<'_>, value: RootId) -> ValueType {
+pub(super) fn type_of(c: &Context<'_>, value: RootId) -> ValueType {
     c.value_type_rooted(value).unwrap_or(ValueType::Undefined)
 }
 
@@ -145,7 +145,7 @@ fn function_with(c: &mut Context<'_>, operation_name: &str, name: &str, data: Ro
     c.host_function_named_with_data(operation(operation_name), name, data)
 }
 
-fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+pub(super) fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     c.host_mut()
         .shared_state()
         .borrow()
@@ -243,10 +243,7 @@ pub(crate) fn build(c: &mut Context<'_>, primordials: RootId) -> Result<(RootId,
     let module = c.object_rooted()?;
     let inspect_function = get(c, primordials, "inspect")?;
     decorate_inspect(c, inspect_function, primordials)?;
-    let error_exception = function(c, "utilErrnoException", "_errnoException")?;
-    put(c, module, "_errnoException", error_exception)?;
-    let host_port = function(c, "utilExceptionWithHostPort", "_exceptionWithHostPort")?;
-    put(c, module, "_exceptionWithHostPort", host_port)?;
+    export_functions(c, module, &[("_errnoException", "utilErrnoException"), ("_exceptionWithHostPort", "utilExceptionWithHostPort")])?;
     let extend = function(c, "utilExtend", "_extend")?;
     let extend = deprecated_export(c, extend, EXTEND_DEPRECATION)?;
     put(c, module, "_extend", extend)?;
@@ -255,36 +252,61 @@ pub(crate) fn build(c: &mut Context<'_>, primordials: RootId) -> Result<(RootId,
     let debuglog = function(c, "utilDebuglog", "debuglog")?;
     put(c, module, "debug", debuglog)?;
     put(c, module, "debuglog", debuglog)?;
-    let deprecate = function(c, "utilDeprecate", "deprecate")?;
-    put(c, module, "deprecate", deprecate)?;
-    let format = function(c, "utilFormat", "format")?;
-    put(c, module, "format", format)?;
+    export_functions(c, module, &[("deprecate", "utilDeprecate"), ("format", "utilFormat")])?;
     let style = super::util_style_shared_vm::function(c, inspect_function)?;
     put(c, module, "styleText", style)?;
-    let format_with_options = function(c, "utilFormatWithOptions", "formatWithOptions")?;
-    put(c, module, "formatWithOptions", format_with_options)?;
-    let get_call_sites = function(c, "utilGetCallSitesPublic", "getCallSites")?;
+    export_functions(c, module, &[("formatWithOptions", "utilFormatWithOptions")])?;
     let get_call_site = function(c, "utilGetCallSite", "deprecated")?;
     put(c, module, "getCallSite", get_call_site)?;
-    put(c, module, "getCallSites", get_call_sites)?;
-    for (name, operation_name) in [
+    export_functions(c, module, &[
+        ("getCallSites", "utilGetCallSitesPublic"),
         ("getSystemErrorMap", "utilGetSystemErrorMap"),
         ("getSystemErrorName", "utilGetSystemErrorName"),
         ("getSystemErrorMessage", "utilGetSystemErrorMessage"),
         ("inherits", "utilInherits"),
-    ] {
+    ])?;
+    put(c, module, "inspect", inspect_function)?;
+    export_predicates(c, module)?;
+    let log = function(c, "utilLog", "log")?;
+    let log = deprecated_export(c, log, LOG_DEPRECATION)?;
+    put(c, module, "log", log)?;
+    let promisify = function(c, "utilPromisify", "promisify")?;
+    let custom = get(c, primordials, "promisifyCustom")?;
+    put(c, promisify, "custom", custom)?;
+    put(c, module, "promisify", promisify)?;
+    export_functions(c, module, &[
+        ("stripVTControlCharacters", "utilStripVTControlCharacters"),
+        ("toUSVString", "utilToUSVString"),
+        ("transferableAbortSignal", "utilTransferableAbortSignal"),
+        ("transferableAbortController", "utilTransferableAbortController"),
+        ("aborted", "utilAborted"),
+    ])?;
+    export_late(c, module)?;
+    let formatters = c.null_object_rooted()?;
+    for name in ["format", "formatWithOptions"] {
+        let value = get(c, module, name)?;
+        let key = c.string_rooted(name);
+        c.define_data_property_rooted(formatters, key, value, false, true, false)?;
+    }
+    super::console_shared_vm::note_inspect_loaded(c)?;
+    Ok((module, formatters))
+}
+
+/// Exports each operation's function under its export name, which is also its own name.
+fn export_functions(c: &mut Context<'_>, module: RootId, exports: &[(&str, &str)]) -> Result<(), RootedError> {
+    for &(name, operation_name) in exports {
         let value = function(c, operation_name, name)?;
         put(c, module, name, value)?;
     }
-    put(c, module, "inspect", inspect_function)?;
+    Ok(())
+}
+
+/// The legacy `util.is*` predicates behind their deprecations, and `isDeepStrictEqual`.
+fn export_predicates(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     for (index, predicate) in PREDICATES.iter().enumerate() {
-        let legacy = match predicate {
-            Predicate::Legacy(legacy) => legacy,
-            Predicate::DeepStrictEqual => {
-                let value = function(c, "utilIsDeepStrictEqual", "isDeepStrictEqual")?;
-                put(c, module, "isDeepStrictEqual", value)?;
-                continue;
-            }
+        let Predicate::Legacy(legacy) = predicate else {
+            export_functions(c, module, &[("isDeepStrictEqual", "utilIsDeepStrictEqual")])?;
+            continue;
         };
         let data = c.number(index as f64);
         let test = function_with(c, "utilLegacyIs", legacy.name, data)?;
@@ -294,51 +316,27 @@ pub(crate) fn build(c: &mut Context<'_>, primordials: RootId) -> Result<(RootId,
         let value = deprecated_export(c, test, (legacy.code, legacy.message))?;
         put(c, module, legacy.name, value)?;
     }
-    let log = function(c, "utilLog", "log")?;
-    let log = deprecated_export(c, log, LOG_DEPRECATION)?;
-    put(c, module, "log", log)?;
-    let promisify = function(c, "utilPromisify", "promisify")?;
-    let custom = get(c, primordials, "promisifyCustom")?;
-    put(c, promisify, "custom", custom)?;
-    put(c, module, "promisify", promisify)?;
-    let strip = function(c, "utilStripVTControlCharacters", "stripVTControlCharacters")?;
-    put(c, module, "stripVTControlCharacters", strip)?;
-    let usv = function(c, "utilToUSVString", "toUSVString")?;
-    put(c, module, "toUSVString", usv)?;
-    for (name, operation_name) in [
-        ("transferableAbortSignal", "utilTransferableAbortSignal"),
-        ("transferableAbortController", "utilTransferableAbortController"),
-        ("aborted", "utilAborted"),
-    ] {
-        let value = function(c, operation_name, name)?;
-        put(c, module, name, value)?;
-    }
+    Ok(())
+}
+
+/// The exports after `aborted`: `types`, the parsers, the lazy text codecs, MIME classes,
+/// `diff` and `setTraceSigInt`.
+fn export_late(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     let types = types_object(c)?;
     put(c, module, "types", types)?;
-    let parse_env = function(c, "parseEnv", "parseEnv")?;
-    put(c, module, "parseEnv", parse_env)?;
+    export_functions(c, module, &[("parseEnv", "parseEnv")])?;
     let parse_args = super::util_parse_args_shared_vm::function(c)?;
     put(c, module, "parseArgs", parse_args)?;
     for name in ["TextDecoder", "TextEncoder"] {
         let name_value = c.string_rooted(name);
         let data = c.record_rooted(false, &["module", "name"], &[module, name_value])?;
-        let initializer = c.host_function_named_with_data(crate::host::shared_vm::operation("utilGlobalExport"), "", data)?;
+        let initializer = function_with(c, "utilGlobalExport", "", data)?;
         c.define_lazy_data_properties_rooted(module, &[name], true, initializer)?;
     }
     let (mime, params) = super::util_mime_shared_vm::classes(c)?;
     put(c, module, "MIMEType", mime)?;
     put(c, module, "MIMEParams", params)?;
-    let diff = function(c, "utilDiff", "diff")?;
-    put(c, module, "diff", diff)?;
-    let trace = function(c, "utilSetTraceSigInt", "setTraceSigInt")?;
-    put(c, module, "setTraceSigInt", trace)?;
-    let formatters = c.null_object_rooted()?;
-    for (name, value) in [("format", format), ("formatWithOptions", format_with_options)] {
-        let key = c.string_rooted(name);
-        c.define_data_property_rooted(formatters, key, value, false, true, false)?;
-    }
-    super::console_shared_vm::note_inspect_loaded(c)?;
-    Ok((module, formatters))
+    export_functions(c, module, &[("diff", "utilDiff"), ("setTraceSigInt", "utilSetTraceSigInt")])
 }
 
 /// `inspect.custom`, `inspect.defaultOptions`, `inspect.colors` and `inspect.styles`.
@@ -922,110 +920,6 @@ pub(crate) fn log(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Roo
     let console = get(c, global, "console")?;
     let log = get(c, console, "log")?;
     c.call_rooted(log, console, &[line])?;
-    Ok(c.undefined())
-}
-
-/// `util.debuglog(set, cb)`: a logger enabled by `NODE_DEBUG`.
-pub(crate) fn debuglog(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let set = argument(c, args, 0);
-    let callback = argument(c, args, 1);
-    let state = c.null_object_rooted()?;
-    put(c, state, "set", set)?;
-    put(c, state, "callback", callback)?;
-    let logger = c.host_function_named_with_data(crate::host::shared_vm::operation!("utilDebugLogger"), "logger", state)?;
-    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("utilDebugEnabled"), "get", state)?;
-    let descriptor = c.null_object_rooted()?;
-    put(c, descriptor, "get", getter)?;
-    let yes = c.boolean(true);
-    put(c, descriptor, "enumerable", yes)?;
-    put(c, descriptor, "configurable", yes)?;
-    let key = c.string_rooted("enabled");
-    c.define_property_descriptor_rooted(logger, key, descriptor)?;
-    Ok(logger)
-}
-
-/// Whether `NODE_DEBUG` (a comma list of case-insensitive `*` patterns) names `set`.
-fn debug_enabled(set: &str) -> bool {
-    let Ok(patterns) = std::env::var("NODE_DEBUG") else { return false };
-    patterns.split(',').any(|pattern| wildcard_match(&pattern.to_uppercase(), set))
-}
-
-fn wildcard_match(pattern: &str, text: &str) -> bool {
-    match pattern.split_once('*') {
-        None => pattern == text,
-        Some((head, tail)) => {
-            text.starts_with(head)
-                && (head.len()..=text.len()).any(|start| text.is_char_boundary(start) && wildcard_match(tail, &text[start..]))
-        }
-    }
-}
-
-fn debug_set(c: &mut Context<'_>, state: RootId) -> Result<String, RootedError> {
-    let set = get(c, state, "set")?;
-    Ok(c.to_string(set)?.to_uppercase())
-}
-
-pub(crate) fn debug_enabled_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let state = c.host_function_data()?;
-    let set = debug_set(c, state)?;
-    Ok(c.boolean(debug_enabled(&set)))
-}
-
-/// The logger: on its first call it resolves the set's implementation and hands it to the
-/// callback; an enabled set writes `SET pid: message` to stderr.
-pub(crate) fn debug_logger(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let state = c.host_function_data()?;
-    let set = debug_set(c, state)?;
-    let implementations = inspect::primordial(c, "debugImpls")?;
-    let mut implementation = get(c, implementations, &set)?;
-    if type_of(c, implementation) == ValueType::Undefined {
-        let set_root = c.string_rooted(&set);
-        implementation = if debug_enabled(&set) {
-            c.host_function_named_with_data(crate::host::shared_vm::operation!("utilDebugWrite"), "debug", set_root)?
-        } else {
-            c.host_function_named(crate::host::shared_vm::operation!("utilNoop"), "noop")?
-        };
-        put(c, implementations, &set, implementation)?;
-    }
-    let initialized = get(c, state, "initialized")?;
-    if !c.truthy_rooted(initialized)? {
-        let yes = c.boolean(true);
-        put(c, state, "initialized", yes)?;
-        let callback = get(c, state, "callback")?;
-        if c.is_callable_rooted(callback)? {
-            let undefined = c.undefined();
-            c.call_rooted(callback, undefined, &[implementation])?;
-        }
-    }
-    let undefined = c.undefined();
-    c.call_rooted(implementation, undefined, args)
-}
-
-pub(crate) fn noop(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    Ok(c.undefined())
-}
-
-/// An enabled set's `debug(...args)`.
-pub(crate) fn debug_write(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let set = c.host_function_data()?;
-    let set = c.to_string(set)?;
-    let process = process(c)?;
-    let stderr = get(c, process, "stderr")?;
-    let colors = super::util_style_shared_vm::should_colorize(c, stderr)?;
-    let options = c.object_rooted()?;
-    let colors_root = c.boolean(colors);
-    put(c, options, "colors", colors_root)?;
-    let message = inspect::format_with_options(c, Some(options), args)?;
-    let pid = get(c, process, "pid")?;
-    let pid = inspect::format_with_options(c, Some(options), &[pid])?;
-    let mut line = format!("{set} ").encode_utf16().collect::<Vec<_>>();
-    line.extend(pid);
-    line.extend(": ".encode_utf16());
-    line.extend(message);
-    line.push(u16::from(b'\n'));
-    let line = c.string_units_rooted(&line);
-    let write = get(c, stderr, "write")?;
-    c.call_rooted(write, stderr, &[line])?;
     Ok(c.undefined())
 }
 

@@ -521,33 +521,9 @@ impl<H: Host> Vm<H> {
         self.heap.alloc_string("ModuleSource".into())
     }
 
-    pub(super) fn call_native_guarded(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-        callee: Value,
-    ) -> Result<Value, JsError> {
-        #[cfg(feature = "profile-lane-exits")]
-        {
-            let name = if native == Native::HostFunction {
-                format!(
-                    "host {}",
-                    self.host_function_name(callee).unwrap_or_default()
-                )
-            } else {
-                format!("{native:?}")
-            };
-            super::lane_exits::record_detail(format!(
-                "native-call {name} argc={} receiver_units={:?} arg0_units={:?}",
-                args.len(),
-                self.heap.string(this).map(|text| text.len()),
-                args.first()
-                    .and_then(|value| self.heap.string(*value))
-                    .map(|text| text.len()),
-            ));
-        }
+    pub(super) fn call_native_guarded(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value],
+        callee: Value) -> Result<Value, JsError> {
+        #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
         self.as_native_activation(native, callee, |vm| vm.call_native(p, native, this, args))
     }
 

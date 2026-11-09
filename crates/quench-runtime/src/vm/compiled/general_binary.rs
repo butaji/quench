@@ -31,9 +31,48 @@ pub(super) fn lower_rest(
         && lower_binary(builder, program, (instruction, next), register_offset, (arguments, payload), exact) {
         return PcLowering::Native;
     }
+    if lower_logical_not(builder, (instruction, next), register_offset, arguments, exact) {
+        return PcLowering::Native;
+    }
     super::emit_js_step_fallback(builder, exact.context, exact.callout, exact.callout_signature, exact.result_pointer,
         exact.stopped_block, exact.continue_block, exact.pc);
     PcLowering::Exact
+}
+
+/// Lowers the `!` at the exact fallback's PC, which only negates its operand's ToBoolean and
+/// so runs no guest code: a returning one (`return !x`) completes the frame with it. Any value
+/// `emit_js_tagged_truthiness` does not decide takes the exact step.
+fn lower_logical_not(
+    builder: &mut FunctionBuilder<'_>,
+    (instruction, next): (WideInstruction, Option<ir::Block>),
+    register_offset: &dyn Fn(u16) -> Option<i32>,
+    arguments: ir::Value,
+    exact: &JsExactFallback,
+) -> bool {
+    let returns = instruction.returns_from_frame();
+    if instruction.op().immediate_role() != crate::bytecode::ImmediateRole::UnaryOperator
+        || instruction.unary_operator() != oxc_ast::ast::UnaryOperator::LogicalNot as u32
+        || instruction.result_flags() != if returns { crate::bytecode::RETURN_REGISTER } else { 0 }
+        || instruction.numeric_local_target().is_some() {
+        return false;
+    }
+    let (Some(source), Some(destination)) = (register_offset(instruction.register_b()), register_offset(instruction.result_register()))
+        else { return false };
+    let next = match (returns, next) {
+        (true, _) => exact.register_return(builder, arguments, destination),
+        (false, Some(next)) => next,
+        (false, None) => return false,
+    };
+    let fallback = builder.create_block();
+    let bits = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
+    let truthy = super::emit_js_tagged_truthiness(builder, bits, fallback);
+    let (truth, falsity) = (builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64),
+        builder.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
+    let negated = builder.ins().select(truthy, falsity, truth);
+    builder.ins().store(MemFlagsData::trusted(), negated, arguments, destination);
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, fallback);
+    true
 }
 
 /// Lowers the plain `Binary` at the exact fallback's PC; false where its result has no home,

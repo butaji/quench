@@ -159,11 +159,11 @@ impl Unit {
         let mut callees = Vec::with_capacity(self.frames.len());
         for frame in &self.frames {
             let (parent, outer) = match frame.parent {
-                None => (caller_masks, 0),
+                None => (caller_masks, RegisterSet::default()),
                 Some(parent) => (callees[parent], suspended[parent]),
             };
             let call = frame.call as usize;
-            let around = parent.get(call)? | (parent.get(call + 1).unwrap_or(0) & !frame.result.map_or(0, |result| register_bit(result - frame.parent_base(&self.frames))));
+            let around = parent.get(call)? | (parent.get(call + 1).unwrap_or_default() & !frame.result.map_or(RegisterSet::default(), |result| register_bit(result - frame.parent_base(&self.frames))));
             suspended.push(outer | around.checked_shl(u32::from(frame.parent_base(&self.frames)))?);
             callees.push(program.register_root_masks(frame.target.function)?);
         }
@@ -178,7 +178,7 @@ impl Unit {
                 &program.field_sites, &program.superinstructions)).collect();
         // A marker defines its callee's registers: call admission binds every one.
         for (frame, pc) in self.frames.iter().zip(&self.markers) {
-            transfers[*pc].1 = (0..frame.registers).fold(0, |mask, register| mask | register_bit(frame.base + register));
+            transfers[*pc].1 = (0..frame.registers).fold(RegisterSet::default(), |mask, register| mask | register_bit(frame.base + register));
         }
         // A returning instruction continues at the function's terminal `Return` where it has
         // one, whose register then holds its value; otherwise it completes the activation.

@@ -9,7 +9,7 @@ impl<H: Host> Vm<H> {
     /// where the name is an immutable global (`builtins::immutable_globals`), else with the
     /// cell it reads now as a Stable fact (`Vm::stable_global_read`).
     pub(super) fn lane_global_reads(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit)
-        -> std::collections::BTreeMap<usize, GlobalRead> {
+        -> crate::vm::global_facts::GlobalReads {
         let global = |function: u32| program.function_get(function as usize)
             .is_some_and(|body| body.names_resolve_statically(program))
             && self.programs.names_are_global(self.active_program);

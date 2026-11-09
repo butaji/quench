@@ -232,3 +232,12 @@ impl<H: Host> Vm<H> {
         self.plain_named_get(base, self.lookup_string_atom(key)?)
     }
 }
+
+impl<H: Host> Vm<H> {
+    /// The array of for-in `keys` with `prototype`.
+    pub(super) fn alloc_for_in_key_array(&mut self, keys: crate::heap::ArrayElements, prototype: Value) -> Value {
+        self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), keys),
+        })
+    }
+}

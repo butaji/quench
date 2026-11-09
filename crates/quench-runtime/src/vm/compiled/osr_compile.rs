@@ -222,7 +222,7 @@ pub(in crate::vm) fn start_osr_region(
     let simple = region.inlining.is_none();
     let lane = (simple || inlined.is_some()).then(|| super::lane_region::RegionSpecializer {
         function_id, unit, helpers, fields: &fields,
-        global_reads: &BTreeMap::new(), facts: VmFacts::STATIC, generic: &[],
+        global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
         direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
         entry_fields: &entry_fields,
         plan: super::lane_region::RegionPlan {

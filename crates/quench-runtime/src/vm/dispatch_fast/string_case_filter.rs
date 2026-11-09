@@ -3,6 +3,11 @@ use super::super::wtf16::{JsString, Units, MAX_STRING_UNITS};
 use super::*;
 use std::hash::Hasher;
 
+// Construction runs once, as the lane view is derived; only `select` runs per operation.
+#[path = "../string_case_derivation.rs"]
+mod derivation;
+pub(super) use derivation::specialize;
+
 /// The low word contains two edge units; the high word contains the UTF-16 length.
 const CASE_LENGTH_SHIFT: u32 = 2 * u16::BITS;
 const EMPTY_EDGE_UNIT: u16 = 0;
@@ -32,6 +37,12 @@ fn signature(text: &JsString, length: usize) -> Option<u64> {
     Some(((length as u64) << CASE_LENGTH_SHIFT) | (u64::from(first) << u16::BITS) | u64::from(last))
 }
 
+/// The bit of `StringCaseFilter::short_lengths` that records `length`; none past its word.
+#[inline(always)]
+fn short_length_bit(length: usize) -> Option<u64> {
+    (length < u64::BITS as usize).then(|| 1_u64 << length)
+}
+
 #[inline(always)]
 fn bucket_index(key: u64, mask: usize) -> usize {
     let mut hash = rustc_hash::FxHasher::default();
@@ -46,6 +57,7 @@ struct Bucket {
     count: u16,
 }
 
+#[derive(Clone, Copy)]
 struct Case {
     index: u16,
     record: u32,
@@ -60,102 +72,44 @@ pub(super) struct StringCaseFilter {
 }
 
 impl StringCaseFilter {
-    fn new(heap: &crate::heap::Heap, start: usize, values: &[Value]) -> Option<Self> {
-        let mut groups: rustc_hash::FxHashMap<u64, Vec<Case>> = Default::default();
-        let mut short_lengths = 0;
-        let mut max_length = 0;
-        for (index, &value) in values.iter().enumerate() {
-            let record = value.direct_string_index()?;
-            // SAFETY: the constant run retains this resolved string identity.
-            let text = unsafe { heap.string_record_by_id(record) };
-            let length = text.len();
-            let key = signature(text, length)?;
-            if length < u64::BITS as usize {
-                short_lengths |= 1_u64 << length;
-            }
-            max_length = max_length.max(length);
-            let group = groups.entry(key).or_default();
-            // Equal constants share a record; retain only their first source position.
-            if group.iter().any(|case| case.record == record) {
-                continue;
-            }
-            if group.len() == MAX_CASE_COMPARISONS {
-                return None;
-            }
-            group.push(Case {
-                index: index as u16,
-                record,
-            });
-        }
-        let capacity = (groups.len() * BUCKET_CAPACITY_FACTOR).next_power_of_two();
-        let mut buckets = vec![Bucket::default(); capacity].into_boxed_slice();
-        let mut cases = Vec::with_capacity(groups.values().map(Vec::len).sum());
-        for (key, group) in groups {
-            let base = bucket_index(key, capacity - 1);
-            let slot = (0..MAX_BUCKET_PROBES)
-                .map(|probe| (base + probe) & (capacity - 1))
-                .find(|&slot| buckets[slot].count == EMPTY_BUCKET_COUNT)?;
-            buckets[slot] = Bucket {
-                key,
-                first: cases.len() as u32,
-                count: group.len() as u16,
-            };
-            cases.extend(group);
-        }
-        Some(Self {
-            start,
-            short_lengths,
-            max_length,
-            buckets,
-            cases: cases.into_boxed_slice(),
-        })
-    }
-
     #[inline(always)]
-    fn select<H: Host>(
-        &self,
-        vm: &Vm<H>,
-        value: Value,
-        text: &JsString,
-        constants: &[Value],
-    ) -> u32 {
+    fn select<H: Host>(&self, vm: &Vm<H>, value: Value, text: &JsString, constants: &[Value]) -> u32 {
         let missing = constants.len() as u32;
         let length = text.len();
-        if length > self.max_length
-            || (length < u64::BITS as usize && self.short_lengths & (1_u64 << length) == 0)
-        {
+        if length > self.max_length || short_length_bit(length).is_some_and(|bit| self.short_lengths & bit == 0) {
             return missing;
         }
         let Some(key) = signature(text, length) else {
             return vm.string_case_index(value, constants);
         };
+        for case in self.group(key) {
+            // SAFETY: the original constant run retains every resolved record.
+            if unsafe { vm.heap.string_record_by_id(case.record) } == text {
+                return u32::from(case.index);
+            }
+        }
+        missing
+    }
+
+    /// The cases whose signature is `key`, none when no bucket holds it. Construction
+    /// proved every known key is found within the probe budget.
+    #[inline(always)]
+    fn group(&self, key: u64) -> &[Case] {
         let mask = self.buckets.len() - 1;
         let base = bucket_index(key, mask);
         for probe in 0..MAX_BUCKET_PROBES {
             // SAFETY: masking indexes the nonempty power-of-two bucket array.
             let bucket = unsafe { self.buckets.get_unchecked((base + probe) & mask) };
             if bucket.count == EMPTY_BUCKET_COUNT {
-                return missing;
+                break;
             }
-            if bucket.key != key {
-                continue;
+            if bucket.key == key {
+                let start = bucket.first as usize;
+                // SAFETY: construction recorded a complete contiguous group in this array.
+                return unsafe { self.cases.get_unchecked(start..start + usize::from(bucket.count)) };
             }
-            let start = bucket.first as usize;
-            // SAFETY: construction recorded a complete contiguous group in this array.
-            let cases = unsafe {
-                self.cases
-                    .get_unchecked(start..start + usize::from(bucket.count))
-            };
-            for case in cases {
-                // SAFETY: the original constant run retains every resolved record.
-                if unsafe { vm.heap.string_record_by_id(case.record) } == text {
-                    return u32::from(case.index);
-                }
-            }
-            return missing;
         }
-        // Construction proved every known key is found within this probe budget.
-        missing
+        &[]
     }
 }
 
@@ -176,34 +130,4 @@ script_handler! {
         r.set(i.a, Value::integer(index as i32));
         next!(cx, r, following(ip), view)
     }
-}
-
-pub(super) fn specialize<H: Host>(
-    heap: &crate::heap::Heap,
-    constants: &[Value],
-    records: &mut [LaneInstruction],
-) -> Box<[StringCaseFilter]> {
-    let mut filters = Vec::new();
-    let mut sites = Vec::new();
-    for (pc, record) in records.iter().enumerate() {
-        if record.handler != lane_string_case_index::<H> as *const () {
-            continue;
-        }
-        let start = record.imm() as usize;
-        // SAFETY: this handler is installed only after lane_operand validates the range.
-        let cases = unsafe { constants.get_unchecked(start..start + usize::from(record.b)) };
-        let Some(filter) = StringCaseFilter::new(heap, start, cases) else {
-            continue;
-        };
-        filters.push(filter);
-        sites.push(pc);
-    }
-    let filters = filters.into_boxed_slice();
-    for (pc, filter) in sites.into_iter().zip(filters.iter()) {
-        records[pc].operand = LaneOperand {
-            string_case_filter: filter,
-        };
-        records[pc].handler = lane_string_case_filtered::<H> as *const ();
-    }
-    filters
 }

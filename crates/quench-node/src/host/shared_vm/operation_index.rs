@@ -1,10 +1,12 @@
-//! Compile-time name order for the immutable host-operation declarations.
+//! The host-operation catalog's compile-time projections: name order, ABI hash, the
+//! operations that run beside activations, and name-to-identity resolution.
 
-use quench_runtime::HostFunctionDescriptor;
+use super::OPERATION_DESCRIPTORS;
+use quench_runtime::{HostFunctionDescriptor, HostFunctionId};
 
 /// Stable bottom-up merge sort. Scratch storage exists only during constant
 /// evaluation; the image retains one u16 per operation and no copied names.
-pub(super) const fn sorted_indices<const N: usize>(descriptors: &[HostFunctionDescriptor]) -> [u16; N] {
+const fn sorted_indices<const N: usize>(descriptors: &[HostFunctionDescriptor]) -> [u16; N] {
     assert!(N == descriptors.len(), "operation index must cover the descriptor table");
     assert!(N <= u16::MAX as usize + 1, "Node binding index fits u16");
     let mut indices = [0; N];
@@ -51,6 +53,141 @@ const fn name_before_or_equal(left: &str, right: &str) -> bool {
     }
     left.len() <= right.len()
 }
+
+const ABI_HASH_OFFSET: u64 = 0xcbf29ce484222325;
+const ABI_HASH_PRIME: u64 = 0x100000001b3;
+const ABI_FIELD_END: u8 = u8::MAX;
+
+pub(super) const fn operation_abi(scope: &str, name: &str, length: u64, callback: &str) -> u64 {
+    let mut hash = ABI_HASH_OFFSET;
+    let fields = [scope, name, callback];
+    let mut field = 0;
+    while field < fields.len() {
+        let bytes = fields[field].as_bytes();
+        let mut byte = 0;
+        while byte < bytes.len() {
+            hash = (hash ^ bytes[byte] as u64).wrapping_mul(ABI_HASH_PRIME);
+            byte += 1;
+        }
+        hash = (hash ^ ABI_FIELD_END as u64).wrapping_mul(ABI_HASH_PRIME);
+        field += 1;
+    }
+    (hash ^ length).wrapping_mul(ABI_HASH_PRIME)
+}
+
+pub(super) const fn bootstrap_abi(words: &[u64]) -> u64 {
+    let mut hash = ABI_HASH_OFFSET;
+    let mut word = 0;
+    while word < words.len() {
+        hash = (hash ^ words[word]).wrapping_mul(ABI_HASH_PRIME);
+        word += 1;
+    }
+    hash
+}
+
+pub(super) const fn operation_bits<const WORDS: usize>(policies: &[bool]) -> [u64; WORDS] {
+    let mut words = [0; WORDS];
+    let mut index = 0;
+    while index < policies.len() {
+        if policies[index] { words[index / u64::BITS as usize] |= 1 << (index % u64::BITS as usize); }
+        index += 1;
+    }
+    words
+}
+
+/// String equality during constant evaluation.
+const fn same_name(left: &str, right: &str) -> bool {
+    let (left, right) = (left.as_bytes(), right.as_bytes());
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut byte = 0;
+    while byte < left.len() && left[byte] == right[byte] { byte += 1; }
+    byte == left.len()
+}
+
+pub(super) const fn operation_beside_activations(name: &str) -> bool {
+    let mut index = 0;
+    while index < BESIDE_ACTIVATIONS.len() {
+        if same_name(BESIDE_ACTIVATIONS[index], name) { return true; }
+        index += 1;
+    }
+    false
+}
+
+/// Resolve host-owned literal names at Rust binding time, before any VM exists.
+pub(crate) const fn static_operation(name: &str) -> HostFunctionId {
+    let mut position = 0;
+    while position < OPERATION_DESCRIPTORS.len() {
+        if same_name(OPERATION_DESCRIPTORS[position].name, name) {
+            assert!(position <= u32::MAX as usize);
+            return HostFunctionId(position as u32);
+        }
+        position += 1;
+    }
+    panic!("unregistered Node operation")
+}
+
+/// The host function registered as `name`. Hosts resolve operations per request (an
+/// incoming message's stream methods, an accepted socket's handle), so the names are
+/// indexed once, by a binary search, rather than scanned among every binding. Each name
+/// registers exactly one function (`operation_names_are_unique`).
+pub(crate) fn operation(name: &str) -> HostFunctionId {
+    // Resolve immutable declaration order during compilation, without first-use
+    // allocation, sorting or synchronization. Each entry is only a binding index.
+    static INDEX: [u16; OPERATION_DESCRIPTORS.len()] = sorted_indices(OPERATION_DESCRIPTORS);
+    let descriptors = OPERATION_DESCRIPTORS;
+    let index = &INDEX;
+    let first = index.partition_point(|&position| descriptors[usize::from(position)].name < name);
+    let position = index
+        .get(first)
+        .copied()
+        .filter(|&position| descriptors[usize::from(position)].name == name)
+        .unwrap_or_else(|| panic!("unregistered Node operation: {name}"));
+    HostFunctionId(u32::from(position))
+}
+
+/// The host operations that run beside a lane's frameless activations
+/// (`host_function_runs_beside_activations`).
+pub(super) const BESIDE_ACTIVATIONS: &[&str] = &[
+    "emitterListenerCount",
+    "emitterEmitListeners",
+    "bufferBindingByteLengthUtf8",
+    "bufferBindingAsciiSlice",
+    "bufferBindingBase64Slice",
+    "bufferBindingBase64urlSlice",
+    "bufferBindingHexSlice",
+    "bufferBindingLatin1Slice",
+    "bufferBindingUcs2Slice",
+    "bufferBindingUtf8Slice",
+    "bufferBindingUtf8Write",
+    "utilTypeCheck",
+    "nextTick",
+    "asyncResourceInit",
+    "asyncResourceEnterScope",
+    "asyncResourceExitScope",
+    "stringDecoderDecode",
+    "markAsUncloneable",
+    "byteStringEnd",
+    "headerFields",
+    // Socket, timer, decoder and listener bookkeeping a request or message makes several
+    // times (ws, undici, esbuild and Fastify package censuses): none reads the frame stack
+    // itself, and the guest code or errors any of them reaches take frames first
+    // (`Vm::materialize_deferred_lane`).
+    "netSocketAccountWrite",
+    "netSocketRead",
+    "netSocketWrite",
+    "netSocketReference",
+    "setImmediate",
+    "clearTimeout",
+    "textDecoderDecode",
+    "encodingUtf8",
+    "emitterOnce",
+    "emitterAddListener",
+    "emitterRemoveListener",
+    "primordialsCopy",
+    "childProcessReference",
+];
 
 #[cfg(test)]
 mod tests {

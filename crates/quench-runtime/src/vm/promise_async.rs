@@ -50,7 +50,7 @@ impl<H: Host> Vm<H> {
         // Dead registers come in runs (a statement's temporaries), each cleared as one span,
         // found a machine word of the mask at a time.
         for (word, registers) in low.chunks_mut(u64::BITS as usize).enumerate() {
-            let live = (mask >> (word * u64::BITS as usize)) as u64;
+            let live = mask.word(word);
             let mut dead = !live & u64::MAX >> (u64::BITS as usize - registers.len());
             while dead != 0 {
                 let start = dead.trailing_zeros();

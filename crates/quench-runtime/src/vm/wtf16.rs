@@ -12,6 +12,7 @@ mod search;
 pub(super) use concat_all::JsStringBuilder;
 mod split;
 mod text_hash;
+mod conversions;
 pub(crate) use text_hash::{str_text_hash, table_hash, TextHash};
 use append_buffer::{AppendBuffer, APPEND_BUFFER_MIN_UNITS};
 
@@ -1261,45 +1262,6 @@ impl Eq for JsString {}
 impl Hash for JsString {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_u32(self.units().text_hash());
-    }
-}
-
-impl std::fmt::Debug for JsString {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_tuple("JsString")
-            .field(&self.host_string())
-            .finish()
-    }
-}
-
-impl From<&str> for JsString {
-    fn from(value: &str) -> Self {
-        Self::from_str(value)
-    }
-}
-
-impl From<String> for JsString {
-    fn from(value: String) -> Self {
-        Self::from_str(&value)
-    }
-}
-
-impl From<JsString> for String {
-    fn from(value: JsString) -> Self {
-        value.host_string().to_owned()
-    }
-}
-
-impl FromIterator<char> for JsString {
-    fn from_iter<T: IntoIterator<Item = char>>(iter: T) -> Self {
-        Self::from(iter.into_iter().collect::<String>())
-    }
-}
-
-impl std::fmt::Display for JsString {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.host_string())
     }
 }
 

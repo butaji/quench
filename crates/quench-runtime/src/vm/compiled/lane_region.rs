@@ -45,6 +45,9 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/bindings.rs"] mod bindings;
 #[path = "lane_region/frame.rs"] mod frame;
 #[path = "lane_region/polymorphic_stores.rs"] mod polymorphic_stores;
+#[path = "lane_region/hoisted_reads.rs"] mod hoisted_reads;
+#[path = "lane_region/field_reads.rs"] mod field_reads;
+#[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
 use polls::specialize_closed_polls;
 #[cfg(test)]
@@ -362,7 +365,7 @@ struct Lowering<'a, 'f> {
     /// An OSR region's field reads answered from the entry record, by unit PC.
     entry_fields: &'a BTreeMap<usize, u32>,
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
-    global_reads: &'a BTreeMap<usize, crate::vm::global_facts::GlobalRead>,
+    global_reads: &'a crate::vm::global_facts::GlobalReads,
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
     /// (`array_length`), and whether an IsHTMLDDA object can exist (`emit_nullish_branch`).
     vm: VmFacts<'a>,
@@ -1185,7 +1188,7 @@ pub(super) struct RegionSpecializer<'p> {
     pub(super) unit: &'p super::lane_unit::Unit,
     pub(super) helpers: LaneHelpers,
     pub(super) fields: &'p BTreeMap<u16, Vec<NativeFieldLoad>>,
-    pub(super) global_reads: &'p BTreeMap<usize, crate::vm::global_facts::GlobalRead>,
+    pub(super) global_reads: &'p crate::vm::global_facts::GlobalReads,
     pub(super) facts: VmFacts<'p>,
     pub(super) generic: &'p [usize],
     pub(super) direct: &'p BTreeMap<usize, *const DirectCallee>,
@@ -1217,7 +1220,7 @@ pub(super) fn lower_body(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
-    global_reads: &BTreeMap<usize, crate::vm::global_facts::GlobalRead>,
+    global_reads: &crate::vm::global_facts::GlobalReads,
     vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
@@ -1248,7 +1251,7 @@ pub(super) fn lower(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
-    global_reads: &BTreeMap<usize, crate::vm::global_facts::GlobalRead>,
+    global_reads: &crate::vm::global_facts::GlobalReads,
     vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
@@ -1987,23 +1990,7 @@ impl Lowering<'_, '_> {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
             LaneHelpers::Process(_) => emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver)),
             #[cfg(feature = "aot")]
-            LaneHelpers::Bound(..) => {
-                let slot = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, fixed_this_slot));
-                let present = self.builder.ins().icmp_imm_u(IntCC::NotEqual, slot, 0);
-                let bound = self.builder.create_block();
-                let absent = self.builder.create_block();
-                let join = self.builder.create_block();
-                let bits = self.builder.append_block_param(join, types::I64);
-                self.builder.ins().brif(present, bound, &[], absent, &[]);
-                self.builder.switch_to_block(bound);
-                let value = self.builder.ins().load(types::I64, MemFlagsData::trusted(), slot, 0);
-                self.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
-                self.builder.switch_to_block(absent);
-                let deleted = self.builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
-                self.builder.ins().jump(join, &[ir::BlockArg::Value(deleted)]);
-                self.builder.switch_to_block(join);
-                bits
-            }
+            LaneHelpers::Bound(..) => self.fixed_this(),
             #[cfg(feature = "aot")]
             LaneHelpers::Linked(..) => unreachable!("helper table bound before entry facts"),
         };
@@ -2178,18 +2165,7 @@ impl Lowering<'_, '_> {
         };
         #[cfg(not(feature = "aot"))]
         let fields = smallvec::SmallVec::new();
-        // Profiled raw stores preserve their declared field type. An online body's plan
-        // registered those possible writes before it was lowered (`Vm::admit_lane_stores`);
-        // other code registers them here, at each entry.
-        // An online body admitted its stores when it was planned; a frozen image has no
-        // plan, so it admits them at each entry, as offline code does.
-        let domains = if self.vm.online.is_some() && !self.vm.frozen { Vec::new() } else { store_domains(instructions, |site| self.fields.get(&site).map(Vec::as_slice)) };
-        for (shape, slot, domain) in domains {
-            let exit = *miss.get_or_insert_with(|| self.builder.create_block());
-            let shape = self.builder.ins().iconst(types::I64, i64::from(shape));
-            let slot = self.builder.ins().iconst(types::I64, i64::from(slot));
-            self.admit_slot_writes(shape, slot, domain, exit);
-        }
+        self.admit_store_domains(instructions, &mut miss);
         let records = self.invariant_field_records(instructions, &receiver, object_table, &mut miss);
         if let Some(miss) = miss {
             let admitted = self.builder.create_block();
@@ -2344,51 +2320,8 @@ impl Lowering<'_, '_> {
         if self.unit.markers.contains(&pc) || !retains_array_views(&self.program.constants, instruction) {
             state.proofs.arrays.clear();
         }
-        if let Some(LoopRead { value: variable, ty, representation, receiver, header }) = self.hoisted.get(&pc).copied() {
-            if let Some((owner, ty)) = receiver {
-                let owner = match instruction.field_lookup() {
-                    Some(FieldLookup::Atom { base, .. }) => base.register_index().unwrap_or(owner),
-                    _ => owner,
-                };
-                let fact = &mut state.values[usize::from(owner)];
-                *fact = RegisterFact { tagged: fact.tagged,
-                    ..RegisterFact::definition(ty, Representation::Tagged) };
-                if let Some(header) = header { state.proofs.headers[usize::from(owner)] = Some(header); }
-            }
-            let raw = self.builder.use_var(variable);
-            if representation == Representation::Int32 && instruction.op().class().eq(Class::LoadCapture) {
-                // Captures have no tagged field-cache consumer. Preserve the
-                // admitted view; recovery or a tagged use boxes it on demand.
-                self.set_int(state, instruction.result_register(), raw);
-                self.native += 1;
-                return true;
-            }
-            let value = if representation == Representation::Int32 { int_tagged(&mut self.builder, raw) } else { raw };
-            let destination = instruction.result_register();
-            if instruction.op().class().eq(Class::GetField)
-                && let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() {
-                #[cfg(test)] {
-                    record_field_forward(cache_site);
-                    if representation == Representation::Int32 {
-                        LOOP_INT32_READ_SITE.with(|site| {
-                            if let Some((expected, count)) = site.get() && expected == cache_site {
-                                site.set(Some((expected, count + 1)));
-                            }
-                        });
-                    }
-                }
-                #[cfg(not(test))] let _ = cache_site;
-                state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty });
-            }
-            self.define(state, destination, value, RegisterFact::definition(ty, Representation::Tagged));
-            if ty == Type::INT32 {
-                let int = if representation == Representation::Int32 { raw } else { self.ins().ireduce(types::I32, value) };
-                let variable = self.int_var(usize::from(destination));
-                self.builder.def_var(variable, int);
-                state.values[usize::from(destination)] = RegisterFact { tagged: TaggedView::Value(value),
-                    ..RegisterFact::definition(Type::INT32, Representation::Int32) };
-            }
-            self.native += 1;
+        if let Some(read) = self.hoisted.get(&pc).copied() {
+            self.hoisted_read(state, instruction, read);
             return true;
         }
         let instructions = &self.unit.instructions;
@@ -2426,30 +2359,8 @@ impl Lowering<'_, '_> {
                 None => Some(true),
             },
             op if plain && op.js_denotation() == JsDenotation::LoadConst => {
-                let index = instruction.constant_index();
-                let Some(constant) = self.program.constants.get(index) else { return false };
-                if super::facts::immediate(constant).is_none()
-                    && matches!(constant, crate::bytecode::Constant::String(_))
-                    && let Some(base) = self.vm.frozen_constants
-                {
-                    // The image materializes the string once at load; the read is checked
-                    // against the image's invalidation word like every other frozen fact.
-                    let exit = self.guard_exit(state, pc as u32);
-                    self.read_invalidation(state, exit);
-                    let address = self.ins().iconst(types::I64,
-                        (base + index * std::mem::size_of::<Value>()) as i64);
-                    let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-                    self.define(state, instruction.result_register(), value,
-                        RegisterFact::definition(super::facts::constant_type(constant), Representation::Tagged));
-                    Some(true)
-                } else {
-                    crate::staged::Operation::decode(instruction, |index|
-                        self.constant_value(index).map(|(value, ty)| crate::staged::Constant { value, ty }))
-                        .map(|operation| {
-                            self.step(state, frame::Edges::Value, operation);
-                            true
-                        })
-                }
+                let Some(constant) = self.program.constants.get(instruction.constant_index()) else { return false };
+                self.load_constant(state, pc, instruction, constant)
             }
             op if plain && op.js_denotation() == JsDenotation::Move => {
                 crate::staged::Operation::decode(instruction, |_| None).map(|operation| {
@@ -2513,8 +2424,8 @@ impl Lowering<'_, '_> {
                 emit_js_guard(&mut self.builder, stored, exit);
                 Some(true)
             }
-            Op::GetField if instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
-            Op::GetIndex if plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
+            op if op.is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
+            op if op.is_get_index() && plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
                 // of an int32 key, proved once.
                 let exit = self.guard_exit(state, pc32);
@@ -2525,7 +2436,7 @@ impl Lowering<'_, '_> {
                         Some(array) => self.loop_element_read(array, index, exit),
                         None => {
                             let view = self.array_view(state, base, false, exit);
-                            self.dense_element(base, view, index, exit)
+                            self.dense_element(state, base, view, index, exit)
                         }
                     };
                     self.set_tagged(state, instruction.result_register(), value);
@@ -2837,7 +2748,7 @@ impl Lowering<'_, '_> {
     /// `operation` by the interpreter's semantics (`staged::step`) on the emit stage, with
     /// `edges` as its control edges. The lane specializer decides every truthiness itself, so
     /// no step is left unresolved.
-    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation)
+    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>)
         -> crate::staged::Step<ir::Value, ()> {
         let locals = (self.completion != Completion::Number).then(|| emit_js_payload_word(
             &mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, native_locals)));
@@ -3877,8 +3788,7 @@ impl Lowering<'_, '_> {
             self.builder.set_cold_block(slow);
             let done = self.builder.create_block();
             let view = self.array_view(state, base, true, slow);
-            let (address, old) = super::emit_dense_element(&mut self.builder, view, index, slow);
-            super::emit_dense_element_replace(&mut self.builder, view, address, old, value);
+            self.index_write(state, index, value, view, slow);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);
             self.builder.seal_block(slow);
@@ -4008,8 +3918,7 @@ impl Lowering<'_, '_> {
             self.builder.set_cold_block(slow);
             let view = super::DenseArrayView { values, length, writable: true };
             // The view's backing counts no values (`hoist_arrays`): the store writes the element.
-            let (address, _) = super::emit_dense_element(&mut self.builder, view, index, slow);
-            self.ins().store(MemFlagsData::trusted(), value, address, 0);
+            self.index_write(state, index, value, view, slow);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);
             self.builder.seal_block(slow);
@@ -4128,14 +4037,8 @@ impl Lowering<'_, '_> {
         // guard and leaves to the shared body.
         if rest.is_empty() && sink.is_none() && completes.is_none()
             && !instruction.writes_current_this()
-            && let Some(expected) = self.vm.frozen_fields.and_then(|fields| fields.get(&first.0)).copied()
+            && self.fold_frozen_field(state, (register, receiver), *first, destination, exit)
         {
-            let actual = self.base_field_read(state, register, receiver, *first, exit);
-            let same = self.ins().icmp_imm_u(IntCC::Equal, actual, expected.to_bits() as i64);
-            emit_js_guard(&mut self.builder, same, exit);
-            let value = self.ins().iconst(types::I64, expected.to_bits() as i64);
-            self.define(state, destination, value,
-                RegisterFact::definition(Type::immediate(expected), Representation::Tagged));
             return Some(true);
         }
         let known = field.and_then(|(owner, atom)| state.proofs.fields.iter().copied()
@@ -4157,36 +4060,7 @@ impl Lowering<'_, '_> {
             self.return_value(record, value);
             return Some(false);
         }
-        // A slot that has only held int32 values is read as one: its value's tag is tested
-        // here, once, and a value it no longer holds leaves before the read is defined.
-        let integer = rest.is_empty() && known.is_some_and(|field| field.ty == Type::INT32);
-        let ty = if integer || int32_read(self.program, self.fields, instruction) {
-            if !integer {
-                let integer = is_int_tagged(&mut self.builder, value);
-                emit_js_guard(&mut self.builder, integer, exit);
-            }
-            Type::INT32
-        } else { Type::ANY };
-        // A fused chain can consume an existing first-slot proof, but its guest
-        // result names the final slot. Do not retain a new anonymous intermediate
-        // solely for forwarding; the existing proof needs no duplicate update.
-        if let Some((owner, atom)) = field.filter(|_| rest.is_empty()) {
-            let read = FieldValue { owner, atom, value, ty };
-            match state.proofs.fields.iter_mut().find(|field| field.owner == owner && field.atom == atom) {
-                Some(field) => *field = read,
-                None => state.proofs.fields.push(read),
-            }
-        }
-        if ty != Type::INT32 {
-            self.set_tagged(state, destination, value);
-            return Some(true);
-        }
-        self.set_tagged(state, destination, value);
-        let int = self.ins().ireduce(types::I32, value);
-        let variable = self.int_var(usize::from(destination));
-        self.builder.def_var(variable, int);
-        state.values[usize::from(destination)] = RegisterFact { tagged: TaggedView::Value(value),
-            ..RegisterFact::definition(Type::INT32, Representation::Int32) };
+        self.define_field_read(state, instruction, value, (field, rest.is_empty(), known), exit);
         Some(true)
     }
 
@@ -4333,20 +4207,7 @@ impl Lowering<'_, '_> {
             return self.holder_read(state, object, holder, *field, exit);
         }
         if let [field] = shapes {
-            let known = owner.and_then(|owner| state.proofs.layouts.get(&(owner, field.shape)).copied());
-            let projection = match known {
-                Some(projection) if usize::from(field.slot) < projection.storage_len() => projection,
-                _ => {
-                    self.prove_shape(state, owner, shape, field.shape, exit);
-                    let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                        *field, PackedAccess::Reload, exit)?;
-                    if let Some(owner) = owner {
-                        state.proofs.layouts.insert((owner, field.shape), projection);
-                    }
-                    projection
-                }
-            };
-            return Some(projection.read(&mut self.builder, field.slot));
+            return self.single_shape_read(state, owner, object, shape, inline, properties, *field, exit);
         }
         // Layout families (`object_slots::field_load_groups`): own fields at one slot of every
         // shape of a family take one shape-set test and one read; a prototype-held slot its own.
@@ -4377,6 +4238,33 @@ impl Lowering<'_, '_> {
         self.ins().jump(exit, &[]);
         self.builder.switch_to_block(join);
         Some(value)
+    }
+
+    /// One proven shape's slot read: the owner's kept layout proof where it still holds the
+    /// slot, otherwise the proof this shape test establishes, read by the staged operation.
+    #[allow(clippy::too_many_arguments)]
+    fn single_shape_read(&mut self, state: &mut State, owner: Option<Option<Register>>,
+        object: ir::Value, shape: ir::Value, inline: ir::Value, properties: ir::Value,
+        field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
+        let known = owner.and_then(|owner| state.proofs.layouts.get(&(owner, field.shape)).copied());
+        let projection = match known {
+            Some(projection) if usize::from(field.slot) < projection.storage_len() => projection,
+            _ => {
+                self.prove_shape(state, owner, shape, field.shape, exit);
+                let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
+                    field, PackedAccess::Reload, exit)?;
+                if let Some(owner) = owner {
+                    state.proofs.layouts.insert((owner, field.shape), projection);
+                }
+                projection
+            }
+        };
+        let step = self.step(state, frame::Edges::Value, crate::staged::Operation::ReadField {
+            base: owner.flatten().unwrap_or(0), slot: field.slot, ty: field.ty, proof: EmitProof::Field(projection) });
+        match step {
+            crate::staged::Step::Value(value) => Some(value),
+            _ => None,
+        }
     }
 
     /// Guards that `shape`, the shape word of `owner`'s object, is `expected`; the owner's
@@ -4707,7 +4595,7 @@ impl Lowering<'_, '_> {
                     let ok = self.ins().band(same, admitted);
                     self.ins().brif(ok, matched, &[], next, &[]);
                     self.builder.switch_to_block(matched);
-                    widens.extend(self.store_direct(field, object_bits, object, header.inline, properties, None, value, ty, done, general)?);
+                    widens.extend(self.store_direct(state, field, object_bits, object, header.inline, properties, None, value, ty, done, general)?);
                     self.builder.switch_to_block(next);
                 }
                 self.ins().jump(general, &[]);
@@ -4739,7 +4627,7 @@ impl Lowering<'_, '_> {
         };
         self.ins().brif(ok, direct, &[], general, &[]);
         self.builder.switch_to_block(direct);
-        let widen = self.store_direct(field, object_bits, object, inline, properties, projection, value, ty, done, general)?;
+        let widen = self.store_direct(state, field, object_bits, object, inline, properties, projection, value, ty, done, general)?;
         self.finish_store(state, object_bits, atom, site, value, ty, exit, dynamic_header, general,
             widen.as_slice(), done);
         Some(())
@@ -4751,7 +4639,7 @@ impl Lowering<'_, '_> {
     /// continues at the block returned, which the caller completes by the VM's hit, which
     /// joins its type (`ValueArena::note_slot_value`); a raw store would not.
     #[allow(clippy::too_many_arguments)]
-    fn store_direct(&mut self, field: NativeFieldLoad, object_bits: ir::Value, object: ir::Value, inline: ir::Value,
+    fn store_direct(&mut self, state: &mut State, field: NativeFieldLoad, object_bits: ir::Value, object: ir::Value, inline: ir::Value,
         properties: ir::Value, projection: Option<CheckedObject>, value: ir::Value, ty: Type, done: ir::Block,
         general: ir::Block) -> Option<Option<ir::Block>> {
         let (widen, direct_ty) = if !ty.is_subtype(field.ty) {
@@ -4777,8 +4665,9 @@ impl Lowering<'_, '_> {
                 CheckedObject::prove(&mut self.builder, object, inline, properties, plan, PackedAccess::Reload, general)?
             }
         };
-        let address = projection.arena_address(&mut self.builder, field.slot, general)?;
-        self.ins().store(MemFlagsData::trusted(), value, address, 0);
+        let step = self.step(state, frame::Edges::ValueGuarded { miss: general },
+            crate::staged::Operation::WriteField { base: 0, slot: field.slot, ty: direct_ty, value, proof: EmitProof::Field(projection) });
+        if !matches!(step, crate::staged::Step::Value(_)) { return None; }
         self.ins().jump(done, &[]);
         Some(widen)
     }
@@ -5158,7 +5047,7 @@ mod tests {
         let id = program.functions.iter().position(|body| body.header().name
             .is_some_and(|name| &program.atoms[name as usize] == "subject")).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let region = super::super::lower_static_typed_regions(&program, id as u32, &[], &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC, &std::collections::BTreeMap::new())
+        let region = super::super::lower_static_typed_regions(&program, id as u32, &[], &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC, &Default::default())
             .into_iter().next().expect("typed loop region");
         cranelift_codegen::verify_function(&region.function, &*isa).unwrap();
         if !super::super::FAULT_POLL_SUPPORTED { return; }
@@ -5252,7 +5141,7 @@ mod tests {
             let isa = super::super::super::jit_backend::target_isa().unwrap();
             let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
             let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-                &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
+                &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
             let function = region.function;
             let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
             let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
@@ -5339,7 +5228,7 @@ mod tests {
                     .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "the Boolean method must inline");
             let isa = super::super::super::jit_backend::target_isa().unwrap();
-            let regions = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC, &std::collections::BTreeMap::new());
+            let regions = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC, &Default::default());
             assert!(!regions.is_empty(), "selected caller header must publish");
             let mut integer_add = false;
             for region in regions {
@@ -5511,7 +5400,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -5551,7 +5440,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
         assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
         for instruction in region.function.layout.blocks()
             .flat_map(|block| region.function.layout.block_insts(block)) {
@@ -5608,7 +5497,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         assert!(region.fault_poll);
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -5645,7 +5534,7 @@ mod tests {
         for ty in [Type::INT32, Type::ANY] {
             fields.values_mut().next().unwrap()[0].ty = ty;
             let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-                &fields, &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+                &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
             let native = region.function;
             let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
                 .any(|instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -5671,7 +5560,7 @@ mod tests {
         }).collect();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &BTreeMap::new(),
+        let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -5701,7 +5590,7 @@ mod tests {
         }).collect();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &BTreeMap::new(),
+        let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -5728,7 +5617,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
         assert!(region.native > 0);
         let native = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
@@ -5783,7 +5672,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = RegionSpecializer { function_id: id, unit: &unit,
             helpers: LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            fields: &BTreeMap::new(), global_reads: &BTreeMap::new(), facts: VmFacts::STATIC,
+            fields: &BTreeMap::new(), global_reads: &Default::default(), facts: VmFacts::STATIC,
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
             entry_fields: &NO_ENTRY_FIELDS,
             plan: RegionPlan { coverage: Coverage::Loop { header, backedge, poll: true },
@@ -5812,7 +5701,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let helpers = LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]);
         let specialize = |plan| RegionSpecializer { function_id: id, unit: &unit, helpers,
-            fields: &BTreeMap::new(), global_reads: &BTreeMap::new(), facts: VmFacts::STATIC,
+            fields: &BTreeMap::new(), global_reads: &Default::default(), facts: VmFacts::STATIC,
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
             entry_fields: &NO_ENTRY_FIELDS, plan }
             .specialize(&program).expect("the region lowers");

@@ -30,6 +30,8 @@ pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
 /// a failed guard goes. A 32-bit load zero-extends.
 pub(crate) trait Stage {
     type Word: Copy;
+    /// The layout proof a field operation carries (a projection for Emit, `()` for Concrete).
+    type Proof: Copy;
     type Cond: Copy;
     /// Where a failed guard leaves: nowhere for the interpreter, which knows the value; a
     /// native exit for a specializer.
@@ -143,6 +145,29 @@ pub(crate) trait Frame<S: Stage> {
     /// `register`'s value from `constant`, with the fact the stage keeps of it.
     fn constant(&mut self, stage: &mut S, constant: Constant) -> (S::Word, Self::Fact);
 
+    /// The proven slot `slot` of `base`'s object, with the fact the read proves; `None` where
+    /// the frame has no heap or the slot is not proved, leaving the instruction to the host.
+    #[inline(always)]
+    fn field_read(&mut self, _stage: &mut S, _base: Register, _slot: u16, _ty: Type, _proof: S::Proof) -> Option<(S::Word, Self::Fact)> {
+        None
+    }
+
+    /// Write `value` to the proven slot; `None` where the frame has no heap or the slot is
+    /// not writable, leaving the instruction to the host.
+    #[inline(always)]
+    fn field_write(&mut self, _stage: &mut S, _base: Register, _slot: u16, _ty: Type, _value: S::Word, _proof: S::Proof) -> Option<()> {
+        None
+    }
+
+    /// The dense array element at `index`, under the proof; a hole, a miss or an index past
+    /// the view leaves `None` to the caller's cold path.
+    #[inline(always)]
+    fn index_read(&mut self, _stage: &mut S, _index: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// Store `value` at the dense array element `index`, under the proof.
+    #[inline(always)]
+    fn index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -174,7 +199,7 @@ pub(crate) trait Frame<S: Stage> {
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
-pub(crate) enum Operation {
+pub(crate) enum Operation<W, P> {
     /// Copy register `source` into `destination` with its facts.
     Move { destination: Register, source: Register },
     /// Define `destination` from `constant`.
@@ -199,12 +224,20 @@ pub(crate) enum Operation {
     RequireObjectCoercible { register: Register },
     /// Define `destination` with the logical negation of register `source`'s truthiness.
     LogicalNot { destination: Register, source: Register },
+    /// The proven slot `slot` of `base`'s object, under `proof`, as a value (`Frame::field_read`).
+    ReadField { base: Register, slot: u16, ty: Type, proof: P },
+    /// Write `value` to the proven slot `slot` of `base`'s object under `proof`.
+    WriteField { base: Register, slot: u16, ty: Type, value: W, proof: P },
+    /// A dense array element at `index`, under `proof`; a hole or miss leaves `Unresolved`.
+    IndexRead { index: W, proof: P },
+    /// Store `value` at dense array element `index`, under `proof`.
+    IndexWrite { index: W, value: W, proof: P },
 }
-
-impl Operation {
+impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes.
     /// `None` where the opcode has no staged operation, or where its constant is not
-    /// available to this tier: the caller then takes its own exact path.
+    /// available to this tier: the caller then takes its own exact path. The heap
+    /// operations are the frame's (`Frame::field_read`); a tier decodes those itself.
     pub(crate) fn decode(instruction: WideInstruction,
         constant: impl FnOnce(usize) -> Option<Constant>) -> Option<Self> {
         Some(match instruction.op() {
@@ -261,7 +294,7 @@ pub(crate) enum Step<W, C> {
 
 /// Run `operation` on `frame`; its word or where control goes.
 #[inline(always)]
-pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation) -> Step<S::Word, F::Control> {
+pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Move { destination, source } => Step::Value(frame.move_register(stage, destination, source)),
         Operation::LoadConst { destination, constant } => {
@@ -309,6 +342,34 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             }
             None => Step::Unresolved,
         },
+        heap => return heap_step(stage, frame, heap),
+    }
+}
+
+/// The heap operations: a field read or write. A frame with no heap for the operation leaves
+/// it `Unresolved` for its host path.
+#[inline(always)]
+fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
+        Operation::ReadField { base, slot, ty, proof } => match frame.field_read(stage, base, slot, ty, proof) {
+            Some((value, _)) => Step::Value(value),
+            None => Step::Unresolved,
+        },
+        Operation::WriteField { base, slot, ty, value, proof } =>
+            match frame.field_write(stage, base, slot, ty, value, proof) {
+                Some(()) => Step::Value(value),
+                None => Step::Unresolved,
+            },
+        Operation::IndexRead { index, proof } => match frame.index_read(stage, index, proof) {
+            Some(value) => Step::Value(value),
+            None => Step::Unresolved,
+        },
+        Operation::IndexWrite { index, value, proof } => match frame.index_write(stage, index, value, proof) {
+            Some(()) => Step::Value(value),
+            None => Step::Unresolved,
+        },
+        _ => Step::Unresolved,
     }
 }
 
@@ -360,6 +421,7 @@ impl Concrete {
 
 impl Stage for Concrete {
     type Word = u64;
+    type Proof = ();
     type Cond = bool;
     type Miss = ();
 

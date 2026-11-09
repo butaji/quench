@@ -4,6 +4,7 @@
 //! exported classes live on the shared-VM side of the host boundary.
 
 use super::async_hooks_state::{JobContext, StoreContext};
+use super::host_members::leading;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Runtime};
 use std::{cell::RefCell, rc::Rc};
@@ -12,7 +13,7 @@ pub(super) const ASYNC_ID: &str = "\0quench:async_hooks:id";
 pub(super) const MANUAL_DESTROY: &str = "\0quench:async_hooks:manualDestroy";
 pub(super) const TRIGGER_ID: &str = "\0quench:async_hooks:trigger";
 const RESOURCE_TYPE: &str = "\0quench:async_hooks:type";
-const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
+pub(super) const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
 
 /// Restore the default constructor trigger on normal, thrown, and reentrant
 /// callback exits. This does not allocate an async resource or alter ALS.
@@ -48,9 +49,7 @@ pub(crate) fn default_trigger_scope(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let trigger = args.first().copied().unwrap_or(undefined);
-    let block = args.get(1).copied().unwrap_or(undefined);
+    let ([trigger, block], block_args) = leading(context, args);
     let scope = if context
         .rooted_value(trigger)
         .is_some_and(|value| value.is_undefined())
@@ -63,7 +62,7 @@ pub(crate) fn default_trigger_scope(
         Some(enter_default_trigger(&shared, trigger))
     };
     let receiver = context.null();
-    let result = context.call_rooted(block, receiver, args.get(2..).unwrap_or_default());
+    let result = context.call_rooted(block, receiver, block_args);
     drop(scope);
     result
 }
@@ -833,17 +832,11 @@ pub(crate) fn external_init(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let resource = args.first().copied().unwrap_or(undefined);
-    let kind = args.get(1).copied().unwrap_or(undefined);
+    let ([resource, kind, id], _) = leading(context, args);
     let kind = context
         .string_text(kind)?
         .ok_or_else(|| RootedError::host("async resource type is not a string"))?;
-    let id = if let Some(id) = args
-        .get(2)
-        .and_then(|id| context.rooted_value(*id))
-        .and_then(|v| v.as_number())
-    {
+    let id = if let Some(id) = context.rooted_value(id).and_then(|v| v.as_number()) {
         id as u64
     } else {
         create_context(&context.host_mut().shared_state())
@@ -1115,164 +1108,11 @@ pub(crate) fn emit_destroy(
     Ok(receiver)
 }
 
-pub(crate) fn initialize_storage(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let identity = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .async_hooks
-        .identity
-        .clone();
-    let id = identity.allocate_local_storage_id();
-    set_number(context, receiver, LOCAL_ID, id)?;
-    Ok(receiver)
-}
-
-pub(crate) fn enter_with(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let store = args.first().copied().unwrap_or_else(|| context.undefined());
-    let local_id = number_property(context, receiver, LOCAL_ID)?
-        .ok_or_else(|| RootedError::host("AsyncLocalStorage has no store ID"))?;
-    let store = context.retain(store)?;
-    let released = {
-        let shared_state = context.host_mut().shared_state();
-        let async_id = shared_state.borrow().async_hooks.identity.store_context();
-        let mut shared = shared_state.borrow_mut();
-        replace_local_store(&mut shared.async_hooks, async_id, local_id, store)
-    };
-    if let Some(previous) = released {
-        context.release_root(previous);
-    }
-    Ok(context.undefined())
-}
-
-/// Puts `store` in storage `local_id`'s slot of `context`'s frame, retained, and returns the
-/// value it replaced when that was its last reference, for release.
-fn replace_local_store(
-    state: &mut super::async_hooks_state::SharedAsyncHooksState,
-    context: StoreContext,
-    local_id: u64,
-    store: RootId,
-) -> Option<RootId> {
-    state.enabled_local_storages.insert(local_id);
-    let frame = state.local_stores.entry(context).or_default();
-    let previous = frame.insert(local_id, store);
-    state.retain_store(store);
-    previous.filter(|previous| state.release_store(*previous))
-}
-
-/// Storage `local_id`'s value in `context`'s frame, if it has one.
-fn local_store(
-    state: &super::async_hooks_state::SharedAsyncHooksState,
-    context: StoreContext,
-    local_id: u64,
-) -> Option<RootId> {
-    state
-        .local_stores
-        .get(&context)
-        .and_then(|frame| frame.get(&local_id).copied())
-}
-
-/// Run a callback with the given AsyncLocalStorage value. This is installed
-/// directly as the public `run` method so deeply nested synchronous calls do
-/// not accumulate an extra guest-JavaScript method frame per nesting level.
-pub(crate) fn run_storage(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let Some(callback) = args.get(1).copied() else {
-        return invalid_function(context, "callback");
-    };
-    if !context.is_callable_rooted(callback)? {
-        return invalid_function(context, "callback");
-    }
-
-    let local_id = number_property(context, receiver, LOCAL_ID)?
-        .ok_or_else(|| RootedError::host("AsyncLocalStorage has no store ID"))?;
-    let shared = context.host_mut().shared_state();
-    let identity = shared.borrow().async_hooks.identity.clone();
-    let store_context = identity.store_context();
-    let previous = local_store(&shared.borrow().async_hooks, store_context, local_id);
-    let previous = match previous {
-        Some(previous) => context.retain(previous)?,
-        None => {
-            let default_value =
-                super::event_constructor_shared_vm::get(context, receiver, "defaultValue")?;
-            context.retain(default_value)?
-        }
-    };
-
-    let store = args.first().copied().unwrap_or_else(|| context.undefined());
-    let store = context.retain(store)?;
-    let replaced = replace_local_store(&mut shared.borrow_mut().async_hooks, store_context, local_id, store);
-    if let Some(replaced) = replaced {
-        context.release_root(replaced);
-    }
-
-    // Match Node's ReflectApply(callback, null, args) receiver semantics.
-    let null = context.null();
-    let result = context.call_rooted(callback, null, args.get(2..).unwrap_or_default());
-
-    // Restore even when the guest callback throws, matching the JS `finally`
-    // behavior. Reuse the held root for the restored slot.
-    let released = replace_local_store(&mut shared.borrow_mut().async_hooks, store_context, local_id, previous);
-    if let Some(released) = released {
-        context.release_root(released);
-    }
-    result
-}
-
-pub(crate) fn get_store(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let store = current_local_store(context, receiver)?;
-    let found = context.boolean(store.is_some());
-    let store = store.unwrap_or_else(|| context.undefined());
-    context.array_rooted(&[found, store])
-}
-
-pub(crate) fn disable_storage(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let local_id = number_property(context, receiver, LOCAL_ID)?
-        .ok_or_else(|| RootedError::host("AsyncLocalStorage has no store ID"))?;
-    let released = {
-        let shared_state = context.host_mut().shared_state();
-        let mut shared = shared_state.borrow_mut();
-        let current = shared.async_hooks.identity.store_context();
-        shared.async_hooks.enabled_local_storages.remove(&local_id);
-        let previous = shared.async_hooks.local_stores.get_mut(&current).and_then(|frame| frame.remove(&local_id));
-        previous.filter(|store| shared.async_hooks.release_store(*store))
-    };
-    if let Some(store) = released { context.release_root(store); }
-    Ok(context.undefined())
-}
-
 fn async_field_key(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Result<RootId, RootedError> {
     if name == LOCAL_ID {
         let data = context.host_function_data()?;
         context.get_named_property_rooted(data, "localId")
     } else { Ok(context.string_rooted(name)) }
-}
-
-pub(super) fn current_local_store(context: &mut NativeContext<'_, NodeHost>, receiver: RootId) -> Result<Option<RootId>, RootedError> {
-    let local_id = number_property(context, receiver, LOCAL_ID)?
-        .ok_or_else(|| RootedError::host("AsyncLocalStorage has no store ID"))?;
-    let shared = context.host_mut().shared_state();
-    let state = shared.borrow();
-    Ok(local_store(&state.async_hooks, state.async_hooks.identity.store_context(), local_id))
 }
 
 pub(super) fn number_property(
@@ -1289,7 +1129,7 @@ pub(super) fn number_property(
         .map(|number| number as u64))
 }
 
-fn set_number(
+pub(super) fn set_number(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
     name: &str,
@@ -1306,7 +1146,7 @@ fn set_number(
     }
 }
 
-fn invalid_function(
+pub(super) fn invalid_function(
     context: &mut NativeContext<'_, NodeHost>,
     name: &str,
 ) -> Result<RootId, RootedError> {

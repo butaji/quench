@@ -91,7 +91,7 @@ impl<'s> Requests<'s> {
             .chain(crate::modules::events_shared_vm::EVENT_GLOBALS.iter().copied())
             .chain(crate::modules::events_shared_vm::MESSAGING_GLOBALS.iter().copied())
             .chain(crate::modules::text_decoder_shared_vm::GLOBAL_NAMES.iter().copied())
-            .chain(crate::modules::util_shared_vm::lazy_global_names());
+            .chain(crate::modules::util_lazy_shared_vm::lazy_global_names());
         if name == "performance" || interfaces.into_iter().any(|global|global == name) {
             self.host_globals.insert(name.to_owned());
         }

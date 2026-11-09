@@ -109,6 +109,13 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
         (constant.value.to_bits(), ())
     }
 
+    fn field_read(&mut self, _stage: &mut Concrete, base: Register, slot: u16, _ty: Type, _proof: ()) -> Option<(u64, ())> {
+        let heap = self.heap?;
+        let object = heap.object_record(Value::from_bits(self.registers[usize::from(base)]))?;
+        // SAFETY: the object is live in this frame's heap and the caller proved the slot.
+        Some((unsafe { concrete_own_read(object, heap.property_values_base(), usize::from(slot)) }.to_bits(), ()))
+    }
+
     fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> {
         let value = Value::from_bits(self.read(stage, register));
         value.truthiness().or_else(|| self.heap?.string(value).map(|text| !text.units().is_empty()))
@@ -193,7 +200,7 @@ fn every_staged_opcode_decodes_to_one_operation() {
     for op in staged {
         assert_eq!(op.semantics(), Semantics::Staged, "{op:?}");
         let instruction = WideInstruction::new(op, 1, 2, 3, 0);
-        assert!(Operation::decode(instruction, |index| constants.get(index).copied()).is_some(),
+        assert!(Operation::<u64, ()>::decode(instruction, |index| constants.get(index).copied()).is_some(),
             "{op:?} must decode to a staged operation");
     }
     for index in 0..Op::COUNT {
@@ -417,4 +424,20 @@ fn staged_load_this_leaves_where_the_activation_holds_no_this() {
     let mut frame = ConcreteFrame { registers: vec![Value::NULL.to_bits()], heap: None };
     assert!(matches!(step(&mut stage, &mut frame, Operation::LoadThis { destination: 0 }), Step::Unresolved));
     assert_eq!(frame.registers[0], Value::NULL.to_bits(), "a load that left writes nothing");
+}
+
+
+#[test]
+fn a_proven_slot_field_read_is_one_staged_operation() {
+    let mut heap = Heap::new();
+    let objects = objects_of_every_form(&mut heap);
+    let (object, values) = &objects[0];
+    let mut stage = Concrete::new(heap.property_values_base());
+    let mut frame = ConcreteFrame { registers: vec![object.to_bits(), 0], heap: Some(&heap) };
+    let step = super::step(&mut stage, &mut frame,
+        Operation::ReadField { base: 0, slot: 0, ty: Type::ANY, proof: () });
+    match step {
+        Step::Value(value) => assert_eq!(Value::from_bits(value), values[0]),
+        _ => panic!("a proven slot reads"),
+    }
 }

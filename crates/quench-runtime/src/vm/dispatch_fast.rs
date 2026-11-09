@@ -762,6 +762,18 @@ struct ActivationShape {
     initial: Value,
 }
 
+impl ActivationShape {
+    /// The window of `function`, when its parameters have registers and it keeps no locals.
+    fn of(function: &Function) -> Option<Self> {
+        function.parameter_registers.filter(|_| function.locals == 0).map(|parameters| Self {
+            registers: function.registers,
+            parameters,
+            params: function.params,
+            initial: function.initial_register.value(),
+        })
+    }
+}
+
 /// Storage and guest-call allowance proved before an inlined body runs.
 #[derive(Clone, Copy, Default)]
 pub(super) struct LaneRecoverySpace {
@@ -1553,10 +1565,10 @@ impl CallEntry {
     }
 }
 
+// Recognized once per target, as it resolves; no operation runs them.
 #[path = "call_body_forms.rs"]
 mod call_body_forms;
 use call_body_forms::{body_entry, leaf_body};
-
 
 impl ScriptCallTarget {
     /// No legacy `arguments` reflection observes its activation: a strict function's or an
@@ -2306,20 +2318,20 @@ thread_local! {
         const { std::cell::Cell::new(std::ptr::null()) };
 }
 
-/// The running lane's floor.
-#[inline(always)]
-fn lane_floor() -> &'static std::sync::atomic::AtomicUsize {
-    // SAFETY: set for the whole of a lane run to its VM's interrupt state, which the VM
-    // holds; only read while a lane runs.
-    unsafe { &*LANE_FLOOR.with(std::cell::Cell::get) }
-}
-
 /// A lane run's raised floor (`Vm::enter_lane_floor`): the VM's floor cell, and the cell and
 /// floor of the run it nests in, which leaving restores.
 struct LaneFloor {
     cell: *const std::sync::atomic::AtomicUsize,
     outer_cell: *const std::sync::atomic::AtomicUsize,
     outer_floor: usize,
+}
+
+/// The running lane's floor.
+#[inline(always)]
+fn lane_floor() -> &'static std::sync::atomic::AtomicUsize {
+    // SAFETY: set for the whole of a lane run to its VM's interrupt state, which the VM
+    // holds; only read while a lane runs.
+    unsafe { &*LANE_FLOOR.with(std::cell::Cell::get) }
 }
 
 /// Stack a lane run may use below its entry before a safepoint jump returns
@@ -8086,16 +8098,8 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     if site.backedge > site.header {
         // SAFETY: the record before the backedge is the loop body's, in the same view.
         let update = unsafe { ip.sub(1) };
-        let handler = unsafe { (*update).handler };
-        let fused: Option<Handler> = if handler == lane_inc_dec::<H, false> as Handler as *const () {
-            Some(lane_inc_dec_jump::<H, false, true>)
-        } else if handler == lane_inc_dec::<H, true> as Handler as *const () {
-            Some(lane_inc_dec_jump::<H, true, true>)
-        } else {
-            None
-        };
-        if let Some(fused) = fused {
-            requicken::<H>(update, fused);
+        if let Some(decrement) = update_direction::<H>(unsafe { (*update).handler }) {
+            requicken::<H>(update, update_jump::<H>(decrement, true));
         }
     }
 }
@@ -13486,25 +13490,10 @@ fn lane_call_native<H: Host>(
     if !native.runs_from_lane() {
         return None;
     }
-    // A Math function of Numbers runs no guest code and observes no frame, so it runs from
-    // any activation (`number::math_inline_call`, and `math_numbers` past two arguments).
-    if native.is_math_function() {
-        if let Some(value) = super::number::math_inline_call(native, args) {
-            return Some(value);
-        }
-        if let Some(numbers) = args
-            .iter()
-            .map(|value| value.as_number())
-            .collect::<Option<smallvec::SmallVec<[f64; super::number::MATH_INLINE_ARGUMENTS]>>>()
-            && let Some(result) = super::number::math_numbers(native, &numbers)
-        {
-            return Some(Value::number(result));
-        }
-    }
     lane_call_native_out(cx, ip, native, callee, receiver, args)
 }
 
-/// `lane_call_native` past its in-place Math shortcuts: the native's call out of the lane,
+/// `lane_call_native` past its admission: the native's call out of the lane,
 /// beside its activations where the native admits it, else from its frame
 /// (`lane_call_from_frame`), as `lane_call_array_callback` calls an array's callback method,
 /// which no shortcut answers.
@@ -19668,15 +19657,7 @@ fn derive_lane_view<'live, H: Host>(
     }
     let entries = entries.into_boxed_slice();
     let returns_from_entry = reads_accumulator.first() == Some(&false) && entry_run_returns(&decoded, &exits);
-    let activation = function
-        .parameter_registers
-        .filter(|_| function.locals == 0)
-        .map(|parameters| ActivationShape {
-            registers: function.registers,
-            parameters,
-            params: function.params,
-            initial: function.initial_register.value(),
-        });
+    let activation = ActivationShape::of(function);
     let hinted_records = |names: bool| -> Box<[u32]> {
         decoded
             .iter()
@@ -19690,7 +19671,7 @@ fn derive_lane_view<'live, H: Host>(
             .collect()
     };
     let (field_records, name_records) = (hinted_records(false), hinted_records(true));
-    let string_case_filters = string_case_filter::specialize::<H>(heap, constants, &mut records);
+    let string_case_filters = string_case_filter::specialize::<H>(heap, constants, &decoded, &mut records);
     let records: Box<[std::cell::UnsafeCell<LaneInstruction>]> =
         records.into_iter().map(std::cell::UnsafeCell::new).collect();
     let first = std::cell::UnsafeCell::raw_get(records.as_ptr()).cast_const();
@@ -20516,28 +20497,47 @@ fn specialize_array_literals<H: Host>(records: &mut [LaneInstruction]) {
 /// test, the update, jump and test (`lane_inc_dec_loop`). The jump and test records stay, for
 /// a jump that enters them and for the update's own slow path.
 fn specialize_update_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
-    let updates = [lane_inc_dec::<H, false> as Handler as *const (), lane_inc_dec::<H, true> as Handler as *const ()];
     let jumps = [lane_jump_always::<H, false> as Handler as *const (), lane_jump_always::<H, true> as Handler as *const ()];
     for pc in 0..records.len().saturating_sub(1) {
         let (Some(decrement), Some(backward)) = (
-            updates.iter().position(|&update| update == records[pc].handler),
+            update_direction::<H>(records[pc].handler),
             jumps.iter().position(|&jump| jump == records[pc + 1].handler),
         ) else {
             continue;
         };
-        let fused: Handler = match (decrement == 1, backward == 1) {
-            (false, false) => lane_inc_dec_jump::<H, false, false>,
-            (false, true) => lane_inc_dec_jump::<H, false, true>,
-            (true, false) => lane_inc_dec_jump::<H, true, false>,
-            (true, true) => lane_inc_dec_jump::<H, true, true>,
-        };
+        let fused = update_jump::<H>(decrement, backward == 1);
         let test = decoded[pc + 1].imm() as usize;
         let looped = (backward == 1)
             .then(|| records.get(test))
             .flatten()
             .filter(|test| test.handler == relation_jump_handler::<H, false>(u32::from(test.a), false) as *const ())
-            .map(|test| update_loop_handler::<H>(u32::from(test.a), decrement == 1, test.b == records[pc].a));
+            .map(|test| update_loop_handler::<H>(u32::from(test.a), decrement, test.b == records[pc].a));
         records[pc].handler = looped.unwrap_or(fused) as *const ();
+    }
+}
+
+/// Whether a record running `handler`, an `IncDec`'s own (`lane_inc_dec`), decrements;
+/// `None` for any other record.
+fn update_direction<H: Host>(handler: *const ()) -> Option<bool> {
+    let [increment, decrement] =
+        [lane_inc_dec::<H, false> as Handler as *const (), lane_inc_dec::<H, true> as Handler as *const ()];
+    if handler == increment {
+        Some(false)
+    } else if handler == decrement {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// The fused update and jump (`lane_inc_dec_jump`) of an `IncDec` that decrements or not,
+/// and a jump backward or forward.
+fn update_jump<H: Host>(decrement: bool, backward: bool) -> Handler {
+    match (decrement, backward) {
+        (false, false) => lane_inc_dec_jump::<H, false, false>,
+        (false, true) => lane_inc_dec_jump::<H, false, true>,
+        (true, false) => lane_inc_dec_jump::<H, true, false>,
+        (true, true) => lane_inc_dec_jump::<H, true, true>,
     }
 }
 
@@ -21136,37 +21136,6 @@ impl<H: Host> Vm<H> {
     /// depend on the lane.
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    /// Raises the stack floor for a lane run of `program`: below the native stack's slack, or
-    /// at once where a collection is due or the run credits loop work (`lane_safepoint`).
-    fn enter_lane_floor(&mut self, code: &ResidualProgram, program: ProgramId) -> LaneFloor {
-        let floor = if self.heap.should_collect() || self.lane_credits_backedges(code, program) {
-            COLLECTION_DUE_FLOOR
-        } else {
-            stack_pointer().saturating_sub(LANE_STACK_SLACK)
-        };
-        let cell: *const std::sync::atomic::AtomicUsize = self.execution_interrupt.lane_floor();
-        let outer_cell = LANE_FLOOR.with(|current| current.replace(cell));
-        // SAFETY: the VM holds its interrupt state for the whole run.
-        let outer_floor = unsafe { &*cell }.swap(floor, std::sync::atomic::Ordering::SeqCst);
-        if self.execution_interrupt.is_termination_requested() {
-            unsafe { &*cell }.store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::SeqCst);
-        }
-        LaneFloor { cell, outer_cell, outer_floor }
-    }
-
-    /// Restores the floor `entered` raised: an enclosing run of this VM keeps a raised floor
-    /// raised, and a termination request raises it for good.
-    fn leave_lane_floor(&self, entered: LaneFloor) {
-        // SAFETY: the VM holds its interrupt state for the whole run.
-        let floor = unsafe { &*entered.cell };
-        if self.execution_interrupt.is_termination_requested() {
-            floor.store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::SeqCst);
-        } else {
-            floor.store(entered.outer_floor, std::sync::atomic::Ordering::Relaxed);
-        }
-        LANE_FLOOR.with(|current| current.set(entered.outer_cell));
-    }
-
     pub(super) fn run_fast_lane(
         &mut self,
         code: &ResidualProgram,
@@ -21275,6 +21244,41 @@ impl<H: Host> Vm<H> {
         *frame = unsafe { (*cx).frame };
         // SAFETY: handlers only return records of the active view.
         unsafe { ip.offset_from((*cx).base) as usize }
+    }
+
+    /// Raises the stack floor for a lane run of `program`: below the native stack's slack, or
+    /// at once where a collection is due or the run credits loop work, so its backward jumps
+    /// count in `lane_safepoint` (`LaneContext::backedges_left`). The floor lives in the VM's
+    /// interrupt state, where a termination request raises it; entry sets it before reading
+    /// the request, the request raises it after setting itself, so one of the two sees the
+    /// other.
+    fn enter_lane_floor(&mut self, code: &ResidualProgram, program: ProgramId) -> LaneFloor {
+        let floor = if self.heap.should_collect() || self.lane_credits_backedges(code, program) {
+            COLLECTION_DUE_FLOOR
+        } else {
+            stack_pointer().saturating_sub(LANE_STACK_SLACK)
+        };
+        let cell: *const std::sync::atomic::AtomicUsize = self.execution_interrupt.lane_floor();
+        let outer_cell = LANE_FLOOR.with(|current| current.replace(cell));
+        // SAFETY: the VM holds its interrupt state for the whole run.
+        let outer_floor = unsafe { &*cell }.swap(floor, std::sync::atomic::Ordering::SeqCst);
+        if self.execution_interrupt.is_termination_requested() {
+            unsafe { &*cell }.store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::SeqCst);
+        }
+        LaneFloor { cell, outer_cell, outer_floor }
+    }
+
+    /// Restores the floor `entered` raised: an enclosing run of this VM keeps a raised floor
+    /// raised, and a termination request raises it for good.
+    fn leave_lane_floor(&self, entered: LaneFloor) {
+        // SAFETY: the VM holds its interrupt state for the whole run.
+        let floor = unsafe { &*entered.cell };
+        if self.execution_interrupt.is_termination_requested() {
+            floor.store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::SeqCst);
+        } else {
+            floor.store(entered.outer_floor, std::sync::atomic::Ordering::Relaxed);
+        }
+        LANE_FLOOR.with(|current| current.set(entered.outer_cell));
     }
 
     /// `Vm::call_value` of `callee` from the native a lane called (`LaneNativeCall`), run as

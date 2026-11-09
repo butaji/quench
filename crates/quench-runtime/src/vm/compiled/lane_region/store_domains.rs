@@ -18,3 +18,22 @@ pub(in crate::vm) fn store_domains<'a>(instructions: &[WideInstruction], field: 
     }
     domains
 }
+
+impl Lowering<'_, '_> {
+    /// Admits at entry the writes the unit's raw stores may make (`store_domains`), each
+    /// failing through `miss`. Profiled raw stores preserve their declared field type. An
+    /// online body's plan registered those possible writes before it was lowered
+    /// (`Vm::admit_lane_stores`); other code registers them here, at each entry. A frozen
+    /// image has no plan, so it admits them at each entry, as offline code does.
+    pub(super) fn admit_store_domains(&mut self, instructions: &[WideInstruction], miss: &mut Option<ir::Block>) {
+        if self.vm.online.is_some() && !self.vm.frozen {
+            return;
+        }
+        for (shape, slot, domain) in store_domains(instructions, |site| self.fields.get(&site).map(Vec::as_slice)) {
+            let exit = *miss.get_or_insert_with(|| self.builder.create_block());
+            let shape = self.builder.ins().iconst(types::I64, i64::from(shape));
+            let slot = self.builder.ins().iconst(types::I64, i64::from(slot));
+            self.admit_slot_writes(shape, slot, domain, exit);
+        }
+    }
+}
