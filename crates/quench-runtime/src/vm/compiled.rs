@@ -3750,7 +3750,7 @@ pub(super) fn lower_js_general_dispatch(
     builder.seal_all_blocks();
     builder.into_builder().finalize(isa.frontend_config());
     #[cfg(feature = "aot")]
-    if !typed_entries.is_empty() || !_scalar_regions.is_empty() {
+    if typed_entries.len() + _scalar_regions.len() != 0 {
         use cranelift_codegen::inline::{Inline, InlineCommand};
         struct TypedResidual<'a>(&'a [StaticTypedRegionEntry<'a>], &'a [StaticRegionEntry<'a>]);
         impl Inline for TypedResidual<'_> {
