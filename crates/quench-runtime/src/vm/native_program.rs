@@ -72,11 +72,13 @@ pub(crate) struct FrozenAssumptions {
     pub(crate) fields: Box<[crate::bytecode::Atom]>,
     /// Set when any assumption no longer holds; the code leaves at its invalidation point.
     pub(crate) watch: Rc<crate::code_dependencies::PublishedCode<()>>,
+    /// The tier the dispatcher selected last (0 call-threaded, 1 general, 2 specialized).
+    pub(crate) last_tier: Rc<std::cell::Cell<u64>>,
 }
 
 impl Clone for FrozenAssumptions {
     fn clone(&self) -> Self {
-        Self { invalidation: self.invalidation.clone(), atoms: self.atoms.clone(), globals: self.globals.clone(), fields: self.fields.clone(), watch: self.watch.clone() }
+        Self { invalidation: self.invalidation.clone(), atoms: self.atoms.clone(), globals: self.globals.clone(), fields: self.fields.clone(), watch: self.watch.clone(), last_tier: self.last_tier.clone() }
     }
 }
 
@@ -146,6 +148,18 @@ impl<H: Host> NativeJsProgram<H> {
     #[cfg(test)]
     pub(crate) fn frozen_global_atoms_for_test(&self) -> &[crate::bytecode::Atom] {
         self.frozen.as_ref().map_or(&[], |frozen| &frozen.globals)
+    }
+
+    /// Retire the image's stable facts, as a changed assumption would (tests).
+    #[cfg(test)]
+    pub(crate) fn invalidate_frozen(&self) {
+        if let Some(frozen) = &self.frozen { frozen.watch.retire() }
+    }
+
+    /// The AOT tier the dispatcher selected last (tests).
+    #[cfg(test)]
+    pub(crate) fn last_tier(&self) -> u64 {
+        self.frozen.as_ref().map_or(0, |frozen| frozen.last_tier.get())
     }
 
     /// The whole-program prototype values the image folded (tests).

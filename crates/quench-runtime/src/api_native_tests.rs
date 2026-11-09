@@ -2653,3 +2653,32 @@ fn a_frozen_image_folds_a_prototype_value_and_guards_a_redefinition() {
     runtime.execute_native(&native).unwrap();
     assert_eq!(runtime.native_execution_rejections(), 0, "counts: {counts:?}");
 }
+
+#[cfg(feature = "aot")]
+#[test]
+fn the_aot_tier_ladder_selects_the_general_body_after_invalidation() {
+    // The loop function's entry is a dispatcher over T2 (typed), T1 (general) and T0
+    // (call-threaded), all resident. It reads the image's invalidation word: zero selects
+    // the specialized body; a retired image selects the general baseline. Guest results
+    // are identical either way.
+    let source = r#"
+        var SCALE = 3;
+        function scale(x) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + x * SCALE) | 0; } return s; }
+        globalThis.answer = scale(2);
+        if (globalThis.answer !== 24) throw Error("answer " + globalThis.answer);
+    "#;
+    let (_program, native) = compile_frozen(source);
+    let counts = native.publication_counts();
+    assert!(counts.tier_specialized >= 1, "no specialized tier: {counts:?}");
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    assert_eq!(native.last_tier(), 2, "the specialized body must run first");
+    native.invalidate_frozen();
+    assert!(native.frozen_invalidated());
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    assert_eq!(native.last_tier(), 1, "a retired image must select the general body");
+    assert_eq!(runtime.native_execution_rejections(), 0);
+}
