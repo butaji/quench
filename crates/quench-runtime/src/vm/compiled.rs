@@ -6322,7 +6322,7 @@ impl CompiledOsrRegion {
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
     ) -> LoopOutcome {
         if self.lane {
-            return unsafe { self.run_lane(registers, vm, program, function, frame, interrupt) };
+            return unsafe { self.run_lane(registers, entry, region, vm, program, function, frame, interrupt) };
         }
         // SAFETY: the caller keeps the VM alive and excludes other mutable VM access while
         // native code runs. The interrupt reference is used only to construct raw ABI fields.
@@ -6378,6 +6378,8 @@ impl CompiledOsrRegion {
     unsafe fn run_lane<H: Host>(
         &self,
         registers: *mut crate::value::Value,
+        entry: &mut LoopEntry,
+        region: &LoopRegion,
         vm: *mut Vm<H>,
         program: ProgramId,
         function: u32,
@@ -6389,6 +6391,19 @@ impl CompiledOsrRegion {
         LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
         let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, |native, vm| {
             native.dispatch.bind_native_storage(vm);
+            // The loop entry's captures in the dense slot view the lane capture reads use.
+            let captures = if region.captures.is_empty() { Vec::new() } else {
+                let len = region.captures.iter().map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);
+                let mut captures = vec![crate::Value::DELETED; len];
+                for (slot, value) in region.captures.iter().zip(entry.captures(region.captures.len())) {
+                    captures[usize::from(*slot)] = value;
+                }
+                captures
+            };
+            if !captures.is_empty() {
+                native.dispatch.capture_values = captures.as_ptr();
+                native.dispatch.capture_len = captures.len();
+            }
             // The lane activation's own registers, locals and body. A frame whose local
             // storage does not cover the function keeps them in the activation window,
             // after the register file; the VM frame may name the caller.

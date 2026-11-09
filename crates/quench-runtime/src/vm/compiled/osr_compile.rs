@@ -111,7 +111,6 @@ pub(in crate::vm) fn start_osr_region(
     // arrays still come from the loop entry record, so those regions keep the private
     // lowering until the lane unit carries them too.
     let simple = region.inlining.is_none()
-        && region.captures.is_empty()
         && region.field_store_sites.is_empty()
         && !region.reads_heap_natively();
     let lane = simple.then(|| super::lane_region::RegionSpecializer {
@@ -129,13 +128,12 @@ pub(in crate::vm) fn start_osr_region(
         Some(region) => (region.function, BTreeMap::new(), true),
         // The loop tier's private lowering remains for an inlining region and for a loop
         // whose captures, fields or arrays the lane unit does not carry yet.
-        None if !simple => {
+        None => {
             let verified = osr_loop::verify_region(region, observation).ok()?;
             let (function, widenings) =
                 osr_loop::lower_verified(verified, observation, &*isa, poll_address(interrupt))?;
             (function, widenings, false)
         }
-        None => return None,
     };
     let clif = native_dump_directory().map(|_| function.display().to_string());
     let loads = || observation.native_field_loads.iter().flatten();
@@ -277,5 +275,20 @@ mod tests {
         assert_eq!(error.thrown_value(), Some(crate::Value::integer(10_400_000)));
         assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
             "the lane OSR path ran");
+    }
+    /// A loop reading a captured binding carries the loop entry's capture view.
+    #[test]
+    fn a_capture_loop_keeps_its_capture_value() {
+        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
+        let program = crate::Engine::specialize(
+            "function helper(){ let add=1; let f=()=>add; let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=s+i+add; } } return s; } function main(){ return helper(); } throw main();",
+            "lane-osr-capture.js").unwrap();
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.programs.enable_js_lane_methods();
+        vm.programs.disable_js_entry_specializations();
+        let error = vm.execute(&program).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(crate::Value::integer(10_100_000)));
     }
 }
