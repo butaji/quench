@@ -88,7 +88,7 @@ fn loop_unit(function: &Function) -> lane_unit::Unit {
 /// Map an inlining loop region onto the lane unit: its instructions' jump targets become
 /// unit PCs, its origins name the caller/inlined frame of each instruction, and its frames
 /// carry the callee identity, function, call window and result.
-fn inlining_unit(region: &LoopRegion) -> Option<lane_unit::Unit> {
+fn inlining_unit(region: &LoopRegion) -> Option<(lane_unit::Unit, BTreeMap<usize, u32>)> {
     let inlining = region.inlining.as_deref()?;
     let count = region.instructions().len();
     let header = region.header as usize;
@@ -114,6 +114,10 @@ fn inlining_unit(region: &LoopRegion) -> Option<lane_unit::Unit> {
             function: frame.function,
         },
         callee_register: frame.callee_register,
+        callee_entry_word: match frame.guard {
+            osr_loop::InlineGuard::Field(index) => u32::try_from(osr_loop::field_word(region, index)).ok(),
+            _ => None,
+        },
         receiver: frame.receiver,
         window: frame.window,
         arguments: frame.arguments,
@@ -156,12 +160,32 @@ fn inlining_unit(region: &LoopRegion) -> Option<lane_unit::Unit> {
     for marker in &mut markers { *marker = shift(*marker); }
     let registers = frames.iter().map(|frame| frame.base + frame.registers)
         .max().unwrap_or(0).max(inlining.caller_registers);
-    Some(lane_unit::Unit {
+    // The region's static field reads, by the unit PC each instruction took, answered from
+    // the entry record: an instruction at region offset `o` moved past every marker at or
+    // before it.
+    let unit_pc = |offset: usize| offset + inserted.iter().filter(|(at, _)| *at <= offset).count();
+    let entry_fields: BTreeMap<usize, u32> = region.field_reads().iter()
+        .filter(|(_, index)| !region.is_dynamic_field(**index))
+        .filter_map(|(offset, index)| Some((unit_pc(*offset as usize),
+            u32::try_from(osr_loop::field_word(region, *index)).ok()?)))
+        .collect();
+    Some((lane_unit::Unit {
         instructions, origins, frames, markers,
         caller_registers: inlining.caller_registers, registers,
         // The caller PC past the loop, where an edge out of it resumes.
         end: inlining.latch + 1,
-    })
+    }, entry_fields))
+}
+
+/// A plain loop unit's static field reads, by the unit PC each instruction keeps, answered
+/// from the entry record.
+fn plain_entry_fields(region: &LoopRegion) -> BTreeMap<usize, u32> {
+    let header = region.header as usize;
+    region.field_reads().iter()
+        .filter(|(_, index)| !region.is_dynamic_field(**index))
+        .filter_map(|(offset, index)| Some((header + *offset as usize,
+            u32::try_from(osr_loop::field_word(region, *index)).ok()?)))
+        .collect()
 }
 
 /// The loop's cached field reads, keyed by their field-cache site: the lane specializer's
@@ -192,25 +216,15 @@ pub(in crate::vm) fn start_osr_region(
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
     let plain = loop_unit(program.function(function_id as usize));
     let inlined = region.inlining.is_some().then(|| inlining_unit(region)).flatten();
-    let unit = inlined.as_ref().unwrap_or(&plain);
+    let unit = inlined.as_ref().map_or(&plain, |(unit, _)| unit);
+    let entry_fields = inlined.as_ref().map_or_else(|| plain_entry_fields(region), |(_, fields)| fields.clone());
     let fields = loop_fields(region, observation);
     let simple = region.inlining.is_none();
-    // A callee with its own loop makes the inlined unit a nested loop region. The lane
-    // plan's single `Coverage::Loop` does not model the callee's loop yet (its receiver
-    // and nested backedges need their own coverage); the verified lowering does, so the
-    // lane plan declines it and the verified lowering publishes the region. Region PCs are
-    // offsets from the header and a jump target is one too, so compare in that space.
-    let nested_inlined_loop = region.inlining.as_deref().is_some_and(|inlining|
-        region.instructions().iter().enumerate().any(|(offset, instruction)| {
-            let pc = region.header as usize + offset;
-            instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
-                && (instruction.jump_target() as usize) <= pc
-                && pc != inlining.latch as usize
-        }));
-    let lane = (!nested_inlined_loop && (simple || inlined.is_some())).then(|| super::lane_region::RegionSpecializer {
+    let lane = (simple || inlined.is_some()).then(|| super::lane_region::RegionSpecializer {
         function_id, unit, helpers, fields: &fields,
         global_reads: &BTreeMap::new(), facts: VmFacts::STATIC, generic: &[],
         direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
+        entry_fields: &entry_fields,
         plan: super::lane_region::RegionPlan {
             coverage: super::lane_region::Coverage::Loop {
                 header: if inlined.is_some() { 0 } else { region.header as usize },
@@ -588,7 +602,7 @@ mod tests {
         let region = super::super::osr_loop::inline_region(function, &decoded, &constants,
             &program.field_sites, live, header, backedge, &mut resolve)
             .expect("the loop inlines");
-        let unit = inlining_unit(&region).expect("the region maps onto a lane unit");
+        let (unit, _) = inlining_unit(&region).expect("the region maps onto a lane unit");
         assert_eq!(unit.frames.len(), 1, "one inlined frame");
         assert!(unit.origins.iter().any(|origin|
             matches!(origin, lane_unit::Origin::Inlined { .. })), "inlined origins");

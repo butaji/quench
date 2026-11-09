@@ -69,6 +69,10 @@ pub(crate) struct Frame {
     pub(crate) target: CallTarget,
     /// The register holding the callee, guarded at the call.
     pub(crate) callee_register: Register,
+    /// An OSR region's entry word holding the callee, which the region resolved at compile
+    /// time and dropped the caller's read for; the marker reads it there instead of the
+    /// register, which the loop may reuse.
+    pub(crate) callee_entry_word: Option<u32>,
     /// The register holding the call's receiver, the callee's `this`.
     pub(crate) receiver: Register,
     /// The call's first argument register.
@@ -528,6 +532,7 @@ impl Emitter {
                         call: pc as u32,
                         target: call.target,
                         callee_register: register(instruction.register_b()),
+                        callee_entry_word: None,
                         receiver: register(instruction.register_c()),
                         window: register(ImmediateLayout::call_window_base(instruction.imm())),
                         arguments: ImmediateLayout::argument_count(instruction.imm()), result: (!returns).then_some(call_result),

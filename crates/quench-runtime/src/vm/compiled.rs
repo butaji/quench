@@ -528,6 +528,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
         helpers: LaneHelpers::Numeric, fields: &std::collections::BTreeMap::new(),
         global_reads: &std::collections::BTreeMap::new(), facts: VmFacts::STATIC, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,
+        entry_fields: &lane_region::NO_ENTRY_FIELDS,
         plan: lane_region::RegionPlan { coverage: lane_region::Coverage::Full,
             completion: lane_region::Completion::Number, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok()?;
@@ -2450,6 +2451,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
             lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
                 fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
                 direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
+                entry_fields: &lane_region::NO_ENTRY_FIELDS,
                 plan: lane_region::RegionPlan { coverage, completion: lane_region::Completion::SourcePc, views } }
                 .specialize(program).ok().filter(|region| region.native != 0)
                 .map(|mut region| {
@@ -6425,6 +6427,10 @@ impl CompiledOsrRegion {
         let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, |native, vm| {
             native.dispatch.bind_native_storage(vm);
             native.dispatch.lane_context = lane_context;
+            // A region's `THIS`-based reads take the running activation's receiver, as a
+            // lane body's do; `with` leaves it `DELETED`. The lane context's `this` is the
+            // outer activation's, so read the loop's own frame.
+            native.dispatch.receiver = vm.current_this(frame).unwrap_or(Value::DELETED).to_bits();
             // The counter is the `words` field's first word, not the struct's offset 0:
             // `LoopEntry` is not `repr(C)`.
             native.dispatch.loop_entry = entry.words_mut() as usize;

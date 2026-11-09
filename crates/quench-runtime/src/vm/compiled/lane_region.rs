@@ -359,6 +359,8 @@ struct Lowering<'a, 'f> {
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
+    /// An OSR region's field reads answered from the entry record, by unit PC.
+    entry_fields: &'a BTreeMap<usize, u32>,
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
     global_reads: &'a BTreeMap<usize, crate::vm::global_facts::GlobalRead>,
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
@@ -1175,6 +1177,10 @@ pub(super) struct RegionPlan {
 /// Futamura's first projection for one region: the same `lower` a lane body, a static typed
 /// region and a numeric region run, parameterized by its `RegionPlan`. AOT and JIT both call
 /// this specializer; only the plan and the `VmFacts` division differ.
+/// No entry-snapshot field reads: a lane body or a static typed region reads its fields
+/// from the registers and caches, not from an OSR entry record.
+pub(super) static NO_ENTRY_FIELDS: BTreeMap<usize, u32> = BTreeMap::new();
+
 pub(super) struct RegionSpecializer<'p> {
     pub(super) function_id: u32,
     pub(super) unit: &'p super::lane_unit::Unit,
@@ -1186,6 +1192,9 @@ pub(super) struct RegionSpecializer<'p> {
     pub(super) direct: &'p BTreeMap<usize, *const DirectCallee>,
     pub(super) frame_captures: &'p [(usize, usize)],
     pub(super) isa: &'p dyn cranelift_codegen::isa::TargetIsa,
+    /// An OSR region's field reads answered from the entry record, by unit PC and entry
+    /// word (`osr_loop::field_word`).
+    pub(super) entry_fields: &'p BTreeMap<usize, u32>,
     pub(super) plan: RegionPlan,
 }
 
@@ -1195,7 +1204,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.plan.coverage, self.plan.completion, self.plan.views)
+            self.isa, self.entry_fields, self.plan.coverage, self.plan.completion, self.plan.views)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1217,7 +1226,7 @@ pub(super) fn lower_body(
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
     let region = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
-        generic, direct, frame_captures, isa: &*isa,
+        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS,
         plan: RegionPlan { coverage: Coverage::Prefix, completion: Completion::StatusAndPc,
             views: ElementViews::Dense } }
         .specialize(program).ok()?;
@@ -1246,6 +1255,7 @@ pub(super) fn lower(
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
+    entry_fields: &BTreeMap<usize, u32>,
     coverage: Coverage,
     completion: Completion,
     views: ElementViews,
@@ -1341,6 +1351,7 @@ pub(super) fn lower(
         params: usize::from(function.params),
         helpers,
         fields,
+        entry_fields,
         interrupt,
         fault_poll,
         reentries: smallvec::SmallVec::new(),
@@ -3029,7 +3040,18 @@ impl Lowering<'_, '_> {
     fn inline_call(&mut self, state: &mut State, pc: usize, frame: usize) -> bool {
         let inlined = self.unit.frames[frame];
         let exit = self.guard_exit(state, pc as u32);
-        let callee = self.tagged(state, inlined.callee_register);
+        // An OSR region's callee comes from the entry snapshot: the caller's read is
+        // resolved at compile time and dropped, and its register is reused by the loop.
+        let callee = match inlined.callee_entry_word {
+            Some(word) => {
+                let entry = emit_js_payload_word(&mut self.builder, self.payload,
+                    std::mem::offset_of!(super::JsStepDispatch, loop_entry));
+                let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
+                    * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
+                self.ins().load(types::I64, MemFlagsData::trusted(), entry, offset)
+            }
+            None => self.tagged(state, inlined.callee_register),
+        };
         let callee_index = usize::from(inlined.callee_register);
         let (same, proved) = match inlined.target.callee {
             // A dominating proof of the identity needs no compare.
@@ -4059,6 +4081,19 @@ impl Lowering<'_, '_> {
             return None;
         }
         let destination = instruction.result_register();
+        // An OSR region's static field read answers from the entry record, as the verified
+        // lowering's does: the value the field held at entry, which the loop does not write.
+        if sink.is_none() && completes.is_none() && !instruction.writes_current_this()
+            && let Some(&word) = self.entry_fields.get(&pc)
+        {
+            let entry = emit_js_payload_word(&mut self.builder, self.payload,
+                std::mem::offset_of!(super::JsStepDispatch, loop_entry));
+            let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
+                * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
+            let bits = self.ins().load(types::I64, MemFlagsData::trusted(), entry, offset);
+            self.set_tagged(state, destination, bits);
+            return Some(true);
+        }
         let exit = self.guard_exit(state, pc as u32);
         let receiver = !self.native_calls
             && (base == crate::bytecode::FieldBase::THIS
@@ -5221,8 +5256,7 @@ mod tests {
             let isa = super::super::super::jit_backend::target_isa().unwrap();
             let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
             let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-                &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
-                Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
+                &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
             let function = region.function;
             let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
             let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
@@ -5481,8 +5515,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
-            Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -5520,8 +5553,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
-            Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
+            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
         assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
         for instruction in region.function.layout.blocks()
             .flat_map(|block| region.function.layout.block_insts(block)) {
@@ -5578,7 +5610,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         assert!(region.fault_poll);
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -5615,8 +5647,7 @@ mod tests {
         for ty in [Type::INT32, Type::ANY] {
             fields.values_mut().next().unwrap()[0].ty = ty;
             let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-                &fields, &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa,
-                Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+                &fields, &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
             let native = region.function;
             let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
                 .any(|instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -5643,7 +5674,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &BTreeMap::new(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -5673,7 +5704,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &BTreeMap::new(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
@@ -5699,7 +5730,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
+            &BTreeMap::new(), &BTreeMap::new(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
         assert!(region.native > 0);
         let native = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
@@ -5756,6 +5787,7 @@ mod tests {
             helpers: LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
             fields: &BTreeMap::new(), global_reads: &BTreeMap::new(), facts: VmFacts::STATIC,
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
+            entry_fields: &NO_ENTRY_FIELDS,
             plan: RegionPlan { coverage: Coverage::Loop { header, backedge, poll: true },
                 completion: Completion::StatusAndPc, views: ElementViews::Dense } }
             .specialize(&program).expect("the loop lowers");
@@ -5783,7 +5815,8 @@ mod tests {
         let helpers = LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]);
         let specialize = |plan| RegionSpecializer { function_id: id, unit: &unit, helpers,
             fields: &BTreeMap::new(), global_reads: &BTreeMap::new(), facts: VmFacts::STATIC,
-            generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa, plan }
+            generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
+            entry_fields: &NO_ENTRY_FIELDS, plan }
             .specialize(&program).expect("the region lowers");
         let jit = specialize(RegionPlan { coverage: Coverage::Prefix,
             completion: Completion::StatusAndPc, views: ElementViews::Dense });

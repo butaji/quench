@@ -1494,6 +1494,12 @@ pub(super) const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
 /// a run completed natively, which weigh what its entry paid for (`LoopSite::note_run`).
 const ENTRY_BACKEDGE_COUNT: usize = 0;
 pub(super) const ENTRY_CAPTURES: usize = 1;
+
+/// The entry word of the region's `index`th field: the single home of the record's field
+/// layout, shared by the verified lowering and the lane region's snapshot reads.
+pub(crate) fn field_word(region: &LoopRegion, index: usize) -> usize {
+    ENTRY_CAPTURES + region.captures.len() + index
+}
 const WORD_BYTES: i32 = 8;
 /// An array's entry words: its element pointer, its length, then its capacity (which only
 /// a written array's appends read).
@@ -1609,7 +1615,7 @@ impl LoopEntry {
     /// The value of the region's `index`th field as pushed: its word follows the captures
     /// and the fields before it.
     pub(crate) fn field_value(&self, region: &LoopRegion, index: usize) -> Value {
-        let word = ENTRY_CAPTURES + region.captures.len() + index;
+        let word = field_word(region, index);
         debug_assert!(word < self.length);
         // SAFETY: the caller pushed the field, after the captures and the fields before it.
         Value::from_bits(unsafe { self.words[word].assume_init() })
