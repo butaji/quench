@@ -16157,7 +16157,7 @@ const LANE_SCRIPT_WINDOW: usize = 4 * ACTIVATION_FILL_BLOCK;
 /// enters Wasm functions; a capture store's handler reads the context a Wasm view lacks.
 fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
     let call = LaneHandler { handler: reference_call_handler::<H>(), produces: false };
-    match op { Op::Call => Some(Some(call)), Op::StoreCapture => Some(None), _ => None }
+    match op.class() { Class::Call => Some(Some(call)), Class::StoreCapture => Some(None), _ => None }
 }
 
 return_handler! {
@@ -18302,23 +18302,23 @@ fn lane_operand(
 /// result from the frame (`lane_returns`, `lane_returning`); a returning record runs no
 /// other result flag.
 fn lane_call_fits(instruction: WideInstruction) -> bool {
-    match instruction.op() {
-        Op::Call | Op::CallArray | Op::CallSpread => {
+    match instruction.op().class() {
+        Class::Call | Class::CallArray | Class::CallSpread => {
             lane_returns(instruction)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval()
         }
-        Op::CallForwardingArguments => lane_returns(instruction),
-        Op::Construct => {
+        Class::CallForwardingArguments => lane_returns(instruction),
+        Class::Construct => {
             lane_returns(instruction)
                 && !instruction.is_super_construct()
                 && !ImmediateLayout::construct_array_arguments(instruction.imm())
         }
-        Op::GetField => lane_returns(instruction) || lane_sinks_field(instruction),
-        Op::Unary | Op::MakeObject2 | Op::SuperConstArrayObject2 | Op::MakeObjectLiteral => {
+        Class::GetField => lane_returns(instruction) || lane_sinks_field(instruction),
+        Class::Unary | Class::MakeObject2 | Class::SuperConstArrayObject2 | Class::MakeObjectLiteral => {
             lane_returns(instruction)
         }
-        Op::Binary if instruction.returns_from_frame() => lane_returns(instruction),
+        Class::Binary if instruction.returns_from_frame() => lane_returns(instruction),
         _ => true,
     }
 }
@@ -20551,11 +20551,11 @@ fn specialize_environment_window<H: Host>(
     let mut replacements = Vec::new();
     for (pc, &instruction) in decoded.iter().enumerate() {
         let op = instruction.op();
-        let own = match op {
-            Op::MakeClosure => instruction.imm(),
-            Op::CloneEnv => 0,
-            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreLocal | Op::StoreLocalPlain
-            | Op::StoreEnvLocal | Op::InitializeTdz => instruction.local_slot() as u32,
+        let own = match op.class() {
+            Class::MakeClosure => instruction.imm(),
+            Class::CloneEnv => 0,
+            Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal | Class::StoreLocal | Class::StoreLocalPlain
+            | Class::StoreEnvLocal | Class::InitializeTdz => instruction.local_slot() as u32,
             _ => continue,
         };
         if own > ENVIRONMENT_WINDOW_FIELD
