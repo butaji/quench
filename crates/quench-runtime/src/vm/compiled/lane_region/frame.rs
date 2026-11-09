@@ -90,6 +90,15 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         (value, fact)
     }
 
+    /// A proven-slot read: the `CheckedObject` projection carries the layout and the slot
+    /// read, so the frame adds no second decode.
+    #[inline(always)]
+    fn field_read(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, ty: Type,
+        proof: CheckedObject) -> Option<(ir::Value, RegisterFact)> {
+        Some((proof.read(stage.builder, slot),
+            RegisterFact::definition(ty, Representation::Tagged)))
+    }
+
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
         let Edges::Branch { miss, .. } = self.edges else { unreachable!("truthiness needs a branch edge") };

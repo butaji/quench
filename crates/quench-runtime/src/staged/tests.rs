@@ -109,7 +109,7 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
         (constant.value.to_bits(), ())
     }
 
-    fn field_read(&mut self, _stage: &mut Concrete, base: Register, slot: u16) -> Option<(u64, ())> {
+    fn field_read(&mut self, _stage: &mut Concrete, base: Register, slot: u16, _ty: Type, _proof: ()) -> Option<(u64, ())> {
         let heap = self.heap?;
         let object = heap.object_record(Value::from_bits(self.registers[usize::from(base)]))?;
         // SAFETY: the object is live in this frame's heap and the caller proved the slot.
@@ -373,7 +373,7 @@ fn a_proven_slot_field_read_is_one_staged_operation() {
     let mut stage = Concrete::new(heap.property_values_base());
     let mut frame = ConcreteFrame { registers: vec![object.to_bits(), 0], heap: Some(&heap) };
     let step = super::step(&mut stage, &mut frame,
-        Operation::GetField { destination: 1, base: 0, slot: 0 });
+        Operation::ReadField { base: 0, slot: 0, ty: Type::ANY, proof: () });
     match step {
         Step::Value(value) => assert_eq!(Value::from_bits(value), values[0]),
         _ => panic!("a proven slot reads"),

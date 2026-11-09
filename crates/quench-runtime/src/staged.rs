@@ -28,6 +28,8 @@ pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
 /// a failed guard goes. A 32-bit load zero-extends.
 pub(crate) trait Stage {
     type Word: Copy;
+    /// The layout proof a field operation carries (a projection for Emit, `()` for Concrete).
+    type Proof: Copy;
     type Cond: Copy;
     /// Where a failed guard leaves: nowhere for the interpreter, which knows the value; a
     /// native exit for a specializer.
@@ -134,7 +136,7 @@ pub(crate) trait Frame<S: Stage> {
     /// The proven slot `slot` of `base`'s object, with the fact the read proves; `None` where
     /// the frame has no heap or the slot is not proved, leaving the instruction to the host.
     #[inline(always)]
-    fn field_read(&mut self, _stage: &mut S, _base: Register, _slot: u16) -> Option<(S::Word, Self::Fact)> {
+    fn field_read(&mut self, _stage: &mut S, _base: Register, _slot: u16, _ty: Type, _proof: S::Proof) -> Option<(S::Word, Self::Fact)> {
         None
     }
 
@@ -155,7 +157,7 @@ pub(crate) trait Frame<S: Stage> {
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
-pub(crate) enum Operation {
+pub(crate) enum Operation<P> {
     /// Copy register `source` into `destination` with its facts.
     Move { destination: Register, source: Register },
     /// Define `destination` from `constant`.
@@ -174,9 +176,8 @@ pub(crate) enum Operation {
     /// the frame's miss edge, where the interpreter throws the TypeError
     /// (RequireObjectCoercible).
     RequireObjectCoercible { register: Register },
-    /// Define `destination` from the proven slot `slot` of `base`'s object (`Frame::field_read`).
-    #[cfg_attr(not(test), allow(dead_code))]
-    GetField { destination: Register, base: Register, slot: u16 },
+    /// The proven slot `slot` of `base`'s object, under `proof`, as a value (`Frame::field_read`).
+    ReadField { base: Register, slot: u16, ty: Type, proof: P },
 }
 
 /// Which of an instruction's two control edges it takes.
@@ -201,7 +202,7 @@ pub(crate) enum Step<W, C> {
 
 /// Run `operation` on `frame`; its word or where control goes.
 #[inline(always)]
-pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation) -> Step<S::Word, F::Control> {
+pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Move { destination, source } => Step::Value(frame.move_register(stage, destination, source)),
         Operation::LoadConst { destination, constant } => {
@@ -220,11 +221,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
-        Operation::GetField { destination, base, slot } => match frame.field_read(stage, base, slot) {
-            Some((value, fact)) => {
-                frame.write(stage, destination, value, fact);
-                Step::Value(value)
-            }
+        Operation::ReadField { base, slot, ty, proof } => match frame.field_read(stage, base, slot, ty, proof) {
+            Some((value, _)) => Step::Value(value),
             None => Step::Unresolved,
         },
     }
@@ -278,6 +276,7 @@ impl Concrete {
 
 impl Stage for Concrete {
     type Word = u64;
+    type Proof = ();
     type Cond = bool;
     type Miss = ();
 

@@ -2394,7 +2394,7 @@ impl Lowering<'_, '_> {
                 emit_js_guard(&mut self.builder, stored, exit);
                 Some(true)
             }
-            Op::GetField if instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
+            op if op.is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
             Op::GetIndex if plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
                 // of an int32 key, proved once.
@@ -2716,7 +2716,7 @@ impl Lowering<'_, '_> {
     /// `operation` by the interpreter's semantics (`staged::step`) on the emit stage, with
     /// `edges` as its control edges. The lane specializer decides every truthiness itself, so
     /// no step is left unresolved.
-    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation)
+    fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<CheckedObject>)
         -> crate::staged::Step<ir::Value, ()> {
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
@@ -4183,7 +4183,12 @@ impl Lowering<'_, '_> {
                     projection
                 }
             };
-            return Some(projection.read(&mut self.builder, field.slot));
+            let step = self.step(state, frame::Edges::Value, crate::staged::Operation::ReadField {
+                base: owner.flatten().unwrap_or(0), slot: field.slot, ty: field.ty, proof: projection });
+            return match step {
+                crate::staged::Step::Value(value) => Some(value),
+                _ => None,
+            };
         }
         // Layout families (`object_slots::field_load_groups`): own fields at one slot of every
         // shape of a family take one shape-set test and one read; a prototype-held slot its own.
