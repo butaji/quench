@@ -103,16 +103,15 @@ pub(crate) fn lower_regions(
         let mut produced = std::collections::BTreeSet::new();
         let mut removes_roundtrip = false;
         for instruction in &decoded[range.clone()] {
-            removes_roundtrip |= instruction.op() == Op::IncDec
-                || osr_loop::number_reads(*instruction)
-                    .iter()
-                    .any(|register| produced.contains(register));
+            removes_roundtrip |= osr_loop::number_reads(*instruction)
+                .iter()
+                .any(|register| produced.contains(register));
             if let Some(register) = instruction.defined_register() {
                 produced.insert(register);
             }
         }
-        // Retain a region when it removes a boxed producer/consumer roundtrip
-        // or an IncDec semantic callout; isolated already-native math needs no wrapper.
+        // Retain a region when it removes a boxed producer/consumer roundtrip;
+        // isolated already-native math (`++` included) needs no wrapper.
         if end < decoded.len()
             && arithmetic != 0
             && removes_roundtrip

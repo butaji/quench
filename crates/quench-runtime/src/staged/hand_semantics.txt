@@ -175,7 +175,7 @@ vm/compiled/lane_unit/static_hints.rs LoadConst 1
 vm/compiled/lane_unit/static_hints.rs MakeClosure 2
 vm/compiled/lane_unit/static_hints.rs Move 2
 vm/compiled/scalar_region.rs GetField 3
-vm/compiled/scalar_region.rs IncDec 2
+vm/compiled/scalar_region.rs IncDec 1
 vm/compiled/scalar_region.rs LoadConst 2
 vm/compiled/scalar_region.rs Move 2
 vm/compiled/scalar_region.rs ToNumeric 2
