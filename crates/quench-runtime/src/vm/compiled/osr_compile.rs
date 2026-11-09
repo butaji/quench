@@ -343,6 +343,44 @@ mod tests {
             "the lane OSR path ran");
     }
 
+    /// A `Return` inside the loop completes the activation through the lane unit, not an
+    /// exit: the loop's native run count stays above its exits and the result matches.
+    #[test]
+    fn a_return_inside_a_loop_completes_through_the_lane_unit() {
+        super::FORCE_LANE_OSR.with(|force| force.set(true));
+        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
+        let program = crate::Engine::specialize(
+            "function cmp(a, b) { var i = a.length; while (--i >= 0) { var r = a[i] - b[i]; if (r != 0) return r; } return 0; }
+             var a = [], b = [];
+             for (var i = 0; i < 200; i++) { a.push(i * 3 & 255); b.push(i * 3 & 255); }
+             var s = 0;
+             for (var k = 0; k < 3000; k++) {
+               b[k % 200] = (k & 1) ? a[k % 200] + 1 : a[k % 200];
+               s = (s + cmp(a, b) * (k % 7)) | 0;
+               b[k % 200] = a[k % 200];
+             }
+             print(s);",
+            "lane-osr-return.js").unwrap();
+        let expected = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        crate::vm::Vm::new(crate::test_host::TestHost::writing_to(expected.clone()))
+            .execute(&program).unwrap();
+        let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.programs.enable_js_lane_methods();
+        vm.programs.disable_js_entry_specializations();
+        vm.execute(&program).unwrap();
+        assert_eq!(*output.borrow(), *expected.borrow());
+        let function_id = program.functions.iter().position(|function|
+            function.header().name.is_some_and(|name| &program.atoms[name as usize] == "cmp")).unwrap();
+        let views = vm.programs.lane_views(super::super::program_store::ProgramId::MAIN).unwrap();
+        let osr = views.get(function_id).and_then(super::super::program_store::derived_lane_view)
+            .unwrap().osr_diagnostics();
+        assert!(osr.native_region_runs > 0, "the return loop ran natively: {osr:?}");
+        assert_eq!(osr.exits, 0, "a return inside the loop is a completion, not an exit: {osr:?}");
+    }
+
     /// A loop appending to a fresh array runs natively through the lane unit: the append
     /// helper grows the backing and the loop's normal continuation is a resume, not an exit.
     #[test]
