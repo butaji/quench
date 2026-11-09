@@ -1281,11 +1281,11 @@ file-lines crates/quench-node/src/aot/graph/loader_bindings.rs 636
 file-lines crates/quench-node/src/host/hmr.rs 843
 file-lines crates/quench-node/src/host/node_host.rs 580
 file-lines crates/quench-node/src/host/resident_pages.rs 1144
-file-lines crates/quench-node/src/host/shared_vm.rs 3276
+file-lines crates/quench-node/src/host/shared_vm.rs 3189
 file-lines crates/quench-node/src/host/shared_vm/commonjs.rs 3365
 file-lines crates/quench-node/src/host/startup_snapshot.rs 577
 file-lines crates/quench-node/src/modules/assert_shared_vm.rs 1358
-file-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs 1267
+file-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs 1159
 file-lines crates/quench-node/src/modules/blob_shared_vm.rs 719
 file-lines crates/quench-node/src/modules/buffer_binding_shared_vm.rs 836
 file-lines crates/quench-node/src/modules/buffer_module.rs 1324
@@ -1306,7 +1306,7 @@ file-lines crates/quench-node/src/modules/crypto_key_shared_vm.rs 663
 file-lines crates/quench-node/src/modules/crypto_node/cipher.rs 592
 file-lines crates/quench-node/src/modules/crypto_node/dh.rs 607
 file-lines crates/quench-node/src/modules/crypto_node/keys.rs 1061
-file-lines crates/quench-node/src/modules/crypto_node/mod.rs 850
+file-lines crates/quench-node/src/modules/crypto_node/mod.rs 652
 file-lines crates/quench-node/src/modules/crypto_node/web.rs 1807
 file-lines crates/quench-node/src/modules/crypto_node/x509.rs 511
 file-lines crates/quench-node/src/modules/crypto_secret_job_shared_vm.rs 2463
@@ -1385,9 +1385,9 @@ file-lines crates/quench-node/src/modules/url_legacy_shared_vm.rs 964
 file-lines crates/quench-node/src/modules/url_whatwg_shared_vm.rs 912
 file-lines crates/quench-node/src/modules/util_comparisons_shared_vm.rs 891
 file-lines crates/quench-node/src/modules/util_inspect_shared_vm.rs 2193
-file-lines crates/quench-node/src/modules/util_module_shared_vm.rs 1085
+file-lines crates/quench-node/src/modules/util_module_shared_vm.rs 995
 file-lines crates/quench-node/src/modules/util_parse_args_shared_vm.rs 934
-file-lines crates/quench-node/src/modules/util_shared_vm.rs 1028
+file-lines crates/quench-node/src/modules/util_shared_vm.rs 948
 file-lines crates/quench-node/src/modules/v8_shared_vm.rs 871
 file-lines crates/quench-node/src/modules/vm_shared_vm.rs 571
 file-lines crates/quench-node/src/modules/websocket_shared_vm.rs 720
@@ -1718,7 +1718,6 @@ function-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs::emit_ini
 function-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs::enter_async_scope 47
 function-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs::initialize_resource 84
 function-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs::promise_job_boundary 51
-function-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs::run_storage 49
 function-lines crates/quench-node/src/modules/async_hooks_state.rs::SharedAsyncHooksState::write_snapshot 51
 function-lines crates/quench-node/src/modules/blob_shared_vm.rs::construct_blob 45
 function-lines crates/quench-node/src/modules/blob_shared_vm.rs::member 151
@@ -1819,7 +1818,6 @@ function-lines crates/quench-node/src/modules/crypto_digest.rs::Digest::fetch_pr
 function-lines crates/quench-node/src/modules/crypto_digest_error.rs::throw 42
 function-lines crates/quench-node/src/modules/crypto_engine_shared_vm.rs::native::set_key 41
 function-lines crates/quench-node/src/modules/crypto_error_shared_vm.rs::create_message 67
-function-lines crates/quench-node/src/modules/crypto_hash_shared_vm.rs::install 42
 function-lines crates/quench-node/src/modules/crypto_hkdf.rs::derive 87
 function-lines crates/quench-node/src/modules/crypto_kem_request.rs::Request::run 97
 function-lines crates/quench-node/src/modules/crypto_key_shared_vm.rs::binding 50
@@ -1839,7 +1837,6 @@ function-lines crates/quench-node/src/modules/crypto_node/keys.rs::generate_pair
 function-lines crates/quench-node/src/modules/crypto_node/keys.rs::import_jwk 76
 function-lines crates/quench-node/src/modules/crypto_node/keys.rs::pair_request 94
 function-lines crates/quench-node/src/modules/crypto_node/keys.rs::parse_key_encoding 73
-function-lines crates/quench-node/src/modules/crypto_node/mod.rs::build 85
 function-lines crates/quench-node/src/modules/crypto_node/web.rs::algorithm_object 41
 function-lines crates/quench-node/src/modules/crypto_node/web.rs::cipher_operation 47
 function-lines crates/quench-node/src/modules/crypto_node/web.rs::derive_bits 65
@@ -2079,7 +2076,6 @@ function-lines crates/quench-node/src/modules/net_socket_options.rs::initialize 
 function-lines crates/quench-node/src/modules/net_socket_options.rs::initialize_server 103
 function-lines crates/quench-node/src/modules/net_socket_options.rs::install 43
 function-lines crates/quench-node/src/modules/net_socket_options.rs::keep_alive 87
-function-lines crates/quench-node/src/modules/node_errors_shared_vm.rs::coded_error_prototype 66
 function-lines crates/quench-node/src/modules/os_binding_shared_vm.rs::build_constants 125
 function-lines crates/quench-node/src/modules/os_facts.rs::constrained_cpu 51
 function-lines crates/quench-node/src/modules/os_facts.rs::cpus 87
@@ -2239,7 +2235,6 @@ function-lines crates/quench-node/src/modules/tls_shared_vm/contexts.rs::select_
 function-lines crates/quench-node/src/modules/tls_shared_vm/discovery.rs::ca_certificates 101
 function-lines crates/quench-node/src/modules/tls_shared_vm/discovery.rs::set_default_ca_certificates 80
 function-lines crates/quench-node/src/modules/tls_shared_vm/facade.rs::initialize 55
-function-lines crates/quench-node/src/modules/tls_shared_vm/facade.rs::install 63
 function-lines crates/quench-node/src/modules/tls_shared_vm/facade.rs::version 41
 function-lines crates/quench-node/src/modules/tls_shared_vm/identity.rs::alt_names 45
 function-lines crates/quench-node/src/modules/tls_shared_vm/identity.rs::check_server_identity 148
@@ -4308,7 +4303,6 @@ magic crates/quench-node/src/modules/assert_shared_vm.rs::fail 3
 magic crates/quench-node/src/modules/assert_shared_vm.rs::print_diff 1
 magic crates/quench-node/src/modules/async_hooks_module_shared_vm.rs::resource_static_bind 1
 magic crates/quench-node/src/modules/async_hooks_module_shared_vm.rs::run_in_async_scope 1
-magic crates/quench-node/src/modules/async_hooks_shared_vm.rs::run_storage 1
 magic crates/quench-node/src/modules/blob_binding_shared_vm.rs::store_data_object 1
 magic crates/quench-node/src/modules/blob_shared_vm.rs::build 1
 magic crates/quench-node/src/modules/blob_shared_vm.rs::class 1
@@ -4849,7 +4843,6 @@ magic crates/quench-node/src/modules/util_parse_args_shared_vm.rs::short_form 1
 magic crates/quench-node/src/modules/util_parse_args_shared_vm.rs::store_option 1
 magic crates/quench-node/src/modules/util_parse_args_shared_vm.rs::tokenize 3
 magic crates/quench-node/src/modules/util_shared_vm.rs::build_key_binding 3
-magic crates/quench-node/src/modules/util_shared_vm.rs::define_lazy_properties 1
 magic crates/quench-node/src/modules/util_shared_vm.rs::integer_separators 2
 magic crates/quench-node/src/modules/util_shared_vm.rs::promise_details 1
 magic crates/quench-node/src/modules/util_style_shared_vm.rs::hex 6

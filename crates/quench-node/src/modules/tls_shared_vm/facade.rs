@@ -25,6 +25,23 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     }
     let api = super::surface::context_facades(context)?;
     let native = get(context, api, "NativeSecureContext")?;
+    let binding = crypto_binding(context, native)?;
+    set(context, api, "binding", binding)?;
+    let prototype = get(context, native, "prototype")?;
+    install_context_methods(context, prototype)?;
+    let api = context.retain(api)?;
+    shared.borrow_mut().tls_contexts.api = Some(api);
+    Ok(api)
+}
+/// Gives a host function the `name` Node's function of that name reports.
+fn name_function(context: &mut NativeContext<'_, NodeHost>, function: RootId, name: &str) -> Result<(), RootedError> {
+    let key = context.string_rooted("name");
+    let text = context.string_rooted(name);
+    context.define_data_property_rooted(function, key, text, false, false, true)?;
+    Ok(())
+}
+/// The `crypto` internal binding: SecureContext and the native crypto operations.
+fn crypto_binding(context: &mut NativeContext<'_, NodeHost>, native: RootId) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     #[cfg(quench_openssl_provider)]
     super::super::crypto_provider_shared_vm::install(context, binding)?;
@@ -33,9 +50,7 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     if super::super::crypto_engine_shared_vm::SUPPORTED {
         let function =
             context.host_function(crate::host::shared_vm::operation!("cryptoSetEngineBinding"))?;
-        let key = context.string_rooted("name");
-        let name = context.string_rooted("setEngine");
-        context.define_data_property_rooted(function, key, name, false, false, true)?;
+        name_function(context, function, "setEngine")?;
         set(context, binding, "setEngine", function)?;
     }
     super::super::crypto_secret_job_shared_vm::install(context, binding)?;
@@ -46,46 +61,37 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
             let function = get(context, hashes, name)?;
             set(context, binding, name, function)?;
         }
+        super::super::crypto_signature_shared_vm::install(context, binding)?;
+        super::super::crypto_rsa_shared_vm::install(context, binding)?;
     }
-    #[cfg(quench_openssl_provider)]
-    super::super::crypto_signature_shared_vm::install(context, binding)?;
-    #[cfg(quench_openssl_provider)]
-    super::super::crypto_rsa_shared_vm::install(context, binding)?;
-    set(context, api, "binding", binding)?;
-    let prototype = get(context, native, "prototype")?;
-    for (name, operation) in [
+    Ok(binding)
+}
+/// SecureContext's native methods, then its configuration methods the engine supports.
+fn install_context_methods(context: &mut NativeContext<'_, NodeHost>, prototype: RootId) -> Result<(), RootedError> {
+    let native = [
         ("init", "tlsContextInit"),
         ("setOptions", "tlsContextSetOptions"),
         ("getMinProto", "tlsContextGetMinProto"),
         ("getMaxProto", "tlsContextGetMaxProto"),
-    ] {
-        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
-        let key = context.string_rooted("name");
-        let text = context.string_rooted(name);
-        context.define_data_property_rooted(function, key, text, false, false, true)?;
+    ];
+    let engine_methods = ["setClientCertEngine", "setEngineKey"];
+    let configured = super::configuration::METHODS
+        .iter()
+        .filter(|name| super::super::crypto_engine_shared_vm::SUPPORTED || !engine_methods.contains(*name));
+    let methods = native.into_iter().map(|(name, operation)| (name, Some(operation))).chain(configured.map(|name| (*name, None)));
+    for (name, operation) in methods {
+        let function = match operation {
+            Some(operation) => context.host_function(crate::host::shared_vm::operation(operation))?,
+            None => {
+                let action = context.string_rooted(name);
+                context.host_function_with_data(crate::host::shared_vm::operation!("tlsContextConfigure"), action)?
+            }
+        };
+        name_function(context, function, name)?;
         let key = context.string_rooted(name);
         context.define_data_property_rooted(prototype, key, function, true, true, true)?;
     }
-    for name in super::configuration::METHODS {
-        if matches!(*name, "setClientCertEngine" | "setEngineKey")
-            && !super::super::crypto_engine_shared_vm::SUPPORTED
-        {
-            continue;
-        }
-        let action = context.string_rooted(name);
-        let function = context.host_function_with_data(
-            crate::host::shared_vm::operation!("tlsContextConfigure"),
-            action,
-        )?;
-        let key = context.string_rooted("name");
-        let text = context.string_rooted(name);
-        context.define_data_property_rooted(function, key, text, false, false, true)?;
-        let key = context.string_rooted(name);
-        context.define_data_property_rooted(prototype, key, function, true, true, true)?;
-    }
-    let api = context.retain(api)?;
-    shared.borrow_mut().tls_contexts.api = Some(api);
-    Ok(api)
+    Ok(())
 }
 fn absent(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
     context

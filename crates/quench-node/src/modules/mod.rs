@@ -11,6 +11,8 @@ pub(crate) mod async_hooks_module_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
 pub(crate) mod async_hooks_public;
 pub(crate) mod async_hooks_state;
+pub(crate) mod async_local_storage_public;
+pub(crate) mod async_local_storage_shared_vm;
 pub(crate) mod blob_binding_shared_vm;
 pub(crate) mod blob_shared_vm;
 pub(crate) mod buffer_binding_shared_vm;
@@ -162,7 +164,9 @@ pub(crate) mod websocket_shared_vm;
 pub(crate) mod util_callbackify_shared_vm;
 pub(crate) mod util_env;
 pub(crate) mod util_comparisons_shared_vm;
+pub(crate) mod util_debuglog_shared_vm;
 pub(crate) mod util_inspect_shared_vm;
+pub(crate) mod util_lazy_shared_vm;
 pub(crate) mod util_mime_shared_vm;
 pub(crate) mod util_module_shared_vm;
 pub(crate) mod util_parse_args_shared_vm;
@@ -222,6 +226,8 @@ pub(crate) mod crypto_digest_cache;
 pub(crate) mod crypto_digest_state;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_shared_vm;
+#[cfg(quench_openssl_provider)]
+mod crypto_hash_input_shared_vm;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_source_shared_vm;
 #[cfg(quench_openssl_provider)]

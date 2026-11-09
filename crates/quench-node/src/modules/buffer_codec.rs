@@ -65,6 +65,9 @@ pub(crate) fn decode_units(bytes: &[u8], encoding: &str) -> Vec<u16> {
     decode_units_limited(bytes, encoding, usize::MAX).expect("unbounded codec output length")
 }
 
+/// A hex string spells each byte as two digits.
+pub(crate) const HEX_CHARACTERS_PER_BYTE: usize = 2;
+
 /// Check the resulting string's UTF-16 length before allocating its unit storage.
 /// The caller supplies the original runtime limit; public mutable exports are not read.
 pub(crate) fn decode_units_limited(
@@ -72,7 +75,6 @@ pub(crate) fn decode_units_limited(
     encoding: &str,
     maximum: usize,
 ) -> Option<Vec<u16>> {
-    const HEX_CHARACTERS_PER_BYTE: usize = 2;
     let direct_length = match encoding {
         "latin1" | "ascii" => Some(bytes.len()),
         "hex" => Some(bytes.len().checked_mul(HEX_CHARACTERS_PER_BYTE)?),
