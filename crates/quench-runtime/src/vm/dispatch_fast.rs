@@ -269,6 +269,8 @@ pub(super) struct LoopSite {
 }
 
 impl LoopSite {
+    pub(super) fn function(&self) -> u32 { self.function }
+
     fn active_region(&self) -> Option<&super::compiled::LoopRegion> {
         self.inline_region.get().and_then(|region| region.as_deref()).or_else(|| self.region.get())
     }
@@ -542,7 +544,7 @@ const WINDOW_ENVIRONMENT: u16 = 0;
 const WINDOW_SLOTS: u16 = 1;
 const WINDOW_CAPTURED: u16 = 2;
 const WINDOW_STORAGE: u16 = 3;
-const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
+pub(super) const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
 
 impl EnvironmentWindow {
     fn captured(self, slot: usize) -> bool {

@@ -472,6 +472,10 @@ enum Liveness<'a> {
 pub(super) enum Coverage {
     Prefix,
     Full,
+    /// One loop of the function's unit, from its header through its backward jump. Only
+    /// instructions in the loop lower; an edge out of it leaves at the exact PC. The
+    /// backedge is a native branch to the header with the tier's poll.
+    Loop { header: usize, backedge: usize, poll: bool },
     /// A caller-origin entry into the original unit CFG. Opaque operations
     /// leave at their exact origin; earlier loops and effects are not replayed.
     PrefixFrom(usize),
@@ -479,9 +483,18 @@ pub(super) enum Coverage {
 }
 
 impl Coverage {
-    pub(super) fn entry(self) -> usize { match self { Self::PrefixFrom(pc) | Self::FullFrom(pc) => pc, _ => 0 } }
-    fn full(self) -> bool { matches!(self, Self::Full | Self::FullFrom(_)) }
-    fn selected_entry(self) -> bool { matches!(self, Self::PrefixFrom(_) | Self::FullFrom(_)) }
+    pub(super) fn entry(self) -> usize {
+        match self { Self::Loop { header, .. } => header,
+            Self::PrefixFrom(pc) | Self::FullFrom(pc) => pc, _ => 0 }
+    }
+    fn full(self) -> bool { matches!(self, Self::Full | Self::FullFrom(_) | Self::Loop { .. }) }
+    fn selected_entry(self) -> bool {
+        matches!(self, Self::PrefixFrom(_) | Self::FullFrom(_) | Self::Loop { .. })
+    }
+    /// Whether instruction `pc` is part of the region this coverage selects.
+    fn lowered(self, pc: usize) -> bool {
+        match self { Self::Loop { header, backedge, .. } => (header..=backedge).contains(&pc), _ => true }
+    }
 }
 
 /// How a run ends: a lane body's status and result word (`LaneExit`), or a static typed
@@ -652,6 +665,10 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn continue_at(&mut self, state: &mut State, pc: usize) {
+        if !self.coverage.lowered(pc) {
+            self.exit(state, pc as u32);
+            return;
+        }
         // A block before this one that no edge entered was not lowered.
         let lowered = pc > self.at || self.entered.contains(pc);
         match self.blocks.get(pc).copied().flatten().filter(|_| lowered) {
@@ -1254,9 +1271,10 @@ pub(super) fn lower(
         context,
         std::mem::offset_of!(CallContext, adapter_payload) as i32,
     ) };
-    let fault_poll = super::FAULT_POLL_SUPPORTED && unit.instructions.iter().enumerate().any(|(pc, instruction)|
-        instruction.op().control_flow_layout().jumps()
-            && instruction.jump_target() as usize <= pc);
+    let fault_poll = match coverage { Coverage::Loop { poll, .. } => poll, _ => true }
+        && super::FAULT_POLL_SUPPORTED && unit.instructions.iter().enumerate().any(|(pc, instruction)|
+            instruction.op().control_flow_layout().jumps()
+                && instruction.jump_target() as usize <= pc);
     let mut seen_headers: CompoundBitSet = CompoundBitSet::with_capacity(unit.instructions.len());
     let mut shared_headers = CompoundBitSet::with_capacity(unit.instructions.len());
     for (pc, instruction) in unit.instructions.iter().enumerate() {
@@ -1535,6 +1553,7 @@ pub(super) fn lower(
     let mut state = State::canonical(count);
     let mut reachable = false;
     for (pc, instruction) in instructions.iter().copied().enumerate() {
+        if !coverage.lowered(pc) { continue; }
         if let Some(block) = lowering.blocks[pc] {
             if reachable {
                 lowering.hoist_reads(&mut state, pc);
@@ -5620,6 +5639,55 @@ mod tests {
             }
         }
         assert_eq!(arithmetic, 3, "{native}");
+    }
+
+    /// A plain unit over the function's own code, without inlining: the shape the loop
+    /// tier hands the region specializer.
+    fn plain_unit(function: &crate::bytecode::Function) -> super::super::lane_unit::Unit {
+        let instructions: Vec<_> = function.instructions().collect();
+        let count = instructions.len();
+        super::super::lane_unit::Unit {
+            instructions,
+            origins: (0..count).map(|pc|
+                super::super::lane_unit::Origin::Caller(pc as u32)).collect(),
+            frames: Vec::new(), markers: Vec::new(),
+            caller_registers: function.registers, registers: function.registers,
+            end: count as u32,
+        }
+    }
+
+    /// `Coverage::Loop` lowers only the loop, treats its backedge as a native branch, and
+    /// leaves at the exact PC of every edge out of it.
+    #[test]
+    fn loop_coverage_lowers_only_the_loop() {
+        let program = crate::Engine::specialize(
+            "function accumulate(x) { let s = 0; for (let i = 0; i < x; i++) { s = (s + i) | 0; } return s; } accumulate(4);",
+            "loop-coverage.js").unwrap();
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap() as u32;
+        let function = program.function(id as usize);
+        let unit = plain_unit(function);
+        let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)| {
+            (instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
+                && (instruction.jump_target() as usize) <= pc)
+                .then(|| (instruction.jump_target() as usize, pc))
+        }).expect("the function has a loop");
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
+        let region = RegionSpecializer { function_id: id, unit: &unit,
+            helpers: LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
+            fields: &BTreeMap::new(), global_reads: &BTreeMap::new(), facts: VmFacts::STATIC,
+            generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
+            plan: RegionPlan { coverage: Coverage::Loop { header, backedge, poll: true },
+                completion: Completion::StatusAndPc, views: ElementViews::Dense } }
+            .specialize(&program).expect("the loop lowers");
+        assert!(region.native > 0, "the loop runs natively");
+        let native = region.function;
+        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
+        let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();
+        dominators.compute(&native, &cfg);
+        let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
+        loops.compute(&native, &cfg, &dominators);
+        assert_eq!(loops.loops().count(), 1, "one native loop: {native}");
     }
 
     /// The JIT lane plan and the AOT typed-region plan are two `RegionPlan`s over the one

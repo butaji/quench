@@ -101,9 +101,13 @@ pub(super) fn lane_loop_compile<H: Host>(
     }
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
+    let program = machine.programs.get(machine.active_program);
+    let function = site.function();
+    let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
     let started = observe(machine, r, region, entry, &tier.widened, |observation| {
-        super::super::compiled::start_osr_region(region, observation, &machine.execution_interrupt, machine.heap.memory_policy())
+        super::super::compiled::start_osr_region(region, observation, &machine.execution_interrupt,
+            machine.heap.memory_policy(), program.as_deref()?, function, helpers)
     });
     machine.host.after_native_compilation();
     tier.start(started, &mut machine.heap, site);

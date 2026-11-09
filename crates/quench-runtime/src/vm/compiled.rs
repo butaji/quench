@@ -2142,6 +2142,11 @@ pub(super) enum LaneHelpers {
     #[cfg(feature = "aot")]
     Bound(ir::Value, u32),
 }
+/// The process helper table a JIT publication binds.
+pub(super) fn process_lane_helpers<H: Host>() -> LaneHelpers {
+    LaneHelpers::Process(LaneHelper::addresses::<H>())
+}
+
 impl LaneHelpers {
     /// A linked publication's helpers: its helper-table symbol, and the narrow
     /// table's symbol after the program's functions.
@@ -6279,12 +6284,20 @@ fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize,
     let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Lane-ABI OSR runs in this test thread.
+    pub(super) static LANE_OSR_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// A native OSR region published by the shared compiler. Its lowerer is private to this
 /// module; lanes only ask the region to run and inspect its exact-PC widening result.
 pub(super) struct CompiledOsrRegion {
     _code: CodeMemory,
     entry: Entry,
     pub(super) facts: OsrFacts,
+    /// Whether the code uses the lane-region entry ABI.
+    lane: bool,
 }
 
 impl CompiledOsrRegion {
@@ -6308,6 +6321,9 @@ impl CompiledOsrRegion {
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
     ) -> LoopOutcome {
+        if self.lane {
+            return unsafe { self.run_lane(registers, vm, program, function, frame, interrupt) };
+        }
         // SAFETY: the caller keeps the VM alive and excludes other mutable VM access while
         // native code runs. The interrupt reference is used only to construct raw ABI fields.
         let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
@@ -6351,6 +6367,73 @@ impl CompiledOsrRegion {
         } else {
             LoopOutcome::decode(word)
         }
+    }
+
+    /// Runs a loop compiled through the lane region specializer: the shared lane entry ABI,
+    /// with the activation's dispatch as the payload and the register file as its arguments.
+    ///
+    /// # Safety
+    /// As `run`: `registers` is the activation's live register file, and `vm`/`interrupt`
+    /// belong to this lane activation.
+    unsafe fn run_lane<H: Host>(
+        &self,
+        registers: *mut crate::value::Value,
+        vm: *mut Vm<H>,
+        program: ProgramId,
+        function: u32,
+        frame: usize,
+        interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
+    ) -> LoopOutcome {
+        let mut outcome = LoopOutcome::Terminated;
+        #[cfg(test)]
+        LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
+        let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, |native, vm| {
+            native.dispatch.bind_native_storage(vm);
+            // The lane activation's own registers, locals and body. A frame whose local
+            // storage does not cover the function keeps them in the activation window,
+            // after the register file; the VM frame may name the caller.
+            if let Some(program) = vm.programs.get(program)
+                && let Some(body) = program.function_get(function as usize) {
+                native.dispatch.native_registers = registers;
+                native.dispatch.register_count = usize::from(body.registers);
+                native.dispatch.native_locals = if vm.frames[frame].locals.len() < usize::from(body.locals) {
+                    registers.add(usize::from(body.registers)
+                        + usize::from(super::dispatch_fast::WINDOW_LOCALS))
+                } else {
+                    vm.frames[frame].locals.as_mut_ptr()
+                };
+                native.dispatch.local_count = usize::from(body.locals);
+                native.dispatch.body = body as *const _;
+                native.dispatch.residual = Rc::as_ptr(&program) as usize;
+            }
+            native.dispatch.refresh_object_bases(vm);
+            let mut context = CallContext::interrupt_only(&*interrupt);
+            context.vm = std::ptr::from_mut(vm).cast();
+            context.program = program;
+            context.adapter_payload = (&mut native.dispatch as *mut JsStepDispatch).cast();
+            let mut word = 0u64;
+            // SAFETY: as the caller promises; the code reads the register file and writes
+            // the result word.
+            let status = enter_native(&mut context, 0, 0, registers.cast::<u64>(),
+                &mut word, NativeEntryMode::Resumable, self.entry);
+
+            if let Some(Raised::Panic(panic)) = context.raised.take() {
+                std::panic::resume_unwind(panic);
+            }
+            outcome = if i64::from(status) == TERMINATED_STATUS {
+                LoopOutcome::Terminated
+            } else {
+                match LaneExit::decode(word) {
+                    LaneExit::At(pc) => LoopOutcome::Exit(pc as u32),
+                    LaneExit::Entry => LoopOutcome::NotEntered(None),
+                    LaneExit::Terminated => LoopOutcome::Terminated,
+                    LaneExit::Callee | LaneExit::Inlined { .. } | LaneExit::Returned { .. } =>
+                        LoopOutcome::Exit(0),
+                }
+            };
+        }) };
+        if ran.is_none() { return LoopOutcome::Terminated; }
+        outcome
     }
 
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
@@ -18218,7 +18301,7 @@ mod tests {
                 vm.execution_interrupt.atomic_flag(), None,
             );
             let vm = vm as *mut Vm<crate::test_host::TestHost>;
-            context.vm = vm.cast();
+            context.vm = std::ptr::from_mut(vm).cast();
             dispatch.bind_native_storage(vm);
             context.program = ProgramId::MAIN;
             let mut result = 0;

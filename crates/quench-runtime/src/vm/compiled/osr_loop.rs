@@ -228,6 +228,12 @@ struct LifetimeRoles {
 }
 
 impl LoopRegion {
+    /// The function's full decoded code, which a loop unit keeps so its PCs stay the
+    /// function's; only `header..=backedge` lowers.
+    pub(crate) fn instructions(&self) -> &[WideInstruction] { &self.instructions }
+    /// The cached field reads, by offset from the header: the lane specializer's field
+    /// sites, mapped from the observation's descriptors.
+    pub(crate) fn field_reads(&self) -> &std::collections::BTreeMap<u32, usize> { &self.field_reads }
     fn tagged_entry(&self, register: Register) -> bool {
         self.lifetime_roles.as_ref().map_or_else(
             || self.tagged.contains(&register),
