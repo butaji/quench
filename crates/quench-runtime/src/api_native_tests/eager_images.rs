@@ -200,11 +200,16 @@ fn a_frozen_image_materializes_heap_string_constants_and_deopts_on_retirement() 
 
 #[cfg(feature = "aot")]
 #[test]
-fn functions_wider_than_the_stack_map_are_reported_and_fall_back() {
+fn functions_past_the_set_width_keep_a_conservative_map() {
     let locals = crate::compile::liveness::ROOT_MAP_REGISTERS as usize + 1;
     let parameters = (0..locals).map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
     let source = format!("function wide({parameters}) {{ return p0; }}\nwide(1);\n");
     let program = Engine::specialize(&source, "wide-frame.js").unwrap();
+    let wide = (0..program.function_count()).find(|index| program.function_get(*index)
+        .is_some_and(|function| function.registers > crate::compile::liveness::ROOT_MAP_REGISTERS))
+        .expect("the wide body");
+    let masks = program.register_root_masks(wide as u32).expect("a body past the set width keeps a conservative map");
+    assert!(masks.get(0).is_none(), "the conservative map has no per-pc entry");
     let options = crate::NativeJsCodegenOptions {
         backend: crate::NativeJsBackend::Cranelift, ..Default::default() };
     let native = crate::NativeJsProgram::<TestHost>::compile_eager_with_options(program, options).unwrap();

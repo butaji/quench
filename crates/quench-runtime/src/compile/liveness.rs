@@ -25,15 +25,15 @@ impl RegisterMasks {
     /// `masks` at the narrowest width that holds every one of them.
     pub(crate) fn new(masks: Vec<RegisterSet>) -> Self {
         if let Some(narrow) = masks.iter().map(|&mask| u64::try_from(mask).ok()).collect::<Option<Box<[u64]>>>() { return Self::Narrow(narrow); }
-        masks.iter().map(|&mask| mask.as_u128()).collect::<Option<Box<[u128]>>>()
-            .map_or_else(|| Self::Wide(masks.into_boxed_slice()), Self::Half)
+        masks.iter().map(|&mask| mask.as_u128()).collect::<Option<Box<[u128]>>>().map_or_else(|| Self::Wide(masks.into_boxed_slice()), Self::Half)
     }
 
     /// `function`'s masks (`analyze`), solved at the width its registers need, when liveness
     /// covers it: a wide solve's tables before narrowing were 30 MB at a cold mandreel run's
     /// peak (`global_init`: 614K instructions over 9 registers).
     pub(crate) fn of(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> Option<Self> {
-        (function.registers <= ROOT_MAP_REGISTERS).then(|| if u32::from(function.registers) <= u64::BITS {
+        if function.registers > ROOT_MAP_REGISTERS { return Some(Self::Wide(Box::default())); }
+        Some(if u32::from(function.registers) <= u64::BITS {
             Self::Narrow(live_masks::<u64>(function, methods, fields, superinstructions).into_boxed_slice())
         } else {
             Self::new(live_masks::<RegisterSet>(function, methods, fields, superinstructions))
