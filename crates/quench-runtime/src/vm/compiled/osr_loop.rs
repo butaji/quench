@@ -30,7 +30,7 @@
 
 use crate::bytecode::{
     FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
-    OperandKind, Register, WideInstruction,
+    OperandKind, Register, WideInstruction, Class,
 };
 use crate::compile::liveness::RegisterSet;
 use crate::value::{Value, ValueLayout};
@@ -2401,8 +2401,8 @@ fn admit(
     defined_registers: &std::collections::BTreeSet<Register>,
     dynamic_arrays: &std::collections::BTreeSet<Register>,
 ) -> Option<()> {
-    match instruction.op() {
-        Op::LoadConst => {
+    match instruction.op().class() {
+        Class::LoadConst => {
             let index = instruction.constant_index();
             if tagged.contains(&instruction.result_register()) {
                 admission.any_constant(index)?;
@@ -2412,7 +2412,7 @@ fn admit(
                 admission.result(instruction)?;
             }
         }
-        Op::Move => {
+        Class::Move => {
             if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
                 admission.tagged(instruction.register_b())?;
@@ -2421,7 +2421,7 @@ fn admit(
                 admission.number(instruction.register_b())?;
             }
         }
-        Op::LoadCapture => {
+        Class::LoadCapture => {
             (instruction.capture_depth() == 0 && instruction.result_flags() == 0).then_some(())?;
             if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
@@ -2433,7 +2433,7 @@ fn admit(
                 admission.captures.push(slot);
             }
         }
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+        Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
             if number_comparison(instruction).is_some() {
                 (instruction.result_flags() == 0).then_some(())?;
                 admission.tagged(instruction.result_register())?;
@@ -2444,16 +2444,16 @@ fn admit(
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
         }
-        Op::ToNumeric => {
+        Class::ToNumeric => {
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
-        Op::IncDec => {
+        Class::IncDec => {
             instruction.boolean_flag()?;
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
-        Op::Unary => {
+        Class::Unary => {
             if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
                 && tagged.contains(&instruction.result_register())
             {
@@ -2466,12 +2466,12 @@ fn admit(
             }
         }
         // An array the entry guard proved is an object passes.
-        Op::RequireObjectCoercible => {
+        Class::RequireObjectCoercible => {
             if !dynamic_arrays.contains(&instruction.register_b()) {
                 admission.array(instruction.register_b(), false)?;
             }
         }
-        Op::GetIndex => {
+        Class::GetIndex => {
             if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
             } else {
@@ -2485,21 +2485,21 @@ fn admit(
             admission.source(instruction.operand_c())?;
         }
         // Its field is the region's (`LoopRegion::field_reads`).
-        Op::GetField => {
+        Class::GetField => {
             if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
             } else {
                 admission.result(instruction)?;
             }
         }
-        Op::SetIndex => {
+        Class::SetIndex => {
             admission.number(instruction.register_a())?;
             if !dynamic_arrays.contains(&instruction.register_b()) {
                 admission.array(instruction.register_b(), true)?;
             }
             admission.number(instruction.register_c())?;
         }
-        op if admitted_store(op) => {
+        _ if admitted_store(instruction.op()) => {
             let value_register = instruction.register_a();
             // An unchanged entry value can be any tagged value. The VM logs a register
             // receiver in the generational barrier before native writes begin.
@@ -2512,7 +2512,7 @@ fn admit(
                 admission.tagged(receiver)?;
             }
         }
-        Op::LoadEnvLocal => {
+        Class::LoadEnvLocal => {
             if instruction.result_flags() != 0
                 || instruction.returns_from_frame()
                 || instruction.numeric_local_target().is_some()
@@ -2527,11 +2527,11 @@ fn admit(
         }
         // The interpreter runs every other instruction at its exact PC, with the whole state
         // written back (binding lookup, calls, allocation, GC, throws).
-        op if exits_before_effects(op) => {}
+        _ if exits_before_effects(instruction.op()) => {}
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
-        Op::Return | Op::Jump => {}
-        Op::JumpBinaryFalse => {
+        Class::Return | Class::Jump => {}
+        Class::JumpBinaryFalse => {
             if let Some(branch) = identity_branch(instruction, constants) {
                 admission.tagged(branch.register)?;
             } else if let Some((register, constant)) = match (
@@ -2582,7 +2582,7 @@ fn admit(
                 return None;
             }
         }
-        Op::JumpFalse | Op::JumpTrue => {
+        Class::JumpFalse | Class::JumpTrue => {
             let register = instruction.register_a();
             // A tagged value's truthiness is decided natively where the value alone decides it
             // (`Lowering::tagged_truthiness`); any other value exits.
@@ -3114,38 +3114,38 @@ pub(super) fn verify_region<'a>(
             if !webs.reachable[offset] || number_definition(instruction).is_none() { continue; }
             let pc = region.header + offset as u32;
             let root = webs.defined(region, pc);
-            let result = match instruction.op() {
-                Op::LoadConst => constant_type(instruction.constant_index())
+            let result = match instruction.op().class() {
+                Class::LoadConst => constant_type(instruction.constant_index())
                     .ok_or_else(|| TypeError::InvalidConstant { pc, index: instruction.constant_index() })?,
-                Op::Move | Op::ToNumeric => {
+                Class::Move | Class::ToNumeric => {
                     let register = instruction.register_b();
                     let source = webs.checked_read(region, pc, register)
                         .ok_or(TypeError::MissingDefinition { pc, register })?;
                     values[source].ty
                 }
-                Op::LoadCapture => captures[region.captures.iter()
+                Class::LoadCapture => captures[region.captures.iter()
                     .position(|slot| *slot == instruction.capture_slot()).expect("admitted capture")].ty,
-                Op::Binary | Op::NumericAdd | Op::NumericMultiply if number_comparison(instruction).is_some() => Type::language(crate::ValueType::Boolean),
-                Op::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => Type::TYPEOF_INDEX,
-                Op::GetField if region.dynamic_field_reads.contains_key(&(offset as u32)) => {
+                Class::Binary | Class::NumericAdd | Class::NumericMultiply if number_comparison(instruction).is_some() => Type::language(crate::ValueType::Boolean),
+                Class::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => Type::TYPEOF_INDEX,
+                Class::GetField if region.dynamic_field_reads.contains_key(&(offset as u32)) => {
                     if representations[root] == Representation::Tagged { Type::ANY } else { Type::NUMBER }
                 }
-                Op::GetField => fields[region.field_reads[&(offset as u32)]].ty,
-                Op::GetIndex | Op::LoadEnvLocal if representations[root] == Representation::Tagged => Type::ANY,
-                Op::Unary if unary(instruction.op(), instruction.unary_operator()) == Some(Unary::BitwiseNot) => Type::INT32,
-                Op::Binary | Op::NumericAdd | Op::NumericMultiply
+                Class::GetField => fields[region.field_reads[&(offset as u32)]].ty,
+                Class::GetIndex | Class::LoadEnvLocal if representations[root] == Representation::Tagged => Type::ANY,
+                Class::Unary if unary(instruction.op(), instruction.unary_operator()) == Some(Unary::BitwiseNot) => Type::INT32,
+                Class::Binary | Class::NumericAdd | Class::NumericMultiply
                     if matches!(arithmetic(instruction.op(), instruction.binary_operator()),
                         Some(Arithmetic::Int32(operation)) if operation != NumberBitwise::ShiftRightUnsigned) => Type::INT32,
-                Op::IncDec | Op::GetIndex | Op::LoadEnvLocal | Op::Unary
-                    | Op::Binary | Op::NumericAdd | Op::NumericMultiply => Type::NUMBER,
+                Class::IncDec | Class::GetIndex | Class::LoadEnvLocal | Class::Unary
+                    | Class::Binary | Class::NumericAdd | Class::NumericMultiply => Type::NUMBER,
                 _ => Type::ANY,
             };
-            obligations[offset] = match instruction.op() {
-                Op::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => DefinitionObligation::TypeofTest,
-                Op::GetIndex | Op::LoadEnvLocal if representations[root] != Representation::Tagged => DefinitionObligation::NumberLoad,
-                Op::GetField if region.dynamic_field_reads.contains_key(&(offset as u32))
+            obligations[offset] = match instruction.op().class() {
+                Class::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => DefinitionObligation::TypeofTest,
+                Class::GetIndex | Class::LoadEnvLocal if representations[root] != Representation::Tagged => DefinitionObligation::NumberLoad,
+                Class::GetField if region.dynamic_field_reads.contains_key(&(offset as u32))
                     && representations[root] != Representation::Tagged => DefinitionObligation::NumberLoad,
-                Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::IncDec | Op::Unary
+                Class::Binary | Class::NumericAdd | Class::NumericMultiply | Class::IncDec | Class::Unary
                     if representations[root] == Representation::Int32 && result != Type::INT32 => DefinitionObligation::Int32Result,
                 _ => DefinitionObligation::None,
             };
@@ -3249,21 +3249,21 @@ fn definition(
             Representation::Float64
         }
     };
-    let representation = match instruction.op() {
-        Op::LoadConst => {
+    let representation = match instruction.op().class() {
+        Class::LoadConst => {
             let index = instruction.constant_index();
             match region.constants.get(&index) {
                 Some(number) if crate::vm::compiled::facts::is_int32_number(*number) => Representation::Int32,
                 _ => Representation::Float64,
             }
         }
-        Op::Move | Op::IncDec | Op::ToNumeric => registers(instruction.register_b()),
-        Op::LoadCapture => {
+        Class::Move | Class::IncDec | Class::ToNumeric => registers(instruction.register_b()),
+        Class::LoadCapture => {
             let slot = instruction.capture_slot();
             let index = region.captures.iter().position(|capture| *capture == slot)?;
             entry.captures[index]
         }
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+        Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
             match arithmetic(instruction.op(), instruction.binary_operator())? {
                 Arithmetic::Float(NumberArithmetic::Divide) | Arithmetic::Remainder => Representation::Float64,
                 Arithmetic::Float(_) => {
@@ -3273,15 +3273,15 @@ fn definition(
                 Arithmetic::Int32(_) => Representation::Int32,
             }
         }
-        Op::Unary => match unary(instruction.op(), instruction.unary_operator())? {
+        Class::Unary => match unary(instruction.op(), instruction.unary_operator())? {
             Unary::Number(_) => registers(instruction.register_b()),
             Unary::BitwiseNot => Representation::Int32,
         },
-        Op::GetIndex => element_representation(instruction, observation),
-        Op::GetField => entry.fields[*region.field_reads.get(&offset)?],
+        Class::GetIndex => element_representation(instruction, observation),
+        Class::GetField => entry.fields[*region.field_reads.get(&offset)?],
         // Environment loads are dynamically checked at the exact instruction. Keep a
         // numeric web in Float64 form so a changed/non-Number local falls back before use.
-        Op::LoadEnvLocal => Representation::Float64,
+        Class::LoadEnvLocal => Representation::Float64,
         _ => return None,
     };
     Some((instruction.result_register(), representation))
