@@ -120,12 +120,16 @@ pub(in crate::vm) fn start_osr_region(
     }.specialize(program).ok()).flatten();
     let (function, widenings, lane) = match lane {
         Some(region) => (region.function, BTreeMap::new(), true),
-        None => {
+        // The loop tier's private lowering remains only for an inlining region, whose
+        // callee frames the lane unit does not yet model. Every other loop either lowers
+        // through `RegionSpecializer` or stays in the interpreter.
+        None if region.inlining.is_some() => {
             let verified = osr_loop::verify_region(region, observation).ok()?;
             let (function, widenings) =
                 osr_loop::lower_verified(verified, observation, &*isa, poll_address(interrupt))?;
             (function, widenings, false)
         }
+        None => return None,
     };
     let clif = native_dump_directory().map(|_| function.display().to_string());
     let loads = || observation.native_field_loads.iter().flatten();
