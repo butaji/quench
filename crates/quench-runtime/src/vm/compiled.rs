@@ -2249,18 +2249,21 @@ pub(super) struct VmFacts<'a> {
     /// The Stable facts the code may fold under a code dependency: `None` for code that takes
     /// no dependency on this VM (`Division::Offline`).
     pub(super) online: Option<OnlineFacts<'a>>,
+    /// Whether those Stable facts come from a closed whole-program image rather than from a
+    /// running VM's feedback: `Division::Frozen` instead of `Division::Online`.
+    pub(super) frozen: bool,
 }
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
-    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None };
+    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None, frozen: false };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
-        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None }
+        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None, frozen: false }
     }
 }
 
@@ -2360,6 +2363,8 @@ enum JsGeneralBranch {
 pub(super) struct StaticTypedRegion {
     pub(super) header: usize,
     pub(super) function: ir::Function,
+    /// The Stable facts the region folded, replayed as assumptions when the image loads.
+    pub(super) stable: lane_region::StableFacts,
 }
 
 /// The same static typed regions with process helper addresses, for the eager
@@ -2367,14 +2372,15 @@ pub(super) struct StaticTypedRegion {
 #[cfg(feature = "aot")]
 pub(super) fn lower_static_typed_regions_process<H: Host>(program: &ResidualProgram, function_id: u32,
     targets: &[Vec<lane_unit::StaticTargets>], isa: &dyn cranelift_codegen::isa::TargetIsa,
+    facts: VmFacts<'_>,
 ) -> Vec<StaticTypedRegion> {
     lower_static_typed_regions(program, function_id, targets, isa,
-        LaneHelpers::Process(LaneHelper::addresses::<H>()))
+        LaneHelpers::Process(LaneHelper::addresses::<H>()), facts)
 }
 
 #[cfg(feature = "aot")]
 pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id: u32, targets: &[Vec<lane_unit::StaticTargets>],
-    isa: &dyn cranelift_codegen::isa::TargetIsa, helpers: LaneHelpers) -> Vec<StaticTypedRegion>
+    isa: &dyn cranelift_codegen::isa::TargetIsa, helpers: LaneHelpers, facts: VmFacts<'_>) -> Vec<StaticTypedRegion>
 {
     if isa.pointer_type() != types::I64 { return Vec::new(); }
     let Some(function) = program.function_get(function_id as usize) else { return Vec::new(); };
@@ -2411,12 +2417,12 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
         let variant = |views: lane_region::ElementViews| {
             lane_region::lower(program, function_id, &unit, helpers,
-                &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), VmFacts::STATIC, &[], &std::collections::BTreeMap::new(), &[], isa,
+                &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), facts, &[], &std::collections::BTreeMap::new(), &[], isa,
                 coverage, lane_region::Completion::SourcePc, views).filter(|region| region.native != 0)
                 .map(|mut region| {
                     let symbol = (header << 1) | u32::from(views == lane_region::ElementViews::Typed);
                     region.function.name = UserFuncName::user(lane_region::LANE_REGION_NAMESPACE, symbol);
-                    (region.hoists_arrays, StaticTypedRegion { header: header as usize, function: region.function })
+                    (region.hoists_arrays, StaticTypedRegion { header: header as usize, function: region.function, stable: region.stable })
                 })
         };
         let (hoists_arrays, dense) = variant(lane_region::ElementViews::Dense)?;
@@ -6455,11 +6461,19 @@ pub(super) fn compile_eager_native<H: Host>(
     // program; the eager publisher must fold them too, or its typed regions would
     // be a second, weaker lowering of the interpreter.
     let targets = super::compiled::static_call_targets(&program);
+    // The image's invalidation word: zero while every whole-program assumption holds.
+    let invalidation = crate::code_dependencies::Invalidation::default();
     let extension = EagerCraneliftExtension::<H> { program: &program, targets, isa, options, entries: Vec::new(),
-        owners: EagerOwners::default(), counts: Default::default(), host: std::marker::PhantomData };
-    let (entries, owners, counts) = super::specialize::CallThreaded::frozen(extension).specialize(&program)?;
+        owners: EagerOwners::default(), counts: Default::default(), invalidation: invalidation.clone(),
+        host: std::marker::PhantomData };
+    let (entries, mut owners, counts) = super::specialize::CallThreaded::frozen(extension).specialize(&program)?;
+    let frozen = crate::vm::native_program::FrozenAssumptions {
+        invalidation: owners.invalidation.clone(),
+        atoms: std::mem::take(&mut owners.frozen_atoms).into_iter().collect(),
+        watch: Rc::new(crate::code_dependencies::PublishedCode::with_invalidation((), invalidation.clone())),
+    };
     // SAFETY: every entry was lowered from its exact function for host H.
-    unsafe { crate::NativeJsProgram::from_entries_with_counts(program, entries, Rc::new(owners), counts) }
+    unsafe { crate::NativeJsProgram::from_entries_with_counts(program, entries, Rc::new(owners), counts, Some(frozen)) }
 }
 
 /// Everything the eager entries address: code, operand arrays and the per-PC
@@ -6470,6 +6484,10 @@ pub(super) struct EagerOwners {
     functions: Vec<(Vec<CodeMemory>, Box<[super::specialize::InstructionSite]>)>,
     operand_arrays: Vec<Box<[super::NativeJsOperands]>>,
     entry_tables: Vec<Box<[*const ()]>>,
+    /// The word the image's stable facts are checked against.
+    invalidation: crate::code_dependencies::Invalidation,
+    /// Method atoms the image holds unnamed (`StableFacts::atoms`).
+    frozen_atoms: std::collections::BTreeSet<Atom>,
 }
 
 /// The call-threaded generating extension for live Cranelift code: semantic
@@ -6483,6 +6501,7 @@ struct EagerCraneliftExtension<'p, H> {
     entries: Vec<crate::NativeJsFunctionEntry>,
     owners: EagerOwners,
     counts: crate::NativeJsPublicationCounts,
+    invalidation: crate::code_dependencies::Invalidation,
     host: std::marker::PhantomData<fn(&mut H)>,
 }
 
@@ -6505,7 +6524,10 @@ impl<'p, H: Host> super::specialize::CallThreadedExtension for EagerCraneliftExt
         Ok(())
     }
 
-    fn finish(self) -> Result<Self::Residual, String> {
+    fn finish(mut self) -> Result<Self::Residual, String> {
+        // The owners carry the same word the code reads, so retiring the image's
+        // watch is what the compiled invalidation points observe.
+        self.owners.invalidation = self.invalidation.clone();
         Ok((self.entries, self.owners, self.counts))
     }
 }
@@ -6586,7 +6608,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
             fields: &region.fields,
             frame: &region.frame,
         }).collect();
-        let units = lower_static_typed_regions_process::<H>(program, function_id, &self.targets, isa);
+        let units = self.frozen_units(program, function_id, isa);
         let typed_entries: Vec<_> = units.iter().map(|unit|
             StaticTypedRegionEntry { header: unit.header, function: &unit.function }).collect();
         let Ok((native, _)) = lower_js_general_dispatch(program, function_id, isa,
@@ -6597,6 +6619,23 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
         self.owners.operand_arrays.push(operands);
         self.owners.entry_tables.push(table);
         Ok(Some(EagerLowering { code, typed_regions: units.len(), scalar_regions: scalar.len() }))
+    }
+
+    /// The static typed regions under the image's whole-program facts: no method
+    /// cache names an atom yet, and every folded Stable fact is checked against the
+    /// image's invalidation word.
+    fn frozen_units(&mut self, program: &ResidualProgram, function_id: u32,
+        isa: &dyn cranelift_codegen::isa::TargetIsa,
+    ) -> Vec<StaticTypedRegion> {
+        let unnamed_atoms = super::method_cache::AtomBits::default();
+        let facts = VmFacts { frozen: true, online: Some(OnlineFacts {
+            method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[],
+        }), ..VmFacts::STATIC };
+        let units = lower_static_typed_regions_process::<H>(program, function_id, &self.targets, isa, facts);
+        for unit in &units {
+            self.owners.frozen_atoms.extend(unit.stable.atoms.iter().copied());
+        }
+        units
     }
 
     fn lower_fallback(&mut self, _function_id: u32, sites: &[super::specialize::InstructionSite],
@@ -14883,7 +14922,7 @@ mod tests {
             "invariant-header.js").unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next().unwrap();
+        let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next().unwrap();
         let native = &region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
         let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
@@ -15927,7 +15966,7 @@ mod tests {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "count")).unwrap();
         let targets = static_call_targets(&program);
         let isa = super::super::jit_backend::target_isa().unwrap();
-        let region = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next().unwrap();
+        let region = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next().unwrap();
         let native = &region.function;
         let comparisons = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|instruction| matches!(native.dfg.insts[*instruction],
@@ -16021,7 +16060,7 @@ mod tests {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "add")).unwrap();
         let targets = static_call_targets(&program);
         let isa = super::super::jit_backend::target_isa().unwrap();
-        let region = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next().unwrap();
+        let region = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next().unwrap();
         assert_eq!(region.header, 0, "scalar preheader definitions must enter the same SSA graph");
         assert!(!region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
             .any(|instruction| region.function.dfg.insts[instruction].opcode() == ir::Opcode::Fadd),
@@ -16201,7 +16240,7 @@ mod tests {
         let mut owners = Vec::new();
         let mut entries = Vec::new();
         for id in 0..program.function_count() {
-            let mut regions = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program));
+            let mut regions = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC);
             for region in &mut regions {
                 bind_test_lane_symbols(&mut region.function, program.function_count() as u32);
             }
@@ -16427,7 +16466,7 @@ mod tests {
                 &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 2, "both numeric calls must inline: {}", program.disassemble());
             let isa = super::super::jit_backend::target_isa().unwrap();
-            let regions = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program));
+            let regions = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC);
             assert_eq!(regions.len(), 2, "each independent caller loop needs an entry");
             assert_ne!(regions[0].function.name, regions[1].function.name, "inliner keys must be distinct");
             for region in &regions {
@@ -16532,14 +16571,14 @@ mod tests {
                 function.header().name.is_some_and(|name| &program.atoms[name as usize] == "pair")).unwrap();
             let isa = super::super::jit_backend::target_isa().unwrap();
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
-            let regions = lower_static_typed_regions(&program, pair as u32, &[], &*isa, LaneHelpers::linked_for(0, &program));
+            let regions = lower_static_typed_regions(&program, pair as u32, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC);
             assert!(!regions.is_empty() && FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0,
                 "exercise pair's native value forwarding ({} regions, {} forwards): {}",
                 regions.len(), FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), program.disassemble());
             let guarded = program.functions.iter().position(|function|
                 function.header().name.is_some_and(|name| &program.atoms[name as usize] == "guarded")).unwrap();
             FIELD_VALUE_FORWARDS.with(|count| count.set(0));
-            let regions = lower_static_typed_regions(&program, guarded as u32, &static_call_targets(&program), &*isa, LaneHelpers::linked_for(0, &program));
+            let regions = lower_static_typed_regions(&program, guarded as u32, &static_call_targets(&program), &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC);
             assert_eq!(regions.len(), 1, "the hinted call inlines into a native region");
             assert_eq!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), 2,
                 "forward the pre-call read, and the inlined store's value to the read after it");
@@ -16552,7 +16591,7 @@ mod tests {
                         _ => None,
                     }).last().unwrap();
                 FIELD_FORWARD_SITE.with(|counter| counter.set(Some((site, 0))));
-                let regions = lower_static_typed_regions(&program, id as u32, &[], &*isa, LaneHelpers::linked_for(0, &program));
+                let regions = lower_static_typed_regions(&program, id as u32, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC);
                 assert!(!regions.is_empty(), "native join regression: {name}");
                 assert_eq!(FIELD_FORWARD_SITE.with(|counter| counter.replace(None).unwrap().1) > 0,
                     forwards, "only identical field values may cross {name}'s join");
@@ -16565,7 +16604,7 @@ mod tests {
                 _ => None,
             }).unwrap_or_else(|| panic!("exercise the fused chain's first read: {}", program.disassemble()));
             FIELD_FORWARD_SITE.with(|counter| counter.set(Some((site, 0))));
-            let regions = lower_static_typed_regions(&program, chained as u32, &[], &*isa, LaneHelpers::linked_for(0, &program));
+            let regions = lower_static_typed_regions(&program, chained as u32, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC);
             assert!(!regions.is_empty());
             assert!(FIELD_FORWARD_SITE.with(|counter| counter.replace(None).unwrap().1) > 0,
                 "reuse the first field of a fused read without confusing the chain result");
@@ -16574,7 +16613,7 @@ mod tests {
             assert!(program.function(anonymous).instructions().filter(|instruction| instruction.op() == Op::GetField)
                 .any(|instruction| matches!(instruction.field_lookup(), Some(FieldLookup::Site(_)))));
             FIELD_VALUE_FORWARDS.with(|counter| counter.set(0));
-            let regions = lower_static_typed_regions(&program, anonymous as u32, &[], &*isa, LaneHelpers::linked_for(0, &program));
+            let regions = lower_static_typed_regions(&program, anonymous as u32, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC);
             assert!(!regions.is_empty());
             assert_eq!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), 0,
                 "a fused read must not retain an anonymous intermediate solely for later forwarding");
@@ -16880,7 +16919,7 @@ mod tests {
             assert_eq!(unit.frames.len(), 1);
             assert_eq!(unit.frames[0].recovery, lane_unit::CallRecovery::Materialize);
             let isa = super::super::jit_backend::target_isa().unwrap();
-            assert!(!lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program)).is_empty());
+            assert!(!lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).is_empty());
             let native = linked_optimized_test_program(program);
             let mut vm = Vm::new(crate::test_host::TestHost::default());
             vm.set_execution_mode(ExecutionMode::NativeOnly);
@@ -16913,7 +16952,7 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "walk")).unwrap();
             let targets = static_call_targets(&program);
             let isa = super::super::jit_backend::target_isa().unwrap();
-            assert!(!lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program)).is_empty());
+            assert!(!lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).is_empty());
             let native = linked_optimized_test_program(program);
             let before = INLINE_MATERIALIZATIONS.with(std::cell::Cell::get);
             let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
@@ -16971,7 +17010,7 @@ mod tests {
             let call = program.function(consume).instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
             let targets = static_call_targets(&program);
             let isa = super::super::jit_backend::target_isa().unwrap();
-            let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program))
+            let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC)
                 .into_iter().next().expect("non-leaf prefix has exact one-frame recovery");
             assert!(!region.function.sized_stack_slots.is_empty(), "callee state must have recovery homes");
             let native = linked_optimized_test_program(program);
@@ -17003,7 +17042,7 @@ mod tests {
         assert_eq!(unit.frames[0].recovery, lane_unit::CallRecovery::Materialize);
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next()
+        let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next()
             .expect("a write followed by a fallible read has exact recovery");
         let offset = LaneHelper::MaterializeInline as i32 * std::mem::size_of::<usize>() as i32;
         assert!(region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
@@ -17062,7 +17101,7 @@ mod tests {
 
             }
             let isa = super::super::jit_backend::target_isa().unwrap();
-            let mut region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next().unwrap();
+            let mut region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next().unwrap();
             let consume = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "consume")).unwrap();
             let read = program.function(consume).instructions().position(|instruction|
@@ -17140,7 +17179,7 @@ mod tests {
         ).unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let residual = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next().expect("call-free typed loop");
+        let residual = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next().expect("call-free typed loop");
         assert!(residual.header > 0, "loop admission must skip the effectful prefix");
         let has_helper = |native: &ir::Function, resolver_symbol: u32, helper: LaneHelper| {
             let load_base = |value: ir::Value, expected_offset: i32| {
@@ -17266,7 +17305,7 @@ mod tests {
         assert_eq!(unit.frames.len(), 1);
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next()
+        let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next()
             .expect("closed loop with an inlined store");
         assert!(region.header > 0, "prefix store cannot execute again on loop reentry");
         assert!(program.function(caller).instructions().any(|instruction|
@@ -17286,7 +17325,7 @@ mod tests {
             "fixture must exercise a fused read/read/sink instruction");
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        assert!(lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next().is_some(),
+        assert!(lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next().is_some(),
             "fused field sites must use the shared typed region");
     }
 
@@ -17307,7 +17346,7 @@ mod tests {
         assert_eq!(unit.frames[0].arguments, 1);
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        assert!(lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next().is_some());
+        assert!(lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next().is_some());
     }
 
     #[cfg(feature = "aot")]
@@ -17327,7 +17366,7 @@ mod tests {
         assert_eq!(unit.frames[0].target.callee, CalleeBinding::Function);
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next()
+        let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next()
             .expect("restartable captured store inline region");
         let scratch_offset = std::mem::offset_of!(JsStepDispatch, inlined) as i32;
         assert!(!region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
@@ -17344,7 +17383,7 @@ mod tests {
             "shared-header.js").unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next().expect("typed field/call region");
+        let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next().expect("typed field/call region");
         let families = region.function.layout.blocks()
             .flat_map(|block| region.function.layout.block_insts(block))
             .filter(|instruction| matches!(region.function.dfg.insts[*instruction],
@@ -17363,7 +17402,7 @@ mod tests {
             "family-latch.js").unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next()
+        let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next()
             .expect("typed traversal loop");
         let function = &region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
@@ -17438,11 +17477,11 @@ mod tests {
         let body = program.function_get(1).unwrap();
         assert!(body.instructions().any(|instruction| instruction.op() == Op::Call
             && instruction.returns_from_frame() && instruction.call_window().count == 1));
-        let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program)).into_iter().next().expect("typed prefix before terminal call");
+        let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC).into_iter().next().expect("typed prefix before terminal call");
         assert_eq!(region.header, 0);
         let nonterminal = crate::Engine::specialize(
             "function pipe(object){object.finish(3);return object.seen;}", "nonterminal-call.js").unwrap();
-        assert!(lower_static_typed_regions(&nonterminal, 1, &[], &*isa, LaneHelpers::linked_for(0, &nonterminal)).into_iter().next().is_none(),
+        assert!(lower_static_typed_regions(&nonterminal, 1, &[], &*isa, LaneHelpers::linked_for(0, &nonterminal), VmFacts::STATIC).into_iter().next().is_none(),
             "unsupported nonterminal calls still require a full effect/recovery boundary");
     }
 

@@ -51,17 +51,33 @@ pub struct NativeJsPublicationCounts {
     pub semantic_entry_sites: usize,
 }
 
+/// The whole-program assumptions an eager image folded, replayed when it loads.
+pub(crate) struct FrozenAssumptions {
+    pub(crate) invalidation: crate::code_dependencies::Invalidation,
+    /// Method atoms the code holds unnamed (`StableFacts::atoms`).
+    pub(crate) atoms: Box<[crate::bytecode::Atom]>,
+    /// Set when any assumption no longer holds; the code leaves at its invalidation point.
+    pub(crate) watch: Rc<crate::code_dependencies::PublishedCode<()>>,
+}
+
+impl Clone for FrozenAssumptions {
+    fn clone(&self) -> Self {
+        Self { invalidation: self.invalidation.clone(), atoms: self.atoms.clone(), watch: self.watch.clone() }
+    }
+}
+
 /// A program bound to native entries compiled for the same host and semantic ABI.
 pub struct NativeJsProgram<H> {
     program: Rc<ResidualProgram>,
     code: Rc<NativeJsCode>,
     counts: NativeJsPublicationCounts,
+    frozen: Option<FrozenAssumptions>,
     host: PhantomData<fn(&mut H)>,
 }
 
 impl<H: Host> Clone for NativeJsProgram<H> {
     fn clone(&self) -> Self {
-        Self { program: self.program.clone(), code: self.code.clone(), counts: self.counts, host: PhantomData }
+        Self { program: self.program.clone(), code: self.code.clone(), counts: self.counts, frozen: self.frozen.clone(), host: PhantomData }
     }
 }
 
@@ -105,12 +121,26 @@ impl<H: Host> NativeJsProgram<H> {
             )
         };
         // SAFETY: the linked image is static and bound to this program and H.
-        Self::bind(program, NativeJsCode::Linked { entries }, NativeJsPublicationCounts::default())
+        Self::bind(program, NativeJsCode::Linked { entries }, NativeJsPublicationCounts::default(), None)
     }
 
     /// What this publication lowered: the counters that make an AOT claim
     /// measurable (`native_execution_rejections` covers the runtime half).
     pub fn publication_counts(&self) -> NativeJsPublicationCounts { self.counts }
+
+    /// The method atoms the image holds unnamed, replayed at load.
+    #[cfg(test)]
+    pub(crate) fn frozen_atoms(&self) -> &[crate::bytecode::Atom] {
+        self.frozen.as_ref().map_or(&[], |frozen| &frozen.atoms)
+    }
+
+    /// Whether a replayed assumption retired the image's stable facts.
+    #[cfg(test)]
+    pub(crate) fn frozen_invalidated(&self) -> bool {
+        self.frozen.as_ref().is_some_and(|frozen| frozen.invalidation.is_set())
+    }
+
+
 
     /// The canonical metadata used by host job checkpoints and source reporting.
     pub fn residual(&self) -> &ResidualProgram {
@@ -129,7 +159,7 @@ impl<H: Host> NativeJsProgram<H> {
         owner: Rc<dyn Any>,
     ) -> Result<Self, String> {
         // SAFETY: the caller's contract is this function's contract.
-        unsafe { Self::from_entries_with_counts(program, entries, owner, NativeJsPublicationCounts::default()) }
+        unsafe { Self::from_entries_with_counts(program, entries, owner, NativeJsPublicationCounts::default(), None) }
     }
 
     pub(crate) unsafe fn from_entries_with_counts(
@@ -137,6 +167,7 @@ impl<H: Host> NativeJsProgram<H> {
         entries: Vec<NativeJsFunctionEntry>,
         owner: Rc<dyn Any>,
         counts: NativeJsPublicationCounts,
+        frozen: Option<FrozenAssumptions>,
     ) -> Result<Self, String> {
         Self::bind(
             program,
@@ -145,10 +176,11 @@ impl<H: Host> NativeJsProgram<H> {
                 _owner: owner,
             },
             counts,
+            frozen,
         )
     }
 
-    fn bind(program: ResidualProgram, code: NativeJsCode, counts: NativeJsPublicationCounts) -> Result<Self, String> {
+    fn bind(program: ResidualProgram, code: NativeJsCode, counts: NativeJsPublicationCounts, frozen: Option<FrozenAssumptions>) -> Result<Self, String> {
         if !crate::DYNAMIC_EXECUTION_ENABLED && program.source.as_ref().is_some_and(|source| source.call_sites.get().is_none()) {
             return Err("native program has no frozen call-site descriptions".into());
         }
@@ -163,6 +195,7 @@ impl<H: Host> NativeJsProgram<H> {
             program: Rc::new(program),
             code: Rc::new(code),
             counts,
+            frozen,
             host: PhantomData,
         })
     }
@@ -270,6 +303,21 @@ impl<H: Host> Vm<H> {
         self.execute_native_with_scripts(scripts, modules, native, true)
     }
 
+    /// Replays an eager image's whole-program assumptions against this realm. A named
+    /// method atom sets the image's invalidation word; the code then leaves at its
+    /// invalidation point, and the shared body runs instead. The subscription retires it
+    /// if a later call names one.
+    fn replay_frozen_assumptions(&mut self, native: &NativeJsProgram<H>) {
+        let Some(frozen) = &native.frozen else { return };
+        let watcher: Rc<dyn crate::code_dependencies::DependentCode> = frozen.watch.clone();
+        for &atom in frozen.atoms.iter() {
+            if self.method_cache_atoms.contains(atom) {
+                frozen.watch.retire();
+            }
+            self.method_cache_atoms.readers().subscribe(atom, &watcher);
+        }
+    }
+
     fn execute_native_with_scripts(
         &mut self,
         scripts: &[NativeJsProgram<H>],
@@ -278,6 +326,7 @@ impl<H: Host> Vm<H> {
         drain_jobs: bool,
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
+        self.replay_frozen_assumptions(native);
         self.initialize_shared(&native.program, super::builtins::RealmScope::Complete)?;
         self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)?;
         for module in modules {
@@ -295,3 +344,4 @@ impl<H: Host> Vm<H> {
         self.run_main(&native.program, drain_jobs)
     }
 }
+

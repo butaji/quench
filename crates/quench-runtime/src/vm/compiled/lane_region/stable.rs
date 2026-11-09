@@ -47,7 +47,11 @@ impl Lowering<'_, '_> {
     /// The division this lowering specializes under: online where it may take code
     /// dependencies on the VM (`VmFacts::online`), offline for code shared across VMs.
     pub(super) fn division(&self) -> Division {
-        if self.vm.online.is_some() { Division::Online } else { Division::Offline }
+        match self.vm.online {
+            None => Division::Offline,
+            Some(_) if self.vm.frozen => Division::Frozen,
+            Some(_) => Division::Online,
+        }
     }
 
     /// The code's invalidation word, as it is now (`code_dependencies::Invalidation`).
@@ -69,7 +73,7 @@ impl Lowering<'_, '_> {
 
     /// The invalidation point of `hold_stable`, made here.
     pub(super) fn read_invalidation(&mut self, state: &mut State, exit: ir::Block) {
-        let online = self.vm.online.expect("only the online division folds Stable facts");
+        let online = self.vm.online.expect("only a division with Stable facts reads the word");
         let invalidated = self.invalidation_word(online);
         let held = self.ins().icmp_imm_u(IntCC::Equal, invalidated, 0);
         emit_js_guard(&mut self.builder, held, exit);

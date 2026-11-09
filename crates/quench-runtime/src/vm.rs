@@ -2256,6 +2256,12 @@ struct IteratorRealmPrototypes {
 }
 
 impl<H: Host> Vm<H> {
+    /// Record a method-cache name, as a call site's first call does (tests).
+    #[cfg(all(test, feature = "aot"))]
+    pub(crate) fn name_method_atom(&mut self, atom: crate::bytecode::Atom) {
+        self.method_cache_atoms.name(atom);
+    }
+
     /// Diagnostic: general-loop dispatches by the register width of their function, since
     /// register liveness (and with it promotion and move coalescing) covers only functions
     /// whose registers fit a root mask.

@@ -2548,3 +2548,52 @@ fn eager_publication_reports_general_dispatch_and_typed_regions() {
     let answer = runtime.get_property_rooted(global, key).unwrap();
     assert_eq!(runtime.rooted_value(answer).unwrap().as_number(), Some(999_000.0));
 }
+
+#[cfg(feature = "aot")]
+fn compile_frozen(source: &str) -> (ResidualProgram, crate::NativeJsProgram<TestHost>) {
+    let program = Engine::specialize(source, "frozen.js").unwrap();
+    let options = crate::NativeJsCodegenOptions { backend: crate::NativeJsBackend::Cranelift, ..Default::default() };
+    let native = crate::NativeJsProgram::compile_eager_with_options(program.clone(), options).unwrap();
+    (program, native)
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn a_frozen_image_folds_the_unnamed_method_atoms_of_its_stores() {
+    let (program, native) = compile_frozen(
+        "var o={a:1,b:2}; function write(x){for(var i=0;i<3;i++){o.a=x}} write(2); write(3);");
+    let a = program.atoms.iter().position(|name| name == "a").unwrap() as crate::bytecode::Atom;
+    assert!(native.frozen_atoms().contains(&a), "held atoms: {:?}", native.frozen_atoms());
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn a_named_method_atom_retires_the_image_and_the_shared_body_runs() {
+    let (program, native) = compile_frozen(
+        "var o={a:1,b:2}; var owner={a(){return 1},m(){return 2}}; \
+         function write(x){for(var i=0;i<3;i++){o.a=x} return o.a} \
+         globalThis.answer = write(2) + write(3) + owner.a(); \
+         if (globalThis.answer !== 6) throw Error('answer ' + globalThis.answer);");
+    let a = program.atoms.iter().position(|name| name == "a").unwrap() as crate::bytecode::Atom;
+    assert!(native.frozen_atoms().contains(&a), "held atoms: {:?}", native.frozen_atoms());
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.name_method_atom(a);
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    assert!(native.frozen_invalidated(), "a named atom retires the image");
+    assert_eq!(runtime.native_execution_rejections(), 0, "the deopt stays inside the image");
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn a_later_method_cache_name_retires_the_image() {
+    let (program, native) = compile_frozen(
+        "var o={a:1}; function write(x){for(var i=0;i<3;i++){o.a=x}} write(2);");
+    let a = program.atoms.iter().position(|name| name == "a").unwrap() as crate::bytecode::Atom;
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    assert!(!native.frozen_invalidated(), "the image holds while no cache names `a`");
+    runtime.name_method_atom(a);
+    assert!(native.frozen_invalidated(), "the subscription retires the image");
+}

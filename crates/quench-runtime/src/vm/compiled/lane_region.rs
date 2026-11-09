@@ -2177,7 +2177,9 @@ impl Lowering<'_, '_> {
         // Profiled raw stores preserve their declared field type. An online body's plan
         // registered those possible writes before it was lowered (`Vm::admit_lane_stores`);
         // other code registers them here, at each entry.
-        let domains = if self.vm.online.is_some() { Vec::new() } else { store_domains(instructions, |site| self.fields.get(&site).map(Vec::as_slice)) };
+        // An online body admitted its stores when it was planned; a frozen image has no
+        // plan, so it admits them at each entry, as offline code does.
+        let domains = if self.vm.online.is_some() && !self.vm.frozen { Vec::new() } else { store_domains(instructions, |site| self.fields.get(&site).map(Vec::as_slice)) };
         for (shape, slot, domain) in domains {
             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
             let shape = self.builder.ins().iconst(types::I64, i64::from(shape));
@@ -5071,7 +5073,7 @@ mod tests {
         let id = program.functions.iter().position(|body| body.header().name
             .is_some_and(|name| &program.atoms[name as usize] == "subject")).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let region = super::super::lower_static_typed_regions(&program, id as u32, &[], &*isa, LaneHelpers::Linked(0, 0))
+        let region = super::super::lower_static_typed_regions(&program, id as u32, &[], &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC)
             .into_iter().next().expect("typed loop region");
         cranelift_codegen::verify_function(&region.function, &*isa).unwrap();
         if !super::super::FAULT_POLL_SUPPORTED { return; }
@@ -5253,7 +5255,7 @@ mod tests {
                     .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "the Boolean method must inline");
             let isa = super::super::super::jit_backend::target_isa().unwrap();
-            let regions = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::Linked(0, 0));
+            let regions = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC);
             assert!(!regions.is_empty(), "selected caller header must publish");
             let mut integer_add = false;
             for region in regions {
