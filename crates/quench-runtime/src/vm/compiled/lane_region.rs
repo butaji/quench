@@ -35,6 +35,9 @@ mod stable;
 #[path = "lane_region/polls.rs"]
 mod polls;
 #[path = "lane_region/literals.rs"] mod literals;
+#[path = "lane_region/hoisted_reads.rs"] mod hoisted_reads;
+#[path = "lane_region/field_reads.rs"] mod field_reads;
+#[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 #[path = "lane_region/edges.rs"] mod edges;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
@@ -1901,23 +1904,7 @@ impl Lowering<'_, '_> {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
             LaneHelpers::Process(_) => emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver)),
             #[cfg(feature = "aot")]
-            LaneHelpers::Bound(..) => {
-                let slot = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, fixed_this_slot));
-                let present = self.builder.ins().icmp_imm_u(IntCC::NotEqual, slot, 0);
-                let bound = self.builder.create_block();
-                let absent = self.builder.create_block();
-                let join = self.builder.create_block();
-                let bits = self.builder.append_block_param(join, types::I64);
-                self.builder.ins().brif(present, bound, &[], absent, &[]);
-                self.builder.switch_to_block(bound);
-                let value = self.builder.ins().load(types::I64, MemFlagsData::trusted(), slot, 0);
-                self.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
-                self.builder.switch_to_block(absent);
-                let deleted = self.builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
-                self.builder.ins().jump(join, &[ir::BlockArg::Value(deleted)]);
-                self.builder.switch_to_block(join);
-                bits
-            }
+            LaneHelpers::Bound(..) => self.fixed_this(),
             #[cfg(feature = "aot")]
             LaneHelpers::Linked(..) => unreachable!("helper table bound before entry facts"),
         };
@@ -2092,18 +2079,7 @@ impl Lowering<'_, '_> {
         };
         #[cfg(not(feature = "aot"))]
         let fields = smallvec::SmallVec::new();
-        // Profiled raw stores preserve their declared field type. An online body's plan
-        // registered those possible writes before it was lowered (`Vm::admit_lane_stores`);
-        // other code registers them here, at each entry.
-        // An online body admitted its stores when it was planned; a frozen image has no
-        // plan, so it admits them at each entry, as offline code does.
-        let domains = if self.vm.online.is_some() && !self.vm.frozen { Vec::new() } else { store_domains(instructions, |site| self.fields.get(&site).map(Vec::as_slice)) };
-        for (shape, slot, domain) in domains {
-            let exit = *miss.get_or_insert_with(|| self.builder.create_block());
-            let shape = self.builder.ins().iconst(types::I64, i64::from(shape));
-            let slot = self.builder.ins().iconst(types::I64, i64::from(slot));
-            self.admit_slot_writes(shape, slot, domain, exit);
-        }
+        self.admit_store_domains(instructions, &mut miss);
         let records = self.invariant_field_records(instructions, &receiver, object_table, &mut miss);
         if let Some(miss) = miss {
             let admitted = self.builder.create_block();
@@ -2246,51 +2222,8 @@ impl Lowering<'_, '_> {
         if self.unit.markers.contains(&pc) || !retains_array_views(&self.program.constants, instruction) {
             state.proofs.arrays.clear();
         }
-        if let Some(LoopRead { value: variable, ty, representation, receiver, header }) = self.hoisted.get(&pc).copied() {
-            if let Some((owner, ty)) = receiver {
-                let owner = match instruction.field_lookup() {
-                    Some(FieldLookup::Atom { base, .. }) => base.register_index().unwrap_or(owner),
-                    _ => owner,
-                };
-                let fact = &mut state.values[usize::from(owner)];
-                *fact = RegisterFact { tagged: fact.tagged,
-                    ..RegisterFact::definition(ty, Representation::Tagged) };
-                if let Some(header) = header { state.proofs.headers[usize::from(owner)] = Some(header); }
-            }
-            let raw = self.builder.use_var(variable);
-            if representation == Representation::Int32 && instruction.op().class().eq(Class::LoadCapture) {
-                // Captures have no tagged field-cache consumer. Preserve the
-                // admitted view; recovery or a tagged use boxes it on demand.
-                self.set_int(state, instruction.result_register(), raw);
-                self.native += 1;
-                return true;
-            }
-            let value = if representation == Representation::Int32 { int_tagged(&mut self.builder, raw) } else { raw };
-            let destination = instruction.result_register();
-            if instruction.op().class().eq(Class::GetField)
-                && let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() {
-                #[cfg(test)] {
-                    record_field_forward(cache_site);
-                    if representation == Representation::Int32 {
-                        LOOP_INT32_READ_SITE.with(|site| {
-                            if let Some((expected, count)) = site.get() && expected == cache_site {
-                                site.set(Some((expected, count + 1)));
-                            }
-                        });
-                    }
-                }
-                #[cfg(not(test))] let _ = cache_site;
-                state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty });
-            }
-            self.define(state, destination, value, RegisterFact::definition(ty, Representation::Tagged));
-            if ty == Type::INT32 {
-                let int = if representation == Representation::Int32 { raw } else { self.ins().ireduce(types::I32, value) };
-                let variable = self.int_var(usize::from(destination));
-                self.builder.def_var(variable, int);
-                state.values[usize::from(destination)] = RegisterFact { tagged: TaggedView::Value(value),
-                    ..RegisterFact::definition(Type::INT32, Representation::Int32) };
-            }
-            self.native += 1;
+        if let Some(read) = self.hoisted.get(&pc).copied() {
+            self.hoisted_read(state, instruction, read);
             return true;
         }
         let instructions = &self.unit.instructions;
@@ -2326,29 +2259,8 @@ impl Lowering<'_, '_> {
                 None => Some(true),
             },
             op if plain && op.js_denotation() == JsDenotation::LoadConst => {
-                let index = instruction.constant_index();
-                let Some(constant) = self.program.constants.get(index) else { return false };
-                if super::facts::immediate(constant).is_none()
-                    && matches!(constant, crate::bytecode::Constant::String(_))
-                    && let Some(base) = self.vm.frozen_constants
-                {
-                    // The image materializes the string once at load; the read is checked
-                    // against the image's invalidation word like every other frozen fact.
-                    let exit = self.guard_exit(state, pc as u32);
-                    self.read_invalidation(state, exit);
-                    let address = self.ins().iconst(types::I64,
-                        (base + index * std::mem::size_of::<Value>()) as i64);
-                    let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-                    self.define(state, instruction.result_register(), value,
-                        RegisterFact::definition(super::facts::constant_type(constant), Representation::Tagged));
-                    Some(true)
-                } else {
-                    self.constant_value(index).map(|(value, ty)| {
-                        self.step(state, frame::Edges::Value, crate::staged::Operation::LoadConst {
-                            destination: instruction.result_register(), constant: crate::staged::Constant { value, ty } });
-                        true
-                    })
-                }
+                let Some(constant) = self.program.constants.get(instruction.constant_index()) else { return false };
+                self.load_constant(state, pc, instruction, constant)
             }
             op if plain && op.js_denotation() == JsDenotation::Move => {
                 self.step(state, frame::Edges::Value, crate::staged::Operation::Move {
@@ -3965,14 +3877,8 @@ impl Lowering<'_, '_> {
         // guard and leaves to the shared body.
         if rest.is_empty() && sink.is_none() && completes.is_none()
             && !instruction.writes_current_this()
-            && let Some(expected) = self.vm.frozen_fields.and_then(|fields| fields.get(&first.0)).copied()
+            && self.fold_frozen_field(state, (register, receiver), *first, destination, exit)
         {
-            let actual = self.base_field_read(state, register, receiver, *first, exit);
-            let same = self.ins().icmp_imm_u(IntCC::Equal, actual, expected.to_bits() as i64);
-            emit_js_guard(&mut self.builder, same, exit);
-            let value = self.ins().iconst(types::I64, expected.to_bits() as i64);
-            self.define(state, destination, value,
-                RegisterFact::definition(Type::immediate(expected), Representation::Tagged));
             return Some(true);
         }
         let known = field.and_then(|(owner, atom)| state.proofs.fields.iter().copied()
@@ -3994,36 +3900,7 @@ impl Lowering<'_, '_> {
             self.return_value(record, value);
             return Some(false);
         }
-        // A slot that has only held int32 values is read as one: its value's tag is tested
-        // here, once, and a value it no longer holds leaves before the read is defined.
-        let integer = rest.is_empty() && known.is_some_and(|field| field.ty == Type::INT32);
-        let ty = if integer || int32_read(self.program, self.fields, instruction) {
-            if !integer {
-                let integer = is_int_tagged(&mut self.builder, value);
-                emit_js_guard(&mut self.builder, integer, exit);
-            }
-            Type::INT32
-        } else { Type::ANY };
-        // A fused chain can consume an existing first-slot proof, but its guest
-        // result names the final slot. Do not retain a new anonymous intermediate
-        // solely for forwarding; the existing proof needs no duplicate update.
-        if let Some((owner, atom)) = field.filter(|_| rest.is_empty()) {
-            let read = FieldValue { owner, atom, value, ty };
-            match state.proofs.fields.iter_mut().find(|field| field.owner == owner && field.atom == atom) {
-                Some(field) => *field = read,
-                None => state.proofs.fields.push(read),
-            }
-        }
-        if ty != Type::INT32 {
-            self.set_tagged(state, destination, value);
-            return Some(true);
-        }
-        self.set_tagged(state, destination, value);
-        let int = self.ins().ireduce(types::I32, value);
-        let variable = self.int_var(usize::from(destination));
-        self.builder.def_var(variable, int);
-        state.values[usize::from(destination)] = RegisterFact { tagged: TaggedView::Value(value),
-            ..RegisterFact::definition(Type::INT32, Representation::Int32) };
+        self.define_field_read(state, instruction, value, (field, rest.is_empty(), known), exit);
         Some(true)
     }
 
