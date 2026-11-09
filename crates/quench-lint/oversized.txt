@@ -3531,7 +3531,6 @@ function-lines crates/quench-runtime/src/vm/string.rs::Vm<H>::string_basic_nativ
 function-lines crates/quench-runtime/src/vm/string.rs::Vm<H>::string_raw 41
 function-lines crates/quench-runtime/src/vm/string.rs::Vm<H>::string_replace_native 104
 function-lines crates/quench-runtime/src/vm/string.rs::Vm<H>::string_split_native 48
-function-lines crates/quench-runtime/src/vm/string_cache.rs::Vm<H>::intern_dynamic_concat 55
 function-lines crates/quench-runtime/src/vm/string_extra.rs::encode_uri 46
 function-lines crates/quench-runtime/src/vm/string_extra.rs::number_to_radix 70
 function-lines crates/quench-runtime/src/vm/superinstruction.rs::Vm<H>::execute_const_array_object2 41
@@ -4447,10 +4446,6 @@ magic crates/quench-node/src/modules/crypto_node/dh.rs::diffie_hellman_construct
 magic crates/quench-node/src/modules/crypto_node/dh.rs::ecdh_compute_secret 1
 magic crates/quench-node/src/modules/crypto_node/dh.rs::ecdh_convert_key 3
 magic crates/quench-node/src/modules/crypto_node/dh.rs::stateless 1
-magic crates/quench-node/src/modules/crypto_node/hash.rs::create_hmac 1
-magic crates/quench-node/src/modules/crypto_node/hash.rs::hmac_constructor 1
-magic crates/quench-node/src/modules/crypto_node/hash.rs::one_shot 1
-magic crates/quench-node/src/modules/crypto_node/hash.rs::transform 1
 magic crates/quench-node/src/modules/crypto_node/kdf.rs::hkdf 1
 magic crates/quench-node/src/modules/crypto_node/kdf.rs::hkdf_parameters 3
 magic crates/quench-node/src/modules/crypto_node/kdf.rs::pbkdf2 5

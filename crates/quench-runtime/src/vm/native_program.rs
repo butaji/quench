@@ -32,16 +32,70 @@ impl NativeJsCode {
 
 }
 
+/// What a publication lowered, so admission is measured rather than assumed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NativeJsPublicationCounts {
+    /// Functions in the program.
+    pub functions: usize,
+    /// Functions published through the general-dispatch baseline.
+    pub general_dispatch: usize,
+    /// Functions left on the call-threaded body (per-PC semantic entries).
+    pub call_threaded: usize,
+    /// Typed regions inlined into their caller.
+    pub typed_regions: usize,
+    /// Scalar regions published beside their caller.
+    pub scalar_regions: usize,
+    /// Instruction sites whose continuation is a folded static transfer.
+    pub static_transfers: usize,
+    /// Instruction sites that call their opcode's semantic entry.
+    pub semantic_entry_sites: usize,
+    /// Functions whose entry is the specialized body (general dispatch + typed regions).
+    pub tier_specialized: usize,
+    /// Functions whose entry is general dispatch without a typed region.
+    pub tier_general: usize,
+    /// Functions whose entry is the call-threaded body (the AOT tier zero).
+    pub tier_call_threaded: usize,
+    /// Whole-program globals the image folds, each checked at its read site.
+    pub frozen_globals: usize,
+    /// Whole-program prototype values the image folds, each guarded at its read site.
+    pub frozen_fields: usize,
+}
+
+/// The whole-program assumptions an eager image folded, replayed when it loads.
+pub(crate) struct FrozenAssumptions {
+    pub(crate) invalidation: crate::code_dependencies::Invalidation,
+    /// Method atoms the code holds unnamed (`StableFacts::atoms`).
+    pub(crate) atoms: Box<[crate::bytecode::Atom]>,
+    /// Whole-program globals the code folds (its read-site guards verify them).
+    pub(crate) globals: Box<[crate::bytecode::Atom]>,
+    /// Whole-program prototype values the code folds.
+    pub(crate) fields: Box<[crate::bytecode::Atom]>,
+    /// Set when any assumption no longer holds; the code leaves at its invalidation point.
+    pub(crate) watch: Rc<crate::code_dependencies::PublishedCode<()>>,
+    /// The tier the dispatcher selected last (0 call-threaded, 1 general, 2 specialized).
+    pub(crate) last_tier: Rc<std::cell::Cell<u64>>,
+    /// The program's constants, materialized into this block after realm initialization.
+    pub(crate) constants: Rc<std::cell::RefCell<Box<[Value]>>>,
+}
+
+impl Clone for FrozenAssumptions {
+    fn clone(&self) -> Self {
+        Self { invalidation: self.invalidation.clone(), atoms: self.atoms.clone(), globals: self.globals.clone(), fields: self.fields.clone(), watch: self.watch.clone(), last_tier: self.last_tier.clone(), constants: self.constants.clone() }
+    }
+}
+
 /// A program bound to native entries compiled for the same host and semantic ABI.
 pub struct NativeJsProgram<H> {
     program: Rc<ResidualProgram>,
     code: Rc<NativeJsCode>,
+    counts: NativeJsPublicationCounts,
+    frozen: Option<FrozenAssumptions>,
     host: PhantomData<fn(&mut H)>,
 }
 
 impl<H: Host> Clone for NativeJsProgram<H> {
     fn clone(&self) -> Self {
-        Self { program: self.program.clone(), code: self.code.clone(), host: PhantomData }
+        Self { program: self.program.clone(), code: self.code.clone(), counts: self.counts, frozen: self.frozen.clone(), host: PhantomData }
     }
 }
 
@@ -85,8 +139,56 @@ impl<H: Host> NativeJsProgram<H> {
             )
         };
         // SAFETY: the linked image is static and bound to this program and H.
-        Self::bind(program, NativeJsCode::Linked { entries })
+        Self::bind(program, NativeJsCode::Linked { entries }, NativeJsPublicationCounts::default(), None)
     }
+
+    /// What this publication lowered: the counters that make an AOT claim
+    /// measurable (`native_execution_rejections` covers the runtime half).
+    pub fn publication_counts(&self) -> NativeJsPublicationCounts { self.counts }
+
+    /// The whole-program globals the image folded (tests).
+    #[cfg(test)]
+    pub(crate) fn frozen_global_atoms_for_test(&self) -> &[crate::bytecode::Atom] {
+        self.frozen.as_ref().map_or(&[], |frozen| &frozen.globals)
+    }
+
+    /// Retire the image's stable facts, as a changed assumption would (tests).
+    #[cfg(test)]
+    pub(crate) fn invalidate_frozen(&self) {
+        if let Some(frozen) = &self.frozen { frozen.watch.retire() }
+    }
+
+    /// How many constants the image materializes (tests).
+    #[cfg(test)]
+    pub(crate) fn materialized_constants(&self) -> usize {
+        self.frozen.as_ref().map_or(0, |frozen| frozen.constants.borrow().len())
+    }
+
+    /// The AOT tier the dispatcher selected last (tests).
+    #[cfg(test)]
+    pub(crate) fn last_tier(&self) -> u64 {
+        self.frozen.as_ref().map_or(0, |frozen| frozen.last_tier.get())
+    }
+
+    /// The whole-program prototype values the image folded (tests).
+    #[cfg(test)]
+    pub(crate) fn frozen_field_atoms_for_test(&self) -> &[crate::bytecode::Atom] {
+        self.frozen.as_ref().map_or(&[], |frozen| &frozen.fields)
+    }
+
+    /// The method atoms the image holds unnamed, replayed at load.
+    #[cfg(test)]
+    pub(crate) fn frozen_atoms(&self) -> &[crate::bytecode::Atom] {
+        self.frozen.as_ref().map_or(&[], |frozen| &frozen.atoms)
+    }
+
+    /// Whether a replayed assumption retired the image's stable facts.
+    #[cfg(test)]
+    pub(crate) fn frozen_invalidated(&self) -> bool {
+        self.frozen.as_ref().is_some_and(|frozen| frozen.invalidation.is_set())
+    }
+
+
 
     /// The canonical metadata used by host job checkpoints and source reporting.
     pub fn residual(&self) -> &ResidualProgram {
@@ -104,16 +206,29 @@ impl<H: Host> NativeJsProgram<H> {
         entries: Vec<NativeJsFunctionEntry>,
         owner: Rc<dyn Any>,
     ) -> Result<Self, String> {
+        // SAFETY: the caller's contract is this function's contract.
+        unsafe { Self::from_entries_with_counts(program, entries, owner, NativeJsPublicationCounts::default(), None) }
+    }
+
+    pub(crate) unsafe fn from_entries_with_counts(
+        program: ResidualProgram,
+        entries: Vec<NativeJsFunctionEntry>,
+        owner: Rc<dyn Any>,
+        counts: NativeJsPublicationCounts,
+        frozen: Option<FrozenAssumptions>,
+    ) -> Result<Self, String> {
         Self::bind(
             program,
             NativeJsCode::Owned {
                 entries: entries.into_boxed_slice(),
                 _owner: owner,
             },
+            counts,
+            frozen,
         )
     }
 
-    fn bind(program: ResidualProgram, code: NativeJsCode) -> Result<Self, String> {
+    fn bind(program: ResidualProgram, code: NativeJsCode, counts: NativeJsPublicationCounts, frozen: Option<FrozenAssumptions>) -> Result<Self, String> {
         if !crate::DYNAMIC_EXECUTION_ENABLED && program.source.as_ref().is_some_and(|source| source.call_sites.get().is_none()) {
             return Err("native program has no frozen call-site descriptions".into());
         }
@@ -127,6 +242,8 @@ impl<H: Host> NativeJsProgram<H> {
         Ok(Self {
             program: Rc::new(program),
             code: Rc::new(code),
+            counts,
+            frozen,
             host: PhantomData,
         })
     }
@@ -234,6 +351,35 @@ impl<H: Host> Vm<H> {
         self.execute_native_with_scripts(scripts, modules, native, true)
     }
 
+    /// Replays an eager image's whole-program assumptions against this realm. A named
+    /// method atom sets the image's invalidation word; the code then leaves at its
+    /// invalidation point, and the shared body runs instead. The subscription retires it
+    /// if a later call names one.
+    fn replay_frozen_assumptions(&mut self, native: &NativeJsProgram<H>) {
+        let Some(frozen) = &native.frozen else { return };
+        let watcher: Rc<dyn crate::code_dependencies::DependentCode> = frozen.watch.clone();
+        for &atom in frozen.atoms.iter() {
+            if self.method_cache_atoms.contains(atom) {
+                frozen.watch.retire();
+            }
+            self.method_cache_atoms.readers().subscribe(atom, &watcher);
+        }
+    }
+
+    /// Materializes the image's constant block in the fresh realm: strings are allocated once
+    /// here, so the compiled literal reads the block instead of materializing per use.
+    fn materialize_frozen_constants(&mut self, native: &NativeJsProgram<H>) {
+        let Some(frozen) = &native.frozen else { return };
+        let mut slots = frozen.constants.borrow_mut();
+        for (index, constant) in native.program.constants.iter().enumerate() {
+            slots[index] = match constant {
+                crate::bytecode::Constant::String(text) =>
+                    self.heap.alloc_string(crate::vm::wtf16::JsString::from_str(text)),
+                other => crate::vm::compiled::facts::immediate(other).unwrap_or(Value::UNDEFINED),
+            };
+        }
+    }
+
     fn execute_native_with_scripts(
         &mut self,
         scripts: &[NativeJsProgram<H>],
@@ -242,7 +388,9 @@ impl<H: Host> Vm<H> {
         drain_jobs: bool,
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
+        self.replay_frozen_assumptions(native);
         self.initialize_shared(&native.program, super::builtins::RealmScope::Complete)?;
+        self.materialize_frozen_constants(native);
         self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)?;
         for module in modules {
             if native.program.kind == crate::bytecode::ProgramKind::Module
@@ -259,3 +407,4 @@ impl<H: Host> Vm<H> {
         self.run_main(&native.program, drain_jobs)
     }
 }
+

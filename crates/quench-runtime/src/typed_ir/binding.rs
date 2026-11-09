@@ -28,12 +28,17 @@ pub(crate) enum Proof {
 /// Which binding times a specializer treats as known (Ershov's division).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Division {
-    /// Build-time facts only: static inputs and storage locations. AOT images
-    /// and eager publication need no training run, so they never fold feedback.
+    /// Build-time facts only: static inputs and storage locations. An AOT image
+    /// with no frozen facts folds nothing else.
     Offline,
+    /// Also Stable heap facts, each under a code dependency whose change retires
+    /// the code, but no feedback site contents: the AOT image's whole-program
+    /// division. The facts come from the closed program, not from a training run.
+    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
+    Frozen,
     /// Also the contents of feedback sites, each behind a guard whose failure
-    /// resumes the interpreter at the exact PC, and Stable heap facts, each under a
-    /// code dependency whose change retires the code: the JIT's regions.
+    /// resumes the interpreter at the exact PC, and Stable heap facts under a
+    /// code dependency: the JIT's regions.
     Online,
 }
 
@@ -41,7 +46,8 @@ impl Division {
     pub(crate) const fn folds(self, time: BindingTime) -> bool {
         match time {
             BindingTime::Static | BindingTime::Location => true,
-            BindingTime::Stable | BindingTime::Site => matches!(self, Self::Online),
+            BindingTime::Stable => matches!(self, Self::Frozen | Self::Online),
+            BindingTime::Site => matches!(self, Self::Online),
             BindingTime::Dynamic => false,
         }
     }

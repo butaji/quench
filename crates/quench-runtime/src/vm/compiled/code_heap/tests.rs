@@ -1,4 +1,4 @@
-use super::{Block, Chunk, CodeHeap, CodeMemory, CHUNK_BYTES, CODE_GRANULE, REGION_CHUNKS};
+use super::{Block, Chunk, CodeHeap, CodeMemory, Views, CHUNK_BYTES, CODE_GRANULE, REGION_CHUNKS};
 
 fn chunk(heap: &CodeHeap, block: Block) -> Chunk {
     heap.regions[block.region as usize].chunks[block.chunk()]
@@ -52,8 +52,9 @@ fn a_chunk_without_live_bodies_returns_its_pages() {
     }
     let (next, next_granted) = first_chunk.pop().unwrap();
     let views = heap.regions[0].views;
-    // SAFETY: the writable view of a live block.
-    unsafe { views.writer(first_chunk[0].0.offset as usize).write(1) };
+    // SAFETY: the writable view of a live block, opened through the platform's write window
+    // (Darwin's MAP_JIT page faults a write made outside it).
+    Views::writing(|| unsafe { views.writer(first_chunk[0].0.offset as usize).write(1) });
     for (block, granted) in first_chunk {
         heap.free(block, granted);
     }
@@ -67,8 +68,13 @@ fn a_chunk_without_live_bodies_returns_its_pages() {
         ),
         Chunk::Free
     );
-    // SAFETY: the released pages stay mapped and read as zero.
-    assert_eq!(unsafe { views.exec.read() }, 0);
+    // Linux returns the pages on release (`MADV_REMOVE`), so the mapping reads zero at once.
+    // Darwin's `MADV_FREE` keeps the contents until the system reclaims them.
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: the released pages stay mapped and read as zero.
+        assert_eq!(unsafe { views.exec.read() }, 0);
+    }
     heap.free(next, next_granted);
     assert_eq!(
         heap.allocate(CODE_GRANULE).unwrap().0,

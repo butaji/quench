@@ -43,6 +43,10 @@ mod compile;
 mod code_dependencies;
 mod float_layout;
 mod heap;
+#[cfg_attr(
+    not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))),
+    allow(dead_code)
+)]
 mod jit_coverage;
 mod host;
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
@@ -99,6 +103,7 @@ const _: fn() = || {
 
 mod api;
 pub use api::{
+    CollectionContext,
     BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin,
     PreparedScript, NativeArithmetic, NativeContext, PromiseRejectionEvent, RootScopeMark, RootedError, RootedIterator, Runtime,
     CompiledScript, RuntimeError, SourceKind, ErrorSourcePosition, SourceStackFrame, SynchronousModule, ModuleAcceptArguments, ModuleAcceptCallback,
@@ -122,7 +127,7 @@ pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_LANE_HELPERS_SYMBOL, NATIVE_J
 #[cfg(feature = "native-execution")]
 pub use vm::{
     NativeJsOperands, NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,
-    native_program::{NativeJsFunctionEntry, NativeJsProgram, NativeProgramResolver},
+    native_program::{NativeJsFunctionEntry, NativeJsProgram, NativeJsPublicationCounts, NativeProgramResolver},
 };
 #[cfg(feature = "aot")]
 pub use vm::{

@@ -620,10 +620,6 @@ node_bindings! {
         method "textDecoderFatalGet" (0) => crate::modules::text_decoder_shared_vm::decoder_fatal,
         method "textDecoderIgnoreBomGet" (0) => crate::modules::text_decoder_shared_vm::decoder_ignore_bom,
         method "textDecoderDecodeMethod" (0) => crate::modules::text_decoder_shared_vm::decoder_decode,
-        method "textEncoderConstructor" (0) => crate::modules::text_decoder_shared_vm::encoder_constructor,
-        method "textEncoderEncodingGet" (0) => crate::modules::text_decoder_shared_vm::encoder_encoding,
-        method "textEncoderEncode" (0) => crate::modules::text_decoder_shared_vm::encoder_encode,
-        method "textEncoderEncodeInto" (2) => crate::modules::text_decoder_shared_vm::encoder_encode_into,
         method "strictAssign" (3) => crate::modules::events_shared_vm::strict_assign,
         method "strictDelete" (2) => crate::modules::events_shared_vm::strict_delete,
         method "disposableFactory" (2) => crate::modules::events_shared_vm::disposable_factory,
@@ -793,6 +789,13 @@ node_bindings! {
         method "asyncExecutionId" (0) => crate::modules::async_hooks_shared_vm::execution_id,
         method "asyncTriggerId" (0) => crate::modules::async_hooks_shared_vm::trigger_id,
         method "asyncExecutionResource" (0) => crate::modules::async_hooks_shared_vm::execution_resource,
+        method "asyncHookInit" (7) => crate::modules::async_hook_registry_shared_vm::initialize_hook,
+        method "asyncHookEnable" (1) => crate::modules::async_hook_registry_shared_vm::enable,
+        method "asyncHookDisable" (1) => crate::modules::async_hook_registry_shared_vm::disable,
+        method "asyncHooksEnabled" (0) => crate::modules::async_hook_registry_shared_vm::enabled,
+        method "asyncDefaultTriggerScope" (2) => crate::modules::async_hooks_shared_vm::default_trigger_scope,
+        method "asyncGetDefaultTrigger" (0) => crate::modules::async_hooks_shared_vm::get_default_trigger,
+        method "asyncExternalInit" (3) => crate::modules::async_hooks_shared_vm::external_init,
         method "asyncQueueDestroyAsyncId" (1) => crate::modules::async_hooks_shared_vm::queue_destroy_async_id,
         method "asyncSetPromiseHooks" (1) => crate::modules::promise_hooks_shared_vm::set_registry,
         method "asyncPromisePrune" (0) => crate::modules::async_hooks_shared_vm::prune_promises,
@@ -1507,6 +1510,8 @@ node_bindings! {
         #[cfg(quench_openssl_provider)]
         method "cryptoNativeHashNew" (0) => crate::modules::crypto_hash_shared_vm::create_hash,
         #[cfg(quench_openssl_provider)]
+        method "cryptoHashBinding" (0) => crate::modules::crypto_hash_shared_vm::binding,
+        #[cfg(quench_openssl_provider)]
         method "cryptoNativeHmacNew" (0) => crate::modules::crypto_hash_shared_vm::create_hmac,
         #[cfg(quench_openssl_provider)]
         method "cryptoNativeHmacInit" (0) => crate::modules::crypto_hash_shared_vm::init_hmac,
@@ -1688,6 +1693,40 @@ node_bindings! {
         method "tlsContextGetMinProto" (0) => crate::modules::tls_shared_vm::contexts::minimum,
         method "tlsContextGetMaxProto" (0) => crate::modules::tls_shared_vm::contexts::maximum,
         #[cfg(quench_openssl_provider)]
+        method "cryptoPublicDecrypt" (2) => crate::modules::crypto_node::sign::public_decrypt,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicEncrypt" (2) => crate::modules::crypto_node::sign::public_encrypt,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHash" (2) => crate::modules::crypto_hash_source_shared_vm::hash,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicOneShot" (3) => crate::modules::crypto_hash_source_shared_vm::one_shot,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHmac" (3) => crate::modules::crypto_hash_source_shared_vm::hmac,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicCreateHash" (2) => crate::modules::crypto_hash_source_shared_vm::create_hash,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicCreateHmac" (3) => crate::modules::crypto_hash_source_shared_vm::create_hmac,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashCopy" (1) => crate::modules::crypto_hash_source_shared_vm::copy,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashUpdate" (2) => crate::modules::crypto_hash_source_shared_vm::update,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashDigest" (1) => crate::modules::crypto_hash_source_shared_vm::hash_digest,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHmacDigest" (1) => crate::modules::crypto_hash_source_shared_vm::hmac_digest,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashTransform" (3) => crate::modules::crypto_hash_source_shared_vm::transform,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashFlush" (1) => crate::modules::crypto_hash_source_shared_vm::hash_flush,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHmacFlush" (1) => crate::modules::crypto_hash_source_shared_vm::hmac_flush,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyTransform" (1) => crate::modules::crypto_lazy_transform::construct,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyStateGet" (0) => crate::modules::crypto_lazy_transform::get,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyStateSet" (1) => crate::modules::crypto_lazy_transform::set,
+        #[cfg(quench_openssl_provider)]
         method "get crypto" (0) => crate::modules::crypto_node::webcrypto_getter,
         #[cfg(quench_openssl_provider)]
         method "cryptoCheckPrime" (1) => crate::modules::crypto_node::random::check_prime,
@@ -1703,10 +1742,6 @@ node_bindings! {
         method "cryptoCreateDiffieHellmanGroup" (1) => crate::modules::crypto_node::dh::create_diffie_hellman_group,
         #[cfg(quench_openssl_provider)]
         method "cryptoCreateEcdh" (1) => crate::modules::crypto_node::dh::create_ecdh,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoCreateHash" (2) => crate::modules::crypto_node::hash::create_hash,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoCreateHmac" (3) => crate::modules::crypto_node::hash::create_hmac,
         #[cfg(quench_openssl_provider)]
         method "cryptoCreatePrivateKey" (1) => crate::modules::crypto_node::keys::create_private_key,
         #[cfg(quench_openssl_provider)]
@@ -1756,10 +1791,6 @@ node_bindings! {
         #[cfg(quench_openssl_provider)]
         method "cryptoPrivateEncrypt" (2) => crate::modules::crypto_node::sign::private_encrypt,
         #[cfg(quench_openssl_provider)]
-        method "cryptoPublicDecrypt" (2) => crate::modules::crypto_node::sign::public_decrypt,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoPublicEncrypt" (2) => crate::modules::crypto_node::sign::public_encrypt,
-        #[cfg(quench_openssl_provider)]
         method "cryptoRandomBytesApi" (2) => crate::modules::crypto_node::random::random_bytes,
         #[cfg(quench_openssl_provider)]
         method "cryptoRandomFill" (4) => crate::modules::crypto_node::random::random_fill,
@@ -1786,8 +1817,6 @@ node_bindings! {
         #[cfg(quench_openssl_provider)]
         method "cryptoVerifyOneShot" (5) => crate::modules::crypto_node::sign::verify_one_shot,
         #[cfg(quench_openssl_provider)]
-        method "cryptoHashOneShot" (2) => crate::modules::crypto_node::hash::one_shot,
-        #[cfg(quench_openssl_provider)]
         method "cryptoSecureHeapUsed" (0) => crate::modules::crypto_node::secure_heap_used,
         #[cfg(quench_openssl_provider)]
         method "cryptoAliasGet" (0) => crate::modules::crypto_node::alias_get,
@@ -1803,25 +1832,6 @@ node_bindings! {
         method "cryptoGetRandomValuesUnbound" (1) => crate::modules::crypto_node::random::get_random_values_unbound,
         #[cfg(quench_openssl_provider)]
         method "cryptoWebClassGlobals" (0) => crate::modules::crypto_node::web_class_globals,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoLazyTransform" (1) => crate::modules::crypto_node::hash::lazy_transform_constructor,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoLazyTransformGet" (0) => crate::modules::crypto_node::hash::lazy_transform_get,
-        #[cfg(quench_openssl_provider)]
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHashConstructor" (2) => crate::modules::crypto_node::hash::hash_constructor,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHmacConstructor" (3) => crate::modules::crypto_node::hash::hmac_constructor,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHashCopy" (1) => crate::modules::crypto_node::hash::copy,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHashTransform" (3) => crate::modules::crypto_node::hash::transform,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHashFlush" (1) => crate::modules::crypto_node::hash::flush,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHashUpdate" (2) => crate::modules::crypto_node::hash::update,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHashDigest" (1) => crate::modules::crypto_node::hash::digest,
         #[cfg(quench_openssl_provider)]
         method "cryptoCipheriv" (4) => crate::modules::crypto_node::cipher::cipheriv,
         #[cfg(quench_openssl_provider)]
@@ -1980,6 +1990,32 @@ node_bindings! {
         method "cryptoSubtleWrapKey" (4) => crate::modules::crypto_node::web::subtle_wrap_key,
         #[cfg(quench_openssl_provider)]
         method "cryptoSubtleUnwrapKey" (7) => crate::modules::crypto_node::web::subtle_unwrap_key,
+        method "asyncPublicResource" (1) => crate::modules::async_hooks_public::resource,
+        method "asyncPublicResourceRun" (2) => crate::modules::async_hooks_public::resource_run,
+        method "asyncPublicResourceDestroy" (0) => crate::modules::async_hooks_public::resource_destroy,
+        method "asyncPublicResourceId" (0) => crate::modules::async_hooks_public::resource_id,
+        method "asyncPublicResourceTrigger" (0) => crate::modules::async_hooks_public::resource_trigger,
+        method "asyncPublicResourceBind" (2) => crate::modules::async_hooks_public::resource_bind,
+        method "asyncPublicResourceStaticBind" (3) => crate::modules::async_hooks_public::resource_static_bind,
+        method "asyncPublicResourceFinalize" (1) => crate::modules::async_hooks_public::resource_finalize,
+        method "asyncPublicStorage" (0) => crate::modules::async_hooks_public::storage,
+        method "asyncPublicStorageName" (0) => crate::modules::async_hooks_public::storage_name,
+        method "asyncPublicStorageGet" (0) => crate::modules::async_hooks_public::storage_get,
+        method "asyncPublicStorageRun" (2) => crate::modules::async_hooks_public::storage_run,
+        method "asyncPublicStorageExit" (1) => crate::modules::async_hooks_public::storage_exit,
+        method "asyncPublicStorageScope" (1) => crate::modules::async_hooks_public::storage_scope,
+        method "asyncPublicStorageBind" (1) => crate::modules::async_hooks_public::storage_bind,
+        method "asyncPublicStorageSnapshot" (0) => crate::modules::async_hooks_public::storage_snapshot,
+        method "asyncPublicScope" (2) => crate::modules::async_hooks_public::scope,
+        method "asyncPublicScopeDispose" (0) => crate::modules::async_hooks_public::scope_dispose,
+        method "asyncPublicScopeSymbolDispose" (0) => crate::modules::async_hooks_public::scope_symbol_dispose,
+        method "asyncBoundDynamic" (0) => crate::modules::async_hooks_public::bound_dynamic,
+        method "asyncBoundFixed" (0) => crate::modules::async_hooks_public::bound_fixed,
+        method "asyncSnapshotInvoke" (1) => crate::modules::async_hooks_public::snapshot_invoke,
+        method "asyncPublicHook" (1) => crate::modules::async_hooks_public::hook,
+        method "asyncPublicCreateHook" (1) => crate::modules::async_hooks_public::create_hook,
+        method "asyncPublicHookEnable" (0) => crate::modules::async_hooks_public::hook_enable,
+        method "asyncPublicHookDisable" (0) => crate::modules::async_hooks_public::hook_disable,
         method "asyncResourceInit" (2) => crate::modules::async_hooks_shared_vm::initialize_resource,
         method "asyncResourceEnterScope" (1) => crate::modules::async_hooks_shared_vm::enter_async_scope,
         method "asyncResourceExitScope" (0) => crate::modules::async_hooks_shared_vm::exit_async_scope,
@@ -2207,6 +2243,12 @@ node_bindings! {
         method "icuErrorName" (1) => crate::modules::icu_binding_shared_vm::error_name,
         method "textDecoderDecode" (4) => crate::modules::text_decoder_shared_vm::decode,
         method "textDecoderInitialize" (0) => crate::modules::text_decoder_shared_vm::initialize,
+        method "textEncoderInitialize" (0) => crate::modules::text_encoder_shared_vm::initialize,
+        method "textEncoderConstruct" (0) => crate::modules::text_encoder_shared_vm::construct,
+        method "textEncoderEncoding" (0) => crate::modules::text_encoder_shared_vm::encoding,
+        method "textEncoderEncode" (0) => crate::modules::text_encoder_shared_vm::encode,
+        method "textEncoderEncodeInto" (2) => crate::modules::text_encoder_shared_vm::encode_into,
+        method "textEncoderInspect" (2) => crate::modules::text_encoder_shared_vm::inspect,
         method "stringDecoderDecode" (0) => crate::modules::string_decoder_shared_vm::decode,
         method "stringDecoderFlush" (0) => crate::modules::string_decoder_shared_vm::flush,
         method "urlConstruct" (1) => crate::modules::url_whatwg_shared_vm::construct,
@@ -2456,7 +2498,7 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
         .get(first)
         .copied()
         .filter(|&position| descriptors[usize::from(position)].name == name)
-        .expect("registered Node operation");
+        .unwrap_or_else(|| panic!("unregistered Node operation: {name}"));
     HostFunctionId(u32::from(position))
 }
 
@@ -2529,6 +2571,13 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_at_collection(policy.returns_pages_at_collections());
         quench_alloc::release_empty_pages();
         crate::host::resident_pages::note_collection();
+    }
+
+    fn after_collection(context: &mut quench_runtime::CollectionContext<'_, Self>) {
+        #[cfg(quench_openssl_provider)]
+        crate::modules::crypto_hash_shared_vm::prune(context);
+        #[cfg(not(quench_openssl_provider))]
+        let _ = context;
     }
 
     /// The pages the program touched leave the resident set before the code generator's join

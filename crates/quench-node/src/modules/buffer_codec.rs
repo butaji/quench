@@ -35,6 +35,23 @@ pub(crate) fn encode_units(input: &[u16], encoding: &str) -> Vec<u8> {
     }
 }
 
+/// WHATWG encodeInto: consume complete scalar values, counting original UTF-16 units.
+/// A lone surrogate becomes U+FFFD; a destination never receives a partial UTF-8 sequence.
+pub(crate) fn encode_utf8_into(input: &[u16], destination: &mut [u8]) -> (usize, usize) {
+    let (mut read, mut written) = (0, 0);
+    for scalar in char::decode_utf16(input.iter().copied()) {
+        let scalar = scalar.unwrap_or(char::REPLACEMENT_CHARACTER);
+        let width = scalar.len_utf8();
+        if width > destination.len() - written {
+            break;
+        }
+        scalar.encode_utf8(&mut destination[written..written + width]);
+        read += scalar.len_utf16();
+        written += width;
+    }
+    (read, written)
+}
+
 fn encode_fixed_width_units(input: impl Iterator<Item = u16>, encoding: &str) -> Vec<u8> {
     if encoding == "utf16le" {
         input.flat_map(u16::to_le_bytes).collect()

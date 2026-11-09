@@ -11,8 +11,6 @@ pub(crate) enum CryptoError<'a> {
     InvalidDigest(Option<&'a str>),
     /// `ERR_OSSL_EVP_INVALID_DIGEST`.
     InvalidDigestUsed,
-    HashFinalized,
-    HashUpdateFailed,
     /// `ERR_CRYPTO_INVALID_STATE`, naming the operation when Node does.
     InvalidState(Option<&'a str>),
     /// `ERR_CRYPTO_INVALID_STATE` with the native layer's message.
@@ -90,8 +88,6 @@ impl CryptoError<'_> {
         Some(match self {
             Self::InvalidDigest(_) => "ERR_CRYPTO_INVALID_DIGEST",
             Self::InvalidDigestUsed => "ERR_OSSL_EVP_INVALID_DIGEST",
-            Self::HashFinalized => "ERR_CRYPTO_HASH_FINALIZED",
-            Self::HashUpdateFailed => "ERR_CRYPTO_HASH_UPDATE_FAILED",
             Self::InvalidState(_) | Self::InvalidStateMessage(_) => "ERR_CRYPTO_INVALID_STATE",
             Self::UnknownCipher => "ERR_CRYPTO_UNKNOWN_CIPHER",
             Self::InvalidKeyLength | Self::InvalidKeyLengthMessage(_) => "ERR_CRYPTO_INVALID_KEYLEN",
@@ -169,8 +165,6 @@ impl CryptoError<'_> {
             Self::InvalidDigest(Some(name)) => format!("Invalid digest: {name}"),
             Self::InvalidDigest(None) => "Invalid digest".to_owned(),
             Self::InvalidDigestUsed => "Invalid digest used".to_owned(),
-            Self::HashFinalized => "Digest already called".to_owned(),
-            Self::HashUpdateFailed => "Hash update failed".to_owned(),
             Self::InvalidState(Some(operation)) => format!("Invalid state for operation {operation}"),
             Self::InvalidState(None) => "Invalid state".to_owned(),
             Self::UnknownCipher => "Unknown cipher".to_owned(),

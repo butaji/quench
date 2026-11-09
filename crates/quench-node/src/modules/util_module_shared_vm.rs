@@ -319,8 +319,12 @@ pub(crate) fn build(c: &mut Context<'_>, primordials: RootId) -> Result<(RootId,
     put(c, module, "parseEnv", parse_env)?;
     let parse_args = super::util_parse_args_shared_vm::function(c)?;
     put(c, module, "parseArgs", parse_args)?;
-    let initializer = function(c, "utilGlobalExport", "")?;
-    c.define_lazy_data_properties_rooted(module, &["TextDecoder", "TextEncoder"], true, initializer)?;
+    for name in ["TextDecoder", "TextEncoder"] {
+        let name_value = c.string_rooted(name);
+        let data = c.record_rooted(false, &["module", "name"], &[module, name_value])?;
+        let initializer = c.host_function_named_with_data(crate::host::shared_vm::operation("utilGlobalExport"), "", data)?;
+        c.define_lazy_data_properties_rooted(module, &[name], true, initializer)?;
+    }
     let (mime, params) = super::util_mime_shared_vm::classes(c)?;
     put(c, module, "MIMEType", mime)?;
     put(c, module, "MIMEParams", params)?;
@@ -553,9 +557,7 @@ pub(crate) fn deprecated_wrapper(c: &mut Context<'_>, target: RootId, message: R
     }
     let wrapper = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("utilDeprecated"), "deprecated", state)?;
     put(c, state, "wrapper", wrapper)?;
-    if c.is_object_rooted(target)? {
-        c.set_prototype_rooted(wrapper, target)?;
-    }
+    c.set_prototype_rooted(wrapper, target)?;
     let length = get(c, target, "length")?;
     if type_of(c, length) == ValueType::Number {
         let key = c.string_rooted("length");
@@ -604,12 +606,20 @@ fn warn_deprecation(c: &mut Context<'_>, state: RootId) -> Result<(), RootedErro
         c.call_rooted(emit, process, &[message, kind, wrapper])?;
         return Ok(());
     }
+    emit_deprecation(c, message, code, wrapper)
+}
+
+/// One code history for util wrappers, legacy exports and crypto's implicit-length warning.
+pub(crate) fn emit_deprecation(c: &mut Context<'_>, message: RootId, code: RootId, wrapper: RootId) -> Result<(), RootedError> {
     let codes = inspect::primordial(c, "codesWarned")?;
     let seen = c.get_property_rooted(codes, code)?;
     if c.truthy_rooted(seen)? {
         return Ok(());
     }
+    let process = process(c)?;
     let emit = get(c, process, "emitWarning")?;
+    let kind = c.string_rooted("DeprecationWarning");
+    let yes = c.boolean(true);
     c.call_rooted(emit, process, &[message, kind, code, wrapper])?;
     c.set_property_rooted(codes, code, yes, codes)?;
     Ok(())
@@ -771,14 +781,20 @@ pub(crate) fn set_trace_sig_int(c: &mut Context<'_>, _: RootId, args: &[RootId])
     Ok(c.undefined())
 }
 
-/// The lazy `TextDecoder` and `TextEncoder` exports: the globals of those names.
+/// Each codec export initializes independently. TextEncoder shares its original constructor
+/// with the global even after a script replaces that public binding.
 pub(crate) fn global_export(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let global = c.global_root()?;
-    let module = super::util_shared_vm::module(c)?;
-    for name in ["TextDecoder", "TextEncoder"] {
-        let value = get(c, global, name)?;
-        put(c, module, name, value)?;
-    }
+    let data = c.host_function_data()?;
+    let module = get(c, data, "module")?;
+    let name = get(c, data, "name")?;
+    let name = c.to_string(name)?;
+    let value = if name == "TextEncoder" {
+        super::text_encoder_shared_vm::constructor(c)?
+    } else {
+        let global = c.global_root()?;
+        get(c, global, &name)?
+    };
+    put(c, module, &name, value)?;
     Ok(c.undefined())
 }
 

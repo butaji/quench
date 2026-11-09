@@ -929,9 +929,7 @@ impl<H: Host> Vm<H> {
         if let Some(strings) = &mut self.dynamic_strings {
             strings.retain(|_, value| self.heap.is_live(*value));
         }
-        if let Some(concats) = &mut self.string_concats {
-            concats.fill(EMPTY_STRING_CONCAT_CACHE);
-        }
+        H::after_collection(&mut crate::CollectionContext::new(&mut self.host, &mut self.heap));
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
         self.collection_boundary();
@@ -1004,7 +1002,6 @@ impl<H: Host> Vm<H> {
         self.plain_assign_shapes.clear();
         self.embedding_record_shapes.clear();
         self.function_name_shapes.clear();
-        self.shape_attribute_memo.clear();
         self.object_shapes.reset();
         self.invalidate_field_caches();
         self.holder_hints.clear();

@@ -231,9 +231,23 @@ pub(crate) fn argument_value_error_units(
     name: &[u16],
     reason: &str,
 ) -> Result<RootedError, RootedError> {
-    const MAX_INSPECTED_VALUE_UNITS: usize = 128;
     let inspected = super::console_format_shared_vm::inspect(context, value, Default::default())?;
-    let mut detail = inspected.encode_utf16().collect::<Vec<_>>();
+    let inspected = context.string_rooted(&inspected);
+    argument_value_error_inspected_units(context, name, reason, inspected)
+}
+
+/// Finish a value error from an already inspected value. Callers with a proven primitive
+/// presentation share the same message, truncation and coded-error construction.
+pub(crate) fn argument_value_error_inspected_units(
+    context: &mut NativeContext<'_, NodeHost>,
+    name: &[u16],
+    reason: &str,
+    inspected: RootId,
+) -> Result<RootedError, RootedError> {
+    const MAX_INSPECTED_VALUE_UNITS: usize = 128;
+    let mut detail = context
+        .string_code_units(inspected)?
+        .ok_or_else(|| RootedError::host("inspect returned a non-string"))?;
     if detail.len() > MAX_INSPECTED_VALUE_UNITS {
         detail.truncate(MAX_INSPECTED_VALUE_UNITS);
         detail.extend("...".encode_utf16());

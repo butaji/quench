@@ -125,7 +125,7 @@ pub(crate) struct SharedAsyncHooksState {
     pub(super) entered_scopes: Vec<super::async_hooks_shared_vm::EnteredScope>,
     /// Each context's AsyncLocalStorage values, by storage ID: a context's frame is found,
     /// copied and dropped whole, without scanning the other contexts'.
-    pub(super) local_stores: FxHashMap<StoreContext, Vec<(u64, RootId)>>,
+    pub(super) local_stores: FxHashMap<StoreContext, FxHashMap<u64, RootId>>,
     pub(super) store_references: FxHashMap<RootId, usize>,
     /// The AsyncLocalStorage instances entered since their last `disable()`. Like Node's
     /// storage hook, an enabled one makes promises tracked (`tracks_promises`).

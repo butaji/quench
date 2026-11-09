@@ -322,6 +322,34 @@ pub(super) fn has_hooks(context: &mut NativeContext<'_, NodeHost>, kind: HookKin
         != 0
 }
 
+pub(crate) fn enabled(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (api, snapshot) = {
+        let state = context.host_mut().shared_state();
+        let state = state.borrow();
+        let registry = &state.async_hooks.registry;
+        (registry.api, registry.snapshot)
+    };
+    let count = if let Some((snapshot, _)) = snapshot {
+        let length = get(context, snapshot, "length")?;
+        context
+            .rooted_value(length)
+            .and_then(|v| v.as_number())
+            .unwrap_or_default() as u32
+    } else {
+        let api = api.ok_or_else(|| RootedError::host("async hook registry missing"))?;
+        let hooks = get(context, api, "hooks")?;
+        let Some(BuiltinData::Set(hooks)) = context.builtin_data_rooted(hooks)? else {
+            return Err(RootedError::host("async hook subscriptions are not a Set"));
+        };
+        hooks.len() as u32
+    };
+    Ok(context.boolean(count != 0))
+}
+
 pub(super) fn emit(
     context: &mut NativeContext<'_, NodeHost>,
     kind: HookKind,

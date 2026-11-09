@@ -355,17 +355,18 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .map(|key| self.heap.root_value(*key).unwrap())
                 .collect::<Vec<_>>();
-            Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(self.array_proto),
-                    elements,
-                ),
-            }))
+            Ok(self.alloc_for_in_key_array(elements.into(), self.array_proto))
         })();
         for root in visited_objects.into_values().chain(own_keys).chain(keys) {
             self.heap.release_root(root);
         }
         outcome
+    }
+
+    fn alloc_for_in_key_array(&mut self, keys: crate::heap::ArrayElements, prototype: Value) -> Value {
+        self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), keys),
+        })
     }
 
     /// for-in keys of an object whose prototype chain holds only objects with

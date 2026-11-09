@@ -1929,16 +1929,6 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        // The concatenation cache holds only string pairs, so a heap left operand probes it
-        // before the Number paths it could never take.
-        if op == BinaryOperator::Addition as u32
-            && left.is_heap()
-            && let Some(value) = self.cached_concat(left, right)
-        {
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.concat_cache(true);
-            return Ok(value);
-        }
         if let Some(value) = self.number_binary(op, left, right) {
             return Ok(value);
         }

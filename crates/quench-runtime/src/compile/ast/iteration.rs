@@ -131,7 +131,7 @@ impl FunctionCompiler<'_, '_> {
         {
             self.clone_lexical_environment();
         }
-        self.bind_for_of_left(left, key);
+        self.bind_iteration_left(left, key);
         self.statement(body);
         let control = self.controls.pop().unwrap();
         let update = self.code.len() as u32;
@@ -245,7 +245,7 @@ impl FunctionCompiler<'_, '_> {
         }
         // The iterator cleanup record reads `iterator` and `done` until the body ends.
         self.with_registers_held(|compiler| {
-            compiler.bind_for_of_left(left, value);
+            compiler.bind_iteration_left(left, value);
             compiler.statement(body);
         });
         if let Some(error) = disposal_error {
@@ -387,7 +387,7 @@ impl FunctionCompiler<'_, '_> {
         true
     }
 
-    fn bind_for_of_left(&mut self, left: &ForStatementLeft<'_>, value: Register) {
+    fn bind_iteration_left(&mut self, left: &ForStatementLeft<'_>, value: Register) {
         match left {
             ForStatementLeft::VariableDeclaration(declaration)
                 if declaration.declarations.len() == 1 =>
@@ -408,7 +408,7 @@ impl FunctionCompiler<'_, '_> {
                     self.assign_pattern(target, value);
                 } else {
                     self.owner
-                        .reject(left.span(), "for-of assignment target unsupported");
+                        .reject(left.span(), "iteration assignment target unsupported");
                 }
             }
         }

@@ -1,6 +1,5 @@
 use super::*;
 
-const STRING_CONCAT_HASH_MULTIPLIER: usize = 0x9e37_79b1;
 /// The parts a `StringConcat` converts without a heap list: a template of up to four
 /// substitutions and their text.
 const STRING_CONCAT_INLINE_PARTS: usize = 9;
@@ -41,80 +40,21 @@ impl<H: Host> Vm<H> {
         Some(string)
     }
 
-    /// The cache slot for an operand pair.
-    #[inline(always)]
-    fn concat_cache_index(left: Value, right: Value) -> Option<usize> {
-        let left_index = left.heap_index()? as usize;
-        let right_index = right.heap_index()? as usize;
-        Some(
-            (left_index.wrapping_mul(STRING_CONCAT_HASH_MULTIPLIER) ^ right_index)
-                & (STRING_CONCAT_CACHE_SIZE - 1),
-        )
-    }
-
-    /// A cached `left + right` of two strings. Entries are made only for string operands and
-    /// collection empties the cache, so between collections a matching pair names the same
-    /// immutable string cells and the stored result is their live concatenation.
-    #[inline(always)]
-    pub(super) fn cached_concat(&self, left: Value, right: Value) -> Option<Value> {
-        let entry = self.string_concats.as_ref()?[Self::concat_cache_index(left, right)?];
-        (entry.left == left && entry.right == right).then_some(entry.result)
-    }
-
+    /// Join two string values directly; primitive string identity is not observable.
     pub(super) fn intern_dynamic_concat(&mut self, left: Value, right: Value) -> Option<Value> {
-        let cache_index = Self::concat_cache_index(left, right)?;
-        if let Some(result) = self.cached_concat(left, right) {
-            #[cfg(feature = "profile-aggregate")]
-            if let (Some(left), Some(right), Some(result_text)) = (
-                self.heap.string(left),
-                self.heap.string(right),
-                self.heap.string(result),
-            ) {
-                self.profile.string_concat_shapes(
-                    left.profile_shape(),
-                    right.profile_shape(),
-                    result_text.profile_shape() != 2,
-                );
-            }
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.concat_cache(true);
-            return Some(result);
-        }
-        let text = {
-            let (Some(left), Some(right)) = (self.heap.string(left), self.heap.string(right))
-            else {
-                return None;
-            };
-            #[cfg(feature = "profile-aggregate")]
-            let operand_shapes = (left.profile_shape(), right.profile_shape());
-            let text = left.concat(right);
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.string_concat_shapes(
-                operand_shapes.0,
-                operand_shapes.1,
-                text.profile_shape() != 2,
-            );
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.string_concat_size(text.len());
-            text
+        let (Some(left), Some(right)) = (self.heap.string(left), self.heap.string(right)) else {
+            return None;
         };
         #[cfg(feature = "profile-aggregate")]
-        self.profile.concat_cache(false);
-        // The operand-pair cache above already avoids repeating this concat.
-        // Interning the result would hash every UTF-16 unit, which turns
-        // repeated `out += chunk` into quadratic work for a growing string.
-        // Primitive string identity is not observable, so store this rope
-        // directly in the heap.
-        let value = self.heap.alloc_string(text);
-        let cache = self.string_concats.get_or_insert_with(|| {
-            vec![EMPTY_STRING_CONCAT_CACHE; STRING_CONCAT_CACHE_SIZE].into_boxed_slice()
-        });
-        cache[cache_index] = StringConcatCache {
-            left,
-            right,
-            result: value,
-        };
-        Some(value)
+        let operand_shapes = (left.profile_shape(), right.profile_shape());
+        let text = left.concat(right);
+        #[cfg(feature = "profile-aggregate")]
+        {
+            self.profile.string_concat_shapes(operand_shapes.0, operand_shapes.1, text.profile_shape() != 2);
+            self.profile.string_concat_size(text.len());
+            self.profile.concat_cache(false);
+        }
+        Some(self.heap.alloc_string(text))
     }
 
     /// The atom of the string `key`, interned as `intern_js_atom` does, found once per string

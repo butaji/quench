@@ -387,25 +387,13 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn shape_slot_attributes(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
-            return Some(
-                index
-                    .attributes
-                    .get(&(slot as u32))
-                    .copied()
-                    .unwrap_or(DEFAULT_SHAPE_ATTRIBUTES),
-            );
+            return Some(index.attributes.get(&(slot as u32)).copied().unwrap_or(DEFAULT_SHAPE_ATTRIBUTES));
         }
-        let memo_slot = u32::try_from(slot).ok().filter(|_| !self.shape_is_dictionary(shape));
-        if let Some(memo_slot) = memo_slot
-            && let Some(attributes) = self.shape_attribute_memo.get(shape, memo_slot)
-        {
-            return attributes;
+        let layout = &self.shapes[shape as usize];
+        if layout.facts.default_attributes() && !self.shape_is_dictionary(shape) {
+            return (slot < layout.storage_len()).then_some(DEFAULT_SHAPE_ATTRIBUTES);
         }
-        let attributes = self.walked_shape_attribute(shape, slot);
-        if let Some(memo_slot) = memo_slot {
-            self.shape_attribute_memo.record(shape, memo_slot, attributes);
-        }
-        attributes
+        self.walked_shape_attribute(shape, slot)
     }
     /// The attributes the nearest transition describing `slot` gives it, walking `shape`'s chain.
     fn walked_shape_attribute(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
@@ -1522,7 +1510,7 @@ impl<H: Host> Vm<H> {
     /// The own data field the holderless field cache entry `cache` proves for `receiver`;
     /// `None` where its shape differs.
     #[inline(always)]
-    fn own_field_entry_hit(&self, cache: FieldCache, receiver: &Object) -> Option<Value> {
+    pub(super) fn own_field_entry_hit(&self, cache: FieldCache, receiver: &Object) -> Option<Value> {
         // The exact shape matches only outside dictionary storage (`Object::exact_shape`).
         if cache.receiver != receiver.exact_shape() {
             return None;

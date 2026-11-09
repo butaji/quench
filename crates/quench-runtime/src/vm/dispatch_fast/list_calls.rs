@@ -135,7 +135,7 @@ pub(super) fn lane_spread_native_call<H: Host>(
     list: Value,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let kind @ FunctionKind::Native(native) = vm.heap.function(callee)?.kind else {
+    let FunctionKind::Native(native) = vm.heap.function(callee)?.kind else {
         return None;
     };
     if matches!(native, Native::FunctionCall | Native::FunctionBoundCall | Native::FunctionApply | Native::ReflectApply | Native::Eval)
@@ -147,6 +147,6 @@ pub(super) fn lane_spread_native_call<H: Host>(
         return Some(Resumed::Exit(exit(ip)));
     }
     let args = smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::from_slice(vm.heap.array_elements(list)?.as_slice());
-    let value = lane_native_value(cx, ip, i, kind, callee, receiver, &args);
+    let value = lane_native_value(cx, ip, i, native, callee, receiver, &args);
     Some(lane_native_complete(cx, ip, i, value))
 }

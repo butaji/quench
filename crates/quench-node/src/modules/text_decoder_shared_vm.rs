@@ -4,7 +4,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 
-pub(crate) const GLOBAL_NAMES: &[&str] = &["TextDecoder", "TextEncoder"];
+pub(crate) const GLOBAL_NAMES: &[&str] = &["TextDecoder"];
 
 /// Installs `TextDecoder` and `TextEncoder` as lazy data properties, built on first use.
 pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
@@ -17,6 +17,9 @@ pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Resul
         false,
         initializer,
     )?;
+    context.release_root(initializer);
+    let initializer = context.host_function(crate::host::shared_vm::operation!("textEncoderInitialize"))?;
+    context.define_lazy_data_properties_rooted(global, &["TextEncoder"], false, initializer)?;
     context.release_root(initializer);
     Ok(())
 }
@@ -34,17 +37,8 @@ pub(crate) fn initialize(
         accessor(context, decoder_prototype, name, operation(getter))?;
     }
     to_string_tag(context, decoder_prototype, "TextDecoder")?;
-    let encoder = context.host_constructor_named(crate::host::shared_vm::operation!("textEncoderConstructor"), "TextEncoder")?;
-    let encoder_prototype = context.get_named_property_rooted(encoder, "prototype")?;
-    accessor(context, encoder_prototype, "encoding", crate::host::shared_vm::operation!("textEncoderEncodingGet"))?;
-    method(context, encoder_prototype, "encode", crate::host::shared_vm::operation!("textEncoderEncode"))?;
-    method(context, encoder_prototype, "encodeInto", crate::host::shared_vm::operation!("textEncoderEncodeInto"))?;
-    to_string_tag(context, encoder_prototype, "TextEncoder")?;
     let global = context.global_root()?;
-    for (name, constructor) in [("TextDecoder", decoder), ("TextEncoder", encoder)] {
-        let key = context.string_rooted(name);
-        context.define_data_property_rooted(global, key, constructor, true, false, true)?;
-    }
+    context.define_named_data_property_rooted(global, "TextDecoder", decoder, true, false, true)?;
     Ok(context.undefined())
 }
 
@@ -228,61 +222,6 @@ fn invalid_encoded_data(context: &mut NativeContext<'_, NodeHost>, encoding: &st
     Ok(context.throw(error))
 }
 
-/// `new TextEncoder()`.
-pub(crate) fn encoder_constructor(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    if context.new_target_rooted().is_none() {
-        let error = context.type_error_rooted("Class constructor TextEncoder cannot be invoked without 'new'")?;
-        return Err(context.throw(error));
-    }
-    Ok(context.undefined())
-}
-
-pub(crate) fn encoder_encoding(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    Ok(context.string_rooted("utf-8"))
-}
-
-/// `textEncoder.encode([input])`: the input's UTF-8 bytes, lone surrogates as U+FFFD.
-pub(crate) fn encoder_encode(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let input = argument(context, args, 0);
-    let text = if context.rooted_value(input).is_some_and(|value| value.is_undefined()) {
-        String::new()
-    } else {
-        String::from_utf16_lossy(&context.to_string_code_units(input)?)
-    };
-    context.uint8_array_from_rooted(text.into_bytes())
-}
-
-/// `textEncoder.encodeInto(source, destination)`: as many whole characters as fit, and
-/// `{ read, written }` in UTF-16 units and bytes.
-pub(crate) fn encoder_encode_into(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let source = argument(context, args, 0);
-    let destination = argument(context, args, 1);
-    if !context.has_builtin_brand_rooted(destination, quench_runtime::BuiltinBrand::Uint8Array)? {
-        return Err(super::util_shared_vm::argument_type_error_with_expected(context, destination, "dest", "an instance of Uint8Array")?);
-    }
-    let text = String::from_utf16_lossy(&context.to_string_code_units(source)?);
-    let (read, written) = context
-        .with_buffer_bytes_mut_rooted(destination, |bytes| {
-            let (mut read, mut written) = (0usize, 0usize);
-            for character in text.chars() {
-                let width = character.len_utf8();
-                if written + width > bytes.len() {
-                    break;
-                }
-                character.encode_utf8(&mut bytes[written..written + width]);
-                written += width;
-                read += character.len_utf16();
-            }
-            (read, written)
-        })
-        .unwrap_or_default();
-    let result = context.object_rooted()?;
-    let read = context.number(read as f64);
-    let written = context.number(written as f64);
-    context.assign_named_property_rooted(result, "read", read)?;
-    context.assign_named_property_rooted(result, "written", written)?;
-    Ok(result)
-}
 
 pub(crate) fn canonical_encoding(
     context: &mut NativeContext<'_, NodeHost>,

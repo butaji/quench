@@ -13,6 +13,10 @@ pub(crate) enum GlobalRead {
     /// A global cell's value, of type `ty`, held under `fact` by code that runs while the realm
     /// of global object `global` is active: the one the VM's field at `realm_offset` names.
     Stable { value: Value, ty: Type, fact: GlobalFact, global: Value, realm_offset: i32 },
+    /// A whole-program AOT fact: the cell's value at every read, checked once per read
+    /// site and folded while it holds (`Division::Frozen`).
+    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
+    Frozen { value: Value, ty: Type },
     /// The lane's own read at run time (`LaneHelper::GlobalGet`).
     Dynamic,
 }

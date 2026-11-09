@@ -1277,14 +1277,7 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
 };
 /// A table of empty targets, which no binding matches: its function is the root, never a callee.
 static NO_CALL_TARGETS: [InLoopCallTarget; CALL_TARGET_CACHE_SIZE] = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
-const STRING_CONCAT_CACHE_SIZE: usize = 64;
 /// The code units below which a unit is ASCII.
-#[derive(Clone, Copy)]
-struct StringConcatCache {
-    left: Value,
-    right: Value,
-    result: Value,
-}
 #[derive(Clone, Copy)]
 enum ShapeTransition {
     Root,
@@ -1670,6 +1663,9 @@ impl ShapeFacts {
     /// Some property of the chain was deleted, or left a vacant slot when it was rebuilt: a
     /// second deletion makes the object its own dictionary (`DictionaryTrigger::DeletionPattern`).
     const DELETIONS: u8 = 1 << 4;
+    /// A transition introduced non-default slot attributes. Without this fact every
+    /// allocated slot has the default data descriptor, including vacated slots.
+    const NON_DEFAULT_ATTRIBUTES: u8 = 1 << 5;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
@@ -1679,6 +1675,11 @@ impl ShapeFacts {
         Self(
             self.0
                 | introduced(transition.introduces_gc_roots(), Self::MAY_HAVE_GC_ROOTS)
+                | introduced(
+                    matches!(transition, ShapeTransition::Add { attributes, .. } if attributes != DEFAULT_DATA_ATTRIBUTES)
+                        || descriptor(|attributes| attributes != DEFAULT_SHAPE_ATTRIBUTES),
+                    Self::NON_DEFAULT_ATTRIBUTES,
+                )
                 | introduced(descriptor(ShapeAttributes::slot_getter), Self::SLOT_GETTERS)
                 | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS)
                 | introduced(
@@ -1691,6 +1692,7 @@ impl ShapeFacts {
 
     fn accessor_pairs(self) -> bool { self.0 & Self::ACCESSOR_PAIRS != 0 }
     fn accessors(self) -> bool { self.0 & Self::ACCESSORS != 0 }
+    fn default_attributes(self) -> bool { self.0 & Self::NON_DEFAULT_ATTRIBUTES == 0 }
     fn deletions(self) -> bool { self.0 & Self::DELETIONS != 0 }
     fn may_have_gc_roots(self) -> bool { self.0 & Self::MAY_HAVE_GC_ROOTS != 0 }
     fn slot_getters(self) -> bool { self.0 & Self::SLOT_GETTERS != 0 }
@@ -1780,11 +1782,6 @@ impl Shape {
         }
     }
 }
-const EMPTY_STRING_CONCAT_CACHE: StringConcatCache = StringConcatCache {
-    left: Value::UNDEFINED,
-    right: Value::UNDEFINED,
-    result: Value::UNDEFINED,
-};
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CallTarget {
     User(ProgramId, u32, Value),
@@ -2085,7 +2082,6 @@ pub(crate) struct Vm<H> {
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::RefCell<Option<promise::PromiseSpeciesProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
-    shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
     /// Every atom, hashed by its text (`atom_keys::text_hash`); equal hashes are told apart
@@ -2116,7 +2112,6 @@ pub(crate) struct Vm<H> {
     typeof_names: [Value; TYPEOF_NAMES],
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: WellKnownSymbols,
-    string_concats: Option<Box<[StringConcatCache]>>,
     /// The slots of a bound function's target, receiver and arguments in the shape its
     /// environment object has (`Vm::bound_function_parts`): every `bind` gives its environment
     /// the three in one order, so they share it. Shape compaction renumbers shapes and empties it.
@@ -2261,6 +2256,12 @@ struct IteratorRealmPrototypes {
 }
 
 impl<H: Host> Vm<H> {
+    /// Record a method-cache name, as a call site's first call does (tests).
+    #[cfg(all(test, feature = "aot"))]
+    pub(crate) fn name_method_atom(&mut self, atom: crate::bytecode::Atom) {
+        self.method_cache_atoms.name(atom);
+    }
+
     /// Diagnostic: general-loop dispatches by the register width of their function, since
     /// register liveness (and with it promotion and move coalescing) covers only functions
     /// whose registers fit a root mask.
@@ -3103,7 +3104,7 @@ impl<H: Host> Vm<H> {
         self.species_slot_proof.set(None);
         self.promise_species_proof.take();
         self.heap.dependencies_mut().retire_all();
-        self.enumerable_keys.clear(); self.shape_attribute_memo.clear(); self.heap.clear_string_atoms();
+        self.enumerable_keys.clear(); self.heap.clear_string_atoms();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
@@ -3121,7 +3122,6 @@ impl<H: Host> Vm<H> {
         self.typeof_names = [Value::UNDEFINED; TYPEOF_NAMES];
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
-        self.string_concats = None;
         self.clear_call_targets();
         self.lane_stack.clear_script_targets();
         let atom_text = self.atom_text.clone();

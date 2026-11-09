@@ -759,33 +759,55 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         key: Value,
     ) -> Option<Value> {
-        let found = self.plain_own_attributes(p, receiver, key)?;
-        let holds = found.is_some_and(|attributes| {
-            native == Native::ObjectPrototypeHasOwnProperty || attributes.enumerable
-        });
+        let found = if native == Native::ObjectPrototypeHasOwnProperty {
+            self.plain_own_query::<false>(p, receiver, key)?
+        } else {
+            self.plain_own_query::<true>(p, receiver, key)?
+        };
+        let holds = found == Some(true);
         Some(if holds { Value::TRUE } else { Value::FALSE })
     }
 
-    /// The attributes of `object`'s own property of the string `key`, `Some(None)` when it
-    /// has none, read without guest code: `object` is neither a Proxy nor a module namespace
-    /// (`ordinary_own_string_property`). `None` for any other object or key.
-    fn plain_own_attributes(
+    /// A present string-keyed own property's query answer, or absent (`Some(None)`).
+    /// Presence needs only the slot; enumerability also reads its attributes. The query
+    /// kind is bound by the caller, so presence reads no descriptor metadata.
+    /// Exotics keep their shared descriptor operation; effectful lookups decline.
+    fn plain_own_query<const ENUMERABLE: bool>(
         &mut self,
         p: &ResidualProgram,
         object: Value,
         key: Value,
-    ) -> Option<Option<PropertyAttributes>> {
-        if matches!(self.heap.get(object), Some(Cell::Proxy { .. }))
-            || !self
-                .object_data(object)
-                .is_some_and(|data| !data.is_module_namespace() && data.deferred_module().is_none())
-        {
-            return None;
+    ) -> Option<Option<bool>> {
+        match self.heap.ordinary_object(object) {
+            Some(data) => {
+                if data.is_module_namespace() || data.deferred_module().is_some() {
+                    return None;
+                }
+                if !data.is_arguments_object() {
+                    let shape = data.shape();
+                    let atom = self.string_key_atom(key)?;
+                    let slot = self.shape_slot(shape, atom);
+                    return Some(if ENUMERABLE {
+                        slot.and_then(|slot| self.shape_slot_attributes(shape, slot))
+                            .map(|attributes| attributes.enumerable)
+                    } else {
+                        slot.map(|_| true)
+                    });
+                }
+            }
+            None => {
+                if matches!(self.heap.get(object), Some(Cell::Proxy { .. }))
+                    || !self.object_data(object)
+                        .is_some_and(|data| !data.is_module_namespace() && data.deferred_module().is_none())
+                {
+                    return None;
+                }
+            }
         }
         let text = self.heap.string(key)?.clone();
         let atom = self.string_key_atom(key)?;
         let found = self.ordinary_own_string_property(p, object, &text, atom).ok()?;
-        Some(found.map(|(_, attributes)| attributes))
+        Some(found.map(|(_, attributes)| !ENUMERABLE || attributes.enumerable))
     }
 
     /// Whether `key` is an own enumerable property of `target`; `None` when it

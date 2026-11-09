@@ -3342,17 +3342,17 @@ fn primitive_strings_keep_the_intrinsic_prototype_after_global_reassignment() {
 }
 
 #[test]
-fn repeated_string_concatenations_use_the_bounded_cache() {
+fn repeated_string_concatenations_preserve_values_across_collection() {
     let mut vm = Vm::new(TestHost::default());
     let left = vm.intern_dynamic_value("left".into());
     let right = vm.intern_dynamic_value("right".into());
     let first = vm.intern_dynamic_concat(left, right).unwrap();
     let second = vm.intern_dynamic_concat(left, right).unwrap();
-    assert_eq!(first, second);
-    assert_eq!(
-        vm.string_concats.as_ref().unwrap().len(),
-        super::STRING_CONCAT_CACHE_SIZE
-    );
+    assert_eq!(vm.heap.string(first), vm.heap.string(second));
+    assert_eq!(vm.heap.string(first).unwrap().host_string(), "leftright");
+    vm.heap.collect([left, right, first, second]);
+    let third = vm.intern_dynamic_concat(left, right).unwrap();
+    assert_eq!(vm.heap.string(first), vm.heap.string(third));
 }
 
 #[test]

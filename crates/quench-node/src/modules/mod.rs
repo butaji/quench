@@ -9,6 +9,7 @@ pub(crate) mod worker_shared_vm;
 pub(crate) mod async_hook_registry_shared_vm;
 pub(crate) mod async_hooks_module_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
+pub(crate) mod async_hooks_public;
 pub(crate) mod async_hooks_state;
 pub(crate) mod blob_binding_shared_vm;
 pub(crate) mod blob_shared_vm;
@@ -145,6 +146,7 @@ pub(crate) mod text_decoder_codec;
 #[cfg(quench_icu)]
 pub(crate) mod text_decoder_icu;
 pub(crate) mod text_decoder_shared_vm;
+pub(crate) mod text_encoder_shared_vm;
 pub(crate) mod timers_interval_shared_vm;
 pub(crate) mod timers_shared_vm;
 pub(crate) mod tls_shared_vm;
@@ -220,6 +222,10 @@ pub(crate) mod crypto_digest_cache;
 pub(crate) mod crypto_digest_state;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_hash_source_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_lazy_transform;
 
 pub(crate) mod abort_controller_shared_vm;
 

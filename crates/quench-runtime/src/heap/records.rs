@@ -748,16 +748,26 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         bases.append(&mut self.aged_words);
         bases.sort_unstable();
         bases.dedup();
+        // The stopped mutator's log names old records whose barrier cleared their mark.
+        // Restore those bits only while deriving newborn words: direct bit addressing
+        // excludes each old record in O(1), without searching the sparse word list.
+        // No observer runs until the bits are cleared again below.
+        for &id in logged {
+            let (block_index, word_index) = Self::word_position(id);
+            let mask = 1_u64 << (id as usize % OCCUPANCY_WORD_BITS);
+            let word = &mut self.blocks[block_index].marked[word_index];
+            debug_assert_eq!(*word & mask, 0, "the barrier unmarked each logged record");
+            *word |= mask;
+        }
         self.minor_words.extend(bases.into_iter().map(|base| {
             let (block_index, word_index) = Self::word_position(base);
             let block = &self.blocks[block_index];
             (base, block.occupied[word_index] & !block.marked[word_index] & !block.aged[word_index])
         }));
         for &id in logged {
-            let base = id - id % word_bits;
-            if let Ok(position) = self.minor_words.binary_search_by_key(&base, |&(base, _)| base) {
-                self.minor_words[position].1 &= !(1_u64 << (id % word_bits));
-            }
+            let (block_index, word_index) = Self::word_position(id);
+            self.blocks[block_index].marked[word_index] &=
+                !(1_u64 << (id as usize % OCCUPANCY_WORD_BITS));
         }
     }
 
@@ -1099,8 +1109,47 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PromotionAge, RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK, RecordSpace};
+    use super::{OCCUPANCY_WORD_BITS, PromotionAge, RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK, RecordSpace};
     use std::mem::size_of;
+
+    #[test]
+    fn newborn_words_exclude_logged_old_records_and_restore_their_marks() {
+        let mut arena: RecordSpace<u64> = RecordSpace::default();
+        let old: Vec<_> = (0..=OCCUPANCY_WORD_BITS)
+            .map(|value| arena.try_insert(value as u64).unwrap())
+            .collect();
+        for &id in &old {
+            assert!(arena.mark(id));
+        }
+        arena.sweep(true, PromotionAge::First, false, |_| {});
+        let survivor = arena.try_insert(1).unwrap();
+        let dead = arena.try_insert(2).unwrap();
+        // One old record shares the newborn word; the other word has no newborns.
+        let written = [old[0], old[OCCUPANCY_WORD_BITS]];
+        for &id in &written {
+            arena.remember(id);
+        }
+        let logged = arena.take_remembered();
+        arena.prepare_minor(&logged, PromotionAge::Second);
+        let newborn = (1_u64 << (survivor as usize % OCCUPANCY_WORD_BITS))
+            | (1_u64 << (dead as usize % OCCUPANCY_WORD_BITS));
+        assert_eq!(arena.minor_words, [(OCCUPANCY_WORD_BITS as u32, newborn)]);
+        for &id in &written {
+            assert!(!arena.is_marked(id), "classification must restore the barrier state");
+            assert!(arena.mark(id));
+        }
+        assert!(arena.is_marked(old[1]));
+        assert!(!arena.is_marked(survivor));
+        assert!(arena.mark(survivor));
+        assert_eq!(
+            arena.sweep(false, PromotionAge::Second, false, |_| {}),
+            (old.len() + 1, 1)
+        );
+        assert!(arena.is_live(survivor));
+        assert!(!arena.is_live(dead));
+        assert!(!arena.is_marked(survivor), "a newborn survivor stays young");
+        assert!(written.iter().all(|&id| arena.is_marked(id)));
+    }
 
     #[test]
     fn reserved_record_base_is_absent_until_reserved_and_then_stable() {

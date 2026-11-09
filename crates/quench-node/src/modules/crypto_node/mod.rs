@@ -68,7 +68,6 @@ pub(crate) struct Intrinsics {
 
 /// The native state behind one guest object.
 pub(crate) enum Native {
-    Hash(hash::Digesting),
     Cipher(Box<cipher::CipherState>),
     Signer(sign::Signer),
     Key(std::sync::Arc<keys::Key>),
@@ -565,8 +564,6 @@ const FUNCTIONS: &[(&str, &str, &str)] = &[
     ("createDiffieHellman", "cryptoCreateDiffieHellman", "createDiffieHellman"),
     ("createDiffieHellmanGroup", "cryptoCreateDiffieHellmanGroup", "createDiffieHellmanGroup"),
     ("createECDH", "cryptoCreateEcdh", "createECDH"),
-    ("createHash", "cryptoCreateHash", "createHash"),
-    ("createHmac", "cryptoCreateHmac", "createHmac"),
     ("createPrivateKey", "cryptoCreatePrivateKey", "createPrivateKey"),
     ("createPublicKey", "cryptoCreatePublicKey", "createPublicKey"),
     ("createSecretKey", "cryptoCreateSecretKey", "createSecretKey"),
@@ -605,12 +602,11 @@ const FUNCTIONS: &[(&str, &str, &str)] = &[
     ("getFips", "cryptoGetFips", "getFips"),
     ("setFips", "cryptoSetFips", "setFips"),
     ("verify", "cryptoVerifyOneShot", "verifyOneShot"),
-    ("hash", "cryptoHashOneShot", "hash"),
 ];
 
 /// The module's class members, by export name; the removed legacy `Cipher` and
 /// `Decipher` remain own members holding `undefined`.
-const CLASS_EXPORTS: [(&str, Option<Class>); 14] = [
+const CLASS_EXPORTS: &[(&str, Option<Class>)] = &[
     ("Certificate", Some(Class::Certificate)),
     ("Cipher", None),
     ("Cipheriv", Some(Class::Cipheriv)),
@@ -619,8 +615,6 @@ const CLASS_EXPORTS: [(&str, Option<Class>); 14] = [
     ("DiffieHellman", Some(Class::DiffieHellman)),
     ("DiffieHellmanGroup", Some(Class::DiffieHellmanGroup)),
     ("ECDH", Some(Class::Ecdh)),
-    ("Hash", Some(Class::Hash)),
-    ("Hmac", Some(Class::Hmac)),
     ("KeyObject", Some(Class::KeyObject)),
     ("Sign", Some(Class::Sign)),
     ("Verify", Some(Class::Verify)),
@@ -661,8 +655,9 @@ fn build(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     let transform = stream_class(c, "Transform")?;
     let writable = stream_class(c, "Writable")?;
     let mut built: Vec<(Class, RootId)> = Vec::new();
-    let lazy = hash::lazy_transform(c, transform)?;
-    built.extend(hash::build(c, lazy)?);
+    let lazy = crate::modules::crypto_lazy_transform::constructor(c, transform)?;
+    let (hash, hmac) = crate::modules::crypto_hash_source_shared_vm::install(c, module, lazy)?;
+    built.extend([(Class::Hash, hash), (Class::Hmac, hmac)]);
     built.extend(cipher::build(c, lazy)?);
     built.extend(sign::build(c, writable)?);
     built.extend(keys::build(c)?);
@@ -686,7 +681,7 @@ fn build(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
         put(c, module, name, function)?;
     }
     let util = crate::modules::util_shared_vm::module(c)?;
-    for (name, class_id) in CLASS_EXPORTS {
+    for &(name, class_id) in CLASS_EXPORTS {
         let mut constructor = match class_id {
             Some(class_id) => classes[class_id as usize],
             None => c.undefined(),
