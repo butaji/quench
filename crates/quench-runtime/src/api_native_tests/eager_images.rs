@@ -197,3 +197,17 @@ fn a_frozen_image_materializes_heap_string_constants_and_deopts_on_retirement() 
     assert_eq!(native.last_tier(), 1, "general tier after retirement");
     assert_eq!(runtime.native_execution_rejections(), 0);
 }
+
+#[cfg(feature = "aot")]
+#[test]
+fn functions_wider_than_the_stack_map_are_reported_and_fall_back() {
+    let locals = crate::compile::liveness::ROOT_MAP_REGISTERS as usize + 1;
+    let parameters = (0..locals).map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
+    let source = format!("function wide({parameters}) {{ return p0; }}\nwide(1);\n");
+    let program = Engine::specialize(&source, "wide-frame.js").unwrap();
+    let options = crate::NativeJsCodegenOptions {
+        backend: crate::NativeJsBackend::Cranelift, ..Default::default() };
+    let native = crate::NativeJsProgram::<TestHost>::compile_eager_with_options(program, options).unwrap();
+    assert!(native.publication_counts().wide_frame_functions >= 1,
+        "{:?}", native.publication_counts());
+}
