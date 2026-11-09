@@ -27,6 +27,7 @@ pub(super) fn lower_shortcut(
     function: &crate::bytecode::Function,
     register_offset: &dyn Fn(u16) -> Option<i32>,
     (arguments, payload): (ir::Value, ir::Value),
+    frame_locals: (ir::Value, ir::Value),
     exact: &JsExactFallback,
 ) -> Option<bool> {
     if lower_call(builder, (pc, instruction, next), function.strict, register_offset, (arguments, payload), exact) {
@@ -34,7 +35,7 @@ pub(super) fn lower_shortcut(
     }
     let next = next?;
     if super::general_capture::lower_capture(builder, (instruction, next), register_offset, (arguments, payload), exact)
-        || super::general_capture::lower_env_local(builder, (instruction, next), function, register_offset, (arguments, payload), exact)
+        || super::general_capture::lower_env_local(builder, (instruction, next), function, register_offset, (arguments, payload), frame_locals, exact)
         || super::general_capture::lower_closure(builder, (instruction, next), function, register_offset, (arguments, payload), exact) {
         return Some(true);
     }
