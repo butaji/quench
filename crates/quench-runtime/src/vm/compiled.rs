@@ -123,11 +123,7 @@ pub(super) use osr_loop::{
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
 
-#[derive(Clone, Copy)]
-pub(super) enum NumberRelationDomain {
-    Int32,
-    Float64,
-}
+pub(super) use crate::staged::Domain as NumberRelationDomain;
 
 /// The shared word written by a compiled region when it hands execution back to the lane.
 /// Region-specific metadata stays in the owning tier; this layout carries only the handoff
@@ -235,11 +231,11 @@ impl RegionExitBlocks {
 /// The domain selects its Cranelift condition codes; the operation mapping is shared.
 pub(super) fn emit_number_relation(
     builder: &mut FunctionBuilder<'_>,
-    operator: u32,
+    relation: super::operations::NumberRelation,
     left: ir::Value,
     right: ir::Value,
     domain: NumberRelationDomain,
-) -> Option<ir::Value> {
+) -> ir::Value {
     struct Emit<'a, 'f> {
         builder: &'a mut FunctionBuilder<'f>,
         domain: NumberRelationDomain,
@@ -311,13 +307,14 @@ pub(super) fn emit_number_relation(
         }
     }
 
-    Some(
-        crate::vm::operations::NumberRelation::from_operator(operator)?.apply(
-            &mut Emit { builder, domain },
-            left,
-            right,
-        ),
-    )
+    relation.apply(&mut Emit { builder, domain }, left, right)
+}
+
+/// A Number relation named by its operator, through the shared operator table.
+pub(super) fn emit_number_relation_operator(builder: &mut FunctionBuilder<'_>, operator: u32,
+    left: ir::Value, right: ir::Value, domain: NumberRelationDomain) -> Option<ir::Value> {
+    let relation = crate::vm::operations::NumberRelation::from_operator(operator)?;
+    Some(emit_number_relation(builder, relation, left, right, domain))
 }
 
 /// Native primitive view; callers retain operands for float fallback or exact-PC recovery.
@@ -378,6 +375,13 @@ pub(super) fn emit_number_arithmetic_operation(
     right: ir::Value,
 ) -> ir::Value {
     operation.apply(&mut EmitArithmetic::<false> { builder }, left, right)
+}
+
+/// `operation` of two int32 values: its wrapping result and its overflow flag.
+pub(super) fn emit_checked_int32_arithmetic(builder: &mut FunctionBuilder<'_>,
+    operation: super::operations::NumberArithmetic, left: ir::Value, right: ir::Value,
+) -> (ir::Value, ir::Value) {
+    operation.apply(&mut EmitArithmetic::<true> { builder }, left, right)
 }
 
 /// The shared Number remainder denotation, after the caller's Number guards.
@@ -3250,7 +3254,7 @@ pub(super) fn lower_js_general_dispatch(
                     }
                     builder.switch_to_block(number);
                     let [left, right] = [left, right].map(|bits| emit_js_tagged_number(&mut builder, bits, fallback));
-                    let holds = emit_number_relation(&mut builder, operator, left, right, NumberRelationDomain::Float64)
+                    let holds = emit_number_relation_operator(&mut builder, operator, left, right, NumberRelationDomain::Float64)
                         .expect("prevalidated JavaScript numeric relation");
                     let fails = builder.ins().icmp_imm_u(IntCC::Equal, holds, 0);
                     builder.ins().jump(join, &[ir::BlockArg::Value(fails)]);
@@ -3608,7 +3612,7 @@ pub(super) fn lower_js_general_dispatch(
             )
             .expect("prevalidated JS relation right operand");
             let right = emit_js_tagged_number(&mut builder, right_bits, fallback);
-            let holds = emit_number_relation(
+            let holds = emit_number_relation_operator(
                 &mut builder,
                 instruction.binary_operator(),
                 left,
@@ -6678,31 +6682,9 @@ struct JsStepDispatch {
     outcome: Option<JsNativeStep>,
 }
 
-/// The slots a lane body's field reads and its direct callees' bodies depend on, once each.
-/// Makes `code` retire when a fact a lane body's code took changes: a slot's type, or one
-/// of its Stable facts; `false` where a reader table is full.
-pub(super) fn subscribe_lane_dependencies(slots: &[crate::code_dependencies::SlotDependency],
-    stable: &lane_region::StableFacts, code: &Rc<dyn crate::code_dependencies::DependentCode>,
-    heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
-    slots.iter().all(|dependency| heap.subscribe_slot(*dependency, code))
-        && stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
-        && stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
-        && stable.globals.iter().all(|fact| crate::heap::subscribe_global_value(*fact, code))
-}
-
-fn lane_slot_dependencies(fields: &std::collections::BTreeMap<u16, Vec<NativeFieldLoad>>, direct: &[DirectCallee])
-    -> Vec<crate::code_dependencies::SlotDependency> {
-    let mut slot_dependencies: Vec<_> = fields.values().flatten()
-        .filter_map(|field| field.slot_dependency())
-        .chain(direct.iter().flat_map(|callee| callee.body.slot_dependencies.iter().copied()))
-        .collect();
-    slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
-    slot_dependencies.dedup();
-    slot_dependencies
-}
-
 pub(super) struct LaneMethod {
-    pub(super) slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
+    /// The slot observations and holder shapes its code relies on (`LaneDependencies`).
+    pub(super) dependencies: lane_compile::LaneDependencies,
     /// The Stable facts its code folded, each a dependency its publication takes.
     pub(super) stable: lane_region::StableFacts,
     /// The word its code reads at its invalidation points, set when it retires.
@@ -6773,6 +6755,9 @@ pub(super) enum LaneExit {
     Callee,
     /// The activation completes with `value`, by the `Return` or the returning call at `pc`.
     Returned { pc: usize, value: Value },
+    /// The entry's proof of its inputs failed before any instruction ran: the activation
+    /// resumes at its first record, and a plan again proves no input contract.
+    Entry,
 }
 
 /// The bit of a lane body's result word that marks a leave inside an inlined frame, whose
@@ -6780,6 +6765,8 @@ pub(super) enum LaneExit {
 const INLINED_EXIT: u64 = 1 << 63;
 /// The result word of a leave into a native call's callee activation.
 const CALLEE_EXIT: u64 = 1 << 62;
+/// The result word of a leave at the body's entry, whose proof of its inputs failed.
+const ENTRY_EXIT: u64 = 1 << 61;
 /// The status of a lane body whose activation completes: its result word holds the value,
 /// and `JsStepDispatch::returned_pc` the record that completes it (`LaneExit::Returned`). It
 /// sits below the general dispatch's return statuses and above every small status.
@@ -6806,13 +6793,18 @@ impl LaneExit {
     }
     #[cfg(test)]
     pub(super) fn caller_pc(self) -> Option<usize> {
-        match self { Self::At(pc) | Self::Returned { pc, .. } => Some(pc), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
+        match self { Self::At(pc) | Self::Returned { pc, .. } => Some(pc), Self::Entry => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
+    }
+    /// Where the activation resumes: an entry leave at its first record.
+    pub(super) fn resumed(self) -> Self {
+        if self == Self::Entry { Self::At(0) } else { self }
     }
     pub(super) fn word(self) -> u64 {
         match self {
             Self::At(pc) => pc as u64,
             Self::Inlined { frame, pc } => INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc),
             Self::Callee => CALLEE_EXIT,
+            Self::Entry => ENTRY_EXIT,
             Self::Returned { .. } | Self::Terminated => unreachable!("a completion is a status, not a leave word"),
         }
     }
@@ -6820,6 +6812,9 @@ impl LaneExit {
     fn decode(word: u64) -> Self {
         if word == CALLEE_EXIT {
             return Self::Callee;
+        }
+        if word == ENTRY_EXIT {
+            return Self::Entry;
         }
         if word & INLINED_EXIT == 0 {
             return Self::At(usize::try_from(word).unwrap_or(0));
@@ -7112,13 +7107,13 @@ impl<H: Host> Vm<H> {
     /// they take the VM's cached read, which answers them (`lane_region::field_probe`).
     fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize])
         -> std::collections::BTreeMap<u16, Vec<NativeFieldLoad>> {
-        let generic: Vec<u16> = generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
-            .map(|(site, _)| site).collect();
+        let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
+            .map(|(site, _)| site).collect(), self.heap.function_shapes());
         unit.instructions
             .iter()
             .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
             .filter(|(site, _)| !generic.contains(site))
-            .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }))
+            .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), ..load }).collect::<Vec<_>>()))
             .filter(|(_, shapes)| !shapes.is_empty())
             .collect()
     }
@@ -16024,7 +16019,7 @@ mod tests {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
         let method = vm.compile_lane_method(&program, function as u32,
             &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
-        assert!(!method.slot_dependencies.is_empty(), "the actual field read must subscribe");
+        assert!(!method.dependencies.slots.is_empty(), "the actual field read must subscribe");
         let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
         let active = published.lease().unwrap();
         let weak = Rc::downgrade(&active);
@@ -16098,7 +16093,7 @@ mod tests {
             let store = program.function(writer).instructions().find(|i| i.op() == Op::SetField).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
-            assert!(!method.slot_dependencies.is_empty());
+            assert!(!method.dependencies.slots.is_empty());
             let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
             let active = published.lease().unwrap();
             let atom = vm.intern_atom("receiver");

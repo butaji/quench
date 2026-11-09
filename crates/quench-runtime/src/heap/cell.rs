@@ -3094,13 +3094,13 @@ impl EnvironmentSlots {
         Some(std::mem::ManuallyDrop::new(Self(std::mem::ManuallyDrop::into_inner(slots))))
     }
 
-    /// Read through a live dense-storage cache, retaining the ordinary bounds/marker checks.
+    /// Read through a live dense-storage cache by `staged::environment::dense_capture`.
     /// # Safety
     /// `storage` is null or live as for `dense_storage`; no element is mutably borrowed.
     #[inline(always)]
-    pub(crate) unsafe fn read_storage(storage: *const usize, slot: usize) -> Option<Value> {
-        // SAFETY: as guaranteed by the caller, for this read only.
-        unsafe { Self::borrow_storage(storage) }?.dense_plain(slot)
+    pub(crate) unsafe fn read_storage(storage: *const usize, slot: u16) -> Option<Value> {
+        // SAFETY: as guaranteed by the caller; each slot is a `Value` (`repr(transparent)`).
+        unsafe { let (values, len) = Self::borrow_storage(storage)?.0.run(); crate::staged::environment::concrete_dense_capture(values.cast(), len, slot) }
     }
 
     /// Write through a cache whose caller has already admitted the store and taken its barrier.

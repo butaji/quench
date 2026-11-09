@@ -225,18 +225,17 @@ fn transfer(
             else if numeric { prove_number(types, operands); }
             Flow::To(instruction.jump_target() as usize)
         }
-        Op::Call if native_calls => {
-            for ty in types.iter_mut() {
-                *ty = ty.without_object_shape();
-            }
-            set(types, instruction.result_register(), Type::ANY);
-            Flow::Next
-        }
         _ => {
             for register in written(instruction) {
                 set(types, register, Type::ANY);
             }
             match op.control_flow_layout() {
+                // Any call, a construction's included (`Lowering::construct`): its result is
+                // written above, and no object keeps its shape past it.
+                ControlFlowLayout::Call if native_calls => {
+                    for ty in types.iter_mut() { *ty = ty.without_object_shape(); }
+                    Flow::Next
+                }
                 ControlFlowLayout::Fallthrough if matches!((op.is_named_field_access(), op), (true, _)
                     | (_, Op::Nop | Op::LoadThis | Op::LoadCapture | Op::GetIndex
                     | Op::SetIndex)) => Flow::Next,
@@ -386,6 +385,24 @@ mod tests {
                 assert_eq!(actual, expected, "{ty:?}, register {register}");
             }
         }
+    }
+
+    /// A construction continues where the region calls natively, as the lowering's does
+    /// (`Lowering::construct`): a loop that constructs carries its backedge's facts to its
+    /// header, instead of the analysis stopping at the construction.
+    #[test]
+    fn native_construction_continues_like_a_call() {
+        let program = crate::Engine::specialize(
+            "function make(C) { return new C(1); }", "construct.js").unwrap();
+        let function = program.function(1);
+        let construct = function.instructions().find(|instruction| instruction.op() == Op::Construct).unwrap();
+        let mut types = vec![Type::direct_object(7); usize::from(function.registers)];
+        assert!(matches!(transfer(&mut types, construct, &program.constants,
+            &super::super::lane_region::writes, true), Flow::Next));
+        assert_eq!(types[usize::from(construct.result_register())], Type::ANY);
+        assert!(types.iter().all(|ty| *ty == Type::ANY || *ty == Type::direct_object(7).without_object_shape()));
+        assert!(matches!(transfer(&mut types, construct, &program.constants,
+            &super::super::lane_region::writes, false), Flow::Leaves));
     }
 
     fn infer_inductive(body: &str, names: &[&str]) -> (Vec<Type>, Vec<Register>) {

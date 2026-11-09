@@ -23,15 +23,10 @@ impl Lowering<'_, '_> {
         let value = self.builder.append_block_param(join, types::I64);
         match dense {
             Some((values, len)) => {
-                let load = self.builder.create_block();
-                let in_bounds = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, len, i64::from(slot));
-                self.ins().brif(in_bounds, load, &[], slow, &[]);
-                self.builder.switch_to_block(load);
-                let offset = i32::from(slot) * std::mem::size_of::<Value>() as i32;
-                let read = self.ins().load(types::I64, MemFlagsData::trusted(), values, offset);
-                let tag = self.ins().band_imm_u(read, crate::value::ValueLayout::TAG_MASK as i64);
-                let ordinary = self.ins().icmp_imm_u(IntCC::NotEqual, tag, crate::value::ValueLayout::INTERNAL_TAG as i64);
-                self.ins().brif(ordinary, join, &[ir::BlockArg::Value(read)], slow, &[]);
+                let mut stage = Emit { builder: &mut self.builder, property_values: None };
+                let read = crate::staged::environment::dense_capture(&mut stage, values, len, slot, slow)
+                    .expect("the emit stage continues past its guards");
+                self.ins().jump(join, &[ir::BlockArg::Value(read)]);
             }
             None => { self.ins().jump(slow, &[]); }
         }

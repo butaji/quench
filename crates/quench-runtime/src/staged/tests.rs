@@ -1,7 +1,10 @@
 use super::*;
+use crate::bytecode::Operand;
 use crate::heap::{Cell, Heap, Object};
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use crate::Value;
+use crate::value::NarrowLayout;
+use super::object::decode_narrow;
 
 /// The storage forms an exact-shape object can take, by how the interpreter's object API
 /// (independent of `staged`) describes it.
@@ -72,6 +75,125 @@ fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_form(
     for form in [Observed::Packed, Observed::Arena, Observed::DisplacedInline, Observed::DisplacedArena] {
         assert!(forms.contains(&form), "the corpus covers {form:?}: {forms:?}");
     }
+}
+
+/// A concrete register frame: the interpreter keeps no facts about its registers. A heap
+/// value whose cell decides its truthiness reads the cell through `heap`, as the lane does.
+struct ConcreteFrame<'a> {
+    registers: Vec<u64>,
+    heap: Option<&'a Heap>,
+}
+
+impl Frame<Concrete> for ConcreteFrame<'_> {
+    type Fact = ();
+    type Control = Edge;
+
+    fn fact(&self, _register: Register) -> Self::Fact {}
+
+    fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
+        self.registers[usize::from(register)]
+    }
+
+    fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, _fact: Self::Fact) {
+        self.registers[usize::from(register)] = value;
+    }
+
+    /// The test frame's activation holds no `this`.
+    fn this(&mut self, _stage: &mut Concrete) -> u64 { Value::DELETED.to_bits() }
+
+    fn define_this(&mut self, _stage: &mut Concrete, destination: Register, this: u64) {
+        self.registers[usize::from(destination)] = this;
+    }
+
+    fn constant(&mut self, _stage: &mut Concrete, constant: Constant) -> (u64, Self::Fact) {
+        (constant.value.to_bits(), ())
+    }
+
+    fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> {
+        let value = Value::from_bits(self.read(stage, register));
+        value.truthiness().or_else(|| self.heap?.string(value).map(|text| !text.units().is_empty()))
+    }
+
+    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> Edge {
+        if condition { Edge::Target } else { Edge::Following }
+    }
+
+    fn jump(&mut self, _stage: &mut Concrete) -> Edge {
+        Edge::Target
+    }
+}
+
+impl NumericFrame<Concrete> for ConcreteFrame<'_> {
+    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
+        let register = operand.register_index().expect("a numeric operand is a register");
+        u64::from(Value::from_bits(self.read(stage, register)).as_int().expect("a proved int") as u32)
+    }
+    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
+        let register = operand.register_index().expect("a numeric operand is a register");
+        Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number").to_bits()
+    }
+    fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
+        Value::from_bits(self.read(stage, register)).as_number().map(|_| ())
+    }
+    fn miss(&self) {}
+    fn int_fact(&self) {}
+    fn number_fact(&self) {}
+}
+
+#[test]
+fn step_moves_and_defines_constants_on_the_concrete_stage() {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0; 4], heap: None };
+    let moved = Value::number(41.0);
+    frame.registers[1] = moved.to_bits();
+    let Step::Value(word) = step(&mut stage, &mut frame, Operation::Move { destination: 2, source: 1 })
+        else { panic!("a move produces a value") };
+    assert_eq!(Value::from_bits(word), moved);
+    assert_eq!(Value::from_bits(frame.registers[2]), moved);
+    let constant = Value::number(7.0);
+    let Step::Value(word) = step(&mut stage, &mut frame, Operation::LoadConst {
+        destination: 3, constant: Constant::untyped(constant) }) else { panic!("a constant produces a value") };
+    assert_eq!(Value::from_bits(word), constant);
+    assert_eq!(Value::from_bits(frame.registers[3]), constant);
+}
+
+/// The edge a `JumpIf` takes on the concrete stage for `value`.
+fn jump_if_edge(value: Value, taken: bool, heap: &Heap) -> Edge {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![value.to_bits()], heap: Some(heap) };
+    match step(&mut stage, &mut frame, Operation::JumpIf { register: 0, taken }) {
+        Step::Control(edge) => edge,
+        Step::Unresolved => panic!("{value:?} needs its cell, which the frame bound"),
+        Step::Value(_) => panic!("a jump produces no value"),
+    }
+}
+
+#[test]
+fn step_jumps_on_the_javascript_truthiness_of_every_value_kind() {
+    let mut heap = Heap::new();
+    let empty = heap.alloc_string("".into());
+    let text = heap.alloc_string("x".into());
+    let cases = [
+        (Value::number(1.0), Edge::Target),
+        (Value::number(-3.5), Edge::Target),
+        (Value::number(0.0), Edge::Following),
+        (Value::number(-0.0), Edge::Following),
+        (Value::number(f64::NAN), Edge::Following),
+        (Value::TRUE, Edge::Target),
+        (Value::FALSE, Edge::Following),
+        (Value::NULL, Edge::Following),
+        (Value::UNDEFINED, Edge::Following),
+        (empty, Edge::Following),
+        (text, Edge::Target),
+    ];
+    for (value, truthy_edge) in cases {
+        assert_eq!(jump_if_edge(value, true, &heap), truthy_edge, "JumpTrue {value:?}");
+        let falsy_edge = match truthy_edge { Edge::Target => Edge::Following, Edge::Following => Edge::Target };
+        assert_eq!(jump_if_edge(value, false, &heap), falsy_edge, "JumpFalse {value:?}");
+    }
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0], heap: None };
+    assert!(matches!(step(&mut stage, &mut frame, Operation::Jump), Step::Control(Edge::Target)));
 }
 
 #[test]
@@ -185,4 +307,49 @@ fn tiers_derive_opcode_meaning_from_the_interpreter() {
         assert!(count >= *limit, "{file} now names Op::{op} {count} times: lower its line in \
             staged/hand_semantics.txt to {count} (or drop it at 0)");
     }
+}
+
+#[test]
+fn staged_require_object_coercible_rejects_only_null_and_undefined() {
+    let coercible = |value: Value| {
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = ConcreteFrame { registers: vec![value.to_bits()], heap: None };
+        match step(&mut stage, &mut frame, Operation::RequireObjectCoercible { register: 0 }) {
+            Step::Value(word) => { assert_eq!(word, value.to_bits()); true }
+            Step::Unresolved => false,
+            Step::Control(_) => panic!("a coercibility test transfers no control"),
+        }
+    };
+    assert!(!coercible(Value::NULL));
+    assert!(!coercible(Value::UNDEFINED));
+    for value in [Value::TRUE, Value::FALSE, Value::number(0.0), Value::number(f64::NAN), Value::number(-0.0)] {
+        assert!(coercible(value), "{value:?}");
+    }
+}
+
+#[test]
+fn staged_to_numeric_copies_numbers_and_leaves_for_the_rest() {
+    let convert = |value: Value| {
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = ConcreteFrame { registers: vec![value.to_bits(), Value::UNDEFINED.to_bits()], heap: None };
+        match step(&mut stage, &mut frame, Operation::Number(NumberOperation::ToNumeric { destination: 1, source: 0 })) {
+            Step::Value(_) => Some(Value::from_bits(frame.registers[1])),
+            Step::Unresolved => { assert_eq!(frame.registers[1], Value::UNDEFINED.to_bits()); None }
+            Step::Control(_) => panic!("a conversion transfers no control"),
+        }
+    };
+    for value in [Value::number(1.5), Value::number(-0.0), Value::number(f64::NAN), Value::number(7.0)] {
+        assert_eq!(convert(value).map(Value::to_bits), Some(value.to_bits()), "{value:?}");
+    }
+    for value in [Value::NULL, Value::UNDEFINED, Value::TRUE] {
+        assert_eq!(convert(value), None, "{value:?}");
+    }
+}
+
+#[test]
+fn staged_load_this_leaves_where_the_activation_holds_no_this() {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![Value::NULL.to_bits()], heap: None };
+    assert!(matches!(step(&mut stage, &mut frame, Operation::LoadThis { destination: 0 }), Step::Unresolved));
+    assert_eq!(frame.registers[0], Value::NULL.to_bits(), "a load that left writes nothing");
 }

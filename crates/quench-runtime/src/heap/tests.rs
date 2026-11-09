@@ -1135,7 +1135,7 @@ fn dense_storage_reads_writes_and_native_views_share_the_owner_checks() {
     unsafe {
         assert_eq!(EnvironmentSlots::read_storage(storage, 0), Some(Value::UNDEFINED));
         assert_eq!(EnvironmentSlots::read_storage(storage, 1), None);
-        assert_eq!(EnvironmentSlots::read_storage(storage, slots.len()), None);
+        assert_eq!(EnvironmentSlots::read_storage(storage, slots.len() as u16), None);
         assert_eq!(EnvironmentSlots::read_storage(std::ptr::null(), 0), None);
         assert_eq!(EnvironmentSlots::write_storage(storage, 0, Value::integer(7)), Some(()));
         assert_eq!(EnvironmentSlots::write_storage(storage, 1, Value::integer(7)), None);

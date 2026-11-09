@@ -5858,7 +5858,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         } else {
             (self.float(left), self.float(right), super::NumberRelationDomain::Float64)
         };
-        super::emit_number_relation(&mut self.body.builder, operator, left, right, domain)
+        super::emit_number_relation_operator(&mut self.body.builder, operator, left, right, domain)
     }
 
     fn source(&self, operand: Operand) -> Option<Source> {
@@ -7134,7 +7134,7 @@ mod tests {
             Some(crate::heap::PlainPropertyStorage::PackedInline), None] {
             let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| vec![NativeFieldLoad { target_shape: None,
                 shape: 0, holder: None, slot: slot as u16, storage_len: region.fields.len(),
-                storage, ty: Type::ANY, inherited: None,
+                storage, ty: Type::ANY, inherited: None, function_shape: false,
             }]).collect();
             let widened = Default::default();
             let observation = Observation {

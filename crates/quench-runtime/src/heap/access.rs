@@ -7,6 +7,8 @@ use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 use std::collections::HashSet;
 
+mod subscribe; mod function_shapes;
+
 impl Heap {
     /// Return live JavaScript objects whose internal prototype chain contains `prototype`.
     /// The caller is responsible for collecting first when it needs only currently reachable
@@ -800,11 +802,6 @@ impl Heap {
     }
     /// Whether `slot` of `shape` already holds any target shape, so no store widens its target.
     pub(crate) fn slot_target_settled(&self, shape: u32, slot: usize) -> bool { self.properties.slot_target_settled(shape, slot) }
-
-    pub(crate) fn subscribe_slot(&mut self, dependency: crate::code_dependencies::SlotDependency,
-        code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
-        self.properties.subscribe_slot(dependency, code)
-    }
 
     pub(crate) fn subscribe_shape(&mut self, shape: u32,
         code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
