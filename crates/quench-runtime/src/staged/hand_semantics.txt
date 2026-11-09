@@ -103,7 +103,7 @@ vm/compiled/osr_loop.rs Binary 16
 vm/compiled/osr_loop.rs Call 3
 vm/compiled/osr_loop.rs CallArray 1
 vm/compiled/osr_loop.rs GetField 31
-vm/compiled/osr_loop.rs GetIndex 21
+vm/compiled/osr_loop.rs GetIndex 20
 vm/compiled/osr_loop.rs IncDec 9
 vm/compiled/osr_loop.rs Jump 7
 vm/compiled/osr_loop.rs JumpBinaryFalse 12
@@ -115,10 +115,10 @@ vm/compiled/osr_loop.rs LoadEnvLocal 7
 vm/compiled/osr_loop.rs Move 21
 vm/compiled/osr_loop.rs NumericAdd 13
 vm/compiled/osr_loop.rs NumericMultiply 13
-vm/compiled/osr_loop.rs RequireObjectCoercible 5
+vm/compiled/osr_loop.rs RequireObjectCoercible 4
 vm/compiled/osr_loop.rs Return 5
 vm/compiled/osr_loop.rs SetField 2
-vm/compiled/osr_loop.rs SetIndex 9
+vm/compiled/osr_loop.rs SetIndex 8
 vm/compiled/osr_loop.rs SetThisField 2
 vm/compiled/osr_loop.rs ToNumeric 8
 vm/compiled/osr_loop.rs Unary 15
