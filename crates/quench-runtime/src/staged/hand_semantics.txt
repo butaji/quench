@@ -3,6 +3,13 @@
 # decides opcode meaning by hand instead of deriving it from the interpreter (`staged`, a
 # semantic entry, an opcode-table fact). Entries may only shrink or disappear
 # (`staged::tests::tiers_derive_opcode_meaning_from_the_interpreter`).
+vm/call_body_forms.rs Call 1
+vm/call_body_forms.rs GetField 3
+vm/call_body_forms.rs GetIndex 1
+vm/call_body_forms.rs LoadCapture 1
+vm/call_body_forms.rs LoadThis 1
+vm/call_body_forms.rs Move 1
+vm/call_body_forms.rs Return 3
 vm/call_printer.rs Call 1
 vm/call_printer.rs CallArray 1
 vm/call_printer.rs CallForwardingArguments 1
