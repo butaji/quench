@@ -130,7 +130,13 @@ fn inlining_unit(region: &LoopRegion) -> Option<lane_unit::Unit> {
     let mut inserted: Vec<(usize, u32)> = (0..frames.len()).filter_map(|frame| {
         let at = origins.iter().position(|origin|
             matches!(origin, lane_unit::Origin::Inlined { frame: at, .. } if *at == frame))?;
-        Some((at, frames[frame].call))
+        // A failed identity guard must rerun the callee's read too: the region resolved it
+        // at compile time and dropped it, so resume where its setup begins.
+        let call = match at.checked_sub(1).and_then(|before| origins.get(before)).copied() {
+            Some(lane_unit::Origin::Caller(resume)) => resume,
+            _ => frames[frame].call,
+        };
+        Some((at, call))
     }).collect();
     inserted.sort_unstable_by_key(|(at, _)| *at);
     inserted.dedup_by_key(|(at, _)| *at);
