@@ -219,14 +219,27 @@ fn a_narrow_decode_inverts_every_narrow_encoding() {
     }
 }
 
+/// The interpreter's u32 reading of a prototype link (`ProtoLink::object_record_id`) names
+/// the record the staged rule names, at and around every range boundary.
+#[test]
+fn a_prototype_link_names_the_object_record_the_staged_rule_names() {
+    use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+    let edges = [0, OBJECT.proto_record_base, OBJECT.proto_record_end, OBJECT.proto_mask];
+    for link in edges.iter().flat_map(|edge| [edge.wrapping_sub(1), *edge, edge + 1]).filter(|link| *link <= OBJECT.proto_mask) {
+        let staged = super::object::proto_object_record_id(&mut Concrete::new(std::ptr::null()), u64::from(link), ());
+        let interpreter = crate::heap::ProtoLink::from_bits(link).object_record_id();
+        assert_eq!(interpreter.map(u64::from), staged, "link {link:#x}");
+    }
+}
+
 /// Hand-written decodes of the object and narrow layouts outside `staged`, per native-tier
 /// file: each is a second home of a rule `staged` owns (AGENTS.md, manifesto 4). The counts
 /// only go down; a new decode belongs in `staged` as an operation every tier runs.
 const LAYOUT_DECODES: &[(&str, &str, usize)] = &[
-    ("vm/compiled.rs", include_str!("../vm/compiled.rs"), 9),
-    ("vm/compiled/lane_region.rs", include_str!("../vm/compiled/lane_region.rs"), 5),
-    ("vm/compiled/osr_loop.rs", include_str!("../vm/compiled/osr_loop.rs"), 1),
-    ("vm/compiled/object_slots.rs", include_str!("../vm/compiled/object_slots.rs"), 2),
+    ("vm/compiled.rs", include_str!("../vm/compiled.rs"), 0),
+    ("vm/compiled/lane_region.rs", include_str!("../vm/compiled/lane_region.rs"), 0),
+    ("vm/compiled/osr_loop.rs", include_str!("../vm/compiled/osr_loop.rs"), 0),
+    ("vm/compiled/object_slots.rs", include_str!("../vm/compiled/object_slots.rs"), 0),
     ("vm/js_compiled.rs", include_str!("../vm/js_compiled.rs"), 0),
     ("vm/dispatch_fast.rs", include_str!("../vm/dispatch_fast.rs"), 0),
 ];
@@ -239,6 +252,8 @@ const LAYOUT_TOKENS: &[&str] = &[
     "storage_start_mask",
     "NarrowLayout::INTEGER_FLAG",
     "NarrowLayout::CODE_SHIFT",
+    "proto_mask",
+    "proto_record_base",
 ];
 
 #[test]

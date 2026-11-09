@@ -27,7 +27,7 @@ fn lane_dependencies_retire_at_holder_departures_only() {
         let (storage, values) = heap.initial_object_storage(1, &[Value::integer(1)], false);
         let object = heap.alloc_object(Object::with_property_storage(Value::NULL, storage, values));
         let dependencies = LaneDependencies {
-            slots: vec![SlotDependency { shape: 1, slot: 0, ty: Type::INT32, target_shape: None }],
+            slots: vec![SlotDependency { shape: 1, slot: 0, ty: Type::INT32 }],
             departure_shapes: if holder { vec![1] } else { Vec::new() },
         };
         let code: Rc<dyn DependentCode> = Rc::new(PublishedCode::new(()));

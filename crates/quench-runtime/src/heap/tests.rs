@@ -1570,7 +1570,7 @@ fn shape_departures_retire_readers_through_each_storage_path() {
             let (storage, values) = heap.initial_object_storage(1, &[Value::integer(1)], inline);
             let object = heap.alloc_object(Object::with_property_storage(Value::NULL, storage, values));
             let reader: Rc<dyn DependentCode> = Rc::new(Reader(std::cell::Cell::new(true)));
-            assert!(heap.subscribe_slot(SlotDependency { shape: 1, slot: 0, ty: Type::INT32, target_shape: None }, &reader));
+            assert!(heap.subscribe_slot(SlotDependency { shape: 1, slot: 0, ty: Type::INT32 }, &reader));
             let unrelated: Rc<dyn DependentCode> = Rc::new(Reader(std::cell::Cell::new(true)));
             assert!(heap.properties.subscribe_shape(2, &unrelated));
             // No departure: a repeated shape and storage descriptor preserve the
@@ -1614,7 +1614,7 @@ fn named_property_publication_retires_readers_for_every_record_family() {
             heap.track_slot_representations(&[(0, None), (1, None)]);
             heap.alloc_object_with_properties(Value::NULL, 1, &[Value::integer(1)]);
             let reader: Rc<dyn DependentCode> = Rc::new(Reader(std::cell::Cell::new(true)));
-            assert!(heap.subscribe_slot(SlotDependency { shape: 1, slot: 0, ty: Type::INT32, target_shape: None }, &reader));
+            assert!(heap.subscribe_slot(SlotDependency { shape: 1, slot: 0, ty: Type::INT32 }, &reader));
             // Construct storage without publishing it: the publication boundary
             // must admit its contents, regardless of the allocator's fast path.
             let value = Value::number(0.5);
@@ -1654,61 +1654,6 @@ fn named_property_publication_retires_readers_for_every_record_family() {
             assert_eq!(heap.slot_type(1, 0), Type::NUMBER, "census includes {family:?}");
         }
     }
-}
-
-#[test]
-fn linked_target_observations_retire_on_mutation_and_raw_admission() {
-    use crate::code_dependencies::{DependentCode, PublishedCode, SlotDependency};
-    #[derive(Clone, Copy, Debug)]
-    enum Change { TargetShape, LinkWrite, RawAdmission }
-    for change in [Change::TargetShape, Change::LinkWrite, Change::RawAdmission] {
-        for inline in [false, true] {
-            let mut heap = Heap::new();
-            let layouts = [(0, None), (1, None), (0, None), (0, None)];
-            heap.track_slot_representations(&layouts);
-            let target = heap.alloc_object_with_properties(Value::NULL, 2, &[]);
-            let (storage, values) = heap.initial_object_storage(1, &[Value::NULL], inline);
-            let owner = heap.alloc_object(Object::with_property_storage(Value::NULL, storage, values));
-            heap.property_set(owner, 0, target);
-            assert_eq!(heap.slot_target_shape(1, 0), Some(2));
-            heap.property_set(owner, 0, Value::NULL);
-            heap.property_set(owner, 0, target);
-            assert_eq!(heap.slot_target_shape(1, 0), Some(2));
-            // Census reconstructs observations from actual contents.
-            heap.track_slot_representations(&layouts);
-            assert_eq!(heap.slot_target_shape(1, 0), Some(2));
-            let reader: Rc<dyn DependentCode> = Rc::new(PublishedCode::new(()));
-            assert!(heap.subscribe_slot(SlotDependency {
-                shape: 1, slot: 0, ty: heap.slot_type(1, 0), target_shape: Some(2),
-            }, &reader));
-            match change {
-                Change::TargetShape => heap.set_object_shape(target, 3),
-                Change::LinkWrite => {
-                    let different = heap.alloc_object_with_properties(Value::NULL, 3, &[]);
-                    // Same coarse object family, different pointee: decline before storing.
-                    let record = owner.direct_object_index().unwrap();
-                    assert!(!unsafe { heap.record_property_set_flat::<true>(record, 0, different, PropertyStoreLayout::PreserveNative) });
-                    assert_eq!(heap.property_get(heap.object(owner).unwrap(), 0), Some(target));
-                    assert!(unsafe { heap.record_property_set_flat::<true>(record, 0, different, PropertyStoreLayout::PreserveNative) });
-                }
-                Change::RawAdmission => {
-                    assert!(!heap.admit_slot_writes(1, 0, crate::typed_ir::Type::DIRECT_OBJECT_FAMILY));
-                    assert!(heap.admit_slot_writes(1, 0, crate::typed_ir::Type::DIRECT_OBJECT_FAMILY));
-                }
-            }
-            assert_eq!(heap.slot_target_shape(1, 0), None, "{change:?}, inline={inline}");
-            assert!(!reader.is_published(), "{change:?}, inline={inline}");
-        }
-    }
-}
-
-#[test]
-fn linked_target_self_reference_is_observed_before_mutable_access() {
-    let mut heap = Heap::new();
-    heap.track_slot_representations(&[(0, None), (1, None)]);
-    let object = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::NULL]);
-    heap.property_set(object, 0, object);
-    assert_eq!(heap.slot_target_shape(1, 0), Some(1));
 }
 
 #[test]

@@ -4978,8 +4978,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             record,
             (array_layout.object_offset + object_layout.payload_offset) as i32,
         );
-        let tag = self.body.builder.ins().band_imm_u(payload, object_layout.extras_tag_mask as i64);
-        let extras = self.body.builder.ins().icmp_imm_u(IntCC::Equal, tag, object_layout.extras_tag as i64);
+        let extras = crate::staged::object::has_extras(&mut super::object_slots::emit(&mut self.body.builder), payload);
         self.guard(pc, extras);
         Some(ArrayView { identity: value.value, elements, entry_index: None, access: ArrayAccess::InBounds { length } })
     }
@@ -7096,7 +7095,7 @@ mod tests {
         assert_eq!(region.fields.len(), 2);
         for storage in [Some(crate::heap::PlainPropertyStorage::Arena),
             Some(crate::heap::PlainPropertyStorage::PackedInline), None] {
-            let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| vec![NativeFieldLoad { target_shape: None,
+            let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| vec![NativeFieldLoad {
                 shape: 0, holder: None, slot: slot as u16, storage_len: region.fields.len(),
                 storage, ty: Type::ANY, inherited: None, function_shape: false,
             }]).collect();

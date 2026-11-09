@@ -24,11 +24,9 @@ impl ValueArena {
 
     /// The slot owner `dependency` now describes, or `None` where its observation changed.
     fn admits_slot_dependency(&self, dependency: SlotDependency) -> Option<u32> {
-        let SlotDependency { shape, slot, ty, target_shape } = dependency;
+        let SlotDependency { shape, slot, ty } = dependency;
         let slot = usize::from(slot);
-        (self.tracking && slot < self.shape_length(shape)
-            && self.slot_observation(shape, slot).ty() == ty
-            && target_shape.is_none_or(|target| self.slot_target_shape(shape, slot) == Some(target)))
+        (self.tracking && slot < self.shape_length(shape) && self.slot_observation(shape, slot).ty() == ty)
             .then(|| self.slot_owner(shape, slot))
     }
 }
