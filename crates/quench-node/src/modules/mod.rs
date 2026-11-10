@@ -18,6 +18,7 @@ pub(crate) mod blob_shared_vm;
 pub(crate) mod buffer_binding_shared_vm;
 pub(crate) mod buffer_codec;
 pub(crate) mod buffer_module;
+pub(crate) mod buffer_predicates;
 pub(crate) mod buffer_shared_vm;
 pub(crate) mod primordials_shared_vm;
 pub(crate) mod cares_binding;
