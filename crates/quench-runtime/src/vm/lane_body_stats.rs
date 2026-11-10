@@ -123,7 +123,6 @@ miss_reasons! {
     CallReturningNotAdmitted => "call:returning-not-admitted",
     CallReceiver => "call:receiver",
     CallEntryNotActivation => "call:entry-not-activation",
-    CallTooManyArgs => "call:too-many-args",
     CallNoActivationRoom => "call:no-activation-room",
     CallReadAnswer => "call:read-answer",
     ConstructShadowActive => "construct:shadow-active",

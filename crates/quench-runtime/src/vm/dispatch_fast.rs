@@ -15283,7 +15283,7 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     if lane_constructing(vm, callee) { return lane_body_stats::miss(lane_body_stats::Miss::CallConstructing); }
     if vm.with_scope_entered { return lane_body_stats::miss(lane_body_stats::Miss::CallWithScope); }
     if returns && !lane_returning_call_admitted(cx) { return lane_body_stats::miss(lane_body_stats::Miss::CallReturningNotAdmitted); }
-    let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else {
+    let Some(target) = lane_body_call_target(cx, vm, callee, &i.call_link) else {
         return native_calls::lane_body_native_call(cx, r, i, callee);
     };
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
@@ -15292,13 +15292,13 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else { return lane_body_stats::miss(lane_body_stats::Miss::CallReceiver) };
     // SAFETY: as `lane_call_read`.
     if target.entry.answered_by_read() { return unsafe { lane_body_read_call(cx, ip, target, argc, this) }; }
-    // Any other entry than a plain activation (a frame, kept arguments) takes the lane's call.
-    if !target.entry.activates() { return lane_body_stats::miss(lane_body_stats::Miss::CallEntryNotActivation); }
-    if argc > target.params.min(FIXED_ARGUMENT_COPIES) { return lane_body_stats::miss(lane_body_stats::Miss::CallTooManyArgs); }
-    if !lane_activation_room(vm, target) { return lane_body_stats::miss(lane_body_stats::Miss::CallNoActivationRoom); }
+    let Some(how) = lane_call_activation(target, argc, ImmediateLayout::call_window_base(i.imm())) else {
+        return lane_body_stats::miss(lane_body_stats::Miss::CallEntryNotActivation);
+    };
+    if matches!(how, LaneActivation::Plain) && !lane_activation_room(vm, target) { return lane_body_stats::miss(lane_body_stats::Miss::CallNoActivationRoom); }
     // SAFETY: the record's window of `r` holds its values.
     let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
-    lane_body_activate(cx, r, ip, target, passed, argc, this, false)
+    lane_body_activate(cx, r, ip, target, passed, argc, this, false, how)
 }
 
 /// `lane_body_call` of a target whose body is a read: the read's hit completes it, as the
@@ -15375,7 +15375,74 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     }
     // SAFETY: a construction passes its arguments from register `c` on.
     let passed = unsafe { r.0.add(usize::from(i.c)).cast_const() };
-    lane_body_activate(cx, r, ip, &target, passed, argc, this, true)
+    lane_body_activate(cx, r, ip, &target, passed, argc, this, true, LaneActivation::Plain)
+}
+
+/// The target a lane body's call of `callee` activates: the site's linked entry, else the one
+/// the lane's call resolves for a script function of the running program
+/// (`lane_script_call_resolve`: `Vm::resolve_script_call_target`), which links the site.
+fn lane_body_call_target<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, callee: Value, link: &std::cell::Cell<u16>) -> Option<*const ScriptCallTarget> {
+    vm.linked_script_call_entry(callee, link).or_else(|| {
+        if matches!(vm.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::Native(_), .. })) || vm.cross_call_entry(callee).is_some() {
+            return None;
+        }
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let resolved = vm.resolve_script_call_target(code, callee)?;
+        if resolved.program != vm.active_program { return None; }
+        vm.linked_script_call_entry(callee, link)
+    })
+}
+
+/// How the lane activates a call of `target` passed `argc` values from `window`: its registers
+/// alone, as `lane_activate`; by the keeping form where it keeps or gathers values or is passed
+/// more than it has parameters; by the environment form. A frame or a settling entry takes the
+/// lane's own call, which is `None`.
+fn lane_call_activation(target: &ScriptCallTarget, argc: u16, window: u16) -> Option<LaneActivation> {
+    match target.entry {
+        entry if entry.activates() && argc <= target.params.min(FIXED_ARGUMENT_COPIES) => Some(LaneActivation::Plain),
+        entry if entry.activates() || target.forwards() => Some(LaneActivation::Keeping(window)),
+        CallEntry::Environment => Some(LaneActivation::Environment),
+        _ => None,
+    }
+}
+
+/// How a lane body's call activates its target: its window copied (`lane_push_passed`), or
+/// by the lane's keeping form for the call window at the register (`lane_activate_keeping`).
+#[derive(Clone, Copy)]
+enum LaneActivation {
+    Plain,
+    Keeping(u16),
+    /// A target whose window holds its environment and locals (`lane_activate_environment`).
+    Environment,
+}
+
+/// The activation a lane body's call makes of `target` (`how`), its registers; the helper's
+/// miss where the lane's keeping or environment form routes the call to the general path.
+#[allow(clippy::too_many_arguments)]
+fn lane_body_push<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    passed: *const Value,
+    argc: u16,
+    this: Value,
+    constructs: bool,
+    how: LaneActivation,
+) -> Result<Registers, u64> {
+    let refused = || lane_body_stats::miss(lane_body_stats::Miss::CallNoActivationRoom);
+    Ok(match how {
+        LaneActivation::Plain => lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, constructs).0,
+        // The activation the lane's own call makes where values are kept or gathered.
+        LaneActivation::Keeping(window) => lane_activate_keeping::<H, false>(
+            cx, r, ip, target, ActivationArguments::Window(window), this, constructs, None).map_err(|_| refused())?.0,
+        LaneActivation::Environment => {
+            // SAFETY: the call's window is registers of the running function.
+            let window = unsafe { lane_call_window(r, &*ip) };
+            lane_activate_environment(cx, r, ip, target, window, this).map_err(|_| refused())?.0
+        }
+    })
 }
 
 /// The activation of `target` a lane body's call (`constructs`: `new`) at `ip` makes, its
@@ -15392,14 +15459,14 @@ fn lane_body_activate<H: Host>(
     argc: u16,
     this: Value,
     constructs: bool,
+    how: LaneActivation,
 ) -> u64 {
     use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_TERMINATED};
     let vm = unsafe { vm(cx) };
-    let (registers, _) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, constructs);
+    let registers = match lane_body_push(cx, r, ip, target, passed, argc, this, constructs, how) { Ok(registers) => registers, Err(miss) => return miss };
     // A leave resumes at a record of the callee's view, never at its tier prologue, which
     // lies outside its records: a loop region's `Callee` exit (`lane_loop_native`) leaves the
     // lane there and needs its PC. `lane_specialize` below takes the prologue's warming step.
-    // SAFETY: the push made the context the callee's.
     let start = unsafe { (*cx).base };
     let leave = move |resume: Ip, acc: Value| {
         unsafe { (*cx).callee_resume = resume; (*cx).callee_acc = acc; }
