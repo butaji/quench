@@ -192,15 +192,7 @@ fn a_lane_body_calls_in_place_natives_and_matches_the_interpreter() {
       for (let call = 0; call < 3000; call++) total = (total + mix(call)) | 0;
       print(total);
     "#;
-    let run = |mode: crate::ExecutionMode, lane_methods: bool| {
-        let program = Engine::specialize(&format!("(function(){{{source}}})();"), "lane-body-natives.js").unwrap();
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        vm.set_execution_mode(mode);
-        if lane_methods { vm.programs.enable_js_lane_methods(); }
-        vm.execute(&program).unwrap();
-        output.take()
-    };
+    let run = |mode, lane_methods| printed(source, "lane-body-natives.js", mode, lane_methods);
     let interpreted = run(crate::ExecutionMode::Interpreted, false);
     assert_eq!(interpreted.len(), 1);
     assert_eq!(run(crate::ExecutionMode::Compiled, true), interpreted);
@@ -228,16 +220,57 @@ fn an_inlined_math_imul_matches_the_interpreter_across_arguments_and_replacement
       for (let call = 0; call < 3000; call++) total = (total + fold(call)) | 0;
       print(total);
     "#;
-    let run = |mode: crate::ExecutionMode, lane_methods: bool| {
-        let program = Engine::specialize(&format!("(function(){{{source}}})();"), "lane-body-imul.js").unwrap();
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        vm.set_execution_mode(mode);
-        if lane_methods { vm.programs.enable_js_lane_methods(); }
-        vm.execute(&program).unwrap();
-        output.take()
-    };
+    let run = |mode, lane_methods| printed(source, "lane-body-imul.js", mode, lane_methods);
     let interpreted = run(crate::ExecutionMode::Interpreted, false);
     assert_eq!(interpreted.len(), 1);
     assert_eq!(run(crate::ExecutionMode::Compiled, true), interpreted);
+}
+
+/// Each Math function a body runs inline (`native_calls::Inline`) gives the native's value
+/// for Numbers at its edges, and leaves any other argument or count to the native.
+#[test]
+fn inlined_math_functions_match_the_interpreter_at_their_edges() {
+    let source = r#"
+      const xs = [0, -0, 1.5, -1.5, 2.5, -2.5, 0.49999999999999994, 2147483647.75, -2147483648.25, 1e300, -1e300,
+        NaN, Infinity, -Infinity, 4, 16777217];
+      let hash = 0;
+      function sweep() {
+        let h = hash;
+        for (let i = 0; i < xs.length; i++) {
+          const x = xs[i], y = xs[(i * 7 + 3) % xs.length];
+          for (let op = 0; op < 11; op++) {
+            let v;
+            if (op === 0) v = Math.floor(x); else if (op === 1) v = Math.ceil(x); else if (op === 2) v = Math.trunc(x);
+            else if (op === 3) v = Math.abs(x); else if (op === 4) v = Math.sqrt(x); else if (op === 5) v = Math.fround(x);
+            else if (op === 6) v = Math.max(x, y); else if (op === 7) v = Math.min(x, y); else if (op === 8) v = Math.max(x);
+            else if (op === 9) v = Math.min(y, x); else v = Math.max(y, x);
+            const part = v > 1e9 ? 1 : v < -1e9 ? 2 : v !== v ? 3 : (v * 1024) | 0;
+            h = (Math.imul(h, 31) + part + (1 / v > 0 ? 5 : 9)) | 0;
+          }
+        }
+        hash = h;
+      }
+      for (let call = 0; call < 2500; call++) sweep();
+      print(hash);
+      // Arguments that are no Numbers, and other counts, are the native's.
+      xs.push("9", undefined, null, true, { valueOf() { return -3.5; } });
+      for (let call = 0; call < 300; call++) sweep();
+      print(hash, Math.max(), Math.min(), Math.floor(), Math.max(1, 2, 3));
+    "#;
+    let run = |mode, lane_methods| printed(source, "lane-body-math.js", mode, lane_methods);
+    let interpreted = run(crate::ExecutionMode::Interpreted, false);
+    assert_eq!(interpreted.len(), 2);
+    assert_eq!(run(crate::ExecutionMode::Compiled, true), interpreted);
+}
+
+/// What `source`, wrapped in a function, prints when run in `mode`, with lane bodies where
+/// `lane_methods`.
+fn printed(source: &str, name: &str, mode: crate::ExecutionMode, lane_methods: bool) -> Vec<String> {
+    let program = Engine::specialize(&format!("(function(){{{source}}})();"), name).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(mode);
+    if lane_methods { vm.programs.enable_js_lane_methods(); }
+    vm.execute(&program).unwrap();
+    output.take()
 }
