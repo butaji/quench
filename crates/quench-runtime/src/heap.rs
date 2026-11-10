@@ -2569,6 +2569,7 @@ impl Heap {
                 }
                 array.needs_drop()
             };
+            self.array_records.warm_before_drop(records::sweep_support::warm_array_elements);
             let (array_live, array_freed) = self.array_records.sweep_disposing(full, age, true, dispose, |record| match record {
                 RecordSweep::Keep(record_id, array) => {
                     if full {

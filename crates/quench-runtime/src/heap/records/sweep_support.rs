@@ -1,5 +1,6 @@
 //! What a sweep does beside freeing: warming what its drops will free, and checking its result.
 
+use crate::heap::ArrayObject;
 use super::{BLOCK_WORDS, OCCUPANCY_WORD_BITS, RECORDS_PER_BLOCK, RecordId, RecordSpace};
 
 impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
@@ -56,4 +57,18 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             }
         }
     }
+}
+
+/// Starts loading the element backing a dead array's drop will free (`RecordSpace::warm`): a
+/// hint, so it may name the shared empty backing or a young run.
+#[inline(always)]
+pub(in crate::heap) fn warm_array_elements(array: &ArrayObject) {
+    let address = array.elements().as_ptr();
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: a prefetch hint reads nothing and never faults.
+    unsafe {
+        core::arch::x86_64::_mm_prefetch::<{ core::arch::x86_64::_MM_HINT_T0 }>(address.cast());
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = address;
 }
