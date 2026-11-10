@@ -83,12 +83,14 @@ impl<H: Host> Vm<H> {
         immediate || value.as_number().is_some() || self.heap.is_string(value)
     }
 
-    /// `UNARY_TO_STRING_PRIMITIVE` of `value`: itself where ToString of it runs no guest code
-    /// and raises nothing, else that ToString, made now.
-    pub(super) fn string_primitive(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
+    /// `UNARY_TO_STRING_PRIMITIVE` (or, for a `+` chain's operand, `UNARY_ADD_OPERAND_STRING`:
+    /// the same, the object's ToPrimitive taken with the default hint) of `value`: itself
+    /// where ToString of it runs no guest code and raises nothing, else that ToString, made now.
+    pub(super) fn string_primitive(&mut self, p: &ResidualProgram, operator: u32, value: Value) -> Result<Value, JsError> {
         if self.converts_to_string_purely(value) {
             return Ok(value);
         }
+        let value = if operator == crate::bytecode::UNARY_ADD_OPERAND_STRING { self.to_primitive(p, value, "default")? } else { value };
         let text = self.coerce_js_string(p, value)?;
         Ok(self.heap.alloc_string(text))
     }
