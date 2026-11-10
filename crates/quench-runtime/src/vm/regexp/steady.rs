@@ -25,20 +25,35 @@ impl<H: Host> Vm<H> {
         if native == Native::RegExpTest && self.regexp_builtin_exec_matcher(receiver).is_none() {
             return None;
         }
-        // A search the prefilter excludes fails as the matcher's would: `null` from exec and
-        // `false` from test, and a global or sticky regexp's `lastIndex` reset through the
-        // slot `regexp_match_from` stores through.
+        let exec = native == Native::RegExpExec;
+        Some(self.steady_regexp_search(p, receiver, subject, exec, (slot, last_index, prefilter), result_used))
+    }
+
+    /// `steady_regexp_call`'s search once its state is read: a search the prefilter excludes
+    /// fails as the matcher's would (`null` from exec, `false` from test, a global or sticky
+    /// regexp's `lastIndex` reset through its slot); `test` with the builtin exec is that
+    /// exec whose result array never escapes.
+    fn steady_regexp_search(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        subject: Value,
+        exec: bool,
+        (slot, last_index, prefilter): (usize, Value, Prefilter),
+        result_used: bool,
+    ) -> Result<Value, JsError> {
         if let Prefilter::Excludes { stateful } = prefilter {
             if stateful {
                 self.heap.property_set(receiver, slot, Value::number(0.0));
             }
-            return Some(Ok(if native == Native::RegExpExec { Value::NULL } else { Value::FALSE }));
+            return Ok(if exec { Value::NULL } else { Value::FALSE });
         }
-        // `test` with the builtin exec is that exec whose result array never escapes.
-        let exec = native == Native::RegExpExec;
+        if let Some(result) = self.steady_exec_ascii(receiver, subject, exec, (slot, last_index), result_used) {
+            return result;
+        }
         let steady = SteadyMatch { slot, prefiltered: prefilter == Prefilter::Admits, captures: result_used && exec };
         let result = self.regexp_steady_exec(p, receiver, subject, last_index, steady);
-        Some(if exec { result } else { result.map(|result| Value::boolean(!result.is_null())) })
+        if exec { result } else { result.map(|result| Value::boolean(!result.is_null())) }
     }
 
     /// `String.prototype.match(regexp)` of a string under `steady_string_replace`'s proofs
@@ -179,6 +194,9 @@ impl<H: Host> Vm<H> {
         let (matcher, flags) = self.steady_symbol_matcher(this, search, WellKnownSymbol::Replace, Native::RegExpSymbolReplace)?;
         let input = self.heap.string(this)?.clone();
         let template = self.heap.string(replacement)?.clone();
+        if let Some(replaced) = self.replace_ascii_input(p, search, this, &input, &template, &matcher, flags, result_used) {
+            return Some(replaced);
+        }
         Some(self.with_call_roots([this, search, replacement], |vm| {
             vm.regexp_symbol_replace_fast(
                 p,
@@ -191,6 +209,150 @@ impl<H: Host> Vm<H> {
                 result_used,
             )
         }))
+    }
+
+    /// `regexp_search`'s search of an input already flat ASCII, in place, with no prepared
+    /// subject to make and drop: the matcher reads its bytes (`Regex::find_ascii`). The outer
+    /// `None` leaves the search to the prepared subject.
+    pub(super) fn regexp_search_ascii(
+        regex: &quench_regexp::Regex,
+        input: &JsString,
+        start: usize,
+        sticky: bool,
+        steady: Option<SteadyMatch>,
+    ) -> Option<Option<quench_regexp::Match>> {
+        let Some(crate::vm::wtf16::Units::Ascii(bytes)) = input.existing_flat().map(|flat| flat.view()) else {
+            return None;
+        };
+        if steady.is_some_and(|steady| !steady.captures) {
+            return regex.find_range_ascii(bytes, start, sticky).map(|found| found.map(quench_regexp::Match::native));
+        }
+        regex.find_ascii(bytes, start, sticky, true)
+    }
+
+    /// `steady_string_replace` of a flat ASCII subject by a flat ASCII template with no `$`:
+    /// GetSubstitution returns the template, so the match ranges are all the replacement
+    /// reads. `None` leaves any other call, or a pattern with no compiled matcher over
+    /// bytes, to the general route (`regexp_replace_with_literal`).
+    #[allow(clippy::too_many_arguments)]
+    fn replace_ascii_input(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        this: Value,
+        input: &JsString,
+        template: &JsString,
+        matcher: &Rc<quench_regexp::Regex>,
+        flags: RegExpFlags,
+        result_used: bool,
+    ) -> Option<Result<Value, JsError>> {
+        use crate::vm::wtf16::Units::Ascii;
+        let (Some(Ascii(bytes)), Some(Ascii(literal))) =
+            (input.existing_flat().map(|flat| flat.view()), template.existing_flat().map(|flat| flat.view()))
+        else {
+            return None;
+        };
+        if flags.contains(RegExpFlags::STICKY) || literal.contains(&b'$') {
+            return None;
+        }
+        let global = flags.contains(RegExpFlags::GLOBAL);
+        let ranges = ascii_match_ranges(matcher, bytes, global)?;
+        // The exec loop of a global replace starts from lastIndex 0 and leaves it 0.
+        if global && let Err(error) = self.store_regexp_last_index(p, receiver, Value::number(0.0)) {
+            return Some(Err(error));
+        }
+        Some(self.ascii_replace_result(p, receiver, this, input, matcher, (bytes, literal), &ranges, result_used))
+    }
+
+    /// The result of a replace of `ranges` of `input`'s bytes by `literal` (`replace_ascii_input`),
+    /// after its effect on the RegExp legacy statics: the subject itself where nothing matched.
+    #[allow(clippy::too_many_arguments)]
+    fn ascii_replace_result(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        this: Value,
+        input: &JsString,
+        matcher: &Rc<quench_regexp::Regex>,
+        (bytes, literal): (&[u8], &[u8]),
+        ranges: &[Range<usize>],
+        result_used: bool,
+    ) -> Result<Value, JsError> {
+        let Some(last) = ranges.last() else {
+            return Ok(if result_used { this } else { Value::UNDEFINED });
+        };
+        self.record_regexp_legacy_pending(receiver, input.clone(), matcher, last.start)?;
+        let length = ranges
+            .iter()
+            .try_fold(bytes.len(), |length, range| (length - range.len()).checked_add(literal.len()))
+            .filter(|length| *length <= super::wtf16::MAX_STRING_UNITS);
+        let Some(length) = length else {
+            return Err(self.range_error(p, "Invalid string length".into()));
+        };
+        if !result_used {
+            return Ok(Value::UNDEFINED);
+        }
+        Ok(self.heap.alloc_string(ascii_replaced(bytes, literal, ranges, length)))
+    }
+
+    /// `regexp_steady_exec` of a flat ASCII subject, matched in place from its bytes: no
+    /// string coercion, no `lastIndex` conversion (it is the Number `regexp_steady_state`
+    /// read) and no second look at the regexp. A failed match is `null` (`false` for `test`)
+    /// with a stateful regexp's `lastIndex` reset through its slot; a match stores the new
+    /// one and builds the result as `regexp_steady_exec` does. `None` leaves the call to
+    /// `regexp_steady_exec`: another subject, or a pattern with no matcher over bytes.
+    fn steady_exec_ascii(
+        &mut self,
+        receiver: Value,
+        subject: Value,
+        exec: bool,
+        (slot, last_index): (usize, Value),
+        result_used: bool,
+    ) -> Option<Result<Value, JsError>> {
+        let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
+            return None;
+        };
+        let (regex, flags) = (Rc::clone(meta.matcher.0.get()?), meta.flags);
+        let input = self.heap.string(subject)?.clone();
+        let Some(crate::vm::wtf16::Units::Ascii(bytes)) = input.existing_flat().map(|flat| flat.view()) else {
+            return None;
+        };
+        let stateful = flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
+        let start = if stateful { regexp_to_length(last_index.as_number()?) } else { 0 };
+        let captures = result_used && exec;
+        let found = regex.find_ascii(bytes, start, flags.contains(RegExpFlags::STICKY), captures)?;
+        Some(self.steady_ascii_outcome(receiver, subject, input, &regex, found, (exec, stateful, slot), captures))
+    }
+
+    /// The outcome of `steady_exec_ascii`'s match `found`, with `lastIndex` stored through
+    /// its slot where the regexp is stateful.
+    #[allow(clippy::too_many_arguments)]
+    fn steady_ascii_outcome(
+        &mut self,
+        receiver: Value,
+        subject: Value,
+        input: JsString,
+        regex: &Rc<quench_regexp::Regex>,
+        found: Option<quench_regexp::Match>,
+        (exec, stateful, slot): (bool, bool, usize),
+        captures: bool,
+    ) -> Result<Value, JsError> {
+        let Some(matched) = found else {
+            if stateful {
+                self.heap.property_set(receiver, slot, Value::number(0.0));
+            }
+            return Ok(if exec { Value::NULL } else { Value::FALSE });
+        };
+        if stateful {
+            self.heap.property_set(receiver, slot, Value::number(matched.range.end as f64));
+        }
+        if captures {
+            return self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched));
+        }
+        // Nothing reads the result: only the legacy statics remain, found again from the
+        // match's start if read.
+        self.record_regexp_legacy_pending(receiver, input, regex, matched.range.start)?;
+        Ok(if exec { Value::UNDEFINED } else { Value::TRUE })
     }
 
     /// `regexp_builtin_exec` of `steady_regexp_call`'s case: a string subject, whose
@@ -283,4 +445,35 @@ pub(super) struct SteadyMatch {
     pub(super) slot: usize,
     pub(super) prefiltered: bool,
     pub(super) captures: bool,
+}
+
+/// The ranges of the matches of `bytes` a replace reads: the first, or each of a global
+/// search (an empty match advances it by one unit, a whole code point in ASCII). `None`
+/// where the pattern has no compiled matcher over bytes.
+fn ascii_match_ranges(matcher: &quench_regexp::Regex, bytes: &[u8], global: bool) -> Option<smallvec::SmallVec<[Range<usize>; 8]>> {
+    let mut ranges = smallvec::SmallVec::new();
+    let mut next = matcher.find_range_ascii(bytes, 0, false)?;
+    while let Some(range) = next {
+        let resume = if range.is_empty() { range.end + 1 } else { range.end };
+        ranges.push(range);
+        if !global {
+            break;
+        }
+        next = matcher.find_range_ascii(bytes, resume, false).flatten();
+    }
+    Some(ranges)
+}
+
+/// `bytes` with each of `ranges` replaced by `literal`, written once into storage of its
+/// total `length`.
+fn ascii_replaced(bytes: &[u8], literal: &[u8], ranges: &[Range<usize>], length: usize) -> JsString {
+    let mut parts: smallvec::SmallVec<[&[u8]; 17]> = smallvec::SmallVec::new();
+    let mut copied = 0;
+    for range in ranges {
+        parts.push(&bytes[copied..range.start]);
+        parts.push(literal);
+        copied = range.end;
+    }
+    parts.push(&bytes[copied..]);
+    JsString::from_ascii_parts(length, parts.into_iter())
 }
