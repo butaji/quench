@@ -216,8 +216,10 @@ impl WasmModuleCompile {
     /// without the time bound, compiles it at 300 mappings too). JetStream 3 --jit, eager
     /// (one round) / this (median of 3): argon2 55.9 / 51.5, gcc-loops 78.0 / 68.3, quicksort
     /// 106.6 / 88.8, tsf 28.0 / 29.3, zlib 35.6 / 33.0 (Linux x86_64, 4 vCPU, 2026-10-27).
-    pub(super) const ADAPTIVE: Self =
-        Self { work: 4096, after: std::time::Duration::from_millis(20) };
+    pub(super) const ADAPTIVE: Self = Self {
+        work: TIERS.wasm.module_work,
+        after: std::time::Duration::from_millis(TIERS.wasm.module_after_millis),
+    };
     /// Never compile whole: hot roots only (`QUENCH_DEV=wasm-selective`, for A/B runs).
     const NEVER: Self = Self { work: u32::MAX, after: std::time::Duration::MAX };
     /// Compile at the first entry, as eager compilation does: a conformance run that
@@ -229,10 +231,6 @@ impl WasmModuleCompile {
     }
 }
 
-/// How often, in work, a selective module reads the clock for `WasmModuleCompile::after`:
-/// often enough that a 20 ms bound lands within a few interpreted calls, rarely enough that
-/// the clock stays off an interpreted call's path.
-const WASM_JIT_MODULE_CLOCK_INTERVAL: u32 = 16;
 const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
 /// The eager artifacts of Wasm modules together. A module's eager artifact is all of its code
 /// at once, compiled before its first call: held to the shared ceiling, a module larger than

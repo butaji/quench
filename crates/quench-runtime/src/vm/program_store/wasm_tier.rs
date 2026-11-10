@@ -139,7 +139,7 @@ impl WasmModule {
         let before = self.work();
         self.tier.apply(Event::Entry { favourable: false }, &TIERS);
         let work = self.work();
-        let clocked = work / super::WASM_JIT_MODULE_CLOCK_INTERVAL != before / super::WASM_JIT_MODULE_CLOCK_INTERVAL
+        let clocked = work / TIERS.wasm.module_clock_interval != before / TIERS.wasm.module_clock_interval
             && policy.due(0, first.elapsed());
         let due = clocked || policy.due(work, std::time::Duration::ZERO);
         if due {

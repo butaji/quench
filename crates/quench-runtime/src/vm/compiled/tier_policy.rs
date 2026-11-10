@@ -115,6 +115,16 @@ pub(in crate::vm) struct Wasm {
     /// 16 ms and lost 13% of its JetStream Score waiting; source-map's module, 12,971, takes
     /// 67 ms, which its one short parse never repays.
     pub(in crate::vm) eager_module_bytecodes: usize,
+    /// The work (`WasmModule::note_work`) at which a module running under `--jit` compiles
+    /// whole (`WasmModuleCompile::ADAPTIVE`).
+    pub(in crate::vm) module_work: u32,
+    /// The milliseconds after a module's first work at which its next entry compiles it
+    /// whole, for a module whose work the counts undersell.
+    pub(in crate::vm) module_after_millis: u64,
+    /// How often, in work, a selective module reads the clock for `module_after_millis`:
+    /// often enough that the bound lands within a few interpreted calls, rarely enough that
+    /// the clock stays off an interpreted call's path.
+    pub(in crate::vm) module_clock_interval: u32,
 }
 
 /// The distinct cases (shapes, callees, targets) a site's feedback keeps before it widens to
@@ -141,7 +151,7 @@ const FLOOR: Tiers = Tiers {
     loops: Loops { threshold: 2, ..MEASURED.loops },
     lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
-    wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
+    wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX, ..MEASURED.wasm },
 };
 
 const MEASURED: Tiers = Tiers {
@@ -162,7 +172,14 @@ const MEASURED: Tiers = Tiers {
         general_saved_share: (1, 4),
         general_entry_overhead: 32,
     },
-    wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
+    wasm: Wasm {
+        promotion_entries: 32,
+        backedges_per_entry: 1024,
+        eager_module_bytecodes: 4096,
+        module_work: 4096,
+        module_after_millis: 20,
+        module_clock_interval: 16,
+    },
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)
