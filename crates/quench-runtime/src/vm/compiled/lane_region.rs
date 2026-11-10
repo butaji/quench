@@ -1950,6 +1950,31 @@ impl Lowering<'_, '_> {
         })
     }
 
+    /// The ToInt32 of a sum or difference only `| 0` reads: int32 operands wrap, any other
+    /// Numbers take ToInt32 of their double result, and both join as an int32. Only a value
+    /// that is no Number, or a result past exact truncation, leaves at `exit`.
+    fn truncated_sum(&mut self, state: &mut State, arithmetic: super::operations::NumberArithmetic,
+        (left, right): (Operand, Operand), exit: ir::Block) -> Option<ir::Value> {
+        let float = self.builder.create_block();
+        self.builder.set_cold_block(float);
+        let mut float_state = state.clone();
+        let left_int = self.operand_int(state, left, float)?;
+        let right_int = self.operand_int(state, right, float)?;
+        let wrapped = arithmetic.apply(&mut EmitWord32Arithmetic { builder: &mut self.builder }, left_int, right_int);
+        let join = self.builder.create_block();
+        let int = self.builder.append_block_param(join, types::I32);
+        self.ins().jump(join, &[ir::BlockArg::Value(wrapped)]);
+        self.builder.switch_to_block(float);
+        let left_number = self.operand_number(&mut float_state, left, exit)?;
+        let right_number = self.operand_number(&mut float_state, right, exit)?;
+        let number = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left_number, right_number);
+        let truncated = self.number_to_int32(number, exit);
+        self.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
+        self.builder.switch_to_block(join);
+        self.join_states(state, &float_state);
+        Some(int)
+    }
+
     /// Whether only the result's ToInt32 is read of `register`, written at `pc`: the next
     /// instruction is its one reader, a bitwise operator, which applies ToInt32 to its operands.
     /// A sum's or difference's wrapping int32 result then serves for int32 operands, and
@@ -4902,12 +4927,9 @@ impl Lowering<'_, '_> {
             && self.blocks[pc + 1].is_none()
             && (next.result_register() == destination || !self.is_live(pc + 2, destination))
         {
-            // No source edge or observer can see the intermediate Number.
-            // A failed input proof resumes before the arithmetic, and the
-            // consumer cannot fail once these signed-int32 inputs are proved.
-            let left = self.operand_int(state, left, exit)?;
-            let right = self.operand_int(state, right, exit)?;
-            let bits = arithmetic.apply(&mut EmitWord32Arithmetic { builder: &mut self.builder }, left, right);
+            // No source edge or observer can see the intermediate Number: the pair is the
+            // sum's ToInt32 (`truncated_sum`).
+            let bits = self.truncated_sum(state, arithmetic, (left, right), exit)?;
             self.set_int(state, next.result_register(), bits);
             self.consumed.insert(pc + 1);
             return Some(true);
@@ -4959,29 +4981,7 @@ impl Lowering<'_, '_> {
                     self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 } else if arithmetic.int32_projection_is_wrapping()
                     && self.truncated(pc, destination) {
-                    // Only its ToInt32 is read: int32 operands wrap, any other numbers take
-                    // ToInt32 of their double result, and both join as an int32.
-                    let float = self.builder.create_block();
-                    self.builder.set_cold_block(float);
-                    let mut float_state = state.clone();
-                    let left_int = self.operand_int(state, left, float).expect("supported operand");
-                    let right_int = self.operand_int(state, right, float).expect("supported operand");
-                    let wrapped = if arithmetic == super::operations::NumberArithmetic::Add {
-                        self.ins().iadd(left_int, right_int)
-                    } else {
-                        self.ins().isub(left_int, right_int)
-                    };
-                    let join = self.builder.create_block();
-                    let int = self.builder.append_block_param(join, types::I32);
-                    self.ins().jump(join, &[ir::BlockArg::Value(wrapped)]);
-                    self.builder.switch_to_block(float);
-                    let left_number = self.operand_number(&mut float_state, left, exit)?;
-                    let right_number = self.operand_number(&mut float_state, right, exit)?;
-                    let number = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left_number, right_number);
-                    let truncated = self.number_to_int32(number, exit);
-                    self.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
-                    self.builder.switch_to_block(join);
-                    self.join_states(state, &float_state);
+                    let int = self.truncated_sum(state, arithmetic, (left, right), exit)?;
                     self.set_int(state, destination, int);
                 } else {
                     let float = self.builder.create_block();
