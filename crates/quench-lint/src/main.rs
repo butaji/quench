@@ -4,7 +4,8 @@
 //! tests a guest program's own names (`guest_names`) or recognizes a function by its bytecode
 //! shape (`fingerprints`), when a body spells an unnamed number
 //! (`magic`), when data is laid out against data-oriented design (`data_layout`), or when
-//! code tests a function's address for identity (`fn_identity`).
+//! code tests a function's address for identity (`fn_identity`), or when a tier's state is
+//! built or assigned outside its transition module (`tier_state`).
 //!
 //! usage: quench-lint [--update] [ROOT...]   (default: crates quench-bench/src tools)
 
@@ -17,6 +18,7 @@ mod guest_names;
 mod hot_path;
 mod magic;
 mod shape;
+mod tier_state;
 
 use std::{
     fs,
@@ -88,7 +90,7 @@ fn main() -> ExitCode {
     };
     // A guest-name test has no allowance: `oversized.txt` cannot grandfather one.
     let recorded: shape::Measures = shape::parse(&fs::read_to_string(OVERSIZED).unwrap_or_default())
-        .into_iter().filter(|(subject, _)| !subject.starts_with(guest_names::MEASURE)).collect();
+        .into_iter().filter(|(subject, _)| ![guest_names::MEASURE, tier_state::MEASURE].iter().any(|measure| subject.starts_with(measure))).collect();
     let shrunk: shape::Measures = recorded
         .iter()
         .filter_map(|(subject, limit)| Some((subject.clone(), (*oversized.get(subject)?).min(*limit))))

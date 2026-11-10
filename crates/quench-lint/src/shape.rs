@@ -70,6 +70,7 @@ impl Functions<'_> {
         }
         if !self.test {
             crate::guest_names::scan(&subject, body, self.measures);
+            crate::tier_state::scan(&subject, body, self.measures);
             crate::fingerprints::scan(&subject, body, self.measures);
             crate::magic::scan(&subject, body, self.measures);
             self.trees.scan(&subject, body);
@@ -169,6 +170,8 @@ pub fn render(measures: &Measures) -> String {
 fn remedy(subject: &str) -> &'static str {
     if subject.starts_with("guest-name ") {
         "no special case for one program: derive the behavior from semantics, never from a guest name"
+    } else if subject.starts_with("tier-state ") {
+        "a tier's state changes only in `Tier::transition`: send it an event, never build or assign a state"
     } else if subject.starts_with("dod-bool-array ") {
         "flags belong in a bitset: one bit per flag, scanned a word at a time"
     } else if subject.starts_with("dod-dense-hash ") {
