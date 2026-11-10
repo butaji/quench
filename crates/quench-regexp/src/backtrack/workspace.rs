@@ -1,5 +1,5 @@
 //! The registers and stack a search runs in, shared by every program on a thread.
-use super::{Frame, Found, Inst, Program, Search, Text, UnitTest, UNBOUNDED, UNSET};
+use super::{ascii_table, AsciiTable, Frame, Found, Inst, MatchSet, ASCII_UNITS, Program, Search, Text, UnitTest, UNBOUNDED, UNSET};
 use std::cell::Cell;
 use std::ops::Range;
 
@@ -92,6 +92,11 @@ impl Program {
     /// search runs in one workspace, taken once; a literal or class-run pattern needs none.
 
     pub(crate) fn find_all_bounds<T: Text + ?Sized>(&self, text: &T, first: usize, mut found: impl FnMut(Range<usize>)) {
+        if let (Some(run), Some(bytes)) = (self.class_run.as_deref(), text.bytes()) {
+            if bytes.len() < SHORT_RUN_SUBJECT {
+                return run.each_run(bytes, first, found);
+            }
+        }
         let mut workspace = ((self.literal_length.is_none() && !self.is_class_run()) || text.bytes().is_none()).then(take_workspace);
         let mut at = first;
         loop {
@@ -111,14 +116,32 @@ impl Program {
     }
 }
 
-/// The unit test of a program that is one greedy repeat of a unit, at least once and with no
-/// maximum, and nothing else (`\\s+`): an ASCII subject's match is the run of such units from
-/// where the search finds the first (`Program::class_run_found`), with no run of the program.
-pub(super) fn class_run_of(instructions: &[Inst], capture_count: usize) -> Option<UnitTest> {
-    match instructions {
-        [Inst::UnitRepeat { test, min: 1, max: UNBOUNDED, greedy: true }, Inst::Match] if capture_count == 0 => Some(*test),
-        _ => None,
+/// A program that is one greedy repeat of a unit, at least once and with no maximum, and
+/// nothing else (`\\s+`): an ASCII subject's matches are its maximal runs of such units
+/// (`Program::class_run_found`, `Program::class_runs`), with no run of the program.
+pub(super) struct ClassRun {
+    test: UnitTest,
+    /// The ASCII units that pass `test`, for a scan of a short subject.
+    table: AsciiTable,
+}
+
+/// The subjects shorter than this are scanned for runs unit by unit, in one pass: the block
+/// scan's set-up costs more than the table test of this many units.
+const SHORT_RUN_SUBJECT: usize = 64;
+
+pub(super) fn class_run_of(instructions: &[Inst], sets: &[MatchSet], capture_count: usize) -> Option<Box<ClassRun>> {
+    let [Inst::UnitRepeat { test, min: 1, max: UNBOUNDED, greedy: true }, Inst::Match] = instructions else {
+        return None;
+    };
+    if capture_count != 0 {
+        return None;
     }
+    let passes = |unit: u32| match *test {
+        UnitTest::Exact(expected) => unit == expected,
+        UnitTest::Set(set) => sets[set as usize].contains(unit),
+    };
+    let mask = (0..ASCII_UNITS).fold(0u128, |mask, unit| mask | u128::from(passes(unit)) << unit);
+    Some(Box::new(ClassRun { test: *test, table: ascii_table(mask) }))
 }
 
 impl Program {
@@ -127,7 +150,7 @@ impl Program {
     /// `None` where the pattern or subject is another kind, or the start scan was wrong.
     #[inline(always)]
     pub(super) fn class_run_found<T: Text + ?Sized>(&self, text: &T, first: usize, sticky: bool) -> Option<Option<Found>> {
-        let (test, Some(_)) = (self.class_run?, text.bytes()) else {
+        let (test, Some(_)) = (self.class_run.as_deref()?.test, text.bytes()) else {
             return None;
         };
         let last = if sticky { first } else { text.len() };
@@ -136,5 +159,19 @@ impl Program {
         };
         let end = self.run_end(test, text, start, text.len());
         (end > start).then(|| Some(Found { start, end, captures: Vec::new() }))
+    }
+}
+
+impl ClassRun {
+    /// The maximal runs of passing units of `bytes` from `first`, in order, in one pass.
+    fn each_run(&self, bytes: &[u8], first: usize, mut found: impl FnMut(Range<usize>)) {
+        let passes = |unit: &u8| self.table.contains(*unit);
+        let mut at = first;
+        while let Some(skipped) = bytes[at..].iter().position(passes) {
+            let start = at + skipped;
+            let end = bytes[start..].iter().position(|unit| !passes(unit)).map_or(bytes.len(), |taken| start + taken);
+            found(start..end);
+            at = end;
+        }
     }
 }
