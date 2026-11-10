@@ -73,6 +73,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let symbol = self.well_known_symbols.get(symbol)?;
+        if let Some(proven) = self.steady_symbol_matcher_proven(search, symbol, native) {
+            return proven;
+        }
         let method = self.regexp_proven_symbol_method(search, symbol)?;
         match self.heap.function(method) {
             Some(FunctionRecord { kind: FunctionKind::Native(found), realm, .. })
@@ -80,6 +83,79 @@ impl<H: Host> Vm<H> {
             _ => return None,
         }
         self.regexp_builtin_receiver_matcher(search)
+    }
+
+    /// `steady_symbol_matcher` where both of its proofs are recorded for the receiver's and
+    /// the prototype's shapes: `Some(None)` where a recorded proof's value no longer holds (the
+    /// method or `exec` was replaced), `None` where a proof is not recorded yet, which the
+    /// general route records.
+    #[inline(always)]
+    fn steady_symbol_matcher_proven(
+        &mut self,
+        search: Value,
+        symbol: Value,
+        native: Native,
+    ) -> Option<Option<(Rc<quench_regexp::Regex>, RegExpFlags)>> {
+        let Some(Cell::RegExp { object, meta }) = self.heap.get(search) else {
+            return None;
+        };
+        let (flags, proto, receiver_shape) = (meta.flags, object.proto(), object.shape());
+        let global = flags.contains(RegExpFlags::GLOBAL);
+        if !global && flags.contains(RegExpFlags::STICKY) {
+            return None;
+        }
+        if !self.steady_layouts_proven(proto, receiver_shape, symbol, native)? {
+            return Some(None);
+        }
+        if !global && self.regexp_last_index_value(search).and_then(|(_, value)| value.as_number()).is_none() {
+            return Some(None);
+        }
+        let Some(Cell::RegExp { meta, .. }) = self.heap.get(search) else {
+            return Some(None);
+        };
+        Some(Self::regexp_matcher(meta).ok().map(|matcher| (matcher, flags)))
+    }
+
+    /// Whether the method for `symbol` and `exec` of a RegExp of `receiver_shape` and prototype
+    /// `proto` are the builtins': one flag read while the prototype-values watch the layout
+    /// holds is published, else both slots read, which restarts the watch. `None` where a shape
+    /// proof is not recorded.
+    fn steady_layouts_proven(&mut self, proto: Value, receiver_shape: u32, symbol: Value, native: Native) -> Option<bool> {
+        let realm = self.realm.globals;
+        let prototype = self.object_data(proto)?;
+        let prototype_shape = prototype.shape();
+        let position = self.regexp_symbol_layouts.iter().position(|layout| {
+            layout.symbol == symbol && layout.realm == realm && layout.prototype_object == proto
+                && layout.receiver == receiver_shape && layout.prototype == prototype_shape
+        })?;
+        let layout = &self.regexp_symbol_layouts[position];
+        if layout.steady.as_ref().is_some_and(|watch| watch.is_published()) {
+            return Some(true);
+        }
+        let method_slot = layout.slot as usize;
+        let exec_slot = self.regexp_builtin_layouts.iter().find(|layout| {
+            layout.realm == realm && layout.prototype_object == proto
+                && layout.receiver == receiver_shape && layout.prototype == prototype_shape
+        })?.exec_slot as usize;
+        let proven = self.builtin_values_at(proto, method_slot, exec_slot, native)?;
+        if proven {
+            self.regexp_symbol_layouts[position].steady = crate::heap::watch_prototype_values(prototype_shape);
+        }
+        Some(proven)
+    }
+
+    /// Whether the prototype `proto`'s values at `method_slot` and `exec_slot` are `native` of
+    /// this realm and the builtin `exec`.
+    fn builtin_values_at(&mut self, proto: Value, method_slot: usize, exec_slot: usize, native: Native) -> Option<bool> {
+        let prototype = self.object_data(proto)?;
+        let method = self.heap.property_get(prototype, method_slot)?;
+        let exec = self.heap.property_get(prototype, exec_slot)?;
+        let realm = self.realm.globals;
+        let method_is_builtin = matches!(
+            self.heap.function(method),
+            Some(FunctionRecord { kind: FunctionKind::Native(found), realm: owner, .. }) if *found == native && *owner == realm
+        );
+        Some(method_is_builtin && self.is_native_function(exec, Native::RegExpExec))
     }
 
     /// `String.prototype.replace(regexp, string)` when the call runs no guest code, so it

@@ -208,7 +208,6 @@ pub(super) struct RegExpBuiltinLayout {
 /// A RegExp receiver shape and `RegExp.prototype` shape that together prove `symbol` absent
 /// from the receiver and an own data property of the prototype at `slot`. Shapes hold
 /// attributes, so the proof holds while both match; the slot's value is reread.
-#[derive(Clone, Copy)]
 pub(super) struct RegExpSymbolLayout {
     /// The realm whose `RegExp.prototype` (`prototype_object`) the proof was made for.
     realm: Value,
@@ -217,6 +216,8 @@ pub(super) struct RegExpSymbolLayout {
     receiver: u32,
     prototype: u32,
     slot: u32,
+    /// Published while the method and `exec` read at these shapes are the builtins' (`steady_layouts_proven`).
+    steady: Option<crate::heap::PrototypeValueWatch>,
 }
 
 /// The receiver shapes a program's RegExps commonly share, each proven once: a literal's,
@@ -778,7 +779,7 @@ impl<H: Host> Vm<H> {
                 symbol,
                 receiver: receiver_shape,
                 prototype: prototype_shape,
-                slot: slot as u32,
+                slot: slot as u32, steady: None,
             },
         );
         self.heap.property_get(self.object_data(prototype)?, slot)
