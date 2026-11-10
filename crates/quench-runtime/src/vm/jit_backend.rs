@@ -14,7 +14,6 @@ use std::sync::{Mutex, OnceLock};
 
 #[cfg(any(feature = "jit", feature = "aot"))]
 mod select;
-mod thread;
 mod worker;
 pub(super) use worker::{Pending, run_in_background};
 
@@ -216,7 +215,6 @@ pub(super) fn compile_function<T>(
     ) -> Result<T, NativeCompileRejection>,
 ) -> Result<T, NativeCompileRejection> {
     select::convert(&mut function);
-    if std::env::var_os("QUENCH_NO_THREAD").is_none() { thread::thread_jumps(&mut function); }
     let mut context = COMPILE_CONTEXT.with(|held| held.take()).unwrap_or_else(cranelift_codegen::Context::new);
     let instructions = function.dfg.num_insts();
     context.clear();
