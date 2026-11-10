@@ -746,7 +746,6 @@ complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_frame_construct 1
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_entry 19
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_run 30
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_push_frame_call 14
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_super_construction 16
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_tier_enter 11
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::other_handler 61
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_capture_updates 11
@@ -3032,7 +3031,6 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_frame_constru
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_frame_state 63
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_getter_activation 54
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_in_place 41
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_initialize_fields 47
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlined_activation 41
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlining_region 57
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_literal_value 49
@@ -3050,7 +3048,6 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_resume_genera
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_from 47
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_script_frame 68
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_site_targets 48
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_super_construction 71
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_tier_enter 47
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::leaf_call_tests::leaf_bodies_take_the_leaf_entry_and_others_activate 47
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::other_handler 67
@@ -4176,7 +4173,6 @@ hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::empty_frame 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::iteration_environment 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::push_wasm_frame 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::push_wasm_frame_with_registers 1
-hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::rest_parameter_array 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::run_general_loop 27
 hot-alloc crates/quench-runtime/src/vm/dispatch_wasm.rs::Vm<H>::step_wasm 1
 hot-alloc crates/quench-runtime/src/vm/environment.rs::Vm<H>::name_not_defined 1

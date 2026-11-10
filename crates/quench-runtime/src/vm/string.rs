@@ -657,14 +657,14 @@ impl<H: Host> Vm<H> {
             let input = vm.coerce_js_string(p, this)?;
             let limit = vm.regexp_split_limit(p, limit)?;
             let separator_string = vm.coerce_js_string(p, separator)?;
-            // The parts go straight into the array's backing, with no intermediate list.
-            let mut values = crate::heap::ArrayElements::new();
-            let parts = values.make_mut();
+            // Gathered first (`SplitParts`), so the array's backing is made once at its length.
+            let mut parts = super::wtf16::split::SplitParts::<Value>::new();
             if separator.is_undefined() {
                 if limit != 0 { parts.push(vm.heap.alloc_string(input)); }
             } else {
                 input.split_runs(separator_string.units(), limit, |run| parts.push(vm.heap.alloc_unit_run(run)));
             }
+            let values = crate::heap::ArrayElements::from_slice(&parts);
             Ok(vm.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(vm.array_proto),

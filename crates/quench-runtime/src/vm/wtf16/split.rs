@@ -1,6 +1,13 @@
 //! `String.prototype.split`'s cuts of a string's units.
 use super::*;
 
+/// The parts a split makes that are held without an allocation while they are gathered:
+/// most splits (a path, a key, a short record) make no more.
+const SPLIT_INLINE_PARTS: usize = 8;
+
+/// A split's parts in order, gathered before their array is made.
+pub(crate) type SplitParts<T> = smallvec::SmallVec<[T; SPLIT_INLINE_PARTS]>;
+
 impl JsString {
     /// The runs `String.prototype.split` cuts this string into at `separator`, at most
     /// `limit` of them, handed to `part` in order: each unit alone for an empty separator.
