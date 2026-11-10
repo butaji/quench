@@ -11,6 +11,9 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
     /// The property arena's value base (`Table::PropertyValues`), where the operation
     /// addresses a run; a read through a proved layout already holds its address.
     pub(in crate::vm::compiled) property_values: Option<ir::Value>,
+    /// The helper a Number remainder calls (`LaneHelper::NumberRemainder`), where the
+    /// stage lowers lane code; a stage that cannot meet one never sees the operation.
+    pub(in crate::vm::compiled) remainder: Option<ir::Value>,
 }
 
 impl Stage for Emit<'_, '_> {
@@ -120,7 +123,10 @@ impl NumericStage for Emit<'_, '_> {
         emit_checked_int32_arithmetic(self.builder, operation, left, right)
     }
     fn float_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
-        emit_number_remainder(self.builder, types::I64, left, right)
+        match self.remainder {
+            Some(target) => emit_number_remainder(self.builder, target, left, right),
+            None => unreachable!("a Number remainder runs only in the lane lowering, which binds its helper"),
+        }
     }
     fn int_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
         self.builder.ins().srem(left, right)
@@ -182,7 +188,7 @@ mod tests {
         builder.switch_to_block(entry);
         let [record, base] = builder.block_params(entry).try_into().unwrap();
         let miss = builder.create_block();
-        let mut stage = Emit { builder: &mut builder, property_values: Some(base) };
+        let mut stage = Emit { builder: &mut builder, property_values: Some(base), remainder: None };
         let inline = crate::staged::object::inline_storage(&mut stage, record);
         let layout = crate::staged::own_layout(&mut stage, record, inline, form,
             usize::from(slot) + 1, PackedAccess::Reload, miss).unwrap();

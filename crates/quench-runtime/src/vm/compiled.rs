@@ -285,12 +285,14 @@ pub(super) fn emit_checked_int32_arithmetic(builder: &mut FunctionBuilder<'_>,
     operation.apply(&mut EmitArithmetic::<true> { builder }, left, right)
 }
 
-/// The shared Number remainder denotation, after the caller's Number guards.
-/// Native entries use the host calling convention. This pure scalar helper cannot
-/// enter the VM or collect, so it does not introduce an effect/recovery boundary.
+/// The shared Number remainder denotation, after the caller's Number guards, called at
+/// `target`: the helper's address as the code's helpers bind it (`LaneHelper::NumberRemainder`),
+/// since a linked image's is not the compiling process's. Native entries use the host calling
+/// convention. This pure scalar helper cannot enter the VM or collect, so it does not
+/// introduce an effect/recovery boundary.
 pub(super) fn emit_number_remainder(
     builder: &mut FunctionBuilder<'_>,
-    pointer: ir::Type,
+    target: ir::Value,
     left: ir::Value,
     right: ir::Value,
 ) -> ir::Value {
@@ -298,8 +300,6 @@ pub(super) fn emit_number_remainder(
     signature.params.extend([AbiParam::new(types::F64), AbiParam::new(types::F64)]);
     signature.returns.push(AbiParam::new(types::F64));
     let signature = builder.import_signature(signature);
-    let address = super::operations::number_remainder as *const () as usize as i64;
-    let target = builder.ins().iconst(pointer, address);
     let call = builder.ins().call_indirect(signature, target, &[left, right]);
     builder.inst_results(call)[0]
 }
@@ -955,7 +955,7 @@ pub(super) fn emit_dense_element(
     index: ir::Value,
     fallback: ir::Block,
 ) -> (ir::Value, ir::Value) {
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, remainder: None };
     crate::staged::elements::dense_element(&mut stage, view.values, view.length, index, fallback)
         .expect("the emit stage continues past its guards")
 }
@@ -972,7 +972,7 @@ pub(super) fn emit_dense_element_replace(
     value: ir::Value,
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, remainder: None };
     crate::staged::elements::replace_element(&mut stage, view.values, address, old, value);
 }
 
@@ -1692,7 +1692,7 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
         }
     };
     let narrow = builder.ins().uextend(types::I64, narrow);
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, remainder: None };
     let encoded = crate::staged::object::decode_narrow_through(&mut stage, narrow, table);
     builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
 }
@@ -1780,6 +1780,8 @@ lane_helper_inventory! { H;
     CaptureSet => super::dispatch_fast::lane_body_capture_store::<H>,
     /// Strict equality of two distinct strings or BigInts (`lane_strict_equal_cells`).
     StrictEqual => lane_strict_equal_cells::<H>,
+    /// The Number remainder, `(f64, f64) -> f64` (`operations::number_remainder`).
+    NumberRemainder => super::operations::number_remainder,
     /// `instanceof` by its steady case (`lane_instance_of`).
     InstanceOf => lane_instance_of::<H>,
     /// A fused `typeof` test of a heap value (`lane_typeof_is`).
@@ -1948,6 +1950,7 @@ impl LaneHelpers {
         match self {
             Self::Numeric => match helper {
                 LaneHelper::InterruptOwner => builder.iconst(types::I64, lane_interrupt_owner as *const () as usize as i64),
+                LaneHelper::NumberRemainder => builder.iconst(types::I64, super::operations::number_remainder as *const () as usize as i64),
                 _ => unreachable!("frameless Number regions have no VM helper capability"),
             },
             Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
@@ -2247,6 +2250,13 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     let mut regions = Vec::new();
     if scalar && !headers.is_empty() {
         if let Some(found) = lower(lane_region::Coverage::Full) { regions = found; }
+        // The whole-function region enters only at PC 0. Each loop also enters at its own
+        // header, so a pass that leaves (an overflow, a value outside the region's types)
+        // costs that iteration: the back edge reaches the header's entry again.
+        if !regions.is_empty() {
+            regions.extend(headers.iter().filter(|header| **header != 0)
+                .filter_map(|header| lower(lane_region::Coverage::FullFrom(*header))).flatten());
+        }
     }
     if regions.is_empty()
         && let Some(header) = headers.first().copied().or_else(|| (has_calls || !unit.frames.is_empty()).then_some(0))
@@ -2281,12 +2291,14 @@ fn scalar_static_regions(program: &ResidualProgram, function_id: u32, unit: &lan
 ) -> Vec<StaticTypedRegion> {
     use super::specializer::Specializer;
     scalar_region::ranges(program, function_id).into_iter().filter_map(|range| {
+        // The range is in the caller's PCs, the coverage in the unit's.
+        let covered = scalar_region::unit_range(unit, &range)?;
         let region = lane_region::RegionSpecializer { function_id, unit, helpers,
             fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
             direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
             entry_fields: &lane_region::NO_ENTRY_FIELDS,
             plan: lane_region::RegionPlan {
-                coverage: lane_region::Coverage::Range { start: range.start, end: range.end },
+                coverage: lane_region::Coverage::Range { start: covered.start, end: covered.end },
                 completion: lane_region::Completion::SourcePc, views: lane_region::ElementViews::Dense } }
             .specialize(program).ok().filter(|region| region.native != 0)?;
         let mut function = region.function;
@@ -16109,7 +16121,9 @@ mod tests {
                 &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 2, "both numeric calls must inline: {}", program.disassemble());
             let isa = super::super::jit_backend::target_isa().unwrap();
-            let regions = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default());
+            // The loops' regions; the function's scalar ranges lower beside them.
+            let regions: Vec<_> = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default())
+                .into_iter().filter(|region| !region.scalar).collect();
             assert_eq!(regions.len(), 2, "each independent caller loop needs an entry");
             assert_ne!(regions[0].function.name, regions[1].function.name, "inliner keys must be distinct");
             for region in &regions {

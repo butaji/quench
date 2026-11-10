@@ -50,7 +50,7 @@ impl Lowering<'_, '_> {
         let (values, length) = self.hoisted_view(array);
         let variables = self.array_variables(array.register);
         let room = self.builder.use_var(variables.room);
-        let mut stage = Emit { builder: &mut self.builder, property_values: None };
+        let mut stage = Emit { builder: &mut self.builder, property_values: None, remainder: None };
         let grown = crate::staged::elements::append_element(&mut stage, values, length, room, index, value, miss)
             .expect("the emit stage continues past its guards");
         self.builder.def_var(variables.length, grown);

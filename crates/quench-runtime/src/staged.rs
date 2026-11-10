@@ -27,6 +27,8 @@ pub(crate) mod environment;
 pub(crate) mod ic;
 pub(crate) mod object;
 pub(crate) mod value;
+mod steps;
+pub(crate) use steps::step;
 pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
     own_layout, read_slot};
 
@@ -354,88 +356,6 @@ pub(crate) enum Step<W, C> {
     /// The operation left at its miss edge (a failed guard), or a value's heap cell decides
     /// its truthiness: the interpreter must take its fallback path.
     Unresolved,
-}
-
-/// Run `operation` on `frame`; its word or where control goes.
-#[inline(always)]
-pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    match operation {
-        Operation::Move { destination, source } => Step::Value(frame.move_register(stage, destination, source)),
-        Operation::LoadConst { destination, constant } => {
-            let (value, fact) = frame.constant(stage, constant);
-            frame.write(stage, destination, value, fact);
-            Step::Value(value)
-        }
-        Operation::LoadLocalPlain { destination, slot } => {
-            match frame.load_local(stage, slot, frame.local_miss()) {
-                Some((value, fact)) => {
-                    frame.write(stage, destination, value, fact);
-                    Step::Value(value)
-                }
-                None => Step::Unresolved,
-            }
-        }
-        Operation::StoreLocalPlain { source, slot, result } => {
-            let value = frame.tagged(stage, source);
-            if !frame.store_local(stage, slot, value, frame.local_miss()) { return Step::Unresolved; }
-            if let Some(result) = result {
-                let fact = frame.fact(source);
-                frame.write(stage, result, value, fact);
-            }
-            Step::Value(value)
-        }
-        Operation::Jump => Step::Control(frame.jump(stage)),
-        Operation::JumpIf { register, taken } => heap::jump_if(stage, frame, register, taken),
-        Operation::Number(operation) => numeric::step(stage, frame, operation),
-        Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
-        Operation::LoadThis { destination } => load_this(stage, frame, destination),
-        Operation::LogicalNot { destination, source } => match frame.truthiness(stage, source) {
-            Some(truthy) => {
-                let falsy = stage.not(truthy);
-                let (value, fact) = frame.boolean(stage, falsy);
-                frame.write(stage, destination, value, fact);
-                Step::Value(value)
-            }
-            None => Step::Unresolved,
-        },
-        Operation::Safepoint { proof } => match frame.safepoint(stage, proof) {
-            Some(()) => Step::Value(stage.constant(0)),
-            None => Step::Unresolved,
-        },
-        heap => heap::heap_step(stage, frame, heap),
-    }
-}
-
-/// The activation's `this` into `destination`, where the activation holds it.
-#[inline(always)]
-fn load_this<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    destination: Register) -> Step<S::Word, F::Control> {
-    let miss = frame.miss();
-    let this = frame.this(stage);
-    let bound = stage.ne_imm(this, crate::Value::DELETED.to_bits());
-    match stage.guard(bound, miss) {
-        Some(()) => {
-            frame.define_this(stage, destination, this);
-            Step::Value(this)
-        }
-        None => Step::Unresolved,
-    }
-}
-
-/// RequireObjectCoercible of `register`: its tagged word where it is neither `null` nor
-/// `undefined`; those leave at the frame's miss edge.
-#[inline(always)]
-fn require_object_coercible<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    register: Register) -> Step<S::Word, F::Control> {
-    let miss = frame.miss();
-    let value = frame.tagged(stage, register);
-    let null = stage.eq_imm(value, crate::Value::NULL.to_bits());
-    let undefined = stage.eq_imm(value, crate::Value::UNDEFINED.to_bits());
-    let nullish = stage.either(null, undefined);
-    match stage.guard_false(nullish, miss) {
-        Some(()) => Step::Value(value),
-        None => Step::Unresolved,
-    }
 }
 
 #[cfg(test)]

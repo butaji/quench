@@ -644,7 +644,6 @@ fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstructi
             Op::LoadConst => program.constants.get(instruction.constant_index())
                 .and_then(super::facts::immediate).is_some(),
             op if op.traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
-            op if op.traits().has(Traits::FRAME_ONLY) || op.is_inc_dec() || op.is_return() => true,
             op => op.js_denotation() == JsDenotation::NumericBinary
                 && instruction.numeric_local_target().is_none(),
         }
@@ -1922,6 +1921,101 @@ impl Lowering<'_, '_> {
         })
     }
 
+    /// The fused pair's int32 (`(a ± b) | 0`). A double the region itself computed is no int32
+    /// to speculate on, so its sum is `truncated_sum`'s; any other operand (an entry value, a
+    /// tagged one) is proved int32 here, a proof later uses read, and a failed one resumes
+    /// before the arithmetic.
+    fn truncated_pair(&mut self, state: &mut State, arithmetic: super::operations::NumberArithmetic,
+        (left, right): (Operand, Operand), exit: ir::Block) -> Option<ir::Value> {
+        let computed_double = |operand: Operand| operand.register_index().is_some_and(|register| {
+            let fact = state.values[usize::from(register)].value;
+            fact.representation == Representation::Float64 && fact.proof == Proof::Definition
+        });
+        if computed_double(left) || computed_double(right) {
+            return self.truncated_sum(state, arithmetic, (left, right), exit);
+        }
+        let left = self.operand_int(state, left, exit)?;
+        let right = self.operand_int(state, right, exit)?;
+        Some(arithmetic.apply(&mut EmitWord32Arithmetic { builder: &mut self.builder }, left, right))
+    }
+
+    /// Arithmetic of two proved int32s into `destination`. Operands proved int32 stay int32,
+    /// as C keeps them: a sum or difference that overflows leaves, unless only a truncation
+    /// reads it (`truncated`, `truncated_through_sum`), where it wraps; a product continues
+    /// as a double (`int_product`).
+    fn int_arithmetic(&mut self, state: &mut State, pc: usize, arithmetic: super::operations::NumberArithmetic,
+        destination: Register, (left, right): (Operand, Operand), exit: ir::Block) -> Option<()> {
+        if arithmetic == super::operations::NumberArithmetic::Multiply {
+            let number = self.int_product(state, (left, right), exit)?;
+            self.set_number(state, destination, number);
+            return Some(());
+        }
+        let wraps = arithmetic.int32_projection_is_wrapping()
+            && (self.truncated(pc, destination) || self.truncated_through_sum(state, pc, destination));
+        let overflow = if wraps { crate::staged::Overflow::Wrap } else { crate::staged::Overflow::Exit };
+        let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
+            operation: arithmetic, domain: crate::staged::Domain::Int32, overflow });
+        self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
+        Some(())
+    }
+
+    /// The product of two proved int32s, a Number: the int32 product where it fits, else the
+    /// double product of the same operands, inside the region. A product routinely leaves
+    /// int32 (hashes, generators, fixed point) and nothing here says this one does not, so its
+    /// overflow is no exit; the operands' registers keep their int32 homes on both paths.
+    fn int_product(&mut self, state: &mut State, (left, right): (Operand, Operand), exit: ir::Block) -> Option<ir::Value> {
+        let left = self.operand_int(state, left, exit)?;
+        let right = self.operand_int(state, right, exit)?;
+        let (product, overflow) = super::operations::NumberArithmetic::Multiply
+            .apply(&mut EmitArithmetic::<true> { builder: &mut self.builder }, left, right);
+        let (wide, join) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.set_cold_block(wide);
+        let number = self.builder.append_block_param(join, types::F64);
+        // A zero product of a negative operand is `-0`, which the double product gives.
+        let zero = self.ins().icmp_imm_u(IntCC::Equal, product, 0);
+        let signs = self.ins().bor(left, right);
+        let negative = self.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0);
+        let negative_zero = self.ins().band(zero, negative);
+        let inexact = self.ins().bor(overflow, negative_zero);
+        let fits = self.builder.create_block();
+        self.ins().brif(inexact, wide, &[], fits, &[]);
+        self.builder.switch_to_block(fits);
+        let exact = self.ins().fcvt_from_sint(types::F64, product);
+        self.ins().jump(join, &[ir::BlockArg::Value(exact)]);
+        self.builder.switch_to_block(wide);
+        let (left, right) = (self.ins().fcvt_from_sint(types::F64, left), self.ins().fcvt_from_sint(types::F64, right));
+        let product = self.ins().fmul(left, right);
+        self.ins().jump(join, &[ir::BlockArg::Value(product)]);
+        self.builder.switch_to_block(join);
+        Some(number)
+    }
+
+    /// The ToInt32 of a sum or difference only `| 0` reads: int32 operands wrap, any other
+    /// Numbers take ToInt32 of their double result, and both join as an int32. Only a value
+    /// that is no Number, or a result past exact truncation, leaves at `exit`. Each path
+    /// unboxes the operands its own way on its own copy of the state, so the registers keep
+    /// the homes they had before the pair: a view one path made is not one the join holds.
+    fn truncated_sum(&mut self, state: &mut State, arithmetic: super::operations::NumberArithmetic,
+        (left, right): (Operand, Operand), exit: ir::Block) -> Option<ir::Value> {
+        let float = self.builder.create_block();
+        self.builder.set_cold_block(float);
+        let (mut int_state, mut float_state) = (state.clone(), state.clone());
+        let left_int = self.operand_int(&mut int_state, left, float)?;
+        let right_int = self.operand_int(&mut int_state, right, float)?;
+        let wrapped = arithmetic.apply(&mut EmitWord32Arithmetic { builder: &mut self.builder }, left_int, right_int);
+        let join = self.builder.create_block();
+        let int = self.builder.append_block_param(join, types::I32);
+        self.ins().jump(join, &[ir::BlockArg::Value(wrapped)]);
+        self.builder.switch_to_block(float);
+        let left_number = self.operand_number(&mut float_state, left, exit)?;
+        let right_number = self.operand_number(&mut float_state, right, exit)?;
+        let number = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left_number, right_number);
+        let truncated = self.number_to_int32(number, exit);
+        self.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
+        self.builder.switch_to_block(join);
+        Some(int)
+    }
+
     /// Whether only the result's ToInt32 is read of `register`, written at `pc`: the next
     /// instruction is its one reader, a bitwise operator, which applies ToInt32 to its operands.
     /// A sum's or difference's wrapping int32 result then serves for int32 operands, and
@@ -1940,6 +2034,39 @@ impl Lowering<'_, '_> {
             return true;
         }
         false
+    }
+
+    /// Whether `operand` is proved an int32: a register of that type, or an int32 constant.
+    fn proved_int(&self, state: &State, operand: Operand) -> bool {
+        match operand.kind() {
+            Some(OperandKind::Register) => state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
+            Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
+                .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
+            _ => false,
+        }
+    }
+
+    /// Whether `register`, an int32 sum written at `pc`, is read only by the next instruction,
+    /// a further sum or difference with another proved int32 whose own result only a
+    /// truncation reads (`truncated`): `(a + b + c) | 0`. Sums of int32s are exact doubles, so
+    /// the wrapped chain is the ToInt32 of the exact one; any non-int32 input would not be
+    /// (see `truncated`), hence the proof of the other operand here.
+    fn truncated_through_sum(&self, state: &State, pc: usize, register: Register) -> bool {
+        let at = pc + 1;
+        let Some(next) = self.unit.instructions.get(at).copied() else { return false };
+        if self.blocks[at].is_some() || !next.op().class().eq(Class::Binary) || next.result_flags() != 0 { return false; }
+        let wraps = super::operations::NumberArithmetic::from_js_instruction(next.op(), next.binary_operator())
+            .is_some_and(super::operations::NumberArithmetic::int32_projection_is_wrapping);
+        let reads = |operand: Operand| operand.register_index() == Some(register);
+        let (left, right) = (next.operand_b(), next.operand_c());
+        let other = match (reads(left), reads(right)) {
+            (true, false) => right,
+            (false, true) => left,
+            _ => return false,
+        };
+        wraps && self.proved_int(state, other)
+            && (next.result_register() == register || !self.is_live(at + 1, register))
+            && self.truncated(at, next.result_register())
     }
 
     /// Where `register` at `at` is next read, past an inlined completion's move and jump (`lane_unit`).
@@ -2516,7 +2643,7 @@ impl Lowering<'_, '_> {
                 Some(true)
             }
             _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
-            _ if instruction.op().is_get_index() && plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
+            _ if instruction.op().is_get_index() && plain && [instruction.operand_b(), instruction.operand_c()].into_iter().all(|operand| self.operand_supported(operand)) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
                 // of an int32 key, proved once.
                 let exit = self.guard_exit(state, pc32);
@@ -2842,7 +2969,8 @@ impl Lowering<'_, '_> {
         -> crate::staged::Step<ir::Value, ()> {
         let locals = (self.completion != Completion::Number).then(|| emit_js_payload_word(
             &mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, native_locals)));
-        let mut stage = Emit { builder: &mut self.builder, property_values: None };
+        let remainder = self.helpers.address(self.builder.ins(), LaneHelper::NumberRemainder);
+        let mut stage = Emit { builder: &mut self.builder, property_values: None, remainder: Some(remainder) };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls };
@@ -4250,7 +4378,7 @@ impl Lowering<'_, '_> {
         if !field.valid() { return None; }
         let load = IcOp::LoadSlot { slot: field.slot, form: crate::staged::Form::of(field.storage, field.storage_len),
             storage_len: field.storage_len };
-        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties), remainder: None };
         let ops: &[IcOp<'_>] = match members { Some(members) => &[IcOp::GuardShapes(members), load], None => &[load] };
         crate::staged::ic::run(&mut stage, ops, at, None, exit)
     }
@@ -4350,7 +4478,7 @@ impl Lowering<'_, '_> {
         // The prototype's run lies inside the arena, as every live flat object's does
         // (`object_slots::arena_range`).
         let properties = self.builder.use_var(self.entry.as_ref().expect("entry facts").receiver.properties);
-        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties), remainder: None };
         use crate::staged::ic::IcOp;
         crate::staged::ic::run(&mut stage, &[IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(field.slot)],
             crate::staged::ic::Reached { record, shape: None, inline: None }, Some(records), exit)
@@ -4878,12 +5006,12 @@ impl Lowering<'_, '_> {
             && self.blocks[pc + 1].is_none()
             && (next.result_register() == destination || !self.is_live(pc + 2, destination))
         {
-            // No source edge or observer can see the intermediate Number.
-            // A failed input proof resumes before the arithmetic, and the
-            // consumer cannot fail once these signed-int32 inputs are proved.
-            let left = self.operand_int(state, left, exit)?;
-            let right = self.operand_int(state, right, exit)?;
-            let bits = arithmetic.apply(&mut EmitWord32Arithmetic { builder: &mut self.builder }, left, right);
+            // No source edge or observer can see the intermediate Number: the pair is the
+            // sum's ToInt32. A double the region itself computed is no int32 to speculate on,
+            // so its sum is `truncated_sum`'s; any other operand (an entry value, a tagged
+            // one) is proved int32 here, a proof later uses read, and a failed one resumes
+            // before the arithmetic.
+            let bits = self.truncated_pair(state, arithmetic, (left, right), exit)?;
             self.set_int(state, next.result_register(), bits);
             self.consumed.insert(pc + 1);
             return Some(true);
@@ -4902,48 +5030,17 @@ impl Lowering<'_, '_> {
                 // Operands proved int32 stay int32, as C keeps them: an overflow, or a product's
                 // negative zero, is a value no int32 holds and leaves, rather than every result
                 // becoming a double that the next operation converts back.
-                let proved_int = self.proved_int(state, [left, right]);
+                let proved_int = [left, right].iter().all(|operand| self.proved_int(state, *operand));
                 if arithmetic == super::operations::NumberArithmetic::Divide || float_operand {
                     let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
                         operation: arithmetic, domain: crate::staged::Domain::Float64,
                         overflow: crate::staged::Overflow::Exit });
                     self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 } else if proved_int {
-                    // A sum or difference only `| 0` reads is its ToInt32: the wrapping int32
-                    // result, which needs no overflow exit.
-                    let overflow = if arithmetic.int32_projection_is_wrapping() && self.truncated(pc, destination) {
-                        crate::staged::Overflow::Wrap
-                    } else {
-                        crate::staged::Overflow::Exit
-                    };
-                    let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
-                        operation: arithmetic, domain: crate::staged::Domain::Int32, overflow });
-                    self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
+                    self.int_arithmetic(state, pc, arithmetic, destination, (left, right), exit)?;
                 } else if arithmetic.int32_projection_is_wrapping()
                     && self.truncated(pc, destination) {
-                    // Only its ToInt32 is read: int32 operands wrap, any other numbers take
-                    // ToInt32 of their double result, and both join as an int32.
-                    let float = self.builder.create_block();
-                    self.builder.set_cold_block(float);
-                    let mut float_state = state.clone();
-                    let left_int = self.operand_int(state, left, float).expect("supported operand");
-                    let right_int = self.operand_int(state, right, float).expect("supported operand");
-                    let wrapped = if arithmetic == super::operations::NumberArithmetic::Add {
-                        self.ins().iadd(left_int, right_int)
-                    } else {
-                        self.ins().isub(left_int, right_int)
-                    };
-                    let join = self.builder.create_block();
-                    let int = self.builder.append_block_param(join, types::I32);
-                    self.ins().jump(join, &[ir::BlockArg::Value(wrapped)]);
-                    self.builder.switch_to_block(float);
-                    let left_number = self.operand_number(&mut float_state, left, exit)?;
-                    let right_number = self.operand_number(&mut float_state, right, exit)?;
-                    let number = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left_number, right_number);
-                    let truncated = self.number_to_int32(number, exit);
-                    self.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
-                    self.builder.switch_to_block(join);
-                    self.join_states(state, &float_state);
+                    let int = self.truncated_sum(state, arithmetic, (left, right), exit)?;
                     self.set_int(state, destination, int);
                 } else {
                     let float = self.builder.create_block();

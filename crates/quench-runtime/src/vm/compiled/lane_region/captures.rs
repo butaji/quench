@@ -23,7 +23,7 @@ impl Lowering<'_, '_> {
         let value = self.builder.append_block_param(join, types::I64);
         match dense {
             Some((values, len)) => {
-                let mut stage = Emit { builder: &mut self.builder, property_values: None };
+                let mut stage = Emit { builder: &mut self.builder, property_values: None, remainder: None };
                 let read = crate::staged::environment::dense_capture(&mut stage, values, len, slot, slow)
                     .expect("the emit stage continues past its guards");
                 self.ins().jump(join, &[ir::BlockArg::Value(read)]);

@@ -1,8 +1,8 @@
+# (`staged::tests::tiers_derive_opcode_meaning_from_the_interpreter`).
 # Opcode names in `vm/` outside the interpreters (`vm/dispatch.rs`, `vm/dispatch_wasm.rs`) and
-# tests, per file and opcode: a match arm, a comparison or a shape table that names `Op::X`
 # decides opcode meaning by hand instead of deriving it from the interpreter (`staged`, a
 # semantic entry, an opcode-table fact). Entries may only shrink or disappear
-# (`staged::tests::tiers_derive_opcode_meaning_from_the_interpreter`).
+# tests, per file and opcode: a match arm, a comparison or a shape table that names `Op::X`
 vm/compiled.rs COUNT 1
 vm/compiled.rs Call 1
 vm/compiled.rs WasmMemoryAddress 1
