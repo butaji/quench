@@ -859,6 +859,15 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 emit_js_guard(&mut self.builder, object, exit);
                 self.refine_object_family(state, bits);
             }
+            // An exact shape the target's other edges proved is guarded on this one, the
+            // owner's header read once, so the edge keeps native code.
+            if let Some(shape) = ty.object_shape() && !state.values[index].value.ty.is_subtype(ty) {
+                let exit = self.guard_exit(state, target as u32);
+                let header = self.object_header(state, Some(register), false, exit);
+                self.prove_shape(state, Some(Some(register)), header.shape, shape, exit);
+                state.values[index] = RegisterFact { tagged: state.values[index].tagged,
+                    ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
+            }
             // A fact this edge does not prove and cannot guard leaves at the target, exactly:
             // the edge loses native code, never the body (AGENTS.md, check once).
             if !self.proves(state, register, ty, target) {
@@ -1303,13 +1312,13 @@ pub(super) fn lower_body(
     vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
-    frame_captures: &[(usize, usize)],
+    frame_captures: &[(usize, usize)], entry: Option<usize>,
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
     let region = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
         generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS,
-        plan: RegionPlan { coverage: Coverage::Prefix, completion: Completion::StatusAndPc,
-            views: ElementViews::Dense } }
+        plan: RegionPlan { coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
+            completion: Completion::StatusAndPc, views: ElementViews::Dense } }
         .specialize(program).ok()?;
     let clif = native_dump_directory().map(|_| region.function.to_string());
     Some(LoweredLane { region, clif })
@@ -2719,6 +2728,7 @@ impl Lowering<'_, '_> {
                 falls
             }
             None => {
+                super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
                 // A residual call in an admitted callee completes this native
                 // prefix through exact frame materialization. Its caller's
                 // effects and the callee's live argument homes cannot replay.

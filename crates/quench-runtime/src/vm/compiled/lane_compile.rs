@@ -109,6 +109,13 @@ fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[Option<DirectCallee>])
     (direct, sites)
 }
 
+/// The unit PC a running loop enters at: its `header`'s own instruction; `Some(None)` for a
+/// body that starts at its first, `None` where the unit has no such instruction.
+fn entry_pc(unit: &lane_unit::Unit, header: Option<u32>) -> Option<Option<usize>> {
+    let Some(header) = header else { return Some(None) };
+    unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header)).map(Some)
+}
+
 /// Whether a function is pure numeric, observing neither closure environment nor identity.
 fn numeric_callee(program: &ResidualProgram, function: u32) -> bool {
     program.function_get(function as usize).is_some_and(|body| body.plain_activation(program))
@@ -160,12 +167,13 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn plan_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         captures: &dyn Fn(Value) -> (usize, usize), direct: &[Option<DirectCallee>],
-        generic: &[LaneExit], budget: usize) -> Option<(LanePlan, ir::Function)> {
+        generic: &[LaneExit], budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
         let unit = self.lane_plan_unit(program, function, targets, generic, budget)?;
         let left_at = unit_leaves(&unit, generic);
+        let entry = entry_pc(&unit, entry)?;
         // An entry that leaves at once is pure cost: a body whose first instruction its
         // predecessors left at declines.
-        if left_at.contains(&0) { return None; }
+        if left_at.contains(&entry.unwrap_or(0)) { return None; }
         let mut fields = self.lane_unit_fields(program, &unit, &left_at);
         // Admitting the stores' writes once, here, widens what they widen; the fields then
         // read the widened slots, and the body's entries admit nothing again.
@@ -188,7 +196,7 @@ impl<H: Host> Vm<H> {
             invalidation: invalidation.address(), constants }), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(generic.contains(&LaneExit::Entry).then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
-            &leaves, &direct_sites, &frame_captures)?;
+            &leaves, &direct_sites, &frame_captures, entry)?;
         if lowered.region.native == 0 { return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         Some((LanePlan { unit, lowered, fields, direct, direct_sites, function, invalidation, budget }, native))
@@ -205,7 +213,7 @@ impl<H: Host> Vm<H> {
         self.host.before_native_compilation();
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let method = loop {
-            let Some((plan, native)) = self.plan_lane_method(program, function, targets, captures, &direct, generic, budget)
+            let Some((plan, native)) = self.plan_lane_method(program, function, targets, captures, &direct, generic, budget, None)
             else { break None };
             match lane_code(native) {
                 Ok(code) => break plan.finish(&code),
@@ -222,15 +230,15 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[Option<DirectCallee>], generic: &[LaneExit], budget: usize) -> Option<PendingLaneMethod> {
+        direct: &[Option<DirectCallee>], generic: &[LaneExit], budget: usize, entry: Option<u32>) -> Option<PendingLaneMethod> {
         self.host.before_native_compilation();
-        let planned = self.plan_lane_method(program, function, targets, captures, direct, generic, budget);
+        let planned = self.plan_lane_method(program, function, targets, captures, direct, generic, budget, entry);
         self.host.after_native_compilation();
         let (plan, native) = planned?;
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
-        if !amortizes_entry(&plan.unit) { return None; }
+        if entry.is_none() && !amortizes_entry(&plan.unit) { return None; }
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
         if !plan.dependencies().subscribe(&plan.lowered.region.stable,
@@ -252,11 +260,12 @@ impl<H: Host> Vm<H> {
     }
 
     /// Does `work` for `function`'s lane body (`LaneBodyWork`), whose direct callees
-    /// `direct` gives; publishes a body whose code compiled while its proofs held.
+    /// `direct` gives; publishes a body whose code compiled while its proofs held. An `entry`
+    /// (a caller PC) plans the body to start there, as a running loop enters it.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::vm) fn lane_body_work(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &dyn Fn(&Self) -> Vec<Option<DirectCallee>>, work: LaneBodyWork<'_>) -> LaneBodyOutcome {
+        direct: &dyn Fn(&Self) -> Vec<Option<DirectCallee>>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         let mut pending = match work {
             LaneBodyWork::Start { generic, shrinks } => (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks),
             LaneBodyWork::Poll(pending) => match self.lane_body_poll(pending) {
@@ -270,7 +279,7 @@ impl<H: Host> Vm<H> {
         loop {
             let (generic, budget) = pending;
             let direct = direct(self);
-            let Some(started) = self.start_lane_method(program, function, targets, captures, &direct, &generic, budget)
+            let Some(started) = self.start_lane_method(program, function, targets, captures, &direct, &generic, budget, entry)
             else { return LaneBodyOutcome::Declined };
             match self.lane_body_poll(Box::new(started)) {
                 Ok(outcome) => return outcome,

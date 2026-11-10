@@ -266,6 +266,8 @@ pub(super) struct LoopSite {
     compile_attempts: std::cell::Cell<u64>,
     compile_successes: std::cell::Cell<u64>,
     tier: std::cell::RefCell<LoopTier>,
+    /// The function's lane body planned to start at this loop's header (`lane_loop_body`).
+    body: std::cell::RefCell<LoopBody>,
 }
 
 impl LoopSite {
@@ -627,7 +629,7 @@ mod indexed_forwarding_primitives;
 mod indexed_compositions;
 
 #[path = "lane_body_stats.rs"]
-mod lane_body_stats;
+pub(super) mod lane_body_stats;
 #[path = "lane_leaves.rs"]
 mod lane_leaves;
 #[path = "lane_body_tier.rs"]
@@ -636,7 +638,7 @@ mod lane_body_tier;
 mod loop_tier;
 use loop_tier::{lane_loop_compile, LoopTier};
 use lane_body_tier::LaneBodyHistory;
-pub(super) use lane_body_stats::miss_report as lane_miss_report;
+pub(super) use lane_body_stats::{miss_report as lane_miss_report, unlowered_report as lane_unlowered_report};
 use lane_leaves::LaneLeaves;
 pub(super) use lane_body_stats::LaneBodyStats;
 
@@ -2695,6 +2697,8 @@ lane_handler! {
 
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
+mod loop_body;
+use loop_body::{lane_loop_body, LoopBody};
 use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_require_object_coercible, staged_to_numeric};
 
 lane_handler! {
@@ -7889,6 +7893,20 @@ script_handler! {
             site.taken.set(site.taken.get() + 1);
             next!(cx, r, header, Carried::script(cx))
         }
+        // A loop its region takes whole (no call it leaves at) stays the region's, which hoists
+        // the typed element views a lane body does not yet.
+        if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
+            && (!site.call_boundary_pcs.is_empty() || site.analysis_failure.is_some())
+            && let Some(attempt) = lane_loop_body::<H>(cx, r, ip, site)
+        {
+            match attempt {
+                LoopAttempt::Declined => {}
+                LoopAttempt::At(next) => next!(cx, r, next, Carried::script(cx)),
+                LoopAttempt::Leave(next) => return next,
+                LoopAttempt::Resumed(resumed) => resume!(cx, resumed),
+                LoopAttempt::Carry(registers, next, carried) => next!(cx, registers, next, carried),
+            }
+        }
         // A loop no region runs takes its plain jump from now on.
         if site.promotion_only {
             lane_loop_retire::<H>(cx, ip, site);
@@ -7925,6 +7943,7 @@ script_handler! {
             LoopAttempt::At(next) => next!(cx, r, next, Carried::script(cx)),
             LoopAttempt::Leave(next) => next,
             LoopAttempt::Resumed(resumed) => resume!(cx, resumed),
+            LoopAttempt::Carry(registers, next, carried) => next!(cx, registers, next, carried),
         }
     }
 }
@@ -7955,6 +7974,8 @@ enum LoopAttempt {
     Leave(Ip),
     /// Continue in the activation this completion resumes.
     Resumed(Resumed),
+    /// Continue at this record of these registers with this carried state.
+    Carry(Registers, Ip, Carried),
 }
 
 /// Runs `site`'s region on `r` from its `header` record, reached at `record` (the backward
@@ -8059,6 +8080,7 @@ script_handler! {
                 LoopAttempt::At(next) => next!(cx, r, next, Carried::script(cx)),
                 LoopAttempt::Leave(next) => return next,
                 LoopAttempt::Resumed(resumed) => resume!(cx, resumed),
+                LoopAttempt::Carry(registers, next, carried) => next!(cx, registers, next, carried),
             }
         }
         lane_at_header!(cx, r, ip, site)
@@ -8085,7 +8107,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
             return super::compiled::LaneBodyOutcome::Declined;
         }
         let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-        let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), &direct, work);
+        let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), &direct, work, None);
         if diagnostics && let super::compiled::LaneBodyOutcome::Published(method) = &outcome {
             if let Some(method) = method.lease() { own.body_stats.compiled(function, &method.inlined); }
         }
@@ -14692,9 +14714,20 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
-        // A returned run completes the activation: no leave to resolve, no frame to materialize.
+        lane_body_conclude!(cx, r, ip, own, method, exit)
+    }
+}
+
+/// Where the lane continues after a run of `method`, `own`'s body, that ran on the
+/// activation `cx` holds, with registers `r`, and ended at `exit`: a returned run completes
+/// the activation (no leave to resolve, no frame to materialize), any other leave resumes
+/// where it names (`lane_body_left`).
+macro_rules! lane_body_conclude {
+    ($cx:expr, $r:expr, $ip:expr, $own:expr, $method:expr, $exit:expr) => {{
+        let (cx, r, ip, own, method, exit) = ($cx, $r, $ip, $own, $method, $exit);
+        let base = unsafe { (*cx).base };
         if let super::compiled::LaneExit::Returned { pc, value } = exit
-            && !vm.programs.js_jit_diagnostics_enabled()
+            && !unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled()
         {
             // SAFETY: as `lane_leave_counts`; a completed run carries no warming callee.
             unsafe { (*cx).callee_warming = false };
@@ -14715,8 +14748,9 @@ script_handler! {
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
             LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value),
         }
-    }
+    }};
 }
+use lane_body_conclude;
 
 /// The tier prologue's run of the compiled body `own` keeps for a body that reads only its
 /// parameters (`LaneView::tier_direct`): the `Return` to continue at, its register and the
@@ -19675,7 +19709,7 @@ fn install_loop_sites<'live, H: Host>(
                     widenings: std::cell::Cell::new(0),
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
-                    tier: std::cell::RefCell::default(),
+                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::IDLE),
                 },
             )
         })
