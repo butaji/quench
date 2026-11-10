@@ -8337,6 +8337,17 @@ fn lane_loop_run<H: Host>(
     }
 }
 
+/// A rewritten global-name read's value at a lane entry: the global binding read now.
+fn lane_entry_global<H: Host>(cx: *mut LaneContext<H>, atom: crate::bytecode::Atom, site: u16) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    match vm.global_name_read(code, atom, site) {
+        crate::vm::field_cache::GlobalNameRead::Value(value, _) => Some(value),
+        _ => None,
+    }
+}
+
 /// The entry record of `site`'s native code from the running activation, and the element
 /// views of its arrays (`loop_tier::lane_loop_arrays`), when its arrays and captures pass the
 /// region's guards: each capture an initialized binding resolved without guest code by the
@@ -8350,7 +8361,11 @@ fn lane_loop_entry<H: Host>(
 ) -> Option<super::compiled::ElementViews> {
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
-        for slot in &region.captures {
+        for (index, slot) in region.captures.iter().enumerate() {
+            if let Some(Some((_, atom, site))) = region.capture_globals.get(index) {
+                entry.push_capture(lane_entry_global::<H>(cx, *atom, *site)?);
+                continue;
+            }
             // The activation's `this`, for reads of `this` the region stores (`THIS_CAPTURE`).
             if *slot == super::compiled::THIS_CAPTURE {
                 entry.push_capture(unsafe { lane_held_this(cx) });

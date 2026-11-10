@@ -54,6 +54,9 @@ pub(crate) use crate::vm::js_compiled::MAX_CODE_BYTES;
 
 #[path = "osr_loop/iteration.rs"]
 mod iteration;
+#[path = "osr_loop/globals.rs"]
+pub(super) mod globals;
+use globals::{assign_global_captures, rewrite_entry_reads};
 #[path = "osr_loop/receivers.rs"]
 mod receivers;
 
@@ -111,8 +114,10 @@ pub(crate) struct LoopRegion {
     /// dense (`Vm::dense_array_length`), owns its backing alone, and no prototype of it holds
     /// an index (`Vm::prototypes_hold_no_index`).
     pub(crate) arrays: Vec<ArrayUse>,
-    /// The depth-0 capture slots `LoadCapture` reads, in entry-record order.
+    /// The capture slots `LoadCapture` reads, in entry-record order.
     pub(crate) captures: Vec<u16>,
+    /// For each capture, the global read it materializes (index, atom, site), or `None`.
+    pub(crate) capture_globals: Vec<Option<(u16, crate::bytecode::Atom, u16)>>,
     /// The cached data fields the region reads, in entry-record order: a field read
     /// through another's value follows it (`intern_field`).
     pub(crate) fields: Vec<FieldUse>,
@@ -903,7 +908,8 @@ pub(super) fn inline_region<'a>(
 ) -> Option<LoopRegion> {
     let (start, end) = (header as usize, backedge as usize);
     (start <= end && end < decoded.len()).then_some(())?;
-    let caller = &decoded[start..=end];
+    let (caller_decoded, globals) = rewrite_entry_reads(function, &decoded[start..=end]);
+    let caller = &caller_decoded[..];
     let defines = |register: Register| caller.iter().any(|instruction| instruction.defined_register() == Some(register));
     let targets: std::collections::BTreeSet<u32> = caller
         .iter()
@@ -1260,7 +1266,7 @@ pub(super) fn inline_region<'a>(
         Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks))),
         header_live,
         header,
-        &receivers, MethodCalls::Inliner,
+        &receivers, MethodCalls::Inliner, globals,
     )
     .ok()?;
     // Dynamic receiver reads use the loop's caller registers and exact caller PCs. Keep
@@ -1559,6 +1565,8 @@ struct Admission<'a> {
     constants: &'a [Value],
     roles: std::collections::BTreeMap<Register, Role>,
     captures: Vec<u16>,
+    capture_globals: Vec<Option<(u16, crate::bytecode::Atom, u16)>>,
+    globals: Vec<(crate::bytecode::Atom, u16)>,
     pub(crate) fields: Vec<FieldUse>,
     numbers: std::collections::BTreeMap<usize, f64>,
     values: std::collections::BTreeMap<usize, Value>,
@@ -1665,8 +1673,9 @@ pub(super) fn region(
         });
     }
     let header_live = live.and_then(|live| live.get(start));
+    let (instructions, globals) = rewrite_entry_reads(function, &decoded[start..=end]);
     admit_region(
-        decoded[start..=end].to_vec(),
+        instructions,
         usize::from(function.registers),
         constants,
         sites,
@@ -1675,6 +1684,7 @@ pub(super) fn region(
         header,
         &std::collections::BTreeSet::new(),
         method_calls,
+        globals,
     )
 }
 
@@ -1693,12 +1703,13 @@ fn admit_region(
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
     method_calls: MethodCalls,
+    globals: Vec<(crate::bytecode::Atom, u16)>,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     if let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls) {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op()), header, offset));
     }
     match admit_register_roles(
-        instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, method_calls,
+        instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, method_calls, globals,
     ) {
         Ok(region) => Ok(region),
         Err(failure) => {
@@ -1742,7 +1753,7 @@ fn admit_lifetime_roles(
     let mut flow = LoopRegion {
         header, backedge: header + instructions.len() as u32 - 1,
         numbers: (0..registers).map(|register| register as Register).collect(),
-        tagged: Vec::new(), arrays: Vec::new(), captures: Vec::new(),
+        tagged: Vec::new(), arrays: Vec::new(), captures: Vec::new(), capture_globals: Vec::new(),
         fields: Vec::new(), field_reads: BTreeMap::new(), dynamic_field_reads: BTreeMap::new(),
         dynamic_arrays: BTreeSet::new(),
         field_stores: BTreeMap::new(), dynamic_field_stores: BTreeMap::new(), field_store_sites: Vec::new(), held: BTreeMap::new(),
@@ -1852,7 +1863,7 @@ fn admit_lifetime_roles(
             field(InstructionField::B, instruction.b())?,
             field(InstructionField::C, instruction.c())?, instruction.imm()));
     }
-    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new(), MethodCalls::Inliner)
+    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new(), MethodCalls::Inliner, Vec::new())
         .inspect_err(|&failure| {
             if crate::trace::Channel::OsrReject.on() {
                 eprintln!("QUENCH_JS_JIT_OSR_LIFETIME_REJECT header={header} failure={failure:?}");
@@ -1898,6 +1909,7 @@ fn admit_register_roles(
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
     method_calls: MethodCalls,
+    globals: Vec<(crate::bytecode::Atom, u16)>,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     let backedge = header + instructions.len() as u32 - 1;
     // A held register keeps the value its path read at entry, which a store to any name on
@@ -1978,6 +1990,8 @@ fn admit_register_roles(
         constants,
         roles: std::collections::BTreeMap::new(),
         captures: Vec::new(),
+        capture_globals: Vec::new(),
+        globals,
         fields: Vec::new(),
         numbers: std::collections::BTreeMap::new(),
         values: std::collections::BTreeMap::new(),
@@ -2234,13 +2248,14 @@ fn admit_register_roles(
     if arrays.len() > MAX_REGION_ARRAYS {
         return Err(RegionAnalysisFailure { reason: RegionRejection::ArrayLimit, pc: backedge });
     }
-    Ok(LoopRegion {
+    let mut region = LoopRegion {
         header,
         backedge,
         numbers,
         tagged,
         arrays,
         captures: admission.captures,
+        capture_globals: admission.capture_globals,
         fields: admission.fields,
         field_reads,
         dynamic_field_reads,
@@ -2255,7 +2270,9 @@ fn admit_register_roles(
 
         live,
         inlining: None,
-    })
+    };
+    assign_global_captures(&mut region);
+    Ok(region)
 }
 
 fn admit(
@@ -2286,18 +2303,7 @@ fn admit(
                 admission.number(instruction.register_b())?;
             }
         }
-        Class::LoadCapture => {
-            (instruction.capture_depth() == 0 && instruction.result_flags() == 0).then_some(())?;
-            if tagged.contains(&instruction.result_register()) {
-                admission.tagged(instruction.result_register())?;
-            } else {
-                admission.result(instruction)?;
-            }
-            let slot = instruction.capture_slot();
-            if !admission.captures.contains(&slot) {
-                admission.captures.push(slot);
-            }
-        }
+        Class::LoadCapture => { admission.admit_capture(instruction, tagged)?; }
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
             if number_comparison(instruction).is_some() {
                 (instruction.result_flags() == 0).then_some(())?;

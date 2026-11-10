@@ -2484,6 +2484,16 @@ impl Lowering<'_, '_> {
                 self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 Some(true)
             }
+            Class::LoadCapture if plain
+                && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == super::osr_loop::globals::GLOBAL_DEPTH =>
+            {
+                let exit = self.guard_exit(state, pc as u32);
+                let bits = self.load_capture(state, pc, instruction, exit, None, true);
+                self.set_tagged(state, instruction.result_register(), bits);
+                let value = self.number(state, instruction.result_register(), exit);
+                self.set_number(state, instruction.result_register(), value);
+                Some(true)
+            }
             Class::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
                 let exit = self.guard_exit(state, pc as u32);
                 let value = self.load_capture(state, pc, instruction, exit, None, true);
