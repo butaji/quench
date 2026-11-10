@@ -323,7 +323,7 @@ mod tests {
         }).expect("the function has a loop");
         let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
             .expect("the loop is admitted");
-        let observation = Observation { native_field_loads: &[] };
+        let observation = Observation { native_field_loads: &[], number_arrays: &[], int_entries: &[] };
         let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
             crate::MemoryPolicy::Throughput, &program, id,
             super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &mut |_| Default::default(), &[])

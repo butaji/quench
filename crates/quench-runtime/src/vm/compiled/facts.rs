@@ -70,7 +70,7 @@ impl Facts {
         let Some(entry) = self.at(start) else { return Type::ANY };
         let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = entry.iter().copied().collect();
         for (at, instruction) in instructions.iter().enumerate().take(pc).skip(start) {
-            if matches!(transfer(&mut types, *instruction, constants, written, native_calls, self.observed.binary_search(&at).is_ok()), Flow::Leaves) {
+            if matches!(transfer_observed(&mut types, *instruction, constants, written, native_calls, self.observed.binary_search(&at).is_ok()), Flow::Leaves) {
                 return Type::ANY;
             }
         }
@@ -90,7 +90,7 @@ impl Facts {
             types.extend_from_slice(entry);
             for (pc, instruction) in instructions.iter().copied().enumerate().skip(start) {
                 if pc != start && leaders.contains(pc) { break; }
-                let flow = transfer(&mut types, instruction, constants, written, native_calls, self.observed.binary_search(&pc).is_ok());
+                let flow = transfer_observed(&mut types, instruction, constants, written, native_calls, self.observed.binary_search(&pc).is_ok());
                 for register in written(instruction) {
                     visit(pc, register, types.get(usize::from(register)).copied().unwrap_or(Type::ANY));
                 }
@@ -190,7 +190,6 @@ fn transfer(
     constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>,
     native_calls: bool,
-    observed_number: bool,
 ) -> Flow {
     let op = instruction.op();
     match op.class() {
@@ -231,7 +230,7 @@ fn transfer(
         }
         _ => {
             for register in written(instruction) {
-                set(types, register, if observed_number && op.class().eq(Class::GetIndex) { Type::NUMBER } else { Type::ANY });
+                set(types, register, Type::ANY);
             }
             match op.control_flow_layout() {
                 // Any call, a construction's included (`Lowering::construct`): its result is
@@ -252,6 +251,16 @@ fn transfer(
     }
 }
 
+/// `transfer`, where an element read observed to hold Numbers (`Facts::observed`) defines a Number.
+fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants: &[Constant],
+    written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool, observed_number: bool) -> Flow {
+    let flow = transfer(types, instruction, constants, written, native_calls);
+    if observed_number && instruction.op().class().eq(Class::GetIndex) {
+        for register in written(instruction) { set(types, register, Type::NUMBER); }
+    }
+    flow
+}
+
 /// The fixpoint of `transfer` over the CFG, seeded by checked region-entry facts.
 pub(super) fn analyze(
     entry: usize,
@@ -262,8 +271,7 @@ pub(super) fn analyze(
     written: &dyn Fn(WideInstruction) -> Vec<Register>,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
     native_calls: bool,
-    contracts: &[Contract],
-    observed: &[usize],
+    contracts: &[Contract], observed: &[usize],
 ) -> Facts {
     let mut facts = Facts { offsets: vec![None; instructions.len()], types: Vec::new(), registers: initial.len(),
         reached: CompoundBitSet::with_capacity(instructions.len()), backedge: smallvec::SmallVec::new(),
@@ -286,7 +294,7 @@ pub(super) fn analyze(
                 set(&mut types, register, Type::direct_object(shape));
             }
             let conditional = instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump;
-            match transfer(&mut types, instruction, constants, written, native_calls, observed.binary_search(&pc).is_ok()) {
+            match transfer_observed(&mut types, instruction, constants, written, native_calls, observed.binary_search(&pc).is_ok()) {
                 Flow::Leaves => break,
                 Flow::To(target) => {
                     if target == entry && target <= pc {
@@ -383,7 +391,7 @@ mod tests {
             Type::direct_object(7).join(Type::NULLISH), Type::INT32, Type::ANY] {
             let mut types = vec![ty; usize::from(function.registers)];
             assert!(matches!(transfer(&mut types, call, &program.constants,
-                &super::super::lane_region::writes, true, false), Flow::Next));
+                &super::super::lane_region::writes, true), Flow::Next));
             for (register, actual) in types.into_iter().enumerate() {
                 let expected = if register == usize::from(call.result_register()) { Type::ANY }
                     else { ty.without_object_shape() };
@@ -403,11 +411,11 @@ mod tests {
         let construct = function.instructions().find(|instruction| instruction.op().is_construct()).unwrap();
         let mut types = vec![Type::direct_object(7); usize::from(function.registers)];
         assert!(matches!(transfer(&mut types, construct, &program.constants,
-            &super::super::lane_region::writes, true, false), Flow::Next));
+            &super::super::lane_region::writes, true), Flow::Next));
         assert_eq!(types[usize::from(construct.result_register())], Type::ANY);
         assert!(types.iter().all(|ty| *ty == Type::ANY || *ty == Type::direct_object(7).without_object_shape()));
         assert!(matches!(transfer(&mut types, construct, &program.constants,
-            &super::super::lane_region::writes, false, false), Flow::Leaves));
+            &super::super::lane_region::writes, false), Flow::Leaves));
     }
 
     fn infer_inductive(body: &str, names: &[&str]) -> (Vec<Type>, Vec<Register>) {
