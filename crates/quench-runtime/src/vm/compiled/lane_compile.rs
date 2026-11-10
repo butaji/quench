@@ -122,6 +122,10 @@ fn numeric_callee(program: &ResidualProgram, function: u32) -> bool {
         && numeric_restartable(program, function)
 }
 
+use super::super::dispatch_fast::lane_body_stats::{miss as plan_miss_count, Miss};
+
+fn plan_miss(reason: Miss) { plan_miss_count(reason); }
+
 impl<H: Host> Vm<H> {
     /// The call targets a unit binds at `caller`'s `pc`. A call the body left at takes no
     /// inlined callee: its call binds what the inlined frame could not. A pure numeric callee
@@ -152,13 +156,13 @@ impl<H: Host> Vm<H> {
         let valid = std::cell::Cell::new(true);
         let unit = lane_unit::with_budget(program, function, body, budget,
             &|caller, pc| self.lane_bindings(program, function, generic, targets, &valid, caller, pc),
-            &|callee| program.function_get(callee as usize))?;
-        if !valid.get() { return None; }
+            &|callee| program.function_get(callee as usize)).or_else(|| { plan_miss(Miss::PlanNoUnit); None })?;
+        if !valid.get() { plan_miss(Miss::PlanInvalidBindings); return None; }
         unit.frames.iter().all(|frame| match frame.target.callee {
             CalleeBinding::Identity(callee) | CalleeBinding::Forwarded { callee, .. } => self.lane_inlined_target_admitted(program, callee, frame.target.function),
             CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
                 && numeric_restartable(program, frame.target.function),
-        }).then_some(unit)
+        }).then_some(unit).or_else(|| { plan_miss(Miss::PlanFrameNotAdmitted); None })
     }
 
     /// Plans `function`'s lane body at `budget`: its unit, proofs and lowering, and the
@@ -170,10 +174,10 @@ impl<H: Host> Vm<H> {
         generic: &[LaneExit], budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
         let unit = self.lane_plan_unit(program, function, targets, generic, budget)?;
         let left_at = unit_leaves(&unit, generic);
-        let entry = entry_pc(&unit, entry)?;
+        let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(Miss::PlanNoEntry); None })?;
         // An entry that leaves at once is pure cost: a body whose first instruction its
         // predecessors left at declines.
-        if left_at.contains(&entry.unwrap_or(0)) { return None; }
+        if left_at.contains(&entry.unwrap_or(0)) { plan_miss(Miss::PlanLeavesAtEntry); return None; }
         let mut fields = self.lane_unit_fields(program, &unit, &left_at);
         // Admitting the stores' writes once, here, widens what they widen; the fields then
         // read the widened slots, and the body's entries admit nothing again.
@@ -196,8 +200,8 @@ impl<H: Host> Vm<H> {
             invalidation: invalidation.address(), constants }), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(generic.contains(&LaneExit::Entry).then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
-            &leaves, &direct_sites, &frame_captures, entry)?;
-        if lowered.region.native == 0 { return None; }
+            &leaves, &direct_sites, &frame_captures, entry).or_else(|| { plan_miss(Miss::PlanNotLowered); None })?;
+        if lowered.region.native == 0 { plan_miss(Miss::PlanNothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         Some((LanePlan { unit, lowered, fields, direct, direct_sites, function, invalidation, budget }, native))
     }

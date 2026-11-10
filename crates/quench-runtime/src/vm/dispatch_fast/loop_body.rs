@@ -65,6 +65,11 @@ impl LoopBody {
     }
 }
 
+impl LoopBody {
+    /// Whether the loop may still run a body of its own: one planning, compiling or running.
+    pub(super) fn pending(&self) -> bool { !matches!(self, Self::Declined) }
+}
+
 /// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling` and due).
 fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, site: &LoopSite) {
     let vm = unsafe { vm(cx) };
@@ -77,6 +82,12 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, site: &LoopS
         settled => { *body = settled; return; }
     };
     let function = site.function;
+    // The body's registers are the activation's: a function that keeps frame locals or makes
+    // closures activates another way, and its loops have no body.
+    if !code.function_get(function as usize).is_some_and(|body| body.plain_activation(code)) {
+        *body = LoopBody::Declined;
+        return;
+    }
     let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending),

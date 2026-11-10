@@ -7907,6 +7907,11 @@ script_handler! {
                 LoopAttempt::Carry(registers, next, carried) => next!(cx, registers, next, carried),
             }
         }
+        // A loop whose body is still to come keeps its backward jump, which a loop no region
+        // runs would otherwise retire before the body is planned.
+        if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled() && site.body.borrow().pending() && site.region.get().is_none() {
+            next!(cx, r, header, Carried::script(cx))
+        }
         // A loop no region runs takes its plain jump from now on.
         if site.promotion_only {
             lane_loop_retire::<H>(cx, ip, site);
