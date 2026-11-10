@@ -103,7 +103,6 @@ complexity crates/quench-node/src/modules/clone_shared_vm.rs::structured_clone 1
 complexity crates/quench-node/src/modules/console_class_shared_vm.rs::constructor 11
 complexity crates/quench-node/src/modules/console_class_shared_vm.rs::install_global_members 11
 complexity crates/quench-node/src/modules/console_class_shared_vm.rs::run 33
-complexity crates/quench-node/src/modules/console_class_shared_vm.rs::table_text 13
 complexity crates/quench-node/src/modules/console_shared_vm.rs::inspect_container 37
 complexity crates/quench-node/src/modules/contextify_shared_vm.rs::forward_sandbox 11
 complexity crates/quench-node/src/modules/contextify_shared_vm.rs::reflect_globals 17
@@ -1788,7 +1787,6 @@ function-lines crates/quench-node/src/modules/cluster/primary.rs::internal_messa
 function-lines crates/quench-node/src/modules/cluster/primary.rs::query_server 46
 function-lines crates/quench-node/src/modules/console_class_shared_vm.rs::constructor 52
 function-lines crates/quench-node/src/modules/console_class_shared_vm.rs::run 174
-function-lines crates/quench-node/src/modules/console_class_shared_vm.rs::table_text 56
 function-lines crates/quench-node/src/modules/console_shared_vm.rs::facade 42
 function-lines crates/quench-node/src/modules/console_shared_vm.rs::group_array_elements 50
 function-lines crates/quench-node/src/modules/console_shared_vm.rs::inspect_container 130
@@ -4372,7 +4370,6 @@ magic crates/quench-node/src/modules/cluster/mod.rs::forward 1
 magic crates/quench-node/src/modules/cluster/primary.rs::setup_primary 1
 magic crates/quench-node/src/modules/cluster/primary.rs::worker_message 1
 magic crates/quench-node/src/modules/console_class_shared_vm.rs::constructor 1
-magic crates/quench-node/src/modules/console_class_shared_vm.rs::render_table 1
 magic crates/quench-node/src/modules/contextify_shared_vm.rs::compile_function 7
 magic crates/quench-node/src/modules/contextify_shared_vm.rs::make_context 1
 magic crates/quench-node/src/modules/contextify_shared_vm.rs::run_in_context 1

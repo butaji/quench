@@ -39,6 +39,7 @@ pub(crate) mod clone_shared_vm;
 pub(crate) mod console_class_shared_vm;
 pub(crate) mod console_format_shared_vm;
 pub(crate) mod console_shared_vm;
+mod console_table;
 pub(crate) mod contextify_shared_vm;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_digest;
