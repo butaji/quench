@@ -15393,8 +15393,6 @@ enum LaneActivation {
     Keeping(u16),
     /// A target whose window holds its environment and locals (`lane_activate_environment`).
     Environment,
-    /// A forwarding constructor, whose receiver and activation `lane_construct_keeping_activation` makes.
-    Forwarded,
 }
 
 /// The activation a lane body's call makes of `target` (`how`), its registers; the helper's
@@ -15417,17 +15415,6 @@ fn lane_body_push<H: Host>(
         // The activation the lane's own call makes where values are kept or gathered.
         LaneActivation::Keeping(window) => lane_activate_keeping::<H, false>(
             cx, r, ip, target, ActivationArguments::Window(window), this, constructs, None).map_err(|_| refused())?.0,
-        LaneActivation::Forwarded => {
-            // SAFETY: the body's context and the record it constructs at.
-            match lane_construct_keeping_activation(cx, r, ip, unsafe { &*ip }) {
-                Ok(KeepingConstruction::Activated(registers, _)) => registers,
-                Ok(KeepingConstruction::Finished(this)) => {
-                    r.set(unsafe { &*ip }.a & crate::bytecode::REGISTER_MASK, this);
-                    return Err(super::compiled::LANE_CALL_COMPLETED);
-                }
-                Err(_) => return Err(refused()),
-            }
-        }
         LaneActivation::Environment => {
             // SAFETY: the call's window is registers of the running function.
             let window = unsafe { lane_call_window(r, &*ip) };
