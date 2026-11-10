@@ -25,6 +25,10 @@ const MAX_IDLE_COLLECTIONS: u32 = 2;
 /// A kept block serves a request at most `1 / 2^FIT_SHIFT` smaller than itself, so it is not
 /// held resident for much smaller requests.
 const FIT_SHIFT: u32 = 3;
+/// Sizes of recently freed blocks a thread remembers, to see one requested again.
+const REMEMBERED: usize = 4;
+/// Sizes a thread has seen recur (freed, then requested again); only their blocks are kept.
+const RECURRING: usize = 2;
 /// The largest alignment served: what system malloc guarantees on x86_64 and aarch64, so a
 /// kept block's layout can be rebuilt from its size alone.
 const MAX_ALIGN: usize = std::mem::align_of::<u128>();
@@ -70,6 +74,36 @@ thread_local! {
     /// Whether this thread's collections age its kept blocks (`age`). A thread that never
     /// collects (a code generator's) would keep its blocks for good, so it keeps none.
     static AGES: Cell<bool> = const { Cell::new(false) };
+    /// The sizes last freed without being kept, and the next entry to overwrite.
+    static FREED: SizeRing<REMEMBERED> = const { SizeRing::new() };
+    /// The sizes seen to recur: a one-off free (a module's bytes) never enters, so it is
+    /// never held resident through a later peak.
+    static RECURS: SizeRing<RECURRING> = const { SizeRing::new() };
+}
+
+/// The last `N` sizes noted, zero where none.
+struct SizeRing<const N: usize> {
+    sizes: [Cell<usize>; N],
+    next: Cell<usize>,
+}
+
+impl<const N: usize> SizeRing<N> {
+    const fn new() -> Self {
+        Self { sizes: [const { Cell::new(0) }; N], next: Cell::new(0) }
+    }
+
+    fn note(&self, size: usize) {
+        self.sizes[self.next.get()].set(size);
+        self.next.set((self.next.get() + 1) % N);
+    }
+
+    /// A noted size that a block of `size` bytes would serve, or be served by, within the fit.
+    fn near(&self, size: usize) -> bool {
+        self.sizes.iter().any(|noted| {
+            let (small, large) = (noted.get().min(size), noted.get().max(size));
+            small != 0 && large - small <= large >> FIT_SHIFT
+        })
+    }
 }
 
 fn eligible(layout: Layout) -> bool {
@@ -85,6 +119,7 @@ pub(crate) unsafe fn alloc(layout: Layout) -> *mut u8 {
     if !block.is_null() {
         return block;
     }
+    note_request(layout);
     // SAFETY: forwarded unchanged.
     unsafe { System.alloc(layout) }
 }
@@ -99,6 +134,18 @@ pub(crate) unsafe fn free(block: *mut u8, layout: Layout) {
     }
     // SAFETY: forwarded unchanged.
     unsafe { System.dealloc(block, layout) }
+}
+
+/// A request no kept block served: one near a size this thread freed recently shows that
+/// size recurs, so its next free is kept.
+fn note_request(layout: Layout) {
+    if !eligible(layout) {
+        return;
+    }
+    let recurs = FREED.try_with(|freed| freed.near(layout.size())).unwrap_or(false);
+    if recurs && !RECURS.try_with(|sizes| sizes.near(layout.size())).unwrap_or(true) {
+        let _ = RECURS.try_with(|sizes| sizes.note(layout.size()));
+    }
 }
 
 /// A kept block that serves `layout`, or null. The cache is empty during thread teardown.
@@ -118,6 +165,10 @@ fn take(layout: Layout) -> *mut u8 {
 /// or every slot holds a block not yet idle through a collection.
 fn keep(block: *mut u8, layout: Layout) -> bool {
     if !eligible(layout) || !AGES.try_with(Cell::get).unwrap_or(false) {
+        return false;
+    }
+    if !RECURS.try_with(|sizes| sizes.near(layout.size())).unwrap_or(false) {
+        let _ = FREED.try_with(|freed| freed.note(layout.size()));
         return false;
     }
     KEPT
@@ -154,6 +205,12 @@ pub(crate) fn age() {
 mod tests {
     use super::*;
 
+    /// Makes this test thread a collecting one on which `size` has recurred.
+    fn recurring(size: usize) {
+        age();
+        RECURS.with(|sizes| sizes.note(size));
+    }
+
     fn layout(size: usize) -> Layout {
         Layout::from_size_align(size, MAX_ALIGN).unwrap()
     }
@@ -178,7 +235,7 @@ mod tests {
 
     #[test]
     fn a_kept_block_is_taken_back_for_an_equal_request() {
-        age();
+        recurring(LARGE_MIN_BYTES);
         let block = system_block(LARGE_MIN_BYTES);
         assert!(keep(block, layout(LARGE_MIN_BYTES)));
         assert_eq!(take(layout(LARGE_MIN_BYTES)), block);
@@ -188,7 +245,7 @@ mod tests {
 
     #[test]
     fn a_much_smaller_request_does_not_take_the_block() {
-        age();
+        recurring(LARGE_MIN_BYTES * 2);
         let size = LARGE_MIN_BYTES * 2;
         let block = system_block(size);
         assert!(keep(block, layout(size)));
@@ -199,7 +256,7 @@ mod tests {
 
     #[test]
     fn a_block_ages_out_after_the_idle_limit() {
-        age();
+        recurring(LARGE_MIN_BYTES);
         let block = system_block(LARGE_MIN_BYTES);
         assert!(keep(block, layout(LARGE_MIN_BYTES)));
         for _ in 1..MAX_IDLE_COLLECTIONS {
@@ -223,7 +280,7 @@ mod tests {
 
     #[test]
     fn full_slots_of_fresh_blocks_refuse_another() {
-        age();
+        recurring(LARGE_MIN_BYTES);
         let blocks: Vec<_> = (0..SLOTS).map(|_| system_block(LARGE_MIN_BYTES)).collect();
         assert!(blocks.iter().all(|&block| keep(block, layout(LARGE_MIN_BYTES))));
         let extra = system_block(LARGE_MIN_BYTES);
@@ -234,7 +291,7 @@ mod tests {
 
     #[test]
     fn a_full_cache_evicts_its_oldest_block() {
-        age();
+        recurring(LARGE_MIN_BYTES);
         let blocks: Vec<_> = (0..SLOTS).map(|_| system_block(LARGE_MIN_BYTES)).collect();
         assert!(blocks.iter().all(|&block| keep(block, layout(LARGE_MIN_BYTES))));
         age();
@@ -247,6 +304,17 @@ mod tests {
     fn a_thread_that_has_not_collected_keeps_nothing() {
         let block = system_block(LARGE_MIN_BYTES);
         assert!(!keep(block, layout(LARGE_MIN_BYTES)));
+        free(block, LARGE_MIN_BYTES);
+    }
+
+    #[test]
+    fn a_block_is_kept_only_once_its_size_recurred() {
+        age();
+        let block = system_block(LARGE_MIN_BYTES);
+        assert!(!keep(block, layout(LARGE_MIN_BYTES)), "a first free is only remembered");
+        note_request(layout(LARGE_MIN_BYTES));
+        assert!(keep(block, layout(LARGE_MIN_BYTES)), "the size was requested again");
+        assert_eq!(take(layout(LARGE_MIN_BYTES)), block);
         free(block, LARGE_MIN_BYTES);
     }
 }
