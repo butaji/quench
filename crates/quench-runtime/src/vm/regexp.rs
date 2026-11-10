@@ -1649,12 +1649,12 @@ impl<H: Host> Vm<H> {
         unicode: bool,
     ) -> Result<Value, JsError> {
         let size = input.units().len();
-        let subject = self.regexp_subject(input, matcher);
+        let mut subject = None;
         let mut last_match = None;
         let mut p_index = 0usize;
         let mut q = 0usize;
         while q < size {
-            let Some(matched) = matcher.find_in_subject(&subject, q).next() else {
+            let Some(matched) = self.regexp_split_find(matcher, input, &mut subject, q) else {
                 break;
             };
             // The spec's loop only tries sticky execs below `size`.

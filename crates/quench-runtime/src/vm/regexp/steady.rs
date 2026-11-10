@@ -492,3 +492,22 @@ impl<H: Host> Vm<H> {
         self.regexp_from_meta(prototype, meta).ok()
     }
 }
+
+impl<H: Host> Vm<H> {
+    /// The match of `matcher` over `input` from `q` for the split loop (`regexp_split_builtin`):
+    /// a flat ASCII input is searched in place, any other makes its prepared subject once,
+    /// kept in `subject`.
+    pub(super) fn regexp_split_find(
+        &mut self,
+        matcher: &quench_regexp::Regex,
+        input: &JsString,
+        subject: &mut Option<PreparedSubject>,
+        q: usize,
+    ) -> Option<quench_regexp::Match> {
+        if let Some(found) = Self::regexp_search_ascii(matcher, input, q, false, None) {
+            return found;
+        }
+        let subject = subject.get_or_insert_with(|| self.regexp_subject(input, matcher));
+        matcher.find_in_subject(subject, q).next()
+    }
+}
