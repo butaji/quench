@@ -67,6 +67,7 @@ pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
 /// before a forwarder's or a promise's substitution: [[Construct]] of an ordinary constructor
 /// its returned object, otherwise the receiver it allocated; a setter's store
 /// (`Completion::Assigns`) the value stored, which the caller's register still holds.
+#[inline(always)]
 pub(super) fn completed_value<H: Host>(vm: &Vm<H>, activation: &Activation, completion: Completion, this: Value, value: Value) -> Value {
     match completion {
         completion if completion.constructs() && !vm.is_object_like(value) => this,
