@@ -16,6 +16,9 @@ pub(super) struct LaneBodyHistory {
     shrinks: u8,
 }
 
+/// The base `TIERS.lane_body.reoptimize_share` is a share of.
+const PERCENT: u64 = 100;
+
 /// The entries and the milliseconds of warming past which a function specializes by its
 /// recurrence alone (`LaneView::recurrent`).
 const RECURRENT_ENTRIES: u16 = 16;
@@ -59,7 +62,7 @@ impl LaneView {
         leaves_at.set(leaves_at.get().with(exit));
         // Leaves past the first `reoptimize_exits` that exceed `reoptimize_share` percent of the runs.
         let (leaves, runs) = (u64::from(exits.get()), u64::from(exits.get()) + u64::from(completions.get()));
-        if exits.get() < TIERS.lane_body.reoptimize_exits || leaves * 100 <= runs * u64::from(TIERS.lane_body.reoptimize_share) {
+        if exits.get() < TIERS.lane_body.reoptimize_exits || leaves * PERCENT <= runs * u64::from(TIERS.lane_body.reoptimize_share) {
             return;
         }
         let Some(stuck) = verdict(*recompiles, leaves_at.get(), *stuck) else {
@@ -94,6 +97,14 @@ impl LaneView {
     fn recurrent(&self, entries: u16) -> bool {
         entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && self.history.get().lifetimes == 0
             && warm_clock().wrapping_sub(self.warm_since.get()) >= RECURRENT_TICKS
+    }
+
+    /// Whether `entries` is a count at which its function weighs a compile: the warm-up, then
+    /// each doubling of it, so a function that has not paid for its compile yet looks again
+    /// when it has done twice the work.
+    fn attempts_at(&self, entries: u16) -> bool {
+        let warmup = self.warmup_entries();
+        entries % warmup == 0 && (entries / warmup).is_power_of_two()
     }
 
     /// Whether its history affords another compile.
@@ -159,33 +170,33 @@ impl LaneView {
         if awaits_look(body) {
             return true;
         }
-        let (outcome, recompiles, stuck) = match std::mem::replace(body, LaneBody::Declined) {
-            LaneBody::Unspecialized { entries, recompiles, stuck } if entries.saturating_add(1) >= self.warmup_entries() || self.recurrent(entries.saturating_add(1)) => {
+        let (outcome, entries, recompiles, stuck) = match std::mem::replace(body, LaneBody::Declined) {
+            LaneBody::Unspecialized { entries, recompiles, stuck } if self.attempts_at(entries.saturating_add(1)) || self.recurrent(entries.saturating_add(1)) => {
                 if !self.affords_compile() {
                     *body = LaneBody::Unspecialized { entries, recompiles, stuck };
                     return false;
                 }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks }), recompiles, stuck)
+                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| u32::from(entries) + 1) }), entries, recompiles, stuck)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
                 let ticks = warm_ticks();
                 if entries == 0 { self.warm_since.set(ticks); }
-                *body = LaneBody::Unspecialized { entries: entries + 1, recompiles, stuck };
+                *body = LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck };
                 return true;
             }
             LaneBody::Compiling { pending, recompiles, stuck, .. } =>
-                (work(super::super::compiled::LaneBodyWork::Poll(pending)), recompiles, stuck),
+                (work(super::super::compiled::LaneBodyWork::Poll(pending)), 0, recompiles, stuck),
             settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
         };
-        *body = self.body_after(outcome, entry, recompiles, stuck);
+        *body = self.body_after(outcome, entry, entries, recompiles, stuck);
         !matches!(body, LaneBody::Declined)
     }
 
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
     /// flight records the inlining its plan fits (`LaneBodyHistory::shrinks`).
-    fn body_after(&self, outcome: super::super::compiled::LaneBodyOutcome, entry: Handler, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
+    fn body_after(&self, outcome: super::super::compiled::LaneBodyOutcome, entry: Handler, entries: u16, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
         match outcome {
             super::super::compiled::LaneBodyOutcome::Compiling(pending) => {
                 self.history.set(LaneBodyHistory { shrinks: pending.shrinks(), ..self.history.get() });
@@ -197,6 +208,7 @@ impl LaneView {
                 self.note_dropped_compile();
                 LaneBody::Unspecialized { entries: 0, recompiles, stuck }
             }
+            super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
             super::super::compiled::LaneBodyOutcome::Declined => LaneBody::Declined,
         }
     }
