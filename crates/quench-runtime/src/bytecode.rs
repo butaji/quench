@@ -133,7 +133,7 @@ pub(crate) const UNIQUE_CACHE_SITES: u16 = SHARED_UNCACHED_SITE - NAME_SHARED_CA
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
-pub(crate) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
+pub(crate) use crate::units::MAX_ARRAY_LENGTH;
 pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
 pub(crate) const OPTIONAL_REGISTER_BIAS: Register = 1;
 

@@ -28,7 +28,7 @@ const INSPECT_FIELDS: [&str; 6] = ["min", "max", "mean", "exceeds", "stddev", "c
 
 /// `createHistogram`'s defaults: `lowest`, `highest` (`Number.MAX_SAFE_INTEGER`), `figures`.
 const DEFAULT_LOWEST: i64 = 1;
-const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
+const MAX_SAFE_INTEGER: i64 = quench_runtime::units::MAX_SAFE_INTEGER_U64 as i64;
 const DEFAULT_FIGURES: i64 = 3;
 /// The event loop delay histogram's bounds (`ELDHistogram`'s `Histogram::Options { 1000 }`)
 /// and default sampling resolution in milliseconds.

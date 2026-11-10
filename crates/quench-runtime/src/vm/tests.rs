@@ -6758,7 +6758,7 @@ fn async_continuation_lifetime_follows_reachable_callbacks_and_jobs() {
 fn pending_await_continuations(vm: &mut Vm<TestHost>) -> usize {
     let mut pending = 0;
     vm.heap
-        .for_each_await_state(|state| pending += usize::from(state.continuation.is_some()));
+        .for_each_await_state(|state| pending += usize::from(state.holds_continuation()));
     pending
 }
 
@@ -6797,13 +6797,11 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     let continuation =
         Continuation::suspend(frame, Completion::Yield(Value::UNDEFINED), None, Value::UNDEFINED);
     let state = vm.heap.alloc(crate::heap::Cell::AwaitState(Box::new(
-        crate::heap::AwaitState {
-            continuation: Some(Box::new(continuation)),
-            realm: Value::UNDEFINED,
-            promise: Value::UNDEFINED,
-            generator: None,
-            yielded: false,
-        },
+        crate::heap::AwaitState::arm(
+            crate::heap::AwaitKind::function(continuation),
+            Value::UNDEFINED,
+            Value::UNDEFINED,
+        ),
     )));
     let root = vm.heap.root(state);
     vm.collect_now(&program);
@@ -6812,7 +6810,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     assert!(vm.heap.is_live(original));
     assert!(vm.heap.is_live(scope));
     let take = |vm: &mut Vm<TestHost>| match vm.heap.await_state_mut(state) {
-        Some(state) => state.continuation.take(),
+        Some(state) => state.take_function_continuation().map(|continuation| *continuation),
         _ => panic!("await state"),
     };
     assert_eq!(take(&mut vm).unwrap().frame.original_arguments, [original]);
@@ -9215,13 +9213,11 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 vm.heap.root(value)
             } else {
                 let value = vm.heap.alloc(super::Cell::AwaitState(Box::new(
-                    crate::heap::AwaitState {
-                        continuation: Some(Box::new(continuation)),
-                        realm: Value::UNDEFINED,
+                    crate::heap::AwaitState::arm(
+                        crate::heap::AwaitKind::function(continuation),
+                        Value::UNDEFINED,
                         promise,
-                        generator: None,
-                        yielded: false,
-                    },
+                    ),
                 )));
                 vm.heap.root(value)
             };
@@ -9236,7 +9232,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             }
             let value = vm.heap.root_value(owner).unwrap();
             let resumed = if let Some(state) = vm.heap.await_state_mut(value) {
-                *state.continuation.take().unwrap()
+                *state.take_function_continuation().unwrap()
             } else {
                 match vm.heap.iterator_mut(value) {
                 Some(crate::heap::IteratorRecord { ext, .. }) => ext

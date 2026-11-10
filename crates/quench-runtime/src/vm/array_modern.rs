@@ -491,13 +491,7 @@ impl<H: Host> Vm<H> {
             let length_atom = self.length_atom;
             let length_value = self.get_property(p, source, length_atom)?;
             let number = self.to_number(p, length_value)?;
-            let length = if number.is_nan() || number <= 0.0 {
-                0
-            } else if number.is_infinite() {
-                MAX_SAFE_INTEGER as usize
-            } else {
-                number.floor().min(MAX_SAFE_INTEGER) as usize
-            };
+            let length = crate::units::to_length(number);
             if length > u32::MAX as usize {
                 return Err(self.range_error(
                     p,

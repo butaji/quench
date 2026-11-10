@@ -11,6 +11,7 @@ use super::{WeakMapEntries, WeakSetEntries};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod await_state;
 mod global_values;
 mod modes;
 mod prototype_values;
@@ -18,6 +19,7 @@ mod shape_id;
 mod snapshot;
 mod typed_array_kind;
 mod wasm_fields;
+pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState};
 pub(crate) use wasm_fields::{WasmGcFields, WasmTableElements};
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
@@ -712,38 +714,6 @@ pub(crate) struct ArrayFromAsyncState {
     pub(crate) awaiting: ArrayFromAsyncAwait,
 }
 
-/// One `await`'s suspended activation. The cell is both handlers of the await's promise
-/// reaction, so the continuation is traced while the reaction can still run, and the run
-/// takes it. The continuation is boxed apart so taking it frees its storage at once: the
-/// spent state waits for a sweep.
-#[derive(Clone, Debug)]
-pub(crate) struct AwaitState {
-    pub(crate) continuation: Option<Box<crate::vm::activation::Continuation>>,
-    /// The realm global that awaited, which the continuation resumes in.
-    pub(crate) realm: Value,
-    /// The async function's promise, or the async generator request's promise.
-    pub(crate) promise: Value,
-    pub(crate) generator: Option<Value>,
-    /// The await of an async generator's `yield`, which settles the request with the value.
-    pub(crate) yielded: bool,
-}
-impl AwaitState {
-    /// The program its suspended continuation resumes in, which stays alive with it.
-    pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
-        if let Some(continuation) = &self.continuation {
-            visit(continuation.program());
-        }
-    }
-
-    /// Its edges: the realm and promise it resumes, the generator, the suspended frame.
-    pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
-        out.extend([self.realm, self.promise]);
-        out.extend(self.generator);
-        if let Some(continuation) = &self.continuation {
-            continuation.extend_roots(out);
-        }
-    }
-}
 impl Native {
     /// The constructor intrinsic (`Function`, `AsyncFunction`, ...) of a function of this kind.
     pub(crate) fn function_constructor(is_async: bool, is_generator: bool) -> Self {
