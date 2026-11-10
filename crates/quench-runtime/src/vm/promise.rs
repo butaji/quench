@@ -1482,7 +1482,7 @@ impl<H: Host> Vm<H> {
                 let Some(namespace) = record.pending_namespace() else {
                     return Err(self.type_error(p, "main module namespace is unavailable".into()));
                 };
-                record.begin_async_evaluation(namespace);
+                record.begin_async_evaluation(namespace)?;
                 record.track_evaluation_promise(promise);
                 self.watch_module_evaluation(promise);
                 self.realm
@@ -1689,14 +1689,7 @@ impl<H: Host> Vm<H> {
             return Ok(SynchronousModule::AsyncGraph);
         }
         drop(linked);
-        if self.realm.promise.modules.get(&key).is_some_and(|record| {
-            matches!(
-                record.phase(),
-                ModulePhase::Evaluating
-                    | ModulePhase::EvaluatingAsync
-                    | ModulePhase::WaitingForDependencies
-            )
-        }) {
+        if self.realm.promise.modules.get(&key).is_some_and(|record| record.phase().is_evaluating()) {
             return Ok(SynchronousModule::Evaluating);
         }
         self.evaluate_static_module_source(
@@ -3343,7 +3336,7 @@ impl<H: Host> Vm<H> {
                     self.type_error(p, "module record disappeared during evaluation".into())
                 );
             };
-            record.begin_async_evaluation(value);
+            record.begin_async_evaluation(value)?;
             self.realm
                 .promise
                 .async_module_order
