@@ -13,8 +13,10 @@
 use std::cell::RefCell;
 use std::ops::Range;
 
+mod dispatch;
 mod scan;
 mod workspace;
+use dispatch::Dispatch;
 use workspace::{ClassRun, class_run_of};
 
 use super::{
@@ -440,6 +442,11 @@ enum Inst {
         alternative: u32,
         guard: u32,
     },
+    /// An alternation's branches, each beginning with known units: continue at the first
+    /// branch `Program::dispatches[table]` finds for the unit, the others being choices.
+    Dispatch {
+        table: u32,
+    },
     Jump(u32),
     /// A group's start into its temporary register: with a restore entry where the group
     /// may run again on one path (`Compiler::repeated`), plainly elsewhere, as the group's
@@ -553,6 +560,7 @@ pub(crate) struct Program {
     lists: Box<[u32]>,
     /// The starts of guarded bodies, for `GuardedSplit`.
     guards: Box<[MatchStarts]>,
+    dispatches: Box<[Dispatch]>,
     capture_count: usize,
     register_count: usize,
     /// Where matches can start; `None` where any position can.
@@ -589,11 +597,13 @@ pub(crate) struct Program {
 /// The compiled form of a construct this matcher does not run.
 struct Unsupported;
 
+#[derive(Default)]
 struct Compiler {
     instructions: Vec<Inst>,
     sets: Vec<MatchSet>,
     lists: Vec<u32>,
     guards: Vec<MatchStarts>,
+    dispatches: Vec<Dispatch>,
     registers: u32,
     /// Bodies being compiled that one path may run more than once, or whose registers a
     /// caller keeps across their run: loops with more than one iteration and lookarounds.
@@ -677,24 +687,7 @@ impl Compiler {
                     self.compile(part, flags)?;
                 }
             }
-            Expr::Alternation(alternatives) => {
-                let mut exits = Vec::new();
-                for (index, alternative_expr) in alternatives.iter().enumerate() {
-                    let last = index + 1 == alternatives.len();
-                    let split = (!last).then(|| self.emit(Inst::Split { alternative: 0 }));
-                    self.compile(alternative_expr, flags)?;
-                    if let Some(split) = split {
-                        exits.push(self.emit(Inst::Jump(0)));
-                        let alternative = self.pc();
-                        self.instructions[split as usize] =
-                            self.split(alternative, alternative_expr, flags);
-                    }
-                }
-                let end = self.pc();
-                for exit in exits {
-                    self.instructions[exit as usize] = Inst::Jump(end);
-                }
-            }
+            Expr::Alternation(alternatives) => self.alternation(alternatives, flags)?,
             Expr::Capture { index, body } => {
                 let capture = u32::try_from(*index).map_err(|_| Unsupported)?;
                 let temporary = self.register();
@@ -1329,14 +1322,7 @@ fn nullable(expr: &Expr) -> bool {
 impl Program {
     /// The program for `expr`, or `None` when it uses a construct this matcher does not run.
     pub(crate) fn compile(expr: &Expr, flags: Flags, capture_count: usize) -> Option<Self> {
-        let mut compiler = Compiler {
-            instructions: Vec::new(),
-            sets: Vec::new(),
-            lists: Vec::new(),
-            guards: Vec::new(),
-            registers: u32::try_from(2 * capture_count).ok()?,
-            repeated: 0,
-        };
+        let mut compiler = Compiler { registers: u32::try_from(2 * capture_count).ok()?, ..Compiler::default() };
         compiler.compile(expr, flags).ok()?;
         compiler.emit(Inst::Match);
         let mut prefix = Vec::new();
@@ -1354,6 +1340,7 @@ impl Program {
             sets: compiler.sets.into_boxed_slice(),
             lists: compiler.lists.into_boxed_slice(),
             guards: compiler.guards.into_boxed_slice(),
+            dispatches: compiler.dispatches.into_boxed_slice(),
             capture_count,
             register_count: compiler.registers as usize,
             anchored,
@@ -1597,11 +1584,8 @@ impl Program {
                     max,
                     greedy,
                 } => {
-                    let ceiling = if max == UNBOUNDED {
-                        length
-                    } else {
-                        position.saturating_add(max as usize).min(length)
-                    };
+                    // `UNBOUNDED` exceeds any subject's length, so the minimum is then `length`.
+                    let ceiling = position.saturating_add(max as usize).min(length);
                     let floor = position + min as usize;
                     if floor > length {
                         false
@@ -1649,25 +1633,17 @@ impl Program {
                     }
                 }
                 Inst::Split { alternative } => {
-                    stack.push(Frame::Choice {
-                        pc: alternative,
-                        position,
-                    });
+                    stack.push(Frame::Choice { pc: alternative, position });
                     pc += 1;
                     true
                 }
                 Inst::GuardedSplit { alternative, guard } => {
-                    if self.guards[guard as usize].admits(text, position) {
-                        stack.push(Frame::Choice {
-                            pc: alternative,
-                            position,
-                        });
-                        pc += 1;
-                    } else {
-                        pc = alternative;
-                    }
+                    let admitted = self.guards[guard as usize].admits(text, position);
+                    stack.extend(admitted.then_some(Frame::Choice { pc: alternative, position }));
+                    pc = if admitted { pc + 1 } else { alternative };
                     true
                 }
+                Inst::Dispatch { table } => self.dispatch_target(table, text, position, stack).map(|target| pc = target).is_some(),
                 Inst::Jump(target) => {
                     pc = target;
                     true
