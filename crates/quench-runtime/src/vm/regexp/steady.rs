@@ -477,3 +477,18 @@ fn ascii_replaced(bytes: &[u8], literal: &[u8], ranges: &[Range<usize>], length:
     parts.push(&bytes[copied..]);
     JsString::from_ascii_parts(length, parts.into_iter())
 }
+
+impl<H: Host> Vm<H> {
+    /// The new RegExp object of regular expression literal site `site_index` of `program`
+    /// when the site's record is cached for this realm: made from it alone, with no pattern
+    /// or flags constant read again. `None` leaves the site to `regexp_literal_of`.
+    pub(super) fn regexp_from_cached_site(&mut self, program: ProgramId, site_index: usize) -> Option<Value> {
+        let meta = self.programs.regexp_literal_meta(program, site_index)?;
+        let intrinsics = self.realm.intrinsics.regexp_intrinsics.get(&self.realm.globals)?;
+        if meta.legacy_constructor.constructor() != intrinsics.constructor {
+            return None;
+        }
+        let prototype = intrinsics.prototype;
+        self.regexp_from_meta(prototype, meta).ok()
+    }
+}

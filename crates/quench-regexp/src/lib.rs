@@ -536,26 +536,40 @@ impl Regex {
     /// `backtracking_find` of an ASCII subject's bytes, for a caller that holds them and needs
     /// no `Subject`: `None` when the pattern did not compile to the backtracking matcher.
     pub fn find_ascii(&self, bytes: &[u8], start: usize, sticky: bool, captures: bool) -> Option<Option<Match>> {
-        let complete = self.complete();
-        let program = complete.backtracking.as_ref()?;
-        if start > bytes.len() || bytes.len() - start < complete.min_length {
-            return Some(None);
-        }
-        // Every match consumes the required literal, so a subject without it has none.
-        // A sticky search tries the one start, whose start-set check costs less than
-        // scanning the whole remainder for the literal at every split position. A program
-        // that begins with the literal (`Program::searches_prefix`) scans for it itself.
-        if let Some(literal) = complete.required_bytes.as_ref().filter(|_| !sticky) {
-            if !program.searches_prefix(literal.needle()) && literal.find(&bytes[start..]).is_none() {
-                return Some(None);
-            }
-        }
+        let program = match self.ascii_program(bytes, start, sticky)? {
+            Some(program) => program,
+            None => return Some(None),
+        };
         Some(program.find(bytes, start, sticky, captures).map(|found| self.offset_match(found, captures)))
     }
 
     /// The range `find_ascii` finds, for a caller that observes no captures.
     pub fn find_range_ascii(&self, bytes: &[u8], start: usize, sticky: bool) -> Option<Option<Range<usize>>> {
-        self.find_ascii(bytes, start, sticky, false).map(|found| found.map(|matched| matched.range))
+        let program = match self.ascii_program(bytes, start, sticky)? {
+            Some(program) => program,
+            None => return Some(None),
+        };
+        Some(program.find_bounds(bytes, start, sticky))
+    }
+
+    /// The backtracking program to run over an ASCII subject's `bytes` from `start`, or
+    /// `Some(None)` where the search finds nothing before a run: the rest is shorter than
+    /// any match, or lacks the literal every match consumes (a sticky search tries the one
+    /// start, whose start-set check costs less than scanning the remainder for it, and a
+    /// program that begins with the literal scans for it itself, `Program::searches_prefix`).
+    /// `None` where the pattern did not compile to the backtracking matcher.
+    fn ascii_program(&self, bytes: &[u8], start: usize, sticky: bool) -> Option<Option<&backtrack::Program>> {
+        let complete = self.complete();
+        let program = complete.backtracking.as_ref()?;
+        if start > bytes.len() || bytes.len() - start < complete.min_length {
+            return Some(None);
+        }
+        if let Some(literal) = complete.required_bytes.as_ref().filter(|_| !sticky) {
+            if !program.searches_prefix(literal.needle()) && literal.find(&bytes[start..]).is_none() {
+                return Some(None);
+            }
+        }
+        Some(Some(program))
     }
 
     /// The match the compiled backtracking matcher finds from `start` (only at `start` when

@@ -2345,18 +2345,15 @@ impl<H: Host> Vm<H> {
         program: ProgramId,
         site_index: usize,
     ) -> Result<Value, JsError> {
-        let site = p
-            .regexp_literal_sites
-            .get(site_index)
+        if let Some(object) = self.regexp_from_cached_site(program, site_index) {
+            return Ok(object);
+        }
+        let site = p.regexp_literal_sites.get(site_index)
             .ok_or_else(|| JsError::validation("RegExp literal site is outside program".into()))?;
-        let source = self
-            .programs
-            .constant(program, site.pattern_constant as usize)
+        let source = self.programs.constant(program, site.pattern_constant as usize)
             .and_then(|value| self.heap.string(value).cloned())
             .ok_or_else(|| JsError::validation("RegExp literal pattern is not a string".into()))?;
-        let flags_text = self
-            .programs
-            .constant(program, site.flags_constant as usize)
+        let flags_text = self.programs.constant(program, site.flags_constant as usize)
             .filter(|value| self.heap.string(*value).is_some())
             .ok_or_else(|| JsError::validation("RegExp literal flags are not a string".into()))?;
         let (prototype, constructor) = self
@@ -2413,7 +2410,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// A new RegExp object of `prototype` with the record `meta`.
-    fn regexp_from_meta(
+    pub(super) fn regexp_from_meta(
         &mut self,
         prototype: Value,
         meta: Rc<crate::heap::RegExpMeta>,
