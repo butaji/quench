@@ -2554,7 +2554,7 @@ impl Lowering<'_, '_> {
                 let index = self.operand_int(state, instruction.operand_c(), exit);
                 base.zip(index).map(|(base, index)| {
                     match self.loop_array(pc, instruction.operand_b().register_index()) {
-                        Some(array) => self.loop_element_read(state, array, index, instruction.result_register(), exit),
+                        Some(array) => self.loop_element_read(state, array, index, (pc, instruction.result_register()), exit),
                         None => {
                             let view = self.array_view(state, base, false, exit);
                             let value = self.dense_element(state, base, view, index, exit);
@@ -3543,6 +3543,12 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// Whether a loop definition of `register` of type `ty` makes it a candidate for an int32
+    /// entry contract: the definition yields an int32, or the register held one at entry.
+    fn int32_candidate(&self, register: Register, ty: Type) -> bool {
+        ty == Type::INT32 || self.int_entries.contains(&register)
+    }
+
     /// An unchanged arm preserves a checked entry hypothesis. Every definition
     /// and backedge must preserve it too; failed hypotheses are removed before
     /// reanalysis so a dependent candidate cannot keep using their assumptions.
@@ -3562,8 +3568,7 @@ impl Lowering<'_, '_> {
                 let index = usize::from(register);
                 if (header..=back).contains(&pc) && register < self.unit.caller_registers
                     && self.is_live(header, register) && self.written.contains(index)
-                    && matches!(initial[index], Type::ANY | Type::NUMBER)
-                    && (ty == Type::INT32 || self.int_entries.contains(&register)) {
+                    && matches!(initial[index], Type::ANY | Type::NUMBER) && self.int32_candidate(register, ty) {
                     candidates.insert(index);
                 }
             });
@@ -3969,8 +3974,21 @@ impl Lowering<'_, '_> {
     /// Element `index` (an int32) of a hoisted array's view, into `destination`: a dense
     /// array's present element, tagged, or a typed array's element, a Number. Any other
     /// element exits.
-    fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, destination: Register, exit: ir::Block) {
+    fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, (pc, destination): (usize, Register), exit: ir::Block) {
         let (values, length) = self.hoisted_view(array);
+        let number = self.number_reads.binary_search(&pc).is_ok();
+        if self.views == ElementViews::Dense && number {
+            // An element read as a Number (`number_reads`) needs no hole test of its own: a hole
+            // is a NaN pattern, which the Number proof's one NaN test sends to the tag check
+            // that leaves.
+            let in_bounds = self.ins().icmp(IntCC::UnsignedLessThan, index, length);
+            emit_js_guard(&mut self.builder, in_bounds, exit);
+            let offset = self.ins().uextend(types::I64, index);
+            let offset = self.ins().imul_imm_s(offset, std::mem::size_of::<crate::Value>() as i64);
+            let address = self.ins().iadd(values, offset);
+            let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+            return self.set_tagged(state, destination, value);
+        }
         if self.views == ElementViews::Dense {
             let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable };
             let value = super::emit_dense_element(&mut self.builder, view, index, exit).1;
@@ -3995,6 +4013,13 @@ impl Lowering<'_, '_> {
         let (values, length) = self.hoisted_view(array);
         if self.views == ElementViews::Dense {
             let value = self.tagged(state, instruction.register_a());
+            // A store the code has not left at replaces an element in place or leaves: the
+            // append helper is a call every live value is spilled around, which a loop that
+            // never appends should not pay (a site that left compiles it, `left_here`).
+            if !self.left_here {
+                let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
+                return self.index_write(state, index, value, view, exit);
+            }
             let base = self.tagged(state, instruction.register_b());
             let key = self.tagged(state, instruction.register_c());
             let (slow, done) = (self.builder.create_block(), self.builder.create_block());
