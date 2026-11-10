@@ -11268,12 +11268,11 @@ impl<H: Host> Vm<H> {
     /// the set's, which the hint names from then on. A cache that grew or another callee only
     /// costs the hash again.
     #[inline(always)]
-    fn linked_script_call_entry(&self, callee: Value, link: &std::cell::Cell<u16>) -> Option<*const ScriptCallTarget> {
+    fn linked_script_call_entry(&mut self, callee: Value, link: &std::cell::Cell<u16>) -> Option<*const ScriptCallTarget> {
         let linked = usize::from(link.get());
         let index = if self.script_call_holds(linked, callee) {
             linked
-        } else {
-            let index = self.script_call_index(callee)?;
+        } else if let Some(index) = self.script_call_index(callee).or_else(|| self.relink_closure(callee, linked)) {
             // The callee in hand joins the site's record (`LaneStack::call_sites`): the entry it
             // linked may hold another site's callee since, so only the record names its own.
             let current = &self.lane_stack.script_targets.entries[index];
@@ -11282,9 +11281,34 @@ impl<H: Host> Vm<H> {
             // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
             link.set(index as u16);
             index
+        } else {
+            return None;
         };
         // SAFETY: `script_call_holds` found the entry within the cache.
         Some(unsafe { self.lane_stack.script_targets.entries.get_unchecked(index) } as *const ScriptCallTarget)
+    }
+
+    /// `callee`'s entry, made from the one `linked` names where that holds another closure of
+    /// `callee`'s function in the running program (F4): the function's target is kept and
+    /// only the closure's facts are read (`closure_target`), with no resolution; it joins
+    /// `callee`'s own set, where every lookup finds it.
+    #[cold]
+    #[inline(never)]
+    fn relink_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
+        let entry = *self.lane_stack.script_targets.entries.get(linked)?;
+        if entry.generation != self.lane_stack.generation || entry.program != self.active_program {
+            return None;
+        }
+        let (program, function, env) = self.same_realm_user_target(callee)?;
+        if program != entry.program || function != entry.function {
+            return None;
+        }
+        let known = self.lane_stack.function_target(program, function, false)?;
+        // SAFETY: no program is installed or retired while a call resolves.
+        let code = unsafe { &*std::ptr::from_ref(self.programs.residual(program)?) };
+        let target = self.closure_target(code, program, callee, env, known)?;
+        self.lane_stack.remember_script_target(target, self.heap.memory_policy());
+        self.script_call_index(callee)
     }
 
     /// `script_call_entry` of a callee of another program than the running one, whose
