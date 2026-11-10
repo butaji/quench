@@ -15423,7 +15423,12 @@ fn lane_body_activate<H: Host>(
 ) -> u64 {
     use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_TERMINATED};
     let vm = unsafe { vm(cx) };
-    let (registers, start) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, constructs);
+    let (registers, _) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, constructs);
+    // A leave resumes at a record of the callee's view, never at its tier prologue, which
+    // lies outside its records: a loop region's `Callee` exit (`lane_loop_native`) leaves the
+    // lane there and needs its PC. `lane_specialize` below takes the prologue's warming step.
+    // SAFETY: the push made the context the callee's.
+    let start = unsafe { (*cx).base };
     let leave = move |resume: Ip, acc: Value| {
         unsafe {
             (*cx).callee_resume = resume;
