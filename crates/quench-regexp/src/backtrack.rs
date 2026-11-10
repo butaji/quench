@@ -13,6 +13,7 @@
 use std::cell::RefCell;
 use std::ops::Range;
 
+mod scan;
 mod workspace;
 use workspace::{ClassRun, class_run_of};
 
@@ -1083,44 +1084,6 @@ impl StartRanges {
         return self.find_blocks(haystack);
         #[cfg(not(target_arch = "x86_64"))]
         haystack.iter().position(|unit| admits(*unit))
-    }
-
-    /// The offset of the first unit in a range of a `haystack` of at least one block, found
-    /// a block at a time; the last block overlaps the units already scanned, none of which hit.
-    #[cfg(target_arch = "x86_64")]
-    fn find_blocks(self, haystack: &[u8]) -> Option<usize> {
-        use std::arch::x86_64::{
-            __m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_max_epu8, _mm_min_epu8, _mm_movemask_epi8, _mm_or_si128,
-            _mm_set1_epi8, _mm_setzero_si128,
-        };
-        // SAFETY: SSE2 is part of the x86-64 baseline, and each load reads a whole block
-        // inside `haystack`, which holds at least one.
-        unsafe {
-            let bounds: [(__m128i, __m128i); START_SCAN_RANGES] = std::array::from_fn(|range| {
-                (_mm_set1_epi8(self.low[range] as i8), _mm_set1_epi8(self.high[range] as i8))
-            });
-            let hits_at = |offset: usize| {
-                let block = _mm_loadu_si128(haystack.as_ptr().add(offset).cast());
-                let mut hits = _mm_setzero_si128();
-                for (low, high) in &bounds[..self.count] {
-                    // A unit is in `low..=high` exactly when clamping it there leaves it.
-                    let clamped = _mm_min_epu8(_mm_max_epu8(block, *low), *high);
-                    hits = _mm_or_si128(hits, _mm_cmpeq_epi8(clamped, block));
-                }
-                _mm_movemask_epi8(hits) as u32
-            };
-            let mut offset = 0;
-            while offset + SCAN_BLOCK <= haystack.len() {
-                let mask = hits_at(offset);
-                if mask != 0 {
-                    return Some(offset + mask.trailing_zeros() as usize);
-                }
-                offset += SCAN_BLOCK;
-            }
-            let last = haystack.len() - SCAN_BLOCK;
-            let mask = hits_at(last);
-            (mask != 0).then(|| last + mask.trailing_zeros() as usize)
-        }
     }
 }
 

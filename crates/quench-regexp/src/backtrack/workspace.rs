@@ -1,5 +1,5 @@
 //! The registers and stack a search runs in, shared by every program on a thread.
-use super::{ascii_table, AsciiTable, Frame, Found, Inst, MatchSet, ASCII_UNITS, Program, Search, Text, UnitTest, UNBOUNDED, UNSET};
+use super::{ascii_table, StartRanges, AsciiTable, Frame, Found, Inst, MatchSet, ASCII_UNITS, Program, Search, Text, UnitTest, UNBOUNDED, UNSET};
 use std::cell::Cell;
 use std::ops::Range;
 
@@ -123,6 +123,8 @@ pub(super) struct ClassRun {
     test: UnitTest,
     /// The ASCII units that pass `test`, for a scan of a short subject.
     table: AsciiTable,
+    /// The passing units as byte ranges, where there are few, for a block scan.
+    ranges: Option<StartRanges>,
 }
 
 /// The subjects shorter than this are scanned for runs unit by unit, in one pass: the block
@@ -141,7 +143,7 @@ pub(super) fn class_run_of(instructions: &[Inst], sets: &[MatchSet], capture_cou
         UnitTest::Set(set) => sets[set as usize].contains(unit),
     };
     let mask = (0..ASCII_UNITS).fold(0u128, |mask, unit| mask | u128::from(passes(unit)) << unit);
-    Some(Box::new(ClassRun { test: *test, table: ascii_table(mask) }))
+    Some(Box::new(ClassRun { test: *test, table: ascii_table(mask), ranges: StartRanges::of(mask) }))
 }
 
 impl Program {
@@ -165,6 +167,9 @@ impl Program {
 impl ClassRun {
     /// The maximal runs of passing units of `bytes` from `first`, in order, in one pass.
     fn each_run(&self, bytes: &[u8], first: usize, mut found: impl FnMut(Range<usize>)) {
+        if let Some(mask) = self.ranges.filter(|_| first == 0).and_then(|ranges| ranges.class_mask(bytes)) {
+            return Self::runs_of_mask(mask, found);
+        }
         let passes = |unit: &u8| self.table.contains(*unit);
         let mut at = first;
         while let Some(skipped) = bytes[at..].iter().position(passes) {
@@ -172,6 +177,16 @@ impl ClassRun {
             let end = bytes[start..].iter().position(|unit| !passes(unit)).map_or(bytes.len(), |taken| start + taken);
             found(start..end);
             at = end;
+        }
+    }
+
+    /// The maximal runs of set bits of `mask`, in order, as ranges of units.
+    fn runs_of_mask(mut mask: u64, mut found: impl FnMut(Range<usize>)) {
+        while mask != 0 {
+            let start = mask.trailing_zeros();
+            let end = start + (mask >> start).trailing_ones();
+            found(start as usize..end as usize);
+            mask = mask.checked_shr(end).map_or(0, |rest| rest << end);
         }
     }
 }
