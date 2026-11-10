@@ -7,6 +7,7 @@ mod primitive_bench;
 mod vacancy_tests;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
+mod prefetch;
 mod reservation;
 mod sweep_support;
 use reservation::Reservation;
@@ -333,7 +334,7 @@ impl RecordBlock {
         true
     }
 
-    fn is_occupied(&self, index: usize) -> bool {
+    #[inline(always)] fn is_occupied(&self, index: usize) -> bool {
         let word_index = index / OCCUPANCY_WORD_BITS;
         let bit = index % OCCUPANCY_WORD_BITS;
         self.occupied[word_index] & (1_u64 << bit) != 0
@@ -347,7 +348,7 @@ impl RecordBlock {
         self.occupied[word_index] &= !(1_u64 << bit);
     }
 
-    fn mark(&mut self, index: usize) -> bool {
+    #[inline(always)] fn mark(&mut self, index: usize) -> bool {
         let word_index = index / OCCUPANCY_WORD_BITS;
         let bit = index % OCCUPANCY_WORD_BITS;
         let mask = 1_u64 << bit;
@@ -408,14 +409,14 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     }
 
     /// Claims the highest id of the loaded free word, whose bits name unoccupied ids of one
-    /// occupancy word: the bit is set in that word, which the free word's base names, with no
-    /// test of the id it already proved free.
+    /// occupancy word, with no test of the id it already proved free; hints the next one.
     #[inline(always)]
     fn take_free_word_id(&mut self) -> RecordId {
         debug_assert_ne!(self.free_word, 0);
         let bit = OCCUPANCY_WORD_BITS - 1 - self.free_word.leading_zeros() as usize;
         let mask = 1_u64 << bit;
         self.free_word &= !mask;
+        prefetch::next_free_record(self.base.as_ptr(), self.free_word_base, self.free_word);
         let (block_index, word_index) = Self::word_position(self.free_word_base);
         // SAFETY: a free word is loaded from an existing block's occupancy word.
         let word = unsafe { &mut self.blocks.get_unchecked_mut(block_index).occupied[word_index] };
@@ -623,7 +624,7 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         unsafe { self.base.as_ptr().add(id as usize).read().assume_init() }
     }
 
-    pub(super) fn mark(&mut self, id: RecordId) -> bool {
+    #[inline(always)] pub(super) fn mark(&mut self, id: RecordId) -> bool {
         let (block_index, record_index) = Self::split_id(id);
         self.blocks
             .get_mut(block_index)
