@@ -939,7 +939,7 @@ impl EnvironmentScopeRef {
 
 // A suspended generator or iterator helper: its saved activation is plain data, whose program
 // counter names the same instruction of the same function record once restored.
-use crate::vm::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, CallContext, Completion, GeneratorRecord, GeneratorState};
+use crate::vm::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, CallContext, Completion, GeneratorState};
 
 snapshot_enum!(async_generator_operation: AsyncGeneratorOperation { Next, Return, Throw });
 snapshot_enum!(generator_state: GeneratorState { Suspended, Executing, Completed, AwaitingReturn });
@@ -966,8 +966,6 @@ snap_via_enum! {
 
 snap_struct!(AsyncGeneratorRequest { operation, promise, value });
 snap_struct!(crate::vm::ActiveIterator { iterator, done });
-snap_struct!(GeneratorRecord { continuation, realm, state, requests });
-
 
 /// `CallContext` tags, in declaration order.
 mod call_context_tag {
