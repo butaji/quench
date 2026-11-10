@@ -2718,6 +2718,7 @@ impl Lowering<'_, '_> {
                 falls
             }
             None => {
+                super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
                 // A residual call in an admitted callee completes this native
                 // prefix through exact frame materialization. Its caller's
                 // effects and the callee's live argument homes cannot replay.
