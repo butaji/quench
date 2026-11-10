@@ -367,7 +367,7 @@ impl<H: Host> Vm<H> {
 
 impl MethodCache {
     /// Whether this entry records the same lookup and callee as `other`.
-    fn records_same(&self, other: &Self) -> bool {
+    pub(super) fn records_same(&self, other: &Self) -> bool {
         self.shape == other.shape && self.atom == other.atom && self.proto == other.proto && self.callee == other.callee
     }
 
