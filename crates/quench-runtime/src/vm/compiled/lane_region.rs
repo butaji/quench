@@ -1743,66 +1743,7 @@ pub(super) fn lower(
             align_of::<InlineRecoveryFrame>().trailing_zeros() as u8));
         Some((snapshot, descriptors))
     } else { None };
-    // A lane body's exits that write back the same registers share one block: the exit word
-    // is the block's parameter, so only the register stores (the bulk of an exit) exist once
-    // per live-register set instead of once per source PC.
-    let shared_exits = lowering.completion == Completion::StatusAndPc;
-    if shared_exits {
-        struct Group { caller: Vec<Register>, inlined: Vec<Register>, block: ir::Block }
-        let mut groups: Vec<Group> = Vec::new();
-        let mut routes: Vec<(ir::Block, usize, u64)> = Vec::new();
-        for pc in 0..lowering.exits.len() {
-            let Some(block) = lowering.exits[pc] else { continue };
-            let caller: Vec<Register> = lowering.written.iter().map(|register| register as Register)
-                .take_while(|register| *register < unit.caller_registers)
-                .filter(|register| lowering.is_live(pc, *register)).collect();
-            let (inlined, word) = match unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
-                super::lane_unit::Origin::Caller(record) => (Vec::new(), u64::from(record)),
-                super::lane_unit::Origin::Inlined { frame, pc: record } => {
-                    let registers = unit.chain(frame).into_iter().flat_map(|index| {
-                        let inlined = unit.frames[index];
-                        inlined.base..inlined.base + inlined.registers
-                    }).filter(|register| lowering.is_live(pc, *register)).collect();
-                    (registers, LaneExit::Inlined { frame, pc: record }.word())
-                }
-            };
-            let group = match groups.iter().position(|group| group.caller == caller && group.inlined == inlined) {
-                Some(group) => group,
-                None => {
-                    let block = lowering.builder.create_block();
-                    lowering.builder.set_cold_block(block);
-                    lowering.builder.append_block_param(block, types::I64);
-                    groups.push(Group { caller, inlined, block });
-                    groups.len() - 1
-                }
-            };
-            routes.push((block, group, word));
-        }
-        for (block, group, word) in routes {
-            lowering.switch_to(block, true);
-            let word = lowering.builder.ins().iconst(types::I64, word as i64);
-            let shared = groups[group].block;
-            lowering.builder.ins().jump(shared, &[word.into()]);
-        }
-        for group in groups {
-            lowering.switch_to(group.block, true);
-            for register in group.caller {
-                let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
-                lowering.builder.ins().store(MemFlagsData::trusted(), bits, lowering.registers_base, register_offset(register));
-            }
-            if !group.inlined.is_empty() {
-                let scratch = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, inlined));
-                for register in group.inlined {
-                    let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
-                    lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch, register_offset(register - unit.caller_registers));
-                }
-            }
-            let word = lowering.builder.block_params(group.block)[0];
-            let stop = lowering.stop;
-            lowering.builder.ins().jump(stop, &[word.into()]);
-        }
-    }
-    for pc in 0..if shared_exits { 0 } else { lowering.exits.len() } {
+    for pc in 0..lowering.exits.len() {
         let Some(block) = lowering.exits[pc] else { continue };
         lowering.switch_to(block, true);
         for register in lowering.written.iter().map(|register| register as Register)
