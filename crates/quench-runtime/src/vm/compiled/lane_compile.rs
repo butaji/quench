@@ -283,6 +283,9 @@ impl<H: Host> Vm<H> {
             let direct = direct(self);
             let Some(started) = self.start_lane_method(program, function, targets, captures, &direct, &generic, budget, entry)
             else { return LaneBodyOutcome::Declined };
+            // The plan's IR and lowering state, tens of megabytes for the largest bodies, are
+            // gone; their pages go back instead of staying this thread's.
+            quench_alloc::release_empty_pages();
             match self.lane_body_poll(Box::new(started)) {
                 Ok(outcome) => return outcome,
                 Err(replan) => pending = replan,
