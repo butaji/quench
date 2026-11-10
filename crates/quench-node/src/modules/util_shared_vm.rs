@@ -941,7 +941,7 @@ pub(crate) fn guess_handle_type(
 ) -> Result<RootId, RootedError> {
     let missing = context.undefined();
     let value = context.to_number(args.first().copied().unwrap_or(missing))?;
-    let fd = super::native_number::uint32(value) as i32;
+    let fd = quench_runtime::units::to_uint32(value) as i32;
     Ok(context.number(super::fd_handle_type::guess(fd) as u8 as f64))
 }
 

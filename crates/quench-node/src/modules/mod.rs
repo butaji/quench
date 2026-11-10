@@ -245,7 +245,6 @@ pub(crate) mod udp_binding;
 pub(crate) mod udp_transport;
 
 pub(crate) mod fd_handle_type;
-pub(crate) mod native_number;
 
 pub(crate) mod native_async_wrap;
 

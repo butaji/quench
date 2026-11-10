@@ -15,6 +15,11 @@ pub mod units {
     pub use quench_temporal::units::*;
     /// The most elements an array holds: its length is a `u32`.
     pub const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
+    pub use crate::value::number_to_u32 as to_uint32;
+    /// ToInt32: ToUint32's bits reinterpreted as `i32`.
+    pub fn to_int32(value: f64) -> i32 {
+        to_uint32(value) as i32
+    }
     pub const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
     pub const BINARY_RADIX: u32 = 2;
     pub const OCTAL_RADIX: u32 = 8;
