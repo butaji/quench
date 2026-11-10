@@ -46,14 +46,23 @@ impl LaneLeaves {
     }
 }
 
+/// What a function's lane bodies so far learned, which the next body plans around: where their
+/// runs left (`stuck`), which it plans generic, and the inlining budget halvings the last plan
+/// needed to fit (`PendingLaneMethod::shrinks`).
+#[derive(Clone, Copy, Default)]
+pub(super) struct LaneFeedback {
+    pub(super) stuck: LaneLeaves,
+    pub(super) shrinks: u8,
+}
+
 /// The places the next lane body leaves generic, planned from `past`: where its predecessors'
 /// runs left and, where the speculative bodies are spent, every record of the function of
 /// `length` records, so the one permanent body speculates on nothing.
-pub(super) fn generic_exits(past: Option<&super::super::tier_state::Past<LaneLeaves>>, length: usize) -> Vec<super::super::compiled::LaneExit> {
+pub(super) fn generic_exits(past: Option<&super::super::tier_state::Past<LaneFeedback>>, length: usize) -> Vec<super::super::compiled::LaneExit> {
     use super::super::compiled::LaneExit;
     match past {
         Some(past) if past.is_spent() => (0..length).map(LaneExit::At).chain([LaneExit::Entry]).collect(),
-        Some(past) => past.feedback.listed(),
+        Some(past) => past.feedback.stuck.listed(),
         None => Vec::new(),
     }
 }

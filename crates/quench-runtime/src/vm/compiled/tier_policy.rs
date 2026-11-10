@@ -49,13 +49,8 @@ pub(in crate::vm) struct LaneBody {
     pub(in crate::vm) reoptimize_share: u8,
     /// The leaves after which a body specializes again from the feedback its sites hold then:
     /// a region compiled while its call graph warmed keeps leaving at sites whose targets came
-    /// later, the deoptimization that reoptimizes. Each recompile doubles it, as JSC's exit
-    /// threshold backs off, and `max_recompiles` bounds it.
+    /// later, the deoptimization that reoptimizes. `SPECULATIVE_BODIES` bounds the bodies.
     pub(in crate::vm) reoptimize_exits: u16,
-    pub(in crate::vm) max_recompiles: u8,
-    /// The most bodies of one function lifecycle edges may discard before it runs in the lane
-    /// for good: past them a compile costs more than its runs regain.
-    pub(in crate::vm) max_lifetimes: u8,
     /// The length below which a lane body without loops or inlined calls declines
     /// (`Vm::compile_lane_method`).
     pub(in crate::vm) min_instructions: usize,
@@ -155,8 +150,6 @@ const MEASURED: Tiers = Tiers {
         warmup_entries: 400,
         reoptimize_share: 1,
         reoptimize_exits: 64,
-        max_recompiles: 4,
-        max_lifetimes: 8,
         min_instructions: 0,
         compile_poll_interval: 64,
     },
@@ -226,7 +219,7 @@ mod tests {
         // The warm-up doubles per dropped body, at most seven times, and must not overflow.
         assert!(u32::from(lane.warmup_entries) << 7 <= u32::from(u16::MAX));
         // The reoptimization threshold doubles per recompile and must not overflow its counter.
-        assert!(u32::from(lane.reoptimize_exits) << lane.max_recompiles <= u32::from(u16::MAX));
+        assert!(u32::from(lane.reoptimize_exits) << SPECULATIVE_BODIES <= u32::from(u16::MAX));
         let looks = TIERS.js_function.promotion_looks;
         assert!(looks.windows(2).all(|pair| pair[0].0 < pair[1].0), "looks grow");
         assert!(looks.iter().all(|(observations, minimum)| minimum <= observations));

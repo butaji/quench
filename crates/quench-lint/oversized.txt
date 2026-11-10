@@ -5098,7 +5098,6 @@ magic crates/quench-runtime/src/vm/json.rs::Vm<H>::json_stringify 1
 magic crates/quench-runtime/src/vm/json.rs::write_json_string 1
 magic crates/quench-runtime/src/vm/json/heap_builder.rs::JsonParseCache::small 1
 magic crates/quench-runtime/src/vm/json/heap_builder.rs::short_run_ends 1
-magic crates/quench-runtime/src/vm/lane_body_tier.rs::LaneView::warmup_entries 1
 magic crates/quench-runtime/src/vm/lane_exits.rs::call_target 1
 magic crates/quench-runtime/src/vm/lane_exits.rs::report 2
 magic crates/quench-runtime/src/vm/lazy_data_property.rs::Vm<H>::materialize_lazy_group 1

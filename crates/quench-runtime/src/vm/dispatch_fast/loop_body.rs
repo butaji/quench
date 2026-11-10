@@ -20,30 +20,30 @@ pub(super) struct BodyRuns {
 impl Controller for BodyController {
     type Pending = PendingLaneMethod;
     type Artifact = std::rc::Rc<PublishedLaneMethod>;
-    type Feedback = LaneLeaves;
+    type Feedback = LaneFeedback;
     type Stats = BodyRuns;
     type Leave = LaneExit;
 
     /// A loop whose backward jumps are hot plans its body at once.
-    fn warmup(_: &Tiers, _: &Past<LaneLeaves>) -> u32 {
+    fn warmup(_: &Tiers, _: &Past<LaneFeedback>) -> u32 {
         0
     }
 
     /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
     /// next body's feedback (a failed entry contract drops the contract), until the bodies
     /// run out; where they are scattered, the next body is the generic one.
-    fn judge(policy: &Tiers, stats: &mut BodyRuns, past: &Past<LaneLeaves>, exit: LaneExit) -> Verdict<LaneLeaves> {
+    fn judge(policy: &Tiers, stats: &mut BodyRuns, past: &Past<LaneFeedback>, exit: LaneExit) -> Verdict<LaneFeedback> {
         stats.leaves = stats.leaves.with(exit);
         stats.exits = stats.exits.saturating_add(1);
         if stats.exits < policy.loops.body_reoptimize_leaves { return Verdict::Keep; }
-        match past.feedback.union(stats.leaves) {
+        match past.feedback.stuck.union(stats.leaves) {
             LaneLeaves::Scattered => Verdict::Generalize,
-            next => Verdict::Respecialize(next),
+            stuck => Verdict::Respecialize(LaneFeedback { stuck, ..past.feedback }),
         }
     }
 
-    fn learned(stats: &BodyRuns, feedback: &LaneLeaves) -> LaneLeaves {
-        feedback.union(stats.leaves)
+    fn learned(stats: &BodyRuns, feedback: &LaneFeedback) -> LaneFeedback {
+        LaneFeedback { stuck: feedback.stuck.union(stats.leaves), ..*feedback }
     }
 }
 

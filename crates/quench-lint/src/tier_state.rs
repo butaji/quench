@@ -2,7 +2,7 @@
 //! asks the state a question (a `match`, a predicate) or sends it an event
 //! (`Tier::transition`, `Tier::apply`); none builds a state or assigns one.
 //!
-//! Every function outside tests and outside the module is counted for `tier-state`: an
+//! Every function outside tests and outside the module is counted for `tier-state-outside-transition`: an
 //! expression that names a state of a `Tier` (`Tier::Warming { .. }`, `JsTier::Cold`), and an
 //! assignment whose target is a tier (a place named `tier`, or ending in `_tier`). A pattern
 //! naming a state is a question, and is not counted. Every count is a violation: unlike the
@@ -16,14 +16,14 @@ use crate::shape::Measures;
 const OWNER: &str = "crates/quench-runtime/src/vm/tier_state";
 
 /// The measure every outside change of a tier's state is recorded under, by subject.
-pub const MEASURE: &str = "tier-state ";
+pub const MEASURE: &str = "tier-state-outside-transition ";
 
 /// The states of a `Tier`, which are named by no other enum of the engine.
 const STATES: &[&str] = &["Warming", "Queued", "Compiling", "Speculative", "GenericInterpreted"];
 /// The states a path names only through a `Tier` or its alias, as other enums have them too.
 const SHARED_STATES: &[&str] = &["Cold", "Generic"];
 
-/// Records, by `tier-state <subject>`, how often a function builds or assigns a tier's state.
+/// Records, by `tier-state-outside-transition <subject>`, how often a function builds or assigns a tier's state.
 pub fn scan(subject: &str, body: &syn::Block, measures: &mut Measures) {
     if crate::in_test_path(subject) || subject.starts_with(OWNER) {
         return;

@@ -22,7 +22,7 @@
 //! safepoint jump leaves the lane.
 
 use super::compiled::tier_policy::TIERS;
-use super::tier_state::{Event, Refusal};
+use super::tier_state::{Event, Refusal, Tier};
 use super::dispatch_frame::PendingGeneralCall;
 use smallvec::SmallVec;
 use crate::heap::InlineObjectHeader;
@@ -364,13 +364,8 @@ pub(super) struct LaneView {
     /// (`Vm::direct_tier_entry`).
     tier_direct: std::cell::Cell<Option<super::compiled::DirectTierEntry>>,
     /// The frameless body the prologue runs once the JavaScript tier declined the
-    /// function (`Vm::compile_lane_method`).
-    tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// The warming tick (`lane_body_tier::warm_ticks`) of the entry its body began warming at, which a function
-    /// entered rarely but for long (`LaneView::recurrent`) specializes by.
-    warm_since: std::cell::Cell<u32>,
-    /// What its bodies cost and earned so far (`LaneBodyHistory`).
-    history: std::cell::Cell<LaneBodyHistory>,
+    /// function (`Vm::compile_lane_method`), with its warm-up and its history.
+    tier_lane: std::cell::UnsafeCell<LaneTier>,
     /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
     pub(super) body_stats: LaneBodyStats,
     /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
@@ -656,9 +651,9 @@ mod lane_body_tier;
 #[path = "loop_tier.rs"]
 mod loop_tier;
 use loop_tier::{lane_loop_code, RegionLeave, RegionTier};
-use lane_body_tier::LaneBodyHistory;
+use lane_body_tier::LaneTier;
 pub(super) use lane_body_stats::{miss_report as lane_miss_report, unlowered_report as lane_unlowered_report};
-use lane_leaves::{generic_exits, LaneLeaves};
+use lane_leaves::{generic_exits, LaneFeedback, LaneLeaves};
 pub(super) use lane_body_stats::LaneBodyStats;
 
 /// Conservative lane-stack admission room for `count` registers: whole blocks, at
@@ -838,117 +833,57 @@ impl LaneRecoverySpace {
     }
 }
 
-/// A lane view's frameless body (`LaneView::tier_lane`). Shape compaction
-/// moves a body that names shape IDs back to `Unspecialized`.
-enum LaneBody {
-    /// Counting its entries toward specialization; `recompiles` bodies before it left too
-    /// often for their feedback (`LaneView::note_lane_body_end`), the last of them, where
-    /// `stuck`, at those few leaves only.
-    Unspecialized { entries: u16, recompiles: u8, stuck: LaneLeaves },
-    /// Its body's code compiling on the code generator's thread; the function runs in the
-    /// lane meanwhile, and every `TIERS.lane_body.compile_poll_interval`th entry looks for
-    /// the code (`Vm::lane_body_work`); `wait` counts the entries left before the next look.
-    Compiling { pending: Box<super::compiled::PendingLaneMethod>, wait: std::cell::Cell<u16>, recompiles: u8, stuck: LaneLeaves },
-    /// The body its prologue record enters directly (`lane_body_entry`); `tier_prologue` is
-    /// the handler that record had, which it takes back when the body retires. Its
-    /// publication may retire at a lifecycle edge (`ProgramStore::retire_dead_native_calls`),
-    /// which the next entry settles (`LaneView::settle_retired_body`).
-    Specialized {
-        method: std::rc::Rc<super::compiled::PublishedLaneMethod>,
-        tier_prologue: *const (),
-        /// Its runs that completed since it specialized: the leaves are judged against them
-        /// (`LaneView::note_lane_body_end`).
-        completions: std::cell::Cell<u32>,
-        /// Its leaves since it specialized, toward `TIERS.lane_body.reoptimize_exits` and `TIERS.lane_body.reoptimize_share`, and where
-        /// they went (`LaneLeaves`).
-        exits: std::cell::Cell<u16>,
-        leaves_at: std::cell::Cell<LaneLeaves>,
-        /// Whether a run of it completed, natively called ones included.
-        completed: std::cell::Cell<bool>,
-        recompiles: u8,
-        /// Its predecessor's few leaves, where it left only there.
-        stuck: LaneLeaves,
-    },
-    Declined,
-}
-
-
 impl LaneView {
     /// The name of its body's state, for the diagnostics report (`LaneBodyStats::report`).
     pub(super) fn lane_body_state(&self) -> &'static str {
-        // SAFETY: as `lane_body`.
-        match unsafe { &*self.tier_lane.get() } {
-            LaneBody::Unspecialized { .. } => "unspecialized",
-            LaneBody::Compiling { .. } => "compiling",
-            LaneBody::Specialized { .. } => "specialized",
-            LaneBody::Declined => "declined",
+        match self.lane_tier().stage() {
+            "cold" | "warming" | "queued" => "unspecialized",
+            "speculative" | "generic" => "specialized",
+            "interpreted" => "declined",
+            compiling => compiling,
         }
     }
 
     /// The specialized frameless body, if there is one.
     fn lane_body(&self) -> Option<std::rc::Rc<super::compiled::LaneMethod>> {
-        // SAFETY: this view is read on its VM's thread. Clone the code owner before
-        // execution or recovery can reenter and change the view's publication.
-        match unsafe { &*self.tier_lane.get() } {
-            LaneBody::Specialized { method, .. } => method.lease(),
-            LaneBody::Unspecialized { .. } | LaneBody::Compiling { .. } | LaneBody::Declined => None,
-        }
+        // Clone the code owner before execution or recovery can reenter and change the view's
+        // publication.
+        self.lane_tier().artifact().and_then(|code| code.method.lease())
     }
 
     /// The publication of the specialized body, which a direct caller holds
     /// (`compiled::DirectCallee::method`).
     fn published_lane_body(&self) -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>> {
-        // SAFETY: as `lane_body`.
-        match unsafe { &*self.tier_lane.get() } {
-            LaneBody::Specialized { method, .. } => Some(method.clone()),
-            _ => None,
-        }
+        self.lane_tier().artifact().map(|code| code.method.clone())
     }
 
     /// A specialized body whose publication a lifecycle edge retired
     /// (`ProgramStore::retire_dead_native_calls`) warms again: its prologue takes back the
     /// tier's handler.
     fn settle_retired_body(&self) {
-        // SAFETY: as `lane_body`; settling runs no lane body.
-        let body = unsafe { &mut *self.tier_lane.get() };
-        if let LaneBody::Specialized { method, tier_prologue, .. } = body
-            && !method.is_published()
-        {
-            // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
-            unsafe { (*self.prologue.get()).handler = *tier_prologue };
-            self.drop_body(body);
+        if self.lane_tier().artifact().is_some_and(|code| !code.method.is_published()) {
+            self.drop_body();
         }
     }
 
     /// Whether it has no body yet and counts entries toward one, its first or a next.
     fn warming(&self) -> bool {
-        // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { .. }) || self.compiling()
+        !matches!(self.lane_tier(), Tier::Speculative { .. } | Tier::Generic { .. } | Tier::GenericInterpreted { .. })
     }
-
 
     /// Whether its body left too often and specializes again at its next entry.
     fn respecializes(&self) -> bool {
-        // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
+        self.lane_tier().past().is_some_and(|past| past.bodies > 0)
     }
-
 
     /// Retires field hints and native bodies (and plans) that name shape IDs when compaction renumbers them.
     pub(super) fn invalidate_shape_bindings(&self) {
-        // SAFETY: no lane body runs during a collection.
-        let body = unsafe { &mut *self.tier_lane.get() };
-        if let LaneBody::Compiling { pending, .. } = body { pending.retire_named_shapes(); }
-        if let LaneBody::Specialized { method, tier_prologue, .. } = body
-            && method.lease().is_some_and(|method| method.names_shapes)
-        {
-            // SAFETY: as `claim_for_tier`; no lane body or handler runs during a collection,
-            // and no method borrower is held.
-            unsafe {
-                (*self.prologue.get()).handler = *tier_prologue;
-                method.retire();
-            }
-            self.drop_body(body);
+        // No lane body runs during a collection, and no method borrower is held.
+        let tier = self.lane_tier();
+        if let Tier::Compiling { build, .. } = tier { build.pending().retire_named_shapes(); }
+        if let Some(code) = tier.artifact() && code.method.lease().is_some_and(|method| method.names_shapes) {
+            code.method.retire();
+            self.drop_body();
         }
         self.retired.borrow_mut().clear();
         self.clear_hints(&self.field_records);
@@ -1040,7 +975,7 @@ impl LaneView {
     /// the lane; claiming again would take the prologue back to `lane_tier_prologue`.
     fn lane_tier_unclaimed(&self) -> bool {
         // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { .. }) && self.start.get() != self.prologue.get().cast_const()
+        self.lane_tier().is_warming() && self.start.get() != self.prologue.get().cast_const()
     }
 
     /// Starts activations at the first record again, once the tier declines the function.
@@ -8105,6 +8040,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
+    let length = code.function_get(function as usize).map_or(0, |body| body.code.len());
     let specialize = |work: super::compiled::LaneBodyWork| {
         // Entry warm-up leaves closed loops to their admitted regions while those may run
         // natively. A region that leaves for calls still lets a lane body inline those
@@ -8123,10 +8059,10 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         outcome
     };
     if now {
-        own.specialize_lane_body_now(lane_body_entry::<H>, specialize);
+        own.specialize_lane_body_now(lane_body_entry::<H>, length, specialize);
         own.lane_body().is_some()
     } else {
-        own.specialize_lane_body(lane_body_entry::<H>, specialize)
+        own.specialize_lane_body(lane_body_entry::<H>, length, specialize)
     }
 }
 
@@ -19540,7 +19476,7 @@ fn derive_lane_view<'live, H: Host>(
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         }),
         tier_direct: std::cell::Cell::new(None),
-        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }), history: Default::default(), warm_since: std::cell::Cell::new(0),
+        tier_lane: std::cell::UnsafeCell::default(),
         retired: std::cell::RefCell::default(),
         body_stats: LaneBodyStats::default(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
