@@ -62,25 +62,13 @@ pub(in crate::vm) enum LaneBodyOutcome {
     Declined,
 }
 
-/// Lane bodies with at least this many IR instructions allocate registers in one pass; smaller
-/// ones keep the backtracking allocator. One pass pays off where compile latency dominates (large
-/// bodies), backtracking where a small hot loop runs millions of times. Experiment build, 3
-/// interleaved rounds (2026-11-07): one pass everywhere cost call-method 2.2 -> 5.2 ns and
-/// call-polymorphic 8.6 -> 15.9 ns (bodies of 400-1900 instructions); at 2048 those recover
-/// (2.21, 8.63 ns) while richards (bodies 2k-17k) keeps 28.5 vs 26.9 all-backtracking and
-/// delta-blue 48.0 vs 43.9.
-const LANE_SINGLE_PASS_MIN_INSTS: usize = 2048;
 /// A replanned body inlines with this fraction of the budget whose compile failed.
 const REPLAN_BUDGET_DIVISOR: usize = 2;
 
 /// The code of one lane body, compiled on the calling thread.
 fn lane_code(function: ir::Function) -> LaneCode {
-    let isa = if function.dfg.num_insts() >= LANE_SINGLE_PASS_MIN_INSTS {
-        super::jit_backend::lane_body_isa()
-    } else {
-        super::jit_backend::target_isa()
-    }
-    .ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
+    let isa = super::jit_backend::target_isa()
+        .ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
     compile_native_function(function, &*isa, lane_region::LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
 }
 
@@ -403,9 +391,16 @@ impl LaneMethod {
     /// callee was none of the alternatives it inlined is the leave of the caller's call that
     /// inlined its frame, which the next body then makes itself (`Vm::lane_bindings`), so its
     /// callees run in their own bodies instead of the whole caller's remainder in the lane.
-    pub(in crate::vm) fn feedback(&self, exit: LaneExit) -> LaneExit {
+    /// A leave at a construction inside an inlined frame is the same: a construction no plan
+    /// makes is generic only at a caller record (`Lowering::construct`), so the callee that
+    /// holds it keeps its own body.
+    pub(in crate::vm) fn feedback(&self, exit: LaneExit, program: &ResidualProgram) -> LaneExit {
         let LaneExit::Inlined { frame, pc } = exit else { return exit };
-        if !self.inlined.iter().any(|call| call.parent == Some(frame) && call.call == pc) {
+        let calls_here = self.inlined.iter().any(|call| call.parent == Some(frame) && call.call == pc);
+        let constructs_here = program.function_get(self.inlined[frame].target.function as usize)
+            .and_then(|body| body.instructions().nth(pc as usize))
+            .is_some_and(|instruction| instruction.op().class() == crate::bytecode::Class::Construct);
+        if !calls_here && !constructs_here {
             return exit;
         }
         let mut root = &self.inlined[frame];
