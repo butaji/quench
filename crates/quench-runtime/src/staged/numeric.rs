@@ -39,6 +39,11 @@ pub(crate) trait NumericStage: Stage {
     /// `operation` of two int32 words: the wrapped result and whether it overflowed.
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: Self::Word, right: Self::Word) -> (Self::Word, Self::Cond);
+    /// The binary64 remainder of two binary64 words, keeping the dividend's sign.
+    fn float_remainder(&mut self, left: Self::Word, right: Self::Word) -> Self::Word;
+    /// The truncated remainder of two int32 words, `right` nonzero: the dividend's sign, and
+    /// `i32::MIN % -1` is zero rather than a trap.
+    fn int_remainder(&mut self, left: Self::Word, right: Self::Word) -> Self::Word;
     /// The int32 word holding `value`.
     fn i32_constant(&mut self, value: i32) -> Self::Word;
     fn i32_to_f64(&mut self, value: Self::Word) -> Self::Word;
@@ -80,6 +85,9 @@ pub(crate) enum NumberOperation {
         operation: NumberArithmetic, domain: Domain, overflow: Overflow },
     /// Number x Number relation, producing its predicate word.
     Relation { left: Operand, right: Operand, relation: NumberRelation, domain: Domain },
+    /// `left % right` with both operands in `domain`. An int32 result that is no int32 (a
+    /// zero divisor's NaN, a negative dividend's `-0`) leaves.
+    Remainder { destination: Register, left: Operand, right: Operand, domain: Domain },
     /// `source ± 1` (`++`, or `--` where `decrement`) of an int32 `source`.
     IncDec { destination: Register, source: Register, decrement: bool, overflow: Overflow },
     /// `+source` or `-source` of a Number `source`, in `domain`; any other value leaves.
@@ -97,6 +105,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             arithmetic(stage, frame, destination, left, right, operation, domain, overflow),
         NumberOperation::Relation { left, right, relation, domain } =>
             self::relation(stage, frame, left, right, relation, domain),
+        NumberOperation::Remainder { destination, left, right, domain } =>
+            remainder(stage, frame, destination, left, right, domain),
         NumberOperation::IncDec { destination, source, decrement, overflow } =>
             increment(stage, frame, destination, source, decrement, overflow),
         NumberOperation::ToNumeric { destination, source } => to_numeric(stage, frame, destination, source),
@@ -172,6 +182,38 @@ fn arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             int_arithmetic_result(stage, frame, destination, left, right, operation, overflow, miss)
         }
     }
+}
+
+/// `left % right` in `domain`. An int32 remainder is an int32 except at a zero divisor (NaN)
+/// and at a zero with a negative dividend (`-0`, `i32::MIN % -1` included): those leave.
+fn remainder<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, left: Operand, right: Operand, domain: Domain) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let (result, fact) = match domain {
+        Domain::Float64 => {
+            let left = frame.number_operand(stage, left, miss);
+            let right = frame.number_operand(stage, right, miss);
+            (stage.float_remainder(left, right), frame.number_fact())
+        }
+        Domain::Int32 => {
+            let left = frame.int_operand(stage, left, miss);
+            let right = frame.int_operand(stage, right, miss);
+            let zero_divisor = stage.i32_is_zero(right);
+            if stage.guard_false(zero_divisor, miss).is_none() {
+                return Step::Unresolved;
+            }
+            let result = stage.int_remainder(left, right);
+            let zero = stage.i32_is_zero(result);
+            let negative = stage.i32_is_negative(left);
+            let negative_zero = stage.both(zero, negative);
+            if stage.guard_false(negative_zero, miss).is_none() {
+                return Step::Unresolved;
+            }
+            (result, frame.int_fact())
+        }
+    };
+    frame.write(stage, destination, result, fact);
+    Step::Value(result)
 }
 
 /// ToNumeric of a Number `source`: the Number itself, copied with its facts. Any other
@@ -289,6 +331,12 @@ impl NumericStage for super::Concrete {
         let overflowed = checked.is_none();
         let result = checked.unwrap_or_else(|| operation.apply(&mut WrappingInt32Stage, left, right));
         (u64::from(result as u32), overflowed)
+    }
+    fn float_remainder(&mut self, left: u64, right: u64) -> u64 {
+        crate::vm::operations::number_remainder(f64::from_bits(left), f64::from_bits(right)).to_bits()
+    }
+    fn int_remainder(&mut self, left: u64, right: u64) -> u64 {
+        u64::from(int32(left).wrapping_rem(int32(right)) as u32)
     }
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
     fn i32_to_f64(&mut self, value: u64) -> u64 { f64::from(int32(value)).to_bits() }

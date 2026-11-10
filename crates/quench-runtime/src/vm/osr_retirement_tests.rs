@@ -159,6 +159,60 @@ fn shared_osr_appends_match_the_interpreter_across_growth_doubles_and_prototype_
     }
 }
 
+const REMAINDER_SOURCE: &str = r#"
+      function rems(a, b, n) {
+        let s = 0;
+        for (let i = 0; i < n; i++) {
+          const r = (a[i & 7] | 0) % (b[i & 3] | 0);
+          s = (s * 31 + (r === r ? r : 77) + (1 / r < 0 ? 1000 : 0)) | 0;
+        }
+        return s;
+      }
+      function frems(a, b, n) {
+        let s = 0;
+        for (let i = 0; i < n; i++) {
+          const r = a[i & 7] % b[i & 3];
+          s = (s * 31 + (r === r ? r : 77) + (1 / r < 0 ? 1000 : 0)) | 0;
+        }
+        return s;
+      }
+      function table(a, b) {
+        const out = [];
+        for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) {
+          const r = a[i] % b[j];
+          out.push(Object.is(r, -0) ? "-0" : String(r));
+        }
+        return out.join(" ");
+      }
+      var ints = [7, -7, 0, 1, -1, 6, -6, 2147483647, -2147483648, 100, -100];
+      var divisors = [3, -3, 1, -1, 0, 2, 2147483647, -2147483648, 7];
+      var doubles = [5.5, -7.25, NaN, Infinity, -Infinity, -0, 0.5];
+      var out = [];
+      for (var round = 0; round < 40; round++) {
+        out.push(rems([1, 2, 3, 4, 5, 6, 7, 8], [3, 5, 7, 2], 3000), table(ints, divisors));
+        if (round > 30) out.push(rems([-8, -7, 9, 0, 2147483647, -2147483648, 4, -4], [-1, 3, 0, -2], 500));
+      }
+      for (var round = 0; round < 20; round++) out.push(frems([5.5, -7.25, NaN, Infinity, -0, 0.5, -3, 8], [3, -2.5, 0, Infinity], 500));
+      print(out.join(",") + table(doubles, divisors) + table(ints, doubles));
+"#;
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_remainder_matches_the_interpreter_across_int32_edges_and_doubles() {
+    // `%` of proved int32 operands is an int32 remainder; a zero divisor's NaN and a negative
+    // dividend's `-0` (`-2147483648 % -1` included) leave, and doubles keep the Number path.
+    let program = Engine::compile(crate::ExecutionRequest::script(REMAINDER_SOURCE, "osr-remainder.js")).unwrap();
+    let (expected, _) = printed_run(&program, crate::ExecutionMode::Interpreted, crate::MemoryPolicy::Throughput);
+    for policy in crate::MemoryPolicy::ALL {
+        let (printed, vm) = printed_run(&program, crate::ExecutionMode::Compiled, policy);
+        assert_eq!(printed, expected, "{policy:?}");
+        if crate::vm::compiled::loop_tier_compiles(policy) {
+            let site = osr_site(&vm, function_named(&program, "rems"));
+            assert!(site.native_region_runs > 0, "the remainder loop runs natively under {policy:?}: {site:?}");
+        }
+    }
+}
+
 /// What `program` prints run in `mode` under `policy`, with its VM.
 fn printed_run(program: &crate::bytecode::ResidualProgram, mode: crate::ExecutionMode, policy: crate::MemoryPolicy)
     -> (Vec<String>, Vm<TestHost>) {

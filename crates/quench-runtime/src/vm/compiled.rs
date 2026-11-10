@@ -287,7 +287,6 @@ pub(super) fn emit_checked_int32_arithmetic(builder: &mut FunctionBuilder<'_>,
 /// The shared Number remainder denotation, after the caller's Number guards.
 /// Native entries use the host calling convention. This pure scalar helper cannot
 /// enter the VM or collect, so it does not introduce an effect/recovery boundary.
-#[allow(dead_code)]
 pub(super) fn emit_number_remainder(
     builder: &mut FunctionBuilder<'_>,
     pointer: ir::Type,

@@ -48,6 +48,7 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/polymorphic_stores.rs"] mod polymorphic_stores;
 #[path = "lane_region/hoisted_reads.rs"] mod hoisted_reads;
 #[path = "lane_region/field_reads.rs"] mod field_reads;
+#[path = "lane_region/number_domains.rs"] mod number_domains;
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
 use polls::specialize_closed_polls;
@@ -4893,8 +4894,12 @@ impl Lowering<'_, '_> {
         let operator = instruction.binary_operator();
         let arithmetic = super::operations::NumberArithmetic::from_js_instruction(instruction.op(), operator);
         let bitwise = super::operations::NumberBitwise::from_js_instruction(instruction.op(), operator);
+        // `%` is the shared Number remainder; the opcode's denotation is the catalog's, so the
+        // meaning is not a second hand-written `Binary` arm.
+        let remainder = instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+            && operator == super::operations::REMAINDER;
         // Arithmetic takes Number constants; a relation decides its own (`relation`).
-        if (arithmetic.is_some() || bitwise.is_some()) && [left, right].iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
+        if (arithmetic.is_some() || bitwise.is_some() || remainder) && [left, right].iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
             && self.program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate).and_then(Value::as_number).is_none()) {
             return None;
         }
@@ -4922,16 +4927,8 @@ impl Lowering<'_, '_> {
             self.consumed.insert(pc + 1);
             return Some(true);
         }
-        // `%` is the shared Number remainder: both operands are Numbers, and the result
-        // keeps the sign of the dividend (`-0` included). The opcode's denotation is the
-        // catalog's, so the meaning is not a second hand-written `Binary` arm.
-        if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
-            && operator == super::operations::REMAINDER {
-            let left = self.operand_number(state, left, exit)?;
-            let right = self.operand_number(state, right, exit)?;
-            let value = super::emit_number_remainder(&mut self.builder, types::I64, left, right);
-            self.set_number(state, destination, value);
-            return Some(true);
+        if remainder {
+            return Some(self.remainder(state, destination, [left, right], exit));
         }
         match (arithmetic, bitwise) {
             (Some(arithmetic), _) => {
@@ -4944,12 +4941,7 @@ impl Lowering<'_, '_> {
                 // Operands proved int32 stay int32, as C keeps them: an overflow, or a product's
                 // negative zero, is a value no int32 holds and leaves, rather than every result
                 // becoming a double that the next operation converts back.
-                let proved_int = [left, right].iter().all(|operand| match operand.kind() {
-                    Some(OperandKind::Register) => state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
-                    Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
-                        .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
-                    _ => false,
-                });
+                let proved_int = self.proved_int(state, [left, right]);
                 if arithmetic == super::operations::NumberArithmetic::Divide || float_operand {
                     let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
                         operation: arithmetic, domain: crate::staged::Domain::Float64,
