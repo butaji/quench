@@ -14840,11 +14840,10 @@ script_handler! {
             requicken::<H>(ip, lane_script_call_cross::<H>);
             sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
         }
-        // A site calling a native takes the native handler from now on, which hands any other
-        // callee back.
+        // A site calling a native takes the native handler from now on, which hands any other callee back.
         if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) {
             let native = *native;
-            let handler = native_call_handler::<H>(native, i, || lane_call_result_dead(cx, ip, i));
+            let handler = native_call_handler::<H>(native, i, || lane_call_result_dead(cx, ip, i), || regexp_calls::length_read(cx, ip, i));
             requicken::<H>(ip, handler);
             if handler as *const () != lane_native_call::<H> as *const () {
                 native_calls::install_math_field_call::<H>(cx, ip, native);
@@ -15871,6 +15870,7 @@ use lane_roots::{LaneRoot, LaneStart};
 pub(in crate::vm) use lane_roots::{JobEnd, ParkedLane};
 mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step};
 mod raised_windows;
+mod regexp_calls;
 mod array_steps;
 mod for_in_steps;
 mod name_probe; use name_probe::probe_handler; pub(super) use name_probe::settle_name_record;

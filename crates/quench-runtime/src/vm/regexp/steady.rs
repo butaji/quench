@@ -2,6 +2,9 @@
 use super::*;
 use super::ascii::AsciiReplace;
 
+/// `String.prototype.replace`'s arguments: the search and the replacement.
+const REPLACE_ARGUMENTS: usize = 2;
+
 impl<H: Host> Vm<H> {
     /// `RegExp.prototype.exec` or `test` when the call runs no guest code and raises
     /// nothing, so it observes no frame (`lane_regexp_call`): a RegExp receiver, a string
@@ -317,6 +320,31 @@ impl<H: Host> Vm<H> {
         // match's start if read.
         self.record_regexp_legacy_pending(receiver, input, regex, matched.range.start)?;
         Ok(if exec { Value::UNDEFINED } else { Value::TRUE })
+
+    /// `steady_string_replace` when the result is read only by `.length`
+    /// (`String.prototype.replace(...).length`): the replacement's length, its string never
+    /// built. The same proofs and effects, and the same `None` for any other call; a template
+    /// with `$` runs a substitution, which takes the string's build.
+    pub(in crate::vm) fn steady_string_replace_length(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        arguments: &[Value],
+    ) -> Option<Result<Value, JsError>> {
+        let [search, replacement] = *arguments.get(..2)?.as_array::<2>()?;
+        if native != Native::StringReplace || !self.is_string(replacement) {
+            return None;
+        }
+        let (matcher, flags) = self.steady_symbol_matcher(this, search, WellKnownSymbol::Replace, Native::RegExpSymbolReplace)?;
+        let input = self.heap.string(this)?.clone();
+        let template = self.heap.string(replacement)?.clone();
+        if literal::has_substitution(&template) {
+            return None;
+        }
+        Some(self.with_call_roots([this, search, replacement], |vm| {
+            vm.regexp_symbol_replace_length(p, search, &input, this, &template, &matcher, flags)
+        }))
     }
 
     /// `regexp_builtin_exec` of `steady_regexp_call`'s case: a string subject, whose
