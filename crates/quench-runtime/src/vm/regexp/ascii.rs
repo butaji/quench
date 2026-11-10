@@ -4,13 +4,17 @@ use super::*;
 /// The ranges of the matches of `bytes` a replace reads: the first, or each of a global
 /// search (an empty match advances it by one unit, a whole code point in ASCII). `None`
 /// where the pattern has no compiled matcher over bytes.
-pub(super) fn ascii_match_ranges(matcher: &quench_regexp::Regex, bytes: &[u8], global: bool) -> Option<smallvec::SmallVec<[Range<usize>; 8]>> {
-    let mut ranges = smallvec::SmallVec::new();
+pub(super) fn ascii_match_ranges(
+    matcher: &quench_regexp::Regex,
+    bytes: &[u8],
+    global: bool,
+    ranges: &mut smallvec::SmallVec<[Range<usize>; 8]>,
+) -> Option<()> {
     if global {
-        return matcher.find_all_ranges_ascii(bytes, |range| ranges.push(range)).then_some(ranges);
+        return matcher.find_all_ranges_ascii(bytes, |range| ranges.push(range)).then_some(());
     }
     ranges.extend(matcher.find_range_ascii(bytes, 0, false)?);
-    Some(ranges)
+    Some(())
 }
 
 /// `bytes` with each of `ranges` replaced by `literal`, written once into storage of its
