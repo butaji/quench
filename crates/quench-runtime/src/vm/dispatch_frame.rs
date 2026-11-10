@@ -2557,12 +2557,7 @@ impl<H: Host> Vm<H> {
                             self.set_active_program(executing_program);
                         }
                         self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                        // [[Construct]] of an ordinary constructor yields its returned object,
-                        // otherwise the receiver it allocated.
-                        value = match pending.completion.constructor_this() {
-                            Some(this) if !self.is_object_like(value) => this,
-                            _ => value,
-                        };
+                        value = self.completed_call_value(&pending.completion, frame, pending.destination, value);
                         if let Some(root) = pending.completion.take_promise() {
                             let promise = self.release_settled_call_root(root);
                             // SAFETY: as for `p` at the top of the loop.

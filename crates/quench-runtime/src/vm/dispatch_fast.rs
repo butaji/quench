@@ -578,7 +578,7 @@ mod lane_stack_growth;
 mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
-mod construct_plan; mod super_chain; use super_chain::lane_super_construction;
+mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_initialize_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
@@ -1353,6 +1353,10 @@ enum Completion {
     /// `LaneStack::settling` keeps, and the call yields that promise. Made a frame, its
     /// pending call settles it (`PendingGeneralCall::completion`).
     SettlesPromise,
+    /// A store's setter (`setters::lane_store_setter`): the assignment yields the value
+    /// stored, which its record's register still holds, whatever the setter returns. Made a
+    /// frame, its pending call yields it the same way (`CallCompletion::Assigned`).
+    Assigns,
     /// An array callback method's callback the lane runs for one element
     /// (`lane_begin_array_iteration`): its return steps the iteration `LaneStack::steps`
     /// keeps (`lane_step_array_iteration`). Made a frame, its pending call finishes the
@@ -6863,6 +6867,9 @@ fn lane_set_field_in_place<H: Host>(
     // The running function decides the store's strictness: a running leaf's is its
     // materialized activation's.
     lane_materialize_running_leaf(cx);
+    if let Some(resumed) = setters::lane_store_setter(cx, r, ip, i, object) {
+        return resumed;
+    }
     let vm = unsafe { vm(cx) };
     let function = match vm.lane_stack.activations.last() {
         Some(activation) => activation.function,
@@ -11032,7 +11039,7 @@ impl<H: Host> Vm<H> {
                     let step = steps.next().expect("each array step activation has its entry");
                     CallCompletion::ArrayStep(Box::new(self.array_step_call(step.iteration, step.element, step.index)))
                 }
-                _ => CallCompletion::Value,
+                other => setters::frame_completion(other),
             };
             // A native's callback is the entry frame of the loop that finishes it.
             let to_native = activation.script().is_some_and(|script| script.completion == Completion::ReturnsToNative);
@@ -16403,9 +16410,7 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             if script.completion.crosses() {
                 lane_enter_program(cx, activation.caller_program);
             }
-            if script.completion.constructs() && !vm.is_object_like(value) {
-                value = this;
-            }
+            value = setters::completed_value(vm, &activation, script.completion, this, value);
             if script.completion == Completion::Forwarder {
                 value = this;
                 vm.lane_stack.forwarders.pop();
@@ -17779,12 +17784,9 @@ fn lane_return_script_frame<H: Host>(
             executing.retained = saved.retained;
             lane_enter_program(cx, saved.id);
         }
-        value = match call.completion.constructor_this() {
-            Some(this) if !vm.is_object_like(value) => this,
-            _ => value,
-        };
         drop(call.call_guard);
         frame = call.caller;
+        value = vm.completed_call_value(&call.completion, frame, call.destination, value);
         vm.active_registers = vm.frames[frame].registers.as_mut_ptr();
         if !call.returns {
             vm.write(frame, call.destination, value);
