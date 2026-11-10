@@ -4889,9 +4889,23 @@ impl Lowering<'_, '_> {
             && self.program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate).and_then(Value::as_number).is_none()) {
             return None;
         }
+        // Whether both operands are statically int32. Only they keep a non-truncated int
+        // result in an int32 register; an unproved operand takes the int-fast/float
+        // fallback below, which keeps an overflowing sum a Number instead of leaving.
+        let operands_int = [left, right].iter().all(|operand| match operand.kind() {
+            Some(OperandKind::Register) => state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
+            Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
+                .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
+            _ => false,
+        });
+        // A straight-line plan pays one leave for an unproved pair; a loop would pay it
+        // every iteration, so only operands the model proves int32 keep the Word32 fold
+        // there and the rest take the in-lane int/float fallback below.
+        let fold_unobserved = operands_int || !matches!(self.coverage, Coverage::Loop { .. });
         let exit = self.guard_exit(state, pc as u32);
         if let Some(arithmetic) = arithmetic
             && arithmetic.int32_projection_is_wrapping()
+            && fold_unobserved
             && instruction.result_flags() == 0
             && let Some(next) = self.unit.instructions.get(pc + 1).copied()
             && next.result_flags() == 0
@@ -4935,27 +4949,17 @@ impl Lowering<'_, '_> {
                 // Operands proved int32 stay int32, as C keeps them: an overflow, or a product's
                 // negative zero, is a value no int32 holds and leaves, rather than every result
                 // becoming a double that the next operation converts back.
-                let proved_int = [left, right].iter().all(|operand| match operand.kind() {
-                    Some(OperandKind::Register) => state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
-                    Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
-                        .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
-                    _ => false,
-                });
                 if arithmetic == super::operations::NumberArithmetic::Divide || float_operand {
                     let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
                         operation: arithmetic, domain: crate::staged::Domain::Float64,
                         overflow: crate::staged::Overflow::Exit });
                     self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
-                } else if proved_int {
-                    // A sum or difference only `| 0` reads is its ToInt32: the wrapping int32
-                    // result, which needs no overflow exit.
-                    let overflow = if arithmetic.int32_projection_is_wrapping() && self.truncated(pc, destination) {
-                        crate::staged::Overflow::Wrap
-                    } else {
-                        crate::staged::Overflow::Exit
-                    };
+                } else if operands_int
+                    && arithmetic.int32_projection_is_wrapping()
+                    && self.truncated(pc, destination) {
+                    // A sum or difference only its ToInt32 reads wraps exactly in int32.
                     let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
-                        operation: arithmetic, domain: crate::staged::Domain::Int32, overflow });
+                        operation: arithmetic, domain: crate::staged::Domain::Int32, overflow: crate::staged::Overflow::Wrap });
                     self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 } else if arithmetic.int32_projection_is_wrapping()
                     && self.truncated(pc, destination) {
