@@ -813,7 +813,6 @@ impl<H: Host> Vm<H> {
                 result: Value::UNDEFINED,
                 reactions: Default::default(),
                 rejection: PromiseRejectionState::Unobserved,
-                rejection_id: None,
                 host_context: host_context.into(),
                 module_evaluation: false,
             },

@@ -34,7 +34,7 @@ mod memory_profile;
 mod pacing;
 mod parallel_mark;
 mod promise_record;
-pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
+pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState};
 mod records;
 mod root;
 mod slots;

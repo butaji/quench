@@ -18,7 +18,7 @@ snapshot_enum!(prototype_lookup: PrototypeLookupState { Ordinary, Setup, Ready }
 snapshot_enum!(structured_serialization: StructuredSerialization { Ordinary, Forbidden, TransferRequired });
 snapshot_enum!(symbol_kind: SymbolKind { Public, HostPrivate });
 snapshot_enum!(promise_state: crate::heap::PromiseState { Pending, Fulfilled, Rejected });
-snapshot_enum!(promise_rejection: crate::heap::PromiseRejectionState {
+snapshot_enum!(promise_rejection: crate::heap::PromiseRejectionPhase {
     Unobserved, Observed, AwaitingReport, Reporting, Reported, HandledReported, Handled,
 });
 snapshot_enum!(lexical_binding_kind: crate::bytecode::LexicalBindingKind { Mutable, Immutable, FunctionName, PrivateName });
@@ -473,7 +473,6 @@ impl crate::heap::PromiseCell {
             result,
             reactions,
             rejection,
-            rejection_id,
             host_context,
             module_evaluation,
         } = &self.record;
@@ -495,8 +494,9 @@ impl crate::heap::PromiseCell {
                 writer.u64(context.0);
             }
         }
-        promise_rejection::write(writer, *rejection);
-        writer.u64(rejection_id.map_or(0, std::num::NonZeroU64::get));
+        let (phase, id) = rejection.parts();
+        promise_rejection::write(writer, phase);
+        writer.u64(id.map_or(0, std::num::NonZeroU64::get));
         writer.bool(host_context.get().is_some());
         if let Some(context) = host_context.get() {
             writer.u64(context.0);
@@ -516,8 +516,9 @@ impl crate::heap::PromiseCell {
                 execution_context: if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None }.into(),
             })
         })?;
-        let rejection = promise_rejection::read(reader)?;
-        let rejection_id = std::num::NonZeroU64::new(reader.u64()?);
+        let phase = promise_rejection::read(reader)?;
+        let rejection = crate::heap::PromiseRejectionState::from_parts(phase, std::num::NonZeroU64::new(reader.u64()?))
+            .ok_or_else(|| SnapshotError("a reported promise rejection has no identifier".into()))?;
         let host_context = if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None }.into();
         Ok(Self {
             object,
@@ -526,7 +527,6 @@ impl crate::heap::PromiseCell {
                 result,
                 reactions: reactions.into(),
                 rejection,
-                rejection_id,
                 host_context,
                 module_evaluation: false,
             },
