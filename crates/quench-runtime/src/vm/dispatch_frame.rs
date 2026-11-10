@@ -2709,7 +2709,7 @@ impl<H: Host> Vm<H> {
                             Some(destination),
                             promise,
                         );
-                        let enqueued = self.enqueue_async_resume(callee_code, Some(continuation), promise, None, value, false);
+                        let enqueued = self.enqueue_async_resume(callee_code, crate::heap::AwaitKind::function(continuation), promise, value);
                         frame = pending.caller;
                         if let Some(saved) = pending.caller_program.take() {
                             executing_program = saved.id;

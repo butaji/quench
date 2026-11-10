@@ -22,15 +22,6 @@ fn encoding_allocates(ty: WasmType) -> bool {
     matches!(ty, WasmType::I64 | WasmType::F64 | WasmType::V128)
 }
 
-pub(super) fn copy_within_relative_index(index: i64, length: usize) -> usize {
-    if index < 0 {
-        let magnitude = usize::try_from(index.unsigned_abs()).unwrap_or(usize::MAX);
-        length.saturating_sub(magnitude)
-    } else {
-        usize::try_from(index).unwrap_or(usize::MAX).min(length)
-    }
-}
-
 fn note_emscripten_memcpy_fast_path(counter: *mut u64) {
     if !counter.is_null() {
         // SAFETY: diagnostics allocate this counter for the duration of the
@@ -1519,10 +1510,10 @@ impl<H: Host> Vm<H> {
         {
             return false;
         }
-        let target = copy_within_relative_index(i64::from(indices[0]), memory_length);
-        let start = copy_within_relative_index(i64::from(indices[1]), memory_length);
-        let raw_end = i64::from(indices[1]) + i64::from(indices[2]);
-        let end = copy_within_relative_index(raw_end, memory_length);
+        let target = crate::units::relative_index(f64::from(indices[0]), memory_length);
+        let start = crate::units::relative_index(f64::from(indices[1]), memory_length);
+        let raw_end = f64::from(indices[1]) + f64::from(indices[2]);
+        let end = crate::units::relative_index(raw_end, memory_length);
         let count = end.saturating_sub(start).min(memory_length - target);
         if count > 0 {
             // SAFETY: the active memory is unshared; the current live view

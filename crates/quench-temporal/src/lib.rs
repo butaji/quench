@@ -13,6 +13,12 @@ pub mod units {
     pub const SECONDS_PER_MINUTE: i32 = 60;
     pub const DAYS_PER_WEEK: i128 = 7;
     pub const ISO_DAYS_PER_WEEK: i64 = 7;
+    /// `Number.MAX_SAFE_INTEGER`, the one fact every width below derives from.
+    pub const MAX_SAFE_INTEGER_U64: u64 = (1 << f64::MANTISSA_DIGITS) - 1;
+    /// `Number.MAX_SAFE_INTEGER` as an `i128`.
+    pub const MAX_SAFE_INTEGER_I128: i128 = MAX_SAFE_INTEGER_U64 as i128;
+    /// `Number.MAX_SAFE_INTEGER` as a JavaScript number.
+    pub const MAX_SAFE_INTEGER: f64 = MAX_SAFE_INTEGER_U64 as f64;
     /// Half-way rounding compares twice a remainder against its increment.
     pub const ROUNDING_TIE_FACTOR: i128 = 2;
 }

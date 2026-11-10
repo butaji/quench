@@ -123,8 +123,8 @@ enum Suite {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 enum JitMode {
-    #[default]
     NoJit,
+    #[default]
     Jit,
 }
 
@@ -902,7 +902,7 @@ fn jit_wasm_root_only_error(
     root_only: bool,
 ) -> Option<&'static str> {
     (root_only && (suite != Suite::JetStream3 || jit_mode != JitMode::Jit || root.is_none()))
-        .then_some("--jit-wasm-root-only requires --suite jetstream3 --jit --jit-wasm-root ID")
+        .then_some("--jit-wasm-root-only requires --suite jetstream3 --jit-wasm-root ID")
 }
 
 fn jit_wasm_root_first_error(
@@ -917,7 +917,7 @@ fn jit_wasm_root_first_error(
             || jit_mode != JitMode::Jit
             || root.is_none()
             || root_only))
-        .then_some("--jit-wasm-root-first requires --suite jetstream3 --jit --jit-wasm-root ID and cannot combine with --jit-wasm-root-only")
+        .then_some("--jit-wasm-root-first requires --suite jetstream3 --jit-wasm-root ID and cannot combine with --jit-wasm-root-only")
 }
 
 fn jit_wasm_selective_error(
@@ -932,7 +932,7 @@ fn jit_wasm_selective_error(
             || jit_mode != JitMode::Jit
             || root.is_some()
             || root_only))
-        .then_some("--jit-wasm-selective requires --suite jetstream3 --jit and cannot combine with --jit-wasm-root, --jit-wasm-root-only, or --jit-wasm-root-first")
+        .then_some("--jit-wasm-selective requires --suite jetstream3 and cannot combine with --jit-wasm-root, --jit-wasm-root-only, or --jit-wasm-root-first")
 }
 
 fn jit_wasm_selective_ab_error(options: &Options) -> Option<&'static str> {
@@ -951,7 +951,7 @@ fn jit_wasm_selective_ab_error(options: &Options) -> Option<&'static str> {
         || options.quench_peer.is_some()
     {
         return Some(
-            "--jit-wasm-selective-ab requires --suite jetstream3 --jit, at least 3 rounds, and no other JIT diagnostic modes",
+            "--jit-wasm-selective-ab requires --suite jetstream3, at least 3 rounds, and no other JIT diagnostic modes",
         );
     }
     if options.preflight_only {
@@ -974,7 +974,7 @@ fn jit_js_general_dispatch_error(options: &Options) -> Option<&'static str> {
         return None;
     }
     (options.suite != Suite::JetStream3 || options.jit_mode != JitMode::Jit)
-        .then_some("--jit-js-general-dispatch requires --suite jetstream3 --jit")
+        .then_some("--jit-js-general-dispatch requires --suite jetstream3")
 }
 
 fn parse_options() -> Options {
@@ -988,7 +988,7 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
         .unwrap_or_else(|| usage("missing fixture or --all"));
     let mut options = Options {
         suite: Suite::V8V7,
-        jit_mode: JitMode::NoJit,
+        jit_mode: JitMode::Jit,
         jit_diagnostics: false,
         jit_js_general_dispatch: false,
         jit_wasm_root: None,
@@ -1037,7 +1037,7 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
                     .unwrap_or_else(|| usage("--fixtures requires a comma-separated list"));
                 options.fixtures = Some(parse_fixture_list(&list));
             }
-            "--jit" => options.jit_mode = JitMode::Jit,
+            "--no-jit" => options.jit_mode = JitMode::NoJit,
             "--jit-diagnostics" => options.jit_diagnostics = true,
             "--jit-js-general-dispatch" => options.jit_js_general_dispatch = true,
             "--jit-wasm-selective" => options.jit_wasm_selective = true,
@@ -1102,11 +1102,8 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
     if options.fixed_work && options.suite != Suite::V8V7 {
         usage("--fixed-work measures V8-v7 fixtures only");
     }
-    if options.jit_mode == JitMode::Jit && options.suite != Suite::JetStream3 {
-        usage("--jit is currently supported only with --suite jetstream3");
-    }
     if options.jit_diagnostics && options.jit_mode != JitMode::Jit {
-        usage("--jit-diagnostics requires --suite jetstream3 --jit");
+        usage("--jit-diagnostics requires --suite jetstream3");
     }
     if let Some(error) = jit_js_general_dispatch_error(&options) {
         usage(error);
@@ -1114,7 +1111,7 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
     if options.jit_wasm_root.is_some()
         && (options.jit_mode != JitMode::Jit || options.suite != Suite::JetStream3)
     {
-        usage("--jit-wasm-root requires --suite jetstream3 --jit");
+        usage("--jit-wasm-root requires --suite jetstream3");
     }
     if let Some(error) = jit_wasm_root_only_error(
         options.suite,
@@ -2897,7 +2894,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -2956,7 +2953,6 @@ mod jit_wasm_root_only_tests {
                 "HashSet-wasm",
                 "--suite",
                 "jetstream3",
-                "--jit",
                 "--jit-wasm-root",
                 "19",
                 "--jit-wasm-root-only",
@@ -2978,7 +2974,6 @@ mod jit_wasm_root_only_tests {
                 "gcc-loops-wasm",
                 "--suite",
                 "jetstream3",
-                "--jit",
                 "--jit-wasm-root",
                 "19",
                 "--jit-wasm-root-first",
@@ -3128,7 +3123,6 @@ mod jit_js_general_dispatch_tests {
                 "--all",
                 "--suite",
                 "jetstream3",
-                "--jit",
                 "--jit-js-general-dispatch",
             ]
             .map(str::to_string),
@@ -3179,7 +3173,6 @@ mod jit_wasm_selective_ab_tests {
                 "gcc-loops-wasm",
                 "--suite",
                 "jetstream3",
-                "--jit",
                 "--jit-wasm-selective-ab",
                 "--runs",
                 "3",

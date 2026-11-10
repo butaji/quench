@@ -115,17 +115,16 @@ fn run(path: &str, mode: ExecutionMode) -> Result<f32, String> {
 }
 
 fn main() -> ExitCode {
-    let mut mode = ExecutionMode::Interpreted;
+    let mut mode = ExecutionMode::Compiled;
     let mut path = None;
     for arg in env::args().skip(1) {
         match arg.as_str() {
-            "-jit" | "--jit" => mode = ExecutionMode::Compiled,
             "-no-jit" | "--no-jit" => mode = ExecutionMode::Interpreted,
             _ => path = Some(arg),
         }
     }
     let Some(path) = path else {
-        eprintln!("usage: coremark [-jit|-no-jit] <coremark-minimal.wasm>");
+        eprintln!("usage: coremark [--no-jit] <coremark-minimal.wasm>");
         return ExitCode::from(2);
     };
     let outcome = thread::Builder::new()

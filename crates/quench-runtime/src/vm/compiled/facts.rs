@@ -16,8 +16,6 @@ use crate::typed_ir::Type;
 use cranelift_codegen::bitset::CompoundBitSet;
 use std::num::NonZeroUsize;
 
-mod widen;
-
 /// Scratch storage spills for larger functions without limiting region size.
 const INLINE_ANALYSIS_ITEMS: usize = 16;
 
@@ -538,6 +536,7 @@ mod tests {
 #[path = "facts/immediates.rs"] mod immediates;
 #[path = "facts/written.rs"] mod written;
 #[path = "facts/binary.rs"] mod binary;
+#[path = "facts/widen.rs"] mod widen;
 pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32};
 pub(in crate::vm) use binary::{generic_operator, heap_primitive_binary};
 

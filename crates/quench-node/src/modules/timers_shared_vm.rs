@@ -27,7 +27,7 @@ const PROMISE_REJECTED: &str = "rejected";
 const PROMISE_TIMEOUT: &str = "timeout";
 const PROMISE_IMMEDIATE: &str = "immediate";
 const DEFAULT_TIMER_DELAY_MS: u64 = 1;
-const MAX_TIMER_DELAY_MS: u64 = 2_147_483_647;
+pub(crate) const MAX_TIMER_DELAY_MS: u64 = 2_147_483_647;
 const CALLBACK_TIMER_EXPORTS: &[&str] = &[
     "setTimeout",
     "clearTimeout",

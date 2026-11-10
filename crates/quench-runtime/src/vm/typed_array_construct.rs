@@ -422,10 +422,7 @@ impl<H: Host> Vm<H> {
             // ArrayBuffer length failures. Keep ToIndex's conversion rules,
             // but preserve the original number for Node's constructor error.
             let number = self.to_number(p, object)?;
-            let integer = number.trunc();
-            if !number.is_nan()
-                && (!number.is_finite() || integer < 0.0 || integer > MAX_SAFE_INTEGER)
-            {
+            let Some(length) = crate::units::to_index(number) else {
                 return Err(self.range_error(
                     p,
                     format!(
@@ -433,8 +430,7 @@ impl<H: Host> Vm<H> {
                         crate::number_to_string::format(number)
                     ),
                 ));
-            }
-            let length = if number.is_nan() { 0 } else { integer as usize };
+            };
             return Ok(TypedArrayInitialization::Length(length));
         }
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {

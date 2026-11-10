@@ -72,9 +72,7 @@ fn handle(c: &mut Context<'_>, receiver: RootId) -> Result<u64, RootedError> {
 
 /// ECMAScript ToUint32.
 fn uint32(c: &mut Context<'_>, value: RootId) -> Result<u32, RootedError> {
-    const TWO_TO_THE_32: f64 = 4_294_967_296.0;
-    let number = c.to_number(value)?;
-    Ok(if number.is_finite() { number.trunc().rem_euclid(TWO_TO_THE_32) as u32 } else { 0 })
+    Ok(quench_runtime::units::to_uint32(c.to_number(value)?))
 }
 
 pub(crate) fn serializer_output(c: &mut Context<'_>, receiver: RootId) -> Result<WireOutput, RootedError> {

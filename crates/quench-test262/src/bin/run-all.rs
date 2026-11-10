@@ -21,7 +21,7 @@ use quench_test262::waivers::{Adjudication, Waivers};
 use quench_runtime::ExecutionMode;
 use quench_test262::{
     discover_js_files, execution_mode_name, execution_mode_flag, required_timeout_ms, resolve_stages, take_execution_mode, take_dynamic_source, worker_jobs, HarnessCache,
-    ResolvedStage, StageReport, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG, AOT_FLAG,
+    ResolvedStage, StageReport, Test262Runner, Test262RuntimeHost, TestOutcome, NO_JIT_FLAG, AOT_FLAG,
 };
 use wait_timeout::ChildExt;
 
@@ -67,7 +67,7 @@ fn main() -> ExitCode {
 
 fn run() -> ExitCode {
     let mut args = env::args().skip(1).collect::<Vec<_>>();
-    if args.iter().any(|arg| arg == AOT_FLAG) && args.iter().any(|arg| arg == JIT_FLAG) {
+    if args.iter().any(|arg| arg == AOT_FLAG) && args.iter().any(|arg| arg == NO_JIT_FLAG) {
         return fail("choose one execution mode".into());
     }
     let dynamic_source = take_dynamic_source(&mut args);
@@ -76,7 +76,7 @@ fn run() -> ExitCode {
     let freeze_expected = match args.as_slice() {
         [] => false,
         [option] if option == "--freeze-expected-pass-set" => true,
-        _ => return fail(format!("usage: run-all [{JIT_FLAG}|{AOT_FLAG} [--dynamic-source]] [--freeze-expected-pass-set]")),
+        _ => return fail(format!("usage: run-all [{NO_JIT_FLAG}|{AOT_FLAG} [--dynamic-source]] [--freeze-expected-pass-set]")),
     };
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)

@@ -31,7 +31,7 @@ const MAX_GROUP_COLUMNS: f64 = 15.0;
 /// `formatRaw`: output past this many units at one indentation stops further recursion.
 const OUTPUT_BUDGET: usize = 1 << 27;
 /// `formatSpecialArray`: arrays hold at most 2^32 - 1 elements.
-const MAX_ARRAY_INDEX: f64 = 4_294_967_294.0;
+const MAX_ARRAY_INDEX: f64 = (quench_runtime::units::MAX_ARRAY_LENGTH - 1) as f64;
 /// `identicalSequenceRange`: shared frame runs shorter than this are not elided.
 const MIN_IDENTICAL_FRAMES: usize = 3;
 /// The frames an elided run keeps visible around its message.
@@ -44,7 +44,7 @@ pub(crate) const DEFAULT_OPTIONS: [(&str, DefaultOption); 12] = [
     ("colors", DefaultOption::Boolean(false)),
     ("customInspect", DefaultOption::Boolean(true)),
     ("showProxy", DefaultOption::Boolean(false)),
-    ("maxArrayLength", DefaultOption::Number(100.0)),
+    ("maxArrayLength", DefaultOption::Number(crate::modules::console_format_shared_vm::DEFAULT_MAX_ARRAY_LENGTH as f64)),
     ("maxStringLength", DefaultOption::Number(10_000.0)),
     ("breakLength", DefaultOption::Number(80.0)),
     ("compact", DefaultOption::Number(3.0)),
