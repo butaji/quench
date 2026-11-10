@@ -301,7 +301,7 @@ impl FlatUnits {
         }
     }
 
-    fn same_storage(&self, other: &Self) -> bool {
+    pub(crate) fn same_storage(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Ascii(left), Self::Ascii(right)) => Rc::ptr_eq(left, right),
             (Self::AsciiSlice(left), Self::AsciiSlice(right)) => Rc::ptr_eq(left, right),

@@ -75,6 +75,11 @@ impl Temporaries<'_> {
 /// (`calls_super_base`), whose window the rewrite may have filled with a copy.
 fn super_base(records: &mut impl Iterator<Item = WideInstruction>, atoms: &AtomTable, constants: &[Constant]) -> Option<Register> {
     let (active, base, receiver, mut call) = (records.next()?, records.next()?, records.next()?, records.next()?);
+    // A body that does not start with this shape is not a super initializer; reading a
+    // result register before proving the opcode would ask a field the layout does not have.
+    if active.op() != Op::LoadCapture || base.op() != Op::LoadName || receiver.op() != Op::LoadConst {
+        return None;
+    }
     let mut window = active.result_register();
     if call.op() == Op::Move && call.result_flags() == 0 && call.register_b() == window {
         window = call.result_register();

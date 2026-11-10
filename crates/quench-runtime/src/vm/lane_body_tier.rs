@@ -15,22 +15,11 @@ pub(super) struct LaneBodyHistory {
     wasted: u8,
     /// The inlining budget halvings its last plan needed to fit (`PendingLaneMethod::shrinks`).
     shrinks: u8,
+    /// The warm-ups its compile waited for its callees' bodies (`LaneView::waits_for_callees`).
+    callee_waits: u8,
+    /// The bodies it specialized past because a callee published one (`respecialize_callers`).
+    callee_recompiles: u8,
 }
-
-/// The entries and the milliseconds of warming past which a function specializes by its
-/// recurrence alone (`LaneView::recurrent`).
-const RECURRENT_ENTRIES: u16 = 16;
-const RECURRENT_TICKS: u32 = 256;
-
-/// The warming entries every function has counted so far: a clock of the work the program does
-/// while its functions warm, which, unlike wall time, a rerun repeats.
-fn warm_ticks() -> u32 {
-    thread_local! { static TICKS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) }; }
-    TICKS.with(|ticks| { let next = ticks.get().wrapping_add(1); ticks.set(next); next })
-}
-
-/// The reading `warm_ticks` would give next, without counting.
-fn warm_clock() -> u32 { warm_ticks().wrapping_sub(1) }
 
 /// What a body whose leaves reached the reoptimization threshold does next.
 enum Verdict {
@@ -107,20 +96,50 @@ impl LaneView {
         TIERS.lane_body.warmup_entries << self.history.get().lifetimes.min(7)
     }
 
-    /// Whether a function entered rarely has still been entered at least `RECURRENT_ENTRIES` times
-    /// over `RECURRENT_TICKS` warming entries of the program: an entry that runs long (a driver whose callees
-    /// are hot) costs more than the many cheap entries the warm-up counts, and its callees'
-    /// bodies run from the lane until it specializes and inlines them. Read every
-    /// `RECURRENT_ENTRIES`th entry.
-    fn recurrent(&self, entries: u16) -> bool {
-        entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && self.history.get().lifetimes == 0
-            && warm_clock().wrapping_sub(self.warm_since.get()) >= RECURRENT_TICKS
-    }
-
     /// Whether its history affords another compile.
     pub(super) fn affords_compile(&self) -> bool {
         let history = self.history.get();
         history.lifetimes <= TIERS.lane_body.max_lifetimes && history.wasted < TIERS.lane_body.max_wasted
+    }
+
+    /// Whether its compile waits one more warm-up for callees still warming, whose bodies it
+    /// then calls by their entries (`compiled::DirectCallee`).
+    pub(super) fn waits_for_callees(&self) -> bool {
+        let history = self.history.get();
+        let waits = history.callee_waits < TIERS.lane_body.max_callee_waits;
+        if waits {
+            self.history.set(LaneBodyHistory { callee_waits: history.callee_waits + 1, ..history });
+        }
+        waits
+    }
+
+    /// Records that `caller`'s body compiled a call of this function, by its entry or through
+    /// the lane's helper: a fact of this view's body, whose publication invalidates it.
+    pub(super) fn note_caller(&self, caller: &LaneView) {
+        let caller = std::ptr::from_ref(caller);
+        let mut callers = self.callers.borrow_mut();
+        if !std::ptr::eq(caller, self) && !callers.contains(&caller) { callers.push(caller); }
+    }
+
+    /// Its body published: each caller that compiled against the one before, or against
+    /// none, specializes again at its next entry and calls this one by its entry
+    /// (`compiled::DirectCallee`). A caller's running body keeps its code (`retired`).
+    fn respecialize_callers(&self) {
+        for caller in self.callers.take() {
+            // SAFETY: a program's views outlive its lane runs, and callers are views of it.
+            let caller = unsafe { &*caller };
+            let history = caller.history.get();
+            // SAFETY: as `lane_body`; a caller's running body holds its own lease.
+            let body = unsafe { &mut *caller.tier_lane.get() };
+            let LaneBody::Specialized { tier_prologue, recompiles, stuck, .. } = body else { continue };
+            if history.callee_recompiles >= TIERS.lane_body.max_callee_recompiles { continue; }
+            caller.history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, ..history });
+            // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
+            unsafe { (*caller.prologue.get()).handler = *tier_prologue };
+            let next = LaneBody::Unspecialized { entries: TIERS.lane_body.warmup_entries - 1, recompiles: *recompiles, stuck: *stuck };
+            let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
+            caller.retired.borrow_mut().push(method);
+        }
     }
 
     /// A compile none of whose runs completed counts toward `TIERS.lane_body.max_wasted`.
@@ -187,57 +206,106 @@ impl LaneView {
         if awaits_look(body) {
             return true;
         }
-        let (outcome, recompiles, stuck) = match std::mem::replace(body, LaneBody::Declined) {
-            LaneBody::Unspecialized { entries, recompiles, stuck } if entries.saturating_add(1) >= self.warmup_entries() || self.recurrent(entries.saturating_add(1)) => {
+        let (outcome, recompiles, stuck, looks) = match std::mem::replace(body, LaneBody::Declined) {
+            LaneBody::Unspecialized { entries, recompiles, stuck } if entries.saturating_add(1) >= self.warmup_entries() => {
                 if !self.affords_compile() { return false; }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks }), recompiles, stuck)
+                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks }), recompiles, stuck, 0)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
-                let ticks = warm_ticks();
-                if entries == 0 { self.warm_since.set(ticks); }
                 *body = LaneBody::Unspecialized { entries: entries + 1, recompiles, stuck };
                 return true;
             }
-            LaneBody::Compiling { pending, recompiles, stuck, .. } =>
-                (work(super::super::compiled::LaneBodyWork::Poll(pending)), recompiles, stuck),
+            LaneBody::Compiling { pending, recompiles, stuck, looks, .. } =>
+                (work(super::super::compiled::LaneBodyWork::Poll(pending)), recompiles, stuck, looks.saturating_add(1)),
             settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
         };
-        *body = self.body_after(outcome, entry, recompiles, stuck);
+        *body = self.body_after(outcome, entry, recompiles, stuck, looks);
         !matches!(body, LaneBody::Declined)
     }
 
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
     /// flight records the inlining its plan fits (`LaneBodyHistory::shrinks`).
-    fn body_after(&self, outcome: super::super::compiled::LaneBodyOutcome, entry: Handler, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
+    fn body_after(&self, outcome: super::super::compiled::LaneBodyOutcome, entry: Handler, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
         match outcome {
             super::super::compiled::LaneBodyOutcome::Compiling(pending) => {
                 self.history.set(LaneBodyHistory { shrinks: pending.shrinks(), ..self.history.get() });
-                LaneBody::Compiling { pending, wait: std::cell::Cell::new(TIERS.lane_body.compile_poll_interval), recompiles, stuck }
+                let wait = 1u16.checked_shl(u32::from(looks)).map_or(u16::MAX, |entries| entries - 1).min(TIERS.lane_body.compile_poll_interval);
+                LaneBody::Compiling { pending, wait: std::cell::Cell::new(wait), looks, recompiles, stuck }
             }
-            super::super::compiled::LaneBodyOutcome::Published(published) => self.specialized(entry, published, recompiles, stuck),
+            super::super::compiled::LaneBodyOutcome::Published(published) => {
+                self.respecialize_callers();
+                self.specialized(entry, published, recompiles, stuck)
+            }
             // A compile a collection or a changed fact outran is a body a lifecycle edge dropped.
             super::super::compiled::LaneBodyOutcome::Stale => {
                 self.note_dropped_compile();
                 LaneBody::Unspecialized { entries: 0, recompiles, stuck }
             }
+            super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: 0, recompiles, stuck },
             super::super::compiled::LaneBodyOutcome::Declined => LaneBody::Declined,
         }
     }
 
     /// `specialize_lane_body` at once, past the warm-up: a hot loop's backward jump has run
-    /// its calls, so their sites have linked (`lane_loop_body_or_retire`).
+    /// its calls, so their sites have linked (`lane_loop_retire`).
     pub(super) fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce(super::super::compiled::LaneBodyWork) -> super::super::compiled::LaneBodyOutcome) {
-        // SAFETY: as `lane_body`; specializing runs no lane body.
-        // A function whose bodies lifecycle edges discarded warms as any entry does.
+        self.skip_warm_up();
+        self.specialize_lane_body(entry, specialize);
+        // Its entries are few (the loop is what is hot): the next one compiles where this one
+        // waited for its callees' bodies (`LaneBodyOutcome::Deferred`).
+        self.skip_warm_up();
+    }
+
+    /// A function whose bodies lifecycle edges discarded warms as any entry does.
+    fn skip_warm_up(&self) {
+        // SAFETY: as `lane_body`; no lane body runs here.
         if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() }
             && self.history.get().lifetimes == 0
         {
             *entries = TIERS.lane_body.warmup_entries - 1;
         }
-        self.specialize_lane_body(entry, specialize);
     }
+}
+
+/// The target of the callee the call at `pc` of `view` last reached itself, by the site's own
+/// record (`lane_site_targets`): the entry its record links is another callee's once the
+/// target cache replaced it.
+pub(super) fn site_target<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, pc: usize) -> Option<super::ScriptCallTarget> {
+    let callee = super::lane_site_targets(vm, view, pc as u32).first().filter(|site| site.through().is_none())?.identity()?;
+    // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
+    vm.script_call_entry(callee).map(|target| unsafe { *target })
+}
+
+/// `site_target` for a compile of `view`'s body, which the callee's view records
+/// (`LaneView::note_caller`).
+pub(super) fn compiled_site_target<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, pc: usize) -> Option<super::ScriptCallTarget> {
+    let target = site_target(vm, view, pc)?;
+    // SAFETY: a resolved target's view outlives its program.
+    if let Some(callee) = unsafe { target.view.as_ref() } { callee.note_caller(view); }
+    Some(target)
+}
+
+/// What a first compile of `view` comes to before any planning. Entry warm-up leaves closed
+/// loops to their admitted regions while those still enter native code (a region that leaves
+/// for calls still lets a lane body inline those callees into its typed unit). A function
+/// whose callees still compile waits for their bodies, which it then calls by their entries
+/// (`compiled::DirectCallee`), and `waits_for_callees` for those still counting entries.
+pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, body: Option<&crate::bytecode::Function>) -> Option<super::super::compiled::LaneBodyOutcome> {
+    use super::super::compiled::LaneBodyOutcome;
+    if view.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters()) {
+        return Some(LaneBodyOutcome::Declined);
+    }
+    let body = body?;
+    let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {
+        super::decoded_instruction(body, *packed).op().is_call()
+            && site_target(vm, view, pc).is_some_and(|target| {
+                // SAFETY: a resolved target's view outlives its program.
+                target.program == vm.active_program && !target.view.is_null() && !std::ptr::eq(target.view, view) && pending(unsafe { &*target.view })
+            })
+    });
+    (calls(LaneView::compiling) || (calls(LaneView::warming) && view.waits_for_callees())).then_some(LaneBodyOutcome::Deferred)
 }
 
 /// Whether a compiling `body` lets this entry pass without looking for its code, counting it

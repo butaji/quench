@@ -641,8 +641,8 @@ fn take_store_context(
     }
     let frame = shared.async_hooks.local_stores.remove(&async_id).unwrap_or_default();
     frame
-        .into_iter()
-        .filter_map(|(_, store)| shared.async_hooks.release_store(store).then_some(store))
+        .into_values()
+        .filter(|store| shared.async_hooks.release_store(*store))
         .collect()
 }
 

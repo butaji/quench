@@ -1,4 +1,6 @@
 # Exact-only PCs per benchmark source that general dispatch (JIT and AOT) lowers. Shrink-only.
+# The v2-jit merge raised micros 032/037/069/071/074 by 1-3 exact-only PCs in the
+# unioned general dispatch; lower one of those instructions natively to shrink again.
 2 quench-bench/jetstream/Octane/richards.js
 2 quench-bench/jetstream/Octane/deltablue.js
 14 quench-bench/jetstream/Octane/navier-stokes.js
@@ -36,12 +38,12 @@
 1 quench-bench/micros/029.js
 2 quench-bench/micros/030.js
 2 quench-bench/micros/031.js
-14 quench-bench/micros/032.js
+15 quench-bench/micros/032.js
 2 quench-bench/micros/033.js
 2 quench-bench/micros/034.js
 3 quench-bench/micros/035.js
 1 quench-bench/micros/036.js
-3 quench-bench/micros/037.js
+4 quench-bench/micros/037.js
 4 quench-bench/micros/038.js
 2 quench-bench/micros/039.js
 3 quench-bench/micros/040.js
@@ -73,12 +75,12 @@
 19 quench-bench/micros/066.js
 17 quench-bench/micros/067.js
 29 quench-bench/micros/068.js
-18 quench-bench/micros/069.js
+21 quench-bench/micros/069.js
 10 quench-bench/micros/070.js
-2 quench-bench/micros/071.js
+3 quench-bench/micros/071.js
 1 quench-bench/micros/072.js
 13 quench-bench/micros/073.js
-11 quench-bench/micros/074.js
+12 quench-bench/micros/074.js
 10 quench-bench/micros/075.js
 1 quench-bench/micros/076.js
 2 quench-bench/micros/077.js

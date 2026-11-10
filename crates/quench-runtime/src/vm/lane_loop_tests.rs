@@ -263,6 +263,62 @@ fn inlined_math_functions_match_the_interpreter_at_their_edges() {
     assert_eq!(run(crate::ExecutionMode::Compiled, true), interpreted);
 }
 
+/// A function entered a few times whose loop is hot, and leaves at its calls, gets its lane body
+/// when the loop retires (`lane_loop_retire`), not after the entry warm-up it would never
+/// reach; its calls then run in the callees' bodies, and its results are the interpreter's.
+#[test]
+fn a_hot_loop_that_leaves_at_calls_specializes_its_function_before_the_entry_warm_up() {
+    let source = r#"
+      function Table() { this.keys = []; this.count = 0; }
+      Table.prototype.put = function (key) {
+        if (this.keys.length > 64) this.keys = [];
+        this.keys.push(key); this.count = (this.count + key) | 0; return this.count;
+      };
+      function run(table, n) { let total = 0; for (let i = 0; i < n; i++) total = (total + table.put(i)) | 0; return total; }
+      const table = new Table();
+      let result = 0;
+      for (let repeat = 0; repeat < 8; repeat++) result = (result + run(table, 6000)) | 0;
+      print(result + " " + table.count + " " + table.keys.length);
+    "#;
+    let interpreted = printed(source, "lane-hot-loop-driver.js", crate::ExecutionMode::Interpreted, false);
+    assert_eq!(interpreted.len(), 1);
+    let program = Engine::specialize(&format!("(function(){{{source}}})();"), "lane-hot-loop-driver.js").unwrap();
+    let function_id = program.functions.iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "run"))
+        .unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_lane_methods();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.take(), interpreted);
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let view = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("the driver's lane view");
+    assert!(!matches!(view.lane_body_state(), "unspecialized" | "compiling"), "eight entries settle the driver's body");
+}
+
+/// A body its caller's body calls by its entry leaves at its own native calls (a string
+/// method, a Map read, a Math function) and gives the interpreter's values, a non-string
+/// receiver included.
+#[test]
+fn a_directly_called_body_with_native_calls_matches_the_interpreter() {
+    let source = r#"
+      const seen = new Map([[3, 30], [5, 50]]);
+      function weigh(text, i) {
+        let weight = 0;
+        for (let k = 0; k < 3; k++) weight += text.charCodeAt((i + k) % text.length) + (seen.get(k + i % 4) || 0);
+        return weight + Math.hypot(i & 3, 4);
+      }
+      function total(text, n) { let sum = 0; for (let i = 0; i < n; i++) sum += weigh(text, i); return sum; }
+      let result = 0;
+      for (let repeat = 0; repeat < 700; repeat++) result += total("quench-lane", 24);
+      print(result + " " + total({ length: 2, charCodeAt: (i) => i * 7 }, 9));
+    "#;
+    let interpreted = printed(source, "lane-direct-natives.js", crate::ExecutionMode::Interpreted, false);
+    assert_eq!(interpreted.len(), 1);
+    assert_eq!(printed(source, "lane-direct-natives.js", crate::ExecutionMode::Compiled, true), interpreted);
+}
+
 /// What `source`, wrapped in a function, prints when run in `mode`, with lane bodies where
 /// `lane_methods`.
 fn printed(source: &str, name: &str, mode: crate::ExecutionMode, lane_methods: bool) -> Vec<String> {

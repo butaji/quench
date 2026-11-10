@@ -175,10 +175,20 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     Ok(module)
 }
 
-/// `new StringDecoder(encoding)`.
+/// `new StringDecoder(encoding)`, or the function called on a receiver it initializes
+/// (`StringDecoder.call(object)`); strict code's bare call has none to set `encoding` on.
 pub(crate) fn construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    if c.new_target_rooted().is_none() {
-        let error = c.type_error_rooted("Cannot set properties of undefined (setting 'encoding')")?;
+    let called = c.new_target_rooted().is_none();
+    if called && !c.is_object_rooted(this)? {
+        let message = match c.value_type_rooted(this) {
+            Some(quench_runtime::ValueType::Undefined) => "Cannot set properties of undefined (setting 'encoding')".to_owned(),
+            Some(quench_runtime::ValueType::Null) => "Cannot set properties of null (setting 'encoding')".to_owned(),
+            _ => {
+                let kind = super::assert_shared_vm::type_of(c, this);
+                format!("Cannot create property 'encoding' on {kind} '{}'", c.to_string(this)?)
+            }
+        };
+        let error = c.type_error_rooted(&message)?;
         return Err(c.throw(error));
     }
     let encoding = args.first().copied().unwrap_or_else(|| c.undefined());
@@ -202,7 +212,7 @@ pub(crate) fn construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> R
     let state = super::buffer_shared_vm::from_bytes(c, &bytes)?;
     let key = state_symbol(c)?;
     c.define_data_property_rooted(this, key, state, true, true, true)?;
-    Ok(this)
+    Ok(if called { c.undefined() } else { this })
 }
 
 fn native_state(c: &mut Context<'_>, this: RootId) -> Result<RootId, RootedError> {

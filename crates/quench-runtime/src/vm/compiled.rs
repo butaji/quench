@@ -6590,7 +6590,7 @@ pub(super) struct LaneMethod {
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
     pub(super) direct: Box<[DirectCallee]>,
-    /// Whether every call it makes is inlined or direct: under a direct caller's native
+    /// Whether every call of it that has run is inlined or direct: under a direct caller's native
     /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
     /// a body is called directly.
     closed: bool,

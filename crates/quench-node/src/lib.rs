@@ -11,6 +11,7 @@ pub mod esm_imports;
 pub mod host;
 mod io_transient;
 pub mod modules;
+mod allocator_policy;
 pub mod shared_run;
 
 pub use host::{NodeHost, NodeOutputSink};
