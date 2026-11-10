@@ -2544,6 +2544,7 @@ impl Heap {
                         memory_profile.freed_record_cell(Value::direct_iterator(_record_id), slots);
                     }
                 });
+            self.string_records.warm_before_drop(JsString::prefetch_allocation);
             let (string_live, string_freed) = self.string_records.sweep(full, age, full, |record| match record {
                 RecordSweep::Keep(_, string) => live_payload_bytes += if full { string.flat_unit_bytes() } else { 0 },
                 RecordSweep::Dead(record_id, string) => {
