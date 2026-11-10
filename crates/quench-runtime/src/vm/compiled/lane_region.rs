@@ -1000,8 +1000,17 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         Class::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
         // A dense element, read natively; any other element leaves (`emit_dense_element_read`).
         Class::GetIndex => !instruction.returns_from_frame(),
-        _ => instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
+        // A plain ToNumeric reads one register and writes its result, as an int32 or a
+        // Number with no heap effect, so a loop of them still only reads.
+        Class::ToNumeric => instruction.result_flags() == 0,
+        _ => numeric_read(instruction),
     }
+}
+
+/// Whether `instruction` is a plain numeric binary evaluation: it reads its operands and
+/// writes its result, with no heap, environment or frame effect.
+fn numeric_read(instruction: WideInstruction) -> bool {
+    instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame()
 }
 
 /// Whether `instruction` is a store natively: of its atom, into a slot the object already
@@ -3968,21 +3977,37 @@ impl Lowering<'_, '_> {
         view
     }
 
-    /// An element store. A Number replacing a present element of a writable array is
-    /// native, through the array's view; anything else takes the
-    /// lane's helper (`lane_index_set`), which may also add the element and so retires the
-    /// views, and leaves at the store when that misses too. Every operand's tagged view is
-    /// made before the paths split, so the join sees only values both paths dominate.
+    /// An element store. A Number, or any immediate of a dense loop view, replacing a
+    /// present element of a writable array is native, through the array's view; anything
+    /// else takes the lane's helper (`lane_index_set`), which may also add the element and
+    /// so retires the views, and leaves at the store when that misses too.
     pub(super) fn set_index(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> bool {
         let exit = self.guard_exit(state, pc);
         let number = state.values[usize::from(instruction.register_a())].value.ty.is_subtype(Type::NUMBER);
-        if let Some(array) = self.loop_array(pc as usize, Some(instruction.register_b())).filter(|array| number && array.writable) {
+        // A dense view stores any immediate in place; a heap reference takes the general
+        // path, whose helper barriers and logs the write (`loop_element_write`).
+        let loop_view = number || self.views == ElementViews::Dense;
+        if let Some(array) = self.loop_array(pc as usize, Some(instruction.register_b())).filter(|array| loop_view && array.writable) {
             self.loop_element_write(state, array, pc, instruction, exit);
             state.proofs.arrays.clear();
             state.proofs.fields.clear();
             state.proofs.stable = false;
             return true;
         }
+        self.general_index_store(state, pc, instruction, exit, number);
+        state.proofs.arrays.clear();
+        state.proofs.fields.clear();
+        // The helper may write a prototype's element or mapped argument.
+        state.proofs.stable = false;
+        true
+    }
+
+    /// The element store outside a hoisted loop view: a Number replaces a present element
+    /// in place through the array's view, and every other value (or any view miss) takes
+    /// the lane helper. Every operand's tagged view is made before the paths split, so the
+    /// join sees only values both paths dominate.
+    fn general_index_store(&mut self, state: &mut State, pc: u32, instruction: WideInstruction,
+        exit: ir::Block, number: bool) {
         let value = self.tagged(state, instruction.register_a());
         let base = self.tagged(state, instruction.register_b());
         let key = self.tagged(state, instruction.register_c());
@@ -3991,31 +4016,26 @@ impl Lowering<'_, '_> {
             let hit = lowering.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
             emit_js_guard(&mut lowering.builder, hit, exit);
         };
-        if state.values[usize::from(instruction.register_a())].value.ty.is_subtype(Type::NUMBER) {
-            // The helper stores only at an int32 key; any other leaves at the store either way.
-            let index = self.int(state, instruction.register_c(), exit);
-            let slow = self.builder.create_block();
-            self.builder.set_cold_block(slow);
-            let done = self.builder.create_block();
-            let view = self.array_view(state, base, true, slow);
-            self.index_write(state, index, value, view, slow);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(slow);
-            self.builder.seal_block(slow);
+        if !number {
             general(self);
             self.reload_dense_arrays(pc as usize);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(done);
-            self.builder.seal_block(done);
-        } else {
-            general(self);
-            self.reload_dense_arrays(pc as usize);
+            return;
         }
-        state.proofs.arrays.clear();
-        state.proofs.fields.clear();
-        // The helper may write a prototype's element or mapped argument.
-        state.proofs.stable = false;
-        true
+        // The helper stores only at an int32 key; any other leaves at the store either way.
+        let index = self.int(state, instruction.register_c(), exit);
+        let slow = self.builder.create_block();
+        self.builder.set_cold_block(slow);
+        let done = self.builder.create_block();
+        let view = self.array_view(state, base, true, slow);
+        self.index_write(state, index, value, view, slow);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(slow);
+        self.builder.seal_block(slow);
+        general(self);
+        self.reload_dense_arrays(pc as usize);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(done);
+        self.builder.seal_block(done);
     }
 
     /// After the element store's helper, which may grow any record array's backing, through
@@ -4085,6 +4105,7 @@ impl Lowering<'_, '_> {
             let key = self.tagged(state, instruction.register_c());
             let (slow, done) = (self.builder.create_block(), self.builder.create_block());
             self.builder.set_cold_block(slow);
+            self.guard_immediate_value(state, instruction, value, slow);
             let view = super::DenseArrayView { values, length, writable: true };
             // The view's backing counts no values (`hoist_arrays`): the store writes the element.
             self.index_write(state, index, value, view, slow);
@@ -4107,6 +4128,16 @@ impl Lowering<'_, '_> {
         let step = self.step(state, frame::Edges::ValueGuarded { miss: exit },
             crate::staged::Operation::TypedIndexWrite { index, value: number, proof });
         debug_assert!(matches!(step, crate::staged::Step::Value(_)));
+    }
+
+    /// Guard that `value` holds no heap reference, so its store needs no write barrier: a
+    /// Number or an int32 does not, and anything else leaves at `miss` for the helper.
+    fn guard_immediate_value(&mut self, state: &State, instruction: WideInstruction, value: ir::Value, miss: ir::Block) {
+        let stored = state.values[usize::from(instruction.register_a())].value.ty;
+        if stored.is_subtype(Type::NUMBER) || stored.is_subtype(Type::INT32) { return; }
+        let tag = self.ins().band_imm_u(value, crate::value::ValueLayout::TAG_MASK as i64);
+        let immediate = self.ins().icmp_imm_u(IntCC::NotEqual, tag, crate::value::ValueLayout::HEAP_TAG as i64);
+        emit_js_guard(&mut self.builder, immediate, miss);
     }
 
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
