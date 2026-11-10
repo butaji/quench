@@ -215,39 +215,49 @@ pub(super) fn compile_function<T>(
     ) -> Result<T, NativeCompileRejection>,
 ) -> Result<T, NativeCompileRejection> {
     select::convert(&mut function);
-    let mut context = COMPILE_CONTEXT.with(|held| held.take()).unwrap_or_else(cranelift_codegen::Context::new);
-    let instructions = function.dfg.num_insts();
+    thread_local! {
+        /// One Cranelift context per compiling thread, cleared between compiles.
+        static CONTEXT: std::cell::Cell<Option<cranelift_codegen::Context>> = const { std::cell::Cell::new(None) };
+    }
+    let mut context = CONTEXT.with(std::cell::Cell::take).unwrap_or_else(cranelift_codegen::Context::new);
     context.clear();
     context.func = function;
-    let compiled = context.compile(isa, &mut cranelift_codegen::control::ControlPlane::default()).map(|compiled| compiled.code_buffer().len());
-    let outcome = match compiled {
-        Err(_error) => {
-            #[cfg(test)]
-            eprintln!("shared native compile rejected by Cranelift: {_error:?}");
-            Err(NativeCompileRejection::Cranelift)
-        }
-        Ok(0) => Err(NativeCompileRejection::EmptyCode),
-        Ok(size) if max_code_bytes.is_some_and(|limit| size > limit) => Err(NativeCompileRejection::CodeSizeBudget),
-        Ok(_) => consume(context.compiled_code().expect("successful compilation"), &context.func),
-    };
-    // One context per compiling thread keeps its scratch for the next compile; a function
-    // past `RETAINED_COMPILE_INSTRUCTIONS` took scratch no later one needs, so it goes back.
-    if instructions <= RETAINED_COMPILE_INSTRUCTIONS {
-        context.clear();
-        COMPILE_CONTEXT.with(|held| held.set(Some(context)));
-    } else {
-        drop(context);
-    }
-    outcome
+    let result = compile_in(&mut context, isa, max_code_bytes, consume);
+    CONTEXT.with(|slot| slot.set(Some(context)));
+    result
 }
 
-/// The IR instructions of the largest function whose compile scratch a thread keeps.
 #[cfg(any(feature = "jit", feature = "aot"))]
-const RETAINED_COMPILE_INSTRUCTIONS: usize = 4096;
-
-#[cfg(any(feature = "jit", feature = "aot"))]
-thread_local! {
-    static COMPILE_CONTEXT: std::cell::Cell<Option<cranelift_codegen::Context>> = const { std::cell::Cell::new(None) };
+fn compile_in<T>(
+    context: &mut cranelift_codegen::Context,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    max_code_bytes: Option<usize>,
+    consume: impl FnOnce(
+        &cranelift_codegen::CompiledCode,
+        &cranelift_codegen::ir::Function,
+    ) -> Result<T, NativeCompileRejection>,
+) -> Result<T, NativeCompileRejection> {
+    let compiled = context
+        .compile(
+            isa,
+            &mut cranelift_codegen::control::ControlPlane::default(),
+        )
+        .map_err(|_error| {
+            #[cfg(test)]
+            eprintln!("shared native compile rejected by Cranelift: {_error:?}");
+            NativeCompileRejection::Cranelift
+        })?;
+    let size = compiled.code_buffer().len();
+    if size == 0 {
+        return Err(NativeCompileRejection::EmptyCode);
+    }
+    if max_code_bytes.is_some_and(|limit| size > limit) {
+        return Err(NativeCompileRejection::CodeSizeBudget);
+    }
+    consume(
+        context.compiled_code().expect("successful compilation"),
+        &context.func,
+    )
 }
 
 #[cfg(not(any(feature = "jit", feature = "aot")))]
