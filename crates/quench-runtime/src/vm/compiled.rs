@@ -2272,12 +2272,14 @@ fn scalar_static_regions(program: &ResidualProgram, function_id: u32, unit: &lan
 ) -> Vec<StaticTypedRegion> {
     use super::specializer::Specializer;
     scalar_region::ranges(program, function_id).into_iter().filter_map(|range| {
+        // The range is in the caller's PCs, the coverage in the unit's.
+        let covered = scalar_region::unit_range(unit, &range)?;
         let region = lane_region::RegionSpecializer { function_id, unit, helpers,
             fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
             direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
             entry_fields: &lane_region::NO_ENTRY_FIELDS,
             plan: lane_region::RegionPlan {
-                coverage: lane_region::Coverage::Range { start: range.start, end: range.end },
+                coverage: lane_region::Coverage::Range { start: covered.start, end: covered.end },
                 completion: lane_region::Completion::SourcePc, views: lane_region::ElementViews::Dense } }
             .specialize(program).ok().filter(|region| region.native != 0)?;
         let mut function = region.function;

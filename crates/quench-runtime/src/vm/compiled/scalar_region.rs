@@ -44,6 +44,17 @@ fn scalar(instruction: WideInstruction, constants: &[Value]) -> bool {
     }
 }
 
+/// Where the caller's scalar `range` sits in `unit`, whose PCs shift past each inlined call:
+/// the run of unit instructions that are the caller's own at exactly those PCs. A range holds
+/// no call, so its instructions stay adjacent; `None` where the unit does not keep them so.
+pub(super) fn unit_range(unit: &super::lane_unit::Unit, range: &std::ops::Range<usize>) -> Option<std::ops::Range<usize>> {
+    use super::lane_unit::Origin;
+    let start = unit.origins.iter().position(|origin| *origin == Origin::Caller(range.start as u32))?;
+    let run = unit.origins.get(start..start + range.len())?;
+    run.iter().zip(range.clone()).all(|(origin, pc)| *origin == Origin::Caller(pc as u32))
+        .then_some(start..start + range.len())
+}
+
 /// The function's scalar ranges: maximal runs of `scalar` instructions no jump enters,
 /// each admitted when it repays a region entry.
 pub(super) fn ranges(program: &ResidualProgram, function_id: u32) -> Vec<std::ops::Range<usize>> {
