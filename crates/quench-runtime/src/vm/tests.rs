@@ -9213,6 +9213,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                                 value: request_value,
                             }]
                             .into(),
+                            ..GeneratorRecord::new(continuation, realm)
                         })),
                         ..Default::default()
                     },
@@ -9223,7 +9224,6 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     crate::heap::AwaitState::arm(
                         crate::heap::AwaitKind::function(continuation),
                         Value::UNDEFINED,
-                            ..GeneratorRecord::new(continuation, realm)
                         promise,
                     ),
                 )));
