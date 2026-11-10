@@ -248,3 +248,19 @@ pub(crate) fn construct_statfs(c: &mut Context<'_>, this: RootId, args: &[RootId
     assign(c, this, &STATFS_FIELDS, args)?;
     Ok(c.undefined())
 }
+
+/// `existsSync(path)`: whether `access(path, F_OK)` succeeds; an invalid path is `false`,
+/// and a path of an invalid type deprecates `existsSync` (DEP0187), as Node's `lib/fs.js` does.
+pub(super) fn exists(c: &mut Context<'_>, args: &[RootId], flavor: super::api::Flavor) -> super::api::Call {
+    let exists = match crate::modules::stream_shared_vm::attempt(super::args::path(c, args[0], "path"))? {
+        Ok(path) => super::ops::c_path(&path.io).is_ok_and(|target| unsafe { libc::access(target.as_ptr(), libc::F_OK) } == 0),
+        Err(error) => {
+            if flavor == super::api::Flavor::Sync && crate::modules::stream_shared_vm::errors::has_code(c, error, "ERR_INVALID_ARG_TYPE")? {
+                let undefined = c.undefined();
+                super::emit_deprecation(c, "Passing invalid argument types to fs.existsSync is deprecated", "DEP0187", undefined)?;
+            }
+            false
+        }
+    };
+    Ok(Ok(super::api::Reply::Exists(exists)))
+}
