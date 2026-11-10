@@ -865,37 +865,7 @@ pub(super) fn renamed(
 ) -> Option<WideInstruction> {
     let op = instruction.op();
     let rename = |field: InstructionField, raw: u16| -> Option<u16> {
-        Some(match op.field_layout(field) {
-            FieldLayout::Unused
-            | FieldLayout::BooleanFlag
-            | FieldLayout::BinaryOperator
-            | FieldLayout::CacheSiteIndex
-            | FieldLayout::FieldLookupCacheSiteIndex => raw,
-            FieldLayout::ResultRegister
-            | FieldLayout::Register
-            | FieldLayout::WriteRegister
-            | FieldLayout::ReadWriteRegister => {
-                (raw <= Operand::PAYLOAD_MASK).then_some(())?;
-                register(raw)
-            }
-            FieldLayout::Operand | FieldLayout::NumericIndexOperand => {
-                let operand = Operand(raw);
-                match operand.kind()? {
-                    OperandKind::Register => Operand::register(register(operand.payload())).0,
-                    OperandKind::Constant => raw,
-                    OperandKind::Field | OperandKind::Local => return None,
-                }
-            }
-            FieldLayout::FieldBase => {
-                let base = FieldBase(raw);
-                if base == FieldBase::THIS {
-                    FieldBase::register(this).0
-                } else {
-                    FieldBase::register(register(base.register_index()?)).0
-                }
-            }
-            _ => return None,
-        })
+        renames::field(op, field, raw, instruction.imm(), this, register)
     };
     let a = rename(InstructionField::A, instruction.a())?;
     let b = rename(InstructionField::B, instruction.b())?;
@@ -6966,6 +6936,8 @@ mod truncation;
 mod globals;
 #[path = "osr_loop/calls.rs"]
 mod calls;
+#[path = "osr_loop/renames.rs"]
+mod renames;
 use globals::{capture_index, rewrite_entry_reads};
 
 #[cfg(test)]
