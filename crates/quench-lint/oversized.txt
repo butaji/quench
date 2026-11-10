@@ -5395,4 +5395,34 @@ native_form Throw 1
 native_form ToPropertyKey 1
 native_form Yield 1
 native_form YieldStar 1
-native_refusals 25
+native_ir crates/quench-runtime/src/vm/compiled/eager.rs 29
+native_ir crates/quench-runtime/src/vm/compiled/frame_ssa.rs 65
+native_ir crates/quench-runtime/src/vm/compiled/frameless.rs 86
+native_ir crates/quench-runtime/src/vm/compiled/general_binary.rs 32
+native_ir crates/quench-runtime/src/vm/compiled/general_call.rs 31
+native_ir crates/quench-runtime/src/vm/compiled/general_capture.rs 39
+native_ir crates/quench-runtime/src/vm/compiled/general_elements.rs 7
+native_ir crates/quench-runtime/src/vm/compiled/general_getter.rs 5
+native_ir crates/quench-runtime/src/vm/compiled/general_names.rs 7
+native_ir crates/quench-runtime/src/vm/compiled/general_store.rs 44
+native_ir crates/quench-runtime/src/vm/compiled/lane_region.rs 358
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/bindings.rs 24
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/bound_this.rs 6
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/captures.rs 14
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/constructions.rs 6
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/dense_appends.rs 11
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/dense_elements.rs 3
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/field_reads.rs 3
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/frame.rs 24
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/frame_calls.rs 14
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/global_reads.rs 6
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/hoisted_reads.rs 1
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/literals.rs 9
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/native_calls.rs 18
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/polls.rs 4
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/polymorphic_stores.rs 3
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/stable.rs 7
+native_ir crates/quench-runtime/src/vm/compiled/lane_region/store_domains.rs 2
+native_ir crates/quench-runtime/src/vm/compiled/object_slots.rs 45
+native_ir crates/quench-runtime/src/vm/compiled/object_slots/emit.rs 43
+native_refusals 24

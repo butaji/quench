@@ -7,7 +7,12 @@
 //!   `vm/lane_body_stats.rs` (`miss_reasons!`); each is a case the handler resolves and the
 //!   helper declines.
 //!
-//! Both join the shrink-only measures in `oversized.txt`; a lowering or a refusal that goes
+//! - `native_ir <file>`: instructions a JIT file (`vm/compiled/`, outside tests) builds by hand
+//!   (`.ins()`), the volume of operation meaning written beside the handler it mirrors rather
+//!   than derived from the staged operation (`staged/`). Each is a hand lowering to move
+//!   into the operation table or replace by a call of the shared slow path.
+//!
+//! All join the shrink-only measures in `oversized.txt`; a lowering or a refusal that goes
 //! away shrinks them, one that appears fails.
 
 use std::{collections::BTreeSet, fs, path::PathBuf};
@@ -18,42 +23,54 @@ use crate::shape::Measures;
 
 const CATALOG: &str = "bytecode/op_catalog.rs";
 const LANE_LOWERING: &str = "vm/compiled/lane_region";
+/// Where the JIT builds native code by hand.
+const JIT_FILES: &str = "vm/compiled/";
 const REFUSALS: &str = "vm/lane_body_stats.rs";
 /// Families that need no native form: the catalog's catch-all and the Wasm lane's own.
 const EXEMPT: &[&str] = &["Other", "Nop"];
 const EXEMPT_PREFIX: &str = "Wasm";
 
-/// Records the native-form measures of the files, which read as `native_form <Class>`
-/// and `native_refusals`.
+/// Records the native-form measures of the files: `native_form <Class>`, `native_refusals`
+/// and `native_ir <file>`.
 pub fn scan(files: &[PathBuf], measures: &mut Measures) {
     let mut families = BTreeSet::new();
     let mut named = BTreeSet::new();
     for path in files {
         let file = path.display().to_string();
+        hand_built(&file, path, measures);
         let relevant = file.ends_with(CATALOG) || file.contains(LANE_LOWERING) || file.ends_with(REFUSALS);
         let Some(source) = relevant.then(|| fs::read_to_string(path).ok()).flatten() else { continue };
         if file.ends_with(REFUSALS) {
-            let declared = source.split("miss_reasons! {").nth(1).and_then(|rest| rest.split("\n}").next())
-                .map_or(0, |body| body.lines().filter(|line| line.contains("=>")).count());
-            measures.insert("native_refusals".to_string(), declared);
-            continue;
-        }
-        let Ok(syntax) = syn::parse_file(&source) else { continue };
-        if file.ends_with(CATALOG) {
-            syntax.items.iter().for_each(|item| {
-                if let syn::Item::Enum(class) = item && class.ident == "Class" {
-                    class.variants.iter().for_each(|variant| { families.insert(variant.ident.to_string()); });
-                }
-            });
-        } else {
-            let mut names = ClassNames(&mut named);
-            names.visit_file(&syntax);
+            measures.insert("native_refusals".to_string(), refusals(&source));
+        } else if let Ok(syntax) = syn::parse_file(&source) {
+            if file.ends_with(CATALOG) { families.extend(class_variants(&syntax)); } else { ClassNames(&mut named).visit_file(&syntax); }
         }
     }
     families.iter()
         .filter(|family| !EXEMPT.contains(&family.as_str()) && !family.starts_with(EXEMPT_PREFIX))
         .filter(|family| !named.contains(*family))
         .for_each(|family| { measures.insert(format!("native_form {family}"), 1); });
+}
+
+/// The instructions a JIT file builds by hand (`native_ir <file>`).
+fn hand_built(file: &str, path: &PathBuf, measures: &mut Measures) {
+    if !file.contains(JIT_FILES) || crate::in_test_path(file) || file.ends_with("tests.rs") { return; }
+    let built = fs::read_to_string(path).map_or(0, |source| source.matches(".ins()").count());
+    if built > 0 { measures.insert(format!("native_ir {file}"), built); }
+}
+
+/// The refusal sites `miss_reasons!` declares.
+fn refusals(source: &str) -> usize {
+    source.split("miss_reasons! {").nth(1).and_then(|rest| rest.split("\n}").next())
+        .map_or(0, |body| body.lines().filter(|line| line.contains("=>")).count())
+}
+
+/// The families of the catalog's `Class`.
+fn class_variants(syntax: &syn::File) -> Vec<String> {
+    syntax.items.iter().filter_map(|item| match item {
+        syn::Item::Enum(class) if class.ident == "Class" => Some(class.variants.iter().map(|variant| variant.ident.to_string())),
+        _ => None,
+    }).flatten().collect()
 }
 
 /// The `Class::Name` variants a lowering mentions.
