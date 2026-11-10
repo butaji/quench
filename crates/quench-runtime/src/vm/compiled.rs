@@ -6049,6 +6049,8 @@ impl CompiledOsrRegion {
             // The counter is the `words` field's first word, not the struct's offset 0:
             // `LoopEntry` is not `repr(C)`.
             native.dispatch.loop_entry = entry.words_mut() as usize;
+            // A leave inside an inlined callee writes the callee's live registers here.
+            if region.inlining.is_some() { native.dispatch.inlined = entry.scratch_address(); }
             // The loop entry's captures in the dense slot view the lane capture reads use.
             let captures = if region.captures.is_empty() { Vec::new() } else {
                 let len = region.captures.iter().map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);
@@ -6102,31 +6104,33 @@ impl CompiledOsrRegion {
                 LoopOutcome::Returned { pc: native.dispatch.returned_pc as u32,
                     value: crate::Value::from_bits(word) }
             } else {
-                match LaneExit::decode(word) {
-                    // A leave outside the loop is the loop's normal continuation, which the
-                    // lane resumes at that PC; a guard inside the loop is an exit. The word
-                    // already names the caller's PC, and an inlining region's loop ends at
-                    // the caller's latch, not at the region's last instruction.
-                    LaneExit::At(pc) => {
-                        let pc = pc as u32;
-                        let latch = region.inlining.as_ref().map_or(region.backedge, |inlining| inlining.latch);
-                        if (region.header..=latch).contains(&pc) {
-                            LoopOutcome::Exit(pc)
-                        } else {
-                            LoopOutcome::Resume(pc)
-                        }
-                    }
-                    LaneExit::Entry => LoopOutcome::NotEntered,
-                    LaneExit::Terminated => LoopOutcome::Terminated,
-                    LaneExit::Callee => LoopOutcome::Callee,
-                    LaneExit::Inlined { .. } | LaneExit::Returned { .. } => LoopOutcome::Exit(0),
-                }
+                lane_loop_outcome(word, region)
             };
         }) };
         if ran.is_none() { return LoopOutcome::Terminated; }
         outcome
     }
 
+}
+
+/// The outcome of a lane OSR region's leave `word`. A leave outside the loop is the loop's
+/// normal continuation, which the lane resumes at that PC; a guard inside the loop is an
+/// exit. The word already names the caller's PC, and an inlining region's loop ends at the
+/// caller's latch, not at the region's last instruction. A leave inside an inlined callee
+/// names its frame and callee PC.
+fn lane_loop_outcome(word: u64, region: &LoopRegion) -> LoopOutcome {
+    match LaneExit::decode(word) {
+        LaneExit::At(pc) => {
+            let pc = pc as u32;
+            let latch = region.inlining.as_ref().map_or(region.backedge, |inlining| inlining.latch);
+            if (region.header..=latch).contains(&pc) { LoopOutcome::Exit(pc) } else { LoopOutcome::Resume(pc) }
+        }
+        LaneExit::Entry => LoopOutcome::NotEntered,
+        LaneExit::Terminated => LoopOutcome::Terminated,
+        LaneExit::Callee => LoopOutcome::Callee,
+        LaneExit::Inlined { frame, pc } => LoopOutcome::Inlined { frame, pc },
+        LaneExit::Returned { .. } => LoopOutcome::Exit(0),
+    }
 }
 
 /// Analyze a loop candidate whose calls run inlined (`osr_loop::inline_region`), each

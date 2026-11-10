@@ -380,3 +380,18 @@ fn shared_osr_counted_loops_leave_at_nested_for_of_and_builtin_calls() {
       print(out.join(","));
     "#, &["nested", "builtin"]);
 }
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_leave_inside_an_inlined_callee_makes_its_activation() {
+    // The callee's loop overflows int32 (from `x = 72086`) on the last iterations of the
+    // caller's native loop: the region leaves inside the inlined callee, whose live registers
+    // make its activation.
+    assert_typed_osr(r#"
+      const o = { g(x) { let t = x; for (let j = 0; j < 3; j++) { t = (t * 31 + j) | 0; } return t; } };
+      function g(x) { let t = x; for (let j = 0; j < 3; j++) { t = (t * 31 + j) | 0; } return t; }
+      function method(o) { let s = 0; for (let i = 52000; i < 72200; i++) { s = (s + o.g(i)) | 0; } return s; }
+      function plain() { let s = 0; for (let i = 52000; i < 72200; i++) { s = (s + g(i)) | 0; } return s; }
+      print([method(o), plain()].join(","));
+    "#, &["method", "plain"]);
+}

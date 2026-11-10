@@ -7988,10 +7988,9 @@ fn lane_loop_native<H: Host>(
     match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => LoopAttempt::Declined,
         LoopContinuation::Resume(pc) => LoopAttempt::At(at(pc)),
-        LoopContinuation::Exit(pc) => LoopAttempt::Leave(match region.inlined_exit(pc) {
-            Some((frame, callee_pc)) => exit(lane_inlined_activation(cx, r, region, &entry, *frame, at(frame.call), pc, callee_pc)),
-            None => { count_arithmetic_leave(cx, site, pc); exit(at(pc)) }
-        }),
+        LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc); LoopAttempt::Leave(exit(at(pc))) }
+        LoopContinuation::Inlined { frame, pc } => { let frame = region.inlining.as_ref().expect("an inlining region").frames[frame];
+            LoopAttempt::Leave(exit(lane_inlined_activation(cx, r, region, &entry, frame, at(frame.call), pc))) }
         LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
         // SAFETY: the call set the callee's activation and its resume record before the body
         // left (`lane_body_activate`), so the run leaves at a record of that view.
@@ -8143,6 +8142,8 @@ enum LoopContinuation {
     Resume(u32),
     /// The general path executes the instruction at this PC.
     Exit(u32),
+    /// The general path executes the instruction at callee PC `pc` of inlined `frame`.
+    Inlined { frame: usize, pc: u32 },
     /// The backward jump's safepoint ends the execution termination stopped.
     Safepoint,
     /// The region's code compiles: take the jump, which declines nothing.
@@ -8255,6 +8256,11 @@ fn lane_loop_run<H: Host>(
                     }
                 }
             }
+            LoopOutcome::Inlined { .. } => {
+                site.native_region_runs
+                    .set(site.native_region_runs.get().saturating_add(1));
+                site.native_exits.set(site.native_exits.get().saturating_add(1));
+            }
             LoopOutcome::Terminated => {}
         }
     }
@@ -8292,6 +8298,10 @@ fn lane_loop_run<H: Host>(
                 site.exits.set(site.exits.get().saturating_add(1));
                 return LoopContinuation::Exit(pc);
             }
+            LoopOutcome::Inlined { frame, pc } => {
+                site.exits.set(site.exits.get().saturating_add(1));
+                return LoopContinuation::Inlined { frame, pc };
+            }
             LoopOutcome::Callee => return LoopContinuation::Callee,
             LoopOutcome::NotEntered | LoopOutcome::Terminated | LoopOutcome::Returned { .. } => {}
         }
@@ -8303,6 +8313,7 @@ fn lane_loop_run<H: Host>(
         // A run pays for its entry with the iterations it completed, wherever it leaves.
         LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
         LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
+        LoopOutcome::Inlined { frame, pc } => { site.note_run(entry.backedge_count()); LoopContinuation::Inlined { frame, pc } }
         // The call made the callee's activation, whose own records the lane runs next; the
         // run left as any exit does, so it too pays with the iterations it completed.
         LoopOutcome::Callee => { site.note_run(entry.backedge_count()); LoopContinuation::Callee }
@@ -8401,7 +8412,6 @@ fn lane_loop_entry<H: Host>(
         for frame in &inlining.frames {
             lane_inlined_target(cx, lane_inlined_receiver(r, region, entry, frame), frame)?;
         }
-        entry.push_scratch();
     }
     Some(views)
 }
@@ -8531,13 +8541,13 @@ fn lane_inlining_region<H: Host>(
     )
 }
 
-/// The record native code leaving at the inlined instruction `callee_pc` of `frame` (exit
-/// PC `pc`) continues at: the callee's activation the call at `call` makes
-/// (`lane_push_activation`), its registers those native code held, a parameter bound to a
-/// caller register that register's value, and any other `undefined`, which nothing reads
-/// before writing. The entry checked the call activates in place (`lane_inlined_target`).
+/// The record native code leaving at the inlined instruction `callee_pc` of `frame`
+/// continues at: the callee's activation the call at `call` makes (`lane_push_activation`),
+/// a parameter bound to a caller register that register's value, each register live at
+/// `callee_pc` the value native code left in the scratch window (as a lane body's leave,
+/// `lane_body_inlined_activation`), and any other `undefined`, which nothing reads before
+/// writing. The entry checked the call activates in place (`lane_inlined_target`).
 #[inline(never)]
-#[allow(clippy::too_many_arguments)]
 fn lane_inlined_activation<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
@@ -8545,7 +8555,6 @@ fn lane_inlined_activation<H: Host>(
     entry: &super::compiled::LoopEntry,
     frame: super::compiled::InlineFrame,
     call: Ip,
-    pc: u32,
     callee_pc: u32,
 ) -> Ip {
     let receiver = lane_inlined_receiver(r, region, entry, &frame);
@@ -8558,16 +8567,14 @@ fn lane_inlined_activation<H: Host>(
     let (registers, _) =
         lane_push_activation::<H, false, false>(cx, r, call, target, arguments, receiver, false);
     let inlining = region.inlining.as_ref().expect("an inlining region");
+    // SAFETY: the context's program outlives the lane run.
+    let live = unsafe { &*(*cx).code }.register_root_masks(frame.function)
+        .expect("an inlined callee has its register roots (`lane_inlining_region`)");
     for register in 0..frame.registers {
-        let value = match frame.bound.get(usize::from(register)).copied().flatten() {
-            Some(source) => r.get(source),
-            None if region.wrote_back(pc, frame.base + register) => {
-                // SAFETY: native code wrote back the registers live where it left.
-                unsafe { entry.scratch_value(inlining, frame.base + register) }
-            }
-            None => Value::UNDEFINED,
-        };
-        registers.set(register, value);
+        let bound = frame.bound.get(usize::from(register)).copied().flatten().map(|source| r.get(source));
+        // SAFETY: native code wrote back the registers live where it left.
+        let held = || live.is_live(callee_pc as usize, register).then(|| unsafe { entry.scratch_value(inlining, frame.base + register) });
+        registers.set(register, bound.or_else(held).unwrap_or(Value::UNDEFINED));
     }
     // SAFETY: the activation's view holds a record for each of its function's PCs.
     unsafe { (*cx).base.add(callee_pc as usize) }

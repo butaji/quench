@@ -2989,7 +2989,6 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_frame_state 6
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_getter_activation 54
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_in_place 41
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_initialize_fields 47
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlined_activation 41
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlining_region 57
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_literal_value 49
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_entry 116
