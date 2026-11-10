@@ -648,7 +648,6 @@ fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstructi
             Op::LoadConst => program.constants.get(instruction.constant_index())
                 .and_then(super::facts::immediate).is_some(),
             op if op.traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
-            op if op.traits().has(Traits::FRAME_ONLY) || op.is_inc_dec() || op.is_return() => true,
             op => op.js_denotation() == JsDenotation::NumericBinary
                 && instruction.numeric_local_target().is_none(),
         }
@@ -2545,7 +2544,7 @@ impl Lowering<'_, '_> {
                 Some(true)
             }
             _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
-            _ if instruction.op().is_get_index() && plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
+            _ if instruction.op().is_get_index() && plain && [instruction.operand_b(), instruction.operand_c()].into_iter().all(|operand| self.operand_supported(operand)) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
                 // of an int32 key, proved once.
                 let exit = self.guard_exit(state, pc32);
