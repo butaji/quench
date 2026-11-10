@@ -128,6 +128,10 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
     fn jump(&mut self, _stage: &mut Concrete) -> Edge {
         Edge::Target
     }
+
+    fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) {
+        (Value::boolean(condition).to_bits(), ())
+    }
 }
 
 impl NumericFrame<Concrete> for ConcreteFrame<'_> {
@@ -162,6 +166,49 @@ fn step_moves_and_defines_constants_on_the_concrete_stage() {
         destination: 3, constant: Constant::untyped(constant) }) else { panic!("a constant produces a value") };
     assert_eq!(Value::from_bits(word), constant);
     assert_eq!(Value::from_bits(frame.registers[3]), constant);
+}
+
+/// Logical negation is ToBoolean then the canonical boolean: one operation for the
+/// interpreter and every tier.
+#[test]
+fn staged_logical_not_is_the_javascript_truthiness_negation() {
+    let mut stage = Concrete::new(std::ptr::null());
+    for (value, expected) in [
+        (Value::TRUE, false), (Value::FALSE, true), (Value::number(0.0), true),
+        (Value::number(-0.0), true), (Value::number(f64::NAN), true),
+        (Value::number(3.0), false), (Value::NULL, true), (Value::UNDEFINED, true),
+    ] {
+        let mut frame = ConcreteFrame { registers: vec![value.to_bits(), 0], heap: None };
+        let Step::Value(word) = step(&mut stage, &mut frame,
+            Operation::LogicalNot { destination: 1, source: 0 }) else {
+            panic!("logical not produces a value")
+        };
+        assert_eq!(Value::from_bits(word), Value::boolean(expected), "{value:?}");
+        assert_eq!(Value::from_bits(frame.registers[1]), Value::boolean(expected));
+    }
+}
+
+/// The catalog's staged set and `Operation::decode` agree: every opcode the catalog marks
+/// `Staged` decodes to one operation, and every other opcode is explicitly `Exact`.
+#[test]
+fn every_staged_opcode_decodes_to_one_operation() {
+    use crate::bytecode::{Op, Semantics, WideInstruction};
+    let constants = [Constant::untyped(Value::number(1.0))];
+    let staged = [Op::Move, Op::LoadConst, Op::LoadLocalPlain, Op::StoreLocalPlain,
+        Op::Jump, Op::JumpFalse, Op::JumpTrue, Op::LoadThis, Op::RequireObjectCoercible,
+        Op::ToNumeric];
+    for op in staged {
+        assert_eq!(op.semantics(), Semantics::Staged, "{op:?}");
+        let instruction = WideInstruction::new(op, 1, 2, 3, 0);
+        assert!(Operation::<u64, ()>::decode(instruction, |index| constants.get(index).copied()).is_some(),
+            "{op:?} must decode to a staged operation");
+    }
+    for index in 0..Op::COUNT {
+        let op = Op::from_index(index).unwrap();
+        if !staged.contains(&op) {
+            assert_eq!(op.semantics(), Semantics::Exact, "{op:?} must be an explicit exact path");
+        }
+    }
 }
 
 /// The edge a `JumpIf` takes on the concrete stage for `value`.
@@ -425,4 +472,36 @@ fn an_allocation_is_a_staged_operation_with_a_host_boundary() {
     ] {
         assert!(matches!(step(&mut stage, &mut frame, operation), Step::Unresolved));
     }
+}
+
+#[test]
+fn the_element_store_helper_is_the_host_callout_boundary() {
+    // The interpreter stage has no helper table: an element-store helper is the host callout
+    // boundary, so the frame declines it and the lane's Emit stage provides the call.
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0; 3], heap: None };
+    let step = step(&mut stage, &mut frame,
+        Operation::IndexSetHelper { base: 0, key: 1, value: 2, proof: () });
+    assert!(matches!(step, Step::Unresolved));
+}
+
+#[test]
+fn a_global_name_read_is_the_host_callout_boundary() {
+    // The interpreter reads globals through its own loop; the lane's helper call is the
+    // callout boundary, so the frame declines it.
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0], heap: None };
+    let step = step(&mut stage, &mut frame,
+        Operation::GlobalRead { destination: 0, atom: 0, site: 0, proof: () });
+    assert!(matches!(step, Step::Unresolved));
+}
+
+#[test]
+fn the_field_store_helper_is_the_host_callout_boundary() {
+    // The host's cached field-store hit is a callout: the interpreter stage declines it.
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0; 2], heap: None };
+    let step = step(&mut stage, &mut frame,
+        Operation::FieldStoreMiss { object: 0, atom: 0, site: 0, value: 1, proof: () });
+    assert!(matches!(step, Step::Unresolved));
 }

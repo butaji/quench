@@ -1,6 +1,6 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
-
 use super::*;
+#[path = "frame_calls.rs"] pub(super) mod calls;
 
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
 #[derive(Clone, Copy)]
@@ -26,10 +26,15 @@ pub(super) struct EmitFrame<'a> {
     pub(super) constants: &'a [crate::bytecode::Constant],
     /// The entry's `this` binding, where the lowering has entry facts.
     pub(super) this: Option<Variable>,
+    /// The activation's local slots (`JsStepDispatch::native_locals`), where this region
+    /// may read or write them; `None` for a numeric region, whose activation has none.
+    pub(super) locals: Option<ir::Value>,
     /// The running body's dispatch payload, which semantic helpers take.
     pub(super) payload: ir::Value,
     /// The helper table a callout addresses.
     pub(super) helpers: LaneHelpers,
+    /// The poll instructions a fault-polling body records for later patching.
+    pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -133,6 +138,27 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         Some(())
     }
 
+    /// The lane's own global-name read; a DELETED answer leaves at the miss edge.
+    #[inline(always)] fn global_read(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, proof: EmitProof) -> Option<()> { calls::global_read(self, stage, destination, atom, site, proof) }
+    /// The VM field-store hit, whose false answer leaves at the miss edge.
+    #[inline(always)] fn field_store_miss(&mut self, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32, site: u16, value: ir::Value, proof: EmitProof) -> Option<()> { calls::field_store_miss(self, stage, object, atom, site, value, proof) }
+
+    /// The element store's host helper: its nonzero answer means the store landed.
+    #[inline(always)]
+    fn index_set_helper(&mut self, stage: &mut Emit<'_, '_>, base: ir::Value, key: ir::Value,
+        value: ir::Value, proof: EmitProof) -> Option<()> {
+        calls::index_set_helper(self, stage, base, key, value, proof)
+    }
+
+
+    /// The interrupt/collection safepoint: a fault-polling body records its poll instruction,
+    /// any other leaves at the miss edge when the flag is set.
+    #[inline(always)]
+    fn safepoint(&mut self, stage: &mut Emit<'_, '_>, proof: EmitProof) -> Option<()> {
+        calls::safepoint(self, stage, proof)
+    }
+
+
     /// An object literal: the lane's own allocator, whose DELETED answer (a due collection)
     /// leaves at the proof's miss edge.
     #[inline(always)]
@@ -141,7 +167,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let payload = self.payload;
         let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewObject);
         let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload]);
-        finish_allocation(stage, self, destination, value, miss);
+        calls::finish_allocation(stage, self, destination, value, miss);
         Some(value)
     }
 
@@ -153,7 +179,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let payload = self.payload;
         let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewArray);
         let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload, length, elements]);
-        finish_allocation(stage, self, destination, value, miss);
+        calls::finish_allocation(stage, self, destination, value, miss);
         Some(value)
     }
 
@@ -194,18 +220,39 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn jump(&mut self, _stage: &mut Emit<'_, '_>) {
         debug_assert!(matches!(self.edges, Edges::Jump));
     }
+
+    #[inline(always)]
+    fn boolean(&mut self, stage: &mut Emit<'_, '_>, holds: ir::Value)
+        -> (ir::Value, RegisterFact) {
+        let (yes, no) = (stage.builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64),
+            stage.builder.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
+        let value = stage.builder.ins().select(holds, yes, no);
+        (value, RegisterFact::definition(Type::language(crate::ValueType::Boolean),
+            Representation::Tagged))
+    }
+
+    #[inline(always)]
+
+    fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
+        -> Option<(ir::Value, RegisterFact)> {
+        let locals = self.locals?;
+        let address = stage.builder.ins().iadd_imm_s(locals,
+            i64::from(slot) * std::mem::size_of::<Value>() as i64);
+        let value = stage.builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+        Some((value, RegisterFact::canonical()))
+    }
+
+    #[inline(always)]
+    fn store_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, value: ir::Value,
+        _miss: Option<ir::Block>) -> bool {
+        let Some(locals) = self.locals else { return false };
+        let address = stage.builder.ins().iadd_imm_s(locals,
+            i64::from(slot) * std::mem::size_of::<Value>() as i64);
+        stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+        true
+    }
 }
 
-/// A literal allocation's DELETED answer (a due collection) leaves at `miss`; otherwise the
-/// literal is the destination's tagged value.
-#[inline(always)]
-fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<'_>, destination: Register,
-    value: ir::Value, miss: ir::Block) {
-    let made = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-    super::super::emit_js_guard(stage.builder, made, miss);
-    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
-        RegisterFact::definition(Type::ANY, Representation::Tagged));
-}
 
 /// ToBoolean of `register` as an i8, from its proved representation; a tagged value whose
 /// truthiness needs its cell (`emit_js_tagged_truthiness`) leaves at `miss`.
@@ -371,6 +418,10 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
         }
     }
 
+    fn local_miss(&self) -> Option<ir::Block> {
+        matches!(self.edges, Edges::ValueGuarded { .. }).then(|| self.miss())
+    }
+
     fn int_fact(&self) -> RegisterFact {
         RegisterFact::definition(Type::INT32, Representation::Int32)
     }
@@ -484,3 +535,4 @@ pub(super) fn operand_number(builder: &mut FunctionBuilder<'_>, registers: &mut 
         _ => None,
     }
 }
+

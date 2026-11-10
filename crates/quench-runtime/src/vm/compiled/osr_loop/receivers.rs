@@ -2,7 +2,7 @@
 //! callee's read (`inline_region`).
 
 use std::collections::BTreeMap;
-use super::{field_path, FieldPath, FieldReceiver, FieldSite, Register, RegisterSet, WideInstruction, THIS_CAPTURE};
+use super::{field_path, FieldPath, FieldReceiver, FieldSite, Register, RegisterSet, WideInstruction};
 
 /// Whether the receiver is read through a name the loop stores, so it changes in the loop:
 /// the callee's read stays, and native code checks the callee after it (`InlineGuard::AtRead`).
@@ -45,12 +45,4 @@ pub(super) fn captured(instructions: &[WideInstruction], header_live: RegisterSe
 }
 
 impl FieldReceiver {
-    /// The capture slot holding the receiver: `this`'s (`THIS_CAPTURE`) or a captured value's.
-    pub(super) fn capture_slot(self) -> Option<u16> {
-        match self {
-            FieldReceiver::This => Some(THIS_CAPTURE),
-            FieldReceiver::Capture(slot) => Some(slot),
-            FieldReceiver::Register(_) | FieldReceiver::Field(_) => None,
-        }
-    }
 }

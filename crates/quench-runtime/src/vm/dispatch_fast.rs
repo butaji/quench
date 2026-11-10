@@ -269,6 +269,8 @@ pub(super) struct LoopSite {
 }
 
 impl LoopSite {
+    pub(super) fn function(&self) -> u32 { self.function }
+
     fn active_region(&self) -> Option<&super::compiled::LoopRegion> {
         self.inline_region.get().and_then(|region| region.as_deref()).or_else(|| self.region.get())
     }
@@ -542,7 +544,7 @@ const WINDOW_ENVIRONMENT: u16 = 0;
 const WINDOW_SLOTS: u16 = 1;
 const WINDOW_CAPTURED: u16 = 2;
 const WINDOW_STORAGE: u16 = 3;
-const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
+pub(super) const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
 
 impl EnvironmentWindow {
     fn captured(self, slot: usize) -> bool {
@@ -2707,10 +2709,9 @@ use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
-        // SAFETY: validated bytecode bounds the slot by Function.locals, and
-        // frame setup sizes locals to that count.
-        let value = unsafe { vm(cx).read_validated_local((*cx).frame, i.imm() as usize) };
-        r.set(i.a, value);
+        if !lane_frame::staged_load_local_plain::<H, ACC_NONE>(cx, r, view, i.a, i.imm() as u16) {
+            return exit(ip);
+        }
         next!(cx, r, following(ip), view)
     }
 }
@@ -3062,11 +3063,9 @@ script_handler! {
 
 lane_handler! {
     fn lane_store_local_plain<>(cx, r, ip, i, view) {
-        let value = r.get(i.a);
-        // SAFETY: validated bytecode bounds the slot by Function.locals.
-        unsafe { vm(cx).write_validated_local((*cx).frame, i.imm() as usize, value) };
-        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
-            r.set(register, value);
+        let result = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS);
+        if !lane_frame::staged_store_local_plain::<H, ACC_NONE>(cx, r, view, i.a, i.imm() as u16, result) {
+            return exit(ip);
         }
         next!(cx, r, following(ip), view)
     }
@@ -7915,6 +7914,7 @@ script_handler! {
             LoopAttempt::Declined => lane_at_header!(cx, r, header, site),
             LoopAttempt::At(next) => next!(cx, r, next, Carried::script(cx)),
             LoopAttempt::Leave(next) => next,
+            LoopAttempt::Resumed(resumed) => resume!(cx, resumed),
         }
     }
 }
@@ -7943,6 +7943,8 @@ enum LoopAttempt {
     At(Ip),
     /// Return this from the handler: an exit, or a safepoint's continuation.
     Leave(Ip),
+    /// Continue in the activation this completion resumes.
+    Resumed(Resumed),
 }
 
 /// Runs `site`'s region on `r` from its `header` record, reached at `record` (the backward
@@ -7983,6 +7985,11 @@ fn lane_loop_native<H: Host>(
             None => exit(at(pc)),
         }),
         LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
+        // SAFETY: the call set the callee's activation and its resume record before the body
+        // left (`lane_body_activate`), so the run leaves at a record of that view.
+        LoopContinuation::Callee => LoopAttempt::Leave(exit(unsafe { (*cx).callee_resume })),
+        LoopContinuation::Completed(pc, value) =>
+            LoopAttempt::Resumed(lane_return_value_general::<H>(cx, at(pc), value)),
     }
 }
 
@@ -8028,6 +8035,7 @@ script_handler! {
                 LoopAttempt::Declined => {}
                 LoopAttempt::At(next) => next!(cx, r, next, Carried::script(cx)),
                 LoopAttempt::Leave(next) => return next,
+                LoopAttempt::Resumed(resumed) => resume!(cx, resumed),
             }
         }
         lane_at_header!(cx, r, ip, site)
@@ -8116,6 +8124,10 @@ enum LoopContinuation {
     Safepoint,
     /// The region's code compiles: take the jump, which declines nothing.
     Compiling,
+    /// The region completed its activation with this value at this record.
+    Completed(u32, Value),
+    /// A call activated the callee's lane body: leave the run in that activation.
+    Callee,
 }
 
 /// Compiles `site`'s region if it has no current code, then runs it on `r` with `entry`. A
@@ -8136,7 +8148,7 @@ fn lane_loop_run<H: Host>(
         if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
             return LoopContinuation::Jump;
         }
-        lane_loop_compile(cx, r, site, region, entry, &mut tier);
+        lane_loop_compile(cx, site, region, &mut tier);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }
@@ -8157,16 +8169,16 @@ fn lane_loop_run<H: Host>(
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
     let outcome = unsafe {
-        code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame, interrupt)
+        code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame, interrupt, cx as usize)
     };
     if site.diagnostics {
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
         match outcome {
-            LoopOutcome::NotEntered(widening) => {
+            LoopOutcome::NotEntered => {
                 if crate::trace::Channel::OsrReject.on() {
                     eprintln!(
-                        "QUENCH_JS_JIT_OSR_ENTRY_MISS function={} header={} widening={widening:?}",
+                        "QUENCH_JS_JIT_OSR_ENTRY_MISS function={} header={}",
                         site.function,
                         site.header,
                     );
@@ -8174,7 +8186,7 @@ fn lane_loop_run<H: Host>(
                 site.entry_guard_misses
                     .set(site.entry_guard_misses.get().saturating_add(1));
             }
-            LoopOutcome::Resume(_) => {
+            LoopOutcome::Resume(_) | LoopOutcome::Returned { .. } | LoopOutcome::Callee => {
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
             }
@@ -8216,15 +8228,6 @@ fn lane_loop_run<H: Host>(
                     }
                 }
             }
-            LoopOutcome::Grow(_) => {
-                site.native_region_runs
-                    .set(site.native_region_runs.get().saturating_add(1));
-            }
-            LoopOutcome::Widen(_) => {
-                site.native_region_runs
-                    .set(site.native_region_runs.get().saturating_add(1));
-                site.widenings.set(site.widenings.get().saturating_add(1));
-            }
             LoopOutcome::Terminated => {}
         }
     }
@@ -8255,42 +8258,29 @@ fn lane_loop_run<H: Host>(
             false
         }
     };
-    let mut tier = site.tier.borrow_mut();
     if general_dispatch_due {
         match outcome {
-            LoopOutcome::Resume(pc) | LoopOutcome::Grow(pc) => return LoopContinuation::Exit(pc),
+            LoopOutcome::Resume(pc) => return LoopContinuation::Exit(pc),
             LoopOutcome::Exit(pc) => {
                 site.exits.set(site.exits.get().saturating_add(1));
                 return LoopContinuation::Exit(pc);
             }
-            LoopOutcome::Widen(pc) => {
-                if let Some(widening) = code.widening(pc) {
-                    tier.widened.insert(widening);
-                }
-                publication.retire();
-                return LoopContinuation::Exit(pc);
-            }
-            LoopOutcome::NotEntered(_) | LoopOutcome::Terminated => {}
+            LoopOutcome::Callee => return LoopContinuation::Callee,
+            LoopOutcome::NotEntered | LoopOutcome::Terminated | LoopOutcome::Returned { .. } => {}
         }
     }
     match outcome {
-        LoopOutcome::NotEntered(widening) => {
-            // Only a miss on a value not yet widened recompiles; one already widened would miss alike.
-            if widening.is_some_and(|widening| tier.widened.insert(widening)) {
-                publication.retire();
-            }
-            LoopContinuation::Jump
-        }
+        // An entry guard missed: registers are untouched, so the backward jump runs in
+        // the interpreter.
+        LoopOutcome::NotEntered => LoopContinuation::Jump,
         // A run pays for its entry with the iterations it completed, wherever it leaves.
         LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
         LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
-        LoopOutcome::Grow(pc) => LoopContinuation::Exit(pc),
-        LoopOutcome::Widen(pc) => {
-            if let Some(widening) = code.widening(pc) {
-                tier.widened.insert(widening);
-            }
-            publication.retire();
-            LoopContinuation::Exit(pc)
+        // The call made the callee's activation, whose own records the lane runs next.
+        LoopOutcome::Callee => LoopContinuation::Callee,
+        LoopOutcome::Returned { pc, value } => {
+            site.note_run(entry.backedge_count());
+            LoopContinuation::Completed(pc, value)
         }
         LoopOutcome::Terminated => LoopContinuation::Safepoint,
     }
@@ -8524,6 +8514,7 @@ fn lane_inlining_region<H: Host>(
         let body = code.function_get(target.function as usize)?;
         Some(super::compiled::InlineCallee {
             callee,
+            function: target.function,
             params: body.params,
             registers: body.registers,
             instructions: body.instructions().collect(),
@@ -9293,7 +9284,7 @@ lane_handler! {
 lane_handler! {
     fn lane_float_unary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let input = read::<ACC, ACC_B>(r, i.b, view);
-        let value = if const { matches!(opcode(OP), Op::WasmF64Unary) } {
+        let value = if const { opcode(OP).is_wasm_f64_unary() } {
             let (Some(input), Some(operator)) =
                 (input.bits64(), F64UnaryOperator::from_tag(i.imm()))
             else {
@@ -9788,10 +9779,10 @@ impl<H: Host> AddLoadF64<H> {
 fn load_store_handler<H: Host>(load: Op, store: Op, acc: u8) -> Option<Handler> {
     macro_rules! copies {
         ($(($load:ident, $store:ident)),+) => {
-            match (load, store, acc) {
+            match (load as u16, store as u16, acc) {
                 $(
-                    (Op::$load, Op::$store, ACC_NONE) => Some(lane_load_store::<H, { Op::$load as u16 }, { Op::$store as u16 }, ACC_NONE> as Handler),
-                    (Op::$load, Op::$store, ACC_C) => Some(lane_load_store::<H, { Op::$load as u16 }, { Op::$store as u16 }, ACC_C> as Handler),
+                    (opc::$load, opc::$store, ACC_NONE) => Some(lane_load_store::<H, { opc::$load }, { opc::$store }, ACC_NONE> as Handler),
+                    (opc::$load, opc::$store, ACC_C) => Some(lane_load_store::<H, { opc::$load }, { opc::$store }, ACC_C> as Handler),
                 )+
                 _ => None,
             }
@@ -9810,12 +9801,12 @@ fn load_store_handler<H: Host>(load: Op, store: Op, acc: u8) -> Option<Handler> 
 fn load_table_handler<H: Host>(op: Op, acc: u8, add: bool) -> Option<Handler> {
     macro_rules! loads {
         ($($load:ident),+) => {
-            match (op, acc, add) {
+            match (op as u16, acc, add) {
                 $(
-                    (Op::$load, ACC_NONE, false) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_NONE, false> as Handler),
-                    (Op::$load, ACC_C, false) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_C, false> as Handler),
-                    (Op::$load, ACC_NONE, true) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_NONE, true> as Handler),
-                    (Op::$load, ACC_C, true) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_C, true> as Handler),
+                    (opc::$load, ACC_NONE, false) => Some(lane_load_table::<H, { opc::$load }, ACC_NONE, false> as Handler),
+                    (opc::$load, ACC_C, false) => Some(lane_load_table::<H, { opc::$load }, ACC_C, false> as Handler),
+                    (opc::$load, ACC_NONE, true) => Some(lane_load_table::<H, { opc::$load }, ACC_NONE, true> as Handler),
+                    (opc::$load, ACC_C, true) => Some(lane_load_table::<H, { opc::$load }, ACC_C, true> as Handler),
                 )+
                 _ => None,
             }
@@ -9833,8 +9824,8 @@ fn load_table_handler<H: Host>(op: Op, acc: u8, add: bool) -> Option<Handler> {
 const fn add_load_handler<H: Host>(op: Op) -> Option<Handler> {
     macro_rules! loads {
         ($($load:ident),+) => {
-            match op {
-                $(Op::$load => Some(lane_add_load::<H, { Op::$load as u16 }> as Handler),)+
+            match op as u16 {
+                $(opc::$load => Some(lane_add_load::<H, { opc::$load }> as Handler),)+
                 _ => None,
             }
         };
@@ -9908,7 +9899,7 @@ lane_handler! {
     /// here, each value written as its own record writes it. An access the general path must
     /// run exits at its record.
     fn lane_load_load<SECOND: u16, ACC: u8>(cx, r, ip, i, view) {
-        let first = const { direct_load(Op::WasmI32Load as u16) };
+        let first = const { direct_load(opc::WasmI32Load) };
         let second = const { direct_load(SECOND) };
         // SAFETY: as for `lane_load`.
         let Some(crate::WasmValue::I32(pointer)) =
@@ -10049,10 +10040,10 @@ lane_handler! {
 fn load_pair_binary_handler<H: Host>(load: Op, op: Op, first_left: bool) -> Option<Handler> {
     macro_rules! pairs {
         ($(($load:ident, $op:ident)),+) => {
-            match (load, op, first_left) {
+            match (load as u16, op as u16, first_left) {
                 $(
-                    (Op::$load, Op::$op, false) => Some(lane_load_pair_binary::<H, { Op::$load as u16 }, { Op::$op as u16 }, false> as Handler),
-                    (Op::$load, Op::$op, true) => Some(lane_load_pair_binary::<H, { Op::$load as u16 }, { Op::$op as u16 }, true> as Handler),
+                    (opc::$load, opc::$op, false) => Some(lane_load_pair_binary::<H, { opc::$load }, { opc::$op }, false> as Handler),
+                    (opc::$load, opc::$op, true) => Some(lane_load_pair_binary::<H, { opc::$load }, { opc::$op }, true> as Handler),
                 )+
                 _ => None,
             }
@@ -10113,12 +10104,12 @@ lane_handler! {
 fn offset_mask_jump_handler<H: Host>(first: Op, jump: Op, backward: bool, acc: u8) -> Option<Handler> {
     macro_rules! jumps {
         ($first:ident; $($jump:ident),+) => {
-            match (jump, backward, acc) {
+            match (jump as u16, backward, acc) {
                 $(
-                    (Op::$jump, false, ACC_NONE) => Some(lane_offset_mask_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, false, ACC_NONE> as Handler),
-                    (Op::$jump, true, ACC_NONE) => Some(lane_offset_mask_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, true, ACC_NONE> as Handler),
-                    (Op::$jump, false, ACC_B) => Some(lane_offset_mask_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, false, ACC_B> as Handler),
-                    (Op::$jump, true, ACC_B) => Some(lane_offset_mask_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, true, ACC_B> as Handler),
+                    (opc::$jump, false, ACC_NONE) => Some(lane_offset_mask_jump::<H, { opc::$first }, { opc::$jump }, false, ACC_NONE> as Handler),
+                    (opc::$jump, true, ACC_NONE) => Some(lane_offset_mask_jump::<H, { opc::$first }, { opc::$jump }, true, ACC_NONE> as Handler),
+                    (opc::$jump, false, ACC_B) => Some(lane_offset_mask_jump::<H, { opc::$first }, { opc::$jump }, false, ACC_B> as Handler),
+                    (opc::$jump, true, ACC_B) => Some(lane_offset_mask_jump::<H, { opc::$first }, { opc::$jump }, true, ACC_B> as Handler),
                 )+
                 _ => None,
             }
@@ -10138,8 +10129,8 @@ fn offset_mask_jump_handler<H: Host>(first: Op, jump: Op, backward: bool, acc: u
         };
     }
     match first {
-        Op::WasmI32AddImmediate => tested!(WasmI32AddImmediate),
-        Op::WasmI32SubtractImmediate => tested!(WasmI32SubtractImmediate),
+        op if op.is_wasm_i32_add_immediate() => tested!(WasmI32AddImmediate),
+        op if op.is_wasm_i32_subtract_immediate() => tested!(WasmI32SubtractImmediate),
         _ => None,
     }
 }
@@ -10308,9 +10299,9 @@ fn add_pair_handler<H: Host>(first: Op, second: Op, backward: bool, acc: u8) -> 
     macro_rules! accs {
         ($first:ident, $second:ident, $backward:literal) => {
             match acc {
-                ACC_NONE => Some(lane_add_pair::<H, { Op::$first as u16 }, { Op::$second as u16 }, $backward, ACC_NONE> as Handler),
-                ACC_B => Some(lane_add_pair::<H, { Op::$first as u16 }, { Op::$second as u16 }, $backward, ACC_B> as Handler),
-                ACC_C => Some(lane_add_pair::<H, { Op::$first as u16 }, { Op::$second as u16 }, $backward, ACC_C> as Handler),
+                ACC_NONE => Some(lane_add_pair::<H, { opc::$first }, { opc::$second }, $backward, ACC_NONE> as Handler),
+                ACC_B => Some(lane_add_pair::<H, { opc::$first }, { opc::$second }, $backward, ACC_B> as Handler),
+                ACC_C => Some(lane_add_pair::<H, { opc::$first }, { opc::$second }, $backward, ACC_C> as Handler),
                 _ => None,
             }
         };
@@ -10449,11 +10440,11 @@ lane_handler! {
 fn operator_constant_select_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
     macro_rules! operators {
         ($($op:ident),+) => {
-            match (op, acc) {
+            match (op as u16, acc) {
                 $(
-                    (Op::$op, ACC_NONE) => Some(lane_operator_constant_select::<H, { Op::$op as u16 }, ACC_NONE> as Handler),
-                    (Op::$op, ACC_B) => Some(lane_operator_constant_select::<H, { Op::$op as u16 }, ACC_B> as Handler),
-                    (Op::$op, ACC_C) => Some(lane_operator_constant_select::<H, { Op::$op as u16 }, ACC_C> as Handler),
+                    (opc::$op, ACC_NONE) => Some(lane_operator_constant_select::<H, { opc::$op }, ACC_NONE> as Handler),
+                    (opc::$op, ACC_B) => Some(lane_operator_constant_select::<H, { opc::$op }, ACC_B> as Handler),
+                    (opc::$op, ACC_C) => Some(lane_operator_constant_select::<H, { opc::$op }, ACC_C> as Handler),
                 )+
                 _ => None,
             }
@@ -10483,10 +10474,10 @@ macro_rules! i32_loads {
 fn load_load_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
     macro_rules! loads {
         ($($load:ident),+) => {
-            match (op, acc) {
+            match (op as u16, acc) {
                 $(
-                    (Op::$load, ACC_NONE) => Some(lane_load_load::<H, { Op::$load as u16 }, ACC_NONE> as Handler),
-                    (Op::$load, ACC_C) => Some(lane_load_load::<H, { Op::$load as u16 }, ACC_C> as Handler),
+                    (opc::$load, ACC_NONE) => Some(lane_load_load::<H, { opc::$load }, ACC_NONE> as Handler),
+                    (opc::$load, ACC_C) => Some(lane_load_load::<H, { opc::$load }, ACC_C> as Handler),
                 )+
                 _ => None,
             }
@@ -10500,16 +10491,16 @@ fn load_load_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
 fn load_jump_handler<H: Host>(op: Op, acc: u8, zero: bool, backward: bool) -> Option<Handler> {
     macro_rules! loads {
         ($($load:ident),+) => {
-            match (op, acc, zero, backward) {
+            match (op as u16, acc, zero, backward) {
                 $(
-                    (Op::$load, ACC_NONE, false, false) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_NONE, false, false> as Handler),
-                    (Op::$load, ACC_NONE, false, true) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_NONE, false, true> as Handler),
-                    (Op::$load, ACC_NONE, true, false) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_NONE, true, false> as Handler),
-                    (Op::$load, ACC_NONE, true, true) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_NONE, true, true> as Handler),
-                    (Op::$load, ACC_C, false, false) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_C, false, false> as Handler),
-                    (Op::$load, ACC_C, false, true) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_C, false, true> as Handler),
-                    (Op::$load, ACC_C, true, false) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_C, true, false> as Handler),
-                    (Op::$load, ACC_C, true, true) => Some(lane_load_jump_i32_zero::<H, { Op::$load as u16 }, ACC_C, true, true> as Handler),
+                    (opc::$load, ACC_NONE, false, false) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_NONE, false, false> as Handler),
+                    (opc::$load, ACC_NONE, false, true) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_NONE, false, true> as Handler),
+                    (opc::$load, ACC_NONE, true, false) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_NONE, true, false> as Handler),
+                    (opc::$load, ACC_NONE, true, true) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_NONE, true, true> as Handler),
+                    (opc::$load, ACC_C, false, false) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_C, false, false> as Handler),
+                    (opc::$load, ACC_C, false, true) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_C, false, true> as Handler),
+                    (opc::$load, ACC_C, true, false) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_C, true, false> as Handler),
+                    (opc::$load, ACC_C, true, true) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_C, true, true> as Handler),
                 )+
                 _ => None,
             }
@@ -10522,10 +10513,10 @@ fn load_jump_handler<H: Host>(op: Op, acc: u8, zero: bool, backward: bool) -> Op
 fn move_load_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
     macro_rules! loads {
         ($($load:ident),+) => {
-            match (op, acc) {
+            match (op as u16, acc) {
                 $(
-                    (Op::$load, ACC_NONE) => Some(lane_move_load::<H, { Op::$load as u16 }, ACC_NONE> as Handler),
-                    (Op::$load, ACC_B) => Some(lane_move_load::<H, { Op::$load as u16 }, ACC_B> as Handler),
+                    (opc::$load, ACC_NONE) => Some(lane_move_load::<H, { opc::$load }, ACC_NONE> as Handler),
+                    (opc::$load, ACC_B) => Some(lane_move_load::<H, { opc::$load }, ACC_B> as Handler),
                 )+
                 _ => None,
             }
@@ -10574,12 +10565,12 @@ lane_handler! {
 fn store_move_jump_handler<H: Host>(op: Op, zero: bool, backward: bool) -> Option<Handler> {
     macro_rules! stores {
         ($($store:ident),+) => {
-            match (op, zero, backward) {
+            match (op as u16, zero, backward) {
                 $(
-                    (Op::$store, false, false) => Some(lane_store_move_jump_i32_zero::<H, { Op::$store as u16 }, false, false> as Handler),
-                    (Op::$store, false, true) => Some(lane_store_move_jump_i32_zero::<H, { Op::$store as u16 }, false, true> as Handler),
-                    (Op::$store, true, false) => Some(lane_store_move_jump_i32_zero::<H, { Op::$store as u16 }, true, false> as Handler),
-                    (Op::$store, true, true) => Some(lane_store_move_jump_i32_zero::<H, { Op::$store as u16 }, true, true> as Handler),
+                    (opc::$store, false, false) => Some(lane_store_move_jump_i32_zero::<H, { opc::$store }, false, false> as Handler),
+                    (opc::$store, false, true) => Some(lane_store_move_jump_i32_zero::<H, { opc::$store }, false, true> as Handler),
+                    (opc::$store, true, false) => Some(lane_store_move_jump_i32_zero::<H, { opc::$store }, true, false> as Handler),
+                    (opc::$store, true, true) => Some(lane_store_move_jump_i32_zero::<H, { opc::$store }, true, true> as Handler),
                 )+
                 _ => None,
             }
@@ -10592,11 +10583,11 @@ fn store_move_jump_handler<H: Host>(op: Op, zero: bool, backward: bool) -> Optio
 fn store_move_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
     macro_rules! stores {
         ($($store:ident),+) => {
-            match (op, acc) {
+            match (op as u16, acc) {
                 $(
-                    (Op::$store, ACC_NONE) => Some(lane_store_move::<H, { Op::$store as u16 }, ACC_NONE> as Handler),
-                    (Op::$store, ACC_A) => Some(lane_store_move::<H, { Op::$store as u16 }, ACC_A> as Handler),
-                    (Op::$store, ACC_C) => Some(lane_store_move::<H, { Op::$store as u16 }, ACC_C> as Handler),
+                    (opc::$store, ACC_NONE) => Some(lane_store_move::<H, { opc::$store }, ACC_NONE> as Handler),
+                    (opc::$store, ACC_A) => Some(lane_store_move::<H, { opc::$store }, ACC_A> as Handler),
+                    (opc::$store, ACC_C) => Some(lane_store_move::<H, { opc::$store }, ACC_C> as Handler),
                 )+
                 _ => None,
             }
@@ -10693,12 +10684,12 @@ lane_handler! {
 fn i32_update_handler<H: Host>(op: Op, left: bool, acc: u8) -> Option<Handler> {
     macro_rules! updates {
         ($($op:ident),+) => {
-            match (op, left, acc) {
+            match (op as u16, left, acc) {
                 $(
-                    (Op::$op, false, ACC_NONE) => Some(lane_i32_update::<H, { Op::$op as u16 }, false, ACC_NONE> as Handler),
-                    (Op::$op, true, ACC_NONE) => Some(lane_i32_update::<H, { Op::$op as u16 }, true, ACC_NONE> as Handler),
-                    (Op::$op, false, ACC_C) => Some(lane_i32_update::<H, { Op::$op as u16 }, false, ACC_C> as Handler),
-                    (Op::$op, true, ACC_C) => Some(lane_i32_update::<H, { Op::$op as u16 }, true, ACC_C> as Handler),
+                    (opc::$op, false, ACC_NONE) => Some(lane_i32_update::<H, { opc::$op }, false, ACC_NONE> as Handler),
+                    (opc::$op, true, ACC_NONE) => Some(lane_i32_update::<H, { opc::$op }, true, ACC_NONE> as Handler),
+                    (opc::$op, false, ACC_C) => Some(lane_i32_update::<H, { opc::$op }, false, ACC_C> as Handler),
+                    (opc::$op, true, ACC_C) => Some(lane_i32_update::<H, { opc::$op }, true, ACC_C> as Handler),
                 )+
                 _ => None,
             }
@@ -10754,8 +10745,8 @@ lane_handler! {
 const fn constant_store_handler<H: Host>(op: Op) -> Option<Handler> {
     macro_rules! stores {
         ($($store:ident),+) => {
-            match op {
-                $(Op::$store => Some(lane_constant_store::<H, { Op::$store as u16 }> as Handler),)+
+            match op as u16 {
+                $(opc::$store => Some(lane_constant_store::<H, { opc::$store }> as Handler),)+
                 _ => None,
             }
         };
@@ -10852,12 +10843,6 @@ fn lane_frame_state<H: Host>(
 }
 
 impl<H: Host> Vm<H> {
-    /// Whether the running fast-lane activation stack is empty. OSR adapter reads that use
-    /// frame-local storage must decline while locals live in frameless lane activations.
-    pub(super) fn lane_has_activations(&self) -> bool {
-        !self.lane_stack.activations.is_empty()
-    }
-
     /// Make the lane's activations VM frames, innermost last, each with the
     /// pending call its push would have recorded; the lane continues in the
     /// innermost one. The bottom caller is the lane run's VM frame.
@@ -11440,6 +11425,8 @@ impl<H: Host> Vm<H> {
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
             let constructs = Self::inline_constructible(body);
+            // A class constructor's calls throw on the general path, so they take a
+            // frame; only its constructions activate frameless (`lane_script_construct`).
             let entry = body_entry(body, &code.constants);
             TargetBody {
                 entry,
@@ -12396,12 +12383,12 @@ script_handler! {
     }
 }
 
-/// The by-name load a `LoadName` handler runs for (`Op::LoadName`): a `LoadNameCall` also
+/// The by-name load a `LoadName` handler runs for: a `LoadNameCall` also
 /// writes its call's receiver, and a `LoadNameTypeof` reads an absent global as `undefined`.
 const LOAD_NAME: u8 = 0;
-/// `LOAD_NAME` for `Op::LoadNameCall`.
+/// `LOAD_NAME` for `LoadNameCall`.
 const LOAD_NAME_CALL: u8 = 1;
-/// `LOAD_NAME` for `Op::LoadNameTypeof`.
+/// `LOAD_NAME` for `LoadNameTypeof`.
 const LOAD_NAME_TYPEOF: u8 = 2;
 
 script_handler! {
@@ -13148,7 +13135,7 @@ use wasm_calls::{known_call_handler, reference_call_handler};
 use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
-mod native_calls;
+mod native_calls; mod generator_yields; use generator_yields::yield_handler;
 mod array_steps;
 use array_steps::*;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
@@ -17633,46 +17620,6 @@ fn lane_push_frame_call<H: Host>(
     }
 }
 
-script_handler! {
-    /// `yield` of the frame of a generator its caller resumed in place
-    /// (`PendingGeneralCall::completion`), made as the general loop makes it: the frame
-    /// suspends into the generator at the record after this one, and the caller continues
-    /// with the step's result (`Vm::finish_in_loop_generator_step`). Any other `yield`
-    /// takes the general path.
-    #[inline(never)]
-    fn lane_yield<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        // SAFETY: the general loop's pending calls outlive the lane run.
-        let pending = unsafe { &mut *(*cx).pending };
-        let frame = unsafe { (*cx).frame };
-        let resumed_here = vm.lane_stack.activations.is_empty()
-            && frame + 1 == vm.frames.len()
-            && pending.last().is_some_and(|call| call.completion.is_generator() && call.caller + 1 == frame);
-        if !resumed_here {
-            return exit(ip);
-        }
-        let value = r.get(i.b);
-        // SAFETY: the record lies in the running view.
-        let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-        vm.frames[frame].pc = pc + 1;
-        vm.frames[frame].pc_is_resume = true;
-        let mut call = pending.pop().expect("a pending call resumed the generator");
-        let suspended = vm.frames.pop().expect("the generator's frame is the innermost");
-        let stop = super::generator::InLoopGeneratorStop::Yielded {
-            destination: i.a & crate::bytecode::REGISTER_MASK,
-            delegated_result: None,
-        };
-        let resume = call.completion.take_generator().expect("a generator call");
-        let result = vm.finish_in_loop_generator_step(suspended, resume, value, stop);
-        drop(call.call_guard);
-        vm.active_registers = vm.frames[call.caller].registers.as_mut_ptr();
-        vm.write(call.caller, call.destination, result);
-        // The result may be a fresh allocation, which the caller's safepoints collect after.
-        note_allocation(vm);
-        resume!(cx, lane_enter_script_frame(cx, call.caller))
-    }
-}
-
 /// `lane_generator_step` of a generator the general loop would resume in place
 /// (`Vm::try_in_loop_generator_step`): lane activations become frames, the generator's frame
 /// is pushed with the pending call its `yield` or return completes with the step's reused
@@ -17695,7 +17642,7 @@ fn lane_resume_generator_frame<H: Host>(
     // SAFETY: the call record lies in the running view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     let destination = i.a & crate::bytecode::REGISTER_MASK;
-    match vm.resume_generator_in_place(frame, call_pc + 1, method, generator, true)? {
+    match vm.resume_generator_in_place(frame, call_pc + 1, method, generator, Value::UNDEFINED, true)? {
         Ok((call_guard, resume)) => {
             // SAFETY: the general loop's pending calls outlive the lane run.
             unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
@@ -18128,7 +18075,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::CallForwardingArguments => Some(lane_forward_call::<H>),
         Class::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Class::Return => Some(lane_return::<H, NOT_LEAF>),
-        Class::Yield => Some(lane_yield::<H>),
+        _ if yield_handler::<H>(opcode).is_some() => yield_handler::<H>(opcode),
         _ => jump_handler::<H, BACKWARD, ACC>(opcode),
     }
 }
@@ -18450,13 +18397,13 @@ fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest>
     };
     let done = record(FOR_OF_DONE_READ).filter(|_| reads_result(FOR_OF_DONE_READ))?.result_register();
     let test = record(FOR_OF_DONE_TEST).filter(|test| test.a() == done)?;
-    let form = match test.op() {
-        Op::JumpFalse => ForOfTest::Emitted,
-        Op::JumpTrue => ForOfTest::Threaded,
+    let form = match test.op().class() {
+        Class::JumpFalse => ForOfTest::Emitted,
+        Class::JumpTrue => ForOfTest::Threaded,
         _ => return None,
     };
     let exit = record(form.exit())?;
-    let leaves = exit.op() == if form == ForOfTest::Emitted { Op::Jump } else { Op::JumpTrue }
+    let leaves = exit.op().class().eq(if form == ForOfTest::Emitted { Class::Jump } else { Class::JumpTrue })
         && exit.jump_target() as usize > pc + form.value_read();
     let enters = form == ForOfTest::Threaded || test.jump_target() as usize == pc + form.value_read();
     (leaves && enters && reads_result(form.value_read())).then_some(form)
@@ -18483,8 +18430,8 @@ pub(super) fn memory_register(function: &Function) -> Option<u16> {
     let direct = instructions().filter_map(|instruction| match instruction.op() {
         op if MemoryLoad::from_direct_op(op).is_some()
             || MemoryStore::from_direct_op(op).is_some() => Some(instruction.b()),
-        Op::WasmMemorySize => Some(instruction.b()),
-        Op::WasmMemoryFill => Some(instruction.a()),
+        op if op.is_wasm_memory_size() => Some(instruction.b()),
+        op if op.is_wasm_memory_fill() => Some(instruction.a()),
         _ => None,
     });
     single_register(direct).or_else(|| {
@@ -18493,7 +18440,7 @@ pub(super) fn memory_register(function: &Function) -> Option<u16> {
         )?;
         instructions()
             .take_while(|instruction| {
-                matches!(instruction.op(), Op::WasmFillRegisters | Op::WasmInstanceBinding)
+                matches!(instruction.op().class(), Class::WasmFillRegisters | Class::WasmInstanceBinding)
             })
             .any(|instruction| instruction.op().is_wasm_instance_binding() && instruction.a() == vector)
             .then_some(vector)
@@ -18518,7 +18465,7 @@ fn lane_writes(instruction: WideInstruction, register: u16) -> bool {
             .b()
             .checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS)
             == Some(register);
-    let filled = op == Op::WasmFillRegisters
+    let filled = op.is_wasm_fill_registers()
         && (instruction.b()..instruction.b().saturating_add(instruction.c())).contains(&register);
     result || optional || filled
 }
@@ -18590,7 +18537,7 @@ fn derive_lane_view<'live, H: Host>(
             let instruction = decoded[pc];
             let op = instruction.op();
             let binds_memory =
-                op == Op::WasmInstanceBinding && Some(instruction.a()) == memory_register;
+                op.is_wasm_instance_binding() && Some(instruction.a()) == memory_register;
             let memory_access = MemoryLoad::from_direct_op(op).is_some()
                 || MemoryStore::from_direct_op(op).is_some();
             let keeps_view = if memory_access {
@@ -18613,7 +18560,7 @@ fn derive_lane_view<'live, H: Host>(
                 accumulator_field(instruction, register)
             });
             // A table is backward when one of its entries jumps back.
-            let backward_jump = if op == Op::WasmBranchTable {
+            let backward_jump = if op.is_wasm_branch_table() {
                     crate::bytecode::branch_table_entries(pc, instruction).any(|entry| {
                         decoded[entry].imm() as usize <= pc
                     })
@@ -18626,7 +18573,7 @@ fn derive_lane_view<'live, H: Host>(
                     handler: lane_instance_binding::<H, true> as Handler,
                     produces: false,
                 })
-            } else if op == Op::WasmF64Unary
+            } else if op.is_wasm_f64_unary()
                 && F64UnaryOperator::from_tag(instruction.imm())
                     == Some(F64UnaryOperator::SquareRoot)
             {
@@ -18646,11 +18593,11 @@ fn derive_lane_view<'live, H: Host>(
             } else if let Some(arith) = float_arithmetic(op, instruction.imm()) {
                 tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten().and_then(|_| {
                     LaneHandler::producer(
-                        FloatArithmetic::<H>::HANDLERS[usize::from(op == Op::WasmF64Binary)]
+                        FloatArithmetic::<H>::HANDLERS[usize::from(op.is_wasm_f64_binary())]
                             [usize::from(arith)][usize::from(acc)],
                     )
                 })
-            } else if matches!(op, Op::LoadLocal | Op::LoadLocalPlain | Op::ArgumentsLength | Op::ArgumentGet)
+            } else if matches!(op.class(), Class::LoadLocal | Class::LoadLocalPlain | Class::ArgumentsLength | Class::ArgumentGet)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && let Some(kept) = *kept_arguments.get_or_init(|| function.kept_arguments())
             {
@@ -18659,9 +18606,9 @@ fn derive_lane_view<'live, H: Host>(
                         && next.call_window().last() == Some(instruction.result_register())
                 });
                 Some(LaneHandler {
-                    handler: match op {
-                        Op::ArgumentsLength => lane_arguments_length::<H> as Handler,
-                        Op::ArgumentGet => lane_argument_get::<H> as Handler,
+                    handler: match op.class() {
+                        Class::ArgumentsLength => lane_arguments_length::<H> as Handler,
+                        Class::ArgumentGet => lane_argument_get::<H> as Handler,
                         _ if kept == crate::bytecode::KeptArguments::Passes && !forwards => {
                             lane_load_kept_arguments_object::<H> as Handler
                         }
@@ -18671,14 +18618,14 @@ fn derive_lane_view<'live, H: Host>(
                 })
             } else if op.reads_arguments() {
                 Some(LaneHandler {
-                    handler: if op == Op::ArgumentsLength {
+                    handler: if op.class().eq(Class::ArgumentsLength) {
                         lane_frame_arguments::<H, false> as Handler
                     } else {
                         lane_frame_arguments::<H, true> as Handler
                     },
                     produces: false,
                 })
-            } else if op == Op::Call && lane_iteration_step(&decoded, pc) {
+            } else if op.is_call() && lane_iteration_step(&decoded, pc) {
                 Some(LaneHandler {
                     handler: match lane_for_of_step(&decoded, pc) {
                         Some(ForOfTest::Emitted) => lane_iterator_step_reads::<H, false> as Handler,
@@ -18687,9 +18634,9 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
-            } else if op == Op::StoreEnvLocal && resolves_names {
+            } else if op.is_store_env_local() && resolves_names {
                 None
-            } else if op == Op::GetField && lane_sinks_field(instruction) {
+            } else if op.is_get_field() && lane_sinks_field(instruction) {
                 Some(LaneHandler {
                     handler: lane_get_field_sink_first::<H> as Handler,
                     produces: false,
@@ -18738,20 +18685,20 @@ fn derive_lane_view<'live, H: Host>(
     // runs only its own instruction.
     let selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
     // Whether a record's handler serves `op` with accumulator field `acc`.
-    let serves = |handler: *const (), op: Op, acc: u8| {
+    let serves = |handler: *const (), op: u16, acc: u8| {
         tables[0][usize::from(acc)]
-            .get(op as usize)
+            .get(usize::from(op))
             .copied()
             .flatten()
             .is_some_and(|served| handler == served.handler as *const ())
     };
     // The direction and accumulator field (among `accs`) of the plain handler serving `op`
     // that `handler` is, for an instruction whose handler depends on its jump's direction.
-    let plain_served = |handler: *const (), op: Op, accs: &[u8]| {
+    let plain_served = |handler: *const (), op: u16, accs: &[u8]| {
         [false, true].into_iter().find_map(|backward| {
             accs.iter().copied().find(|&acc| {
                 tables[usize::from(backward)][usize::from(acc)]
-                    .get(op as usize)
+                    .get(usize::from(op))
                     .copied()
                     .flatten()
                     .is_some_and(|served| handler == served.handler as *const ())
@@ -18763,7 +18710,7 @@ fn derive_lane_view<'live, H: Host>(
     // before the fusions below, which then leave each region's first record alone. Only a
     // body with SIMD operators derives the liveness they read.
     let vectors = wasm
-        && decoded.iter().any(|instruction| matches!(instruction.op(), Op::WasmSimd | Op::WasmSimdShuffle));
+        && decoded.iter().any(|instruction| matches!(instruction.op().class(), Class::WasmSimd | Class::WasmSimdShuffle));
     let vector_regions: Box<[vector_region::VectorRegion]> = match vectors.then(live).flatten() {
         Some(live) => vector_region::vector_regions(
             &decoded,
@@ -18801,8 +18748,8 @@ fn derive_lane_view<'live, H: Host>(
         for pc in 0..records.len().saturating_sub(1) {
             let instruction = decoded[pc];
             let next = decoded[pc + 1];
-            let plain_add = serves(records[pc].handler, Op::WasmI32AddImmediate, ACC_NONE);
-            let carried_load = serves(records[pc + 1].handler, next.op(), ACC_C);
+            let plain_add = serves(records[pc].handler, opc::WasmI32AddImmediate, ACC_NONE);
+            let carried_load = serves(records[pc + 1].handler, next.op() as u16, ACC_C);
             if instruction.op().is_wasm_i32_add_immediate()
                 && plain_add
                 && carried_load
@@ -18831,10 +18778,10 @@ fn derive_lane_view<'live, H: Host>(
             let next = decoded[pc + 1];
             let field = [ACC_NONE, ACC_C]
                 .into_iter()
-                .find(|acc| serves(records[pc].handler, instruction.op(), *acc));
+                .find(|acc| serves(records[pc].handler, instruction.op() as u16, *acc));
             if let Some(field) = field
                 && next.a() == instruction.a()
-                && serves(records[pc + 1].handler, Op::WasmBranchTable, ACC_NONE)
+                && serves(records[pc + 1].handler, opc::WasmBranchTable, ACC_NONE)
                 && let Some(fused) = load_table_handler::<H>(instruction.op(), field, false)
             {
                 records[pc].handler = fused as *const ();
@@ -18842,7 +18789,7 @@ fn derive_lane_view<'live, H: Host>(
                 // field joins as well.
                 if pc > 0
                     && field == ACC_NONE
-                    && serves(records[pc - 1].handler, Op::WasmI32AddImmediate, ACC_NONE)
+                    && serves(records[pc - 1].handler, opc::WasmI32AddImmediate, ACC_NONE)
                     && let Some(fused) = load_table_handler::<H>(instruction.op(), ACC_NONE, true)
                 {
                     records[pc - 1].handler = fused as *const ();
@@ -18852,13 +18799,13 @@ fn derive_lane_view<'live, H: Host>(
         // A shift left by a constant whose result the next record adds runs
         // with that add as one record.
         for pc in 0..records.len().saturating_sub(1) {
-            let variant = |op: Op, acc: u8, at: usize| serves(records[at].handler, op, acc);
+            let variant = |op: u16, acc: u8, at: usize| serves(records[at].handler, op as u16, acc);
             let field = [ACC_NONE, ACC_B]
                 .into_iter()
-                .position(|acc| variant(Op::WasmI32ShiftLeftImmediate, acc, pc));
+                .position(|acc| variant(opc::WasmI32ShiftLeftImmediate, acc, pc));
             let left = [ACC_C, ACC_B]
                 .into_iter()
-                .position(|acc| variant(Op::WasmI32Add, acc, pc + 1));
+                .position(|acc| variant(opc::WasmI32Add, acc, pc + 1));
             if let (Some(field), Some(left)) = (field, left) {
                 records[pc].handler = ScaledIndex::<H>::HANDLERS[field][left] as *const ();
             }
@@ -18874,13 +18821,13 @@ fn derive_lane_view<'live, H: Host>(
             }
             let field = [ACC_NONE, ACC_C]
                 .into_iter()
-                .find(|&acc| serves(records[pc].handler, Op::WasmI32Load, acc));
+                .find(|&acc| serves(records[pc].handler, opc::WasmI32Load, acc));
             let left = [ACC_C, ACC_B]
                 .into_iter()
-                .position(|acc| serves(records[pc + 1].handler, combine.op(), acc));
+                .position(|acc| serves(records[pc + 1].handler, combine.op() as u16, acc));
             if let (Some(field), Some(left)) = (field, left)
                 && store.a() == combine.a()
-                && serves(records[pc + 2].handler, Op::WasmI32Store, ACC_A)
+                && serves(records[pc + 2].handler, opc::WasmI32Store, ACC_A)
                 && let Some(fused) = i32_update_handler::<H>(combine.op(), left == 1, field)
             {
                 records[pc].handler = fused as *const ();
@@ -18890,8 +18837,8 @@ fn derive_lane_view<'live, H: Host>(
         // record.
         for pc in 0..records.len().saturating_sub(1) {
             let next = decoded[pc + 1];
-            if serves(records[pc].handler, Op::LoadConst, ACC_NONE)
-                && serves(records[pc + 1].handler, next.op(), ACC_A)
+            if serves(records[pc].handler, opc::LoadConst, ACC_NONE)
+                && serves(records[pc + 1].handler, next.op() as u16, ACC_A)
                 && let Some(fused) = constant_store_handler::<H>(next.op())
             {
                 records[pc].handler = fused as *const ();
@@ -18904,8 +18851,8 @@ fn derive_lane_view<'live, H: Host>(
             let next = decoded[pc + 1];
             let field = [ACC_NONE, ACC_C]
                 .into_iter()
-                .find(|acc| serves(records[pc].handler, instruction.op(), *acc));
-            let carried_store = serves(records[pc + 1].handler, next.op(), ACC_A);
+                .find(|acc| serves(records[pc].handler, instruction.op() as u16, *acc));
+            let carried_store = serves(records[pc + 1].handler, next.op() as u16, ACC_A);
             if let Some(field) = field
                 && carried_store
                 && let Some(fused) = load_store_handler::<H>(instruction.op(), next.op(), field)
@@ -18927,7 +18874,7 @@ fn derive_lane_view<'live, H: Host>(
     // Each record's i32 load with its address field, if it is a plain one.
     let i32_load = |records: &[LaneInstruction], pc: usize| {
         let op = decoded[pc].op();
-        [ACC_NONE, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op, acc)).filter(|_| {
+        [ACC_NONE, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op as u16, acc)).filter(|_| {
             matches!(
                 op,
                 Op::WasmI32Load | Op::WasmI32Load8S | Op::WasmI32Load8U | Op::WasmI32Load16S | Op::WasmI32Load16U
@@ -18939,19 +18886,19 @@ fn derive_lane_view<'live, H: Host>(
         // immediate comparison jump testing that run as one record.
         for pc in 0..records.len().saturating_sub(2) {
             let (first, mask, jump) = (decoded[pc], decoded[pc + 1], decoded[pc + 2]);
-            let Some(acc) = [ACC_NONE, ACC_B].into_iter().find(|&acc| serves(records[pc].handler, first.op(), acc))
+            let Some(acc) = [ACC_NONE, ACC_B].into_iter().find(|&acc| serves(records[pc].handler, first.op() as u16, acc))
             else {
                 continue;
             };
-            if !matches!(first.op(), Op::WasmI32AddImmediate | Op::WasmI32SubtractImmediate)
+            if !matches!(first.op().class(), Class::WasmI32AddImmediate | Class::WasmI32SubtractImmediate)
                 || !mask.op().is_wasm_i32_and_immediate()
                 || mask.b() != first.a()
                 || jump.a() != mask.a()
-                || ![ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, Op::WasmI32AndImmediate, acc))
+                || ![ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, opc::WasmI32AndImmediate, acc))
             {
                 continue;
             }
-            let Some((backward, _)) = plain_served(records[pc + 2].handler, jump.op(), &[ACC_NONE, ACC_A])
+            let Some((backward, _)) = plain_served(records[pc + 2].handler, jump.op() as u16, &[ACC_NONE, ACC_A])
             else {
                 continue;
             };
@@ -18963,13 +18910,13 @@ fn derive_lane_view<'live, H: Host>(
         // one record.
         for pc in 0..records.len().saturating_sub(1) {
             let (first, jump) = (decoded[pc], decoded[pc + 1]);
-            if !serves(records[pc].handler, first.op(), ACC_NONE)
+            if !serves(records[pc].handler, first.op() as u16, ACC_NONE)
                 || I32BinaryOperator::from_jump_op(jump.op()).is_none()
                 || (jump.a() != first.a() && jump.b() != first.a())
             {
                 continue;
             }
-            let Some((backward, _)) = plain_served(records[pc + 1].handler, jump.op(), &[ACC_NONE, ACC_A, ACC_B])
+            let Some((backward, _)) = plain_served(records[pc + 1].handler, jump.op() as u16, &[ACC_NONE, ACC_A, ACC_B])
             else {
                 continue;
             };
@@ -19009,7 +18956,7 @@ fn derive_lane_view<'live, H: Host>(
                 || i32_load(&records, pc + 1) != Some(ACC_NONE)
                 || first.a() == second.a()
                 || second.c() == first.a()
-                || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 2].handler, combine.op(), acc))
+                || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 2].handler, combine.op() as u16, acc))
             {
                 continue;
             }
@@ -19027,14 +18974,14 @@ fn derive_lane_view<'live, H: Host>(
         // An i32 operator, a constant load and a select reading them run as one record.
         for pc in 0..records.len().saturating_sub(2) {
             let (operator, constant) = (decoded[pc], decoded[pc + 1]);
-            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, operator.op(), acc))
+            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, operator.op() as u16, acc))
             else {
                 continue;
             };
-            if !serves(records[pc + 1].handler, Op::LoadConst, ACC_NONE)
+            if !serves(records[pc + 1].handler, opc::LoadConst, ACC_NONE)
                 || ![ACC_NONE, ACC_B, ACC_C, ACC_PAIR]
                     .into_iter()
-                    .any(|acc| serves(records[pc + 2].handler, Op::WasmSelect, acc))
+                    .any(|acc| serves(records[pc + 2].handler, opc::WasmSelect, acc))
                 || !constant.op().is_load_const()
             {
                 continue;
@@ -19046,7 +18993,7 @@ fn derive_lane_view<'live, H: Host>(
         // A plain move whose value the next record's i32 load takes as its address runs with it
         // as one record.
         for pc in 0..records.len().saturating_sub(1) {
-            if serves(records[pc].handler, Op::Move, ACC_NONE)
+            if serves(records[pc].handler, opc::Move, ACC_NONE)
                 && i32_load(&records, pc + 1).is_some()
                 && decoded[pc + 1].c() == decoded[pc].a()
                 && let Some(fused) = move_load_handler::<H>(decoded[pc + 1].op(), ACC_NONE)
@@ -19057,10 +19004,10 @@ fn derive_lane_view<'live, H: Host>(
         // A plain i32 store followed by a move runs with it as one record.
         for pc in 0..records.len().saturating_sub(1) {
             let op = decoded[pc].op();
-            let Some(acc) = [ACC_NONE, ACC_A, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op, acc)) else {
+            let Some(acc) = [ACC_NONE, ACC_A, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op as u16, acc)) else {
                 continue;
             };
-            if [ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, Op::Move, acc))
+            if [ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, opc::Move, acc))
                 && let Some(fused) = store_move_handler::<H>(op, acc)
             {
                 records[pc].handler = fused as *const ();
@@ -19070,7 +19017,7 @@ fn derive_lane_view<'live, H: Host>(
     // A record's plain jump, with its direction.
     let jump_direction = |handler: *const ()| {
         [false, true].into_iter().find(|&backward| {
-            tables[usize::from(backward)][usize::from(ACC_NONE)][Op::Jump as usize]
+            tables[usize::from(backward)][usize::from(ACC_NONE)][opc::Jump as usize]
                 .is_some_and(|jump| handler == jump.handler as *const ())
         })
     };
@@ -19092,7 +19039,7 @@ fn derive_lane_view<'live, H: Host>(
             continue;
         }
         let absorbed = decoded[target];
-        let plain = |op: Op| absorbed.op() == op && serves(records[target].handler, op, ACC_NONE);
+        let plain = |op: Op| absorbed.op() == op && serves(records[target].handler, op as u16, ACC_NONE);
         let backward = target <= pc;
         // In compiled mode an OSR site's backedge must remain a standalone jump record.
         // The lane's `THROUGH` fusion would replace both its handler and jump distance.
@@ -19125,8 +19072,8 @@ fn derive_lane_view<'live, H: Host>(
     // Two plain moves in a row run as one record.
     let mut pc = 0;
     while pc + 1 < records.len() {
-        if serves(records[pc].handler, Op::Move, ACC_NONE)
-            && serves(records[pc + 1].handler, Op::Move, ACC_NONE)
+        if serves(records[pc].handler, opc::Move, ACC_NONE)
+            && serves(records[pc + 1].handler, opc::Move, ACC_NONE)
         {
             // A jump after the pair joins it.
             let jump = records
@@ -19146,7 +19093,7 @@ fn derive_lane_view<'live, H: Host>(
     // A plain move or add of a constant whose next record jumps runs with
     // that jump as one record.
     for pc in 0..records.len().saturating_sub(1) {
-        let plain = |op: Op| serves(records[pc].handler, op, ACC_NONE);
+        let plain = |op: Op| serves(records[pc].handler, op as u16, ACC_NONE);
         let add = if plain(Op::Move) {
             false
         } else if plain(Op::WasmI32AddImmediate) {
@@ -19169,7 +19116,7 @@ fn derive_lane_view<'live, H: Host>(
         for pc in 0..records.len().saturating_sub(1) {
             let Some(move_acc) = [ACC_NONE, ACC_B]
                 .into_iter()
-                .position(|acc| serves(records[pc].handler, Op::Move, acc))
+                .position(|acc| serves(records[pc].handler, opc::Move, acc))
             else {
                 continue;
             };
@@ -19202,7 +19149,7 @@ fn derive_lane_view<'live, H: Host>(
                         .map(|acc| acc == ACC_B)
                 };
                 if instruction.op().is_wasm_f64_load() {
-                    let plain = tables[0][usize::from(ACC_NONE)][Op::WasmF64Load as usize]?;
+                    let plain = tables[0][usize::from(ACC_NONE)][opc::WasmF64Load as usize]?;
                     if records[pc].handler != plain.handler as *const () {
                         return None;
                     }
@@ -19216,7 +19163,7 @@ fn derive_lane_view<'live, H: Host>(
                                 && store.a() == next.a()
                                 && [ACC_NONE, ACC_A]
                                     .into_iter()
-                                    .any(|acc| serves(records[pc + 2].handler, Op::WasmF64Store, acc))
+                                    .any(|acc| serves(records[pc + 2].handler, opc::WasmF64Store, acc))
                         };
                     if updates {
                         return Some((
@@ -19256,7 +19203,7 @@ fn derive_lane_view<'live, H: Host>(
                 // store may read it plainly or through the accumulator.
                 let store_runs = [ACC_NONE, ACC_A]
                     .into_iter()
-                    .any(|acc| serves(records[pc + 1].handler, Op::WasmF64Store, acc));
+                    .any(|acc| serves(records[pc + 1].handler, opc::WasmF64Store, acc));
                 if !instruction.op().is_wasm_f64_binary()
                     || usize::from(first) >= FLOAT_PAIR_FIRSTS
                     || !next.op().is_wasm_f64_store()
@@ -19483,12 +19430,12 @@ fn derive_lane_view<'live, H: Host>(
             let second = decoded[pc + 1];
             let Some(acc) = [ACC_NONE, ACC_B]
                 .into_iter()
-                .find(|&acc| serves(records[pc].handler, Op::WasmI32ShiftRightUnsignedAndImmediate, acc))
+                .find(|&acc| serves(records[pc].handler, opc::WasmI32ShiftRightUnsignedAndImmediate, acc))
             else {
                 continue;
             };
             if !decoded[pc].op().is_wasm_i32_shift_right_unsigned_and_immediate()
-                || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 1].handler, second.op(), acc))
+                || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 1].handler, second.op() as u16, acc))
             {
                 continue;
             }
@@ -19501,12 +19448,12 @@ fn derive_lane_view<'live, H: Host>(
         // accumulator also holds it).
         for pc in 0..records.len().saturating_sub(1) {
             let jump = decoded[pc];
-            if !matches!(jump.op(), Op::WasmJumpI32EqualImmediate | Op::WasmJumpI32NotEqualImmediate)
+            if !matches!(jump.op().class(), Class::WasmJumpI32EqualImmediate | Class::WasmJumpI32NotEqualImmediate)
                 || i32_load(&records, pc + 1).is_none()
             {
                 continue;
             }
-            let Some((backward, acc)) = plain_served(records[pc].handler, jump.op(), &[ACC_NONE, ACC_A]) else {
+            let Some((backward, acc)) = plain_served(records[pc].handler, jump.op() as u16, &[ACC_NONE, ACC_A]) else {
                 continue;
             };
             if let Some(fused) = compare_jump_load_handler::<H>(jump.op(), decoded[pc + 1].op(), backward, acc) {
@@ -19517,14 +19464,14 @@ fn derive_lane_view<'live, H: Host>(
         // fusions take their records first.
         for pc in 0..records.len().saturating_sub(1) {
             let (first, second) = (decoded[pc], decoded[pc + 1]);
-            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, first.op(), acc))
+            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, first.op() as u16, acc))
             else {
                 continue;
             };
-            if !matches!(first.op(), Op::WasmI32Add | Op::WasmI32AddImmediate) {
+            if !matches!(first.op().class(), Class::WasmI32AddRegister | Class::WasmI32AddImmediate) {
                 continue;
             }
-            let Some((backward, _)) = plain_served(records[pc + 1].handler, second.op(), &[ACC_NONE, ACC_B, ACC_C])
+            let Some((backward, _)) = plain_served(records[pc + 1].handler, second.op() as u16, &[ACC_NONE, ACC_B, ACC_C])
             else {
                 continue;
             };
@@ -19677,48 +19624,25 @@ fn derive_lane_view<'live, H: Host>(
 /// operand: every field read or store's of its receiver, and a global name access's or top-level
 /// `var` capture read's of the global object (`lane_load_global_name`, `lane_load_root_var`).
 fn holds_field_hint(op: Op) -> bool {
-    matches!(op, Op::GetField | Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict | Op::LoadCapture)
-        || is_global_name_access(op)
+    op.is_field_store() || op.is_get_field() || op.is_load_capture() || is_global_name_access(op)
 }
 
 /// Whether an instruction's record is a call site a read memo may answer
 /// (`lane_memoize_read`), whose operand is `call`.
 fn is_script_call(op: Op) -> bool {
-    matches!(
-        op,
-        Op::Call
-            | Op::CallArray
-            | Op::CallForwardingArguments
-            | Op::CallKnown
-            | Op::CallMethod
-            | Op::CallSpread
-            | Op::CallThisMethod
-            | Op::Construct
-    )
+    op.traits().has(crate::bytecode::Traits::SCRIPT_CALL)
 }
 
 /// Whether an instruction is a by-name load (`LOAD_NAME`) or store, whose hint a global
 /// lexical declaration clears (`LaneView::clear_name_hints`).
 fn is_global_name_access(op: Op) -> bool {
-    matches!(op, Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::StoreName)
+    op.traits().has(crate::bytecode::Traits::GLOBAL_NAME_ACCESS)
 }
 
 /// Whether an instruction's record leaves its `call_link` unread: any but a call's, whose
 /// handlers keep their target hint there (`linked_script_call_entry`).
 fn holds_no_call_link(op: Op) -> bool {
-    !matches!(
-        op,
-        Op::Call
-            | Op::CallArray
-            | Op::CallForwardingArguments
-            | Op::CallKnown
-            | Op::CallMethod
-            | Op::CallSpread
-            | Op::CallThisMethod
-            | Op::LoadNameCall
-            | Op::Construct
-            | Op::SuperCallCheck
-    )
+    !op.traits().has(crate::bytecode::Traits::CALL_LINK)
 }
 
 /// Gives each backward `Jump` whose loop the shared compiler admits (`analyze_osr_region`) the
@@ -20578,13 +20502,13 @@ fn specialize_environment_window<H: Host>(
             return None;
         }
         let environment = !op.captures_environment() && function.local_slot_uses_environment(own as usize);
-        let handler: Handler = match (op, environment) {
-            (Op::MakeClosure, _) => lane_make_window_closure::<H>,
-            (Op::CloneEnv, _) => lane_clone_window_env::<H>,
-            (Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal, true) => lane_load_window_local::<H, true>,
-            (Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal, false) => lane_load_window_local::<H, false>,
-            (Op::InitializeTdz, true) => lane_initialize_window_tdz::<H, true>,
-            (Op::InitializeTdz, false) => lane_initialize_window_tdz::<H, false>,
+        let handler: Handler = match (op.class(), environment) {
+            (Class::MakeClosure, _) => lane_make_window_closure::<H>,
+            (Class::CloneEnv, _) => lane_clone_window_env::<H>,
+            (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, true) => lane_load_window_local::<H, true>,
+            (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, false) => lane_load_window_local::<H, false>,
+            (Class::InitializeTdz, true) => lane_initialize_window_tdz::<H, true>,
+            (Class::InitializeTdz, false) => lane_initialize_window_tdz::<H, false>,
             (_, true) => lane_store_window_local::<H, true>,
             (_, false) => lane_store_window_local::<H, false>,
         };
@@ -20902,8 +20826,8 @@ fn may_loop(function: &Function) -> bool {
 /// An `Await` counts as `cap`: a resumed async frame's lane run that stops there suspends
 /// without the general loop (`Vm::lane_stop_awaits`), so a short run to it repays its entry.
 fn lane_runs_ahead(decoded: &[WideInstruction], exits: &[bool], cap: usize, follows_jumps: bool) -> Vec<usize> {
-    let next = |pc: usize| match decoded[pc].op() {
-        Op::Jump if follows_jumps => decoded[pc].imm() as usize,
+    let next = |pc: usize| match decoded[pc].op().class() {
+        Class::Jump if follows_jumps => decoded[pc].imm() as usize,
         _ => pc + 1,
     };
     let mut runs = vec![0usize; exits.len()];
@@ -20935,9 +20859,9 @@ fn entry_run_returns(decoded: &[WideInstruction], exits: &[bool]) -> bool {
         if exits.get(pc).is_none_or(|exits| *exits) {
             return false;
         }
-        match decoded[pc].op() {
-            Op::Return => return true, _ if decoded[pc].returns_from_frame() => return true, // fused with its return
-            Op::Jump => pc = decoded[pc].imm() as usize,
+        match decoded[pc].op().class() {
+            Class::Return => return true, _ if decoded[pc].returns_from_frame() => return true, // fused with its return
+            Class::Jump => pc = decoded[pc].imm() as usize,
             _ => pc += 1,
         }
     }

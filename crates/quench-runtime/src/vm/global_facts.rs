@@ -27,8 +27,13 @@ pub(crate) enum GlobalRead {
 pub(crate) struct GlobalReads(Box<[Option<GlobalRead>]>);
 
 impl GlobalReads {
+    /// The read at `pc`, if the instruction there is a by-name global read.
+    pub(crate) fn get(&self, pc: &usize) -> Option<&GlobalRead> {
+        self.0.get(*pc).and_then(Option::as_ref)
+    }
+
     pub(crate) fn contains_key(&self, pc: &usize) -> bool {
-        self.0.get(*pc).is_some_and(Option::is_some)
+        self.get(pc).is_some()
     }
 
     /// The reads at the PCs of `range`, in order.

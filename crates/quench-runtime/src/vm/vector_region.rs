@@ -273,33 +273,33 @@ fn admit(
     if let Some(operator) = I32BinaryOperator::from_immediate_op(op) {
         return Some(Admitted::I32(operator, Some(instruction.imm() as i32)));
     }
-    Some(match op {
-        Op::WasmSimd => {
+    Some(match op.class() {
+        Class::WasmSimd => {
             let (kernel, lane) = SimdKernel::of(instruction.imm())?;
             (admitted_type(kernel.left)
                 && kernel.right.is_none_or(admitted_type)
                 && admitted_type(kernel.result_type(lane)))
             .then_some(Admitted::Simd { kernel, lane })?
         }
-        Op::WasmSimdShuffle => Admitted::Shuffle(ShuffleForm::of(heap.v128(constant()?)?)),
-        Op::Move => Admitted::Move,
-        Op::LoadConst => {
+        Class::WasmSimdShuffle => Admitted::Shuffle(ShuffleForm::of(heap.v128(constant()?)?)),
+        Class::Move => Admitted::Move,
+        Class::LoadConst => {
             let value = constant()?;
             match heap.v128(value) {
                 Some(bytes) => Admitted::VectorConstant(u128::from_le_bytes(bytes)),
                 None => Admitted::Constant(value),
             }
         }
-        Op::WasmMemoryAddress if Some(instruction.c()) == memory => {
+        Class::WasmMemoryAddress if Some(instruction.c()) == memory => {
             Admitted::Address(constant()?.bits64()?)
         }
-        Op::WasmMemoryLoad
+        Class::WasmMemoryLoad
             if Some(instruction.b()) == memory
                 && MemoryLoad::from_tag(instruction.imm()) == Some(MemoryLoad::V128Load) =>
         {
             Admitted::Load
         }
-        Op::WasmMemoryStore
+        Class::WasmMemoryStore
             if Some(instruction.b()) == memory
                 && MemoryStore::from_tag(instruction.imm()) == Some(MemoryStore::V128Store) =>
         {
