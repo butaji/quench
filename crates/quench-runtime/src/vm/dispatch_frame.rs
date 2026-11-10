@@ -2044,7 +2044,7 @@ impl<H: Host> Vm<H> {
                         super::lane_exits::record_detail(format!("GetField {names} on {kind}"));
                     }
                     if matches!(instruction.op() as u16, index::GetIndex | index::SetIndex | index::DefineArrayElement) {
-                        let (base, key) = match instruction.op() {
+                        let (base, key) = match instruction.op() as u16 {
                             index::GetIndex => (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c())),
                             index::SetIndex => (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c()))),
                             _ => {

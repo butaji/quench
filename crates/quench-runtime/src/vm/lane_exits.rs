@@ -1,7 +1,7 @@
 //! Diagnostic census of lane exits (`profile-lane-exits`): how often the general loop takes
 //! over from the lane at each opcode, printed to stderr when the process exits.
 
-use crate::bytecode::{OPCODE_COUNT, opcode_name};
+use crate::bytecode::{OPCODE_COUNT, Op, opcode_name};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static EXITS: [AtomicU64; OPCODE_COUNT] = [const { AtomicU64::new(0) }; OPCODE_COUNT];
