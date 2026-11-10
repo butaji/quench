@@ -1892,12 +1892,8 @@ impl<H: Host> Vm<H> {
     /// elements; `None` for a range outside the program's constants.
     pub(super) fn const_array_value(&mut self, program: ProgramId, i: WideInstruction) -> Option<Value> {
         let elements = self.programs.const_array(program, i.constant_index(), usize::from(i.element_count()))?;
-        Some(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                elements,
-            ),
-        }))
+        let prototype = self.array_prototype_for_realm(self.realm.globals);
+        Some(self.heap.alloc(Cell::Array { object: crate::heap::ArrayObject::fresh(prototype, elements) }))
     }
 }
 
