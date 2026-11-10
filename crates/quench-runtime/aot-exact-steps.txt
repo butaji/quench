@@ -38,12 +38,12 @@
 1 quench-bench/micros/029.js
 2 quench-bench/micros/030.js
 2 quench-bench/micros/031.js
-15 quench-bench/micros/032.js
+13 quench-bench/micros/032.js
 2 quench-bench/micros/033.js
 2 quench-bench/micros/034.js
 3 quench-bench/micros/035.js
 1 quench-bench/micros/036.js
-4 quench-bench/micros/037.js
+2 quench-bench/micros/037.js
 4 quench-bench/micros/038.js
 2 quench-bench/micros/039.js
 3 quench-bench/micros/040.js
@@ -75,12 +75,12 @@
 19 quench-bench/micros/066.js
 17 quench-bench/micros/067.js
 29 quench-bench/micros/068.js
-21 quench-bench/micros/069.js
+18 quench-bench/micros/069.js
 10 quench-bench/micros/070.js
-3 quench-bench/micros/071.js
+1 quench-bench/micros/071.js
 1 quench-bench/micros/072.js
 13 quench-bench/micros/073.js
-12 quench-bench/micros/074.js
+10 quench-bench/micros/074.js
 10 quench-bench/micros/075.js
 1 quench-bench/micros/076.js
 2 quench-bench/micros/077.js
@@ -107,4 +107,4 @@
 1 quench-bench/micros/098.js
 1 quench-bench/micros/099.js
 2 quench-bench/micros/100.js
-49 quench-bench/micros/payload.js
+48 quench-bench/micros/payload.js

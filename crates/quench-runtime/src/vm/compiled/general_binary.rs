@@ -92,8 +92,19 @@ fn lower_binary(
         return false;
     }
     let Some(destination) = register_offset(instruction.result_register()) else { return false };
+    if lower_strict_equality(builder, program, instruction, register_offset, arguments, next, destination) {
+        return true;
+    }
     let (Some(left), Some(right)) = (binary_operand(program, register_offset, instruction.operand_b()),
         binary_operand(program, register_offset, instruction.operand_c())) else { return false };
+    emit_general_binary(builder, operator, (left, right), (arguments, payload), next, destination, exact);
+    true
+}
+
+/// The general binary path: `general_binary` answers the operation for number and string
+/// operands (an integer remainder computed first), and any other pair takes the exact step.
+fn emit_general_binary(builder: &mut FunctionBuilder<'_>, operator: u32, (left, right): ((Option<i32>, u64), (Option<i32>, u64)),
+    (arguments, payload): (ir::Value, ir::Value), next: ir::Block, destination: i32, exact: &JsExactFallback) {
     let value = |builder: &mut FunctionBuilder<'_>, (offset, _): (Option<i32>, u64)| match offset {
         Some(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
         None => builder.ins().iconst(types::I64, 0) };
@@ -113,7 +124,47 @@ fn lower_binary(
     builder.ins().store(MemFlagsData::trusted(), result, arguments, destination);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
+}
+
+/// Lowers `x === null` / `undefined` / a boolean at `instruction`: strict equality to an
+/// immediate that is no number is its canonical encoding's bit equality, so the comparison
+/// runs here with no helper and no exact step. `??` lowers to exactly this shape.
+fn lower_strict_equality(builder: &mut FunctionBuilder<'_>, program: &ResidualProgram,
+    instruction: WideInstruction, register_offset: &dyn Fn(u16) -> Option<i32>,
+    arguments: ir::Value, next: ir::Block, destination: i32) -> bool {
+    if instruction.binary_operator() != BinaryOperator::StrictEquality as u32 { return false; }
+    let Some((register, immediate)) = strict_immediate(program, instruction) else { return false };
+    let Some(source) = register_offset(register) else { return false };
+    let bits = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
+    let equal = builder.ins().icmp_imm_u(IntCC::Equal, bits, immediate.to_bits() as i64);
+    let (truth, falsity) = (builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64),
+        builder.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
+    let result = builder.ins().select(equal, truth, falsity);
+    builder.ins().store(MemFlagsData::trusted(), result, arguments, destination);
+    builder.ins().jump(next, &[]);
     true
+}
+
+/// The register and the immediate a `===` compares it with, where the other operand is a
+/// `null`, `undefined` or boolean constant (whose strict equality is its canonical encoding).
+fn strict_immediate(program: &ResidualProgram, instruction: WideInstruction) -> Option<(crate::bytecode::Register, Value)> {
+    let (left, right) = (instruction.operand_b(), instruction.operand_c());
+    let immediate = |operand: Operand| match operand.kind()? {
+        OperandKind::Constant => match program.constants.get(usize::from(operand.payload()))? {
+            Constant::Null => Some(Value::NULL),
+            Constant::Undefined => Some(Value::UNDEFINED),
+            Constant::Boolean(flag) => Some(if *flag { Value::TRUE } else { Value::FALSE }),
+            _ => None,
+        },
+        _ => None,
+    };
+    match (left.kind()?, right.kind()?) {
+        (OperandKind::Register, OperandKind::Constant) =>
+            immediate(right).map(|value| (left.register_index().expect("a register operand"), value)),
+        (OperandKind::Constant, OperandKind::Register) =>
+            immediate(left).map(|value| (right.register_index().expect("a register operand"), value)),
+        _ => None,
+    }
 }
 
 /// An operand's register home, or its constant index plus one for a number or string
