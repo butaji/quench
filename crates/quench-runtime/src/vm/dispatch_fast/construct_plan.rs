@@ -32,8 +32,15 @@ pub(super) struct ConstructPlan {
     /// Fields whose store computes a Number from its parameter (`InitializerValue::Numeric`),
     /// one bit per field index, each with `operators` and the constant in `fallbacks` at it.
     pub(super) computed: u8,
+    /// Fields whose store reads a data field of a captured binding
+    /// (`InitializerValue::CaptureField`), one bit per field index, each with its capture
+    /// slot and field read in `captured_fields` at it.
+    pub(super) captured: u8,
     pub(super) operators: [u8; CONSTRUCT_PLAN_FIELDS],
     pub(super) fallbacks: [Value; CONSTRUCT_PLAN_FIELDS],
+    /// Each captured-field store's capture slot (at depth 0, the function's own environment),
+    /// then the field's atom and cache site.
+    pub(super) captured_fields: [(u16, u32, u16); CONSTRUCT_PLAN_FIELDS],
     /// For a forwarding constructor's plan, where its body's reads resolved
     /// (`lane_forwarded_construction`), which the plan's own proof keeps. Its fields, if any, are
     /// those its forwarded initializer stores (`lane_record_forwarded_fields`).
@@ -90,11 +97,21 @@ impl ConstructPlan {
     /// parameter names (`argument`), or its fallback for a defaulted field passed a falsy
     /// value, or a constant field's constant, or a computed field's Number, as its store
     /// computes it. `None` when a computed field's argument is no Number.
-    pub(super) fn values<H: Host>(&self, vm: &Vm<H>, argument: impl Fn(u16) -> Value) -> Option<[Value; CONSTRUCT_PLAN_FIELDS]> {
+    pub(super) fn values<H: Host>(&self, vm: &mut Vm<H>, code: &ResidualProgram, argument: impl Fn(u16) -> Value) -> Option<[Value; CONSTRUCT_PLAN_FIELDS]> {
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+        let mut environment: Option<Value> = None;
         for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
             if self.constant & (1 << field) != 0 {
                 *value = self.fallbacks[field];
+                continue;
+            }
+            if self.captured & (1 << field) != 0 {
+                // The constructor's environment, read once for every captured field it has.
+                let env = match environment {
+                    Some(env) => env,
+                    None => *environment.insert(construction_environment(vm, self.callee)?),
+                };
+                *value = captured_field_value(vm, code, env, self.captured_fields[field])?;
                 continue;
             }
             if self.computed & (1 << field) != 0 {
@@ -151,6 +168,13 @@ impl ConstructPlan {
                 self.operators[field] = operator;
                 self.fallbacks[field] = Value::number(constant);
             }
+            crate::bytecode::InitializerValue::CaptureField { depth: 0, slot, field: read, field_site } => {
+                // The value is read at each construction: the plan's own values hold nothing.
+                self.kind = ConstructPlanKind::Defaulted;
+                self.captured |= 1 << field;
+                self.captured_fields[field] = (slot, read, field_site);
+            }
+            crate::bytecode::InitializerValue::CaptureField { depth: 1.., .. } => return None,
         }
         self.fields += 1;
         Some(self)
@@ -170,8 +194,10 @@ pub(super) const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     defaulted: 0,
     constant: 0,
     computed: 0,
+    captured: 0,
     operators: [0; CONSTRUCT_PLAN_FIELDS],
     fallbacks: [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS],
+    captured_fields: [(0, 0, 0); CONSTRUCT_PLAN_FIELDS],
     forwarded: None,
     super_parent: Value::UNDEFINED,
 };
@@ -184,6 +210,32 @@ fn numeric_initializer(passed: Value, operator: u8, constant: f64) -> Option<Val
     match crate::vm::operations::static_number_binary(u32::from(operator), passed.as_number()?, constant)? {
         crate::bytecode::Constant::Number(number) => Some(Value::number(number)),
         _ => None,
+    }
+}
+
+/// The environment a construction of `callee` reads its captures in: the callee's own
+/// `[[Environment]]`, which its linked call target holds. A miss leaves the captured stores to
+/// the body.
+pub(super) fn construction_environment<H: Host>(vm: &mut Vm<H>, callee: Value) -> Option<Value> {
+    // SAFETY: the entry is the lane's linked target for `callee`, alive until the next change
+    // of the call targets; nothing below resolves or collects.
+    Some(unsafe { &*vm.script_call_entry(callee)? }.env)
+}
+
+/// The value a captured-field initializer store gives its field: the data field `field` of the
+/// binding at `slot` of the construction's environment, both read now. `None` for a binding
+/// the environment walk does not answer, and for a field no data-property cache answers, so
+/// the construction runs the body, whose reads may run getters or throw.
+fn captured_field_value<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    env: Value,
+    (slot, _field, field_site): (u16, u32, u16),
+) -> Option<Value> {
+    let object = vm.environment_capture(env, slot)?;
+    match vm.cached_field_hit(code, object, field_site) {
+        super::super::object::FieldCacheProbe::Hit(value) => Some(value),
+        _ => vm.polymorphic_field_hit(code, object, field_site),
     }
 }
 
@@ -201,13 +253,17 @@ pub(super) fn initializer_value<H: Host>(vm: &Vm<H>, passed: Value, fallback: Op
 /// `None` where the store leaves it to the body (`lane_add_initializer_fields`). The running
 /// program is the store's (`Vm::active_constant`).
 #[inline(always)]
-pub(super) fn initializer_store_value<H: Host>(vm: &Vm<H>, store: &crate::bytecode::InitializerStore, argument: impl Fn(u16) -> Value) -> Option<Value> {
+pub(super) fn initializer_store_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, environment: Option<Value>, store: &crate::bytecode::InitializerStore, argument: impl Fn(u16) -> Value) -> Option<Value> {
     match store.value {
         crate::bytecode::InitializerValue::Parameter { parameter, fallback } => {
             Some(initializer_value(vm, argument(parameter), fallback.map(Value::number)))
         }
         crate::bytecode::InitializerValue::Constant(constant) => constant.value(|index| vm.active_constant(index)),
         crate::bytecode::InitializerValue::Numeric { parameter, operator, constant } => numeric_initializer(argument(parameter), operator, constant),
+        crate::bytecode::InitializerValue::CaptureField { depth: 0, slot, field, field_site } => {
+            captured_field_value(vm, code, environment?, (slot, field, field_site))
+        }
+        crate::bytecode::InitializerValue::CaptureField { depth: 1.., .. } => None,
     }
 }
 
@@ -222,14 +278,21 @@ pub(super) fn lane_add_initializer_fields<H: Host>(
     code: &ResidualProgram,
     this: Value,
     function: u32,
+    constructor: Option<Value>,
     argument: impl Fn(u16) -> Value,
     mut each: impl FnMut(&crate::bytecode::InitializerStore, Value),
 ) -> bool {
+    // A `with` or `eval` scope changes what a global name reads, which a planned
+    // construction does not model: such a body runs its stores itself.
+    if code.function(function as usize).has_dynamic_scope_access() {
+        return false;
+    }
     let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
         return false;
     };
+    let environment = constructor.and_then(|callee| construction_environment(vm, callee));
     for store in stores {
-        let Some(value) = initializer_store_value(vm, store, &argument) else {
+        let Some(value) = initializer_store_value(vm, code, environment, store, &argument) else {
             return false;
         };
         if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
@@ -248,20 +311,21 @@ pub(super) fn lane_add_initializer_fields<H: Host>(
 pub(super) fn lane_planned_construction<H: Host>(
     vm: &mut Vm<H>,
     callee: Value,
+    code: &ResidualProgram,
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
-    planned_construction(vm, callee, lane_construct_argument(r, i))
+    planned_construction(vm, callee, code, lane_construct_argument(r, i))
 }
 
 /// `lane_planned_construction` from the parameters' values `argument` gives.
 #[inline(always)]
-fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
+fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, code: &ResidualProgram, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];
     if plan.kind != ConstructPlanKind::Passed {
-        return lane_defaulted_construction(vm, index, argument);
+        return lane_defaulted_construction(vm, code, index, argument);
     }
     Some(plan.allocate(&mut vm.heap, |field| plan.passed_value(field, &argument)))
 }
@@ -292,8 +356,8 @@ pub(in crate::vm) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code
     // SAFETY: the caller passes the body's argument registers.
     let argument = |parameter: u16| if parameter < argc { unsafe { *arguments.add(usize::from(parameter)) } } else { Value::UNDEFINED };
     // A forwarding constructor's plan (`this.initialize(...)`) holds with its forwarding.
-    let this = planned_construction(vm, callee, argument)
-        .or_else(|| lane_forwarded_fields(vm, callee, argument))
+    let this = planned_construction(vm, callee, code, argument)
+        .or_else(|| lane_forwarded_fields(vm, code, callee, argument))
         .or_else(|| initializer_construction(vm, code, callee, argument))?;
     note_allocation(vm);
     Some(this)
@@ -322,12 +386,13 @@ fn initializer_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, cal
 /// forwarding (`lane_forwarded_fields`). Out of line, so plans of plain fields keep their
 /// code.
 #[inline(never)]
-fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
-    let plan = &vm.lane_stack.construct_plans[index];
+fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
+    // A copy: a plan reads no field of the VM to compute its values.
+    let plan = vm.lane_stack.construct_plans[index];
     if plan.kind == ConstructPlanKind::Forwarding {
         return None;
     }
-    let values = plan.values(vm, argument)?;
+    let values = plan.values(vm, code, argument)?;
     Some(plan.allocate(&mut vm.heap, |field| values[field]))
 }
 
@@ -358,6 +423,9 @@ pub(super) fn holding_construct_plan_index<H: Host>(vm: &Vm<H>, callee: Value) -
     let index = construct_plan_index(callee)?;
     let plan = &vm.lane_stack.construct_plans[index];
     (plan.callee == callee
+        // A global-field plan's atoms and cache sites name the program that made it, so it
+        // holds only while that program runs; another program's construction runs the body.
+        && (plan.captured == 0 || vm.same_realm_user_target(callee).is_some_and(|(program, _, _)| program == vm.active_program))
         && plan.epoch == crate::heap::prototype_layout_epoch()
         && vm.function_prototype_in_layout(callee, plan.callee_layout) == Some(plan.prototype)
         && (plan.super_parent.is_undefined()

@@ -13646,7 +13646,7 @@ fn lane_super_construction<H: Host>(
     }
     if let Some(this) = holding_construct_plan(vm, callee)
         .filter(|plan| !plan.super_parent.is_undefined())
-        .and_then(|_| lane_planned_construction(vm, callee, r, i))
+        .and_then(|_| lane_planned_construction(vm, callee, unsafe { &*(*cx).code }, r, i))
     {
         return Some(this);
     }
@@ -13757,7 +13757,7 @@ script_handler! {
         // is the finished object, and the body completed with `undefined`.
         if target.initializes
             && lane_finishes_construction(cx, i)
-            && let Some(this) = lane_planned_construction(vm, callee, r, i)
+            && let Some(this) = lane_planned_construction(vm, callee, unsafe { &*(*cx).code }, r, i)
         {
             // Allocating the receiver can make a collection due.
             note_allocation(vm);
@@ -13781,7 +13781,7 @@ script_handler! {
             sibling!(lane_script_construct_keeping::<H>, r, ip, Carried::script(cx))
         }
         let built = if target.initializes {
-            match lane_planned_construction(vm, callee, r, i) {
+            match lane_planned_construction(vm, callee, unsafe { &*(*cx).code }, r, i) {
                 Some(this) => Some((this, true)),
                 // SAFETY: the context's program outlives the lane run.
                 None => lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, lane_construct_argument(r, i)),
@@ -13828,7 +13828,7 @@ script_handler! {
         if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
             return exit(ip);
         }
-        let Some(this) = lane_planned_construction(vm, r.get(i.b), r, i) else {
+        let Some(this) = lane_planned_construction(vm, r.get(i.b), unsafe { &*(*cx).code }, r, i) else {
             requicken::<H>(ip, lane_script_construct::<H>);
             sibling!(lane_script_construct::<H>, r, ip, Carried::script(cx))
         };
@@ -13851,7 +13851,7 @@ script_handler! {
             return exit(ip);
         }
         let planned = lane_finishes_construction(cx, i)
-            .then(|| lane_planned_construction(vm, r.get(i.b), r, i))
+            .then(|| lane_planned_construction(vm, r.get(i.b), unsafe { &*(*cx).code }, r, i))
             .flatten();
         let Some(this) = planned else {
             requicken::<H>(ip, lane_script_construct::<H>);
@@ -13985,7 +13985,7 @@ fn lane_construct_keeping_activation<H: Host>(
     let finishes = lane_finishes_construction(cx, i);
     // A plan holding for `callee` fixes its function, so the plan alone answers before its
     // target is resolved.
-    if finishes && let Some(this) = lane_forwarded_fields(vm, callee, lane_construct_argument(r, i)) {
+    if finishes && let Some(this) = lane_forwarded_fields(vm, unsafe { &*(*cx).code }, callee, lane_construct_argument(r, i)) {
         // Allocating the receiver can make a collection due.
         note_allocation(vm);
         return Ok(KeepingConstruction::Finished(this));
@@ -14023,7 +14023,7 @@ fn lane_construct_keeping_activation<H: Host>(
             let code = unsafe { &*(*cx).code };
             let mut fields = Some(EMPTY_CONSTRUCT_PLAN);
             let argument = lane_construct_argument(r, i);
-            if lane_add_initializer_fields(vm, code, this, forwarded.function, argument, |store, value| {
+            if lane_add_initializer_fields(vm, code, this, forwarded.function, None, argument, |store, value| {
                 fields = fields.and_then(|fields| fields.with_field(store, value));
             }) {
                 if let Some(fields) = fields {
@@ -14053,18 +14053,18 @@ fn lane_construct_keeping_activation<H: Host>(
 /// (`resolved_forwarded_method`): the receiver that initializer's adds would finish, whose
 /// body completes with `undefined`, as the forwarding body then does.
 #[inline(always)]
-fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
+fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
-    // The plan in place: the allocation borrows the heap beside it, not a copy.
-    let plan = &vm.lane_stack.construct_plans[index];
+    // A copy: a plan reads no field of the VM to compute its values.
+    let plan = vm.lane_stack.construct_plans[index];
     let (program, function) = plan.forwarded?.initializer?;
-    let method = resolved_forwarded_method(vm, callee, plan)?;
+    let method = resolved_forwarded_method(vm, callee, &plan)?;
     if !matches!(vm.heap.function(method), Some(FunctionRecord { kind: FunctionKind::User(p, f), .. }) if *p == program && *f == function)
     {
         return None;
     }
-    let values = plan.values(vm, argument)?;
-    Some(vm.lane_stack.construct_plans[index].allocate(&mut vm.heap, |field| values[field]))
+    let values = plan.values(vm, code, argument)?;
+    Some(plan.allocate(&mut vm.heap, |field| values[field]))
 }
 
 /// Records in `callee`'s holding plan of no fields, whose forwarding resolved
@@ -15327,7 +15327,7 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     }
     // The callee's plan first, the common `new C(…)`, which needs no call target; a returned
     // construction completes by it alone.
-    if let Some(this) = lane_planned_construction(vm, callee, r, i) {
+    if let Some(this) = lane_planned_construction(vm, callee, unsafe { &*(*cx).code }, r, i) {
         note_allocation(vm);
         r.set(i.a & crate::bytecode::REGISTER_MASK, this);
         return LANE_CALL_COMPLETED;
@@ -15898,7 +15898,7 @@ fn lane_initialize_fields<H: Host>(
         shape: source_shape,
         ..EMPTY_CONSTRUCT_PLAN
     });
-    let added = lane_add_initializer_fields(vm, code, this, function, argument, |store, value| {
+    let added = lane_add_initializer_fields(vm, code, this, function, Some(callee), argument, |store, value| {
         planned = planned.and_then(|plan| plan.with_field(store, value));
     });
     if !added {

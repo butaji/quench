@@ -21,6 +21,11 @@ pub(crate) enum InitializerValue {
     /// Numeric binary `operator` of parameter `parameter`, when passed a Number, and the
     /// Number `constant`: `this.y = x + 1`. Any other argument leaves the stores to the body.
     Numeric { parameter: u16, operator: u8, constant: f64 },
+    /// A data field `field` of a binding captured at depth `depth` (0 is the function's own
+    /// environment): `this.color = Info.defaultColor`. The read is made at each construction,
+    /// and only from caches that prove an own data property: a miss leaves the stores to the
+    /// body, which may run a getter or throw.
+    CaptureField { depth: u16, slot: u16, field: u32, field_site: u16 },
 }
 
 impl InitializerStore {
@@ -28,7 +33,7 @@ impl InitializerStore {
     pub(crate) fn parameter(&self) -> Option<u16> {
         match self.value {
             InitializerValue::Parameter { parameter, .. } | InitializerValue::Numeric { parameter, .. } => Some(parameter),
-            InitializerValue::Constant(_) => None,
+            InitializerValue::Constant(_) | InitializerValue::CaptureField { .. } => None,
         }
     }
 }
@@ -71,9 +76,11 @@ impl InitializerConstant {
 }
 
 /// The temporaries an initializing body wrote, latest last: a primitive constant's
-/// `LoadConst`, or a numeric `Binary` of a parameter nothing defaults and a Number constant.
+/// `LoadConst`, a numeric `Binary` of a parameter nothing defaults and a Number constant, or a
+/// data field of a captured binding (`LoadCapture` then `GetField`), whose slot `names` holds
+/// until the read consumes it.
 #[derive(Default)]
-pub(super) struct Temporaries(SmallVec<[(Register, InitializerValue); 4]>);
+pub(super) struct Temporaries(SmallVec<[(Register, InitializerValue); 4]>, SmallVec<[(Register, u16); 2]>);
 
 impl Temporaries {
     /// What temporary `register` holds, if one of these wrote it last.
@@ -84,6 +91,9 @@ impl Temporaries {
     /// Records `instruction` when it writes a temporary these model, which writes nothing
     /// else; `false` for any other instruction. `fallbacks` are the parameters' defaults.
     pub(super) fn write(&mut self, instruction: &WideInstruction, params: u16, fallbacks: &[Option<f64>], constants: &[Constant]) -> bool {
+        if self.read_global_field(instruction, params) {
+            return true;
+        }
         if !matches!(instruction.op(), Op::LoadConst | Op::Binary) || instruction.result_flags() != 0 || instruction.result_register() < params {
             return false;
         }
@@ -93,6 +103,41 @@ impl Temporaries {
             _ => None,
         };
         value.map(|value| self.0.push((instruction.result_register(), value))).is_some()
+    }
+
+    /// Records the two instructions of a captured binding's data field read, `LoadCapture` then
+    /// `GetField`, which write nothing else; `false` for any other instruction, which the
+    /// caller models or breaks at. The read is made at each construction and every miss leaves
+    /// the body its own, so a getter or a dead-zone binding cannot run inside a plan.
+    fn read_global_field(&mut self, instruction: &WideInstruction, params: u16) -> bool {
+        let plain = |instruction: &WideInstruction| {
+            instruction.result_flags() == 0 && instruction.result_register() >= params
+        };
+        match instruction.op() {
+            Op::LoadCapture if instruction.capture_depth() == 0 && plain(instruction) => {
+                self.1.push((instruction.result_register(), instruction.capture_slot()));
+                true
+            }
+            Op::GetField if plain(instruction) => {
+                let Some(crate::bytecode::FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() else {
+                    return false;
+                };
+                let Some(register) = base.register_index() else { return false };
+                // The base must still hold the capture: any later write of its register is its
+                // value, which a field read of it does not give this store.
+                if self.value(register).is_some() {
+                    return false;
+                }
+                let Some(&(_, slot)) = self.1.iter().rev().find(|(written, _)| *written == register) else {
+                    return false;
+                };
+                self.0.push((instruction.result_register(), InitializerValue::CaptureField {
+                    depth: 0, slot, field: atom, field_site: cache_site,
+                }));
+                true
+            }
+            _ => false,
+        }
     }
 
     /// `p op k` of a `Binary`: a numeric operator of a parameter without default and a
