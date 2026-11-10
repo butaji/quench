@@ -68,7 +68,7 @@ mod lane_unit;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{lane_binary, lane_new_array, lane_new_object};
+use lane_allocations::{lane_binary, lane_new_array, lane_new_object, lane_new_object_pair};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
@@ -1797,6 +1797,8 @@ lane_helper_inventory! { H;
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
     NewArray => lane_new_array::<H>,
+    /// A two-property object literal's allocation (`lane_new_object_pair`).
+    NewObjectPair => lane_new_object_pair::<H>,
     Binary => lane_binary::<H>,
     /// A store that may add its property (`lane_field_add`).
     FieldAdd => lane_field_add::<H>,
@@ -6049,16 +6051,24 @@ impl CompiledOsrRegion {
             // `LoopEntry` is not `repr(C)`.
             native.dispatch.loop_entry = entry.words_mut() as usize;
             native.dispatch.inlined = entry.scratch_address();
-            // The loop entry's captures in the dense slot view the lane capture reads use.
-            let captures = if region.captures.is_empty() { Vec::new() } else {
-                let len = region.captures.iter().map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);
+            // A region that stores a capture reads the activation's own slots, as a lane body
+            // does; otherwise the loop entry's captures are the dense slot view the lane
+            // capture reads use, a stored slot holding `DELETED` so its reads take the lane's
+            // own lookup.
+            let live = (!region.stored_captures.is_empty())
+                .then(|| super::dispatch_fast::lane_context_captures::<H>(lane_context)).flatten();
+            let captures = if live.is_some() || (region.captures.is_empty() && region.stored_captures.is_empty()) { Vec::new() } else {
+                let len = region.captures.iter().chain(&region.stored_captures)
+                    .map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);
                 let mut captures = vec![crate::Value::DELETED; len];
                 for (slot, value) in region.captures.iter().zip(entry.captures(region.captures.len())) {
                     captures[usize::from(*slot)] = value;
                 }
                 captures
             };
-            if !captures.is_empty() {
+            if let Some((values, len)) = live {
+                (native.dispatch.capture_values, native.dispatch.capture_len) = (values, len);
+            } else if !captures.is_empty() {
                 native.dispatch.capture_values = captures.as_ptr();
                 native.dispatch.capture_len = captures.len();
             }

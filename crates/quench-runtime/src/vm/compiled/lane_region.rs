@@ -2605,6 +2605,15 @@ impl Lowering<'_, '_> {
                 self.allocated(state);
                 Some(true)
             }
+            Class::MakeObject2 if plain && self.completion == Completion::StatusAndPc => {
+                let exit = self.guard_exit(state, pc32);
+                let (first, second) = (self.tagged(state, instruction.register_b()), self.tagged(state, instruction.register_c()));
+                self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::MakeObjectPair {
+                    destination: instruction.result_register(), site: instruction.imm(), first, second,
+                    proof: super::EmitProof::Allocation { miss: exit } });
+                self.allocated(state);
+                Some(true)
+            }
             Class::Construct if self.completion != Completion::Number && !instruction.is_super_construct()
                 && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
             Class::IncDec if plain && instruction.numeric_local_target().is_none() => {

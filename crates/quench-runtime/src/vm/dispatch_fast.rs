@@ -279,14 +279,18 @@ impl LoopSite {
     /// entries are not declining, and it has code or may compile it. A site without it
     /// retires at its next backward jump (`lane_loop_retire`).
     fn may_run_natively(&self, policy: crate::MemoryPolicy) -> bool {
-        self.exits.get() < TIERS.loops.max_exits
-            && self.declines.get() < TIERS.loops.max_declines
-            && self.tier.borrow().may_run(policy)
+        self.enters() && self.tier.borrow().may_run(policy)
     }
 
     fn is_admitted(&self) -> bool {
         !self.promotion_only
             && self.analysis_failure.is_none_or(|failure| failure.is_call_boundary())
+    }
+
+    /// Whether its entries still pay: its runs have not used up the exits and declines its
+    /// retirement allows.
+    fn enters(&self) -> bool {
+        self.exits.get() < TIERS.loops.max_exits && self.declines.get() < TIERS.loops.max_declines
     }
 }
 
@@ -5226,6 +5230,23 @@ script_handler! {
     }
 }
 
+/// The running lane activation's dense capture slots, the view a lane body's reads take
+/// (`EnvironmentSlots::native_storage_view`): a frame run finds them as its first store does
+/// (`lane_capture_store`).
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn lane_context_captures<H: Host>(context: usize) -> Option<(*const Value, usize)> {
+    let cx = context as *mut LaneContext<H>;
+    unsafe {
+        if capture_reads((*cx).capture).is_null() && (*cx).env.is_deleted() {
+            (*cx).capture = lane_frame_capture(cx)?;
+        }
+        // SAFETY: the context's slots stay live while the lane runs, which collects nothing.
+        crate::heap::EnvironmentSlots::native_storage_view(capture_reads((*cx).capture))
+    }
+}
+
 /// The lane's store of `value` to the capture at `depth` and `slot` past the running
 /// function's dense slots (`lane_store_capture`): whether it stored, which a binding the
 /// direct store does not take (a `const`, an uninitialized `let`) does not.
@@ -8033,8 +8054,7 @@ script_handler! {
         // SAFETY: a record runs this handler only while a site holds it.
         let site = unsafe { &*lane_header_site(ip) };
         if !script_below_floor(cx)
-            && site.exits.get() < TIERS.loops.max_exits
-            && site.declines.get() < TIERS.loops.max_declines
+            && site.enters()
             && let Some(region) = site.active_region()
         {
             match lane_loop_native::<H>(cx, r, ip, ip, site, region) {
@@ -15295,8 +15315,9 @@ pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: 
 }
 
 /// A lane body's store of `value` to the capture `packed` names (depth in its high half,
-/// slot in its low), by the lane's own store (`lane_capture_store`): 1 where it stored, else
-/// 0, which leaves the body at the store, before it.
+/// slot in its low), by the lane's own stores (`lane_store_own_capture`, else
+/// `lane_capture_store`): 1 where it stored, else 0, which leaves the body at the store,
+/// before it.
 ///
 /// # Safety
 /// As `lane_body_capture`.
@@ -15310,7 +15331,7 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
             let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
             lane_environment_store(unsafe { vm(cx) }, code, program, env, depth, slot, value)
         }
-        None => lane_capture_store(cx, depth, slot, value),
+        None => (depth == 0 && lane_store_own_capture(cx, slot, value)) || lane_capture_store(cx, depth, slot, value),
     };
     u64::from(stored)
 }

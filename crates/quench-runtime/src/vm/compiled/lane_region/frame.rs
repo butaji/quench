@@ -191,6 +191,19 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         Some(value)
     }
 
+    /// A two-property object literal: the lane's own allocator (`lane_new_object_pair`).
+    #[inline(always)]
+    fn allocate_object_pair(&mut self, stage: &mut Emit<'_, '_>, destination: Register, site: u32, first: ir::Value,
+        second: ir::Value, proof: EmitProof) -> Option<ir::Value> {
+        let EmitProof::Allocation { miss } = proof else { return None };
+        let payload = self.payload;
+        let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewObjectPair);
+        let site = stage.builder.ins().iconst(types::I64, i64::from(site));
+        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload, site, first, second]);
+        calls::finish_allocation(stage, self, destination, value, miss);
+        Some(value)
+    }
+
     /// A typed array element: the kind's load, as a Number word.
     #[inline(always)]
     fn typed_index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {

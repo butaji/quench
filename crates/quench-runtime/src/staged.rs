@@ -199,6 +199,11 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn allocate_array(&mut self, _stage: &mut S, _destination: Register, _length: S::Word, _elements: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
 
+    /// The two-property object literal `destination` of literal `site`'s shape.
+    #[inline(always)]
+    fn allocate_object_pair(&mut self, _stage: &mut S, _destination: Register, _site: u32, _first: S::Word, _second: S::Word,
+        _proof: S::Proof) -> Option<S::Word> { None }
+
     /// Continue where no interrupt is requested; `None` leaves at the frame's miss edge.
     #[inline(always)]
     fn safepoint(&mut self, _stage: &mut S, _proof: S::Proof) -> Option<()> { Some(()) }
@@ -288,6 +293,9 @@ pub(crate) enum Operation<W, P> {
     MakeObject { destination: Register, proof: P },
     /// The array literal `destination`: `length` holes, or `elements` values.
     MakeArray { destination: Register, length: W, elements: W, proof: P },
+    /// The two-property object literal `destination` of literal `site`'s shape, holding
+    /// `first` and `second`; a due collection leaves at the frame's miss edge.
+    MakeObjectPair { destination: Register, site: u32, first: W, second: W, proof: P },
     /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
     Safepoint { proof: P },
     /// The element store's host helper for `base[key] = value`, under `proof`; the frame's

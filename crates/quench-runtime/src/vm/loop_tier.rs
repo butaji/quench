@@ -104,24 +104,13 @@ pub(super) fn lane_loop_compile<H: Host>(
     let function = site.function();
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
-    let started = observe(machine, region, views, |observation| {
-        super::super::compiled::start_osr_region(region, observation,
-            machine.heap.memory_policy(), program.as_deref()?, function, helpers)
-    });
+    let native_field_loads = native_field_loads(machine, region);
+    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, views };
+    let policy = machine.heap.memory_policy();
+    let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, &observation,
+        policy, program, function, helpers, &mut |unit| machine.lane_global_reads(program, function, unit)));
     machine.host.after_native_compilation();
     tier.start(started, &mut machine.heap, site);
-}
-
-/// Runs `compile` on what the running activation shows `region`'s values to be: the
-/// holderless own-data fields its native reads may load directly, and its arrays' `views`.
-fn observe<H: Host, T>(
-    machine: &Vm<H>,
-    region: &super::super::compiled::LoopRegion,
-    views: super::super::compiled::ElementViews,
-    compile: impl FnOnce(&super::super::compiled::Observation<'_>) -> T,
-) -> T {
-    let native_field_loads = native_field_loads(machine, region);
-    compile(&super::super::compiled::Observation { native_field_loads: &native_field_loads, views })
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.
