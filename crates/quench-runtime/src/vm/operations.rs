@@ -558,7 +558,7 @@ pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool
 /// emitter: no VM state, allocation, collection, guest effects, or integer traps.
 /// Floating remainder preserves negative zero and the Number NaN/infinity rules.
 #[inline]
-pub(super) extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
+pub(crate) extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
     left % right
 }
 

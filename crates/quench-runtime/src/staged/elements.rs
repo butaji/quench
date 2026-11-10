@@ -41,6 +41,33 @@ pub(crate) fn replace_uncounted_element<S: Stage>(stage: &mut S, address: S::Wor
     stage.store_u64(address, 0, value);
 }
 
+/// Appends `value` at `index` of the dense backing at `values`, which holds `length` values
+/// and room for `capacity`, as its owner proved: `None` (leaving at `miss`) unless `index` is
+/// the length and the room has a slot past it. The new element counts among the backing's
+/// others as `replace_element` counts one, and the backing's length advances; the new
+/// length is the answer. `index`, `length` and `capacity` share one width.
+#[inline(always)]
+pub(crate) fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, capacity: S::Word,
+    index: S::Word, value: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let past = stage.sub(index, length);
+    let at_end = stage.eq_imm(past, 0);
+    stage.guard(at_end, miss)?;
+    let room = stage.ult(length, capacity);
+    stage.guard(room, miss)?;
+    let offset = stage.uextend32(length);
+    let offset = stage.mul_imm(offset, std::mem::size_of::<crate::Value>() as u64);
+    let address = stage.add(values, offset);
+    let others = stage.load_u32(values, crate::heap::OTHERS_FROM_VALUES);
+    let (added, none) = (other(stage, value), stage.constant(0));
+    let others = recount(stage, others, added, none);
+    stage.store_u32(values, crate::heap::OTHERS_FROM_VALUES, others);
+    stage.store_u64(address, 0, value);
+    let grown = stage.add_imm(length, 1);
+    let word = stage.uextend32(grown);
+    stage.store_u32(values, crate::heap::LENGTH_FROM_VALUES, word);
+    Some(grown)
+}
+
 /// A backing's count of other values once a write added `added` and overwrote `removed`;
 /// `OTHERS_UNKNOWN` stays unknown. Subtracting first keeps an exact count from overflowing.
 #[inline(always)]
@@ -107,5 +134,40 @@ mod tests {
         assert_eq!(read(1), None, "a hole leaves");
         assert_eq!(read(2), Some(Value::UNDEFINED.to_bits()));
         assert_eq!(read(3), None, "past the backing leaves");
+    }
+
+    /// `append_element` on `Concrete` over `elements`' own backing, with its room.
+    fn append(elements: &mut crate::heap::UniqueElements, index: usize, value: Value) -> Option<u64> {
+        let (length, capacity) = (elements.len() as u64, elements.capacity() as u64);
+        let values = elements.as_mut_ptr() as u64;
+        append_element(&mut Concrete::new(std::ptr::null()), values, length, capacity, index as u64, value.to_bits(), ())
+    }
+
+    #[test]
+    fn an_append_writes_the_slot_past_the_length_within_room_and_counts_it() {
+        let mut backing = crate::heap::ArrayElements::from_slice(&[Value::integer(1), Value::number(0.5)]);
+        let elements = backing.make_mut();
+        elements.reserve(2);
+        let others = |elements: &mut crate::heap::UniqueElements| {
+            Concrete::new(std::ptr::null()).load_u32(elements.as_mut_ptr() as u64, crate::heap::OTHERS_FROM_VALUES)
+        };
+        assert_eq!(others(elements), 1);
+        assert_eq!(append(elements, 3, Value::integer(7)), None, "past the length leaves");
+        assert_eq!(append(elements, 1, Value::integer(7)), None, "below the length leaves");
+        assert_eq!(append(elements, 2, Value::integer(7)), Some(3));
+        assert_eq!(append(elements, 3, Value::number(2.5)), Some(4));
+        assert_eq!(elements.len(), 4);
+        assert_eq!(others(elements), 2, "the double counts, the int32 does not");
+        let read = |index| concrete_dense_element(elements, index).map(Value::to_bits);
+        assert_eq!(read(2), Some(Value::integer(7).to_bits()));
+        assert_eq!(read(3), Some(Value::number(2.5).to_bits()));
+        while elements.len() < elements.capacity() { elements.push(Value::integer(0)); }
+        let full = elements.len();
+        assert_eq!(append(elements, full, Value::integer(7)), None, "a full backing leaves");
+        crate::staged::Stage::store_u32(&mut Concrete::new(std::ptr::null()), elements.as_mut_ptr() as u64,
+            crate::heap::OTHERS_FROM_VALUES, u64::from(crate::heap::OTHERS_UNKNOWN));
+        elements.reserve(1);
+        assert_eq!(append(elements, full, Value::number(0.25)), Some(full as u64 + 1));
+        assert_eq!(others(elements), u64::from(crate::heap::OTHERS_UNKNOWN), "an unknown count stays unknown");
     }
 }

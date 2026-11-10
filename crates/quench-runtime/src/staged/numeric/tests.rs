@@ -216,3 +216,34 @@ fn staged_increments_are_int32_sums_with_one() {
     assert_eq!(concrete_increment(i32::MIN, true, Overflow::Widen),
         Some(NumberWord::Float(f64::from(i32::MIN) - 1.0)));
 }
+
+/// The remainder result, or `None` where the operation left at its miss edge.
+fn concrete_remainder(left: NumberWord, right: NumberWord, domain: Domain) -> Option<NumberWord> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = number_frame(left, right);
+    let operation = Operation::Number(NumberOperation::Remainder {
+        destination: 2, left: Operand::register(0), right: Operand::register(1), domain });
+    match step(&mut stage, &mut frame, operation) {
+        Step::Value(_) => Some(frame.values[2]),
+        Step::Unresolved => None,
+        Step::Control(_) => panic!("a remainder transfers no control"),
+    }
+}
+
+#[test]
+fn staged_int32_remainder_is_the_number_remainder_or_leaves() {
+    let edges = [7, -7, 0, 1, -1, 3, -3, i32::MAX, i32::MIN];
+    for left in edges {
+        for right in edges {
+            let number = f64::from(left) % f64::from(right);
+            let float = concrete_remainder(NumberWord::Int(left), NumberWord::Int(right), Domain::Float64);
+            assert_eq!(float.map(|word| match word { NumberWord::Float(value) => value.to_bits(), _ => 0 }),
+                Some(number.to_bits()), "{left} % {right} as binary64");
+            // An int32 result is exactly the Number's; NaN and `-0` are no int32 and leave.
+            let expected = (number.is_finite() && !(number == 0.0 && number.is_sign_negative()))
+                .then_some(NumberWord::Int(number as i32));
+            assert_eq!(concrete_remainder(NumberWord::Int(left), NumberWord::Int(right), Domain::Int32),
+                expected, "{left} % {right}");
+        }
+    }
+}

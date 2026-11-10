@@ -31,6 +31,7 @@ use cranelift_codegen::entity::EntityRef;
 mod packed_ranges;
 #[path = "lane_region/global_reads.rs"]
 mod global_reads;
+#[path = "lane_region/native_calls.rs"] mod native_calls;
 #[path = "lane_region/stable.rs"]
 mod stable;
 #[path = "lane_region/polls.rs"]
@@ -42,11 +43,15 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
 #[path = "lane_region/constructions.rs"] mod constructions;
 #[path = "lane_region/dense_elements.rs"] mod dense_elements;
+#[path = "lane_region/dense_appends.rs"] mod dense_appends;
 #[path = "lane_region/bindings.rs"] mod bindings;
 #[path = "lane_region/frame.rs"] mod frame;
 #[path = "lane_region/polymorphic_stores.rs"] mod polymorphic_stores;
 #[path = "lane_region/hoisted_reads.rs"] mod hoisted_reads;
 #[path = "lane_region/field_reads.rs"] mod field_reads;
+#[path = "lane_region/number_domains.rs"] mod number_domains;
+#[path = "lane_region/loop_arrays.rs"] mod loop_arrays;
+use loop_arrays::LoopArray;
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
 use polls::specialize_closed_polls;
@@ -287,17 +292,6 @@ struct InvariantRead {
     rooted: bool,
 }
 
-/// An array base a local loop indexes and never redefines: its loop's entry proves the
-/// array's view once, writable where the loop stores through it, and only the element
-/// store's general path, which may grow the backing, loads the view again.
-#[derive(Clone, Copy)]
-struct LoopArray {
-    header: usize,
-    back: usize,
-    register: Register,
-    writable: bool,
-}
-
 /// A hoisted view: its base, its elements' address and count, and in a typed region the
 /// array's `TypedArrayKind` discriminant.
 #[derive(Clone, Copy)]
@@ -307,6 +301,8 @@ struct ArrayVariables {
     /// The element count: a dense backing's `u32` as `i32`, a typed array's as `i64`.
     length: Variable,
     kind: Variable,
+    /// A dense array's room for appends (`dense_appends`) as `i32`: zero until a reserve proves it.
+    room: Variable,
 }
 
 /// The typed array kinds whose elements a loop reads and writes natively, with how a load
@@ -432,7 +428,6 @@ pub(super) struct LoweredRegion {
     pub(super) native: usize,
     pub(super) fault_poll: bool,
     /// Whether a loop of the region hoists an array view, so a typed variant may differ.
-    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     pub(super) hoists_arrays: bool,
     pub(super) stable: StableFacts,
 }
@@ -622,10 +617,11 @@ pub(super) enum Completion {
 /// Which arrays a region's loops index in place (`LoopArray`): dense arrays' elements, or
 /// typed arrays' (`Vm::lane_typed_array_elements`). A region assumes one, proved on each
 /// loop's entering edge, so no access chooses between them; a static image publishes a
-/// typed variant beside the dense one, which its dispatcher tries next at the header, and
-/// an OSR region takes the one its arrays held at the entry that compiled it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// typed variant beside the dense one, which its dispatcher tries next at the header, and a
+/// loop site compiles the one its entry found (`LoopTier::views`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(in crate::vm) enum ElementViews {
+    #[default]
     Dense,
     Typed,
 }
@@ -1060,30 +1056,6 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
     loops
 }
 
-fn loop_arrays(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> Vec<LoopArray> {
-    let mut arrays = Vec::new();
-    for &(header, back) in loops {
-        let body = &unit.instructions[header..=back];
-        let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
-        let first = arrays.len();
-        for instruction in body {
-            let (base, stores) = match instruction.op().class() {
-                Class::GetIndex => (instruction.operand_b().register_index(), false),
-                Class::SetIndex => (Some(instruction.register_b()), true),
-                _ => continue,
-            };
-            // The loop's sole entering edge proves the view of any base its body does not
-            // redefine, an inlined frame's argument as well as the caller's own register.
-            let Some(register) = base.filter(|register| !written.contains(register)) else { continue };
-            match arrays[first..].iter_mut().find(|array: &&mut LoopArray| array.register == register) {
-                Some(array) => array.writable |= stores,
-                None => arrays.push(LoopArray { header, back, register, writable: stores }),
-            }
-        }
-    }
-    arrays
-}
-
 fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> BTreeMap<usize, Vec<InvariantRead>> {
     let mut hoists = BTreeMap::new();
     let boundaries = leaders(&unit.instructions);
@@ -1321,7 +1293,6 @@ impl Specializer for RegionSpecializer<'_> {
 /// Lowers `unit` (`lane_unit::unit`) as a lane body, whose field cache sites `fields`
 /// gives the proved shapes and slots of; `None` where it does not lower.
 #[allow(clippy::too_many_arguments)]
-
 pub(super) fn lower_body(
     program: &ResidualProgram,
     function_id: u32,
@@ -1619,7 +1590,7 @@ pub(super) fn lower(
     lowering.require_object_latches(&instructions, &leaders, &loops);
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, &loops, &leaders)); }
     lowering.hoists = invariant_reads(program, unit, &loops);
-    lowering.loop_arrays = loop_arrays(unit, &loops);
+    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
         lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner), rooted: false });
@@ -2320,10 +2291,7 @@ impl Lowering<'_, '_> {
             if self.blocks[pc].is_some() { reachable = self.facts.at(pc).is_some(); }
             if !reachable { continue; }
             let owner = match instruction.op().class() {
-                // An array's `length` is its length word (`array_length`), read with no record.
-                Class::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Atom { atom, base, .. })
-                    if base != crate::bytecode::FieldBase::THIS && super::names_length(self.program, atom)) => None,
-                Class::GetField => {
+                Class::GetField if !super::reads_length(self.program, *instruction) => {
                     let base = self.field_base(pc, *instruction);
                     base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
                         else { base.register_index().map(usize::from) })
@@ -2558,14 +2526,14 @@ impl Lowering<'_, '_> {
                 let base = self.operand_tagged(state, instruction.operand_b());
                 let index = self.operand_int(state, instruction.operand_c(), exit);
                 base.zip(index).map(|(base, index)| {
-                    let value = match self.loop_array(pc, instruction.operand_b().register_index()) {
-                        Some(array) => self.loop_element_read(state, array, index, exit),
+                    match self.loop_array(pc, instruction.operand_b().register_index()) {
+                        Some(array) => self.loop_element_read(state, array, index, instruction.result_register(), exit),
                         None => {
                             let view = self.array_view(state, base, false, exit);
-                            self.dense_element(state, base, view, index, exit)
+                            let value = self.dense_element(state, base, view, index, exit);
+                            self.set_tagged(state, instruction.result_register(), value);
                         }
-                    };
-                    self.set_tagged(state, instruction.result_register(), value);
+                    }
                     true
                 })
             }
@@ -3208,13 +3176,12 @@ impl Lowering<'_, '_> {
             let base = self.registers_base;
             self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
         }
-        let completed = self.builder.create_block();
+        let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
         self.reentries.push(completed);
-        let generic = self.builder.create_block();
         match self.direct.get(&pc).copied().filter(|_| instruction.op().class().eq(Class::Call)) {
             // SAFETY: the body owns the callee for as long as its code runs.
             Some(callee) => self.direct_call(instruction, unsafe { &*callee }, generic, completed),
-            None => { self.ins().jump(generic, &[]); }
+            None => self.native_call(pc, instruction, generic, completed),
         }
         self.builder.switch_to_block(generic);
         let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
@@ -3837,6 +3804,8 @@ impl Lowering<'_, '_> {
                     if array.writable { super::emit_dense_array_uncounted(&mut self.builder, view); }
                     self.builder.def_var(variables.values, view.values);
                     self.builder.def_var(variables.length, view.length);
+                    let unproved = self.ins().iconst(types::I32, 0);
+                    self.builder.def_var(variables.room, unproved);
                 }
                 ElementViews::Typed => {
                     let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
@@ -3866,15 +3835,8 @@ impl Lowering<'_, '_> {
             values: builder.declare_var(types::I64),
             length: builder.declare_var(length),
             kind: builder.declare_var(types::I64),
+            room: builder.declare_var(types::I32),
         })
-    }
-
-    /// The hoisted array of `register` the innermost loop around `pc` proved, if any.
-    fn loop_array(&self, pc: usize, register: Option<Register>) -> Option<LoopArray> {
-        let register = register?;
-        self.loop_arrays.iter().copied()
-            .filter(|array| array.register == register && (array.header..=array.back).contains(&pc))
-            .min_by_key(|array| array.back - array.header)
     }
 
     /// The view of the dense array `base` holds, proved once until a storage change retires
@@ -3941,9 +3903,11 @@ impl Lowering<'_, '_> {
 
     /// After the element store's helper, which may grow any record array's backing, through
     /// whichever register names it: every dense view hoisted around `pc` reads its backing
-    /// again (`emit_dense_array_reload`). A typed region's views, which no such store moves, stay.
+    /// again (`emit_dense_array_reload`), and its append room is proved again
+    /// (`forget_append_rooms`). A typed region's views, which no such store moves, stay.
     fn reload_dense_arrays(&mut self, pc: usize) {
         if self.views != ElementViews::Dense { return; }
+        self.forget_append_rooms(pc);
         let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
             .filter(|array| (array.header..=array.back).contains(&pc)).collect();
         for array in arrays {
@@ -3971,13 +3935,15 @@ impl Lowering<'_, '_> {
         self.builder.use_var(variables.kind)
     }
 
-    /// Element `index` (an int32) of a hoisted array's view, tagged: a dense array's present
-    /// element, or a typed array's Number element. Any other element exits.
-    fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, exit: ir::Block) -> ir::Value {
+    /// Element `index` (an int32) of a hoisted array's view, into `destination`: a dense
+    /// array's present element, tagged, or a typed array's element, a Number. Any other
+    /// element exits.
+    fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, destination: Register, exit: ir::Block) {
         let (values, length) = self.hoisted_view(array);
         if self.views == ElementViews::Dense {
             let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable };
-            return super::emit_dense_element(&mut self.builder, view, index, exit).1;
+            let value = super::emit_dense_element(&mut self.builder, view, index, exit).1;
+            return self.set_tagged(state, destination, value);
         }
         let kind = self.hoisted_kind(array);
         let proof = super::EmitProof::TypedIndex { values, length, kind, absent: exit };
@@ -3986,7 +3952,7 @@ impl Lowering<'_, '_> {
             crate::staged::Step::Value(value) => value,
             _ => unreachable!("a typed element read yields a value or leaves at its miss edge"),
         };
-        super::emit_js_box_number(&mut self.builder, number)
+        self.set_number(state, destination, number);
     }
 
     /// A Number's store to a hoisted array's element `index` (an int32): a dense array's
@@ -4008,6 +3974,7 @@ impl Lowering<'_, '_> {
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);
             self.builder.seal_block(slow);
+            self.dense_append(array, pc, index, value, base, done);
             let proof = super::EmitProof::IndexSetHelper { miss: exit };
             self.step(state, frame::Edges::ValueGuarded { miss: exit },
                 crate::staged::Operation::IndexSetHelper { base, key, value, proof });
@@ -4839,9 +4806,10 @@ impl Lowering<'_, '_> {
     /// invalidation word again before it next holds a Stable fact.
     fn store_helper_unbound(&mut self, state: &mut State, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
         state.proofs.stable = false;
+        self.forget_append_rooms(self.at);
         let proof = super::EmitProof::FieldStoreMiss { miss: exit };
         self.step(state, frame::Edges::ValueGuarded { miss: exit },
-            crate::staged::Operation::FieldStoreMiss { object, atom: u32::from(atom), site, value, proof });
+            crate::staged::Operation::FieldStoreMiss { object, atom, site, value, proof });
     }
 
     /// `+source` or `-source` of a Number: the shared Number unary denotation, with the
@@ -4898,14 +4866,18 @@ impl Lowering<'_, '_> {
         let operator = instruction.binary_operator();
         let arithmetic = super::operations::NumberArithmetic::from_js_instruction(instruction.op(), operator);
         let bitwise = super::operations::NumberBitwise::from_js_instruction(instruction.op(), operator);
+        // `%` is the shared Number remainder; the opcode's denotation is the catalog's, so the
+        // meaning is not a second hand-written `Binary` arm.
+        let remainder = instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+            && operator == super::operations::REMAINDER;
         // Arithmetic takes Number constants; a relation decides its own (`relation`).
-        if (arithmetic.is_some() || bitwise.is_some()) && [left, right].iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
+        if (arithmetic.is_some() || bitwise.is_some() || remainder) && [left, right].iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
             && self.program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate).and_then(Value::as_number).is_none()) {
             return None;
         }
         let exit = self.guard_exit(state, pc as u32);
         if let Some(arithmetic) = arithmetic
-            && arithmetic.int32_projection_is_wrapping()
+            && arithmetic.int32_projection_is_wrapping() && !self.left_here
             && instruction.result_flags() == 0
             && let Some(next) = self.unit.instructions.get(pc + 1).copied()
             && next.result_flags() == 0
@@ -4927,16 +4899,8 @@ impl Lowering<'_, '_> {
             self.consumed.insert(pc + 1);
             return Some(true);
         }
-        // `%` is the shared Number remainder: both operands are Numbers, and the result
-        // keeps the sign of the dividend (`-0` included). The opcode's denotation is the
-        // catalog's, so the meaning is not a second hand-written `Binary` arm.
-        if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
-            && operator == super::operations::REMAINDER {
-            let left = self.operand_number(state, left, exit)?;
-            let right = self.operand_number(state, right, exit)?;
-            let value = super::emit_number_remainder(&mut self.builder, types::I64, left, right);
-            self.set_number(state, destination, value);
-            return Some(true);
+        if remainder {
+            return Some(self.remainder(state, destination, [left, right], exit));
         }
         match (arithmetic, bitwise) {
             (Some(arithmetic), _) => {
@@ -4945,16 +4909,11 @@ impl Lowering<'_, '_> {
                     Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
                         .and_then(super::facts::immediate).is_some_and(|value| !super::facts::is_int32(value)),
                     _ => false,
-                });
+                }) || self.left_here;
                 // Operands proved int32 stay int32, as C keeps them: an overflow, or a product's
                 // negative zero, is a value no int32 holds and leaves, rather than every result
                 // becoming a double that the next operation converts back.
-                let proved_int = [left, right].iter().all(|operand| match operand.kind() {
-                    Some(OperandKind::Register) => state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
-                    Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
-                        .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
-                    _ => false,
-                });
+                let proved_int = self.proved_int(state, [left, right]);
                 if arithmetic == super::operations::NumberArithmetic::Divide || float_operand {
                     let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
                         operation: arithmetic, domain: crate::staged::Domain::Float64,

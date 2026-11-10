@@ -257,7 +257,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 
     #[inline(always)]
-
     fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
         -> Option<(ir::Value, RegisterFact)> {
         let locals = self.native_locals(stage)?;

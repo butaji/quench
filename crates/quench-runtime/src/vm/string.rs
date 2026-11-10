@@ -521,21 +521,15 @@ impl<H: Host> Vm<H> {
                     native,
                     Native::StringToUpperCase | Native::StringToLocaleUpperCase
                 );
-                let units = receiver.units();
-                // ASCII maps ASCII without locale tailoring; an already-mapped string is its
-                // own result, as primitive strings have no identity.
+                // Without locale tailoring, only a capital sigma's lowercase needs the
+                // run-wise host mapping; an unchanged string is its own result.
                 if matches!(native, Native::StringToUpperCase | Native::StringToLowerCase)
-                    && let super::wtf16::Units::Ascii(bytes) = units
+                    && let Some(mapped) = receiver.default_case(upper)
                 {
-                    let mapped = |byte: &u8| {
-                        if upper { byte.to_ascii_uppercase() } else { byte.to_ascii_lowercase() }
-                    };
-                    if bytes.iter().all(|byte| mapped(byte) == *byte) {
-                        return Ok(this);
-                    }
-                    let bytes: Vec<u8> = bytes.iter().map(mapped).collect();
-                    let text = std::str::from_utf8(&bytes).expect("ASCII units are UTF-8");
-                    return Ok(self.heap.alloc_string(JsString::from_str(text)));
+                    return Ok(match mapped {
+                        std::borrow::Cow::Borrowed(_) => this,
+                        std::borrow::Cow::Owned(text) => self.heap.alloc_string(text),
+                    });
                 }
                 let text = if matches!(
                     native,
@@ -546,11 +540,9 @@ impl<H: Host> Vm<H> {
                         .into_iter()
                         .next()
                         .unwrap_or_else(|| "en-US".into());
-                    map_case(units, |text| quench_intl::locale_case(text, &locale, upper))
-                } else if upper {
-                    map_case(units, str::to_uppercase)
+                    map_case(receiver.units(), |text| quench_intl::locale_case(text, &locale, upper))
                 } else {
-                    map_case(units, str::to_lowercase)
+                    map_case(receiver.units(), str::to_lowercase)
                 };
                 Ok(self.heap.alloc_string(text))
             }
