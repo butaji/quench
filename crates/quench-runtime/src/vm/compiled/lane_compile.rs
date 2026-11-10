@@ -394,9 +394,16 @@ impl LaneMethod {
     /// callee was none of the alternatives it inlined is the leave of the caller's call that
     /// inlined its frame, which the next body then makes itself (`Vm::lane_bindings`), so its
     /// callees run in their own bodies instead of the whole caller's remainder in the lane.
-    pub(in crate::vm) fn feedback(&self, exit: LaneExit) -> LaneExit {
+    /// A leave at a construction inside an inlined frame is the same: a construction no plan
+    /// makes is generic only at a caller record (`Lowering::construct`), so the callee that
+    /// holds it keeps its own body.
+    pub(in crate::vm) fn feedback(&self, exit: LaneExit, program: &ResidualProgram) -> LaneExit {
         let LaneExit::Inlined { frame, pc } = exit else { return exit };
-        if !self.inlined.iter().any(|call| call.parent == Some(frame) && call.call == pc) {
+        let calls_here = self.inlined.iter().any(|call| call.parent == Some(frame) && call.call == pc);
+        let constructs_here = program.function_get(self.inlined[frame].target.function as usize)
+            .and_then(|body| body.instructions().nth(pc as usize))
+            .is_some_and(|instruction| instruction.op().class() == crate::bytecode::Class::Construct);
+        if !calls_here && !constructs_here {
             return exit;
         }
         let mut root = &self.inlined[frame];
