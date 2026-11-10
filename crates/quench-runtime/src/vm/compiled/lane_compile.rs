@@ -74,6 +74,13 @@ const LANE_SINGLE_PASS_MIN_INSTS: usize = 2048;
 const REPLAN_BUDGET_DIVISOR: usize = 2;
 
 /// The code of one lane body, compiled on the calling thread.
+/// The helpers a body of this process calls by address.
+fn process_helpers<H: Host>() -> LaneHelpers {
+    let helpers = LaneHelper::addresses::<H>();
+    crate::jit_coverage::note_native_helpers(helpers);
+    LaneHelpers::Process(helpers)
+}
+
 fn lane_code(function: ir::Function) -> LaneCode {
     let isa = if function.dfg.num_insts() >= LANE_SINGLE_PASS_MIN_INSTS {
         super::jit_backend::lane_body_isa()
@@ -84,47 +91,8 @@ fn lane_code(function: ir::Function) -> LaneCode {
     compile_native_function(function, &*isa, lane_region::LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
 }
 
-/// The unit PCs of a previous body's leaves: the specialization's feedback.
-fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<usize> {
-    generic.iter().filter_map(|exit| unit.origins.iter().position(|origin| match *exit {
-        LaneExit::At(pc) => *origin == lane_unit::Origin::Caller(pc as u32),
-        LaneExit::Inlined { frame, pc } => *origin == lane_unit::Origin::Inlined { frame, pc },
-        LaneExit::Callee | LaneExit::Returned { .. } | LaneExit::Terminated | LaneExit::Entry => false,
-    })).collect()
-}
-
-/// The calls a unit still makes (none it inlines) whose callees have bodies. Each candidate
-/// owns one contiguous stable slice, which the code names by address.
-fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[Option<DirectCallee>])
-    -> (Box<[DirectCallee]>, BTreeMap<usize, *const DirectCallee>) {
-    let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
-        .filter(|(_, instruction)| instruction.op().is_call())
-        .filter_map(|(pc, _)| match unit.origins[pc] {
-            lane_unit::Origin::Caller(origin) => direct.get(origin as usize)?.as_ref().cloned().map(|callee| (pc, callee)),
-            lane_unit::Origin::Inlined { .. } => None,
-        })
-        .unzip();
-    let direct: Box<[DirectCallee]> = direct.into_boxed_slice();
-    let sites = pcs.iter().zip(direct.iter()).map(|(pc, callee)| (*pc, std::ptr::from_ref(callee))).collect();
-    (direct, sites)
-}
-
-/// The unit PC a running loop enters at: its `header`'s own instruction; `Some(None)` for a
-/// body that starts at its first, `None` where the unit has no such instruction.
-fn entry_pc(unit: &lane_unit::Unit, header: Option<u32>) -> Option<Option<usize>> {
-    let Some(header) = header else { return Some(None) };
-    unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header)).map(Some)
-}
-
-/// Whether a function is pure numeric, observing neither closure environment nor identity.
-fn numeric_callee(program: &ResidualProgram, function: u32) -> bool {
-    program.function_get(function as usize).is_some_and(|body| body.plain_activation(program))
-        && numeric_restartable(program, function)
-}
-
-use super::super::dispatch_fast::lane_body_stats::{miss as plan_miss_count, Miss};
-
-fn plan_miss(reason: Miss) { plan_miss_count(reason); }
+use super::super::dispatch_fast::lane_body_stats::{miss as plan_miss, Miss};
+use lane_facts::{amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
 
 impl<H: Host> Vm<H> {
     /// The call targets a unit binds at `caller`'s `pc`. A call the body left at takes no
@@ -188,9 +156,7 @@ impl<H: Host> Vm<H> {
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
-        let helpers = LaneHelper::addresses::<H>();
-        crate::jit_coverage::note_native_helpers(helpers);
-        let helpers = LaneHelpers::Process(helpers);
+        let helpers = process_helpers::<H>();
         // The body folds Stable facts under its own invalidation word, which its publication
         // sets when one changes (`ProgramStore::publish_lane_method`).
         let invalidation = crate::code_dependencies::Invalidation::default();
@@ -231,24 +197,31 @@ impl<H: Host> Vm<H> {
         method
     }
 
+    /// Plans `function`'s lane body at `budget`, again with less inlined where its IR would make
+    /// more code than a body may take, before anything compiles: compiling it first costs all
+    /// of its compile.
+    #[allow(clippy::too_many_arguments)]
+    fn plan_lane_method_sized(&mut self, program: &ResidualProgram, function: u32,
+        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
+        direct: &[Option<DirectCallee>], generic: &[LaneExit], mut budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
+        loop {
+            self.host.before_native_compilation();
+            let planned = self.plan_lane_method(program, function, targets, captures, direct, generic, budget, entry);
+            self.host.after_native_compilation();
+            let (plan, native) = planned?;
+            let oversized = native.dfg.num_insts() * lane_region::LANE_BODY_CODE_BYTES_PER_IR > lane_region::LANE_BODY_MAX_CODE_BYTES;
+            if !oversized || plan.unit.frames.is_empty() || budget == 0 { return Some((plan, native)); }
+            budget /= REPLAN_BUDGET_DIVISOR;
+        }
+    }
+
     /// Plans `function`'s lane body at `budget` and starts compiling its code on the code
     /// generator's thread (`PendingLaneMethod`).
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &[Option<DirectCallee>], generic: &[LaneExit], budget: usize, entry: Option<u32>) -> Option<PendingLaneMethod> {
-        // A plan whose IR would make more code than a body may take is planned again with
-        // less inlined before anything compiles: compiling it first costs all of its compile.
-        let mut budget = budget;
-        let (plan, native) = loop {
-            self.host.before_native_compilation();
-            let planned = self.plan_lane_method(program, function, targets, captures, direct, generic, budget, entry);
-            self.host.after_native_compilation();
-            let (plan, native) = planned?;
-            let oversized = native.dfg.num_insts() * lane_region::LANE_BODY_CODE_BYTES_PER_IR > lane_region::LANE_BODY_MAX_CODE_BYTES;
-            if !oversized || plan.unit.frames.is_empty() || budget == 0 { break (plan, native); }
-            budget /= REPLAN_BUDGET_DIVISOR;
-        };
+        let (plan, native) = self.plan_lane_method_sized(program, function, targets, captures, direct, generic, budget, entry)?;
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
@@ -329,13 +302,6 @@ impl<H: Host> Vm<H> {
                 .map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published),
         })
     }
-}
-
-/// Whether a callee bound by its definition restarts its call on a leave, as a pure numeric
-/// function does.
-fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
-    program.function_get(function as usize).is_some_and(|body|
-        lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>()))
 }
 
 impl<H: Host> Vm<H> {
@@ -447,26 +413,6 @@ impl LaneMethod {
         while let Some(parent) = root.parent { root = &self.inlined[parent]; }
         LaneExit::At(root.call as usize)
     }
-}
-
-/// `targets`, each once, in first-seen order.
-fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
-    let mut kept = 0;
-    for index in 0..targets.len() {
-        let target = targets[index];
-        if !targets[..kept].contains(&target) { targets[kept] = target; kept += 1; }
-    }
-    targets.truncate(kept);
-    targets
-}
-
-/// Whether a body has work that amortizes an entry, which costs a few hundred instructions
-/// the lane's own run of a short leaf never pays: a loop, an inlined call, or length
-/// (`TIERS.lane_body.min_instructions`).
-fn amortizes_entry(unit: &lane_unit::Unit) -> bool {
-    let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
-        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || !unit.frames.is_empty() || unit.instructions.len() >= TIERS.lane_body.min_instructions
 }
 
 /// What a lane body's code relies on beyond its guards, its direct callees' included, once
