@@ -743,8 +743,8 @@ pub(crate) enum Semantics {
 
 
 #[macro_use]
-mod op_catalog; mod denotation;
-pub(crate) use op_catalog::{Class, JsDenotation, Traits};
+mod op_catalog; mod denotation; mod opcode_table;
+pub(crate) use op_catalog::{Class, JsDenotation, Traits, OPCODE_COUNT, opcode_name};
 
 macro_rules! opcodes {
     ($d:tt; $($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? $(; semantics $semantics:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {

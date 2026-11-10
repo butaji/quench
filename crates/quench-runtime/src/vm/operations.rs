@@ -144,7 +144,7 @@ macro_rules! number_arithmetic {
             /// specialized bytecodes are accepted only for their corresponding
             /// operator, as recorded in this table.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                if instruction == Op::Binary {
+                if instruction.is_binary() {
                     return Self::from_operator(operator);
                 }
                 $(number_arithmetic!(
@@ -172,7 +172,7 @@ macro_rules! number_arithmetic {
         None
     ) => {};
     (@specialized_instruction $instruction:ident, $operator:ident, $operation:expr, $operator_name:ident, $specialized_instruction:ident) => {
-        if $instruction == Op::$specialized_instruction
+        if $instruction.class().eq(crate::bytecode::Class::$specialized_instruction)
             && $operator == BinaryOperator::$operator_name as u32
         {
             return Some($operation);
@@ -246,7 +246,7 @@ macro_rules! number_unary {
             /// The side-effect-free Number unary operation denoted by JavaScript bytecode.
             /// Other unary operators still require their normal coercion and effect paths.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                (instruction == Op::Unary)
+                (instruction.is_unary())
                     .then(|| Self::from_operator(operator))
                     .flatten()
             }
@@ -335,7 +335,7 @@ macro_rules! number_bitwise {
             /// for the general `Binary` instruction; entry guards are checked
             /// separately by the caller.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                (instruction == Op::Binary)
+                (instruction.is_binary())
                     .then(|| Self::from_operator(operator))
                     .flatten()
             }

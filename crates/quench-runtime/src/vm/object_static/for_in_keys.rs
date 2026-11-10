@@ -1,5 +1,5 @@
 //! for-in's key walk: the key snapshot a loop takes (`Vm::for_in_start`), the state
-//! `Op::ForInNext` steps through it (`Vm::for_in_next`), and the shape memo that lets a step
+//! `ForInNext` steps through it (`Vm::for_in_next`), and the shape memo that lets a step
 //! skip its key's lookup (`ForInOwnKeys`).
 
 use super::*;
@@ -57,7 +57,7 @@ const KEYS: usize = 1;
 const CURSOR: usize = 2;
 
 impl<H: Host> Vm<H> {
-    /// The state a for-in over `source` steps (`Op::ForInNext`): its object and key snapshot,
+    /// The state a for-in over `source` steps (`ForInNext`): its object and key snapshot,
     /// at the first key. `null` and `undefined` list no key.
     pub(in crate::vm) fn for_in_start(&mut self, p: &ResidualProgram, source: Value) -> Result<Value, JsError> {
         if source.is_null() || source.is_undefined() {

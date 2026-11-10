@@ -194,7 +194,7 @@ impl LoopRegion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RegionRejection {
     RegionTooLarge,
-    UnsupportedInstruction(Op),
+    UnsupportedInstruction(u16),
     RegisterLimit,
     CaptureLimit,
     ArrayLimit,
@@ -216,7 +216,7 @@ pub(crate) struct RegionAnalysisFailure {
 
 impl RegionAnalysisFailure {
     /// The region stops only at a call, which may run inlined once the site is hot.
-    pub(crate) fn is_call_boundary(self) -> bool { self.reason == RegionRejection::UnsupportedInstruction(Op::Call) }
+    pub(crate) fn is_call_boundary(self) -> bool { self.reason == RegionRejection::UnsupportedInstruction(crate::bytecode::index::Call) }
 
     fn at(reason: RegionRejection, header: u32, offset: usize) -> Self {
         Self { reason, pc: header.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX)) }
@@ -1685,7 +1685,7 @@ fn admit_region(
     objects: &std::collections::BTreeSet<Register>,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     if let Err(offset) = iteration::iterates_natively(&instructions, header) {
-        return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op()), header, offset));
+        return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }
     match admit_register_roles(
         instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects,
@@ -1956,7 +1956,7 @@ fn admit_register_roles(
                 }
             }
             return Err(RegionAnalysisFailure::at(
-                RegionRejection::UnsupportedInstruction(instructions[failure_offset].op()),
+                RegionRejection::UnsupportedInstruction(instructions[failure_offset].op() as u16),
                 header,
                 failure_offset,
             ));
@@ -1997,7 +1997,7 @@ fn admit_register_roles(
         if instruction.op().is_get_field() {
             let path = field_path(instruction, sites, &rooted).ok_or_else(|| {
                 RegionAnalysisFailure::at(
-                    RegionRejection::UnsupportedInstruction(Op::GetField),
+                    RegionRejection::UnsupportedInstruction(crate::bytecode::index::GetField),
                     header,
                     offset,
                 )
@@ -2025,7 +2025,7 @@ fn admit_register_roles(
         if admitted_store(instruction.op()) {
             if instruction.result_flags() != 0 || instruction.returns_from_frame() {
                 return Err(RegionAnalysisFailure::at(
-                    RegionRejection::UnsupportedInstruction(instruction.op()),
+                    RegionRejection::UnsupportedInstruction(instruction.op() as u16),
                     header,
                     offset,
                 ));
@@ -2085,7 +2085,7 @@ fn admit_register_roles(
                 .is_some_and(|definition| definition.op().is_get_field())
             {
                 return Err(RegionAnalysisFailure::at(
-                    RegionRejection::UnsupportedInstruction(instruction.op()),
+                    RegionRejection::UnsupportedInstruction(instruction.op() as u16),
                     header,
                     offset,
                 ));
@@ -2113,7 +2113,7 @@ fn admit_register_roles(
                 );
             }
             return Err(RegionAnalysisFailure::at(
-                RegionRejection::UnsupportedInstruction(instruction.op()),
+                RegionRejection::UnsupportedInstruction(instruction.op() as u16),
                 header,
                 offset,
             ));
@@ -2554,7 +2554,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
         && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand|
             operand.kind() == Some(OperandKind::Constant) && region.constants.contains_key(&usize::from(operand.payload())));
-    let expected = if matches!(instruction.op(), Op::Move | Op::JumpFalse | Op::JumpTrue)
+    let expected = if matches!(instruction.op().class(), Class::Move | Class::JumpFalse | Class::JumpTrue)
         || region.identity_branches.contains_key(&pc) || strict_number_test {
         Type::ANY
     } else {
