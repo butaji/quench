@@ -297,6 +297,28 @@ fn a_hot_loop_that_leaves_at_calls_specializes_its_function_before_the_entry_war
     assert!(!matches!(view.lane_body_state(), "unspecialized" | "compiling"), "eight entries settle the driver's body");
 }
 
+/// A body its caller's body calls by its entry leaves at its own native calls (a string
+/// method, a Map read, a Math function) and gives the interpreter's values, a non-string
+/// receiver included.
+#[test]
+fn a_directly_called_body_with_native_calls_matches_the_interpreter() {
+    let source = r#"
+      const seen = new Map([[3, 30], [5, 50]]);
+      function weigh(text, i) {
+        let weight = 0;
+        for (let k = 0; k < 3; k++) weight += text.charCodeAt((i + k) % text.length) + (seen.get(k + i % 4) || 0);
+        return weight + Math.hypot(i & 3, 4);
+      }
+      function total(text, n) { let sum = 0; for (let i = 0; i < n; i++) sum += weigh(text, i); return sum; }
+      let result = 0;
+      for (let repeat = 0; repeat < 700; repeat++) result += total("quench-lane", 24);
+      print(result + " " + total({ length: 2, charCodeAt: (i) => i * 7 }, 9));
+    "#;
+    let interpreted = printed(source, "lane-direct-natives.js", crate::ExecutionMode::Interpreted, false);
+    assert_eq!(interpreted.len(), 1);
+    assert_eq!(printed(source, "lane-direct-natives.js", crate::ExecutionMode::Compiled, true), interpreted);
+}
+
 /// What `source`, wrapped in a function, prints when run in `mode`, with lane bodies where
 /// `lane_methods`.
 fn printed(source: &str, name: &str, mode: crate::ExecutionMode, lane_methods: bool) -> Vec<String> {

@@ -345,6 +345,9 @@ pub(super) struct LaneView {
     /// direct callers that name them still run until they retire with them at a shape
     /// compaction.
     retired: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::PublishedLaneMethod>>>,
+    /// The views whose bodies compiled a call of this function (`LaneView::note_caller`):
+    /// they specialize again when its body publishes, to call it by its entry.
+    callers: std::cell::RefCell<Vec<*const LaneView>>,
     /// Per record, the register whose value it reads as the carried accumulator
     /// (`NO_ACCUMULATOR` where it reads none): a lane body that leaves at it resumes
     /// with that register carried, as falling through from its producer would.
@@ -814,9 +817,11 @@ enum LaneBody {
     /// `stuck`, at those few leaves only.
     Unspecialized { entries: u16, recompiles: u8, stuck: LaneLeaves },
     /// Its body's code compiling on the code generator's thread; the function runs in the
-    /// lane meanwhile, and every `TIERS.lane_body.compile_poll_interval`th entry looks for
-    /// the code (`Vm::lane_body_work`); `wait` counts the entries left before the next look.
-    Compiling { pending: Box<super::compiled::PendingLaneMethod>, wait: std::cell::Cell<u16>, recompiles: u8, stuck: LaneLeaves },
+    /// lane meanwhile, and looks for the code (`Vm::lane_body_work`) at entries spaced twice
+    /// as far apart after each of its `looks`, up to `TIERS.lane_body.compile_poll_interval`:
+    /// a function entered seldom (a hot loop's) finds its code at its next entries, and a hot
+    /// one pays few looks. `wait` counts the entries left before the next.
+    Compiling { pending: Box<super::compiled::PendingLaneMethod>, wait: std::cell::Cell<u16>, looks: u8, recompiles: u8, stuck: LaneLeaves },
     /// The body its prologue record enters directly (`lane_body_entry`); `tier_prologue` is
     /// the handler that record had, which it takes back when the body retires. Its
     /// publication may retire at a lifecycle edge (`ProgramStore::retire_dead_native_calls`),
@@ -8111,11 +8116,14 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     }
     // A hot loop no region runs makes its function worth a body past the entry warm-up: its
     // calls have run, so their sites have linked, and its next entry runs the loop natively.
+    // The site stays, and asks again a threshold of jumps on, while that body warms: the
+    // function's entries may be too few to wait for its callees' bodies or look for its code.
     // SAFETY: the program's views outlive the lane run.
     if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)
     {
         lane_specialize(cx, own, site.function, true);
+        if own.warming() { return site.taken.set(0); }
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
@@ -14869,7 +14877,7 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
             let instruction = decoded_instruction(body, *packed);
             (instruction.op().is_call() && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
             (!(tail_calls && instruction.returns_from_frame())).then_some(())?;
-            let target = lane_body_tier::site_target(vm, view, pc)?;
+            let target = lane_body_tier::compiled_site_target(vm, view, pc)?;
             let sloppy = match target.this_binding {
                 ThisBinding::Sloppy => Some(vm.realm.globals),
                 ThisBinding::Strict => None,
@@ -19528,7 +19536,7 @@ fn derive_lane_view<'live, H: Host>(
         }),
         tier_direct: std::cell::Cell::new(None),
         tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }), history: Default::default(),
-        retired: std::cell::RefCell::default(),
+        retired: std::cell::RefCell::default(), callers: std::cell::RefCell::default(),
         body_stats: LaneBodyStats::default(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
         plain_backward_jump_sites: decoded
