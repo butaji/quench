@@ -2123,7 +2123,9 @@ impl Function {
             || self.inherited_with_scope
             || !self.binding_sites.is_empty()
             || self.instructions().any(|instruction| {
-                instruction.op().loads_name() && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
+                // A store by name reads its binding as a load does: the lane stores a global the
+                // global object answers (`lane_store_name_first`) and leaves any other.
+                (instruction.op().loads_name() || instruction.op().stores_name()) && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
                     tables
                         .atom_name(atom)
                         .is_none_or(|name| name.starts_with('\0') && !is_intrinsic_name(name))
@@ -2133,7 +2135,6 @@ impl Function {
                         Op::ResolveName
                             | Op::LoadResolvedName
                             | Op::DeleteName
-                            | Op::StoreName
                             | Op::StoreResolvedName
                             | Op::StoreVarBinding
                             | Op::InitializeThis

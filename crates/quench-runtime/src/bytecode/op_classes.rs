@@ -68,7 +68,6 @@ impl Op {
     }
 
     /// A store to a binding by name.
-    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     pub(crate) const fn stores_name(self) -> bool {
         matches!(self, Op::StoreName)
     }
