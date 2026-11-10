@@ -26,3 +26,7 @@ impl<H: Host> Vm<H> {
         Ok(self.new_array(vec![matched; count]))
     }
 }
+
+#[cfg(test)]
+#[path = "literal_matches_tests.rs"]
+mod tests;

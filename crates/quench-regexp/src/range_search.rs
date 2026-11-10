@@ -97,3 +97,7 @@ impl RangeSearcher<'_> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "range_search_tests.rs"]
+mod range_search_tests;

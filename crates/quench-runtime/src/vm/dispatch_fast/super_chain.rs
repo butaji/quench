@@ -148,3 +148,7 @@ pub(super) fn lane_super_construction<H: Host>(
         this
     })
 }
+
+#[cfg(test)]
+#[path = "../super_chain_tests.rs"]
+mod tests;
