@@ -147,6 +147,7 @@ impl Lowering<'_, '_> {
             Class::LoadName | Class::LoadNameCall => self.global_reads.contains_key(&pc),
             Class::GetField => !instruction.writes_current_this(),
             Class::GetIndex => true,
+            Class::Call => self.intrinsics.get(pc).is_some_and(Option::is_some),
             _ if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary => true,
             _ => reads_only(&self.program.constants, instruction),
         }

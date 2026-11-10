@@ -515,6 +515,8 @@ struct Lowering<'a, 'f> {
     /// on the loop's one entry edge; each read's PC names the value it made there and
     /// whether its int tag was tested.
     hoists: BTreeMap<usize, Vec<InvariantRead>>,
+    /// The calls that run inline as Math operations (`native_calls::intrinsic_calls`).
+    intrinsics: native_calls::Intrinsics,
     hoisted: BTreeMap<usize, LoopRead>,
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
@@ -1042,8 +1044,8 @@ fn retains_array_views(constants: &[crate::bytecode::Constant], instruction: Wid
 /// Loops with one external entry and no interior entry, whose native operations
 /// only read or replace existing own fields and array elements. Misses leave before guest effects.
 /// A sole native entry at the header can supply the same entry proofs.
-fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Constant], start: usize)
-    -> Vec<(usize, usize)> {
+fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Constant], start: usize,
+    intrinsics: &native_calls::Intrinsics) -> Vec<(usize, usize)> {
     let instructions = &unit.instructions;
     let target = |instruction: &WideInstruction| instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize);
     let falls = |instruction: &WideInstruction| instruction.op().control_flow_layout().falls_through();
@@ -1058,8 +1060,8 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
         if (entries != 1 && !entry_header) || side
             || (header + 1..=back).contains(&start)
-            || !body.iter().all(|candidate| reads_only(constants, *candidate) || stores_own(*candidate)
-                || stores_element(*candidate)) { continue }
+            || !body.iter().enumerate().all(|(offset, candidate)| reads_only(constants, *candidate) || stores_own(*candidate)
+                || stores_element(*candidate) || intrinsics[header + offset].is_some()) { continue }
         loops.push((header, back));
     }
     loops
@@ -1484,6 +1486,7 @@ pub(super) fn lower(
         completion,
         number_returns: smallvec::SmallVec::new(),
         hoists: BTreeMap::new(),
+        intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
         loop_arrays: Vec::new(),
         array_vars: BTreeMap::new(),
@@ -1550,7 +1553,8 @@ pub(super) fn lower(
         field.own_direct().then_some((base.register_index()?, field.shape))
     };
     lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[]);
-    let loops = local_loops(unit, &program.constants, entry_pc);
+    lowering.intrinsics = native_calls::intrinsic_calls(unit, global_reads, |pc| direct.contains_key(&pc));
+    let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics);
     // One entry query of the call depth replaces each binding's helper with its cached
     // target probe (`cached_call_target`). A completed call leaves the depth it found.
     if !numeric && unit.frames.iter().any(|frame| frame.target.callee == CalleeBinding::Function) {
@@ -2440,7 +2444,7 @@ impl Lowering<'_, '_> {
             Class::Call if self.completion == Completion::StatusAndPc
                 && (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
-                && !instruction.parameter_eval() => Some(self.call(state, pc, instruction, LaneHelper::Call)),
+                && !instruction.parameter_eval() => Some(self.intrinsic_call(state, pc, instruction) || self.call(state, pc, instruction, LaneHelper::Call)),
             // ToNumeric of a Number is the Number: a typed operand is copied with its facts,
             // and an untyped one is taken for an int, tested once, which leaves where it is not.
             Class::ToNumeric if plain && instruction.register_b() < self.unit.registers => {
@@ -3191,7 +3195,7 @@ impl Lowering<'_, '_> {
         match self.direct.get(&pc).copied().filter(|_| instruction.op().class().eq(Class::Call)) {
             // SAFETY: the body owns the callee for as long as its code runs.
             Some(callee) => self.direct_call(instruction, unsafe { &*callee }, generic, completed),
-            None => self.native_call(pc, instruction, generic, completed),
+            None => { self.ins().jump(generic, &[]); }
         }
         self.builder.switch_to_block(generic);
         let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
@@ -5163,7 +5167,7 @@ mod tests {
             let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
                 instruction.op().control_flow_layout().jumps()
                     .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
-            let loops = local_loops(&unit, &program.constants, header);
+            let loops = local_loops(&unit, &program.constants, header, &vec![None; unit.instructions.len()]);
             let reads = invariant_reads(&program, &unit, &loops);
             let captures: Vec<_> = reads.values().flatten().map(|read| read.pc).filter(|&pc|
                 unit.instructions[pc].op().is_load_capture()
@@ -5360,7 +5364,7 @@ mod tests {
                     .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
                     .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "exercise an actual inline marker: {name}");
-            let loops = local_loops(&unit, &program.constants, 0);
+            let loops = local_loops(&unit, &program.constants, 0, &vec![None; unit.instructions.len()]);
             assert!(!loops.is_empty(), "exercise an eligible loop: {name}");
             let reads = invariant_reads(&program, &unit, &loops);
             assert!(!reads.values().flatten().any(|read|
