@@ -14,7 +14,7 @@ const MMAP_THRESHOLD_BYTES: libc::c_int = 1 << 20;
 
 /// The glibc tunable that, when set, already fixes the threshold.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-const MMAP_THRESHOLD_VARIABLE: &str = "MALLOC_MMAP_THRESHOLD_";
+pub(crate) const MMAP_THRESHOLD_VARIABLE: &str = "MALLOC_MMAP_THRESHOLD_";
 
 /// Runs from `.init_array`, before the Rust runtime and `main`: from here on a fault on the
 /// read-only file mappings maps only the touched page, and the pages the C runtime's start
