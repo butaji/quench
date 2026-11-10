@@ -494,9 +494,9 @@ pub(crate) fn parse(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<R
                 }
                 key.extend_from_slice(&plus);
                 last = index + 1;
-                index += 1;
-                continue;
             }
+            index += 1;
+            continue; // A key's characters leave the value's encoding check alone (Node 26).
         }
         if unit == PLUS {
             if last < index {

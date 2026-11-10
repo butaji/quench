@@ -357,6 +357,9 @@ pub(super) struct LaneView {
     /// direct callers that name them still run until they retire with them at a shape
     /// compaction.
     retired: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::PublishedLaneMethod>>>,
+    /// The views whose bodies compiled a call of this function (`LaneView::note_caller`):
+    /// they specialize again when its body publishes, to call it by its entry.
+    callers: std::cell::RefCell<Vec<*const LaneView>>,
     /// Per record, the register whose value it reads as the carried accumulator
     /// (`NO_ACCUMULATOR` where it reads none): a lane body that leaves at it resumes
     /// with that register carried, as falling through from its producer would.
@@ -827,9 +830,11 @@ enum LaneBody {
     /// `stuck`, at those few leaves only.
     Unspecialized { entries: u16, recompiles: u8, stuck: LaneLeaves },
     /// Its body's code compiling on the code generator's thread; the function runs in the
-    /// lane meanwhile, and every `TIERS.lane_body.compile_poll_interval`th entry looks for
-    /// the code (`Vm::lane_body_work`); `wait` counts the entries left before the next look.
-    Compiling { pending: Box<super::compiled::PendingLaneMethod>, wait: std::cell::Cell<u16>, recompiles: u8, stuck: LaneLeaves },
+    /// lane meanwhile, and looks for the code (`Vm::lane_body_work`) at entries spaced twice
+    /// as far apart after each of its `looks`, up to `TIERS.lane_body.compile_poll_interval`:
+    /// a function entered seldom (a hot loop's) finds its code at its next entries, and a hot
+    /// one pays few looks. `wait` counts the entries left before the next.
+    Compiling { pending: Box<super::compiled::PendingLaneMethod>, wait: std::cell::Cell<u16>, looks: u8, recompiles: u8, stuck: LaneLeaves },
     /// The body its prologue record enters directly (`lane_body_entry`); `tier_prologue` is
     /// the handler that record had, which it takes back when the body retires. Its
     /// publication may retire at a lifecycle edge (`ProgramStore::retire_dead_native_calls`),
@@ -1021,12 +1026,12 @@ impl LaneView {
     }
 
     /// Whether a call's resolution claims the prologue for the lane tier: while its body warms
+    /// (a hot loop may start its compile before any call resolves it, `lane_loop_retire`)
     /// and nothing claimed it yet. A specialized body's prologue already enters it, and any
     /// other body (declined, retired, or serving native callers only) runs its function in
     /// the lane; claiming again would take the prologue back to `lane_tier_prologue`.
     fn lane_tier_unclaimed(&self) -> bool {
-        // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { .. }) && self.start.get() != self.prologue.get().cast_const()
+        self.warming() && self.start.get() != self.prologue.get().cast_const()
     }
 
     /// Starts activations at the first record again, once the tier declines the function.
@@ -8102,14 +8107,10 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     let specialize = |work: super::compiled::LaneBodyWork| {
-        // Entry warm-up leaves closed loops to their admitted regions while those may run
-        // natively. A region that leaves for calls still lets a lane body inline those
-        // callees into its typed unit.
         if matches!(work, super::compiled::LaneBodyWork::Start { .. })
-            && own.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some()
-                && site.may_run_natively(vm.heap.memory_policy()))
+            && let Some(outcome) = lane_body_tier::start_gate(vm, own, code.function_get(function as usize))
         {
-            return super::compiled::LaneBodyOutcome::Declined;
+            return outcome;
         }
         let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
         let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), &direct, work, None);
@@ -8134,6 +8135,17 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     if unsafe { vm(cx) }.programs.js_jit_general_dispatch_enabled() {
         return;
+    }
+    // A hot loop no region runs makes its function worth a body past the entry warm-up: its
+    // calls have run, so their sites have linked, and its next entry runs the loop natively.
+    // The site stays, and asks again a threshold of jumps on, while that body warms: the
+    // function's entries may be too few to wait for its callees' bodies or look for its code.
+    // SAFETY: the program's views outlive the lane run.
+    if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
+        && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)
+    {
+        lane_specialize(cx, own, site.function, true);
+        if own.warming() { return site.taken.set(0); }
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
@@ -14913,9 +14925,7 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
             let instruction = decoded_instruction(body, *packed);
             (instruction.op().is_call() && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
             (!(tail_calls && instruction.returns_from_frame())).then_some(())?;
-            // SAFETY: the view holds a record per PC; reading its link changes nothing.
-            let record = unsafe { &*view.records.get(pc)?.get() };
-            let target = *vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get()))?;
+            let target = lane_body_tier::compiled_site_target(vm, view, pc)?;
             let sloppy = match target.this_binding {
                 ThisBinding::Sloppy => Some(vm.realm.globals),
                 ThisBinding::Strict => None,
@@ -19634,7 +19644,7 @@ fn derive_lane_view<'live, H: Host>(
         }),
         tier_direct: std::cell::Cell::new(None),
         tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }), history: Default::default(), warm_since: std::cell::Cell::new(0),
-        retired: std::cell::RefCell::default(),
+        retired: std::cell::RefCell::default(), callers: std::cell::RefCell::default(),
         body_stats: LaneBodyStats::default(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
         plain_backward_jump_sites: decoded
@@ -19754,7 +19764,7 @@ fn install_loop_sites<'live, H: Host>(
                         }
                     }
                     // A loop the region analysis rejects keeps its site, diagnostics or not: its
-                    // function's lane body may run it (`lane_loop_body_or_retire`), and the
+                    // function's lane body may run it (`lane_loop_retire`), and the
                     // site retires to the plain jump where none does. A diagnostics run tiers
                     // as any other.
                     if !general_dispatch {

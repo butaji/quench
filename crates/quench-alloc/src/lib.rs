@@ -27,6 +27,7 @@
 //! the next new thread adopts it. Allocation on a thread whose heap is already gone (late
 //! thread-exit destructors) uses one shared heap behind a lock.
 
+mod large;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, UnsafeCell};
 use std::ptr;
@@ -358,6 +359,7 @@ fn take_chunk() -> Option<usize> {
 /// a steady cycle's pages stay resident for the next, and what a burst left beyond them goes.
 /// Returned pages come back zeroed when next used, before any untouched page of the chunk.
 pub fn release_empty_pages() {
+    large::age();
     let heap = thread_heap();
     if !heap.is_null() {
         // SAFETY: the calling thread owns its heap.
@@ -375,6 +377,7 @@ pub fn owns(block: *const u8) -> bool {
 
 /// The allocator. One instance serves a process as `#[global_allocator]`; its state lives in
 /// per-thread heaps, so every instance shares it.
+#[derive(Default)]
 pub struct QuenchAlloc;
 
 impl QuenchAlloc {
@@ -407,13 +410,7 @@ impl QuenchAlloc {
             }
         }
         // SAFETY: forwarded unchanged.
-        unsafe { System.alloc(layout) }
-    }
-}
-
-impl Default for QuenchAlloc {
-    fn default() -> Self {
-        Self::new()
+        unsafe { large::alloc(layout) }
     }
 }
 
@@ -753,7 +750,7 @@ unsafe impl GlobalAlloc for QuenchAlloc {
             return;
         }
         // SAFETY: any other block came from the system allocator.
-        unsafe { System.dealloc(block, layout) }
+        unsafe { large::free(block, layout) }
     }
 
     #[inline]

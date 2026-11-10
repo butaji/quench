@@ -1,9 +1,10 @@
 //! Node-compatible terminal escape stripping.
 use std::sync::LazyLock;
 
-// Node's internal/util/inspect ANSI pattern, based on ansi-regex (MIT,
-// Sindre Sorhus). ASCII digit classes preserve JavaScript RegExp semantics.
-const ANSI_PATTERN: &str = r"[\x1B\u{009B}][\[\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z0-9/#&.:=?%@~_]+)*|[a-zA-Z0-9]+(?:;[-a-zA-Z0-9/#&.:=?%@~_]*)*)?(?:\x07|\x1B\\|\u{009C}))|(?:(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-PR-TZcf-nq-uy=><~]))";
+// Node 26's internal/util/inspect ANSI pattern, based on ansi-regex (MIT, Sindre Sorhus):
+// a terminated OSC sequence whole, else a CSI one. ASCII digit classes preserve JavaScript
+// RegExp semantics.
+const ANSI_PATTERN: &str = r"(?:\x1B\][\s\S]*?(?:\x07|\x1B\\|\u{009C}))|[\x1B\u{009B}][\[\]()#;?]*(?:[0-9]{1,4}(?:[;:][0-9]{0,4})*)?[0-9A-PR-TZcf-nq-uy=><~]";
 static ANSI: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(ANSI_PATTERN).expect("constant ANSI pattern"));
 

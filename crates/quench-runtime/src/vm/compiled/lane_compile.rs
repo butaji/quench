@@ -14,7 +14,8 @@ pub(super) struct LanePlan {
     lowered: lane_region::LoweredLane,
     fields: BTreeMap<u16, Vec<NativeFieldLoad>>,
     direct: Box<[DirectCallee]>,
-    direct_sites: BTreeMap<usize, *const DirectCallee>,
+    /// Whether every call of it that has run is inlined or direct (`LaneMethod::closed`).
+    closed: bool,
     function: u32,
     /// The word its publication sets when one of its Stable facts changes.
     invalidation: crate::code_dependencies::Invalidation,
@@ -66,7 +67,8 @@ pub(in crate::vm) enum LaneBodyOutcome {
     Published(Rc<PublishedLaneMethod>),
     /// A collection ran while its code compiled: its proofs no longer hold, and it warms again.
     Stale,
-    /// Its function has not run long enough to pay for the compile: it counts on.
+    /// Its function has not run long enough to pay for the compile, or callees it would call
+    /// directly still warm toward their bodies: it counts on.
     Deferred,
     Declined,
 }
@@ -99,6 +101,19 @@ fn left_places(unit: &lane_unit::Unit, generic: &[LaneExit], first: usize) -> (V
     let entry_left = left_at.contains(&first) || generic.contains(&LaneExit::Entry);
     left_at.retain(|pc| *pc != first);
     (left_at, entry_left)
+}
+
+/// Whether every call of a unit that has run is direct (`LaneMethod::closed`). A call that
+/// recorded no callee has not run; where it first does it leaves, as any helper call does
+/// under a direct caller's frames.
+fn unit_closed(unit: &lane_unit::Unit, function: u32, direct: &BTreeMap<usize, *const DirectCallee>,
+    targets: &dyn Fn(u32, u32) -> Vec<CallTarget>) -> bool {
+    unit.instructions.iter().enumerate().all(|(pc, instruction)| !instruction.op().is_call()
+        || direct.contains_key(&pc)
+        || match unit.origins[pc] {
+            lane_unit::Origin::Caller(origin) => targets(function, origin),
+            lane_unit::Origin::Inlined { frame, pc } => targets(unit.frames[frame].target.function, pc),
+        }.is_empty())
 }
 
 impl<H: Host> Vm<H> {
@@ -156,6 +171,7 @@ impl<H: Host> Vm<H> {
         if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| fields.get(&site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at); }
         let global_reads = self.lane_global_reads(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
+        let closed = unit_closed(&unit, function, &direct_sites, targets);
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
         let helpers = process_helpers::<H>();
@@ -173,7 +189,7 @@ impl<H: Host> Vm<H> {
             &leaves, &direct_sites, &frame_captures, entry).or_else(|| { plan_miss(Miss::PlanNotLowered); None })?;
         if lowered.region.native == 0 { plan_miss(Miss::PlanNothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
-        Some((LanePlan { unit, lowered, fields, direct, direct_sites, function, invalidation, budget }, native))
+        Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation, budget }, native))
     }
 
     /// Specialize `function` for lane activations, admitting a body only where its first
@@ -382,8 +398,6 @@ impl LanePlan {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
         let amortizes = amortizes_entry(unit);
-        let closed = unit.instructions.iter().enumerate()
-            .all(|(pc, instruction)| !instruction.op().is_call() || self.direct_sites.contains_key(&pc));
         let (dependencies, recovery_space) = (self.dependencies(), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
         let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
         let names_shapes = self.names_shapes();
@@ -403,7 +417,7 @@ impl LanePlan {
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, inlined: self.unit.frames,
             scratch_width, caller_registers,
-            amortizes, direct: self.direct, closed,
+            amortizes, direct: self.direct, closed: self.closed,
         })
     }
 }
