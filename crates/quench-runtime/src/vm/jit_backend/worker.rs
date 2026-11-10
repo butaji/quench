@@ -42,7 +42,7 @@ pub(in crate::vm) fn run_in_background<T: Send + 'static>(work: impl FnOnce() ->
         let (queue, jobs) = std::sync::mpsc::channel::<Work>();
         std::thread::Builder::new()
             .name("quench-codegen".into())
-            .spawn(move || jobs.into_iter().for_each(|job| job()))
+            .spawn(move || jobs.into_iter().for_each(|job| { job(); release_compile_scratch(); }))
             .ok()
             .map(|_| queue)
     });
@@ -56,4 +56,13 @@ pub(in crate::vm) fn run_in_background<T: Send + 'static>(work: impl FnOnce() ->
         None => job(),
     }
     Pending { result }
+}
+
+/// Returns the freed heap pages of the code generator's malloc arena to the system: a compile's
+/// register-allocation state is megabytes that the arena otherwise keeps for the next.
+fn release_compile_scratch() {
+    quench_alloc::release_empty_pages();
+    // SAFETY: `malloc_trim` only releases free memory.
+    #[cfg(target_os = "linux")]
+    unsafe { libc::malloc_trim(0) };
 }
