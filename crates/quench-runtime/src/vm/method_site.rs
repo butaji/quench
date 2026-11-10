@@ -32,6 +32,7 @@ impl MethodSite {
     pub(super) const EMPTY: Self = Self { inline: [EMPTY_METHOD_CACHE; METHOD_CACHE_WAYS], set: None };
 
     /// Every entry the site holds: the inline ways, then the set's.
+    #[cfg(any(test, feature = "profile-aggregate"))]
     pub(super) fn entries(&self) -> impl Iterator<Item = &MethodCache> {
         self.inline.iter().chain(self.recorded_set())
     }
