@@ -30,8 +30,8 @@ pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 
 use quench_runtime::ExecutionMode;
 
-/// The switch that runs cases in compiled (JIT) execution, spelled as the Wasm runner's.
-pub const JIT_FLAG: &str = "--jit";
+/// The switch that runs cases in the interpreter; compiled (JIT) execution is the default.
+pub const NO_JIT_FLAG: &str = "--no-jit";
 pub const AOT_FLAG: &str = "--aot";
 pub const DYNAMIC_SOURCE_FLAG: &str = "--dynamic-source";
 pub const NATIVE_COMPILE_REPORT_FILENAME:&str = "compile-report.json";
@@ -45,18 +45,18 @@ pub fn take_dynamic_source<T: PartialEq<str>>(args: &mut Vec<T>) -> bool {
     requested
 }
 
-/// Select native-only, JIT, or interpreter execution and remove the mode switch.
+/// Select native-only, interpreter (`--no-jit`) or, by default, JIT execution and remove the mode switch.
 pub fn take_execution_mode<T: PartialEq<str>>(args: &mut Vec<T>) -> ExecutionMode {
     let native = args.iter().any(|arg| arg == AOT_FLAG);
     args.retain(|arg| arg != AOT_FLAG);
     let before = args.len();
-    args.retain(|arg| arg != JIT_FLAG);
+    args.retain(|arg| arg != NO_JIT_FLAG);
     if native {
         ExecutionMode::NativeOnly
     } else if args.len() < before {
-        ExecutionMode::Compiled
-    } else {
         ExecutionMode::Interpreted
+    } else {
+        ExecutionMode::Compiled
     }
 }
 
@@ -71,8 +71,8 @@ pub fn execution_mode_name(mode: ExecutionMode) -> &'static str {
 
 pub fn execution_mode_flag(mode: ExecutionMode) -> Option<&'static str> {
     match mode {
-        ExecutionMode::Interpreted => None,
-        ExecutionMode::Compiled => Some(JIT_FLAG),
+        ExecutionMode::Interpreted => Some(NO_JIT_FLAG),
+        ExecutionMode::Compiled => None,
         ExecutionMode::NativeOnly => Some(AOT_FLAG),
     }
 }

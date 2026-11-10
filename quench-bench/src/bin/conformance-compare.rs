@@ -13,7 +13,7 @@
 //!
 //! Every case runs as its own process on every engine, as Quench's runners run them:
 //!
-//! - Test262: `run-all --case [--jit] PATH` against `node|bun tools/test262-engine-case.cjs`
+//! - Test262: `run-all --case [--no-jit] PATH` against `node|bun tools/test262-engine-case.cjs`
 //!   (the Node oracle's harness composition). Module cases are excluded: the JavaScript
 //!   host runner cannot load them.
 //! - Wasm: `run --worker FILE OUT` (`QUENCH_EXECUTION_MODE`) against
@@ -257,7 +257,7 @@ fn test262_cases(options: &Options) -> Result<(Vec<Case>, usize), String> {
         }
         let relative = file.strip_prefix(&root).unwrap().to_string_lossy().into_owned();
         let mut quench = vec![options.quench.display().to_string(), "--case".into()];
-        quench.push(if jit { "--jit" } else { "--no-jit" }.into());
+        if !jit { quench.push("--no-jit".into()); }
         quench.push(file.display().to_string());
         let mut node = vec![options.node.display().to_string()];
         if !jit {

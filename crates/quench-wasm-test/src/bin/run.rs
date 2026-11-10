@@ -49,11 +49,9 @@ fn run() -> Result<bool, String> {
     let mut args = env::args_os().skip(1);
     let mut report_path = PathBuf::from("target/iteration/wasm-shared-report.json");
     let mut paths = Vec::new();
-    let mut jit = false;
+    let mut jit = true;
     while let Some(arg) = args.next() {
-        if arg == "-jit" || arg == "--jit" {
-            jit = true;
-        } else if arg == "-no-jit" || arg == "--no-jit" {
+        if arg == "-no-jit" || arg == "--no-jit" {
             jit = false;
         } else if arg == "--report" {
             report_path = args
@@ -65,7 +63,7 @@ fn run() -> Result<bool, String> {
         }
     }
     if paths.is_empty() {
-        return Err("usage: run [--report FILE] WAST_FILE_OR_DIRECTORY ...".into());
+        return Err("usage: run [--no-jit] [--report FILE] WAST_FILE_OR_DIRECTORY ...".into());
     }
     let mut files = Vec::new();
     for path in paths {

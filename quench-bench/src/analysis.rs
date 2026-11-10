@@ -1092,12 +1092,12 @@ fn validate_engine(
                 && engine.argv.iter().any(|arg| arg == "--jitless")
                 && engine.jit_proof.contains("true")
         }
-        ("quench", crate::Suite::JetStream3, crate::JitMode::Jit) => {
+        ("quench", _, crate::JitMode::Jit) => {
             engine.jit_mode == "enabled-by-default"
                 && engine.argv.is_empty()
                 && engine.jit_proof.contains("default JIT")
         }
-        ("bun", crate::Suite::JetStream3, crate::JitMode::Jit) => {
+        ("bun", _, crate::JitMode::Jit) => {
             engine.jit_mode == "enabled-and-probed"
                 && engine
                     .environment
@@ -1105,7 +1105,7 @@ fn validate_engine(
                     .is_some_and(|value| value == "1")
                 && engine.jit_proof.contains("useJIT=true")
         }
-        ("node", crate::Suite::JetStream3, crate::JitMode::Jit) => {
+        ("node", _, crate::JitMode::Jit) => {
             engine.jit_mode == "enabled-and-probed"
                 && !engine.argv.iter().any(|arg| arg == "--jitless")
                 && engine.jit_proof.contains("completed compiling")
