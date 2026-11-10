@@ -45,6 +45,11 @@ pub(in crate::vm) struct LaneBody {
     /// The share of a body's runs, in percent, its leaves may reach, from `reoptimize_exits`
     /// leaves on, before it specializes again.
     pub(in crate::vm) reoptimize_share: u8,
+    /// The runs after which a body that no more recompile may change, and that left more than
+    /// `retire_share` percent of them, stops being entered: it pays its entry and its exit for
+    /// work the lane does anyway.
+    pub(in crate::vm) retire_after_runs: u16,
+    pub(in crate::vm) retire_share: u8,
     /// The leaves after which a body specializes again from the feedback its sites hold then:
     /// a region compiled while its call graph warmed keeps leaving at sites whose targets came
     /// later, the deoptimization that reoptimizes. Each recompile doubles it, as JSC's exit
@@ -155,6 +160,8 @@ const MEASURED: Tiers = Tiers {
     lane_body: LaneBody {
         warmup_entries: 400,
         reoptimize_share: 1,
+        retire_after_runs: 1000,
+        retire_share: 10,
         reoptimize_exits: 64,
         max_recompiles: 1,
         max_lifetimes: 8,

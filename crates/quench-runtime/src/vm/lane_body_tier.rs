@@ -68,7 +68,8 @@ impl LaneView {
         let Some(stuck) = verdict(*recompiles, leaves_at.get(), *stuck) else {
             // A body that keeps leaving where no other body would, and has never completed a
             // run, gains nothing from its entry: its function runs in the lane again.
-            if !completed.get() {
+            let costly = runs >= u64::from(TIERS.lane_body.retire_after_runs) && leaves * PERCENT > runs * u64::from(TIERS.lane_body.retire_share);
+            if !completed.get() || costly {
                 // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
                 unsafe { (*self.prologue.get()).handler = *tier_prologue };
                 let LaneBody::Specialized { method, .. } = std::mem::replace(body, LaneBody::Declined) else { unreachable!() };

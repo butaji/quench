@@ -967,7 +967,7 @@ impl Default for ProgramStore {
             general_baseline_priced: !(STRESS || crate::trace::Dev::JsUnpricedGeneralDispatch.on()),
             js_jit_diagnostics: crate::trace::Channel::JsJit.on().then(FxHashMap::default),
             js_jit_general_dispatch_enabled: STRESS || crate::trace::Dev::JsGeneralDispatch.on(),
-            js_jit_lane_methods_enabled: STRESS || crate::trace::Dev::JsLaneMethods.on(),
+            js_jit_lane_methods_enabled: true,
             #[cfg(test)]
             js_entry_specializations_enabled: true,
             js_general_dispatch_work: None,
