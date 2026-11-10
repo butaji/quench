@@ -571,6 +571,7 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 /// Script activation admission groups two base granules.
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
+mod closure_targets;
 mod getters;
 mod lane_stack_growth;
 mod this_binding;
@@ -11272,7 +11273,8 @@ impl<H: Host> Vm<H> {
         let linked = usize::from(link.get());
         let index = if self.script_call_holds(linked, callee) {
             linked
-        } else if let Some(index) = self.script_call_index(callee).or_else(|| self.relink_closure(callee, linked)) {
+        } else {
+            let index = self.script_call_index(callee).or_else(|| self.relink_closure(callee, linked))?;
             // The callee in hand joins the site's record (`LaneStack::call_sites`): the entry it
             // linked may hold another site's callee since, so only the record names its own.
             let current = &self.lane_stack.script_targets.entries[index];
@@ -11281,34 +11283,9 @@ impl<H: Host> Vm<H> {
             // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
             link.set(index as u16);
             index
-        } else {
-            return None;
         };
         // SAFETY: `script_call_holds` found the entry within the cache.
         Some(unsafe { self.lane_stack.script_targets.entries.get_unchecked(index) } as *const ScriptCallTarget)
-    }
-
-    /// `callee`'s entry, made from the one `linked` names where that holds another closure of
-    /// `callee`'s function in the running program (F4): the function's target is kept and
-    /// only the closure's facts are read (`closure_target`), with no resolution; it joins
-    /// `callee`'s own set, where every lookup finds it.
-    #[cold]
-    #[inline(never)]
-    fn relink_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
-        let entry = *self.lane_stack.script_targets.entries.get(linked)?;
-        if entry.generation != self.lane_stack.generation || entry.program != self.active_program {
-            return None;
-        }
-        let (program, function, env) = self.same_realm_user_target(callee)?;
-        if program != entry.program || function != entry.function {
-            return None;
-        }
-        let known = self.lane_stack.function_target(program, function, false)?;
-        // SAFETY: no program is installed or retired while a call resolves.
-        let code = unsafe { &*std::ptr::from_ref(self.programs.residual(program)?) };
-        let target = self.closure_target(code, program, callee, env, known)?;
-        self.lane_stack.remember_script_target(target, self.heap.memory_policy());
-        self.script_call_index(callee)
     }
 
     /// `script_call_entry` of a callee of another program than the running one, whose
@@ -11337,22 +11314,6 @@ impl<H: Host> Vm<H> {
             && target.function == function
             && target.entry.activates_registers_only()
             && target.this_binding.binds_receiver())
-    }
-
-    /// `known`, a function's target, for its closure `callee` of `env`: only the closure's facts read.
-    fn closure_target(&mut self, code: &ResidualProgram, program: ProgramId, callee: Value, env: Value,
-        known: ScriptCallTarget) -> Option<ScriptCallTarget> {
-        let capture = if known.view.is_null() { std::ptr::null() } else { self.target_capture(code, program, env) };
-        // An arrow's `this` is its own closure's environment's, like `capture`.
-        let (this_binding, lexical_this) = match known.this_binding {
-            ThisBinding::Lexical | ThisBinding::CallerReceiver => match self.captured_lexical_this(env) {
-                Some(this) if this.is_deleted() => return None,
-                Some(this) => (ThisBinding::Lexical, this),
-                None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
-            },
-            binding => (binding, Value::UNDEFINED),
-        };
-        Some(ScriptCallTarget { callee, env, capture, this_binding, lexical_this, ..known })
     }
 
     /// Resolve and cache `callee` as a lane call target: frameless when its activation is its
