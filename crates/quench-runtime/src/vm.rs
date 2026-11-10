@@ -838,7 +838,7 @@ struct AccessorFieldCache {
     next: u32,
 }
 /// A cache site without an accessor entry (`Vm::accessor_field_indices`).
-const NO_ACCESSOR_FIELD: u32 = u32::MAX;
+const NO_ACCESSOR_FIELD: u32 = object::MRU_CHAIN_END;
 /// Receiver shapes one site's inherited entries remember: a method inherited from beyond the
 /// immediate prototype read on instances of several subclasses (DeltaBlue's constraints)
 /// reaches one site with a shape per class. A further shape reuses the oldest entry.
@@ -853,7 +853,7 @@ const ACCESSOR_FIELD_CACHE_WAYS: usize = 16;
 use crate::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
 /// A cache site without an inherited entry (`Vm::inherited_field_indices`).
-const NO_INHERITED_FIELD: u32 = u32::MAX;
+const NO_INHERITED_FIELD: u32 = object::MRU_CHAIN_END;
 // A cached add proves every prototype up to this depth. Node's stream objects (an
 // `IncomingMessage` above `Readable`, `Stream`, `EventEmitter` and `Object.prototype`) add
 // their fields five prototypes below the chain's end; deeper chains stay uncached. Every
