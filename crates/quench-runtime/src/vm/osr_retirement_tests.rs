@@ -225,3 +225,110 @@ fn printed_run(program: &crate::bytecode::ResidualProgram, mode: crate::Executio
     let printed = output.borrow().clone();
     (printed, vm)
 }
+
+/// Runs `source` interpreted, then compiled under every memory policy: each prints what the
+/// interpreter prints, and each loop of `native` (one per function) runs natively wherever
+/// the policy compiles loops. The throughput run's VM.
+fn assert_typed_osr(source: &str, native: &[&str]) -> Vm<TestHost> {
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "osr-typed.js")).unwrap();
+    let (expected, _) = printed_run(&program, crate::ExecutionMode::Interpreted, crate::MemoryPolicy::Throughput);
+    for policy in crate::MemoryPolicy::ALL {
+        let (printed, vm) = printed_run(&program, crate::ExecutionMode::Compiled, policy);
+        assert_eq!(printed, expected, "{policy:?}");
+        for name in native.iter().filter(|_| crate::vm::compiled::loop_tier_compiles(policy)) {
+            let site = osr_site(&vm, function_named(&program, name));
+            assert!(site.native_region_runs > 0, "{name}'s loop runs natively under {policy:?}: {site:?}");
+        }
+    }
+    printed_run(&program, crate::ExecutionMode::Compiled, crate::MemoryPolicy::Throughput).1
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_typed_array_loops_match_the_interpreter() {
+    // An Int32Array read and written in place, a Float64Array stencil through a copy of its
+    // register, and Uint8Array stores that wrap modulo 256 (and leave for a fraction).
+    assert_typed_osr(r#"
+      function scale(a) { for (let i = 0; i < a.length; i++) a[i] = (a[i] * 3 + i) | 0; return a; }
+      function smooth(v, w) { const values = v; for (let i = 1; i < w - 1; i++) values[i] = (values[i - 1] + values[i] + values[i + 1]) * 0.3333333333333333; }
+      function wrap(b, k) { for (let i = 0; i < b.length; i++) b[i] = i * k + (k > 40 ? 0.5 : 250) - 600; return b; }
+      var a = new Int32Array(300), v = new Float64Array(33), b = new Uint8Array(200), out = [];
+      for (var i = 0; i < 33; i++) v[i] = (i + 2) / 34;
+      for (var round = 0; round < 50; round++) {
+        scale(a); smooth(v, 33); wrap(b, round);
+        out.push(a[0], a[1], a[150], a[299], v[16], b[0], b[7], b[199]);
+      }
+      print(out.join(","));
+    "#, &["scale", "smooth", "wrap"]);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_typed_array_out_of_bounds_accesses_match_the_interpreter() {
+    // Stores past the length change nothing and reads past either end are undefined: each
+    // leaves the loop to the interpreter at the access.
+    assert_typed_osr(r#"
+      function edges(a, n) { let s = 0; for (let i = 0; i < n; i++) { a[i] = i * 7; s = (s * 31 + (a[i + 2] | 0) + ((a[i - 1] + 1) | 0)) | 0; } return s; }
+      var a = new Int32Array(64), out = [];
+      for (var round = 0; round < 60; round++) out.push(edges(a, round < 40 ? 62 : 70), a.length, a[63]);
+      print(out.join(","));
+    "#, &["edges"]);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_loop_over_dense_then_typed_arrays_recompiles_for_each() {
+    // One site over a dense array, then a typed one, then the dense one again: each kind's
+    // entry compiles its element views, and a loop over both kinds at once stays correct.
+    let vm = assert_typed_osr(r#"
+      function total(a, n) { let s = 0; for (let i = 0; i < n; i++) s = (s * 31 + a[i]) | 0; return s; }
+      function mixed(d, t) { let s = 0; for (let i = 0; i < t.length; i++) s = (s + d[i] * t[i]) | 0; return s; }
+      var d = []; for (var i = 0; i < 500; i++) d.push(i * 3 - 700);
+      var t = new Float64Array(d), out = [];
+      for (var round = 0; round < 90; round++) out.push(total(round < 30 || round >= 60 ? d : t, 500), mixed(d, t));
+      print(out.join(","));
+    "#, &["total"]);
+    let program = Engine::compile(crate::ExecutionRequest::script("function total(a) {}", "osr-typed.js")).unwrap();
+    let site = osr_site(&vm, function_named(&program, "total"));
+    assert!(site.compile_successes >= 2, "each element kind compiles its own views: {site:?}");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_typed_array_over_a_detached_or_resized_buffer_matches_the_interpreter() {
+    // A buffer transferred away between runs and within one, and a length-tracking view of a
+    // resizable buffer that shrinks and grows: entry sees each length, and the loop never
+    // reads past one.
+    assert_typed_osr(r#"
+      function sum(a) { let s = 0; for (let i = 0; i < a.length; i++) s = (s * 31 + a[i]) | 0; return s; }
+      function fill(a, k) { for (let i = 0; i < a.length; i++) a[i] = i * k; }
+      function drain(a, buffer) { let s = 0; for (let i = 0; i < 300; i++) { if (i === 150) buffer.transfer(); s = (s + (a[i] | 0)) | 0; } return s; }
+      var buffer = new ArrayBuffer(1200), a = new Int32Array(buffer), out = [];
+      var growable = new ArrayBuffer(400, { maxByteLength: 1600 }), tracking = new Int32Array(growable);
+      for (var round = 0; round < 60; round++) {
+        if (round === 30) buffer = buffer.transfer();
+        if (round % 20 === 10) growable.resize(400 * (1 + (round % 40 === 10 ? 3 : 0)));
+        fill(a, round); fill(tracking, round + 1);
+        out.push(sum(a), a.length, sum(tracking), tracking.length);
+      }
+      for (var round = 0; round < 20; round++) { var fresh = new ArrayBuffer(1200); var view = new Int32Array(fresh); fill(view, round); out.push(drain(view, fresh), fresh.detached); }
+      print(out.join(","));
+    "#, &["sum", "fill"]);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_typed_element_kinds_the_lowering_lacks_stay_with_the_interpreter() {
+    // A clamped store rounds half to even and a BigInt element is no Number: the first leaves
+    // at its store, the second declines the entry; a Float32 store rounds to single.
+    assert_typed_osr(r#"
+      function store(a, k) { for (let i = 0; i < a.length; i++) a[i] = i * k - 3.5; return a; }
+      function bigs(a) { let s = 0n; for (let i = 0; i < a.length; i++) { a[i] = BigInt(i); s += a[i]; } return s; }
+      var clamped = new Uint8ClampedArray(300), singles = new Float32Array(300), wide = new BigInt64Array(300), out = [];
+      for (var round = 0; round < 40; round++) {
+        store(clamped, round / 3); store(singles, round / 3);
+        out.push(clamped[2], clamped[299], singles[7], singles[299], String(bigs(wide)));
+      }
+      print(out.join(","));
+    "#, &[]);
+}

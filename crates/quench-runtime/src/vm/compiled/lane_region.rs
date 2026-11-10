@@ -49,6 +49,8 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/hoisted_reads.rs"] mod hoisted_reads;
 #[path = "lane_region/field_reads.rs"] mod field_reads;
 #[path = "lane_region/number_domains.rs"] mod number_domains;
+#[path = "lane_region/loop_arrays.rs"] mod loop_arrays;
+use loop_arrays::LoopArray;
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
 use polls::specialize_closed_polls;
@@ -289,17 +291,6 @@ struct InvariantRead {
     rooted: bool,
 }
 
-/// An array base a local loop indexes and never redefines: its loop's entry proves the
-/// array's view once, writable where the loop stores through it, and only the element
-/// store's general path, which may grow the backing, loads the view again.
-#[derive(Clone, Copy)]
-struct LoopArray {
-    header: usize,
-    back: usize,
-    register: Register,
-    writable: bool,
-}
-
 /// A hoisted view: its base, its elements' address and count, and in a typed region the
 /// array's `TypedArrayKind` discriminant.
 #[derive(Clone, Copy)]
@@ -436,7 +427,6 @@ pub(super) struct LoweredRegion {
     pub(super) native: usize,
     pub(super) fault_poll: bool,
     /// Whether a loop of the region hoists an array view, so a typed variant may differ.
-    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     pub(super) hoists_arrays: bool,
     pub(super) stable: StableFacts,
 }
@@ -626,11 +616,12 @@ pub(super) enum Completion {
 /// Which arrays a region's loops index in place (`LoopArray`): dense arrays' elements, or
 /// typed arrays' (`Vm::lane_typed_array_elements`). A region assumes one, proved on each
 /// loop's entering edge, so no access chooses between them; a static image publishes a
-/// typed variant beside the dense one, which its dispatcher tries next at the header.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum ElementViews {
+/// typed variant beside the dense one, which its dispatcher tries next at the header, and a
+/// loop site compiles the one its entry found (`LoopTier::views`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(in crate::vm) enum ElementViews {
+    #[default]
     Dense,
-    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     Typed,
 }
 
@@ -1061,30 +1052,6 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
         loops.push((header, back));
     }
     loops
-}
-
-fn loop_arrays(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> Vec<LoopArray> {
-    let mut arrays = Vec::new();
-    for &(header, back) in loops {
-        let body = &unit.instructions[header..=back];
-        let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
-        let first = arrays.len();
-        for instruction in body {
-            let (base, stores) = match instruction.op().class() {
-                Class::GetIndex => (instruction.operand_b().register_index(), false),
-                Class::SetIndex => (Some(instruction.register_b()), true),
-                _ => continue,
-            };
-            // The loop's sole entering edge proves the view of any base its body does not
-            // redefine, an inlined frame's argument as well as the caller's own register.
-            let Some(register) = base.filter(|register| !written.contains(register)) else { continue };
-            match arrays[first..].iter_mut().find(|array: &&mut LoopArray| array.register == register) {
-                Some(array) => array.writable |= stores,
-                None => arrays.push(LoopArray { header, back, register, writable: stores }),
-            }
-        }
-    }
-    arrays
 }
 
 fn invariant_reads(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> BTreeMap<usize, Vec<InvariantRead>> {
@@ -1619,7 +1586,7 @@ pub(super) fn lower(
     lowering.require_object_latches(&instructions, &leaders, &loops);
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, &loops, &leaders)); }
     lowering.hoists = invariant_reads(unit, &loops);
-    lowering.loop_arrays = loop_arrays(unit, &loops);
+    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
         lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner), rooted: false });
@@ -2320,7 +2287,7 @@ impl Lowering<'_, '_> {
             if self.blocks[pc].is_some() { reachable = self.facts.at(pc).is_some(); }
             if !reachable { continue; }
             let owner = match instruction.op().class() {
-                Class::GetField => {
+                Class::GetField if !super::reads_length(self.program, *instruction) => {
                     let base = self.field_base(pc, *instruction);
                     base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
                         else { base.register_index().map(usize::from) })
@@ -2555,14 +2522,14 @@ impl Lowering<'_, '_> {
                 let base = self.operand_tagged(state, instruction.operand_b());
                 let index = self.operand_int(state, instruction.operand_c(), exit);
                 base.zip(index).map(|(base, index)| {
-                    let value = match self.loop_array(pc, instruction.operand_b().register_index()) {
-                        Some(array) => self.loop_element_read(state, array, index, exit),
+                    match self.loop_array(pc, instruction.operand_b().register_index()) {
+                        Some(array) => self.loop_element_read(state, array, index, instruction.result_register(), exit),
                         None => {
                             let view = self.array_view(state, base, false, exit);
-                            self.dense_element(state, base, view, index, exit)
+                            let value = self.dense_element(state, base, view, index, exit);
+                            self.set_tagged(state, instruction.result_register(), value);
                         }
-                    };
-                    self.set_tagged(state, instruction.result_register(), value);
+                    }
                     true
                 })
             }
@@ -3861,14 +3828,6 @@ impl Lowering<'_, '_> {
         })
     }
 
-    /// The hoisted array of `register` the innermost loop around `pc` proved, if any.
-    fn loop_array(&self, pc: usize, register: Option<Register>) -> Option<LoopArray> {
-        let register = register?;
-        self.loop_arrays.iter().copied()
-            .filter(|array| array.register == register && (array.header..=array.back).contains(&pc))
-            .min_by_key(|array| array.back - array.header)
-    }
-
     /// The view of the dense array `base` holds, proved once until a storage change retires
     /// it; a `writable` request upgrades a read view.
     fn array_view(&mut self, state: &mut State, base: ir::Value, writable: bool, exit: ir::Block) -> super::DenseArrayView {
@@ -3965,13 +3924,15 @@ impl Lowering<'_, '_> {
         self.builder.use_var(variables.kind)
     }
 
-    /// Element `index` (an int32) of a hoisted array's view, tagged: a dense array's present
-    /// element, or a typed array's Number element. Any other element exits.
-    fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, exit: ir::Block) -> ir::Value {
+    /// Element `index` (an int32) of a hoisted array's view, into `destination`: a dense
+    /// array's present element, tagged, or a typed array's element, a Number. Any other
+    /// element exits.
+    fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, destination: Register, exit: ir::Block) {
         let (values, length) = self.hoisted_view(array);
         if self.views == ElementViews::Dense {
             let view = super::DenseArrayView { values, length, writable: array.writable };
-            return super::emit_dense_element(&mut self.builder, view, index, exit).1;
+            let value = super::emit_dense_element(&mut self.builder, view, index, exit).1;
+            return self.set_tagged(state, destination, value);
         }
         let kind = self.hoisted_kind(array);
         let proof = super::EmitProof::TypedIndex { values, length, kind, absent: exit };
@@ -3980,7 +3941,7 @@ impl Lowering<'_, '_> {
             crate::staged::Step::Value(value) => value,
             _ => unreachable!("a typed element read yields a value or leaves at its miss edge"),
         };
-        super::emit_js_box_number(&mut self.builder, number)
+        self.set_number(state, destination, number);
     }
 
     /// A Number's store to a hoisted array's element `index` (an int32): a dense array's

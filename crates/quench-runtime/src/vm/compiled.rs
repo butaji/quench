@@ -62,6 +62,7 @@ pub(super) mod tier_policy;
 mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
+pub(super) use lane_region::ElementViews;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
 #[path = "compiled/lane_sites.rs"]
@@ -2041,6 +2042,13 @@ impl OnlineFacts<'_> {
 /// reads it as natively as a VM's own compile does.
 pub(super) fn names_length(program: &ResidualProgram, atom: Atom) -> bool {
     program.atoms.get(atom as usize) == Some("length")
+}
+
+/// Whether `instruction` is a plain read of `length`, which its lowering answers for any base
+/// (`Lowering::array_length`), so the base needs no object record.
+pub(super) fn reads_length(program: &ResidualProgram, instruction: WideInstruction) -> bool {
+    !instruction.writes_current_this() && !instruction.returns_from_frame()
+        && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { atom, .. }) if names_length(program, atom))
 }
 
 /// The facts of the VM a lowering specializes to, fixed when the VM is built.
@@ -6722,6 +6730,9 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
     }
     // A string primitive reads as the lane's does: its `length`, else `String.prototype`.
     if let Some(value) = vm.cached_string_field_hit(residual, Value::from_bits(receiver), atom, site) { return value.to_bits(); }
+    // A typed array's geometry, which no field cache records, as the lane's (`lane_cached_field`).
+    if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
+        && let Some(value) = vm.typed_array_geometry_read(Value::from_bits(receiver), atom) { return value.to_bits(); }
     // A read native code has no descriptor for is mostly an inherited method's: its proved
     // entry answers without a walk (`Vm::proved_inherited_field_hit`), before the other tiers.
     if let Some(value) = vm.proved_inherited_field_hit(residual, Value::from_bits(receiver), site) {

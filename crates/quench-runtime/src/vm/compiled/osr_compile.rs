@@ -187,9 +187,10 @@ fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
     fields
 }
 
-/// Starts compiling `region`'s code from `observation`, or `None` where it lowers no code.
+/// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
+/// `None` where it lowers no code (a typed plan hoisting no view would leave at an access).
 pub(in crate::vm) fn start_osr_region(
-    region: &LoopRegion,
+    region: &LoopRegion, views: super::ElementViews,
     observation: &Observation<'_>,
     policy: crate::MemoryPolicy,
     program: &ResidualProgram,
@@ -211,10 +212,9 @@ pub(in crate::vm) fn start_osr_region(
             entry_fields,
             plan: super::lane_region::RegionPlan {
                 coverage: super::lane_region::Coverage::Loop { header, backedge, poll: false },
-                completion: super::lane_region::Completion::StatusAndPc,
-                views: super::lane_region::ElementViews::Dense,
+                completion: super::lane_region::Completion::StatusAndPc, views,
             },
-        }.specialize(program).ok()
+        }.specialize(program).ok().filter(|lowered| views == super::ElementViews::Dense || lowered.hoists_arrays)
     };
     let inlined = region.inlining.is_some().then(|| inlining_unit(region)).flatten();
     let lane = inlined
@@ -307,7 +307,7 @@ mod tests {
         let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge)
             .expect("the loop is admitted");
         let observation = Observation { native_field_loads: &[] };
-        let pending = start_osr_region(&region, &observation,
+        let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
             crate::MemoryPolicy::Throughput, &program, id,
             super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &[])
             .expect("the loop plans");

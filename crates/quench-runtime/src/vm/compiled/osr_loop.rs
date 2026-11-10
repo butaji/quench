@@ -1423,7 +1423,7 @@ impl LoopEntry {
 
     /// Arrays follow the fields, in the region's order. An array longer than
     /// `MAX_INDEXED_LENGTH` declines the entry.
-    pub(crate) fn push_array(&mut self, elements: *mut Value, length: usize, capacity: usize) -> Option<()> {
+    pub(crate) fn push_array<T>(&mut self, elements: *mut T, length: usize, capacity: usize) -> Option<()> {
         (length <= MAX_INDEXED_LENGTH).then_some(())?;
         let end = self.length + ARRAY_WORDS;
         self.words[self.length..end].copy_from_slice(&[

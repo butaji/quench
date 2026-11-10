@@ -7969,12 +7969,12 @@ fn lane_loop_native<H: Host>(
         return LoopAttempt::Declined;
     }
     let mut entry = super::compiled::LoopEntry::new();
-    if lane_loop_entry(cx, r, region, &mut entry).is_none() {
+    let Some(views) = lane_loop_entry(cx, r, region, &mut entry) else {
         site.declines.set(site.declines.get() + 1);
         return LoopAttempt::Declined;
-    }
+    };
     // The tier's state is borrowed only here, so the dispatch below holds no borrow.
-    let continuation = lane_loop_run(cx, r, site, region, &mut entry);
+    let continuation = lane_loop_run(cx, r, site, region, &mut entry, views);
     site.declines.set(if matches!(continuation, LoopContinuation::Jump) { site.declines.get() + 1 } else { 0 });
     lane_loop_hold_header::<H>(header, site);
     match continuation {
@@ -8155,9 +8155,13 @@ fn lane_loop_run<H: Host>(
     site: &LoopSite,
     region: &super::compiled::LoopRegion,
     entry: &mut super::compiled::LoopEntry,
+    views: super::compiled::ElementViews,
 ) -> LoopContinuation {
     use super::compiled::LoopOutcome;
     let mut tier = site.tier.borrow_mut();
+    if !tier.select(views) {
+        return LoopContinuation::Jump;
+    }
     if !tier.is_published() {
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
         if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
@@ -8301,18 +8305,17 @@ fn lane_loop_run<H: Host>(
     }
 }
 
-/// The entry record of `site`'s native code from the running activation, when its arrays
-/// and captures pass the region's guards: each written array a plain record array whose
-/// elements a write replaces in place (`Vm::try_replace_record_element`), each read one a
-/// record array (`Vm::direct_dense_element`), each capture an initialized binding resolved
-/// without guest code by the same lookup as LoadCapture (`lane_capture_value`).
+/// The entry record of `site`'s native code from the running activation, and the element
+/// views of its arrays (`loop_tier::lane_loop_arrays`), when its arrays and captures pass the
+/// region's guards: each capture an initialized binding resolved without guest code by the
+/// same lookup as LoadCapture (`lane_capture_value`).
 #[inline(never)]
 fn lane_loop_entry<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     region: &super::compiled::LoopRegion,
     entry: &mut super::compiled::LoopEntry,
-) -> Option<()> {
+) -> Option<super::compiled::ElementViews> {
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         for slot in &region.captures {
@@ -8375,31 +8378,7 @@ fn lane_loop_entry<H: Host>(
             })?;
         entry.push_field(value, field.tagged)?;
     }
-    for array in &region.arrays {
-        let value = match array.field {
-            None => r.get(array.register),
-            Some(index) => entry.field_value(region, index),
-        };
-        if array.written {
-            // A store below the length or an append at it, into a dense array no prototype
-            // claims an index of, defines or replaces an own data element and nothing else
-            // (`append_dense_element`, `fill_dense_hole`).
-            if vm.dense_array_length(value).is_none() || !vm.prototypes_hold_no_index(value) {
-                return None;
-            }
-            // A Number store logs nothing.
-            let object = vm.heap.record_array_store_mut_unlogged(value, Value::integer(0))?;
-            let elements = object.elements_mut();
-            if elements.owner_count() != 1 {
-                return None;
-            }
-            let elements = super::index::mutable_array_elements(elements);
-            entry.push_array(elements.as_mut_ptr(), elements.len(), elements.capacity())?;
-        } else {
-            let elements = vm.heap.record_array(value)?.elements().as_slice();
-            entry.push_array(elements.as_ptr().cast_mut(), elements.len(), elements.len())?;
-        }
-    }
+    let views = loop_tier::lane_loop_arrays(vm, r, region, entry)?;
     lane_loop_field_stores(cx, r, region, entry)?;
     if region.reads_heap_natively() {
         let object_base = vm.heap.object_record_base().unwrap_or(std::ptr::null());
@@ -8415,11 +8394,11 @@ fn lane_loop_entry<H: Host>(
         }
         entry.push_scratch();
     }
-    Some(())
+    Some(views)
 }
 
 /// A cached data field's value as the region's entry reads it: a hit of the field's cache
-/// on its receiver, for no private name. `earlier` gives the value of the earlier field a
+/// on its receiver, or a typed array's geometry, for no private name. `earlier` gives the value of the earlier field a
 /// receiver may be (`FieldReceiver::Field`).
 fn lane_region_field<H: Host>(
     cx: *mut LaneContext<H>,
@@ -8445,7 +8424,10 @@ fn lane_region_field<H: Host>(
         super::object::FieldCacheProbe::Hit(value) => Some(value),
         // A site of several shapes answers from its polymorphic entries, own or of the
         // immediate prototype, as the lane's polymorphic read does (`lane_get_field_polymorphic`).
-        _ => vm.polymorphic_field_hit(code, receiver, field.cache_site),
+        // A typed array's geometry is its intrinsic getter's answer, which only a call (a
+        // detach, a resize, a redefinition) changes, and a call leaves the region.
+        _ => vm.polymorphic_field_hit(code, receiver, field.cache_site)
+            .or_else(|| vm.typed_array_geometry_read(receiver, field.atom)),
     }
 }
 
