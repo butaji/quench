@@ -134,7 +134,7 @@ impl<H: Host> Vm<H> {
             array_index_atoms: FxHashMap::default(),
             startup_intrinsics: Default::default(),
             atom_sequence: Rc::new(crate::bytecode::AtomSequence::new(Default::default())),
-            regexp_subjects: Vec::new(),
+            regexp_subjects: Default::default(),
             regexp_matchers: Default::default(),
             atom_classes: vec![],
             intrinsic_natives: Vec::new(),

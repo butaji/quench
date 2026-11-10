@@ -2095,7 +2095,7 @@ pub(crate) struct Vm<H> {
     atom_sequence: Rc<crate::bytecode::AtomSequence>,
     /// The strings most recently matched by a RegExp whose search decodes them, most recent
     /// first, each prepared once for repeated matching (`Vm::regexp_subject`).
-    regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
+    regexp_subjects: regexp::SubjectCache,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,

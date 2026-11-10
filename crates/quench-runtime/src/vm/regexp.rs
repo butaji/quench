@@ -5,6 +5,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 mod literal;
 mod steady;
+mod subject_cache; pub(super) use subject_cache::SubjectCache;
 
 /// Recently matched strings whose prepared subjects are kept (`Vm::regexp_subject`): a
 /// scanner's input plus the few strings it tests between matches.
@@ -1057,23 +1058,10 @@ impl<H: Host> Vm<H> {
                 return PreparedSubject::Local(quench_regexp::Subject::short_ascii(text.as_str()));
             }
             FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::Wide(_) => &*flat,
-            // A matcher subject owns whole wide storage, so a slice's run is copied into one;
-            // it is not kept, as nothing else holds that copy to find it by.
-            FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) => {
-                let crate::vm::wtf16::Units::Wide(units) = flat.view() else {
-                    unreachable!("a wide slice views wide units")
-                };
-                return PreparedSubject::Local(quench_regexp::Subject::new(Rc::from(units)));
-            }
-            // An append buffer's prefix is copied into whole storage as a wide slice's run is.
-            FlatUnits::AsciiPrefix(..) => {
-                let crate::vm::wtf16::Units::Ascii(bytes) = flat.view() else {
-                    unreachable!("an ASCII prefix views ASCII units")
-                };
-                // SAFETY: ASCII bytes are UTF-8.
-                let text: Rc<str> = Rc::from(unsafe { std::str::from_utf8_unchecked(bytes) });
-                let length = text.len();
-                return PreparedSubject::Local(quench_regexp::Subject::from_ascii(text, 0..length));
+            // A matcher subject owns whole storage, so a run of shared storage is copied into
+            // one, once per run (`SubjectCache::run`).
+            FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) | FlatUnits::AsciiPrefix(..) => {
+                return self.regexp_subjects.run(&flat);
             }
         };
         let fresh = || match text {
@@ -1087,7 +1075,7 @@ impl<H: Host> Vm<H> {
         if matcher.searches_undecoded(!matches!(text, FlatUnits::Wide(_))) {
             return PreparedSubject::Local(fresh());
         }
-        let cached = self.regexp_subjects.iter().position(|subject| match text {
+        let cached = self.regexp_subjects.whole.iter().position(|subject| match text {
             FlatUnits::Wide(units) => subject.is_text_of(units),
             ascii => ascii
                 .shared_ascii()
@@ -1096,20 +1084,20 @@ impl<H: Host> Vm<H> {
         // The cache is ordered by recency: a hit moves to the front, and a miss takes the
         // least recent entry's place, reusing its allocation when no match holds it.
         if let Some(position) = cached {
-            self.regexp_subjects[..=position].rotate_right(1);
-            return PreparedSubject::Shared(Rc::clone(&self.regexp_subjects[0]));
+            self.regexp_subjects.whole[..=position].rotate_right(1);
+            return PreparedSubject::Shared(Rc::clone(&self.regexp_subjects.whole[0]));
         }
-        if self.regexp_subjects.len() < REGEXP_SUBJECT_CACHE_ENTRIES {
-            self.regexp_subjects.push(Rc::new(fresh()));
+        if self.regexp_subjects.whole.len() < REGEXP_SUBJECT_CACHE_ENTRIES {
+            self.regexp_subjects.whole.push(Rc::new(fresh()));
         } else {
-            let least_recent = self.regexp_subjects.last_mut().expect("the cache is full");
+            let least_recent = self.regexp_subjects.whole.last_mut().expect("the cache is full");
             match Rc::get_mut(least_recent) {
                 Some(reused) => *reused = fresh(),
                 None => *least_recent = Rc::new(fresh()),
             }
         }
-        self.regexp_subjects.rotate_right(1);
-        PreparedSubject::Shared(Rc::clone(&self.regexp_subjects[0]))
+        self.regexp_subjects.whole.rotate_right(1);
+        PreparedSubject::Shared(Rc::clone(&self.regexp_subjects.whole[0]))
     }
 
     /// `RegExp.prototype[@@replace]` for a receiver whose exec, flags and lastIndex are its
