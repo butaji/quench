@@ -8,6 +8,7 @@ mod vacancy_tests;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
 mod reservation;
+mod sweep_support;
 use reservation::Reservation;
 use crate::vm::wtf16::JsString;
 use crate::value::Value;
@@ -162,6 +163,9 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> 
     aged_fates: AgedFates,
     /// How many ids `withhold` keeps from reuse.
     withheld: usize,
+    /// Touches what a dead record's drop will free, before the drop (`release`): the drops of
+    /// one occupancy word then wait on their cache misses together, not one after another.
+    warm: Option<fn(&T)>,
 }
 
 impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
@@ -183,6 +187,7 @@ impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
             promoted: Vec::new(),
             aged_fates: AgedFates::default(),
             withheld: 0,
+            warm: None,
         }
     }
 }
@@ -823,9 +828,9 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             let mut live_count = 0;
             for block_index in 0..self.blocks.len() {
                 for word_index in 0..BLOCK_WORDS {
+                    self.warm_ahead(block_index, word_index);
                     let (live, freed) = self.sweep_word(block_index, word_index, if visit_live { u64::MAX } else { 0 }, &mut visit);
-                    live_count += live;
-                    freed_count += freed;
+                    (live_count, freed_count) = (live_count + live, freed_count + freed);
                 }
             }
             live_count
@@ -965,28 +970,6 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             dead &= dead - 1;
         }
         freed
-    }
-
-    /// After a sweep every occupied record is marked or aged, never both: the invariant that
-    /// lets a minor sweep skip the words no allocation reached and no aged record holds.
-    #[cfg(debug_assertions)]
-    fn debug_assert_swept(&self) {
-        for (block_index, block) in self.blocks.iter().enumerate() {
-            for word_index in 0..BLOCK_WORDS {
-                let (occupied, marked, aged) =
-                    (block.occupied[word_index], block.marked[word_index], block.aged[word_index]);
-                assert_eq!(
-                    occupied & !marked & !aged,
-                    0,
-                    "an unswept young record survives in block {block_index} word {word_index}"
-                );
-                assert_eq!(
-                    aged & (marked | !occupied),
-                    0,
-                    "an aged record is marked or free after a sweep in block {block_index} word {word_index}"
-                );
-            }
-        }
     }
 
     pub(super) fn for_each_live(&self, mut visit: impl FnMut(RecordId, &T)) {
