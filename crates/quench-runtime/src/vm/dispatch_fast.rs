@@ -835,11 +835,10 @@ enum LaneBody {
     Specialized {
         method: std::rc::Rc<super::compiled::PublishedLaneMethod>,
         tier_prologue: *const (),
-        /// Its runs from the prologue and those that left before completing, counted up to
-        /// `TIERS.lane_body.trial_runs` (`LaneView::note_lane_body_run`).
-        runs: std::cell::Cell<u16>,
-        leaves: std::cell::Cell<u16>,
-        /// Its leaves since it specialized, toward `TIERS.lane_body.reoptimize_exits`, and where
+        /// Its runs that completed since it specialized: the leaves are judged against them
+        /// (`LaneView::note_lane_body_end`).
+        completions: std::cell::Cell<u32>,
+        /// Its leaves since it specialized, toward `TIERS.lane_body.reoptimize_exits` and `TIERS.lane_body.reoptimize_share`, and where
         /// they went (`LaneLeaves`).
         exits: std::cell::Cell<u16>,
         leaves_at: std::cell::Cell<LaneLeaves>,
@@ -849,9 +848,6 @@ enum LaneBody {
         /// Its predecessor's few leaves, where it left only there.
         stuck: LaneLeaves,
     },
-    /// A body whose runs mostly left: its function runs in the lane again, and its code stays
-    /// for the direct callers that name it until they retire with it at a shape compaction.
-    Retired { _method: std::rc::Rc<super::compiled::PublishedLaneMethod> },
     Declined,
 }
 
@@ -864,7 +860,6 @@ impl LaneView {
             LaneBody::Unspecialized { .. } => "unspecialized",
             LaneBody::Compiling { .. } => "compiling",
             LaneBody::Specialized { .. } => "specialized",
-            LaneBody::Retired { .. } => "retired",
             LaneBody::Declined => "declined",
         }
     }
@@ -875,7 +870,7 @@ impl LaneView {
         // execution or recovery can reenter and change the view's publication.
         match unsafe { &*self.tier_lane.get() } {
             LaneBody::Specialized { method, .. } => method.lease(),
-            LaneBody::Unspecialized { .. } | LaneBody::Compiling { .. } | LaneBody::Retired { .. } | LaneBody::Declined => None,
+            LaneBody::Unspecialized { .. } | LaneBody::Compiling { .. } | LaneBody::Declined => None,
         }
     }
 
@@ -902,28 +897,6 @@ impl LaneView {
             unsafe { (*self.prologue.get()).handler = *tier_prologue };
             self.drop_body(body);
         }
-    }
-
-    /// Counts a run of the specialized body from its prologue, and whether it `left` before
-    /// completing; at `TIERS.lane_body.trial_runs`, a body whose runs mostly left retires
-    /// (`LaneBody::Retired`), its prologue taking back the tier's handler.
-    fn note_lane_body_run(&self, left: bool) {
-        // SAFETY: as `lane_body`; the run that counts has finished.
-        let body = unsafe { &mut *self.tier_lane.get() };
-        let LaneBody::Specialized { runs, leaves, tier_prologue, .. } = body else { return };
-        if runs.get() >= TIERS.lane_body.trial_runs {
-            return;
-        }
-        runs.set(runs.get() + 1);
-        leaves.set(leaves.get() + u16::from(left));
-        if runs.get() < TIERS.lane_body.trial_runs || leaves.get() <= TIERS.lane_body.trial_runs / 2 {
-            return;
-        }
-        // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
-        unsafe { (*self.prologue.get()).handler = *tier_prologue };
-        let LaneBody::Specialized { method, .. } = std::mem::replace(body, LaneBody::Declined) else { unreachable!() };
-        *body = LaneBody::Retired { _method: method };
-        self.release_from_tier();
     }
 
     /// Whether it has no body yet and counts entries toward one, its first or a next.
@@ -957,10 +930,6 @@ impl LaneView {
             self.drop_body(body);
         }
         self.retired.borrow_mut().clear();
-        // Its direct callers name shapes too, so they retire with this compaction.
-        if matches!(body, LaneBody::Retired { .. }) {
-            *body = LaneBody::Declined;
-        }
         self.clear_hints(&self.field_records);
         self.clear_name_hints();
         for site in &self.loops {
@@ -14729,18 +14698,15 @@ script_handler! {
         {
             // SAFETY: as `lane_leave_counts`; a completed run carries no warming callee.
             unsafe { (*cx).callee_warming = false };
-            own.note_lane_body_run(false);
             own.note_lane_body_end(exit, false);
             drop(method);
             // SAFETY: the record that completes the activation is one of its function's.
             lane_return_value!(cx, unsafe { base.add(pc) }, value)
         }
         let counts = lane_leave_counts(cx, exit);
-        let left = counts && !matches!(exit, super::compiled::LaneExit::Returned { .. });
         let (resumed, feedback) = lane_body_left(cx, r, own, &method, exit);
         drop(method);
         // Counted once nothing reads the body: a retirement or reoptimization moves it.
-        own.note_lane_body_run(left);
         if counts {
             own.note_lane_body_end(feedback, false);
         }
