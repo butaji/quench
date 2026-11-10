@@ -235,13 +235,12 @@ fn transfer(
             match op.control_flow_layout() {
                 // Any call, a construction's included (`Lowering::construct`): its result is
                 // written above, and no object keeps its shape past it.
-                ControlFlowLayout::Call if native_calls => {
-                    for ty in types.iter_mut() { *ty = ty.without_object_shape(); }
-                    Flow::Next
-                }
-                ControlFlowLayout::Fallthrough if matches!((op.is_named_field_access(), op.class()), (true, _)
-                    | (_, Class::Nop | Class::LoadThis | Class::LoadCapture | Class::GetIndex
-                    | Class::SetIndex)) => Flow::Next,
+                ControlFlowLayout::Call if native_calls => forget_shapes(types, true),
+                // An instruction the analysis does not model continues with the registers it
+                // writes unknown, and with no object shape kept unless it cannot change one: the
+                // code after it is typed whether the lowering runs it natively or leaves at it.
+                ControlFlowLayout::Fallthrough => forget_shapes(types, !matches!((op.is_named_field_access(), op.class()),
+                    (true, _) | (_, Class::Nop | Class::LoadThis | Class::LoadCapture | Class::GetIndex | Class::SetIndex))),
                 ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
                     Flow::To(instruction.jump_target() as usize)
                 }
@@ -249,6 +248,13 @@ fn transfer(
             }
         }
     }
+}
+
+/// Continues the analysis past an instruction that may change an object's shape (`forget`): no
+/// register keeps a shape.
+fn forget_shapes(types: &mut [Type], forget: bool) -> Flow {
+    if forget { for ty in types.iter_mut() { *ty = ty.without_object_shape(); } }
+    Flow::Next
 }
 
 /// The transfer of a ToNumeric or a Number's unary operator, whose operand is a Number or whose
