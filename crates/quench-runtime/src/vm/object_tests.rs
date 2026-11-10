@@ -1211,11 +1211,7 @@ fn exhausted_field_cache_preserves_generic_reads() {
                     .any(|set| set.len() == field_megamorphic_limit),
                 "test must exhaust the existing per-site shape budget"
             );
-            assert!(
-                vm.megamorphic_fields
-                    .iter()
-                    .all(|set| set.len() <= field_megamorphic_limit)
-            );
+            assert!(vm.megamorphic_fields.iter().all(|set| set.len() <= field_megamorphic_limit));
         }
     }
 }
