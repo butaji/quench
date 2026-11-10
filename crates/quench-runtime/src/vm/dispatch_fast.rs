@@ -18799,7 +18799,7 @@ fn derive_lane_view<'live, H: Host>(
         // A shift left by a constant whose result the next record adds runs
         // with that add as one record.
         for pc in 0..records.len().saturating_sub(1) {
-            let variant = |op: u16, acc: u8, at: usize| serves(records[at].handler, op as u16, acc);
+            let variant = |op: u16, acc: u8, at: usize| serves(records[at].handler, op, acc);
             let field = [ACC_NONE, ACC_B]
                 .into_iter()
                 .position(|acc| variant(opc::WasmI32ShiftLeftImmediate, acc, pc));

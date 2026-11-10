@@ -1318,7 +1318,6 @@ impl Specializer for RegionSpecializer<'_> {
 /// Lowers `unit` (`lane_unit::unit`) as a lane body, whose field cache sites `fields`
 /// gives the proved shapes and slots of; `None` where it does not lower.
 #[allow(clippy::too_many_arguments)]
-
 pub(super) fn lower_body(
     program: &ResidualProgram,
     function_id: u32,
@@ -4827,7 +4826,7 @@ impl Lowering<'_, '_> {
         state.proofs.stable = false;
         let proof = super::EmitProof::FieldStoreMiss { miss: exit };
         self.step(state, frame::Edges::ValueGuarded { miss: exit },
-            crate::staged::Operation::FieldStoreMiss { object, atom: u32::from(atom), site, value, proof });
+            crate::staged::Operation::FieldStoreMiss { object, atom, site, value, proof });
     }
 
     /// `+source` or `-source` of a Number: the shared Number unary denotation, with the
