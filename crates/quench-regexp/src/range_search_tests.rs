@@ -62,18 +62,19 @@ fn non_literal_range_searches_find_the_general_ranges() {
 }
 
 /// Only a case-sensitive ASCII literal run over an ASCII subject is answered by one byte
-/// search, whose starts never overlap the match before.
+/// search, whose matches never overlap the one before: their length, count and last start.
 #[test]
-fn literal_starts_answer_only_case_sensitive_ascii_runs() {
-    let starts = |pattern: &str, flags: &str, text: &str| {
+fn literal_matches_answer_only_case_sensitive_ascii_runs() {
+    let matches = |pattern: &str, flags: &str, text: &str| {
         let regex = Regex::with_flags(pattern, Flags::from(flags)).unwrap();
         let subject = subject(text);
-        regex.range_searcher(&subject).literal_starts().map(|(length, starts)| (length, starts.collect::<Vec<_>>()))
+        regex.range_searcher(&subject).literal_matches().map(|found| (found.length, found.count, found.last))
     };
-    assert_eq!(starts("aa", "", "aaaa"), Some((2, vec![0, 2])));
-    assert_eq!(starts("\\n", "", "a\nbb\n\n"), Some((1, vec![1, 4, 5])));
-    assert_eq!(starts("q", "", "abc"), Some((1, vec![])));
-    assert_eq!(starts("ab", "i", "xAbab"), None);
-    assert_eq!(starts("a.", "", "abab"), None);
-    assert_eq!(starts("\\n", "", "é\nü"), None);
+    assert_eq!(matches("aa", "", "aaaa"), Some((2, 2, Some(2))));
+    assert_eq!(matches("aa", "", "aaaaa"), Some((2, 2, Some(2))));
+    assert_eq!(matches("\\n", "", "a\nbb\n\n"), Some((1, 3, Some(5))));
+    assert_eq!(matches("q", "", "abc"), Some((1, 0, None)));
+    assert_eq!(matches("ab", "i", "xAbab"), None);
+    assert_eq!(matches("a.", "", "abab"), None);
+    assert_eq!(matches("\\n", "", "é\nü"), None);
 }

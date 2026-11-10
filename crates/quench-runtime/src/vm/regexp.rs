@@ -1997,9 +1997,8 @@ impl<H: Host> Vm<H> {
         // Only the last match's captures are observable (the legacy statics), so every match
         // is found as its range alone; the statics find the last again from its start if read.
         let searcher = matcher.range_searcher(&subject);
-        if !flags.contains(RegExpFlags::STICKY) && let Some((length, starts)) = searcher.literal_starts() {
-            let (count, last) = starts.fold((0, None), |(count, _), start| (count + 1, Some(start)));
-            return self.regexp_literal_matches(p, receiver, input, matcher, length, count, last);
+        if !flags.contains(RegExpFlags::STICKY) && let Some(found) = searcher.literal_matches() {
+            return self.regexp_literal_matches(p, receiver, input, matcher, found);
         }
         let ranges = self.regexp_global_matches(p, receiver, input, flags, |start| searcher.find(start), Range::clone)?;
         let Some(last) = ranges.last() else {

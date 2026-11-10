@@ -13,7 +13,7 @@ use oxc::regular_expression::{ast, LiteralParser, Options};
 
 mod backtrack;
 mod range_search;
-pub use range_search::RangeSearcher;
+pub use range_search::{LiteralMatches, RangeSearcher};
 mod stack;
 
 pub fn is_stack_exhaustion_message(message: &str) -> bool {

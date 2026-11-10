@@ -1,4 +1,4 @@
-//! Global matches of a pattern that is a literal run (`quench_regexp::RangeSearcher::literal_starts`).
+//! Global matches of a pattern that is a literal run (`quench_regexp::RangeSearcher::literal_matches`).
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -6,16 +6,13 @@ impl<H: Host> Vm<H> {
     /// the last at `last`: lastIndex stored 0 as the loop's first step stores it, the legacy
     /// statics left pending on the last match, and the array of the matches, `null` without
     /// one. Every match is the same string, so the array holds one value `count` times.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn regexp_literal_matches(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
         input: &JsString,
         matcher: &Rc<quench_regexp::Regex>,
-        length: usize,
-        count: usize,
-        last: Option<usize>,
+        quench_regexp::LiteralMatches { length, count, last }: quench_regexp::LiteralMatches,
     ) -> Result<Value, JsError> {
         self.store_regexp_last_index(p, receiver, Value::number(0.0))?;
         let Some(last) = last else {

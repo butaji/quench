@@ -45,6 +45,14 @@ impl Regex {
     }
 }
 
+/// What `RangeSearcher::literal_matches` found: `count` matches of `length` units each, the
+/// last starting at `last`.
+pub struct LiteralMatches {
+    pub length: usize,
+    pub count: usize,
+    pub last: Option<usize>,
+}
+
 /// `Regex::range_searcher`'s searcher.
 pub struct RangeSearcher<'a> {
     regex: &'a Regex,
@@ -63,14 +71,18 @@ enum RangeBackend<'a> {
 }
 
 impl RangeSearcher<'_> {
-    /// Where the matches of a search from the subject's start begin, each as long as the
-    /// first value, when the pattern is a literal run of that length (`LiteralRun`): its
-    /// occurrences in order, none overlapping the one before.
-    pub fn literal_starts(&self) -> Option<(usize, impl Iterator<Item = usize> + '_)> {
-        match self.backend {
-            RangeBackend::Literal { finder, bytes } => Some((finder.needle().len(), finder.find_iter(bytes))),
-            _ => None,
-        }
+    /// The matches of a search from the subject's start, when the pattern is a literal run
+    /// (`LiteralRun`): its occurrences in order, none overlapping the one before. A one-byte
+    /// run is counted without visiting each occurrence.
+    pub fn literal_matches(&self) -> Option<LiteralMatches> {
+        let RangeBackend::Literal { finder, bytes } = self.backend else {
+            return None;
+        };
+        let (count, last) = match *finder.needle() {
+            [byte] => (memchr::memchr_iter(byte, bytes).count(), memchr::memrchr(byte, bytes)),
+            _ => finder.find_iter(bytes).fold((0, None), |(count, _), start| (count + 1, Some(start))),
+        };
+        Some(LiteralMatches { length: finder.needle().len(), count, last })
     }
 
     /// `Regex::find_range_in_subject(subject, start)`.
