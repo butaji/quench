@@ -16,13 +16,35 @@ pub(super) fn ascii_match_ranges(matcher: &quench_regexp::Regex, bytes: &[u8], g
 /// `bytes` with each of `ranges` replaced by `literal`, written once into storage of its
 /// total `length`.
 pub(super) fn ascii_replaced(bytes: &[u8], literal: &[u8], ranges: &[Range<usize>], length: usize) -> JsString {
-    let tail = &bytes[ranges.last().map_or(0, |range| range.end)..];
-    let mut copied = 0;
-    let pieces = ranges.iter().flat_map(|range| {
-        let before = &bytes[std::mem::replace(&mut copied, range.end)..range.start];
-        [before, literal]
-    });
-    JsString::from_ascii_parts(length, pieces.chain(std::iter::once(tail)))
+    JsString::from_ascii_filled(length, |output| {
+        let mut at = 0;
+        let mut copied = 0;
+        for range in ranges {
+            put(output, &mut at, &bytes[copied..range.start]);
+            put(output, &mut at, literal);
+            copied = range.end;
+        }
+        put(output, &mut at, &bytes[copied..]);
+        debug_assert_eq!(at, output.len(), "the pieces fill the string's length");
+    })
+}
+
+/// The longest piece `put` writes byte by byte: two machine words.
+const INLINE_PIECE_BYTES: usize = 2 * size_of::<usize>();
+
+/// `piece` written at `at` of `output`, which moves on: a short piece byte by byte, as a
+/// call to copy a few bytes costs more than the bytes.
+#[inline(always)]
+fn put(output: &mut [std::mem::MaybeUninit<u8>], at: &mut usize, piece: &[u8]) {
+    let target = &mut output[*at..*at + piece.len()];
+    if piece.len() <= INLINE_PIECE_BYTES {
+        for (unit, byte) in target.iter_mut().zip(piece) {
+            unit.write(*byte);
+        }
+    } else {
+        target.write_copy_of_slice(piece);
+    }
+    *at += piece.len();
 }
 
 impl<H: Host> Vm<H> {
