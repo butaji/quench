@@ -609,6 +609,9 @@ mod indexed_compositions;
 
 #[path = "lane_body_stats.rs"]
 mod lane_body_stats;
+#[path = "lane_entry.rs"]
+mod lane_entry;
+use lane_entry::lane_entry_captures;
 #[path = "lane_leaves.rs"]
 mod lane_leaves;
 #[path = "lane_body_tier.rs"]
@@ -8295,6 +8298,21 @@ fn lane_loop_run<H: Host>(
     }
 }
 
+
+/// A rewritten global-name read's value at a lane entry: an own data property of the global
+/// object, which the entry record snapshots; any accessor, lexical binding or absent name
+/// declines the entry and leaves the loop to the interpreter.
+fn lane_entry_global<H: Host>(cx: *mut LaneContext<H>, atom: crate::bytecode::Atom, site: u16) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    match vm.global_name_read(code, atom, site) {
+        crate::vm::field_cache::GlobalNameRead::Value(value, _) => Some(value),
+        _ => None,
+    }
+}
+
+
 /// The entry record of `site`'s native code from the running activation, when its arrays
 /// and captures pass the region's guards: each written array a plain record array whose
 /// elements a write replaces in place (`Vm::try_replace_record_element`), each read one a
@@ -8307,47 +8325,7 @@ fn lane_loop_entry<H: Host>(
     region: &super::compiled::LoopRegion,
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<()> {
-    if !region.captures.is_empty() {
-        let slots = capture_reads(unsafe { (*cx).capture });
-        for slot in &region.captures {
-            // The activation's `this`, for reads of `this` the region stores (`THIS_CAPTURE`).
-            if *slot == super::compiled::THIS_CAPTURE {
-                entry.push_capture(unsafe { lane_held_this(cx) });
-                continue;
-            }
-            // An inlined callee's capture reads its own environment (`Inlining::callee_captures`).
-            if slot & super::compiled::CALLEE_CAPTURE != 0 {
-                let inlining = region.inlining.as_deref()?;
-                let &(frame, callee_slot) = inlining.callee_captures.get(usize::from(slot & !super::compiled::CALLEE_CAPTURE))?;
-                let callee = inlining.frames.get(frame)?.callee;
-                let vm = unsafe { vm(cx) };
-                // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
-                let env = unsafe { &*vm.script_call_entry(callee)? }.env;
-                // A top-level binding the global object projects is its property, which the
-                // region keeps only while it stores no field (as the caller's own captures).
-                let value = vm.environment_capture(env, callee_slot).or_else(|| {
-                    (!region.writes_fields())
-                        .then(|| vm.environment_capture_env(env, false, 0)
-                            .and_then(|env| vm.plain_projected_root_binding(env, callee_slot)))
-                        .flatten()
-                })?;
-                entry.push_capture(value);
-                continue;
-            }
-            // SAFETY: the context's dense slots remain live until the next collection.
-            // A cache miss follows the same non-effectful lookup as LoadCapture.
-            let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, *slot) }
-                .or_else(|| lane_capture_value(cx, 0, *slot))
-                .or_else(|| {
-                    // A projected global var aliases its global object's property. Native
-                    // field stores could change it after entry, invalidating this snapshot.
-                    (!region.writes_fields())
-                        .then(|| lane_projected_capture(cx, 0, *slot))
-                        .flatten()
-                })?;
-            entry.push_capture(value);
-        }
-    }
+    lane_entry_captures::<H>(cx, region, entry)?;
     let vm = unsafe { vm(cx) };
     // No guest call or allocation occurs in a native run. Field writes replace guarded
     // own slots, and element stores change no shape slot. Immutable fields keep their

@@ -180,8 +180,11 @@ pub(crate) struct LoopRegion {
     /// dense (`Vm::dense_array_length`), owns its backing alone, and no prototype of it holds
     /// an index (`Vm::prototypes_hold_no_index`).
     pub(crate) arrays: Vec<ArrayUse>,
-    /// The depth-0 capture slots `LoadCapture` reads, in entry-record order.
+    /// The depth-0 capture slots `LoadCapture` reads, in entry-record order, then each
+    /// rewritten global-name read (`capture_globals` names its atom).
     pub(crate) captures: Vec<u16>,
+    /// The global-name atom a rewritten `LoadName` capture reads, else `None`.
+    pub(crate) capture_globals: Vec<Option<(crate::bytecode::Atom, u16)>>,
     /// The cached data fields the region reads, in entry-record order: a field read
     /// through another's value follows it (`intern_field`).
     pub(crate) fields: Vec<FieldUse>,
@@ -997,7 +1000,7 @@ pub(super) fn inline_region<'a>(
 ) -> Option<LoopRegion> {
     let (start, end) = (header as usize, backedge as usize);
     (start <= end && end < decoded.len()).then_some(())?;
-    let caller = &decoded[start..=end];
+    let (caller_decoded, globals) = rewrite_global_reads(function, &decoded[start..=end]); let caller = &caller_decoded[..];
     let defines = |register: Register| caller.iter().any(|instruction| instruction.defined_register() == Some(register));
     let targets: std::collections::BTreeSet<u32> = caller
         .iter()
@@ -1349,7 +1352,7 @@ pub(super) fn inline_region<'a>(
         Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks))),
         header_live,
         header,
-        &receivers,
+        &receivers, globals.clone(),
     )
     .ok()?;
     // Dynamic receiver reads use the loop's caller registers and exact caller PCs. Keep
@@ -1688,8 +1691,10 @@ enum Role {
 
 struct Admission<'a> {
     constants: &'a [Value],
+    /// The rewritten global-name atoms, by the slot a `LoadCapture` at `GLOBAL_DEPTH` names.
+    globals: &'a [(crate::bytecode::Atom, u16)],
     roles: std::collections::BTreeMap<Register, Role>,
-    captures: Vec<u16>,
+    captures: Vec<u16>, capture_globals: Vec<Option<(crate::bytecode::Atom, u16)>>,
     pub(crate) fields: Vec<FieldUse>,
     numbers: std::collections::BTreeMap<usize, f64>,
     values: std::collections::BTreeMap<usize, Value>,
@@ -1778,6 +1783,7 @@ impl Admission<'_> {
     }
 }
 
+
 /// The region of the loop from `header` to its backward jump at `backedge`, when every
 /// instruction in it is one the tier lowers.
 pub(super) fn region(
@@ -1797,8 +1803,9 @@ pub(super) fn region(
         });
     }
     let header_live = live.and_then(|live| live.get(start));
+    let (instructions, globals) = rewrite_global_reads(function, &decoded[start..=end]);
     admit_region(
-        decoded[start..=end].to_vec(),
+        instructions,
         usize::from(function.registers),
         constants,
         sites,
@@ -1806,6 +1813,7 @@ pub(super) fn region(
         header_live,
         header,
         &std::collections::BTreeSet::new(),
+        globals,
     )
 }
 
@@ -1823,16 +1831,19 @@ fn admit_region(
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
+    globals: Vec<(crate::bytecode::Atom, u16)>,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     if let Err(offset) = iteration::iterates_natively(&instructions, header) {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }
     match admit_register_roles(
-        instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects,
+        instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, &globals,
     ) {
         Ok(region) => Ok(region),
         Err(failure) => {
-            if objects.is_empty()
+            // The lifetime fallback models no captures; a rewritten global read keeps the
+            // register-role path, whose entry record carries it.
+            if objects.is_empty() && globals.is_empty()
                 && let Some(region) = admit_lifetime_roles(instructions, registers, constants, live, header)
             {
                 return Ok(region);
@@ -1841,6 +1852,8 @@ fn admit_region(
         }
     }
 }
+
+
 
 /// Whether a lifetime region admits `instruction`: number and element operations, jumps, a
 /// field store through a register, and a field read by name from a register or `this`, whose
@@ -1872,7 +1885,7 @@ fn admit_lifetime_roles(
     let mut flow = LoopRegion {
         header, backedge: header + instructions.len() as u32 - 1,
         numbers: (0..registers).map(|register| register as Register).collect(),
-        tagged: Vec::new(), lifetime_roles: None, arrays: Vec::new(), captures: Vec::new(),
+        tagged: Vec::new(), lifetime_roles: None, arrays: Vec::new(), captures: Vec::new(), capture_globals: Vec::new(),
         fields: Vec::new(), field_reads: BTreeMap::new(), dynamic_field_reads: BTreeMap::new(),
         dynamic_arrays: BTreeSet::new(),
         field_stores: BTreeMap::new(), dynamic_field_stores: BTreeMap::new(), field_store_sites: Vec::new(), held: BTreeMap::new(),
@@ -1982,7 +1995,7 @@ fn admit_lifetime_roles(
             field(InstructionField::B, instruction.b())?,
             field(InstructionField::C, instruction.c())?, instruction.imm()));
     }
-    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new())
+    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new(), &[])
         .inspect_err(|&failure| {
             if crate::trace::Channel::OsrReject.on() {
                 eprintln!("QUENCH_JS_JIT_OSR_LIFETIME_REJECT header={header} failure={failure:?}");
@@ -2037,7 +2050,7 @@ fn admit_register_roles(
     live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     header_live: Option<RegisterSet>,
     header: u32,
-    objects: &std::collections::BTreeSet<Register>,
+    objects: &std::collections::BTreeSet<Register>, globals: &[(crate::bytecode::Atom, u16)],
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     let backedge = header + instructions.len() as u32 - 1;
     // A held register keeps the value its path read at entry, which a store to any name on
@@ -2115,9 +2128,9 @@ fn admit_register_roles(
     };
     tagged.extend(paths.keys().copied());
     let mut admission = Admission {
-        constants,
+        constants, globals,
         roles: std::collections::BTreeMap::new(),
-        captures: Vec::new(),
+        captures: Vec::new(), capture_globals: Vec::new(),
         fields: Vec::new(),
         numbers: std::collections::BTreeMap::new(),
         values: std::collections::BTreeMap::new(),
@@ -2383,7 +2396,7 @@ fn admit_register_roles(
         tagged,
         lifetime_roles: None,
         arrays,
-        captures: admission.captures,
+        captures: admission.captures, capture_globals: admission.capture_globals,
         fields: admission.fields,
         field_reads,
         dynamic_field_reads,
@@ -2429,18 +2442,7 @@ fn admit(
                 admission.number(instruction.register_b())?;
             }
         }
-        Class::LoadCapture => {
-            (instruction.capture_depth() == 0 && instruction.result_flags() == 0).then_some(())?;
-            if tagged.contains(&instruction.result_register()) {
-                admission.tagged(instruction.result_register())?;
-            } else {
-                admission.result(instruction)?;
-            }
-            let slot = instruction.capture_slot();
-            if !admission.captures.contains(&slot) {
-                admission.captures.push(slot);
-            }
-        }
+        Class::LoadCapture => { admission.admit_capture(instruction, &tagged)?; }
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
             if number_comparison(instruction).is_some() {
                 (instruction.result_flags() == 0).then_some(())?;
@@ -2917,10 +2919,9 @@ fn representations(
         .map(|index| {
             // A slot shared with a numeric load retains its Number guard; boxing that
             // number for a tagged load is safe, but unboxing an arbitrary capture is not.
-            let slot = region.captures[index];
             if region.instructions.iter()
                 .enumerate()
-                .filter(|(_, instruction)| instruction.op().is_load_capture() && instruction.capture_slot() == slot)
+                .filter(|(_, instruction)| capture_index(region, **instruction) == Some(index))
                 .all(|(offset, _)| region.tagged_definition(offset as u32))
             {
                 return Representation::Tagged;
@@ -3131,8 +3132,7 @@ pub(super) fn verify_region<'a>(
                         .ok_or(TypeError::MissingDefinition { pc, register })?;
                     values[source].ty
                 }
-                Class::LoadCapture => captures[region.captures.iter()
-                    .position(|slot| *slot == instruction.capture_slot()).expect("admitted capture")].ty,
+                Class::LoadCapture => captures[capture_index(region, instruction).expect("admitted capture")].ty,
                 Class::Binary | Class::NumericAdd | Class::NumericMultiply if number_comparison(instruction).is_some() => Type::language(crate::ValueType::Boolean),
                 Class::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => Type::TYPEOF_INDEX,
                 Class::GetField if region.dynamic_field_reads.contains_key(&(offset as u32)) => {
@@ -3266,11 +3266,7 @@ fn definition(
             }
         }
         Class::Move | Class::IncDec | Class::ToNumeric => registers(instruction.register_b()),
-        Class::LoadCapture => {
-            let slot = instruction.capture_slot();
-            let index = region.captures.iter().position(|capture| *capture == slot)?;
-            entry.captures[index]
-        }
+        Class::LoadCapture => entry.captures[capture_index(region, *instruction)?],
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
             match arithmetic(instruction.op(), instruction.binary_operator())? {
                 Arithmetic::Float(NumberArithmetic::Divide) | Arithmetic::Remainder => Representation::Float64,
@@ -3934,8 +3930,7 @@ fn counted_loop(
                 constant(*region.constants.get(&index)?)
             }
             Class::LoadCapture => {
-                let slot = instruction.capture_slot();
-                let index = region.captures.iter().position(|capture| *capture == slot)?;
+                let index = capture_index(region, instruction)?;
                 (captures[index] == Representation::Int32).then_some(Affine::of(Base::Capture(index)))
             }
             Class::Move | Class::ToNumeric => register(instruction.register_b()).1,
@@ -4372,8 +4367,8 @@ impl Resident {
                 resident.values += 1;
             }
         }
-        for (index, slot) in region.captures.iter().enumerate() {
-            let loads = |instruction: &WideInstruction| instruction.op().is_load_capture() && instruction.capture_slot() == *slot;
+        for index in 0..region.captures.len() {
+            let loads = |instruction: &WideInstruction| capture_index(region, *instruction) == Some(index);
             if !read_hot(&loads) {
                 resident.captures[index] = Some(resident.values);
                 resident.values += 1;
@@ -6489,8 +6484,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.fall_through(pc)
             }
             Class::LoadCapture => {
-                let slot = instruction.capture_slot();
-                let index = self.region.captures.iter().position(|capture| *capture == slot)?;
+                let index = capture_index(self.region, instruction)?;
                 let value = self.capture(index);
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
@@ -6994,6 +6988,9 @@ mod receivers;
 mod coverage_tests;
 #[path = "osr_loop/truncation.rs"]
 mod truncation;
+#[path = "osr_loop/globals.rs"]
+mod globals;
+use globals::{capture_index, rewrite_global_reads};
 
 #[cfg(test)]
 mod tests {
@@ -7159,7 +7156,7 @@ mod tests {
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ], 1, &[Value::number(number)], &[],
                 Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::from(1_u64)]))),
-                Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default())
+                Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default(), Vec::new(),)
                 .unwrap_or_else(|failure| panic!("constant admission: {failure:?}"));
             let verified = verify_unprofiled(&region).unwrap();
             let definition = verified.webs.defined(&region, 0);
@@ -7208,7 +7205,7 @@ mod tests {
         ], 4, &[], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 4]))),
             Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
-        ).unwrap_or_else(|failure| panic!("nested probe admission: {failure:?}"));
+         Vec::new(),).unwrap_or_else(|failure| panic!("nested probe admission: {failure:?}"));
         // Exercise the callout projection rather than an entry-pinned or direct
         // native array view. Its receiver still needs the same SSA proof.
         region.dynamic_arrays.remove(&1);
@@ -7235,7 +7232,7 @@ mod tests {
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
         ], 3, &[], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(3_u64), crate::compile::liveness::RegisterSet::from(7_u64), crate::compile::liveness::RegisterSet::from(3_u64), crate::compile::liveness::RegisterSet::from(3_u64)]))),
-            Some(crate::compile::liveness::RegisterSet::from(3_u64)), 0, &Default::default())
+            Some(crate::compile::liveness::RegisterSet::from(3_u64)), 0, &Default::default(), Vec::new(),)
             .unwrap_or_else(|failure| panic!("comparison admission: {failure:?}"));
         let widened = std::collections::BTreeSet::new();
         let observation = Observation {
@@ -7268,7 +7265,7 @@ mod tests {
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ], 2, &[constant], &[],
                 Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::from(1_u64), crate::compile::liveness::RegisterSet::default()]))),
-                Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default()).unwrap();
+                Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default(), Vec::new(),).unwrap();
             let widened = Default::default();
             let observation = Observation {
                 register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
@@ -7290,7 +7287,7 @@ mod tests {
         let region = admit_region(vec![branch,
             WideInstruction::new(Op::IncDec, 0, 0, 0, 1),
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
-        ], 2, &[], &[], None, None, 0, &Default::default());
+        ], 2, &[], &[], None, None, 0, &Default::default(), Vec::new(),);
         assert!(region.is_ok(), "fused numeric AND branch: {:?}", region.err());
     }
 
@@ -7305,7 +7302,7 @@ mod tests {
         let region = admit_region(instructions, 4, &[], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 4]))),
             Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
-        ).unwrap_or_else(|failure| panic!("nested lifetime admission: {failure:?}"));
+         Vec::new(),).unwrap_or_else(|failure| panic!("nested lifetime admission: {failure:?}"));
         assert!(region.lifetime_roles.is_some());
         assert!(region.tagged_definition(0));
         assert!(!region.tagged_definition(2));
@@ -7323,7 +7320,7 @@ mod tests {
         ], 4, &[], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 3]))),
             Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
-        ).unwrap_or_else(|failure| panic!("nested receiver store: {failure:?}"));
+         Vec::new(),).unwrap_or_else(|failure| panic!("nested receiver store: {failure:?}"));
         // The element read defines the receiver, so the store reads its array from the record at
         // each access (`Lowering::dynamic_array`) instead of pinning an entry identity.
         assert!(region.dynamic_arrays.contains(&1));
@@ -7343,7 +7340,7 @@ mod tests {
             ], 4, &[], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 5]))),
             Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
-        ).unwrap_or_else(|failure| panic!("lifetime admission failed: {failure:?}"));
+         Vec::new(),).unwrap_or_else(|failure| panic!("lifetime admission failed: {failure:?}"));
         assert!(region.lifetime_roles.is_some());
         assert!(region.tagged_definition(0));
         assert!(!region.tagged_definition(2));
@@ -7379,7 +7376,7 @@ mod tests {
             let admitted = admit_region(instructions, 5, &[], &[],
                 Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(31_u64); 7]))),
                 Some(crate::compile::liveness::RegisterSet::from(31_u64)), 0, &Default::default(),
-            ).is_ok();
+             Vec::new(),).is_ok();
             assert_eq!(admitted, alternative == 0);
         }
     }
@@ -7393,7 +7390,7 @@ mod tests {
         ], 2, &[Value::NULL], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(3_u64); 3]))),
             Some(crate::compile::liveness::RegisterSet::from(3_u64)), 0, &Default::default(),
-        ).is_err());
+         Vec::new(),).is_err());
     }
 
     #[test]
@@ -7410,7 +7407,7 @@ mod tests {
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ],
             4, &[], &[], None, None, 0, &Default::default(),
-        ).unwrap_or_else(|_| panic!("numeric control region"));
+         Vec::new(),).unwrap_or_else(|_| panic!("numeric control region"));
         let webs = webs(&region);
         let old = webs.defined(&region, 0);
         let new = webs.defined(&region, 2);
@@ -7437,7 +7434,7 @@ mod tests {
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ],
             6, &[], &[], None, None, 0, &Default::default(),
-        ).unwrap_or_else(|_| panic!("branch control region"));
+         Vec::new(),).unwrap_or_else(|_| panic!("branch control region"));
         let webs = webs(&region);
         let joined = webs.defined(&region, 1);
         let overwritten = webs.defined(&region, 5);
@@ -7458,7 +7455,7 @@ mod tests {
         let failure = match admit_region(
             vec![WideInstruction::new(Op::Move, 3, 1, 0, 0), instruction],
             4, &[], &[], None, None, 17, &std::collections::BTreeSet::from([0]),
-        ) {
+         Vec::new(),) {
             Ok(_) => panic!("tagged arithmetic must retain its existing rejection"),
             Err(failure) => failure,
         };
@@ -7470,9 +7467,9 @@ mod tests {
     fn osr_admission_keeps_wide_load_const_indices() {
         let constants = vec![Value::number(0.0); 65_537];
         let mut admission = Admission {
-            constants: &constants,
+            constants: &constants, globals: &[],
             roles: std::collections::BTreeMap::new(),
-            captures: Vec::new(),
+            captures: Vec::new(), capture_globals: Vec::new(),
             fields: Vec::new(),
             numbers: std::collections::BTreeMap::new(),
             values: std::collections::BTreeMap::new(),
@@ -7504,9 +7501,9 @@ mod tests {
         )
         .expect("valid constant operand");
         let mut admission = Admission {
-            constants: &constants,
+            constants: &constants, globals: &[],
             roles: std::collections::BTreeMap::new(),
-            captures: Vec::new(),
+            captures: Vec::new(), capture_globals: Vec::new(),
             fields: Vec::new(),
             numbers: std::collections::BTreeMap::new(),
             values: std::collections::BTreeMap::new(),
