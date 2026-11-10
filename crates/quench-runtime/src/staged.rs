@@ -14,11 +14,13 @@
 //! (`docs/v2/specialization.md`). `staged_coverage` in this module's tests keeps hand-written
 //! decodes of the same layouts from reappearing elsewhere.
 
-use crate::bytecode::Register;
+use crate::bytecode::{Op, Register, WideInstruction};
 use crate::typed_ir::Type;
 
+mod concrete;
 pub(crate) mod numeric;
 mod heap;
+pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
 pub(crate) mod environment;
@@ -224,6 +226,20 @@ pub(crate) trait Frame<S: Stage> {
 
     /// Continue at the jump target.
     fn jump(&mut self, stage: &mut S) -> Self::Control;
+
+    /// The canonical boolean `condition`, with the fact this stage keeps of it.
+    fn boolean(&mut self, stage: &mut S, condition: S::Cond) -> (S::Word, Self::Fact);
+
+    /// Read local slot `slot` with the fact this stage keeps of it; `None` where this
+    /// frame cannot read the activation's locals (the tier then leaves at its exact PC).
+    #[inline(always)]
+    fn load_local(&mut self, _stage: &mut S, _slot: u16, _miss: Option<S::Miss>)
+        -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Write `value` to local slot `slot`; `false` where this frame cannot write them.
+    #[inline(always)]
+    fn store_local(&mut self, _stage: &mut S, _slot: u16, _value: S::Word, _miss: Option<S::Miss>)
+        -> bool { false }
 }
 
 /// An instruction `step` runs, with the operands a tier decoded.
@@ -233,6 +249,10 @@ pub(crate) enum Operation<W, P> {
     Move { destination: Register, source: Register },
     /// Define `destination` from `constant`.
     LoadConst { destination: Register, constant: Constant },
+    /// Define `destination` from local slot `slot`.
+    LoadLocalPlain { destination: Register, slot: u16 },
+    /// Write `source` to local slot `slot`, and to `result` where the instruction has one.
+    StoreLocalPlain { source: Register, slot: u16, result: Option<Register> },
     /// Continue at the jump target.
     Jump,
     /// Continue at the jump target when register `register` is truthy, or when it is falsy
@@ -247,6 +267,8 @@ pub(crate) enum Operation<W, P> {
     /// the frame's miss edge, where the interpreter throws the TypeError
     /// (RequireObjectCoercible).
     RequireObjectCoercible { register: Register },
+    /// Define `destination` with the logical negation of register `source`'s truthiness.
+    LogicalNot { destination: Register, source: Register },
     /// The proven slot `slot` of `base`'s object, under `proof`, as a value (`Frame::field_read`).
     ReadField { base: Register, slot: u16, ty: Type, proof: P },
     /// Write `value` to the proven slot `slot` of `base`'s object under `proof`.
@@ -274,6 +296,44 @@ pub(crate) enum Operation<W, P> {
     GlobalRead { destination: Register, atom: u32, site: u16, proof: P },
     /// The VM field-store helper for `object.atom = value` through cache `site`.
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
+}
+impl<W, P> Operation<W, P> {
+    /// The staged operation `instruction` denotes, with the operands the catalog fixes.
+    /// `None` where the opcode has no staged operation, or where its constant is not
+    /// available to this tier: the caller then takes its own exact path. The heap
+    /// operations are the frame's (`Frame::field_read`); a tier decodes those itself.
+    pub(crate) fn decode(instruction: WideInstruction,
+        constant: impl FnOnce(usize) -> Option<Constant>) -> Option<Self> {
+        Some(match instruction.op() {
+            Op::Move => Self::Move {
+                destination: instruction.result_register(), source: instruction.register_b() },
+            Op::LoadConst => Self::LoadConst {
+                destination: instruction.result_register(),
+                constant: constant(instruction.constant_index())? },
+            Op::LoadLocalPlain => Self::LoadLocalPlain {
+                destination: instruction.result_register(),
+                slot: u16::try_from(instruction.local_slot()).ok()? },
+            Op::StoreLocalPlain => Self::StoreLocalPlain {
+                source: instruction.register_a(),
+                slot: u16::try_from(instruction.local_slot()).ok()?,
+                result: instruction.optional_register_b() },
+            Op::Jump => Self::Jump,
+            Op::JumpFalse => Self::JumpIf {
+                register: instruction.register_a(), taken: false },
+            Op::JumpTrue => Self::JumpIf {
+                register: instruction.register_a(), taken: true },
+            Op::LoadThis => Self::LoadThis {
+                destination: instruction.result_register() },
+            Op::RequireObjectCoercible => Self::RequireObjectCoercible {
+                register: instruction.register_b() },
+            Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
+                destination: instruction.result_register(), source: instruction.register_b() }),
+            Op::Unary if instruction.unary_operator()
+                == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot {
+                    destination: instruction.result_register(), source: instruction.register_b() },
+            _ => return None,
+        })
+    }
 }
 
 /// Which of an instruction's two control edges it takes.
@@ -306,11 +366,38 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             frame.write(stage, destination, value, fact);
             Step::Value(value)
         }
+        Operation::LoadLocalPlain { destination, slot } => {
+            match frame.load_local(stage, slot, frame.local_miss()) {
+                Some((value, fact)) => {
+                    frame.write(stage, destination, value, fact);
+                    Step::Value(value)
+                }
+                None => Step::Unresolved,
+            }
+        }
+        Operation::StoreLocalPlain { source, slot, result } => {
+            let value = frame.tagged(stage, source);
+            if !frame.store_local(stage, slot, value, frame.local_miss()) { return Step::Unresolved; }
+            if let Some(result) = result {
+                let fact = frame.fact(source);
+                frame.write(stage, result, value, fact);
+            }
+            Step::Value(value)
+        }
         Operation::Jump => Step::Control(frame.jump(stage)),
         Operation::JumpIf { register, taken } => heap::jump_if(stage, frame, register, taken),
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
+        Operation::LogicalNot { destination, source } => match frame.truthiness(stage, source) {
+            Some(truthy) => {
+                let falsy = stage.not(truthy);
+                let (value, fact) = frame.boolean(stage, falsy);
+                frame.write(stage, destination, value, fact);
+                Step::Value(value)
+            }
+            None => Step::Unresolved,
+        },
         Operation::Safepoint { proof } => match frame.safepoint(stage, proof) {
             Some(()) => Step::Value(stage.constant(0)),
             None => Step::Unresolved,
@@ -349,104 +436,6 @@ fn require_object_coercible<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
         Some(()) => Step::Value(value),
         None => Step::Unresolved,
     }
-}
-
-/// The interpreter's stage: machine words, read from live memory. It knows every condition,
-/// so a guard never fails and each `choose` runs one arm.
-#[derive(Clone, Copy)]
-pub(crate) struct Concrete {
-    tables: [u64; Table::COUNT],
-}
-
-impl Concrete {
-    #[inline(always)]
-    pub(crate) fn new(property_values: *const crate::Value) -> Self {
-        Self { tables: [property_values as u64] }
-    }
-}
-
-impl Stage for Concrete {
-    type Word = u64;
-    type Proof = ();
-    type Cond = bool;
-    type Miss = ();
-
-    #[inline(always)]
-    fn constant(&mut self, bits: u64) -> u64 { bits }
-    #[inline(always)]
-    fn load_u32(&mut self, base: u64, offset: i32) -> u64 {
-        // SAFETY: a staged operation loads only from a live record or table at a layout offset.
-        u64::from(unsafe { ((base as *const u8).offset(offset as isize) as *const u32).read() })
-    }
-    #[inline(always)]
-    fn load_u64(&mut self, base: u64, offset: i32) -> u64 {
-        // SAFETY: as `load_u32`; records and arena values are 8-byte aligned.
-        unsafe { ((base as *const u8).offset(offset as isize) as *const u64).read() }
-    }
-    #[inline(always)]
-    fn load_table(&mut self, address: u64) -> u64 { self.load_u64(address, 0) }
-    #[inline(always)]
-    fn add(&mut self, a: u64, b: u64) -> u64 { a.wrapping_add(b) }
-    #[inline(always)]
-    fn or(&mut self, a: u64, b: u64) -> u64 { a | b }
-    #[inline(always)]
-    fn add_imm(&mut self, a: u64, imm: u64) -> u64 { a.wrapping_add(imm) }
-    #[inline(always)]
-    fn mul_imm(&mut self, a: u64, imm: u64) -> u64 { a.wrapping_mul(imm) }
-    #[inline(always)]
-    fn and_imm(&mut self, a: u64, imm: u64) -> u64 { a & imm }
-    #[inline(always)]
-    fn or_imm(&mut self, a: u64, imm: u64) -> u64 { a | imm }
-    #[inline(always)]
-    fn shr_imm(&mut self, a: u64, shift: u32) -> u64 { a >> shift }
-    #[inline(always)]
-    fn sar32_imm(&mut self, a: u64, shift: u32) -> u64 { u64::from(((a as u32 as i32) >> shift) as u32) }
-    #[inline(always)]
-    fn eq_imm(&mut self, a: u64, imm: u64) -> bool { a == imm }
-    #[inline(always)]
-    fn ne_imm(&mut self, a: u64, imm: u64) -> bool { a != imm }
-    #[inline(always)]
-    fn ugt_imm(&mut self, a: u64, imm: u64) -> bool { a > imm }
-    #[inline(always)]
-    fn ult(&mut self, a: u64, b: u64) -> bool { a < b }
-    #[inline(always)]
-    fn uextend32(&mut self, a: u64) -> u64 { a }
-    #[inline(always)]
-    fn sub(&mut self, a: u64, b: u64) -> u64 { a.wrapping_sub(b) }
-    #[inline(always)]
-    fn select(&mut self, cond: bool, then: u64, otherwise: u64) -> u64 { if cond { then } else { otherwise } }
-    #[inline(always)]
-    fn store_u32(&mut self, base: u64, offset: i32, value: u64) {
-        // SAFETY: a staged operation stores only into a live record or backing at a layout offset.
-        unsafe { ((base as *mut u8).offset(offset as isize) as *mut u32).write(value as u32) }
-    }
-    #[inline(always)]
-    fn store_u64(&mut self, base: u64, offset: i32, value: u64) {
-        // SAFETY: as `store_u32`; values and backings are 8-byte aligned.
-        unsafe { ((base as *mut u8).offset(offset as isize) as *mut u64).write(value) }
-    }
-    #[inline(always)]
-    fn not(&mut self, cond: bool) -> bool { !cond }
-    #[inline(always)]
-    fn any(&mut self, a: bool, b: bool) -> bool { a | b }
-    #[inline(always)]
-    fn pick(&mut self, cond: bool, then: bool, otherwise: bool) -> bool { if cond { then } else { otherwise } }
-    #[inline(always)]
-    fn number_truthy(&mut self, bits: u64) -> bool { crate::vm::number_is_truthy(f64::from_bits(bits)) }
-    #[inline(always)]
-    fn shape_in(&mut self, shape: u64, shapes: &[u32]) -> bool {
-        u32::try_from(shape).is_ok_and(|shape| shapes.binary_search(&shape).is_ok())
-    }
-    #[inline(always)]
-    fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
-        if cond { then(self) } else { otherwise(self) }
-    }
-    #[inline(always)]
-    fn guard(&mut self, cond: bool, _miss: ()) -> Option<()> { cond.then_some(()) }
-    #[inline(always)]
-    fn known(&self, cond: bool) -> Option<bool> { Some(cond) }
-    #[inline(always)]
-    fn table(&mut self, table: Table) -> u64 { self.tables[table as usize] }
 }
 
 #[cfg(test)]

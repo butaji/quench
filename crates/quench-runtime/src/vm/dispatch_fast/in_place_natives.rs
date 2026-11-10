@@ -40,7 +40,8 @@ fn math_value(native: Native, args: &[Value]) -> Option<Value> {
 /// property query by a string key (`Vm::plain_own_property_query`), `Object.is`, an object's
 /// keys, values or entries its shape lists (`Vm::plain_enumerable_own_properties`), `super`
 /// reads (`Reflect.get` and `Reflect.getPrototypeOf` of an ordinary target, whose data
-/// property read ignores the receiver) and `Symbol.for` of a string.
+/// property read ignores the receiver), `Symbol.for` of a string and
+/// `Object.prototype.toString` (`object_to_string_in_place`).
 fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
     let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
     match native {
@@ -59,11 +60,29 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
         _ if let Some(kind) = super::super::object_keys::EnumerableOwnPropertyKind::of(native) =>
             vm.plain_enumerable_own_properties(argument, kind),
         Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
+        Native::ObjectPrototypeToString => object_to_string_in_place(vm, code, receiver),
         // The registry lookup of a string key, which ToString leaves as it is.
         Native::SymbolFor if args.first().is_some_and(|key| vm.heap.is_string(*key)) =>
             vm.call_symbol_native(code, Native::SymbolFor, args).ok(),
         _ => None,
     }
+}
+
+/// `Object.prototype.toString` of `undefined`, `null`, or an object whose `@@toStringTag`
+/// a plain lookup reads (`Vm::plain_keyed_get`, which declines accessors on the chain): its
+/// brand and its tag then run no guest code. A proxy, whose brand asks `IsArray` of its
+/// target, and a primitive, which the tag reads through its wrapper, take the native.
+fn object_to_string_in_place<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, receiver: Value) -> Option<Value> {
+    if receiver.is_heap() {
+        if matches!(vm.heap.get(receiver), Some(Cell::Proxy { .. })) || !vm.is_object_like(receiver) {
+            return None;
+        }
+        let tag = vm.well_known_symbols.get(super::super::WellKnownSymbol::ToStringTag)?;
+        vm.plain_keyed_get(receiver, tag)?;
+    } else if !receiver.is_undefined() && !receiver.is_null() {
+        return None;
+    }
+    vm.object_prototype_to_string(code, receiver).ok()
 }
 
 /// Steps of collections and built-in records on their own receivers: the Map and Set

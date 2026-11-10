@@ -339,10 +339,23 @@ fn activation_is_private(function: &Function, id: usize, inputs: &LayoutInputs) 
         && !inputs.dynamic_descendant
         && !function.is_async
         && !function.is_generator
-        && !function.is_class_constructor
-        && !function.derived_constructor
-        && !function.class_initializer
+        && construction_is_private(function)
         && !function.has_dynamic_scope_access()
+}
+
+/// Whether no construction protocol names the function's slots: a derived constructor's
+/// `this` binding, a class initializer's, or a constructor defining instance elements.
+fn construction_is_private(function: &Function) -> bool {
+    !function.derived_constructor
+        && !function.class_initializer
+        && !(function.is_class_constructor && initializes_instance_elements(function))
+}
+
+/// Whether a class constructor's code defines its instance's fields or private methods,
+/// whose initializers resolve the class scope through its environment by name.
+fn initializes_instance_elements(function: &Function) -> bool {
+    function.instructions().any(|instruction| matches!(instruction.op(),
+        Op::DefineField | Op::DefinePrivateField | Op::DefineComputedField | Op::MarkPrivateName))
 }
 
 fn has_closure(function: &Function) -> bool {

@@ -128,6 +128,10 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
     fn jump(&mut self, _stage: &mut Concrete) -> Edge {
         Edge::Target
     }
+
+    fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) {
+        (Value::boolean(condition).to_bits(), ())
+    }
 }
 
 impl NumericFrame<Concrete> for ConcreteFrame<'_> {
@@ -162,6 +166,49 @@ fn step_moves_and_defines_constants_on_the_concrete_stage() {
         destination: 3, constant: Constant::untyped(constant) }) else { panic!("a constant produces a value") };
     assert_eq!(Value::from_bits(word), constant);
     assert_eq!(Value::from_bits(frame.registers[3]), constant);
+}
+
+/// Logical negation is ToBoolean then the canonical boolean: one operation for the
+/// interpreter and every tier.
+#[test]
+fn staged_logical_not_is_the_javascript_truthiness_negation() {
+    let mut stage = Concrete::new(std::ptr::null());
+    for (value, expected) in [
+        (Value::TRUE, false), (Value::FALSE, true), (Value::number(0.0), true),
+        (Value::number(-0.0), true), (Value::number(f64::NAN), true),
+        (Value::number(3.0), false), (Value::NULL, true), (Value::UNDEFINED, true),
+    ] {
+        let mut frame = ConcreteFrame { registers: vec![value.to_bits(), 0], heap: None };
+        let Step::Value(word) = step(&mut stage, &mut frame,
+            Operation::LogicalNot { destination: 1, source: 0 }) else {
+            panic!("logical not produces a value")
+        };
+        assert_eq!(Value::from_bits(word), Value::boolean(expected), "{value:?}");
+        assert_eq!(Value::from_bits(frame.registers[1]), Value::boolean(expected));
+    }
+}
+
+/// The catalog's staged set and `Operation::decode` agree: every opcode the catalog marks
+/// `Staged` decodes to one operation, and every other opcode is explicitly `Exact`.
+#[test]
+fn every_staged_opcode_decodes_to_one_operation() {
+    use crate::bytecode::{Op, Semantics, WideInstruction};
+    let constants = [Constant::untyped(Value::number(1.0))];
+    let staged = [Op::Move, Op::LoadConst, Op::LoadLocalPlain, Op::StoreLocalPlain,
+        Op::Jump, Op::JumpFalse, Op::JumpTrue, Op::LoadThis, Op::RequireObjectCoercible,
+        Op::ToNumeric];
+    for op in staged {
+        assert_eq!(op.semantics(), Semantics::Staged, "{op:?}");
+        let instruction = WideInstruction::new(op, 1, 2, 3, 0);
+        assert!(Operation::<u64, ()>::decode(instruction, |index| constants.get(index).copied()).is_some(),
+            "{op:?} must decode to a staged operation");
+    }
+    for index in 0..Op::COUNT {
+        let op = Op::from_index(index).unwrap();
+        if !staged.contains(&op) {
+            assert_eq!(op.semantics(), Semantics::Exact, "{op:?} must be an explicit exact path");
+        }
+    }
 }
 
 /// The edge a `JumpIf` takes on the concrete stage for `value`.

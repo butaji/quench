@@ -26,6 +26,9 @@ pub(super) struct EmitFrame<'a> {
     pub(super) constants: &'a [crate::bytecode::Constant],
     /// The entry's `this` binding, where the lowering has entry facts.
     pub(super) this: Option<Variable>,
+    /// The activation's local slots (`JsStepDispatch::native_locals`), where this region
+    /// may read or write them; `None` for a numeric region, whose activation has none.
+    pub(super) locals: Option<ir::Value>,
     /// The running body's dispatch payload, which semantic helpers take.
     pub(super) payload: ir::Value,
     /// The helper table a callout addresses.
@@ -201,7 +204,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
-        let Edges::Branch { miss, .. } = self.edges else { unreachable!("truthiness needs a branch edge") };
+        let (Edges::Branch { miss, .. } | Edges::ValueGuarded { miss }) = self.edges else { unreachable!("truthiness needs a miss edge") };
         Some(register_truthiness(stage.builder, self.registers, self.state, register, miss))
     }
 
@@ -216,6 +219,36 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn jump(&mut self, _stage: &mut Emit<'_, '_>) {
         debug_assert!(matches!(self.edges, Edges::Jump));
+    }
+
+    #[inline(always)]
+    fn boolean(&mut self, stage: &mut Emit<'_, '_>, holds: ir::Value)
+        -> (ir::Value, RegisterFact) {
+        let (yes, no) = (stage.builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64),
+            stage.builder.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
+        let value = stage.builder.ins().select(holds, yes, no);
+        (value, RegisterFact::definition(Type::language(crate::ValueType::Boolean),
+            Representation::Tagged))
+    }
+
+    #[inline(always)]
+    fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
+        -> Option<(ir::Value, RegisterFact)> {
+        let locals = self.locals?;
+        let address = stage.builder.ins().iadd_imm_s(locals,
+            i64::from(slot) * std::mem::size_of::<Value>() as i64);
+        let value = stage.builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+        Some((value, RegisterFact::canonical()))
+    }
+
+    #[inline(always)]
+    fn store_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, value: ir::Value,
+        _miss: Option<ir::Block>) -> bool {
+        let Some(locals) = self.locals else { return false };
+        let address = stage.builder.ins().iadd_imm_s(locals,
+            i64::from(slot) * std::mem::size_of::<Value>() as i64);
+        stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+        true
     }
 }
 
@@ -382,6 +415,10 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
             Edges::ValueGuarded { miss } => miss,
             _ => unreachable!("a numeric operation has a miss edge"),
         }
+    }
+
+    fn local_miss(&self) -> Option<ir::Block> {
+        matches!(self.edges, Edges::ValueGuarded { .. }).then(|| self.miss())
     }
 
     fn int_fact(&self) -> RegisterFact {

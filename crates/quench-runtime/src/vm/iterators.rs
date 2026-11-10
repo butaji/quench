@@ -26,8 +26,8 @@ impl From<JsError> for IteratorHelperFailure {
 }
 
 /// The slots of an iterator result's shape (`Vm::iterator_result`): `value`, then `done`.
-const ITERATOR_RESULT_VALUE_SLOT: usize = 0;
-const ITERATOR_RESULT_DONE_SLOT: usize = 1;
+pub(super) const ITERATOR_RESULT_VALUE_SLOT: usize = 0;
+pub(super) const ITERATOR_RESULT_DONE_SLOT: usize = 1;
 
 /// What an iteration step's call is (`Vm::iteration_step`): one the lane makes in place, of
 /// an array iterator or a generator, or any other call.

@@ -16,7 +16,7 @@ pub use calendar::{
     calendar_uses_eras, calendar_year_from_era, calendar_year_month_reference_date, CalendarDate,
     CalendarDifferenceDirection, CalendarDifferenceUnit, MAX_CALENDAR_MONTHS_PER_YEAR,
 };
-pub use collator::{canonical_locale_identifier, compare_collator, CollatorOptions};
+pub use collator::{canonical_locale_identifier, compare_collator, resolve_collator, CollatorOptions, ResolvedCollator};
 pub use digits::localize_digits;
 pub use locale_canonicalization::{
     canonical_region, canonicalize_locale_identifier, language_alias, titlecase_script,

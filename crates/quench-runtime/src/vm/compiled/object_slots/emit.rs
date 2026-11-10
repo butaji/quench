@@ -112,9 +112,18 @@ impl NumericStage for Emit<'_, '_> {
         left: ir::Value, right: ir::Value) -> ir::Value {
         emit_number_arithmetic_operation(self.builder, operation, left, right)
     }
+    fn float_negate(&mut self, value: ir::Value) -> ir::Value {
+        self.builder.ins().fneg(value)
+    }
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
         emit_checked_int32_arithmetic(self.builder, operation, left, right)
+    }
+    fn float_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+        emit_number_remainder(self.builder, types::I64, left, right)
+    }
+    fn int_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+        self.builder.ins().srem(left, right)
     }
     fn i32_constant(&mut self, value: i32) -> ir::Value { self.builder.ins().iconst(types::I32, i64::from(value)) }
     fn i32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fcvt_from_sint(types::F64, a) }
