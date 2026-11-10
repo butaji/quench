@@ -40,16 +40,42 @@ pub enum Rmw {
 }
 const MAX_ADDRESS_WAITERS: usize = u32::MAX as usize;
 
-#[derive(Default, Debug)]
-struct WaitState {
-    notified: bool,
-    cancelled: bool,
+/// A waiter's fate; a timeout is not stored, the waiter reads its own clock.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+enum WaitState {
+    #[default]
+    Waiting,
+    Notified,
+    /// The thread was terminated, which outranks a notification that raced it.
+    Cancelled,
+}
+impl WaitState {
+    /// Notification takes only a waiting waiter, cancellation any live one; whether it took.
+    fn settle(&mut self, to: Self) -> bool {
+        let moved = if to == Self::Notified { *self == Self::Waiting } else { *self != to };
+        if moved { *self = to; }
+        moved
+    }
+
+    /// What a wait that is over reports, or `None` while it still waits.
+    fn finished(self) -> Option<WaitResult> {
+        match self {
+            Self::Waiting => None,
+            Self::Notified => Some(WaitResult::Ok),
+            Self::Cancelled => Some(WaitResult::Cancelled),
+        }
+    }
 }
 #[derive(Debug)]
 struct Waiter {
     notified: Mutex<WaitState>,
     wake: Condvar,
     deadline: Option<Instant>,
+}
+impl Waiter {
+    fn new(deadline: Option<Instant>) -> Arc<Self> {
+        Arc::new(Self { notified: Mutex::default(), wake: Condvar::new(), deadline })
+    }
 }
 #[derive(Debug)]
 pub(crate) struct State {
@@ -84,6 +110,13 @@ impl State {
             self.waiters.insert(offset, queue);
         }
         Ok(())
+    }
+    /// Drops `waiter` from the queue at `offset`, which may not hold it any more.
+    fn withdraw(&mut self, offset: usize, waiter: &Arc<Waiter>) {
+        if let Some(queue) = self.waiters.get_mut(&offset) {
+            queue.retain(|w| !Arc::ptr_eq(w, waiter));
+        }
+        self.prune_waiters(offset);
     }
     fn prune_waiters(&mut self, offset: usize) {
         if self.waiters.get(&offset).is_some_and(VecDeque::is_empty) {
@@ -327,11 +360,7 @@ impl SharedBacking {
             return Err(AccessError::Width);
         }
         let deadline = timeout.and_then(|d| Instant::now().checked_add(d));
-        let waiter = Arc::new(Waiter {
-            notified: Mutex::new(WaitState::default()),
-            wake: Condvar::new(),
-            deadline,
-        });
+        let waiter = Waiter::new(deadline);
         {
             let _order = memory_order();
             let mut s = self.lock();
@@ -346,7 +375,7 @@ impl SharedBacking {
             let waiter = waiter.clone();
             let callback: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
                 let mut state = waiter.notified.lock().unwrap_or_else(|e| e.into_inner());
-                state.cancelled = true;
+                state.settle(WaitState::Cancelled);
                 waiter.wake.notify_one();
             });
             interrupt.register_termination_waker(&callback);
@@ -354,11 +383,10 @@ impl SharedBacking {
         });
         let mut state = waiter.notified.lock().map_err(|_| AccessError::Poisoned)?;
         loop {
-            if state.cancelled {
-                break;
-            }
-            if state.notified {
-                return Ok(WaitResult::Ok);
+            match state.finished() {
+                Some(WaitResult::Cancelled) => break,
+                Some(result) => return Ok(result),
+                None => {}
             }
             match deadline {
                 None => state = waiter.wake.wait(state).map_err(|_| AccessError::Poisoned)?,
@@ -378,17 +406,8 @@ impl SharedBacking {
         drop(state);
         let mut s = self.lock();
         let state = waiter.notified.lock().map_err(|_| AccessError::Poisoned)?;
-        if let Some(queue) = s.waiters.get_mut(&offset) {
-            queue.retain(|w| !Arc::ptr_eq(w, &waiter));
-        }
-        s.prune_waiters(offset);
-        Ok(if state.cancelled {
-            WaitResult::Cancelled
-        } else if state.notified {
-            WaitResult::Ok
-        } else {
-            WaitResult::TimedOut
-        })
+        s.withdraw(offset, &waiter);
+        Ok(state.finished().unwrap_or(WaitResult::TimedOut))
     }
     pub fn notify(&self, offset: usize, count: usize) -> Result<usize, AccessError> {
         let _order = memory_order();
@@ -400,10 +419,9 @@ impl SharedBacking {
                     break;
                 };
                 let mut state = waiter.notified.lock().map_err(|_| AccessError::Poisoned)?;
-                if state.cancelled || waiter.deadline.is_some_and(|d| Instant::now() >= d) {
+                if waiter.deadline.is_some_and(|d| Instant::now() >= d) || !state.settle(WaitState::Notified) {
                     continue;
                 }
-                state.notified = true;
                 waiter.wake.notify_one();
                 n += 1;
             }
@@ -433,20 +451,10 @@ impl AsyncWait {
             .notified
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let result = if state.cancelled {
-            Some(WaitResult::Cancelled)
-        } else if state.notified {
-            Some(WaitResult::Ok)
-        } else if self.deadline.is_some_and(|d| Instant::now() >= d) {
-            Some(WaitResult::TimedOut)
-        } else {
-            None
-        };
+        let timed_out = self.deadline.is_some_and(|d| Instant::now() >= d).then_some(WaitResult::TimedOut);
+        let result = state.finished().or(timed_out);
         if result.is_some() {
-            if let Some(queue) = storage.waiters.get_mut(&self.offset) {
-                queue.retain(|w| !Arc::ptr_eq(w, &self.waiter));
-            }
-            storage.prune_waiters(self.offset);
+            storage.withdraw(self.offset, &self.waiter);
         }
         result
     }
@@ -454,10 +462,7 @@ impl AsyncWait {
 impl Drop for AsyncWait {
     fn drop(&mut self) {
         let mut storage = self.backing.lock();
-        if let Some(queue) = storage.waiters.get_mut(&self.offset) {
-            queue.retain(|w| !Arc::ptr_eq(w, &self.waiter));
-        }
-        storage.prune_waiters(self.offset);
+        storage.withdraw(self.offset, &self.waiter);
     }
 }
 impl SharedBacking {
@@ -482,11 +487,7 @@ impl SharedBacking {
             return Ok(AsyncStart::Ready(WaitResult::TimedOut));
         }
         let deadline = timeout.and_then(|d| Instant::now().checked_add(d));
-        let waiter = Arc::new(Waiter {
-            notified: Mutex::new(WaitState::default()),
-            wake: Condvar::new(),
-            deadline,
-        });
+        let waiter = Waiter::new(deadline);
         storage.enroll(offset, waiter.clone())?;
         Ok(AsyncStart::Pending(AsyncWait {
             backing: self.clone(),
