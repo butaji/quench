@@ -257,9 +257,7 @@ fn test262_cases(options: &Options) -> Result<(Vec<Case>, usize), String> {
         }
         let relative = file.strip_prefix(&root).unwrap().to_string_lossy().into_owned();
         let mut quench = vec![options.quench.display().to_string(), "--case".into()];
-        if jit {
-            quench.push("--jit".into());
-        }
+        quench.push(if jit { "--jit" } else { "--no-jit" }.into());
         quench.push(file.display().to_string());
         let mut node = vec![options.node.display().to_string()];
         if !jit {

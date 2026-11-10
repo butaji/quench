@@ -690,7 +690,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         Some("--help") | Some("-h") => {
             print_cli_help();
             // Quench's own options follow Node's.
-            println!("quench-node [--jit] [{}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG);
+            println!("quench-node [--no-jit] [{}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG);
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
@@ -711,12 +711,14 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut input = None;
     let mut eval_source = None;
     let mut print = false;
-    let mut jit = false;
+    // Native tiers run by default; `--no-jit` keeps execution in the interpreter.
+    let mut jit = true;
     let mut guest_arguments = Vec::new();
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--jit" => jit = true,
+            "--no-jit" => jit = false,
             "--env-file" | "--env-file-if-exists" => {
                 let Some(path) = args.get(index + 1) else {
                     return Ok(cli_usage_error(&format!(

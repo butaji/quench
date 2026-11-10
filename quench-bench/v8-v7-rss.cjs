@@ -8,7 +8,7 @@
 // Every round runs each engine once, in a fixed interleaved order, through `rss-exec`
 // (quench-bench), which evicts the engine's executable from the page cache, runs it, and
 // reports the child's peak RSS from wait4. A sample counts only with exit status 0 and a
-// finite Score. Quench runs without and with --jit; Node runs --jitless and with its JIT;
+// finite Score. Quench runs with --no-jit and with --jit; Node runs --jitless and with its JIT;
 // Bun runs with BUN_JSC_useJIT=0 and with its JIT. A fixture is won when every Quench
 // sample, in both modes, is below every sample of every other engine.
 //
@@ -108,7 +108,7 @@ if (measuredQuench !== quench) {
 
 // Engines in the order each round runs them. Quench's two modes come first.
 const engines = [
-  { name: "quench", side: "quench", executable: measuredQuench, argv: [], env: {} },
+  { name: "quench", side: "quench", executable: measuredQuench, argv: ["--no-jit"], env: {} },
   { name: "quench --jit", side: "quench", executable: measuredQuench, argv: ["--jit"], env: {} },
 ];
 const qjs = option("--qjs", null);
