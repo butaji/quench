@@ -8,11 +8,10 @@ use super::super::compiled::LaneExit;
 /// edges (a shape compaction, a dead native callee) dropped, and those of them no run of
 /// which completed (`LaneView::drop_body`). Each dropped body doubles the next one's warm-up,
 /// so a function whose bodies keep being discarded stops paying a compile for each;
-/// `TIERS.lane_body.max_lifetimes` dropped bodies, or `max_wasted` wasted ones, decline it.
+/// `TIERS.lane_body.max_lifetimes` dropped bodies, decline it.
 #[derive(Clone, Copy, Default)]
 pub(super) struct LaneBodyHistory {
     pub(super) lifetimes: u8,
-    wasted: u8,
     /// The inlining budget halvings its last plan needed to fit (`PendingLaneMethod::shrinks`).
     shrinks: u8,
 }
@@ -60,11 +59,6 @@ impl LaneView {
             return;
         }
         let Some(stuck) = verdict(*recompiles, leaves_at.get(), *stuck) else { return };
-        // A body no run of which completed was a wasted compile, whatever comes next,
-        // but one whose runs all left at its entry contract proved only that: its
-        // replan drops the contract (`LaneExit::Entry`).
-        let entry_only = leaves_at.get().exits().all(|exit| exit == LaneExit::Entry);
-        if !completed.get() && !entry_only { self.note_wasted_compile(); }
         let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck };
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
@@ -90,16 +84,10 @@ impl LaneView {
     /// Whether its history affords another compile.
     pub(super) fn affords_compile(&self) -> bool {
         let history = self.history.get();
-        history.lifetimes <= TIERS.lane_body.max_lifetimes && history.wasted < TIERS.lane_body.max_wasted
+        history.lifetimes <= TIERS.lane_body.max_lifetimes
     }
 
-    /// A compile none of whose runs completed counts toward `TIERS.lane_body.max_wasted`.
-    fn note_wasted_compile(&self) {
-        let history = self.history.get();
-        self.history.set(LaneBodyHistory { wasted: history.wasted.saturating_add(1), ..history });
-    }
-
-    /// A compile a lifecycle edge outran counts as a dropped body, never a wasted one: no run
+    /// A compile a lifecycle edge outran counts as a dropped body: no run
     /// of it took place.
     pub(super) fn note_dropped_compile(&self) {
         let history = self.history.get();
@@ -111,12 +99,11 @@ impl LaneView {
     /// outlives the shape ids the edge renumbered. One no run of which completed counts as
     /// wasted (`LaneBodyHistory`).
     pub(super) fn drop_body(&self, body: &mut LaneBody) {
-        let LaneBody::Specialized { completed, leaves_at, stuck, recompiles, .. } = body else { return };
-        let (completed, stuck, recompiles) = (completed.get(), stuck.union(leaves_at.get()), *recompiles);
+        let LaneBody::Specialized { leaves_at, stuck, recompiles, .. } = body else { return };
+        let (stuck, recompiles) = (stuck.union(leaves_at.get()), *recompiles);
         let history = self.history.get();
         self.history.set(LaneBodyHistory {
             lifetimes: history.lifetimes.saturating_add(1),
-            wasted: history.wasted + u8::from(!completed),
             ..history
         });
         *body = LaneBody::Unspecialized { entries: 0, recompiles, stuck };
@@ -159,7 +146,10 @@ impl LaneView {
         }
         let (outcome, recompiles, stuck) = match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized { entries, recompiles, stuck } if entries.saturating_add(1) >= self.warmup_entries() || self.recurrent(entries.saturating_add(1)) => {
-                if !self.affords_compile() { return false; }
+                if !self.affords_compile() {
+                    *body = LaneBody::Unspecialized { entries, recompiles, stuck };
+                    return false;
+                }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
                 (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks }), recompiles, stuck)

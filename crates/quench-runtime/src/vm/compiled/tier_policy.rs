@@ -51,10 +51,6 @@ pub(in crate::vm) struct LaneBody {
     /// threshold backs off, and `max_recompiles` bounds it.
     pub(in crate::vm) reoptimize_exits: u16,
     pub(in crate::vm) max_recompiles: u8,
-    /// The bodies a function may lose without any run of theirs completing before it
-    /// declines: a shape compaction or a dead native call drops a body, and one that never
-    /// completed paid its compile for nothing. Each such body doubles the next one's warm-up.
-    pub(in crate::vm) max_wasted: u8,
     /// The most bodies of one function lifecycle edges may discard before it runs in the lane
     /// for good: past them a compile costs more than its runs regain.
     pub(in crate::vm) max_lifetimes: u8,
@@ -153,9 +149,8 @@ const MEASURED: Tiers = Tiers {
         reoptimize_share: 1,
         reoptimize_exits: 64,
         max_recompiles: 4,
-        max_wasted: u8::MAX,
         max_lifetimes: 8,
-        min_instructions: 24,
+        min_instructions: 0,
         compile_poll_interval: 64,
     },
     js_function: JsFunction {

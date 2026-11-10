@@ -173,11 +173,13 @@ impl<H: Host> Vm<H> {
         captures: &dyn Fn(Value) -> (usize, usize), direct: &[Option<DirectCallee>],
         generic: &[LaneExit], budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
         let unit = self.lane_plan_unit(program, function, targets, generic, budget)?;
-        let left_at = unit_leaves(&unit, generic);
+        let mut left_at = unit_leaves(&unit, generic);
         let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(Miss::PlanNoEntry); None })?;
-        // An entry that leaves at once is pure cost: a body whose first instruction its
-        // predecessors left at declines.
-        if left_at.contains(&entry.unwrap_or(0)) { plan_miss(Miss::PlanLeavesAtEntry); return None; }
+        // A leave at the first instruction is a wrong entry speculation: the next body drops
+        // its entry contract (`LaneExit::Entry`) and lowers the instruction as any other.
+        let first = entry.unwrap_or(0);
+        let entry_left = left_at.contains(&first) || generic.contains(&LaneExit::Entry);
+        left_at.retain(|pc| *pc != first);
         let mut fields = self.lane_unit_fields(program, &unit, &left_at);
         // Admitting the stores' writes once, here, widens what they widen; the fields then
         // read the widened slots, and the body's entries admit nothing again.
@@ -198,7 +200,7 @@ impl<H: Host> Vm<H> {
             .map_or(&[][..], |_| self.programs.constants(active));
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
             invalidation: invalidation.address(), constants }), ..self.vm_facts() };
-        let leaves: Vec<usize> = left_at.iter().copied().chain(generic.contains(&LaneExit::Entry).then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
+        let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
             &leaves, &direct_sites, &frame_captures, entry).or_else(|| { plan_miss(Miss::PlanNotLowered); None })?;
         if lowered.region.native == 0 { plan_miss(Miss::PlanNothingNative); return None; }
@@ -420,7 +422,7 @@ impl LaneMethod {
         if !calls_here && !constructs_here {
             return exit;
         }
-        let mut root = &self.inlined[frame];
+        let mut root = inlined;
         while let Some(parent) = root.parent { root = &self.inlined[parent]; }
         LaneExit::At(root.call as usize)
     }
