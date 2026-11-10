@@ -11448,7 +11448,7 @@ impl<H: Host> Vm<H> {
         });
         if !environment
             && !settles
-            && !cross
+            && self.claims_across(cross)
             && !body.rest
             && !plan.keeps_arguments
             && shape.entry == CallEntry::Activates
@@ -11522,6 +11522,12 @@ impl<H: Host> Vm<H> {
         };
         self.remember_target(target, numeric, cross);
         Some(target)
+    }
+
+    /// Whether a callee of another program (where `cross`) may take the tier prologue: a lane
+    /// body runs in its own program's context, which the activation enters first.
+    fn claims_across(&self, cross: bool) -> bool {
+        !cross || self.programs.js_jit_lane_methods_enabled()
     }
 
     /// Record a resolved `target`, also as its function's unless its closure is numeric; a
