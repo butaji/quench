@@ -16060,7 +16060,9 @@ mod tests {
                 &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 2, "both numeric calls must inline: {}", program.disassemble());
             let isa = super::super::jit_backend::target_isa().unwrap();
-            let regions = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default());
+            // The loops' regions; the function's scalar ranges lower beside them.
+            let regions: Vec<_> = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default())
+                .into_iter().filter(|region| !region.scalar).collect();
             assert_eq!(regions.len(), 2, "each independent caller loop needs an entry");
             assert_ne!(regions[0].function.name, regions[1].function.name, "inliner keys must be distinct");
             for region in &regions {
