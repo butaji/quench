@@ -1369,7 +1369,7 @@ fn quickjs_engine(options: &Options) -> EngineSpec {
 fn quench_engine(options: &Options) -> EngineSpec {
     let jit_enabled = options.jit_mode == JitMode::Jit;
     let argv = if jit_enabled {
-        vec!["--jit".into()]
+        Vec::new()
     } else {
         vec!["--no-jit".into()]
     };
@@ -1398,12 +1398,11 @@ fn quench_engine(options: &Options) -> EngineSpec {
     );
     quench.jit_proof_command = vec![quench.executable.display().to_string()];
     if jit_enabled {
-        quench.jit_proof_command.push("--jit".into());
-        quench.jit_mode = "enabled-by-cli-flag";
+        quench.jit_mode = "enabled-by-default";
         quench.jit_proof = if options.jit_diagnostics {
-            "the measured Quench process is launched with --jit and opt-in JavaScript/WebAssembly JIT counters; diagnostic-only, not for qualification".into()
+            "the measured Quench process is launched with the default JIT and opt-in JavaScript/WebAssembly JIT counters; diagnostic-only, not for qualification".into()
         } else {
-            "the measured Quench process is launched with --jit".into()
+            "the measured Quench process is launched with the default JIT".into()
         };
         if options.jit_js_general_dispatch {
             quench.jit_proof = format!(
@@ -3158,7 +3157,7 @@ mod jit_js_general_dispatch_tests {
         let mut options = experimental_options();
         options.quench = std::env::current_exe().expect("test executable path");
         let engine = quench_engine(&options);
-        assert_eq!(engine.argv, vec!["--jit".to_string()]);
+        assert_eq!(engine.argv, Vec::<String>::new());
         assert!(engine.env.get(QUENCH_DEV).is_some_and(|dev| dev.split(',').any(|name| name == "js-general-dispatch")));
         assert!(engine
             .jit_proof
@@ -3220,7 +3219,7 @@ mod jit_wasm_selective_ab_tests {
 
         assert_eq!(selective_off.name, "quench_selective_handoff_off");
         assert_eq!(selective_on.name, "quench_selective_handoff_on");
-        assert_eq!(selective_off.argv, vec!["--jit".to_string()]);
+        assert_eq!(selective_off.argv, Vec::<String>::new());
         assert_eq!(selective_on.argv, selective_off.argv);
         assert_eq!(selective_off.executable, selective_on.executable);
         assert_eq!(

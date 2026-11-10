@@ -722,7 +722,6 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--jit" => mode = quench_runtime::ExecutionMode::Compiled,
             "--no-jit" => mode = quench_runtime::ExecutionMode::Interpreted,
             "--env-file" | "--env-file-if-exists" => {
                 let Some(path) = args.get(index + 1) else {

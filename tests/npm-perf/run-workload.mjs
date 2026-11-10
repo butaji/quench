@@ -64,10 +64,10 @@ const QUENCH_BENCH_ENV = { XDG_CACHE_HOME: "/dev/null" };
 function engineSpecs() {
   if (phase === "no-jit") {
     const specs = [
-      { name: "quench-interpreter", binary: binaries.quench, args: [workload], env: { ...QUENCH_BENCH_ENV } },
+      { name: "quench-interpreter", binary: binaries.quench, args: ["--no-jit", workload], env: { ...QUENCH_BENCH_ENV } },
     ];
     if (binaries.quenchControl) {
-      specs.push({ name: "quench-control", binary: binaries.quenchControl, args: [workload], env: { ...QUENCH_BENCH_ENV } });
+      specs.push({ name: "quench-control", binary: binaries.quenchControl, args: ["--no-jit", workload], env: { ...QUENCH_BENCH_ENV } });
     }
     if (process.env.QUENCH_NPM_PERF_SKIP_NODE_NO_JIT !== "1") {
       specs.push({ name: "node-jitless", binary: binaries.node, args: ["--jitless", workload], env: {} });
@@ -78,10 +78,10 @@ function engineSpecs() {
     return specs;
   }
   const specs = [
-    { name: "quench-jit", binary: binaries.quench, args: ["--jit", workload], env: { ...QUENCH_BENCH_ENV } },
+    { name: "quench-jit", binary: binaries.quench, args: [workload], env: { ...QUENCH_BENCH_ENV } },
   ];
   if (binaries.quenchControl) {
-    specs.push({ name: "quench-control-jit", binary: binaries.quenchControl, args: ["--jit", workload], env: { ...QUENCH_BENCH_ENV } });
+    specs.push({ name: "quench-control-jit", binary: binaries.quenchControl, args: [workload], env: { ...QUENCH_BENCH_ENV } });
   }
   specs.push(
     { name: "node-jit", binary: binaries.node, args: [workload], env: {} },

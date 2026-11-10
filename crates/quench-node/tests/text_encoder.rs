@@ -4,8 +4,8 @@ use std::process::{Command, Output};
 
 fn run(engine: &str, jit: bool) -> Output {
     let mut command = Command::new(engine);
-    if jit {
-        command.arg("--jit");
+    if !jit && engine != "node" {
+        command.arg("--no-jit");
     }
     command
         .arg(concat!(
