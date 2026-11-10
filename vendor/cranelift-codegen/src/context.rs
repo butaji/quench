@@ -186,8 +186,8 @@ impl Context {
             self.compute_domtree();
             self.eliminate_unreachable_code(isa)?;
             self.remove_constant_phis(isa)?;
-            self.func.dfg.resolve_all_aliases();
         }
+        self.func.dfg.resolve_all_aliases();
 
         if opt_level != OptLevel::None {
             self.egraph_pass(isa, ctrl_plane)?;
