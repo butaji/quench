@@ -444,6 +444,10 @@ struct Lowering<'a, 'f> {
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
     /// An OSR region's field reads answered from the entry record, by unit PC.
     entry_fields: &'a BTreeMap<usize, u32>,
+    /// The element reads observed to hold Numbers (`RegionSpecializer::number_reads`).
+    number_reads: &'a [usize],
+    /// The registers observed to hold int32s at entry (`RegionSpecializer::int_entries`).
+    int_entries: &'a [Register],
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
     global_reads: &'a crate::vm::global_facts::GlobalReads,
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
@@ -1287,6 +1291,12 @@ pub(super) struct RegionSpecializer<'p> {
     /// An OSR region's field reads answered from the entry record, by unit PC and entry
     /// word (`osr_loop::field_word`).
     pub(super) entry_fields: &'p BTreeMap<usize, u32>,
+    /// The unit PCs of element reads observed to hold Numbers (sorted): each leaves where its
+    /// element is not one, and its result is typed a Number.
+    pub(super) number_reads: &'p [usize],
+    /// The registers whose values at entry were int32s: candidates for an int32 entry contract
+    /// (`refine_inductive_inputs`), kept where every definition in the loop yields an int32.
+    pub(super) int_entries: &'p [Register],
     pub(super) plan: RegionPlan,
 }
 
@@ -1296,7 +1306,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.entry_fields, self.plan.coverage, self.plan.completion, self.plan.views)
+            self.isa, self.entry_fields, self.number_reads, self.int_entries, self.plan.coverage, self.plan.completion, self.plan.views)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1318,7 +1328,7 @@ pub(super) fn lower_body(
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
     let region = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
-        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS,
+        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
         plan: RegionPlan { coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::StatusAndPc, views: ElementViews::Dense } }
         .specialize(program).ok()?;
@@ -1348,6 +1358,8 @@ pub(super) fn lower(
     frame_captures: &[(usize, usize)],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     entry_fields: &BTreeMap<usize, u32>,
+    number_reads: &[usize],
+    int_entries: &[Register],
     coverage: Coverage,
     completion: Completion,
     views: ElementViews,
@@ -1449,6 +1461,8 @@ pub(super) fn lower(
         helpers,
         fields,
         entry_fields,
+        number_reads,
+        int_entries,
         interrupt,
         fault_poll,
         reentries: smallvec::SmallVec::new(),
@@ -1552,7 +1566,7 @@ pub(super) fn lower(
         let [field] = fields.get(&cache_site)?.as_slice() else { return None };
         field.own_direct().then_some((base.register_index()?, field.shape))
     };
-    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[]);
+    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], number_reads);
     lowering.intrinsics = native_calls::intrinsic_calls(unit, global_reads, |pc| direct.contains_key(&pc));
     let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics);
     // One entry query of the call depth replaces each binding's helper with its cached
@@ -1595,7 +1609,7 @@ pub(super) fn lower(
             }
         }
         if refined {
-            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[]);
+            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], number_reads);
         }
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
@@ -2547,6 +2561,8 @@ impl Lowering<'_, '_> {
                             self.set_tagged(state, instruction.result_register(), value);
                         }
                     }
+                    // The element an observation typed a Number (`number_reads`), proved here.
+                    if self.number_reads.binary_search(&pc).is_ok() { self.number(state, instruction.result_register(), exit); }
                     true
                 })
             }
@@ -3546,12 +3562,13 @@ impl Lowering<'_, '_> {
                 let index = usize::from(register);
                 if (header..=back).contains(&pc) && register < self.unit.caller_registers
                     && self.is_live(header, register) && self.written.contains(index)
-                    && matches!(initial[index], Type::ANY | Type::NUMBER) && ty == Type::INT32 {
+                    && matches!(initial[index], Type::ANY | Type::NUMBER)
+                    && (ty == Type::INT32 || self.int_entries.contains(&register)) {
                     candidates.insert(index);
                 }
             });
         if let Some(facts) = super::facts::inductive_int32(initial, candidates, header..=back,
-            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls) {
+            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, self.number_reads) {
             self.facts = facts;
         }
     }
@@ -3577,7 +3594,7 @@ impl Lowering<'_, '_> {
             }
         }
         if let Some(facts) = super::facts::loop_int32(entry, initial, candidates, instructions, boundaries,
-            &self.program.constants, &writes, own_shape, self.native_calls) {
+            &self.program.constants, &writes, own_shape, self.native_calls, self.number_reads) {
             self.facts = facts;
         }
     }
@@ -5710,7 +5727,7 @@ mod tests {
             helpers: LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
             fields: &BTreeMap::new(), global_reads: &Default::default(), facts: VmFacts::STATIC,
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-            entry_fields: &NO_ENTRY_FIELDS,
+            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
             plan: RegionPlan { coverage: Coverage::Loop { header, backedge, poll: true },
                 completion: Completion::StatusAndPc, views: ElementViews::Dense } }
             .specialize(&program).expect("the loop lowers");
@@ -5739,7 +5756,7 @@ mod tests {
         let specialize = |plan| RegionSpecializer { function_id: id, unit: &unit, helpers,
             fields: &BTreeMap::new(), global_reads: &Default::default(), facts: VmFacts::STATIC,
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-            entry_fields: &NO_ENTRY_FIELDS, plan }
+            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], plan }
             .specialize(&program).expect("the region lowers");
         let jit = specialize(RegionPlan { coverage: Coverage::Prefix,
             completion: Completion::StatusAndPc, views: ElementViews::Dense });

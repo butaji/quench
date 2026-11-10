@@ -8233,7 +8233,9 @@ fn lane_loop_run<H: Host>(
         if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
             return LoopContinuation::Jump;
         }
-        lane_loop_compile(cx, site, region, &mut tier);
+        let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
+        let int_entries = loop_tier::int_entries(r, region);
+        lane_loop_compile(cx, site, region, &mut tier, &number_arrays, &int_entries);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }
