@@ -15268,7 +15268,9 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     {
         return LANE_CALL_MISSED;
     }
-    let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else { return LANE_CALL_MISSED };
+    let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else {
+        return native_calls::lane_body_native_call(cx, r, i, callee);
+    };
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
     let target = unsafe { &*target };
     let argc = ImmediateLayout::argument_count(i.imm());

@@ -175,3 +175,34 @@ fn a_loop_leaves_into_a_claimed_callee_at_its_first_record() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), [(20000 * 10).to_string()]);
 }
+
+/// A lane body answers natives that complete in place (`lane_body_native_call`) and stays
+/// native across them: a Math function, a string method and a Map read give the values the
+/// interpreter gives.
+#[test]
+fn a_lane_body_calls_in_place_natives_and_matches_the_interpreter() {
+    let source = r#"
+      const seen = new Map([[1, 10], [2, 20]]);
+      function mix(seed) {
+        let bits = seed;
+        for (let i = 0; i < 40; i++) bits = Math.imul(bits ^ (bits >>> 13), 0x85ebca6b) | 0;
+        return bits + "abc".charCodeAt(seed & 1) + seen.get(1 + (seed & 1)) + Math.max(seed, 3);
+      }
+      let total = 0;
+      for (let call = 0; call < 3000; call++) total = (total + mix(call)) | 0;
+      print(total);
+    "#;
+    let run = |mode: crate::ExecutionMode, lane_methods: bool| {
+        let program = Engine::specialize(&format!("(function(){{{source}}})();"), "lane-body-natives.js").unwrap();
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        if lane_methods { vm.programs.enable_js_lane_methods(); }
+        vm.execute(&program).unwrap();
+        output.take()
+    };
+    let interpreted = run(crate::ExecutionMode::Interpreted, false);
+    assert_eq!(interpreted.len(), 1);
+    assert_eq!(run(crate::ExecutionMode::Compiled, true), interpreted);
+    assert_eq!(run(crate::ExecutionMode::Compiled, false), interpreted);
+}
