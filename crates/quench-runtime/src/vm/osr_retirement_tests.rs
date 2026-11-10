@@ -120,3 +120,54 @@ fn shared_osr_sum_that_overflows_int32_each_iteration_widens_and_stays_native() 
         "a sum that overflows on every run widens instead of exhausting the site: {site:?}"
     );
 }
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_appends_match_the_interpreter_across_growth_doubles_and_prototype_setters() {
+    // Appends at the length store in place within the proved room and reserve past it: into
+    // `[]` and a `slice(0)` copy, across capacity growths, of doubles, and after
+    // `Array.prototype` gains an indexed setter between runs, which the next reserve sees.
+    let source = r#"
+      function fill(a, start, n, k) {
+        for (let i = start; i < n; i++) a[i] = (i * k + 3) & 1023;
+        return a;
+      }
+      function halves(a, n) {
+        for (let i = 0; i < n; i++) a[i] = i + 0.5;
+        return a;
+      }
+      function sum(a) { let s = 0; for (let i = 0; i < a.length; i++) s = (s * 31 + a[i]) | 0; return s; }
+      var base = fill([], 0, 10, 5), out = [], hits = 0;
+      for (var round = 0; round < 60; round++) {
+        var fresh = fill([], 0, 200 + round, 7), copy = fill(base.slice(0), 10, 150, 3);
+        var doubles = halves([1], 100);
+        if (round == 40) Object.defineProperty(Array.prototype, 120, { set: function(v) { hits += v; }, configurable: true });
+        out.push(sum(fresh), fresh.length, sum(copy), copy.length, doubles[99], doubles.length, 120 in fresh);
+      }
+      delete Array.prototype[120];
+      print(out.join(",") + ":" + hits);
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "osr-appends.js")).unwrap();
+    let (expected, _) = printed_run(&program, crate::ExecutionMode::Interpreted, crate::MemoryPolicy::Throughput);
+    for policy in crate::MemoryPolicy::ALL {
+        let (printed, vm) = printed_run(&program, crate::ExecutionMode::Compiled, policy);
+        assert_eq!(printed, expected, "{policy:?}");
+        if crate::vm::compiled::loop_tier_compiles(policy) {
+            let site = osr_site(&vm, function_named(&program, "fill"));
+            assert!(site.native_region_runs > 0, "the append loop runs natively under {policy:?}: {site:?}");
+        }
+    }
+}
+
+/// What `program` prints run in `mode` under `policy`, with its VM.
+fn printed_run(program: &crate::bytecode::ResidualProgram, mode: crate::ExecutionMode, policy: crate::MemoryPolicy)
+    -> (Vec<String>, Vm<TestHost>) {
+    let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_memory_policy(policy);
+    vm.set_execution_mode(mode);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(program).unwrap();
+    let printed = output.borrow().clone();
+    (printed, vm)
+}

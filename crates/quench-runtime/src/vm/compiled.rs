@@ -1764,6 +1764,8 @@ lane_helper_inventory! { H;
     FieldSet => lane_field_set::<H>,
     Call => super::dispatch_fast::lane_body_call::<H>,
     IndexSet => lane_index_set::<H>,
+    /// Room for a loop's append to a dense array (`lane_array_append_room`).
+    AppendRoom => lane_array_append_room::<H>,
     FunctionBinding => lane_function_binding::<H>,
     MaterializeInline => lane_materialize_inline::<H>,
     InterruptOwner => lane_interrupt_owner,
@@ -6916,6 +6918,38 @@ unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u6
     }
     let (object, key, value) = (Value::from_bits(object), Value::from_bits(key), Value::from_bits(value));
     u64::from(vm.try_replace_record_element(object, key, value) || vm.try_add_record_element(object, key, value))
+}
+
+/// A lane loop's room for appending to the dense array `object` (`Vm::reserve_native_array_append`):
+/// the room its backing holds, or zero, which leaves the append to `lane_index_set`.
+unsafe extern "C" fn lane_array_append_room<H: Host>(vm: u64, _residual: u64, object: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; a growth moves only this array's backing.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    vm.reserve_native_array_append(Value::from_bits(object)).map_or(0, |room| room as u64)
+}
+
+impl<H: Host> Vm<H> {
+    /// Room for one more element of `array` (a dense array, `dense_array_length`, whose
+    /// backing it owns alone and no prototype of which holds an index), so that OrdinarySet
+    /// of the index at its length defines a plain element in place: the backing grows when
+    /// full, storing, calling and collecting nothing. The answer, the room the backing holds,
+    /// bounds the lengths an `i32` index reaches (`MAX_INDEXED_LENGTH`). `None` for any other
+    /// array, and where collection is due, before or after a growth: the store leaves for
+    /// the VM, which collects at its safepoint.
+    fn reserve_native_array_append(&mut self, array: Value) -> Option<usize> {
+        if self.heap.should_collect() { return None; }
+        let length = self.dense_array_length(array)?;
+        if length >= osr_loop::MAX_INDEXED_LENGTH || !self.prototypes_hold_no_index(array) { return None; }
+        // A Number store logs nothing.
+        let elements = self.heap.record_array_store_mut_unlogged(array, Value::integer(0))?.elements_mut();
+        if elements.owner_count() != 1 { return None; }
+        let elements = super::index::mutable_array_elements(elements);
+        let before = elements.capacity();
+        elements.reserve(1);
+        let room = elements.capacity();
+        self.heap.charge_payload_growth((room - before) * size_of::<Value>());
+        (!self.heap.should_collect()).then_some(room.min(osr_loop::MAX_INDEXED_LENGTH))
+    }
 }
 
 /// Admit a depth-zero closure capture without walking, allocating or invoking

@@ -42,6 +42,7 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
 #[path = "lane_region/constructions.rs"] mod constructions;
 #[path = "lane_region/dense_elements.rs"] mod dense_elements;
+#[path = "lane_region/dense_appends.rs"] mod dense_appends;
 #[path = "lane_region/bindings.rs"] mod bindings;
 #[path = "lane_region/frame.rs"] mod frame;
 #[path = "lane_region/polymorphic_stores.rs"] mod polymorphic_stores;
@@ -307,6 +308,8 @@ struct ArrayVariables {
     /// The element count: a dense backing's `u32` as `i32`, a typed array's as `i64`.
     length: Variable,
     kind: Variable,
+    /// A dense array's room for appends (`dense_appends`) as `i32`: zero until a reserve proves it.
+    room: Variable,
 }
 
 /// The typed array kinds whose elements a loop reads and writes natively, with how a load
@@ -3822,6 +3825,8 @@ impl Lowering<'_, '_> {
                     if array.writable { super::emit_dense_array_uncounted(&mut self.builder, view); }
                     self.builder.def_var(variables.values, view.values);
                     self.builder.def_var(variables.length, view.length);
+                    let unproved = self.ins().iconst(types::I32, 0);
+                    self.builder.def_var(variables.room, unproved);
                 }
                 ElementViews::Typed => {
                     let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
@@ -3851,6 +3856,7 @@ impl Lowering<'_, '_> {
             values: builder.declare_var(types::I64),
             length: builder.declare_var(length),
             kind: builder.declare_var(types::I64),
+            room: builder.declare_var(types::I32),
         })
     }
 
@@ -3926,9 +3932,11 @@ impl Lowering<'_, '_> {
 
     /// After the element store's helper, which may grow any record array's backing, through
     /// whichever register names it: every dense view hoisted around `pc` reads its backing
-    /// again (`emit_dense_array_reload`). A typed region's views, which no such store moves, stay.
+    /// again (`emit_dense_array_reload`), and its append room is proved again
+    /// (`forget_append_rooms`). A typed region's views, which no such store moves, stay.
     fn reload_dense_arrays(&mut self, pc: usize) {
         if self.views != ElementViews::Dense { return; }
+        self.forget_append_rooms(pc);
         let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
             .filter(|array| (array.header..=array.back).contains(&pc)).collect();
         for array in arrays {
@@ -3993,6 +4001,7 @@ impl Lowering<'_, '_> {
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);
             self.builder.seal_block(slow);
+            self.dense_append(array, pc, index, value, base, done);
             let proof = super::EmitProof::IndexSetHelper { miss: exit };
             self.step(state, frame::Edges::ValueGuarded { miss: exit },
                 crate::staged::Operation::IndexSetHelper { base, key, value, proof });
@@ -4824,6 +4833,7 @@ impl Lowering<'_, '_> {
     /// invalidation word again before it next holds a Stable fact.
     fn store_helper_unbound(&mut self, state: &mut State, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
         state.proofs.stable = false;
+        self.forget_append_rooms(self.at);
         let proof = super::EmitProof::FieldStoreMiss { miss: exit };
         self.step(state, frame::Edges::ValueGuarded { miss: exit },
             crate::staged::Operation::FieldStoreMiss { object, atom, site, value, proof });
