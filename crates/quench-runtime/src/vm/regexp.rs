@@ -4,6 +4,7 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 mod steady;
+mod ascii;
 mod literal_matches;
 
 /// Recently matched strings whose prepared subjects are kept (`Vm::regexp_subject`): a
