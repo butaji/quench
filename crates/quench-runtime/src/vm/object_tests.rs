@@ -805,7 +805,7 @@ fn optional_method_cache_observes_callable_replacement_without_shape_change() {
             assert!(
                 vm.method_caches
                     .iter()
-                    .flat_map(|site| site.entries())
+                    .flatten()
                     .any(|entry| entry.atom == method && entry.target.is_some()),
                 "specialized method site should populate its method cache"
             );
@@ -888,8 +888,8 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
 
         if vm.specialized {
             assert!(
-                vm.method_caches.iter().all(|site| site.set.is_none()),
-                "mutation should clear the method sets"
+                vm.megamorphic_methods.is_empty(),
+                "mutation should clear the megamorphic method cache"
             );
             let third_atom = vm.intern_atom("third");
             let third = vm.own_property(vm.realm.globals, third_atom).unwrap();
@@ -900,7 +900,7 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
                 .unwrap();
             assert!(
                 vm.method_caches[0]
-                    .entries()
+                    .iter()
                     .any(|entry| entry.shape == third_shape
                         && entry.atom == method_atom
                         && entry.target == Some(target)),
@@ -1068,9 +1068,17 @@ fn method_cache_fallback_preserves_proxy_get_trap_and_receiver() {
             assert!(
                 vm.method_caches
                     .iter()
-                    .flat_map(|site| site.entries())
+                    .flatten()
                     .all(|entry| entry.atom != method),
                 "Proxy method reads must retain the generic trap path"
+            );
+            assert!(
+                vm.megamorphic_methods
+                    .iter()
+                    .all(|cache| cache.entries[..usize::from(cache.len)]
+                        .iter()
+                        .all(|entry| entry.atom != method)),
+                "Proxy method reads must not enter a megamorphic cache"
             );
         }
     }
@@ -1122,7 +1130,7 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
             assert!(
                 vm.method_caches
                     .iter()
-                    .flat_map(|site| site.entries())
+                    .flatten()
                     .all(|entry| entry.atom != method),
                 "optional accessor lookup must not enter the method cache"
             );

@@ -23,7 +23,7 @@ fn name_in_a_method_cache(vm: &mut Vm<crate::test_host::TestHost>, owner: Value,
     let target = vm.call_target(callee).unwrap();
     let slot = vm.shape_slot(shape, atom).unwrap() as u16;
     let site = vm.method_caches.len();
-    vm.method_caches.push(super::super::method_cache::MethodSite::EMPTY);
+    vm.method_caches.push([super::super::EMPTY_METHOD_CACHE; 2]);
     vm.record_method_cache(site, super::super::MethodCache { shape, atom, proto: owner, callee,
         guard: super::super::MethodGuard { owner, owner_shape: shape, slot, depth: 0 }, target: Some(target) });
 }

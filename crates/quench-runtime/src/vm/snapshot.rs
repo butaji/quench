@@ -399,6 +399,7 @@ impl<H: Host> Vm<H> {
             // and its hosts capture them again.
             object_templates: _,
             method_caches: _,
+            megamorphic_methods: _,
             method_cache_atoms: _,
             #[cfg(feature = "profile-aggregate")]
                 invalidated_methods: _,
