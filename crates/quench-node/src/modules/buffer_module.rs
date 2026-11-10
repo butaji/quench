@@ -348,9 +348,9 @@ pub(crate) fn alloc(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<R
     let fill_value = arg(c, args, 1);
     let zero = number_of(c, fill_value) == Some(0.0);
     if !is_undefined(c, fill_value) && !zero && size > 0 {
-        let start = c.undefined();
+        let (start, end) = (c.number(0.0), c.number(size as f64));
         let encoding = arg(c, args, 2);
-        fill_buffer(c, buffer, fill_value, start, start, encoding, false)?;
+        fill_buffer(c, buffer, fill_value, start, end, encoding, false)?;
     }
     Ok(buffer)
 }
@@ -606,10 +606,10 @@ pub(crate) fn compare(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Res
 /// `buf.copy(target[, targetStart[, sourceStart[, sourceEnd]]])`.
 pub(crate) fn copy(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let target = arg(c, args, 0);
-    if !is_uint8_array(c, this)? {
+    if !super::fs_shared_vm::args::is_view(c, this)? {
         return Err(not_a_buffer(c, this, "source")?);
     }
-    if !is_uint8_array(c, target)? {
+    if !super::fs_shared_vm::args::is_view(c, target)? {
         return Err(not_a_buffer(c, target, "target")?);
     }
     let source_length = length_of(c, this);
@@ -1225,7 +1225,6 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     c.assign_named_property_rooted(buffer, "poolSize", pool)?;
     for (name, operation_name) in [
         ("toString", "bufferToString"),
-        ("toLocaleString", "bufferToString"),
         ("equals", "bufferEquals"),
         ("compare", "bufferCompare"),
         ("copy", "bufferCopy"),
@@ -1238,6 +1237,7 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     ] {
         method(c, prototype, name, operation_name, None)?;
     }
+    let to_string = get(c, prototype, "toString")?; c.assign_named_property_rooted(prototype, "toLocaleString", to_string)?; // one function, as Node assigns it
     for (name, mode) in [("indexOf", SEARCH_FIRST), ("lastIndexOf", SEARCH_LAST), ("includes", SEARCH_INCLUDES)] {
         let data = c.number(f64::from(mode));
         method(c, prototype, name, "bufferIndexOf", Some(data))?;
@@ -1311,8 +1311,8 @@ pub(crate) fn exports(c: &mut Context<'_>, buffer: RootId) -> Result<RootId, Roo
     let inspect_max = c.number(INSPECT_MAX_BYTES as f64);
     c.assign_named_property_rooted(module, "INSPECT_MAX_BYTES", inspect_max)?;
     let binding = binding::binding(c)?;
-    for (name, source) in [("atob", "atob"), ("btoa", "btoa"), ("isUtf8", "isUtf8"), ("isAscii", "isAscii")] {
-        let value = get(c, binding, source)?;
+    for name in ["atob", "btoa", "isUtf8", "isAscii", "isLatin1"] {
+        let value = get(c, binding, name)?;
         c.assign_named_property_rooted(module, name, value)?;
     }
     let (blob, file) = crate::modules::blob_shared_vm::classes(c)?;
