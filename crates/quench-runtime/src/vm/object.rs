@@ -1211,7 +1211,7 @@ impl<H: Host> Vm<H> {
         self.heap.alloc_literal_array(prototype, length, element)
     }
 
-    pub(super) fn object_pair(
+    #[inline(always)] pub(super) fn object_pair(
         &mut self,
         program: &ResidualProgram,
         site: usize,
