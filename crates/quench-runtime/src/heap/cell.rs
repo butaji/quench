@@ -3500,7 +3500,7 @@ impl IteratorRecord {
             .ext
             .generator
             .as_ref()
-            .and_then(|generator| generator.continuation.as_ref())
+            .and_then(|generator| generator.continuation())
         {
             visit(continuation.program());
         }

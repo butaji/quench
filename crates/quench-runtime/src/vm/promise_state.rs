@@ -29,18 +29,18 @@ impl<H: Host> Vm<H> {
                 record.rejection = PromiseRejectionState::Observed;
                 None
             }
-            PromiseRejectionState::AwaitingReport => {
+            PromiseRejectionState::AwaitingReport(_) => {
                 record.rejection = PromiseRejectionState::Observed;
                 None
             }
-            PromiseRejectionState::Reporting => None,
-            PromiseRejectionState::Reported => {
-                record.rejection = PromiseRejectionState::HandledReported;
+            PromiseRejectionState::Reported(id) => {
+                record.rejection = PromiseRejectionState::HandledReported(id);
                 Some(RejectionNotification::Handled(promise))
             }
-            PromiseRejectionState::Observed
-            | PromiseRejectionState::HandledReported
-            | PromiseRejectionState::Handled => None,
+            PromiseRejectionState::Reporting(_)
+            | PromiseRejectionState::Observed
+            | PromiseRejectionState::HandledReported(_)
+            | PromiseRejectionState::Handled(_) => None,
         };
         if let Some(notification) = notification {
             self.realm
@@ -63,14 +63,14 @@ impl<H: Host> Vm<H> {
             };
             let Some(id) = (|| {
                 let record = self.promise_record_mut(promise)?;
-                if record.rejection != PromiseRejectionState::HandledReported
-                    || record.state != PromiseState::Rejected
-                {
+                let PromiseRejectionState::HandledReported(id) = record.rejection else {
+                    return None;
+                };
+                if record.state != PromiseState::Rejected {
                     return None;
                 }
-                let id = record.rejection_id?.get();
-                record.rejection = PromiseRejectionState::Handled;
-                Some(id)
+                record.rejection = PromiseRejectionState::Handled(id);
+                Some(id.get())
             })() else {
                 continue;
             };
@@ -96,14 +96,14 @@ impl<H: Host> Vm<H> {
             };
             let Some((id, result)) = (|| {
                 let record = self.promise_record_mut(promise)?;
-                if record.rejection != PromiseRejectionState::AwaitingReport
-                    || record.state != PromiseState::Rejected
-                {
+                let PromiseRejectionState::AwaitingReport(id) = record.rejection else {
+                    return None;
+                };
+                if record.state != PromiseState::Rejected {
                     return None;
                 }
-                let id = record.rejection_id?.get();
-                record.rejection = PromiseRejectionState::Reporting;
-                Some((id, record.result))
+                record.rejection = PromiseRejectionState::Reporting(id);
+                Some((id.get(), record.result))
             })() else {
                 continue;
             };
@@ -124,13 +124,38 @@ impl<H: Host> Vm<H> {
         let Some(record) = self.promise_record_mut(promise) else {
             return Err(JsError("invalid Promise rejection report".into()));
         };
-        if record.state != PromiseState::Rejected
-            || record.rejection != PromiseRejectionState::Reporting
-        {
+        let PromiseRejectionState::Reporting(id) = record.rejection else {
+            return Err(JsError("Promise rejection was not pending report".into()));
+        };
+        if record.state != PromiseState::Rejected {
             return Err(JsError("Promise rejection was not pending report".into()));
         }
-        record.rejection = PromiseRejectionState::Reported;
+        record.rejection = PromiseRejectionState::Reported(id);
         Ok(())
+    }
+
+    /// Queues the report of `promise`'s rejection with a fresh identifier, unless the host's
+    /// settled hook observed it meanwhile.
+    fn queue_unhandled_rejection(&mut self, promise: Value) {
+        let unobserved = self
+            .promise_record(promise)
+            .is_some_and(|record| record.rejection == PromiseRejectionState::Unobserved);
+        if !unobserved {
+            return;
+        }
+        let id = self
+            .realm
+            .promise
+            .last_rejection_id
+            .checked_add(1)
+            .expect("Promise rejection identifier space exhausted");
+        self.realm.promise.last_rejection_id = id;
+        self.promise_record_mut(promise)
+            .expect("settled Promise record remains registered")
+            .rejection = PromiseRejectionState::AwaitingReport(
+            std::num::NonZeroU64::new(id).expect("rejection identifiers start at one"),
+        );
+        self.realm.promise.rejection_notifications.push_back(RejectionNotification::Unhandled(promise));
     }
 
     pub(super) fn promise_settle(
@@ -150,14 +175,10 @@ impl<H: Host> Vm<H> {
             record.state = state;
             record.result = result;
             let module_evaluation = record.module_evaluation;
-            let notify_unhandled = if state == PromiseState::Rejected
-                && record.rejection == PromiseRejectionState::Unobserved
-            {
-                record.rejection = PromiseRejectionState::AwaitingReport;
-                true
-            } else {
-                false
-            };
+            // Whether to queue the report once the host's settled hook has run, which may
+            // observe the rejection first.
+            let notify_unhandled =
+                state == PromiseState::Rejected && record.rejection == PromiseRejectionState::Unobserved;
             (std::mem::take(&mut record.reactions), notify_unhandled, module_evaluation, record.host_context)
         };
         self.realm.promise.async_module_settled |= module_evaluation;
@@ -177,20 +198,7 @@ impl<H: Host> Vm<H> {
             })?;
         }
         if notify_unhandled {
-            let id = self
-                .realm
-                .promise
-                .last_rejection_id
-                .checked_add(1)
-                .expect("Promise rejection identifier space exhausted");
-            self.realm.promise.last_rejection_id = id;
-            self.promise_record_mut(promise)
-                .expect("settled Promise record remains registered")
-                .rejection_id = std::num::NonZeroU64::new(id);
-            self.realm
-                .promise
-                .rejection_notifications
-                .push_back(RejectionNotification::Unhandled(promise));
+            self.queue_unhandled_rejection(promise);
         }
         for reaction in reactions {
             self.enqueue_promise_reaction(p, reaction, state, result);

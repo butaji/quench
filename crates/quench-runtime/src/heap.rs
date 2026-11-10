@@ -16,7 +16,7 @@ use array_proofs::retire_array_storage_proofs;
 mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
-    INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache,
+    Dependencies, INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache,
     ProofKind,
 };
 mod cell_access;
@@ -34,7 +34,7 @@ mod memory_profile;
 mod pacing;
 mod parallel_mark;
 mod promise_record;
-pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
+pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState};
 mod records;
 mod root;
 mod slots;

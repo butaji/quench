@@ -9197,15 +9197,13 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     done: false,
                     ext: crate::heap::IteratorExt {
                         generator: Some(Box::new(GeneratorRecord {
-                            continuation: Some(continuation),
-                            realm,
-                            state: super::activation::GeneratorState::Suspended,
                             requests: [AsyncGeneratorRequest {
                                 operation: AsyncGeneratorOperation::Next,
                                 promise: request_promise,
                                 value: request_value,
                             }]
                             .into(),
+                            ..GeneratorRecord::new(continuation, realm)
                         })),
                         ..Default::default()
                     },
@@ -9239,8 +9237,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     .generator
                     .as_mut()
                     .expect("generator owner")
-                    .continuation
-                    .take()
+                    .take_suspended()
                     .unwrap(),
                 _ => panic!("suspended owner"),
                 }

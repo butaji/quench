@@ -356,7 +356,7 @@ impl<H: Host> Vm<H> {
                     let result = self.iterator_result(value, false)?;
                     return self.promise_resolve_value(p, resume.promise, result);
                 }
-                self.generator_record_mut(generator).and_then(|record| record.continuation.take())
+                self.generator_record_mut(generator).and_then(|record| record.resume())
             }
             (continuation, _) => continuation,
         };
@@ -389,11 +389,6 @@ impl<H: Host> Vm<H> {
         continuation: Continuation,
         value: Value,
     ) -> Result<(), JsError> {
-        if let AwaitRole::AsyncGeneratorYield(generator) = resume.role
-            && let Some(record) = self.generator_record_mut(generator)
-        {
-            record.state = super::activation::GeneratorState::Executing;
-        }
         let resume_register = continuation.resume_register;
         let mut frame = continuation.resume(self.with_stack.len());
         if !resume.rejected
