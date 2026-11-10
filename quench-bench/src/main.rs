@@ -203,20 +203,21 @@ impl Suite {
     }
 
     /// Writes the runnable sources and returns them with each engine's arguments.
-    fn materialize(self, file: &Path) -> Materialized {
+    fn materialize(self, file: &Path, aot: bool) -> Materialized {
         match self {
             Self::V8V7 => {
                 let source = materialize(file);
                 let arguments = vec![source.clone().into_os_string()];
-                Materialized { temporaries: vec![source], arguments, quickjs_arguments: None }
+                Materialized { temporaries: vec![source], arguments, aot_arguments: None, quickjs_arguments: None }
             }
             Self::JetStream3 => {
                 let prelude = write_temporary("jetstream3-prelude.js", jetstream::prelude());
                 let quickjs_prelude =
                     write_temporary("jetstream3-quickjs-prelude.js", jetstream::quickjs_prelude());
                 let arguments = jetstream::arguments(file, &prelude);
+                let aot_arguments = aot.then(|| jetstream::aot_arguments(file));
                 let quickjs_arguments = Some(jetstream::arguments(file, &quickjs_prelude));
-                Materialized { temporaries: vec![prelude, quickjs_prelude], arguments, quickjs_arguments }
+                Materialized { temporaries: vec![prelude, quickjs_prelude], arguments, aot_arguments, quickjs_arguments }
             }
         }
     }
@@ -258,6 +259,8 @@ struct EngineSpec {
     executable_sha256: String,
     /// Whether the engine exposes `WebAssembly`, probed with its measurement arguments.
     webassembly: bool,
+    /// Whether the engine is an AOT-compiled suite binary, which embeds the prelude.
+    aot: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -566,6 +569,8 @@ struct Options {
     jit_wasm_root_first: bool,
     jit_wasm_selective: bool,
     jit_wasm_selective_ab: bool,
+    /// Measure the suite prelude compiled to a native binary (`--aot`).
+    aot: bool,
     fixture: Option<String>,
     fixtures: Option<Vec<String>>,
     all: bool,
@@ -596,8 +601,8 @@ fn main() {
     if env::var_os("QUENCH_EXEC_TRACE").is_some() {
         fail("scored runs must not inherit QUENCH_EXEC_TRACE");
     }
-    let engines = if options.fixed_work && options.quench_peer.is_some() {
-        prepare_quench_pair(&options)
+    let (engines, _aot_binary) = if options.fixed_work && options.quench_peer.is_some() {
+        (prepare_quench_pair(&options), None)
     } else {
         prepare_engines(&options)
     };
@@ -996,6 +1001,7 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
         jit_wasm_root_first: false,
         jit_wasm_selective: false,
         jit_wasm_selective_ab: false,
+        aot: false,
         fixture: None,
         fixtures: None,
         all: first == "--all",
@@ -1038,18 +1044,14 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
                 options.fixtures = Some(parse_fixture_list(&list));
             }
             "--jit" => options.jit_mode = JitMode::Jit,
+            "--aot" => options.aot = true,
             "--jit-diagnostics" => options.jit_diagnostics = true,
             "--jit-js-general-dispatch" => options.jit_js_general_dispatch = true,
             "--jit-wasm-selective" => options.jit_wasm_selective = true,
             "--jit-wasm-selective-ab" => options.jit_wasm_selective_ab = true,
             "--jit-wasm-root-only" => options.jit_wasm_root_only = true,
             "--jit-wasm-root-first" => options.jit_wasm_root_first = true,
-            "--jit-wasm-root" => {
-                options.jit_wasm_root = Some(
-                    u32::try_from(required_number(&mut args, "--jit-wasm-root"))
-                        .unwrap_or_else(|_| usage("--jit-wasm-root is too large")),
-                )
-            }
+            "--jit-wasm-root" => options.jit_wasm_root = Some(wasm_root(&mut args)),
             "--node" => options.node = required_path(&mut args, "--node"),
             "--bun" => options.bun = required_path(&mut args, "--bun"),
             "--qjs" => options.qjs = required_path(&mut args, "--qjs"),
@@ -1058,19 +1060,8 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
                 options.quench_peer = Some(required_path(&mut args, "--quench-peer"))
             }
             "--fixed-work" => options.fixed_work = true,
-            "--runs" => {
-                options.rounds = usize::try_from(required_number(&mut args, "--runs"))
-                    .unwrap_or_else(|_| usage("--runs is too large"));
-                if options.rounds == 0 {
-                    usage("--runs must be positive");
-                }
-            }
-            "--timeout-ms" => {
-                options.timeout_ms = required_number(&mut args, "--timeout-ms");
-                if options.timeout_ms == 0 {
-                    usage("--timeout-ms must be positive");
-                }
-            }
+            "--runs" => options.rounds = rounds(&mut args),
+            "--timeout-ms" => options.timeout_ms = timeout_ms(&mut args),
             "--out" => options.output = Some(required_path(&mut args, "--out")),
             "--checkpoint" => options.checkpoint = Some(required_path(&mut args, "--checkpoint")),
             "--resume" => options.resume = Some(required_path(&mut args, "--resume")),
@@ -1145,6 +1136,9 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
     if let Some(error) = jit_wasm_selective_ab_error(&options) {
         usage(error);
     }
+    if let Some(error) = aot_mode_error(&options) {
+        usage(error);
+    }
     if options.quench_peer.is_some() && !options.fixed_work {
         usage("--quench-peer requires --fixed-work");
     }
@@ -1217,7 +1211,7 @@ fn fixture_selection_is_valid(suite: Suite, files: &[PathBuf]) -> bool {
     }
 }
 
-fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
+fn prepare_engines(options: &Options) -> (Vec<EngineSpec>, Option<jetstream::BuiltBinary>) {
     let engines = if options.jit_wasm_selective_ab {
         let [selective_off, selective_on] = quench_selective_ab_pair(options);
         vec![
@@ -1240,13 +1234,98 @@ fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
             })
             .collect()
     };
-    engines
+    let engines = engines
         .into_iter()
         .map(|mut engine| {
             engine.webassembly = probe_webassembly(&engine);
             engine
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if !options.aot {
+        return (engines, None);
+    }
+    let (aot, binary) = aot_quench_engine(options);
+    let engines = engines
+        .into_iter()
+        .map(|engine| if engine.name == "quench" { aot.clone() } else { engine })
+        .collect();
+    (engines, Some(binary))
+}
+
+/// `--aot`'s preconditions: the compiled suite binary runs standalone, so no peer, checkpoint or
+/// JIT diagnostic mode applies to it.
+fn aot_mode_error(options: &Options) -> Option<&'static str> {
+    let exclusive = [
+        options.fixed_work,
+        options.quench_peer.is_some(),
+        options.checkpoint.is_some(),
+        options.resume.is_some(),
+        options.preflight_only,
+        options.jit_diagnostics,
+        options.jit_js_general_dispatch,
+        options.jit_wasm_selective,
+        options.jit_wasm_selective_ab,
+        options.jit_wasm_root.is_some(),
+        options.jit_wasm_root_only,
+        options.jit_wasm_root_first,
+    ]
+    .contains(&true);
+    match () {
+        _ if !options.aot => None,
+        _ if options.jit_mode != JitMode::Jit => Some("--aot requires --jit"),
+        _ if options.suite != Suite::JetStream3 => Some("--aot supports --suite jetstream3"),
+        _ if exclusive => {
+            Some("--aot cannot be combined with fixed-work, checkpoints, peers or JIT diagnostic modes")
+        }
+        _ => None,
+    }
+}
+
+/// `--timeout-ms`' positive timeout.
+fn timeout_ms(args: &mut impl Iterator<Item = String>) -> u64 {
+    let timeout_ms = required_number(args, "--timeout-ms");
+    if timeout_ms == 0 {
+        usage("--timeout-ms must be positive");
+    }
+    timeout_ms
+}
+
+/// `--runs`' positive round count.
+fn rounds(args: &mut impl Iterator<Item = String>) -> usize {
+    let rounds = usize::try_from(required_number(args, "--runs"))
+        .unwrap_or_else(|_| usage("--runs is too large"));
+    if rounds == 0 {
+        usage("--runs must be positive");
+    }
+    rounds
+}
+
+/// `--jit-wasm-root`'s root id.
+fn wasm_root(args: &mut impl Iterator<Item = String>) -> u32 {
+    u32::try_from(required_number(args, "--jit-wasm-root"))
+        .unwrap_or_else(|_| usage("--jit-wasm-root is too large"))
+}
+
+/// Compiles the suite prelude to a native binary and describes it as the measured Quench
+/// engine: the binary embeds the prelude, whose arguments are then the corpus root and the
+/// driver flags alone.
+fn aot_quench_engine(options: &Options) -> (EngineSpec, jetstream::BuiltBinary) {
+    let quench = resolve_executable(&options.quench).unwrap_or_else(|error| fail(&error));
+    let entry = write_temporary("jetstream3-aot-entry.js", jetstream::prelude());
+    let output = temporary_path("jetstream3-aot-binary");
+    let proof = jetstream::build_prelude_binary(&quench, &entry, &output).unwrap_or_else(|error| fail(&error));
+    let _ = fs::remove_file(&entry);
+    let mut engine = spec("quench", &output, Vec::new(), BTreeMap::new());
+    engine.aot = true;
+    engine.version = format!(
+        "Quench shared-VM AOT build (prelude linked, dynamic sources compiled); package {}",
+        env!("CARGO_PKG_VERSION")
+    );
+    engine.jit_mode = "aot";
+    engine.jit_proof_command = proof;
+    engine.jit_proof =
+        "the measured Quench process is an AOT-compiled binary of the suite prelude with dynamic-source support".into();
+    (engine, jetstream::BuiltBinary(output))
 }
 
 fn quench_selective_ab_pair(options: &Options) -> [EngineSpec; 2] {
@@ -1488,6 +1567,7 @@ fn spec(
         jit_proof: String::new(),
         executable_sha256: sha,
         webassembly: false,
+        aot: false,
     }
 }
 
@@ -2072,7 +2152,7 @@ fn run_fixture(
         .into_iter()
         .map(|(engine, _)| engine.clone())
         .collect::<Vec<_>>()[..];
-    let materialized = suite.materialize(file);
+    let materialized = suite.materialize(file, engines.iter().any(|engine| engine.aot));
     let mut unsupported_engines: BTreeMap<String, String> = unsupported_engines;
     let mut engines = engines.to_vec();
     let mut results = Vec::with_capacity(rounds);
@@ -2127,12 +2207,19 @@ fn run_fixture(
 struct Materialized {
     temporaries: Vec<PathBuf>,
     arguments: Vec<OsString>,
+    /// The AOT binary's arguments, which omit the prelude it embeds.
+    aot_arguments: Option<Vec<OsString>>,
     /// QuickJS's own arguments, when the suite needs a QuickJS-specific prelude.
     quickjs_arguments: Option<Vec<OsString>>,
 }
 
 impl Materialized {
     fn arguments_for(&self, engine: &EngineSpec) -> &[OsString] {
+        if engine.aot {
+            if let Some(arguments) = &self.aot_arguments {
+                return arguments;
+            }
+        }
         match (&self.quickjs_arguments, engine.name) {
             (Some(arguments), "quickjs") => arguments,
             _ => &self.arguments,
@@ -3055,6 +3142,7 @@ mod jit_wasm_root_only_tests {
             jit_wasm_root_first: false,
             jit_wasm_selective: false,
             jit_wasm_selective_ab: false,
+            aot: false,
             fixture: None,
             fixtures: Some(vec!["HashSet-wasm".into()]),
             all: false,
@@ -3091,6 +3179,7 @@ mod jit_wasm_root_only_tests {
             jit_wasm_root_first: true,
             jit_wasm_selective: false,
             jit_wasm_selective_ab: false,
+            aot: false,
             fixture: None,
             fixtures: Some(vec!["gcc-loops-wasm".into()]),
             all: false,
@@ -3461,185 +3550,4 @@ mod fixed_work_tests {
 }
 
 #[cfg(all(test, unix, not(target_os = "macos")))]
-mod tests {
-    use super::{
-        CorpusRecord, FixtureRecord, HostRecord, SuiteRecord, artifact, fixture_artifact, now_ns,
-        peak_rss_bytes, read_checkpoint, resume_metadata_matches, validate_resume, wait_child,
-        write_checkpoint,
-    };
-    use std::process::Command;
-    use std::{
-        collections::BTreeMap,
-        fs,
-        path::{Path, PathBuf},
-    };
-
-    #[test]
-    fn converts_wait4_peak_rss_to_bytes() {
-        let raw_rss = 1234;
-        let expected: u64 = if cfg!(target_os = "linux") {
-            1_263_616
-        } else {
-            raw_rss as u64
-        };
-        assert_eq!(peak_rss_bytes(raw_rss), Some(expected));
-    }
-
-    #[test]
-    // `wait_child` reaps the child by pid through wait4 (its usage is what is measured).
-    #[allow(clippy::zombie_processes)]
-    fn wait4_reports_exit_status_and_resource_usage() {
-        let mut command = Command::new("sh");
-        command.arg("-c").arg("exit 7");
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::process_group(&mut command, 0);
-        let child = command.spawn().expect("spawn shell");
-        let (status, timed_out, usage) = wait_child(child.id(), 5000).expect("wait4 child");
-        assert_eq!(status, 7);
-        assert!(!timed_out);
-        assert!(usage.peak_rss_bytes.is_some_and(|rss| rss > 0));
-    }
-
-    #[test]
-    // `wait_child` kills and reaps the child's process group by pid through wait4.
-    #[allow(clippy::zombie_processes)]
-    fn timeout_terminates_the_process_group() {
-        let mut command = Command::new("sh");
-        command.arg("-c").arg("sleep 5");
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::process_group(&mut command, 0);
-        let child = command.spawn().expect("spawn shell");
-        let (status, timed_out, _) = wait_child(child.id(), 5).expect("wait4 child");
-        assert_eq!(status, -1);
-        assert!(timed_out);
-    }
-
-    #[test]
-    fn checkpoint_round_trips_and_validates_fixture_inputs() {
-        let directory = std::env::temp_dir().join(format!(
-            "quench-bench-checkpoint-{}-{}",
-            std::process::id(),
-            now_ns()
-        ));
-        fs::create_dir(&directory).expect("create checkpoint test directory");
-        let fixture_path = directory.join("fixture.js");
-        fs::write(&fixture_path, "// pinned fixture\n").expect("write fixture");
-        let report_path = directory.join("report.json");
-        let expected = SuiteRecord {
-            schema: super::SUITE_REPORT_SCHEMA,
-            suite: super::Suite::JetStream3,
-            jit_mode: super::JitMode::Jit,
-            jit_diagnostics: false,
-            jit_js_general_dispatch: false,
-            jit_wasm_root: Some(19),
-            jit_wasm_root_only: true,
-            jit_wasm_root_first: false,
-            jit_wasm_selective: false,
-            jit_wasm_selective_ab: false,
-            created_unix_ns: now_ns(),
-            rounds_requested: 11,
-            timeout_ms: 300_000,
-            source_revision: "a".repeat(40),
-            source_dirty: false,
-            corpus: CorpusRecord {
-                pinned_revision: Some("b".repeat(40)),
-                checkout_revision: Some("b".repeat(40)),
-                checkout_clean: true,
-                fixture_set_matches: true,
-            },
-            host: HostRecord {
-                uname: "test host".into(),
-                rustc: "rustc test".into(),
-                model: Some("test model".into()),
-                memory_bytes: Some(1),
-                memory_limit_bytes: Some(1),
-                cpu_quota: Some("400000 100000".into()),
-                logical_cpus: Some(4),
-                process_metrics_backend: "wait4 test".into(),
-            },
-            engines: Vec::new(),
-            suite_inputs: Vec::new(),
-            selected_fixtures: vec![fixture_path.display().to_string()],
-            fixtures: BTreeMap::new(),
-            complete: false,
-            qualification_ready: false,
-        };
-        let mut saved = expected.clone();
-        saved.fixtures.insert(
-            fixture_path.display().to_string(),
-            FixtureRecord {
-                source: artifact(&fixture_path),
-                valid: false,
-                output_equal: false,
-                summaries: BTreeMap::new(),
-                unsupported_engines: BTreeMap::new(),
-                rounds: Vec::new(),
-            },
-        );
-
-        write_checkpoint(&report_path, &saved);
-        let loaded = read_checkpoint(&report_path);
-        validate_resume(&loaded, &expected, &[PathBuf::from(&fixture_path)]);
-        assert_eq!(loaded.fixtures.len(), 1);
-        assert!(loaded.jit_wasm_root_only);
-        let mut different_mode = expected.clone();
-        different_mode.jit_wasm_root_only = false;
-        assert!(!resume_metadata_matches(&loaded, &different_mode));
-
-        let root_first_path = directory.join("root-first-report.json");
-        let mut root_first = expected.clone();
-        root_first.jit_wasm_root_only = false;
-        root_first.jit_wasm_root_first = true;
-        write_checkpoint(&root_first_path, &root_first);
-        let root_first_loaded = read_checkpoint(&root_first_path);
-        assert!(root_first_loaded.jit_wasm_root_first);
-        assert!(!root_first_loaded.jit_wasm_root_only);
-        assert!(resume_metadata_matches(&root_first_loaded, &root_first));
-        assert!(!resume_metadata_matches(&loaded, &root_first));
-
-        let selective_ab_path = directory.join("selective-ab-report.json");
-        let mut selective_ab = expected;
-        selective_ab.jit_wasm_root_only = false;
-        selective_ab.jit_wasm_selective_ab = true;
-        write_checkpoint(&selective_ab_path, &selective_ab);
-        let selective_ab_loaded = read_checkpoint(&selective_ab_path);
-        assert!(selective_ab_loaded.jit_wasm_selective_ab);
-        assert!(resume_metadata_matches(&selective_ab_loaded, &selective_ab));
-        assert!(!resume_metadata_matches(&loaded, &selective_ab));
-        fs::remove_dir_all(directory).expect("remove checkpoint test directory");
-    }
-
-    #[test]
-    fn directory_artifacts_hash_sorted_relative_paths_and_contents() {
-        let directory = std::env::temp_dir().join(format!(
-            "quench-bench-directory-hash-{}-{}",
-            std::process::id(),
-            now_ns()
-        ));
-        fs::create_dir_all(directory.join("nested")).expect("create directory fixture");
-        fs::write(directory.join("z.js"), "last").expect("write first file");
-        fs::write(directory.join("nested/a.wasm"), "first").expect("write nested file");
-
-        let first = super::sha256(&directory).expect("hash directory fixture");
-        assert_eq!(first.len(), 64);
-        assert_eq!(first, super::sha256(&directory).expect("repeat hash"));
-        fs::write(directory.join("nested/a.wasm"), "changed").expect("change nested file");
-        assert_ne!(
-            first,
-            super::sha256(&directory).expect("hash changed fixture")
-        );
-
-        fs::remove_dir_all(directory).expect("remove directory fixture");
-    }
-
-    #[test]
-    fn synthetic_wasm_fixture_artifact_hashes_its_module_directory() {
-        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("workspace root");
-        let fixture = workspace.join(super::jetstream::fixture_path("HashSet-wasm"));
-        let source = fixture_artifact(super::Suite::JetStream3, &fixture);
-        assert_eq!(source.path, fixture.display().to_string());
-        assert!(source.sha256.as_deref().is_some_and(super::valid_sha256));
-    }
-}
+mod tests;

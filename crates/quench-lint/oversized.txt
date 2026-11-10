@@ -1504,7 +1504,7 @@ file-lines crates/quench-runtime/src/vm/program_store.rs 4013
 file-lines crates/quench-runtime/src/vm/promise.rs 5473
 file-lines crates/quench-runtime/src/vm/promise_async.rs 538
 file-lines crates/quench-runtime/src/vm/promise_jobs.rs 660
-file-lines crates/quench-runtime/src/vm/regexp.rs 3424
+file-lines crates/quench-runtime/src/vm/regexp.rs 3417
 file-lines crates/quench-runtime/src/vm/relational.rs 638
 file-lines crates/quench-runtime/src/vm/shadow_realm.rs 609
 file-lines crates/quench-runtime/src/vm/snapshot.rs 980
@@ -1551,7 +1551,7 @@ file-lines quench-bench/src/bin/conformance-compare.rs 721
 file-lines quench-bench/src/bin/task61-fixed-work-guard.rs 1236
 file-lines quench-bench/src/bin/web.rs 583
 file-lines quench-bench/src/contention.rs 680
-file-lines quench-bench/src/main.rs 3645
+file-lines quench-bench/src/main.rs 3553
 fn-identity crates/quench-runtime/src/vm/dispatch_fast.rs 93
 fn-identity crates/quench-runtime/src/vm/dispatch_fast/capture_update_calls.rs 2
 fn-identity crates/quench-runtime/src/vm/dispatch_fast/getters.rs 1
@@ -3477,13 +3477,13 @@ function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_from_meta 4
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_legacy_getter_native 52
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_literal_of 61
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_proven_symbol_method 46
-function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_replace_with_literal 68
+function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_replace_with_literal 61
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_split_builtin 61
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_subject 69
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_match 77
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_match_all 50
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_replace 174
-function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_replace_fast 94
+function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_replace_fast 93
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_search 48
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_split 124
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_unobservable_splitter 44
@@ -4120,7 +4120,7 @@ function-lines quench-bench/src/main.rs::fixed_work_marginal_summary 43
 function-lines quench-bench/src/main.rs::fixed_work_tests::fixed_work_sample_requires_completion_marker_without_a_score 46
 function-lines quench-bench/src/main.rs::main 168
 function-lines quench-bench/src/main.rs::node_engine 42
-function-lines quench-bench/src/main.rs::parse_options_from 182
+function-lines quench-bench/src/main.rs::parse_options_from 171
 function-lines quench-bench/src/main.rs::quench_engine 76
 function-lines quench-bench/src/main.rs::retry_contended_rounds 50
 function-lines quench-bench/src/main.rs::run_fixed_work_attempt 47
@@ -4130,7 +4130,6 @@ function-lines quench-bench/src/main.rs::run_fixture 69
 function-lines quench-bench/src/main.rs::run_measured 45
 function-lines quench-bench/src/main.rs::run_wait4 67
 function-lines quench-bench/src/main.rs::sha256_directory 86
-function-lines quench-bench/src/main.rs::tests::checkpoint_round_trips_and_validates_fixture_inputs 94
 function-lines quench-bench/src/main.rs::validate_resume 55
 function-lines quench-bench/src/main.rs::wait_child 60
 function-lines tools/l0-oracles.rs::run 292

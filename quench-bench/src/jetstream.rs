@@ -185,6 +185,52 @@ pub(crate) fn arguments(file: &Path, prelude: &Path) -> Vec<OsString> {
         .collect()
 }
 
+/// A suite binary the harness compiled, removed when the run ends.
+pub(crate) struct BuiltBinary(pub(crate) PathBuf);
+
+impl Drop for BuiltBinary {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Compiles this suite's prelude to a native binary (`compile ENTRY -o BINARY --dynamic-source`)
+/// and returns it with the compile command that proves how it was made. The binary embeds the
+/// prelude; the suite's own sources still run dynamically.
+pub(crate) fn build_prelude_binary(quench: &Path, entry: &Path, output: &Path) -> Result<Vec<String>, String> {
+    let status = std::process::Command::new(quench)
+        .arg("compile")
+        .arg(entry)
+        .arg("-o")
+        .arg(output)
+        .arg("--dynamic-source")
+        .status()
+        .map_err(|error| format!("cannot AOT-compile the suite prelude: {error}"))?;
+    if !status.success() {
+        return Err("the AOT compiler did not produce a suite binary".into());
+    }
+    Ok(vec![
+        quench.display().to_string(),
+        "compile".into(),
+        entry.display().to_string(),
+        "-o".into(),
+        output.display().to_string(),
+        "--dynamic-source".into(),
+    ])
+}
+
+/// An AOT binary's arguments: the corpus root and the driver flags. The binary embeds the
+/// prelude, which reads its own arguments after the entry slot the binary inserts for it.
+pub(crate) fn aot_arguments(file: &Path) -> Vec<OsString> {
+    std::iter::once(OsString::from(SUITE_DIR))
+        .chain(DRIVER_ARGUMENTS.iter().map(OsString::from))
+        .chain(std::iter::once(OsString::from(format!(
+            "--test={}",
+            test_name(file)
+        ))))
+        .collect()
+}
+
 /// The test's JetStream Score: `<name> Score <value> pts`.
 pub(crate) fn score(file: &Path, stdout: &str) -> Option<f64> {
     let name = test_name(file);
