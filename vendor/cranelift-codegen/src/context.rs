@@ -181,6 +181,14 @@ impl Context {
 
         self.func.dfg.resolve_all_aliases();
 
+        if crate::guard_dominance::run(&mut self.func, &self.cfg, &self.domtree) {
+            self.compute_cfg();
+            self.compute_domtree();
+            self.eliminate_unreachable_code(isa)?;
+            self.remove_constant_phis(isa)?;
+            self.func.dfg.resolve_all_aliases();
+        }
+
         if opt_level != OptLevel::None {
             self.egraph_pass(isa, ctrl_plane)?;
         }
