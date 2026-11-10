@@ -24,7 +24,7 @@ fn gc_startup_options_match_node_at_environment_and_invocation_edges() {
             .args(["-e", source])
             .output().unwrap();
         assert!(expected.status.success(), "{environment} {arguments:?}: {}", String::from_utf8_lossy(&expected.stderr));
-        for mode in [None, Some("--jit")] {
+        for mode in [Some("--no-jit"), Some("--jit")] {
             let actual = Command::new(env!("CARGO_BIN_EXE_quench-node"))
                 .env_clear()
                 .env("NODE_OPTIONS", environment)
@@ -67,7 +67,7 @@ fn internal_options_matches_node_in_interpreter_and_jit() {
             expected.status,
             String::from_utf8_lossy(&expected.stderr)
         );
-        for mode in [None, Some("--jit")] {
+        for mode in [Some("--no-jit"), Some("--jit")] {
             let actual = Command::new(env!("CARGO_BIN_EXE_quench-node"))
                 .env_clear()
                 .args(mode)

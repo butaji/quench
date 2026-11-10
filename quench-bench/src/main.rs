@@ -1371,7 +1371,7 @@ fn quench_engine(options: &Options) -> EngineSpec {
     let argv = if jit_enabled {
         vec!["--jit".into()]
     } else {
-        Vec::new()
+        vec!["--no-jit".into()]
     };
     let mut environment = BTreeMap::new();
     if options.jit_diagnostics {

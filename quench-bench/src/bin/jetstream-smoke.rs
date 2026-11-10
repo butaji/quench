@@ -71,9 +71,7 @@ fn known(test: &str) -> bool {
 fn passes(quench: &str, prelude: &Path, jit: bool, test: &str) -> bool {
     let file = jetstream::fixture_path(test);
     let mut command = Command::new(quench);
-    if jit {
-        command.arg("--jit");
-    }
+    command.arg(if jit { "--jit" } else { "--no-jit" });
     command
         .args(jetstream::arguments(&file, prelude))
         .args(SMOKE_DRIVER_ARGUMENTS)
