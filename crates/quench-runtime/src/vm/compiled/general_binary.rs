@@ -4,7 +4,7 @@
 //! run no guest code; a remainder of two integers is computed inline first. Any other pair
 //! takes the step.
 use super::{emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback, JsStepDispatch, PcLowering, ResidualProgram, Vm};
-use crate::bytecode::{Constant, Operand, OperandKind, WideInstruction};
+use crate::bytecode::{Class, Constant, Operand, OperandKind, WideInstruction};
 use crate::value::ValueLayout;
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
@@ -27,6 +27,9 @@ pub(super) fn lower_rest(
     (arguments, payload): (ir::Value, ir::Value),
     exact: &JsExactFallback,
 ) -> PcLowering {
+    if lower_require_iterator_result(builder, instruction, next, register_offset, arguments, payload, exact) {
+        return PcLowering::Native;
+    }
     if let Some(next) = next && instruction.op() == crate::bytecode::Op::Binary
         && lower_binary(builder, program, (instruction, next), register_offset, (arguments, payload), exact) {
         return PcLowering::Native;
@@ -37,6 +40,36 @@ pub(super) fn lower_rest(
     super::emit_js_step_fallback(builder, exact.context, exact.callout, exact.callout_signature, exact.result_pointer,
         exact.stopped_block, exact.continue_block, exact.pc);
     PcLowering::Exact
+}
+
+/// Lowers `RequireIteratorResult` of an object, which passes: a direct record or any heap
+/// object continues to `next`, and any other value takes the exact step, which throws.
+fn lower_require_iterator_result(builder: &mut FunctionBuilder<'_>, instruction: WideInstruction,
+    next: Option<ir::Block>, register_offset: &dyn Fn(u16) -> Option<i32>,
+    arguments: ir::Value, payload: ir::Value, exact: &JsExactFallback) -> bool {
+    if !instruction.op().class().eq(Class::RequireIteratorResult) { return false; }
+    let (Some(next), Some(source)) = (next, register_offset(instruction.register_b())) else { return false };
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
+    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_like));
+    let passed = emit_lane_helper_call(builder, payload, helper, &[payload, value]);
+    let object = builder.ins().icmp_imm_u(IntCC::NotEqual, passed, 0);
+    let fallback = builder.create_block();
+    builder.ins().brif(object, next, &[], fallback, &[]);
+    builder.switch_to_block(fallback);
+    exact.emit(builder, fallback);
+    true
+}
+
+/// Whether `value` is an object, as `RequireIteratorResult` requires: a direct record or any
+/// heap object. Reads the heap only; runs no guest code and allocates nothing.
+///
+/// # Safety
+/// As `general_user_call`.
+pub(super) unsafe extern "C" fn general_object_like<H: Host>(vm: u64, _residual: u64, _payload: u64, value: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    let value = Value::from_bits(value);
+    u64::from(value.is_record() || vm.is_object_like(value))
 }
 
 /// Lowers the `!` at the exact fallback's PC, which only negates its operand's ToBoolean and
