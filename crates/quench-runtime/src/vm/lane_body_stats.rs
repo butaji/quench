@@ -8,6 +8,10 @@ pub(in crate::vm) struct LaneBodyStats {
     function: std::cell::Cell<u32>,
     compiles: std::cell::Cell<u32>,
     frames: std::cell::Cell<u32>,
+    /// The last compile's inlined frames as `index:function<-parent@call-pc`, `+` marking an alternative.
+    shape: std::cell::RefCell<String>,
+    /// Wall-clock milliseconds since the epoch of each compile's publication.
+    compiled_at: std::cell::RefCell<Vec<u64>>,
     /// Completed, left at a caller PC, inside an inlined callee, in a native call's callee,
     /// or irreversibly terminated.
     ends: [std::cell::Cell<u32>; End::COUNT],
@@ -18,10 +22,15 @@ pub(in crate::vm) struct LaneBodyStats {
 }
 
 impl LaneBodyStats {
-    pub(in crate::vm) fn compiled(&self, function: u32, frames: usize) {
+    pub(in crate::vm) fn compiled(&self, function: u32, frames: &[super::super::compiled::InlinedCall]) {
         self.function.set(function);
         self.compiles.set(self.compiles.get() + 1);
-        self.frames.set(frames as u32);
+        self.frames.set(frames.len() as u32);
+        self.compiled_at.borrow_mut().push(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_millis() as u64));
+        *self.shape.borrow_mut() = frames.iter().enumerate().map(|(index, frame)| {
+            let parent = frame.parent.map_or(String::from("root"), |parent| parent.to_string());
+            format!("{index}:f{}<-{parent}@{}{}", frame.target.function, frame.call, if frame.alternative.is_some() { "+" } else { "" })
+        }).collect::<Vec<_>>().join(" ");
     }
 
     /// `frames`, the body's inlined calls, name the function a leave inside one was in.
@@ -69,8 +78,8 @@ impl LaneBodyStats {
                 format!("[\"{place}\",{count}]")
             }).collect::<Vec<_>>().join(",");
             format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
-                self.compiles.get(), self.frames.get(), self.refused.get(),
+                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"compiled_at\":{:?},\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
+                self.compiles.get(), self.frames.get(), self.shape.borrow(), self.compiled_at.borrow(), self.refused.get(),
             )
         })
     }
@@ -97,27 +106,54 @@ impl End {
 }
 
 /// Why a lane body's call or construction helper answered `LANE_CALL_MISSED`, which leaves the
-/// body at the call. One slot per refusal site in `lane_body_call`, `lane_body_construct` and
-/// `lane_body_native_call`; read by the diagnostics report (`miss_report`).
-const MISS_REASONS: [&str; 25] = [
-    "call:shadow-active", "call:no-script-calls", "call:constructing", "call:with-scope", "call:returning-not-admitted",
-    "call:receiver", "call:entry-not-activation", "call:too-many-args", "call:no-activation-room", "call:read-answer",
-    "construct:shadow-active", "construct:no-script-constructs", "construct:construct-target", "construct:with-scope", "construct:collection-due",
-    "construct:returning", "construct:no-target", "construct:not-constructor-or-forwards", "construct:entry-not-activation", "construct:too-many-args",
-    "construct:no-activation-room", "construct:no-receiver", "native:returning", "native:not-native", "native:in-place-declined",
-];
-static MISSES: [std::sync::atomic::AtomicU64; MISS_REASONS.len()] = [const { std::sync::atomic::AtomicU64::new(0) }; MISS_REASONS.len()];
+/// body at the call: one variant per refusal site in `lane_body_call`, `lane_body_construct` and
+/// `lane_body_native_call`, named `site:reason` in the diagnostics report (`miss_report`).
+macro_rules! miss_reasons {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        #[derive(Clone, Copy)]
+        pub(in crate::vm) enum Miss { $($variant),+ }
+        const MISS_NAMES: [&str; [$($name),+].len()] = [$($name),+];
+    };
+}
+miss_reasons! {
+    CallShadowActive => "call:shadow-active",
+    CallNoScriptCalls => "call:no-script-calls",
+    CallConstructing => "call:constructing",
+    CallWithScope => "call:with-scope",
+    CallReturningNotAdmitted => "call:returning-not-admitted",
+    CallReceiver => "call:receiver",
+    CallEntryNotActivation => "call:entry-not-activation",
+    CallTooManyArgs => "call:too-many-args",
+    CallNoActivationRoom => "call:no-activation-room",
+    CallReadAnswer => "call:read-answer",
+    ConstructShadowActive => "construct:shadow-active",
+    ConstructNoScriptConstructs => "construct:no-script-constructs",
+    ConstructConstructTarget => "construct:construct-target",
+    ConstructWithScope => "construct:with-scope",
+    ConstructCollectionDue => "construct:collection-due",
+    ConstructReturning => "construct:returning",
+    ConstructNoTarget => "construct:no-target",
+    ConstructNotConstructorOrForwards => "construct:not-constructor-or-forwards",
+    ConstructEntryNotActivation => "construct:entry-not-activation",
+    ConstructTooManyArgs => "construct:too-many-args",
+    ConstructNoActivationRoom => "construct:no-activation-room",
+    ConstructNoReceiver => "construct:no-receiver",
+    NativeReturning => "native:returning",
+    NativeNotNative => "native:not-native",
+    NativeInPlaceDeclined => "native:in-place-declined",
+}
+static MISSES: [std::sync::atomic::AtomicU64; MISS_NAMES.len()] = [const { std::sync::atomic::AtomicU64::new(0) }; MISS_NAMES.len()];
 
-/// Counts a miss for `reason` (an index of `MISS_REASONS`) and answers the helper's miss.
+/// Counts a miss for `reason` and answers the helper's miss.
 #[cold]
-pub(in crate::vm) fn miss(reason: usize) -> u64 {
-    MISSES[reason].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+pub(in crate::vm) fn miss(reason: Miss) -> u64 {
+    MISSES[reason as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     super::super::compiled::LANE_CALL_MISSED
 }
 
 /// The report line of the misses, `QUENCH_LANE_MISSES {...}`, most frequent first.
 pub(in crate::vm) fn miss_report() -> String {
-    let mut counts: Vec<_> = MISS_REASONS.iter().zip(&MISSES)
+    let mut counts: Vec<_> = MISS_NAMES.iter().zip(&MISSES)
         .map(|(name, count)| (*name, count.load(std::sync::atomic::Ordering::Relaxed))).filter(|(_, count)| *count != 0).collect();
     counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
     let fields = counts.iter().map(|(name, count)| format!("\"{name}\":{count}")).collect::<Vec<_>>().join(",");

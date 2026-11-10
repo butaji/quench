@@ -17,6 +17,17 @@ pub(super) struct LaneBodyHistory {
     shrinks: u8,
 }
 
+/// The entries and the milliseconds of warming past which a function specializes by its
+/// recurrence alone (`LaneView::recurrent`).
+const RECURRENT_ENTRIES: u16 = 16;
+const RECURRENT_MILLIS: u32 = 50;
+
+/// Milliseconds on the process's monotonic clock.
+fn now_ms() -> u32 {
+    thread_local! { static START: std::time::Instant = std::time::Instant::now(); }
+    START.with(|start| start.elapsed().as_millis() as u32)
+}
+
 /// What a body whose leaves reached the reoptimization threshold does next.
 enum Verdict {
     /// It keeps its code, and counts on.
@@ -92,6 +103,16 @@ impl LaneView {
         TIERS.lane_body.warmup_entries << self.history.get().lifetimes.min(7)
     }
 
+    /// Whether a function entered rarely has still been entered at least `RECURRENT_ENTRIES` times
+    /// over `RECURRENT_MILLIS` of its warming: an entry that runs long (a driver whose callees
+    /// are hot) costs more than the many cheap entries the warm-up counts, and its callees'
+    /// bodies run from the lane until it specializes and inlines them. Read every
+    /// `RECURRENT_ENTRIES`th entry, so the clock costs a function nothing measurable.
+    fn recurrent(&self, entries: u16) -> bool {
+        entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && self.history.get().lifetimes == 0
+            && now_ms().wrapping_sub(self.warm_since.get()) >= RECURRENT_MILLIS
+    }
+
     /// Whether its history affords another compile.
     pub(super) fn affords_compile(&self) -> bool {
         let history = self.history.get();
@@ -163,13 +184,14 @@ impl LaneView {
             return true;
         }
         let (outcome, recompiles, stuck) = match std::mem::replace(body, LaneBody::Declined) {
-            LaneBody::Unspecialized { entries, recompiles, stuck } if entries.saturating_add(1) >= self.warmup_entries() => {
+            LaneBody::Unspecialized { entries, recompiles, stuck } if entries.saturating_add(1) >= self.warmup_entries() || self.recurrent(entries.saturating_add(1)) => {
                 if !self.affords_compile() { return false; }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
                 (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks }), recompiles, stuck)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
+                if entries == 0 { self.warm_since.set(now_ms()); }
                 *body = LaneBody::Unspecialized { entries: entries + 1, recompiles, stuck };
                 return true;
             }
