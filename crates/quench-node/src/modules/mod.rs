@@ -121,6 +121,7 @@ pub(crate) mod process_memory_shared_vm;
 pub(crate) mod process_metrics_shared_vm;
 pub(crate) mod process_lazy_shared_vm;
 pub(crate) mod process_permission_shared_vm;
+pub(crate) mod process_prototype;
 pub(crate) mod process_shared_vm;
 pub(crate) mod process_warning_shared_vm;
 mod process_exception_route;
