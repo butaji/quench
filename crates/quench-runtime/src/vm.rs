@@ -179,6 +179,7 @@ mod intact_fuses;
 mod iterators;
 mod json;
 mod method_cache;
+mod method_site;
 mod plain_equality;
 mod module;
 mod number;
