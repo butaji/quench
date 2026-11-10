@@ -2146,8 +2146,8 @@ struct LaneContext<H: Host> {
     /// The accumulator the lane loop dispatches its next record with: the one a safepoint
     /// jump carried to its target (`lane_safepoint`), else none.
     resumed_acc: Slot<Value>,
-    /// The record a lane body's native call left the lane to continue at, in the callee's
-    /// activation it made (`lane_body_call`), and the accumulator that record reads.
+    /// The record a lane body's native call left the lane to continue at, one of the callee's
+    /// records in the activation it made (`lane_body_call`), and the accumulator that record reads.
     callee_resume: Ip,
     callee_acc: Value,
     /// What this run proved about the storage of the arrays its loops index
@@ -15389,12 +15389,12 @@ fn lane_body_activate<H: Host>(
 ) -> u64 {
     use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_TERMINATED};
     let vm = unsafe { vm(cx) };
-    let (registers, start) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, constructs);
+    // A body that does not run continues at its first record (the context's base after the push), not
+    // the tier prologue: the general path a native loop leaves to takes only the function's records as PCs.
+    let registers = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, constructs).0;
+    let start = unsafe { (*cx).base };
     let leave = move |resume: Ip, acc: Value| {
-        unsafe {
-            (*cx).callee_resume = resume;
-            (*cx).callee_acc = acc;
-        }
+        unsafe { (*cx).callee_resume = resume; (*cx).callee_acc = acc; }
         LANE_CALL_LEFT
     };
     // SAFETY: the program's views outlive the lane run.

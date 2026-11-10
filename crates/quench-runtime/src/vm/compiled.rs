@@ -12534,9 +12534,13 @@ impl<H: Host> Vm<H> {
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
             return false;
         };
-        let state = self.programs.js_tier(id, function);
-        if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
-            return self.programs.js_jit_diagnostics_enabled();
+        // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim costs a short call-free one its leaf calls.
+        // They specialize the whole function themselves, so a function the function tier
+        // declined is theirs to claim as well.
+        let lane_body = self.programs.js_jit_lane_methods_enabled() && (facts.has_calls
+            || program.function_get(function as usize).is_some_and(|body| body.loops() || body.code.len() >= TIERS.lane_body.min_instructions));
+        if matches!(self.programs.js_tier(id, function), Some(super::program_store::JsTierState::Unsupported)) {
+            return lane_body;
         }
         let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
         // Keep bounded candidates on a frame entry until the shared tier has
@@ -12544,9 +12548,7 @@ impl<H: Host> Vm<H> {
         // across the later promotion and no longer consult tiering.
         // Inlining may erase a short body's calls; a call-free candidate still has
         // to pay for native entry under the same cost policy.
-        // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim costs a short call-free one its leaf calls.
-        candidate || self.js_general_tier_takes(program, function, &facts) || (self.programs.js_jit_lane_methods_enabled() && (facts.has_calls
-            || program.function_get(function as usize).is_some_and(|body| body.loops() || body.code.len() >= TIERS.lane_body.min_instructions)))
+        candidate || self.js_general_tier_takes(program, function, &facts) || lane_body
     }
 
     /// Whether the general baseline may take `function`: a general candidate the tier admits

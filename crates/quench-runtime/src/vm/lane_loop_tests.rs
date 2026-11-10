@@ -155,3 +155,23 @@ fn a_loop_inlines_an_inherited_method_of_a_captured_receiver() {
     let osr = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("run's lane view").osr_diagnostics();
     assert!(osr.native_region_runs > 0, "the call loop runs natively: {:?}", osr.sites);
 }
+
+/// A native loop whose call activates a callee the lane tier claimed, where the callee's body
+/// does not run, leaves to the general path at the callee's first record: the tier prologue
+/// its activations start at lies outside the function's records, so it names no PC.
+#[test]
+fn a_loop_leaves_into_a_claimed_callee_at_its_first_record() {
+    let source = r#"
+      function search() { let found = 0; for (let i = 0; i < 10; i++) found += "ab".indexOf("b"); return found; }
+      let total = 0;
+      for (let call = 0; call < 20000; call++) total += search();
+      print(total);
+    "#;
+    let program = Engine::specialize(&format!("(function(){{{source}}})();"), "lane-loop-claimed-callee.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_lane_methods();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), [(20000 * 10).to_string()]);
+}
