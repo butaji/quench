@@ -12794,7 +12794,7 @@ script_handler! {
             vm.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Forwarded { through: r.get(i.b), callee }, function });
         }
         if let Some(FunctionKind::Native(native)) = kind {
-            if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+            if i.a & crate::bytecode::RETURN_REGISTER != 0 {
                 return exit(ip);
             }
             let value = lane_native_value(cx, ip, i, native, callee, receiver, args);
@@ -15322,14 +15322,17 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
         return lane_body_stats::miss(lane_body_stats::Miss::ConstructReturning);
     }
     // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
-    let Some(target) = vm.script_call_entry(callee).or_else(|| {
-        // An uncached callee resolves as the lane's construction does (`lane_script_target`).
-        lane_script_target(cx, callee)?;
-        vm.script_call_entry(callee)
-    }).map(|entry| unsafe { *entry }) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
+    let Some(target) = lane_body_construct_target(cx, vm, callee) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
     if !target.constructs { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructorOrForwards); }
+    // A forwarding constructor takes the lane's keeping construction, which makes its receiver.
+    let forwarding = target.forwards();
     let Some(how) = lane_call_activation(&target, argc, i.c) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructEntryNotActivation) };
     if matches!(how, LaneActivation::Plain) && !lane_activation_room(vm, &target) { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoActivationRoom); }
+    if forwarding {
+        // SAFETY: a construction passes its arguments from register `c` on.
+        let passed = unsafe { r.0.add(usize::from(i.c)).cast_const() };
+        return lane_body_activate(cx, r, ip, &target, passed, argc, Value::DELETED, true, LaneActivation::Forwarded);
+    }
     let built = if target.initializes {
         // SAFETY: the context's program outlives the lane run.
         lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, lane_construct_argument(r, i))
@@ -15346,6 +15349,14 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     // SAFETY: a construction passes its arguments from register `c` on.
     let passed = unsafe { r.0.add(usize::from(i.c)).cast_const() };
     lane_body_activate(cx, r, ip, &target, passed, argc, this, true, how)
+}
+
+/// The target a lane body's construction of `callee` activates: the cached one, else the one
+/// the lane's construction resolves (`lane_script_target`).
+fn lane_body_construct_target<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>, callee: Value) -> Option<ScriptCallTarget> {
+    let entry = vm.script_call_entry(callee).or_else(|| lane_script_target(cx, callee).and_then(|_| vm.script_call_entry(callee)))?;
+    // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
+    Some(unsafe { *entry })
 }
 
 /// The target a lane body's call of `callee` activates: the site's linked entry, else the one
@@ -15385,6 +15396,8 @@ enum LaneActivation {
     Keeping(u16),
     /// A target whose window holds its environment and locals (`lane_activate_environment`).
     Environment,
+    /// A forwarding constructor, whose receiver and activation `lane_construct_keeping_activation` makes.
+    Forwarded,
 }
 
 /// The activation a lane body's call makes of `target` (`how`), its registers; the helper's
@@ -15407,6 +15420,17 @@ fn lane_body_push<H: Host>(
         // The activation the lane's own call makes where values are kept or gathered.
         LaneActivation::Keeping(window) => lane_activate_keeping::<H, false>(
             cx, r, ip, target, ActivationArguments::Window(window), this, constructs, None).map_err(|_| refused())?.0,
+        LaneActivation::Forwarded => {
+            // SAFETY: the body's context and the record it constructs at.
+            match lane_construct_keeping_activation(cx, r, ip, unsafe { &*ip }) {
+                Ok(KeepingConstruction::Activated(registers, _)) => registers,
+                Ok(KeepingConstruction::Finished(this)) => {
+                    r.set(unsafe { &*ip }.a & crate::bytecode::REGISTER_MASK, this);
+                    return Err(super::compiled::LANE_CALL_COMPLETED);
+                }
+                Err(_) => return Err(refused()),
+            }
+        }
         LaneActivation::Environment => {
             // SAFETY: the call's window is registers of the running function.
             let window = unsafe { lane_call_window(r, &*ip) };

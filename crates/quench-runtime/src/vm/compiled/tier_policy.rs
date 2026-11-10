@@ -155,7 +155,7 @@ const MEASURED: Tiers = Tiers {
         max_recompiles: 4,
         max_wasted: u8::MAX,
         max_lifetimes: 8,
-        min_instructions: 0,
+        min_instructions: 24,
         compile_poll_interval: 64,
     },
     js_function: JsFunction {
