@@ -61,9 +61,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let receiver_root = self.heap.root(receiver);
         let outcome = (|| {
-            if !matches!(self.heap.get(receiver), Some(Cell::Set { .. })) {
-                return Err(self.type_error(p, "Set method called on incompatible receiver".into()));
-            }
+            self.require_brand(p, receiver, Brand::Set, "Set method")?;
             let other = self.get_set_record(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
             let mut values = Vec::new();
             let mut value_roots = Vec::new();

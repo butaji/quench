@@ -1,4 +1,5 @@
 use super::intl_datetime_parts::{self, DateTimeFields, DateTimePartOptions, TemporalKind};
+use super::collections::Brand;
 use super::*;
 use chrono::{FixedOffset, NaiveDate, Offset, TimeZone, Utc};
 use std::str::FromStr;
@@ -595,9 +596,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !matches!(self.heap.get(this), Some(Cell::Date { .. })) {
-            return Err(self.type_error(p, "Date method called on incompatible receiver".into()));
-        }
+        self.require_brand(p, this, Brand::Date, "Date method")?;
         if matches!(self.heap.get(this), Some(Cell::Date { milliseconds, .. }) if !milliseconds.is_finite())
         {
             return Ok(self.heap.alloc_string("Invalid Date".into()));
