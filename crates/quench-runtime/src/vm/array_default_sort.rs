@@ -22,3 +22,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "array_default_sort_tests.rs"]
+mod tests;
