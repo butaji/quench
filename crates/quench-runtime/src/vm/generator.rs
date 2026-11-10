@@ -1,6 +1,7 @@
 use super::activation::{
     AsyncGeneratorOperation, AsyncGeneratorRequest, Completion, Continuation, GeneratorRecord, GeneratorState,
 };
+use crate::heap::AwaitKind;
 use super::promise::{PromiseReaction, PromiseState};
 use super::*;
 mod in_place_steps;
@@ -1212,7 +1213,7 @@ impl<H: Host> Vm<H> {
                 Ok((rejected, promise))
             })
         })?;
-        self.enqueue_async_resume(p, Some(continuation), promise, Some(generator), rejected, false)?;
+        self.enqueue_async_resume(p, AwaitKind::generator_await(generator, continuation), promise, rejected)?;
         Ok(promise)
     }
 
@@ -1684,7 +1685,7 @@ impl<H: Host> Vm<H> {
                         Some(destination),
                         promise,
                     );
-                    vm.enqueue_async_resume(p, Some(continuation), promise, Some(generator), value, false)?;
+                    vm.enqueue_async_resume(p, AwaitKind::generator_await(generator, continuation), promise, value)?;
                 }
                 Ok(_) => {
                     vm.pool_frame(frame);
@@ -1726,7 +1727,7 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         // The yield awaits its value first; its continuation stays in the record.
-        self.enqueue_async_resume(p, None, promise, Some(generator), value, true)
+        self.enqueue_async_resume(p, AwaitKind::AsyncGeneratorYield { generator }, promise, value)
     }
 
     pub(super) fn finish_async_generator(
