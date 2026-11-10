@@ -16,15 +16,13 @@ pub(super) fn ascii_match_ranges(matcher: &quench_regexp::Regex, bytes: &[u8], g
 /// `bytes` with each of `ranges` replaced by `literal`, written once into storage of its
 /// total `length`.
 pub(super) fn ascii_replaced(bytes: &[u8], literal: &[u8], ranges: &[Range<usize>], length: usize) -> JsString {
-    let mut parts: smallvec::SmallVec<[&[u8]; 17]> = smallvec::SmallVec::new();
+    let tail = &bytes[ranges.last().map_or(0, |range| range.end)..];
     let mut copied = 0;
-    for range in ranges {
-        parts.push(&bytes[copied..range.start]);
-        parts.push(literal);
-        copied = range.end;
-    }
-    parts.push(&bytes[copied..]);
-    JsString::from_ascii_parts(length, parts.into_iter())
+    let pieces = ranges.iter().flat_map(|range| {
+        let before = &bytes[std::mem::replace(&mut copied, range.end)..range.start];
+        [before, literal]
+    });
+    JsString::from_ascii_parts(length, pieces.chain(std::iter::once(tail)))
 }
 
 impl<H: Host> Vm<H> {
