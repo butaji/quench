@@ -88,3 +88,35 @@ fn shared_osr_receiver_shape_departures_between_runs_do_not_exhaust_compilations
         "receiver shape departures must not recompile a guarded site: {site:?}"
     );
 }
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_sum_that_overflows_int32_each_iteration_widens_and_stays_native() {
+    let source = r#"
+        function f(a) {
+          let s = 0;
+          for (let i = 0; i < 20000; i++) {
+            let t = a[i & 7] + a[(i + 1) & 7] + a[(i + 2) & 7];
+            s = (s ^ (t | 0)) | 0;
+          }
+          return s;
+        }
+        var result = f([2147483647, 2147483646, 2147483645, 2147483644, 2147483643, 2147483642, 2147483641, 2147483640]);
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "osr-int32-overflow-widen.js")).unwrap();
+    let run = |mode| {
+        let mut vm = test_vm();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let (globals, atom) = (vm.realm.globals, vm.intern_atom("result"));
+        (vm.own_property(globals, atom).expect("result"), vm)
+    };
+    let (interpreted, _) = run(crate::ExecutionMode::Interpreted);
+    let (compiled, vm) = run(crate::ExecutionMode::Compiled);
+    assert_eq!(compiled, interpreted, "the widened loop computes the interpreter's sum");
+    let site = osr_site(&vm, function_named(&program, "f"));
+    assert!(
+        site.native_region_runs > 0 && site.exits < u64::from(crate::vm::compiled::tier_policy::TIERS.loops.max_exits),
+        "a sum that overflows on every run widens instead of exhausting the site: {site:?}"
+    );
+}

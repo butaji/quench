@@ -7982,7 +7982,7 @@ fn lane_loop_native<H: Host>(
         LoopContinuation::Resume(pc) => LoopAttempt::At(at(pc)),
         LoopContinuation::Exit(pc) => LoopAttempt::Leave(match region.inlined_exit(pc) {
             Some((frame, callee_pc)) => exit(lane_inlined_activation(cx, r, region, &entry, *frame, at(frame.call), pc, callee_pc)),
-            None => exit(at(pc)),
+            None => { count_arithmetic_leave(cx, site, pc); exit(at(pc)) }
         }),
         LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
         // SAFETY: the call set the callee's activation and its resume record before the body
@@ -7991,6 +7991,21 @@ fn lane_loop_native<H: Host>(
         LoopContinuation::Completed(pc, value) =>
             LoopAttempt::Resumed(lane_return_value_general::<H>(cx, at(pc), value)),
     }
+}
+
+/// Counts a leave at `pc` (`LoopTier::left_at`) where it is a Number operator, whose int32
+/// speculation a compilation can drop; a leave at any other guard (a shape, an element)
+/// widens nothing.
+#[cold]
+fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
+    // SAFETY: the lane's VM is live, and nothing borrows it across the read.
+    let machine = unsafe { vm(cx) };
+    let arithmetic = machine.programs.get(machine.active_program).as_deref().is_some_and(|program| {
+        let body = program.function(site.function() as usize);
+        body.code.get(pc as usize).is_some_and(|packed|
+            decoded_instruction(body, *packed).op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary)
+    });
+    if arithmetic { site.tier.borrow_mut().left_at(pc); }
 }
 
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the

@@ -13,6 +13,10 @@ pub(super) struct LoopTier {
     pending: Option<Box<super::super::compiled::PendingOsrRegion>>,
     wait: u16,
     pub(super) compilations: u32,
+    /// Each operation the code left at, with its leaves so far; and those whose int32
+    /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
+    leaves: Vec<(u32, u16)>,
+    widened: Vec<usize>,
 }
 
 impl LoopTier {
@@ -24,6 +28,20 @@ impl LoopTier {
     /// compaction renumbers.
     pub(super) fn retire_named_shapes(&self) {
         if let Some(pending) = &self.pending { pending.retire_named_shapes(); }
+    }
+
+    /// Counts a run of the code that left at `pc`. An operation left `widen_after_leaves`
+    /// times joins the widened ones and the code goes, where a compilation remains: the next
+    /// entry compiles the loop holding that operation's result as a double.
+    pub(super) fn left_at(&mut self, pc: u32) {
+        if self.widened.binary_search(&(pc as usize)).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
+        let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
+        self.leaves[at].1 += 1;
+        if self.leaves[at].1 < TIERS.loops.widen_after_leaves { return; }
+        self.leaves.swap_remove(at);
+        self.widened.push(pc as usize);
+        self.widened.sort_unstable();
+        if let Some(code) = self.code.take() { code.retire(); }
     }
 
     /// Whether the site has native code or may still compile it. A site whose compilations
@@ -104,7 +122,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     machine.host.before_native_compilation();
     let started = observe(machine, region, |observation| {
         super::super::compiled::start_osr_region(region, observation,
-            machine.heap.memory_policy(), program.as_deref()?, function, helpers)
+            machine.heap.memory_policy(), program.as_deref()?, function, helpers, &tier.widened)
     });
     machine.host.after_native_compilation();
     tier.start(started, &mut machine.heap, site);

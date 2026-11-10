@@ -4890,7 +4890,7 @@ impl Lowering<'_, '_> {
         }
         let exit = self.guard_exit(state, pc as u32);
         if let Some(arithmetic) = arithmetic
-            && arithmetic.int32_projection_is_wrapping()
+            && arithmetic.int32_projection_is_wrapping() && !self.left_here
             && instruction.result_flags() == 0
             && let Some(next) = self.unit.instructions.get(pc + 1).copied()
             && next.result_flags() == 0
@@ -4930,7 +4930,7 @@ impl Lowering<'_, '_> {
                     Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
                         .and_then(super::facts::immediate).is_some_and(|value| !super::facts::is_int32(value)),
                     _ => false,
-                });
+                }) || self.left_here;
                 // Operands proved int32 stay int32, as C keeps them: an overflow, or a product's
                 // negative zero, is a value no int32 holds and leaves, rather than every result
                 // becoming a double that the next operation converts back.

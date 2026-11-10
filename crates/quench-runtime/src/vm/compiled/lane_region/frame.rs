@@ -204,7 +204,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
-        let Edges::Branch { miss, .. } = self.edges else { unreachable!("truthiness needs a branch edge") };
+        let (Edges::Branch { miss, .. } | Edges::ValueGuarded { miss }) = self.edges else { unreachable!("truthiness needs a miss edge") };
         Some(register_truthiness(stage.builder, self.registers, self.state, register, miss))
     }
 
