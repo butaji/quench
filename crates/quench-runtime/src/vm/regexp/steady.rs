@@ -319,7 +319,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let stateful = flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
-        let start = if stateful { regexp_to_length(last_index.as_number()?) } else { 0 };
+        let start = if stateful { crate::integer_conversion::to_length(last_index.as_number()?) } else { 0 };
         let captures = result_used && exec;
         let found = regex.find_ascii(bytes, start, flags.contains(RegExpFlags::STICKY), captures)?;
         Some(self.steady_ascii_outcome(receiver, subject, input, &regex, found, (exec, stateful, slot), captures))
