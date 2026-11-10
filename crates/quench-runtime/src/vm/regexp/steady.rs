@@ -259,7 +259,8 @@ impl<H: Host> Vm<H> {
         let global = flags.contains(RegExpFlags::GLOBAL);
         let ranges = ascii_match_ranges(matcher, bytes, global)?;
         // The exec loop of a global replace starts from lastIndex 0 and leaves it 0.
-        if global && let Err(error) = self.store_regexp_last_index(p, receiver, Value::number(0.0)) {
+        let holds_zero = |vm: &mut Self| vm.regexp_last_index_value(receiver).is_some_and(|(_, held)| held.as_number() == Some(0.0));
+        if global && !holds_zero(self) && let Err(error) = self.store_regexp_last_index(p, receiver, Value::number(0.0)) {
             return Some(Err(error));
         }
         Some(self.ascii_replace_result(p, receiver, this, input, matcher, (bytes, literal), &ranges, result_used))
