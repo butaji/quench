@@ -1,19 +1,26 @@
 //! A loop site's compilations (`LoopSite::tier`): its current code, the compile under way on
-//! the code generator's thread, and the values earlier code found were no `i32`.
+//! the code generator's thread, the element views it assumes, and the values earlier code
+//! found were no `i32`.
 
 use super::*;
+use super::super::compiled::{ElementViews, LoopEntry, LoopRegion};
 
-/// A loop site's compilations: the current code, if any, the compile under way, and the
-/// values earlier code found were no `i32`, which the next compilation holds as `f64`s.
+/// A loop site's compilations: the current code, if any, the compile under way, the element
+/// views both assume (those the latest entry found), and the values earlier code found were
+/// no `i32`, which the next compilation holds as `f64`s.
 #[derive(Default)]
 pub(super) struct LoopTier {
+    views: ElementViews,
     pub(super) code: Option<Rc<crate::code_dependencies::PublishedCode<super::super::compiled::CompiledOsrRegion>>>,
     /// The compile under way, and the entries left before the next look for its code
     /// (`TIERS.lane_body.compile_poll_interval`, as a lane body's).
     pending: Option<Box<super::super::compiled::PendingOsrRegion>>,
     wait: u16,
-    pub(super) widened: std::collections::BTreeSet<super::super::compiled::Widening>,
     pub(super) compilations: u32,
+    /// Each operation the code left at, with its leaves so far; and those whose int32
+    /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
+    leaves: Vec<(u32, u16)>,
+    widened: Vec<usize>,
 }
 
 impl LoopTier {
@@ -25,6 +32,30 @@ impl LoopTier {
     /// compaction renumbers.
     pub(super) fn retire_named_shapes(&self) {
         if let Some(pending) = &self.pending { pending.retire_named_shapes(); }
+    }
+
+    /// Counts a run of the code that left at `pc`. An operation left `widen_after_leaves`
+    /// times joins the widened ones and the code goes, where a compilation remains: the next
+    /// entry compiles the loop holding that operation's result as a double.
+    pub(super) fn left_at(&mut self, pc: u32) {
+        if self.widened.binary_search(&(pc as usize)).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
+        let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
+        self.leaves[at].1 += 1;
+        if self.leaves[at].1 < TIERS.loops.widen_after_leaves { return; }
+        self.leaves.swap_remove(at);
+        self.widened.push(pc as usize);
+        self.widened.sort_unstable();
+        if let Some(code) = self.code.take() { code.retire(); }
+    }
+
+    /// Whether code over the element `views` an entry found may run: code over the other
+    /// views goes where a compilation remains, which the entry then makes over these.
+    pub(super) fn select(&mut self, views: ElementViews) -> bool {
+        if self.views == views { return true; }
+        if self.compilations >= TIERS.loops.max_compilations { return false; }
+        self.views = views;
+        if let Some(code) = self.code.take() { code.retire(); }
+        true
     }
 
     /// Whether the site has native code or may still compile it. A site whose compilations
@@ -89,10 +120,8 @@ impl LoopTier {
 /// for its code at once: a code generator without its own thread has it ready.
 pub(super) fn lane_loop_compile<H: Host>(
     cx: *mut LaneContext<H>,
-    r: Registers,
     site: &LoopSite,
     region: &super::super::compiled::LoopRegion,
-    entry: &mut super::super::compiled::LoopEntry,
     tier: &mut LoopTier,
 ) {
     tier.compilations += 1;
@@ -101,50 +130,27 @@ pub(super) fn lane_loop_compile<H: Host>(
     }
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
+    let program = machine.programs.get(machine.active_program);
+    let function = site.function();
+    let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
-    let started = observe(machine, r, region, entry, &tier.widened, |observation| {
-        super::super::compiled::start_osr_region(region, observation, &machine.execution_interrupt, machine.heap.memory_policy())
+    let started = observe(machine, region, |observation| {
+        super::super::compiled::start_osr_region(region, tier.views, observation,
+            machine.heap.memory_policy(), program.as_deref()?, function, helpers, &tier.widened)
     });
     machine.host.after_native_compilation();
     tier.start(started, &mut machine.heap, site);
 }
 
-/// Runs `compile` on what the running activation (`r`, `entry`) shows `region`'s values to be.
+/// Runs `compile` on what the running activation (`r`, `entry`) shows `region`'s values to be:
+/// the holderless own-data fields its native reads may load directly.
 fn observe<H: Host, T>(
     machine: &Vm<H>,
-    r: Registers,
     region: &super::super::compiled::LoopRegion,
-    entry: &super::super::compiled::LoopEntry,
-    widened: &std::collections::BTreeSet<super::super::compiled::Widening>,
     compile: impl FnOnce(&super::super::compiled::Observation<'_>) -> T,
 ) -> T {
-    let captures = entry.captures(region.captures.len());
-    let fields: Vec<Value> = (0..region.fields.len()).map(|index| entry.field_value(region, index)).collect();
     let native_field_loads = native_field_loads(machine, region);
-    let heap = &machine.heap;
-    // A field's array is the value its entry word holds, not yet the register's.
-    let array_value = |register| match region.arrays.iter().find(|array| array.register == register) {
-        Some(super::super::compiled::ArrayUse { field: Some(index), .. }) => entry.field_value(region, *index),
-        _ => r.get(register),
-    };
-    let int32_elements = |register| {
-        heap.record_array(array_value(register)).is_some_and(|array| {
-            array.elements().iter().take(TIERS.loops.element_sample).all(|value| value.as_int().is_some())
-        })
-    };
-    let only_int32 = |register| heap.record_array(array_value(register)).is_some_and(|array| array.elements().holds_only_int32());
-    // An inlined callee's register is no register of the running activation: it holds
-    // nothing at entry.
-    let caller_registers = region.inlining.as_ref().map_or(Register::MAX, |inlining| inlining.caller_registers);
-    compile(&super::super::compiled::Observation {
-        register: Some(&|register| if register < caller_registers { r.get(register) } else { Value::UNDEFINED }),
-        int32_elements: &int32_elements,
-        only_int32: &only_int32,
-        captures: &captures,
-        fields: &fields,
-        native_field_loads: &native_field_loads,
-        widened,
-    })
+    compile(&super::super::compiled::Observation { native_field_loads: &native_field_loads })
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.
@@ -159,4 +165,81 @@ fn native_field_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled:
             Default::default()
         })
         .collect()
+}
+
+/// The element views of `region`'s arrays on entry (`ElementViews`), each pushed to `entry`:
+/// every one a record array, each written one a dense array whose elements a store replaces
+/// in place (`Vm::try_replace_record_element`), no prototype claiming an index of it; or every
+/// one a typed array a register holds whose elements the loop may address in place
+/// (`Vm::lane_typed_array_elements`), which its code views at the loop's header. A mix, or
+/// any other value, declines the entry.
+pub(super) fn lane_loop_arrays<H: Host>(vm: &mut Vm<H>, r: Registers, region: &LoopRegion, entry: &mut LoopEntry)
+    -> Option<ElementViews> {
+    let mut views = None;
+    for array in &region.arrays {
+        let value = match array.field {
+            None => r.get(array.register),
+            Some(index) => entry.field_value(region, index),
+        };
+        let found = if vm.heap.record_array(value).is_some() {
+            push_dense_array(vm, value, array.written, entry)?;
+            ElementViews::Dense
+        } else {
+            // A typed array read through a field is no loop's hoisted view.
+            array.field.is_none().then_some(())?;
+            let (elements, length, _) = vm.lane_typed_array_elements(value, array.written)?;
+            entry.push_array(elements, length, length)?;
+            ElementViews::Typed
+        };
+        if *views.get_or_insert(found) != found { return None; }
+    }
+    Some(views.unwrap_or_default())
+}
+
+/// Pushes the record array `value`'s elements; a `written` one must be dense, its backing
+/// owned alone, and no prototype may claim an index of it: a store below the length or an
+/// append at it then defines or replaces an own data element and nothing else
+/// (`append_dense_element`, `fill_dense_hole`).
+fn push_dense_array<H: Host>(vm: &mut Vm<H>, value: Value, written: bool, entry: &mut LoopEntry) -> Option<()> {
+    if !written {
+        let elements = vm.heap.record_array(value)?.elements().as_slice();
+        return entry.push_array(elements.as_ptr().cast_mut(), elements.len(), elements.len());
+    }
+    if vm.dense_array_length(value).is_none() || !vm.prototypes_hold_no_index(value) {
+        return None;
+    }
+    // A Number store logs nothing.
+    let elements = vm.heap.record_array_store_mut_unlogged(value, Value::integer(0))?.elements_mut();
+    if elements.owner_count() != 1 {
+        return None;
+    }
+    let elements = super::super::index::mutable_array_elements(elements);
+    entry.push_array(elements.as_mut_ptr(), elements.len(), elements.capacity())
+}
+
+/// The running activation's function in `code`, the context's program: its index, body and
+/// decoded code, and the program's constants, from which a loop site's region is analyzed.
+pub(super) fn lane_loop_function<H: Host>(cx: *mut LaneContext<H>, code: &ResidualProgram)
+    -> Option<(u32, &crate::bytecode::Function, Vec<WideInstruction>, Vec<Value>)> {
+    let machine = unsafe { vm(cx) };
+    let function_index = machine
+        .lane_stack
+        .activations
+        .last()
+        .map_or(machine.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+    let function = code.function_get(function_index as usize)?;
+    let constants = machine.programs.constants(unsafe { (*cx).program }).to_vec();
+    Some((function_index, function, function.instructions().collect(), constants))
+}
+
+/// The plain region of `site`'s loop, which leaves at each method call the inliner declined
+/// (`MethodCalls::Exit`).
+#[inline(never)]
+pub(super) fn lane_method_call_region<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite) -> Option<LoopRegion> {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let (function_index, function, decoded, constants) = lane_loop_function(cx, code)?;
+    super::super::compiled::analyze_osr_region_detailed(function, &decoded, &constants, &code.field_sites,
+        code.shared_register_root_masks(function_index), site.header, site.backedge,
+        super::super::compiled::MethodCalls::Exit).ok()
 }

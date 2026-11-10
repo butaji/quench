@@ -94,6 +94,7 @@ pub(crate) enum Class {
     DefineField,
     DefinePrivateField,
     MarkPrivateName,
+    YieldStar,
     DefinePropertyRecord,
     Delete,
     InitializeTdz,
@@ -183,6 +184,7 @@ macro_rules! class_of {
     (Throw) => { Class::Throw };
     (Await) => { Class::Await };
     (Yield) => { Class::Yield };
+    (YieldStar) => { Class::YieldStar };
     (DefineArrayElement) => { Class::DefineArrayElement };
     (StoreLocalPlain) => { Class::StoreLocalPlain };
     (LoadLocalPlain) => { Class::LoadLocalPlain };
@@ -439,6 +441,19 @@ op_predicates! {
     is_load_this => LoadThis,
     is_nop => Nop,
     is_call => Call,
+    is_call_array => CallArray,
+    is_load_name_call => LoadNameCall,
+    is_make_object => MakeObject,
+    is_store_capture => StoreCapture,
+    is_wasm_jump_i32_non_zero => WasmJumpI32NonZero,
+    is_wasm_memory_copy => WasmMemoryCopy,
+    is_wasm_memory_fill => WasmMemoryFill,
+    is_wasm_memory_size => WasmMemorySize,
+    is_wasm_simd => WasmSimd,
+    is_yield_star => YieldStar,
+    is_call_known => CallKnown,
+    is_throw => Throw,
+    is_wasm_ref_cast => WasmRefCast,
     is_set_field => SetField,
     is_set_this_field => SetThisField,
     is_require_object_coercible => RequireObjectCoercible,
@@ -458,25 +473,12 @@ op_predicates! {
     is_wasm_f64_load => WasmF64Load,
     is_wasm_f64_store => WasmF64Store,
     is_wasm_f64_binary => WasmF64Binary,
-    is_throw => Throw,
-    is_wasm_simd => WasmSimd,
     is_wasm_simd_shuffle => WasmSimdShuffle,
     is_wasm_f64_unary => WasmF64Unary,
     is_wasm_fill_registers => WasmFillRegisters,
     is_store_env_local => StoreEnvLocal,
     is_wasm_i32_add => WasmI32Add,
     is_wasm_i32_subtract_immediate => WasmI32SubtractImmediate,
-    is_wasm_jump_i32_non_zero => WasmJumpI32NonZero,
-    is_wasm_memory_size => WasmMemorySize,
-    is_wasm_memory_copy => WasmMemoryCopy,
-    is_wasm_memory_fill => WasmMemoryFill,
-    is_call_array => CallArray,
-    is_call_known => CallKnown,
-    is_load_name_call => LoadNameCall,
-    is_make_object => MakeObject,
-    is_store_capture => StoreCapture,
-    is_wasm_ref_cast => WasmRefCast,
-    is_yield_star => YieldStar,
 }
 
 #[cfg(test)]

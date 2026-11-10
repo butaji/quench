@@ -1171,11 +1171,19 @@ impl<H: Host> Vm<H> {
                 };
                 let awaited_result = self.read(f, state_register);
                 let asynchronous = p.function(self.frames[f].function as usize).is_async;
-                let result = if asynchronous && !awaited_result.is_undefined() {
+                // An awaited step's result, or a synchronous step made in place
+                // (`Vm::yield_star_in_place`), waits in the state register.
+                let result = if !awaited_result.is_undefined() {
                     self.write(f, state_register, Value::UNDEFINED);
                     awaited_result
                 } else {
                     let input = self.read(f, i.result_register());
+                    if !asynchronous
+                        && self.steps_as_generator(iterator, next_method)
+                        && let Some(pushed) = self.yield_star_in_place(f, *pc - 1, next_method, iterator, input, state_register)
+                    {
+                        return pushed;
+                    }
                     let result =
                         self.iterator_next_with_cached_method(p, iterator, next_method, &[input])?;
                     if asynchronous {

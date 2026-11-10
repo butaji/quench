@@ -3476,7 +3476,7 @@ impl Drop for ProgramStore {
                     let name = match failure.reason {
                         super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
                         super::compiled::RegionRejection::UnsupportedInstruction(op) => {
-                            crate::bytecode::opcode_name(usize::from(op))
+                            crate::bytecode::opcode_name(op as usize)
                         }
                         super::compiled::RegionRejection::RegisterLimit => "register-limit",
                         super::compiled::RegionRejection::CaptureLimit => "capture-limit",
@@ -3592,7 +3592,7 @@ impl Drop for ProgramStore {
                 let name = match reason {
                     super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
                     super::compiled::RegionRejection::UnsupportedInstruction(op) => {
-                        crate::bytecode::opcode_name(usize::from(*op))
+                        crate::bytecode::opcode_name(*op as usize)
                     }
                     super::compiled::RegionRejection::RegisterLimit => "register-limit",
                     super::compiled::RegionRejection::CaptureLimit => "capture-limit",

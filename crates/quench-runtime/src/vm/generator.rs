@@ -3,6 +3,7 @@ use super::activation::{
 };
 use super::promise::{PromiseReaction, PromiseState};
 use super::*;
+mod in_place_steps;
 
 /// How a generator's resumption stopped (`Vm::resume_generator_step`).
 pub(super) enum GeneratorStep {
@@ -44,32 +45,6 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// `next()` of `generator`, a suspended synchronous generator of this realm and program
-    /// that `method` (`steps_as_generator`) steps, called with no arguments from frame `f`'s
-    /// call record that resumes at `pc`: its frame pushed in place (`resume_generator_in_place`),
-    /// the pending call completing with the step's result (`finish_in_loop_generator_step`).
-    /// `None` leaves any other step, and a call returning its result from the frame (the A
-    /// field `destination` says so), to the native call.
-    pub(super) fn try_in_loop_generator_step(
-        &mut self,
-        f: usize,
-        pc: usize,
-        method: Value,
-        generator: Value,
-        destination: crate::bytecode::Register,
-        reuses_result: bool,
-    ) -> Option<Result<StepResult, JsError>> {
-        if destination & crate::bytecode::RETURN_REGISTER != 0 || !self.generator_resumes_in_place(generator) {
-            return None;
-        }
-        let resumed = self.resume_generator_in_place(f, pc, method, generator, reuses_result)?;
-        Some(resumed.map(|(call_guard, resume)| StepResult::PushFrame {
-            destination: destination & crate::bytecode::REGISTER_MASK,
-            call_guard,
-            completion: CallCompletion::Generator(resume),
-        }))
-    }
-
     /// The in-place step of `generator`, which `generator_resumes_in_place` admits: frame
     /// `f` resumes at `pc` after it, and the generator's frame is pushed under the native
     /// activation `generator_iteration_step` runs it in, so the body sees the same activation
@@ -81,6 +56,7 @@ impl<H: Host> Vm<H> {
         pc: usize,
         method: Value,
         generator: Value,
+        sent: Value,
         reuses_result: bool,
     ) -> Option<Result<(crate::stack::GuestCallGuard, GeneratorResume), JsError>> {
         let call_guard = crate::stack::GuestCallGuard::enter().ok()?;
@@ -93,7 +69,7 @@ impl<H: Host> Vm<H> {
         let resume_register = continuation.resume_register;
         let mut frame = continuation.resume(self.with_stack.len());
         if let Some(register) = resume_register {
-            *frame.registers.get_mut(usize::from(register))? = Value::UNDEFINED;
+            *frame.registers.get_mut(usize::from(register))? = sent;
         }
         self.frames[f].pc = pc;
         self.frames[f].pc_is_resume = true;
