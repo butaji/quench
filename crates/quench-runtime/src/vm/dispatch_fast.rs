@@ -15322,10 +15322,14 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     }
     // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
     let Some(target) = vm.script_call_entry(callee).map(|entry| unsafe { *entry }) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
-    if !target.constructs || target.forwards() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructorOrForwards); }
-    if !target.entry.activates() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructEntryNotActivation); }
-    if argc > target.params || argc > FIXED_ARGUMENT_COPIES { return lane_body_stats::miss(lane_body_stats::Miss::ConstructTooManyArgs); }
-    if !lane_activation_room(vm, &target) { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoActivationRoom); }
+    if !target.constructs { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructor); }
+    // The activation of the lane's own construction (`lane_script_construct`): a target that
+    // keeps or gathers values, or is passed more than it has parameters, by the keeping form.
+    let how = match lane_call_activation(&target, argc, i.c) {
+        Some(LaneActivation::Environment) | None => return lane_body_stats::miss(lane_body_stats::Miss::ConstructEntryNotActivation),
+        Some(how) => how,
+    };
+    if matches!(how, LaneActivation::Plain) && !lane_activation_room(vm, &target) { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoActivationRoom); }
     let built = if target.initializes {
         // SAFETY: the context's program outlives the lane run.
         lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, lane_construct_argument(r, i))
@@ -15341,7 +15345,7 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     }
     // SAFETY: a construction passes its arguments from register `c` on.
     let passed = unsafe { r.0.add(usize::from(i.c)).cast_const() };
-    lane_body_activate(cx, r, ip, &target, passed, argc, this, true, LaneActivation::Plain)
+    lane_body_activate(cx, r, ip, &target, passed, argc, this, true, how)
 }
 
 /// The target a lane body's call of `callee` activates: the site's linked entry, else the one
