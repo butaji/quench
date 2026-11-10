@@ -257,7 +257,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let global = flags.contains(RegExpFlags::GLOBAL);
-        let ranges = ascii_match_ranges(matcher, bytes, global)?;
+        let mut ranges = smallvec::SmallVec::new();
+        ascii_match_ranges(matcher, bytes, global, &mut ranges)?;
         // The exec loop of a global replace starts from lastIndex 0 and leaves it 0.
         let holds_zero = |vm: &mut Self| vm.regexp_last_index_value(receiver).is_some_and(|(_, held)| held.as_number() == Some(0.0));
         if global && !holds_zero(self) && let Err(error) = self.store_regexp_last_index(p, receiver, Value::number(0.0)) {
