@@ -30,6 +30,11 @@ pub(crate) fn typeof_test_operator(name: &str, negated: bool) -> Option<u32> {
 /// case's index (`FunctionCompiler::switch_statement`), as `typeof x === "name"` would
 /// compare the two strings, and like that comparison it needs neither string.
 pub(crate) const UNARY_TYPEOF_INDEX: u32 = UNARY_TYPEOF_IS + UNARY_TYPEOF_TESTS;
+/// The `Unary` operator an operand of a `"text" + a + b` chain compiles to
+/// (`FunctionCompiler::string_chain`): the operand itself where its conversion runs no guest
+/// code and raises nothing, else ToString of its ToPrimitive with the default hint, which
+/// is what the chain's `+` of that operand does, in the order the `+`s run.
+pub(crate) const UNARY_ADD_OPERAND_STRING: u32 = UNARY_TYPEOF_INDEX + 1;
 
 /// The index in `TYPEOF_NAMES` of `name`, if some value's `typeof` is `name`.
 pub(crate) fn typeof_name_index(name: &str) -> Option<usize> {
