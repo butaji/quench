@@ -12,7 +12,8 @@ mod lane_publication;
 mod snapshot;
 mod wasm_tier;
 pub(super) use js_tier::JsTier;
-pub(super) use wasm_tier::WasmTierState;
+pub(super) use wasm_tier::WasmTier;
+use wasm_tier::WasmModule;
 use super::tier_state::{Event, Refusal};
 
 #[derive(Default)]
@@ -195,12 +196,12 @@ const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
 // helpers; the function-count cap still bounds artifact proliferation.
 const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
 const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
-/// When a Wasm module running under `--jit` compiles whole (`WasmModuleTier`). It starts in
+/// When a Wasm module running under `--jit` compiles whole (`WasmModule`). It starts in
 /// the interpreter with its hot roots promoted, so a module used briefly pays only for them;
 /// one that runs long gets the code eager compilation would have made at its first entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct WasmModuleCompile {
-    /// The work (`WasmModuleTier::Selective`) at which the module compiles.
+    /// The work (`WasmModule::note_work`) at which the module compiles.
     work: u32,
     /// The time since the module's first work after which its next entry compiles it, for a
     /// module whose work the counts undersell.
@@ -384,11 +385,11 @@ enum JitTierManager {
 /// module-wide lifecycle that ends selective tiering.
 #[derive(Default)]
 struct WasmTiers {
-    functions: FxHashMap<u32, WasmTierState>,
+    functions: FxHashMap<u32, WasmTier>,
     /// The root whose selective artifact holds each function one holds: a function's own,
     /// else the first installed. A call finds its code without visiting every artifact.
     holders: FxHashMap<u32, u32>,
-    module: WasmModuleTier,
+    module: WasmModule,
 }
 
 impl WasmTiers {
@@ -396,30 +397,9 @@ impl WasmTiers {
     fn install(&mut self, root: u32, compiled: Rc<super::compiled::CompiledProgram>) {
         for function in compiled.held_functions() { self.holders.entry(function as u32).or_insert(root); }
         self.holders.insert(root, root);
-        *self.functions.entry(root).or_default() = WasmTierState::Compiled(compiled);
+        self.functions.entry(root).or_default().install(compiled);
     }
 }
-
-/// A Wasm module's lifecycle under `--jit`. It starts with no eager artifact, so a short use
-/// pays for the few functions it runs hot; once `WasmModuleCompile` says it runs long, the
-/// whole module compiles at once, as eager tiering would have from the start.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WasmModuleTier {
-    /// The work observed so far: entries from the VM (interpreted calls, and host calls into
-    /// the module), and interpreted loop work as entries (`TIERS.wasm.backedges_per_entry`);
-    /// and when the first came.
-    Selective { work: u32, first: Option<std::time::Instant> },
-    /// The whole-module compile was claimed, eagerly or by escalation; its result is the
-    /// program's `compiled`.
-    Whole,
-}
-
-impl Default for WasmModuleTier {
-    fn default() -> Self {
-        Self::Selective { work: 0, first: None }
-    }
-}
-
 
 impl JitTierManager {
     /// Apply JavaScript's bounded statistical promotion transition to the
@@ -459,34 +439,16 @@ impl JitTierManager {
 
     /// Advance the Wasm call-hotness state. Both the lane handoff and the
     /// ordinary dispatcher call this transition owner, so the threshold and
-    /// one-shot attempt bit have one implementation.
+    /// one-shot claim have one implementation.
     fn note_wasm_entry(&mut self, function: u32, lane_handoff: bool) -> bool {
-        let Some(state) = self.wasm_mut_or_default(function) else {
-            return false;
-        };
-        let WasmTierState::Counting(count) = *state else {
-            return false;
-        };
-        let count = count.saturating_add(1);
-        if lane_handoff && count >= TIERS.wasm.promotion_entries {
-            return true;
-        }
-        if count < TIERS.wasm.promotion_entries {
-            *state = WasmTierState::Counting(count);
-            return false;
-        }
-        *state = WasmTierState::Attempted;
-        true
+        self.wasm_mut_or_default(function).is_some_and(|tier| tier.note_entry(lane_handoff))
     }
 
     /// `note_wasm_tier_backedges`'s transition: one more observation, held below the
     /// threshold.
     fn note_wasm_backedges(&mut self, function: u32) {
-        let Some(state) = self.wasm_mut_or_default(function) else {
-            return;
-        };
-        if let WasmTierState::Counting(count) = state {
-            *count = count.saturating_add(1).min(TIERS.wasm.promotion_entries - 1);
+        if let Some(tier) = self.wasm_mut_or_default(function) {
+            tier.note_backedges();
         }
     }
 
@@ -529,14 +491,14 @@ impl JitTierManager {
         functions.into_iter().flat_map(|functions| functions.values())
     }
 
-    fn wasm(&self, function: u32) -> Option<&WasmTierState> {
+    fn wasm(&self, function: u32) -> Option<&WasmTier> {
         match self {
             Self::Wasm(tiers) => tiers.functions.get(&function),
             Self::Empty | Self::JavaScript(_) => None,
         }
     }
 
-    fn wasm_mut_or_default(&mut self, function: u32) -> Option<&mut WasmTierState> {
+    fn wasm_mut_or_default(&mut self, function: u32) -> Option<&mut WasmTier> {
         if matches!(self, Self::Empty) {
             *self = Self::Wasm(WasmTiers::default());
         }
@@ -552,7 +514,7 @@ impl JitTierManager {
         tiers.functions.get(tiers.holders.get(&function)?)?.compiled()
     }
 
-    fn wasm_values(&self) -> impl Iterator<Item = &WasmTierState> {
+    fn wasm_values(&self) -> impl Iterator<Item = &WasmTier> {
         let functions = match self {
             Self::Wasm(tiers) => Some(&tiers.functions),
             Self::Empty | Self::JavaScript(_) => None,
@@ -570,28 +532,13 @@ impl JitTierManager {
         }
     }
 
-    /// Count `work` more entries of a selective module; whether `policy` says its
-    /// whole-module compile is due (claimed by `claim_wasm_module_escalation`).
-    fn note_wasm_module_work(&mut self, work: u32, policy: WasmModuleCompile) -> bool {
-        match self.wasm_tiers_mut().map(|tiers| &mut tiers.module) {
-            Some(WasmModuleTier::Selective { work: observed, first }) => {
-                let first = *first.get_or_insert_with(std::time::Instant::now);
-                let before = *observed;
-                *observed = observed.saturating_add(work);
-                // A passed time bound counts as the work bound from then on, so every later
-                // entry, whichever path observes it, finds the compile due.
-                if *observed / WASM_JIT_MODULE_CLOCK_INTERVAL != before / WASM_JIT_MODULE_CLOCK_INTERVAL
-                    && policy.due(0, first.elapsed())
-                {
-                    *observed = (*observed).max(policy.work);
-                }
-                policy.due(*observed, std::time::Duration::ZERO)
-            }
-            Some(WasmModuleTier::Whole) | None => false,
-        }
+    /// Count one more entry of a selective module; whether `policy` says its whole-module
+    /// compile is due (claimed by `claim_wasm_module_escalation`).
+    fn note_wasm_module_work(&mut self, policy: WasmModuleCompile) -> bool {
+        self.wasm_tiers_mut().is_some_and(|tiers| tiers.module.note_work(policy))
     }
 
-    /// Whether the module's hot functions compile one by one (`WasmTierState`): under the
+    /// Whether the module's hot functions compile one by one (`WasmTier`): under the
     /// selective A/B arm, which never compiles a module whole, or once a module's whole
     /// compile was claimed without an artifact (it failed, or the budget refused it). A module
     /// still waiting to compile whole runs interpreted until then: a short use (an npm
@@ -603,7 +550,7 @@ impl JitTierManager {
 
     fn wasm_module_selective(&self) -> bool {
         match self {
-            Self::Wasm(tiers) => matches!(tiers.module, WasmModuleTier::Selective { .. }),
+            Self::Wasm(tiers) => tiers.module.is_selective(),
             Self::Empty => true,
             Self::JavaScript(_) => false,
         }
@@ -618,15 +565,14 @@ impl JitTierManager {
             Self::Wasm(tiers) => tiers,
             Self::Empty | Self::JavaScript(_) => return None,
         };
-        if tiers.module == WasmModuleTier::Whole {
+        if !tiers.module.claim() {
             return None;
         }
-        tiers.module = WasmModuleTier::Whole;
         tiers.holders.clear();
         let retired = tiers
             .functions
             .values_mut()
-            .filter_map(WasmTierState::take_compiled)
+            .filter_map(WasmTier::take_compiled)
             .fold((0, 0), |(count, bytes), compiled| (count + 1, bytes + compiled.mapped_bytes()));
         Some(retired)
     }
@@ -841,7 +787,7 @@ pub(crate) struct ProgramStore {
     /// the compile (`general_promotion_due`); tests of the baseline's semantics compile it
     /// once hot.
     general_baseline_priced: bool,
-    /// When a selective Wasm module compiles whole (`WasmModuleTier`).
+    /// When a selective Wasm module compiles whole (`WasmModule`).
     wasm_module_compile: WasmModuleCompile,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
@@ -1069,7 +1015,7 @@ impl ProgramStore {
             reclaimed_wasm_tiers.1 += entry
                 .jit_tiers
                 .wasm_values()
-                .filter_map(WasmTierState::compiled)
+                .filter_map(WasmTier::compiled)
                 .map(|compiled| compiled.mapped_bytes())
                 .sum::<usize>();
             reclaimed_wasm_tiers.0 += entry
@@ -1739,7 +1685,7 @@ impl ProgramStore {
     pub(super) fn note_wasm_tier_backedges(&mut self, id: ProgramId, function: u32) {
         let policy = self.wasm_module_compile;
         if let Some(entry) = self.entry_mut(id) {
-            entry.jit_tiers.note_wasm_module_work(1, policy);
+            entry.jit_tiers.note_wasm_module_work(policy);
             if entry.jit_tiers.wasm_promotes_roots(policy) {
                 entry.jit_tiers.note_wasm_backedges(function);
             }
@@ -1747,10 +1693,10 @@ impl ProgramStore {
     }
 
     /// Count an entry into a selective Wasm module from the VM; whether its whole-module
-    /// compile is due (`WasmModuleTier`).
+    /// compile is due (`WasmModule`).
     pub(super) fn note_wasm_module_entry(&mut self, id: ProgramId) -> bool {
         let policy = self.wasm_module_compile;
-        self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.note_wasm_module_work(1, policy))
+        self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.note_wasm_module_work(policy))
     }
 
     /// Whether Wasm module `id` starts in the interpreter at its first entry: always under the
@@ -1769,7 +1715,7 @@ impl ProgramStore {
     }
 
     /// Whether Wasm module `id` still runs selectively: its whole-module compile not yet
-    /// claimed (`WasmModuleTier`).
+    /// claimed (`WasmModule`).
     pub(super) fn wasm_module_selective(&self, id: ProgramId) -> bool {
         self.entry(id).is_some_and(|entry| entry.jit_tiers.wasm_module_selective())
     }
@@ -1795,15 +1741,16 @@ impl ProgramStore {
         self.wasm_module_compile = WasmModuleCompile { work, after: std::time::Duration::MAX };
     }
 
-    /// Record that the program's whole-module compile was claimed at its first call (eager
-    /// tiering, or a diagnostic root mode), so selective escalation never repeats it.
-    pub(super) fn settle_wasm_module_tier(&mut self, id: ProgramId) {
+    /// Record how the program's whole-module compile came out, claimed at its first call (eager
+    /// tiering, or a diagnostic root mode) or by escalation, so selective escalation never
+    /// repeats it.
+    pub(super) fn settle_wasm_module_tier(&mut self, id: ProgramId, compiled: bool) {
         if let Some(tiers) = self.entry_mut(id).and_then(|entry| entry.jit_tiers.wasm_tiers_mut()) {
-            tiers.module = WasmModuleTier::Whole;
+            tiers.module.finish(compiled);
         }
     }
 
-    /// Claim a due whole-module compile (`WasmModuleTier::Whole`), releasing the
+    /// Claim a due whole-module compile (`WasmModule::claim`), releasing the
     /// selective artifacts it supersedes from the tier budget. Active native calls keep
     /// their own `Rc` through return, and an artifact's caches reach others only weakly.
     pub(super) fn claim_wasm_module_escalation(&mut self, id: ProgramId) -> bool {
@@ -1828,7 +1775,7 @@ impl ProgramStore {
             return false;
         };
         // A due whole-module compile hands the call to the general dispatcher, which claims it.
-        if entry.jit_tiers.note_wasm_module_work(1, policy) {
+        if entry.jit_tiers.note_wasm_module_work(policy) {
             return true;
         }
         if !entry.jit_tiers.wasm_promotes_roots(policy) {
@@ -1880,7 +1827,7 @@ impl ProgramStore {
         self.entry(id)?
             .jit_tiers
             .wasm_values()
-            .filter_map(WasmTierState::compiled)
+            .filter_map(WasmTier::compiled)
             .find(|compiled| {
                 std::ptr::eq(Rc::as_ptr(compiled), artifact) && compiled.has_function(function)
             })
@@ -1892,6 +1839,14 @@ impl ProgramStore {
     /// tier budget filled, 15 s of its first iteration).
     pub(super) fn wasm_tier_has_room(&self) -> bool {
         self.jit_code_cache.can_retain(JitArtifactKind::WasmTierRoot, JIT_MIN_ARTIFACT_BYTES)
+    }
+
+    /// Records that the compile claimed for root `function` left no body in its tier: the code
+    /// generator failed it (`built` false), or its artifact was refused (`built`).
+    pub(super) fn note_wasm_tier_unbuilt(&mut self, id: ProgramId, function: u32, built: bool) {
+        if let Some(tiers) = self.entry_mut(id).and_then(|entry| entry.jit_tiers.wasm_tiers_mut()) {
+            tiers.functions.entry(function).or_default().not_installed(built);
+        }
     }
 
     /// Retain one compiled root closure if the VM-wide tier budget permits
@@ -1940,8 +1895,8 @@ impl ProgramStore {
     }
 
     #[cfg(test)]
-    pub(super) fn wasm_tier_state(&self, id: ProgramId, function: u32) -> Option<WasmTierState> {
-        self.entry(id).and_then(|entry| entry.jit_tiers.wasm(function)).cloned()
+    pub(super) fn wasm_tier_state(&self, id: ProgramId, function: u32) -> Option<&WasmTier> {
+        self.entry(id).and_then(|entry| entry.jit_tiers.wasm(function))
     }
 
     pub(super) fn js_tier(&self, id: ProgramId, function: u32) -> Option<&JsTier> {
@@ -3853,7 +3808,7 @@ mod jit_code_cache_tests {
         assert!(!wasm_tiers.note_wasm_entry(2, false));
         assert!(matches!(
             wasm_tiers.wasm(2),
-            Some(super::WasmTierState::Attempted)
+            Some(tier) if tier.is_claimed()
         ));
     }
 }

@@ -98,7 +98,10 @@ fn counting_is_the_warming_fast_path_and_leaves_the_boundary_to_the_transition()
     assert!(tier.count(true, &TIERS));
     assert!(!tier.count(true, &TIERS), "the entry that ends the warm-up is the transition's");
     assert!(matches!(tier, Tier::Warming { entries: 2, favourable: 2, .. }), "and is not counted twice");
-    assert!(!T::Cold.count(true, &TIERS));
+    let mut cold = T::Cold;
+    assert!(cold.count(true, &TIERS), "the first entry starts the warm-up");
+    assert!(matches!(cold, Tier::Warming { entries: 1, favourable: 1, .. }));
+    assert!(!T::Queued { past: Past::default() }.count(true, &TIERS));
 }
 
 /// A look at `build` where the code generator's answer is `answer`.

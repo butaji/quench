@@ -13815,8 +13815,9 @@ impl<H: Host> Vm<H> {
                                 .as_nanos(),
                         );
                     }
+                    let built = compiled.is_some();
                     self.programs.set_compiled(program, compiled);
-                    self.programs.settle_wasm_module_tier(program);
+                    self.programs.settle_wasm_module_tier(program, built);
                     self.programs.compiled(program).flatten()
                 } else if self
                     .programs
@@ -13851,8 +13852,9 @@ impl<H: Host> Vm<H> {
                                 .as_nanos(),
                         );
                     }
+                    let built = compiled.is_some();
                     self.programs.set_compiled(program, compiled);
-                    self.programs.settle_wasm_module_tier(program);
+                    self.programs.settle_wasm_module_tier(program, built);
                     self.programs.compiled(program).flatten()
                 }
             }
@@ -13890,7 +13892,9 @@ impl<H: Host> Vm<H> {
                     started.elapsed().as_nanos(),
                 );
             }
+            let built = compiled.is_some();
             self.programs.set_compiled(program, compiled);
+            self.programs.settle_wasm_module_tier(program, built);
             baseline = self.programs.compiled(program).flatten();
         }
         // Root-first mode earns further tiering only after its selected root
@@ -13920,10 +13924,11 @@ impl<H: Host> Vm<H> {
                     Some(id as usize),
                 )
                 .map(Rc::new);
-            if let Some(tier) = tier
-                && self.programs.install_wasm_tier(program, id, tier)
-            {
+            let built = tier.is_some();
+            if tier.is_some_and(|tier| self.programs.install_wasm_tier(program, id, tier)) {
                 compiled = self.programs.wasm_tier(program, id);
+            } else {
+                self.programs.note_wasm_tier_unbuilt(program, id, built);
             }
         }
         let Some(compiled) = compiled else {

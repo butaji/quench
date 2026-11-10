@@ -264,6 +264,12 @@ impl<C: Controller> Event<C> {
     pub(super) const REFUSED: Self = Self::Note(Note::Refused);
 }
 
+impl<C: Controller> Default for Tier<C> {
+    fn default() -> Self {
+        Self::Cold
+    }
+}
+
 impl<C: Controller> Tier<C> {
     /// The published code, speculative or generic.
     pub(super) fn artifact(&self) -> Option<&C::Artifact> {
@@ -282,12 +288,23 @@ impl<C: Controller> Tier<C> {
     /// entry, a discriminant and an increment. `false` where the entry is the transition's.
     #[inline(always)]
     pub(super) fn count(&mut self, favourable: bool, policy: &Tiers) -> bool {
-        let Self::Warming { entries, favourable: kind, past } = self else { return false };
+        let Self::Warming { entries, favourable: kind, past } = self else { return self.count_first(favourable, policy) };
         if C::ready(policy, *entries + 1, *kind + u32::from(favourable), past) {
             return false;
         }
         *entries += 1;
         *kind += u32::from(favourable);
+        true
+    }
+
+    /// `count` of a cold tier: the first entry starts its warm-up unless it ends it.
+    #[cold]
+    fn count_first(&mut self, favourable: bool, policy: &Tiers) -> bool {
+        let past = Past::default();
+        if !matches!(self, Self::Cold) || C::ready(policy, 1, u32::from(favourable), &past) {
+            return false;
+        }
+        *self = Self::Warming { entries: 1, favourable: u32::from(favourable), past };
         true
     }
 
@@ -297,7 +314,7 @@ impl<C: Controller> Tier<C> {
             Event::Entry { favourable } => self.entered(favourable, policy),
             Event::GuardLeft { at } => self.left(at, policy),
             Event::Started(build) => self.started(build),
-            Event::Compiled(artifact) => self.compiled(artifact),
+            Event::Compiled(artifact) => self.published(artifact),
             Event::Failed(refusal) => self.refused_by_host(refusal),
             Event::Note(note) => self.noted(note),
         }
@@ -415,7 +432,7 @@ impl<C: Controller> Tier<C> {
         }
     }
 
-    fn compiled(self, artifact: C::Artifact) -> (Self, Why) {
+    fn published(self, artifact: C::Artifact) -> (Self, Why) {
         let past = self.into_past();
         if past.is_spent() {
             return (Self::Generic { artifact }, Why::Published);

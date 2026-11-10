@@ -19190,7 +19190,7 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
     assert!(programs.note_js_function_entry(id, 1, true, false, true));
     assert!(matches!(
         programs.js_tier(id, 1),
-        Some(super::program_store::JsTier::Warming { entries: 32, favourable: 31, .. })
+        Some(super::program_store::JsTier::Queued { past }) if !past.is_spent()
     ));
 }
 
