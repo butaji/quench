@@ -2820,7 +2820,7 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         let stream = context.get_property_rooted(process, key)?;
         context.set_prototype_rooted(stream, prototype)?;
     }
-    context.set_prototype_rooted(process, prototype)?;
+    crate::modules::process_prototype::inherit_emitter(context, process, prototype)?;
     context.call_rooted(emitter, process, &[])?;
     let key = context.string_rooted("on");
     let on = context.get_property_rooted(process, key)?;
