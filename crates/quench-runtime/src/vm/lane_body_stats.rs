@@ -132,7 +132,7 @@ miss_reasons! {
     ConstructCollectionDue => "construct:collection-due",
     ConstructReturning => "construct:returning",
     ConstructNoTarget => "construct:no-target",
-    ConstructNotConstructorOrForwards => "construct:not-constructor-or-forwards",
+    ConstructNotConstructor => "construct:not-constructor",
     ConstructEntryNotActivation => "construct:entry-not-activation",
     ConstructNoActivationRoom => "construct:no-activation-room",
     ConstructNoReceiver => "construct:no-receiver",

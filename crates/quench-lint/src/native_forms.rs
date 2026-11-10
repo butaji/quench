@@ -43,7 +43,7 @@ pub fn scan(files: &[PathBuf], measures: &mut Measures) {
         if file.ends_with(REFUSALS) {
             measures.insert("native_refusals".to_string(), refusals(&source));
         } else if let Ok(syntax) = syn::parse_file(&source) {
-            if file.ends_with(CATALOG) { families.extend(class_variants(&syntax)); } else { ClassNames(&mut named).visit_file(&syntax); }
+            if file.ends_with(CATALOG) { families.extend(class_variants(&syntax)); named.extend(generic_steps(&source)); } else { ClassNames(&mut named).visit_file(&syntax); }
         }
     }
     families.iter()
@@ -63,6 +63,13 @@ fn hand_built(file: &str, path: &PathBuf, measures: &mut Measures) {
 fn refusals(source: &str) -> usize {
     source.split("miss_reasons! {").nth(1).and_then(|rest| rest.split("\n}").next())
         .map_or(0, |body| body.lines().filter(|line| line.contains("=>")).count())
+}
+
+/// The families the catalog gives the generic native form of a value step (`LANE_RESULT_STEP`,
+/// `Vm::value_step`), each lowered by one helper of the interpreter's definition.
+fn generic_steps(catalog: &str) -> Vec<String> {
+    catalog.lines().filter(|line| line.contains("LANE_RESULT_STEP") && line.contains("=>"))
+        .filter_map(|line| Some(line.split_once('(')?.1.split_once(')')?.0.trim().to_string())).collect()
 }
 
 /// The families of the catalog's `Class`.
