@@ -2637,6 +2637,9 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
+        if let Some(found) = Self::regexp_search_ascii(regex, input, start, sticky, steady) {
+            return found;
+        }
         let subject = self.regexp_subject(input, regex);
         if steady.is_some_and(|steady| !steady.captures) {
             return regex.find_range_in_subject(&subject, start, sticky).map(quench_regexp::Match::native);
