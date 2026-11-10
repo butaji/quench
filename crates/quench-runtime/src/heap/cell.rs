@@ -2465,10 +2465,10 @@ impl Object {
     }
 
     /// Visit internal primitive data, private-name homes and captured stack roots.
-    pub(crate) fn visit_extras_roots(&self, mut visit: impl FnMut(Value)) {
-        let Some(extras) = self.extras() else {
-            return;
-        };
+    #[inline(always)] pub(crate) fn visit_extras_roots(&self, visit: impl FnMut(Value)) { if self.extras_pointer().is_some() { self.visit_extras_values(visit) } }
+
+    #[inline(never)] fn visit_extras_values(&self, mut visit: impl FnMut(Value)) {
+        let Some(extras) = self.extras() else { return };
         if let Some(value) = extras.boxed_primitive {
             visit(value);
         }

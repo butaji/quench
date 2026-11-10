@@ -124,6 +124,8 @@ mod host_stack_tests;
 mod test_host;
 #[cfg(test)]
 mod subset_tests;
+#[cfg(test)]
+mod string_parts_tests;
 
 pub mod owned_clone;
 

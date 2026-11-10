@@ -3,6 +3,11 @@ use super::*;
 /// The parts a `StringConcat` converts without a heap list: a template of up to four
 /// substitutions and their text.
 const STRING_CONCAT_INLINE_PARTS: usize = 9;
+/// The most parts `string_of_parts` reads before it knows the window is too long for it.
+/// The most text a string of parts may hold in its known parts: past it the copy a flat
+/// concatenation makes costs more than its record saves, and a string read soon is copied twice.
+const PARTS_KNOWN_LIMIT: usize = 256;
+const PARTS_PROBED: usize = super::wtf16::MAX_PARTS + 1;
 
 impl<H: Host> Vm<H> {
     /// `left + right` of strings and Numbers whose text is ASCII and short enough to sit
@@ -77,14 +82,48 @@ impl<H: Host> Vm<H> {
         immediate || value.as_number().is_some() || self.heap.is_string(value)
     }
 
-    /// `UNARY_TO_STRING_PRIMITIVE` of `value`: itself where ToString of it runs no guest code
-    /// and raises nothing, else that ToString, made now.
-    pub(super) fn string_primitive(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
+    /// `UNARY_TO_STRING_PRIMITIVE` (or, for a `+` chain's operand, `UNARY_ADD_OPERAND_STRING`:
+    /// the same, the object's ToPrimitive taken with the default hint) of `value`: itself
+    /// where ToString of it runs no guest code and raises nothing, else that ToString, made now.
+    pub(super) fn string_primitive(&mut self, p: &ResidualProgram, operator: u32, value: Value) -> Result<Value, JsError> {
         if self.converts_to_string_purely(value) {
             return Ok(value);
         }
+        let value = if operator == crate::bytecode::UNARY_ADD_OPERAND_STRING { self.to_primitive(p, value, "default")? } else { value };
         let text = self.coerce_js_string(p, value)?;
         Ok(self.heap.alloc_string(text))
+    }
+
+    /// `StringConcat` of two or three parts, at most one a Number and the rest flat ASCII
+    /// strings, whose text will not fit inline: a string of parts, which writes its text out
+    /// when it is first read (`Heap::written_out_string`) and costs a record until then. `None`
+    /// for any other parts.
+    #[inline(always)]
+    pub(super) fn string_of_parts(&mut self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<Value> {
+        let mut parts = smallvec::SmallVec::<[super::wtf16::Part; super::wtf16::MAX_PARTS]>::new();
+        let (mut known, mut numbers) = (0, 0);
+        for index in 0..count.min(PARTS_PROBED) {
+            let value = part(self, index);
+            match value.direct_string_index() {
+                Some(record_id) => {
+                    let text = self.heap.string(value)?;
+                    if !text.existing_flat()?.is_ascii() {
+                        return None;
+                    }
+                    known += text.len();
+                    parts.push(super::wtf16::Part::Text(record_id));
+                }
+                None => {
+                    numbers += 1;
+                    parts.push(super::wtf16::Part::Number(value.as_number()?));
+                }
+            }
+        }
+        if known + numbers <= wtf16::SHORT_ASCII_CAPACITY || known >= PARTS_KNOWN_LIMIT {
+            return None;
+        }
+        let parts = super::wtf16::Parts::new(&parts)?;
+        Some(self.heap.alloc_string(JsString::from_parts(parts)))
     }
 
     /// `StringConcat` of `count` parts that `part` reads by position, each read when it is
@@ -96,6 +135,9 @@ impl<H: Host> Vm<H> {
         count: usize,
         part: impl Fn(&Self, usize) -> Value,
     ) -> Result<Value, JsError> {
+        if let Some(string) = self.string_of_parts(count, &part) {
+            return Ok(string);
+        }
         if let Some(text) = self.ascii_string_concat(count, &part) {
             return Ok(self.heap.alloc_string(text));
         }

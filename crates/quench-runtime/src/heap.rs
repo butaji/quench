@@ -41,6 +41,7 @@ mod slots;
 mod snapshot;
 mod string_alloc;
 mod string_atoms;
+mod string_parts;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
@@ -245,12 +246,12 @@ const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
 /// MemoryFirst heap rarely reaches it.
 const PARALLEL_MARK_MINIMUM_CELLS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
-// Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
-// larger hosts start with four total markers, with an explicit env override.
-const PARALLEL_MARK_SMALL_HOST_MAX_CPUS: usize = 4;
-const PARALLEL_MARK_SMALL_HOST_DEFAULT_THREADS: usize = 1;
-const PARALLEL_MARK_LARGE_HOST_DEFAULT_THREADS: usize = PARALLEL_MARK_MAX_THREADS;
-const PARALLEL_MARK_SPLIT_THRESHOLD: usize = 256;
+/// The deepest a marker's stack grows before it offers half to an idle worker. A pointer-deep
+/// graph keeps its stack shallow (V8-v7 Splay's tree and payload trees), so at 256 helpers
+/// starved: Splay's full mark took 345 ms on one marker and 245 ms on four, 140 ms at 16
+/// (4-vCPU Linux x86_64, `profile-gc-time` experiment build, five runs each; 32 gave 147 ms,
+/// 8 gave 139-179 ms).
+const PARALLEL_MARK_SPLIT_THRESHOLD: usize = 16;
 const PARALLEL_MARK_STACK_SIZE_BYTES: usize = 256 * 1024;
 const PARALLEL_SWEEP_SLAB_BATCH_SIZE: usize = 8;
 const RC_DROP_LOCK_STRIPES: usize = 64;
@@ -2543,6 +2544,7 @@ impl Heap {
                         memory_profile.freed_record_cell(Value::direct_iterator(_record_id), slots);
                     }
                 });
+            self.string_records.warm_before_drop(JsString::prefetch_allocation);
             let (string_live, string_freed) = self.string_records.sweep(full, age, full, |record| match record {
                 RecordSweep::Keep(_, string) => live_payload_bytes += if full { string.flat_unit_bytes() } else { 0 },
                 RecordSweep::Dead(record_id, string) => {
@@ -2567,6 +2569,7 @@ impl Heap {
                 }
                 array.needs_drop()
             };
+            self.array_records.warm_before_drop(records::sweep_support::warm_array_elements);
             let (array_live, array_freed) = self.array_records.sweep_disposing(full, age, true, dispose, |record| match record {
                 RecordSweep::Keep(record_id, array) => {
                     if full {
@@ -3256,9 +3259,7 @@ impl Heap {
                 value,
                 array,
                 &self.properties,
-                |string| {
-                    string_records.mark(string);
-                },
+                |string| string_parts::mark_flat(string_records, string),
                 work,
                 object_roots,
                 trace_kind,
@@ -3323,8 +3324,9 @@ impl Heap {
             let mark_bits = mark_bits!(self);
             ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
         } else if let Some(record_id) = value.direct_string_index() {
-            // A string holds no heap edges: marking it is the whole visit.
+            // A string holds no edges but its parts': marking it and tracing them is the visit.
             if self.string_records.mark(record_id) {
+                string_parts::trace_parts(&self.string_records, record_id, work);
                 #[cfg(feature = "profile-aggregate")]
                 {
                     self.gc_profile.marked += 1;
@@ -4248,7 +4250,7 @@ impl Heap {
         owner: Value,
         array: &ArrayObject,
         properties: &ValueArena,
-        mut mark_string: impl FnMut(RecordId),
+        mut mark_string: impl FnMut(RecordId) -> bool,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
@@ -4277,15 +4279,14 @@ impl Heap {
     /// (`mark_value`): an array of strings adds nothing to the mark stack, which had held a
     /// value per element at the heap's peak (V8-v7 RegExp: 141 KiB). Profiling builds leave
     /// every value to `mark_value`, which counts each visit.
-    fn mark_leaf(mark_string: &mut impl FnMut(RecordId), value: Value) -> bool {
+    fn mark_leaf(mark_string: &mut impl FnMut(RecordId) -> bool, value: Value) -> bool {
         if cfg!(feature = "profile-aggregate") {
             return false;
         }
         let Some(record_id) = value.direct_string_index() else {
             return false;
         };
-        mark_string(record_id);
-        true
+        mark_string(record_id)
     }
     /// An iterator's edges besides its object: its source, cached next method, helper
     /// state and suspended generator.
