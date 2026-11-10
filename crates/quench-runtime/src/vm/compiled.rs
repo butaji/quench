@@ -12493,8 +12493,13 @@ impl<H: Host> Vm<H> {
             return false;
         };
         let state = self.programs.js_tier(id, function);
+        // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim
+        // costs a short call-free one its leaf calls. A function the numeric tier cannot take
+        // is still theirs to claim.
+        let lane_claims = self.programs.js_jit_lane_methods_enabled() && (facts.has_calls
+            || program.function_get(function as usize).is_some_and(|body| body.loops() || body.code.len() >= TIERS.lane_body.min_instructions));
         if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
-            return self.programs.js_jit_diagnostics_enabled();
+            return lane_claims || self.programs.js_jit_diagnostics_enabled();
         }
         let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
         // Keep bounded candidates on a frame entry until the shared tier has
@@ -12502,9 +12507,7 @@ impl<H: Host> Vm<H> {
         // across the later promotion and no longer consult tiering.
         // Inlining may erase a short body's calls; a call-free candidate still has
         // to pay for native entry under the same cost policy.
-        // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim costs a short call-free one its leaf calls.
-        candidate || self.js_general_tier_takes(program, function, &facts) || (self.programs.js_jit_lane_methods_enabled() && (facts.has_calls
-            || program.function_get(function as usize).is_some_and(|body| body.loops() || body.code.len() >= TIERS.lane_body.min_instructions)))
+        candidate || self.js_general_tier_takes(program, function, &facts) || lane_claims
     }
 
     /// Whether the general baseline may take `function`: a general candidate the tier admits
