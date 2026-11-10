@@ -206,3 +206,38 @@ fn a_lane_body_calls_in_place_natives_and_matches_the_interpreter() {
     assert_eq!(run(crate::ExecutionMode::Compiled, true), interpreted);
     assert_eq!(run(crate::ExecutionMode::Compiled, false), interpreted);
 }
+
+/// A call of `Math.imul` a body compiled inline (`Lowering::native_call`) multiplies Numbers by
+/// their ToInt32, leaves other arguments to the native's coercion, and follows a replaced
+/// `Math.imul`: the interpreter's values each time.
+#[test]
+fn an_inlined_math_imul_matches_the_interpreter_across_arguments_and_replacement() {
+    let source = r#"
+      const inputs = [3, -7, 2246822507, 4294967296.5, -0, NaN, Infinity, "12", undefined, null, true, { valueOf() { return 5; } }];
+      function fold(seed) {
+        let bits = seed;
+        for (let i = 0; i < inputs.length; i++) bits = (Math.imul(bits ^ 0x9e3779b9, inputs[i]) + Math.imul(inputs[i], 0x85ebca6b)) | 0;
+        return bits;
+      }
+      let total = 0;
+      for (let call = 0; call < 3000; call++) total = (total + fold(call)) | 0;
+      const original = Math.imul;
+      Math.imul = function (a, b) { return original(a, b) + 1; };
+      for (let call = 0; call < 3000; call++) total = (total + fold(call)) | 0;
+      Math.imul = original;
+      for (let call = 0; call < 3000; call++) total = (total + fold(call)) | 0;
+      print(total);
+    "#;
+    let run = |mode: crate::ExecutionMode, lane_methods: bool| {
+        let program = Engine::specialize(&format!("(function(){{{source}}})();"), "lane-body-imul.js").unwrap();
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        if lane_methods { vm.programs.enable_js_lane_methods(); }
+        vm.execute(&program).unwrap();
+        output.take()
+    };
+    let interpreted = run(crate::ExecutionMode::Interpreted, false);
+    assert_eq!(interpreted.len(), 1);
+    assert_eq!(run(crate::ExecutionMode::Compiled, true), interpreted);
+}

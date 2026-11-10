@@ -31,6 +31,7 @@ use cranelift_codegen::entity::EntityRef;
 mod packed_ranges;
 #[path = "lane_region/global_reads.rs"]
 mod global_reads;
+#[path = "lane_region/native_calls.rs"] mod native_calls;
 #[path = "lane_region/stable.rs"]
 mod stable;
 #[path = "lane_region/polls.rs"]
@@ -3164,13 +3165,12 @@ impl Lowering<'_, '_> {
             let base = self.registers_base;
             self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
         }
-        let completed = self.builder.create_block();
+        let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
         self.reentries.push(completed);
-        let generic = self.builder.create_block();
         match self.direct.get(&pc).copied().filter(|_| instruction.op().class().eq(Class::Call)) {
             // SAFETY: the body owns the callee for as long as its code runs.
             Some(callee) => self.direct_call(instruction, unsafe { &*callee }, generic, completed),
-            None => { self.ins().jump(generic, &[]); }
+            None => self.native_call(pc, instruction, generic, completed),
         }
         self.builder.switch_to_block(generic);
         let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));

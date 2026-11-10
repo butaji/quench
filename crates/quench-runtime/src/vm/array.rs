@@ -369,7 +369,7 @@ impl<H: Host> Vm<H> {
     /// `object`'s own data property `atom` (`Some(None)` when it has no own `atom`), read
     /// from its shape without a call; `None` for an accessor, or for an object keeping
     /// descriptors outside its shape, which its shape alone does not answer.
-    fn own_plain_data(&self, object: Value, atom: Atom) -> Option<Option<Value>> {
+    pub(in crate::vm) fn own_plain_data(&self, object: Value, atom: Atom) -> Option<Option<Value>> {
         let data = self.object_data(object)?;
         if data.has_side_descriptors() {
             return None;
