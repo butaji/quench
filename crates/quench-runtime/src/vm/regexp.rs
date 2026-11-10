@@ -3,6 +3,7 @@ use super::*;
 use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+mod literal;
 mod steady;
 
 /// Recently matched strings whose prepared subjects are kept (`Vm::regexp_subject`): a
@@ -1134,10 +1135,9 @@ impl<H: Host> Vm<H> {
         let input = &input.unkept_flat();
         let subject = self.regexp_subject(input, matcher);
         if let FastReplacement::Template(template) = replacement
-            && !template.units().iter().any(|unit| unit == u16::from(b'$')) {
-                return self.regexp_replace_with_literal(
-                    p, receiver, input, input_value, &subject, template, matcher, flags, result_used,
-                );
+            && !literal::has_substitution(template) {
+                return self.regexp_replace_with_literal(p, receiver, input, input_value, &subject,
+                    template, matcher, flags, if result_used { literal::ReplaceResult::Value } else { literal::ReplaceResult::Unused });
             }
         let matches = if flags.contains(RegExpFlags::GLOBAL) {
             self.regexp_global_matches(
@@ -1255,7 +1255,7 @@ impl<H: Host> Vm<H> {
         template: &JsString,
         matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
-        result_used: bool,
+        build: literal::ReplaceResult,
     ) -> Result<Value, JsError> {
         let (ranges, last) = if flags.contains(RegExpFlags::GLOBAL) {
             let searcher = matcher.range_searcher(subject);
@@ -1278,25 +1278,18 @@ impl<H: Host> Vm<H> {
             (found.iter().cloned().collect(), found.map(|found| Err(found.start)))
         };
         let Some(last) = last else {
-            if !result_used {
-                return Ok(Value::UNDEFINED);
-            }
-            // No match leaves the subject as it is: the same string value answers.
-            return Ok(input_value);
+            // No match leaves the subject as it is: its own value, or that value's length.
+            return Ok(if build == literal::ReplaceResult::Value { input_value } else { build.value(input.units().len()) });
         };
         match last {
             Ok(found) => self.record_regexp_legacy_match(receiver, input.clone(), found)?,
             Err(start) => self.record_regexp_legacy_pending(receiver, input.clone(), matcher, start)?,
         }
-        // Nothing reads the result: building it runs no guest code, so only its one
-        // observable outcome, a length past the limit raising, needs the length.
-        if !result_used {
-            let kept = ranges.iter().try_fold(input.units().len(), |length, range| {
-                (length - range.len()).checked_add(template.units().len())
-            });
-            if kept.is_some_and(|length| length <= super::wtf16::MAX_STRING_UNITS) {
-                return Ok(Value::UNDEFINED);
-            }
+        // Only a length is observable: a replacement nothing reads, or its `.length`.
+        if build != literal::ReplaceResult::Value
+            && let Some(length) = literal::literal_result_length(input, &ranges, template)
+        {
+            return Ok(build.value(length));
         }
         let mut output = super::wtf16::JsStringBuilder::default();
         let mut next_source = 0;

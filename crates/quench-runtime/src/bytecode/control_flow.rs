@@ -8,6 +8,25 @@ pub(super) fn instruction_at(function: &Function, packed: Instr) -> Option<WideI
     }
 }
 
+/// Whether every edge into `pc` is the fall-through of the instruction at `pc - 1`: no jump,
+/// branch table entry or exception handler targets it, so a record pair fused from `pc - 1`
+/// and `pc` leaves nothing else arriving at the second expecting the first's result.
+pub(crate) fn entered_only_by_fallthrough(function: &Function, pc: usize) -> bool {
+    let Some(previous) = pc.checked_sub(1) else {
+        return false;
+    };
+    if function.handlers.iter().any(|handler| handler.target as usize == pc) {
+        return false;
+    }
+    !function.instructions().enumerate().any(|(at, instruction)| {
+        at != previous && {
+            let mut enters = false;
+            for_each_instruction_successor(at, instruction, |successor| enters |= successor == pc);
+            enters
+        }
+    })
+}
+
 /// The PCs of a branch table's `Jump` entries: its cases, then the default.
 pub(crate) fn branch_table_entries(
     pc: usize,

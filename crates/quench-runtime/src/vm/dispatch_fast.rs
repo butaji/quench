@@ -12379,11 +12379,10 @@ script_handler! {
             requicken::<H>(ip, lane_script_call_cross::<H>);
             sibling!(lane_script_call_cross::<H>, r, ip, Carried::script(cx))
         }
-        // A site calling a native takes the native handler from now on, which hands any other
-        // callee back.
+        // A site calling a native takes the native handler from now on, which hands any other callee back.
         if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) {
             let native = *native;
-            requicken::<H>(ip, native_call_handler::<H>(native, i, || lane_call_result_dead(cx, ip, i)));
+            requicken::<H>(ip, native_call_handler::<H>(native, i, || lane_call_result_dead(cx, ip, i), || regexp_calls::length_read(cx, ip, i)));
         }
         sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
     }
@@ -13142,6 +13141,7 @@ use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
 mod native_calls;
+mod regexp_calls;
 mod array_steps;
 use array_steps::*;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};

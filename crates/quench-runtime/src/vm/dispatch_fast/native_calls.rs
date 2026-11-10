@@ -53,13 +53,17 @@ script_handler! {
 /// `lane_native_call`, the handler of every other native. A call returning its result
 /// completes its caller, which only `lane_native_call` makes. An array callback method's site
 /// whose result nothing reads (`result_dead`, asked only there) takes the form that may
-/// discard it (`lane_call_array_callback`'s `DISCARDS`).
-pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool) -> Handler {
+/// discard it (`lane_call_array_callback`'s `DISCARDS`). A `String.prototype.replace` whose
+/// result only the `GetField "length"` after it reads (`length_only`, asked only there) takes
+/// the replacement's length without building it (`lane_call_string_replace_length`).
+pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool, length_only: impl FnOnce() -> bool) -> Handler {
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return lane_native_call::<H>;
     }
     match native {
         Native::StringCharCodeAt => lane_call_char_code_at::<H>,
+        // A replacement nothing reads but `.length` is answered without building it.
+        Native::StringReplace if length_only() => super::regexp_calls::replace_length_handler::<H>(),
         Native::ArrayPush => lane_call_array_push::<H>,
         Native::ArrayPop => lane_call_array_pop::<H>,
         native if super::number::math_numbers_inline(native) => lane_call_math::<H>,
