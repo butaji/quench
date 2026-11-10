@@ -533,25 +533,37 @@ impl Regex {
         matches.next().map(|matched| matched.range)
     }
 
+    /// `backtracking_find` of an ASCII subject's bytes, for a caller that holds them and needs
+    /// no `Subject`: `None` when the pattern did not compile to the backtracking matcher.
+    pub fn find_ascii(&self, bytes: &[u8], start: usize, sticky: bool, captures: bool) -> Option<Option<Match>> {
+        let complete = self.complete();
+        let program = complete.backtracking.as_ref()?;
+        if start > bytes.len() || bytes.len() - start < complete.min_length {
+            return Some(None);
+        }
+        // Every match consumes the required literal, so a subject without it has none.
+        // A sticky search tries the one start, whose start-set check costs less than
+        // scanning the whole remainder for the literal at every split position. A program
+        // that begins with the literal (`Program::searches_prefix`) scans for it itself.
+        if let Some(literal) = complete.required_bytes.as_ref().filter(|_| !sticky) {
+            if !program.searches_prefix(literal.needle()) && literal.find(&bytes[start..]).is_none() {
+                return Some(None);
+            }
+        }
+        Some(program.find(bytes, start, sticky, captures).map(|found| self.offset_match(found, captures)))
+    }
+
+    /// The range `find_ascii` finds, for a caller that observes no captures.
+    pub fn find_range_ascii(&self, bytes: &[u8], start: usize, sticky: bool) -> Option<Option<Range<usize>>> {
+        self.find_ascii(bytes, start, sticky, false).map(|found| found.map(|matched| matched.range))
+    }
+
     /// The match the compiled backtracking matcher finds from `start` (only at `start` when
     /// `sticky`), with its captures where `captures` asks for them, or `None` when it does
     /// not answer: the pattern did not compile.
     fn backtracking_find(&self, subject: &Subject, start: usize, sticky: bool, captures: bool) -> Option<Option<Match>> {
         if let Some(bytes) = subject.ascii() {
-            let complete = self.complete();
-            let program = complete.backtracking.as_ref()?;
-            if bytes.len().saturating_sub(start) < complete.min_length {
-                return Some(None);
-            }
-            // Every match consumes the required literal, so a subject without it has none.
-            // A sticky search tries the one start, whose start-set check costs less than
-            // scanning the whole remainder for the literal at every split position.
-            if let Some(literal) = complete.required_bytes.as_ref().filter(|_| !sticky) {
-                if literal.find(&bytes[start..]).is_none() {
-                    return Some(None);
-                }
-            }
-            return Some(program.find(bytes, start, sticky, captures).map(|found| self.offset_match(found, captures)));
+            return self.find_ascii(bytes, start, sticky, captures);
         }
         let unicode = self.flags.unicode || self.flags.unicode_sets;
         let complete = self.complete();

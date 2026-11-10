@@ -13,6 +13,8 @@
 use std::cell::RefCell;
 use std::ops::Range;
 
+mod workspace;
+
 use super::{
     canonical, canonical_preimages_of, class_is_single_unit, class_item_matches, class_matches, equal, escape_matches, is_line_terminator, is_word_mode, merge_flags,
     literal_finder, Assertion, Backreference, ClassExpr, ClassItem, ClassKind, Expr, Flags, LiteralFinder, Lookaround,
@@ -542,13 +544,6 @@ pub(crate) struct Found {
     pub(crate) captures: Vec<Option<Range<usize>>>,
 }
 
-/// Registers and stack reused across searches.
-#[derive(Default)]
-struct Workspace {
-    registers: Vec<usize>,
-    stack: Vec<Frame>,
-}
-
 pub(crate) struct Program {
     instructions: Box<[Inst]>,
     sets: Box<[MatchSet]>,
@@ -585,12 +580,6 @@ pub(crate) struct Program {
     /// prefix holds this only in an ASCII subject, whose units have no other case forms
     /// (the Kelvin sign and long s are past ASCII); other subjects run the program.
     literal_length: Option<usize>,
-}
-
-thread_local! {
-    /// The registers and stack of the running search. A search never starts another, so
-    /// every program on a thread shares one workspace, sized by the largest search so far.
-    static WORKSPACE: RefCell<Workspace> = RefCell::default();
 }
 
 /// The compiled form of a construct this matcher does not run.
@@ -1517,23 +1506,7 @@ impl Program {
                 return None;
             }
         }
-        WORKSPACE.with_borrow_mut(|workspace| {
-            let Workspace { registers, stack } = &mut *workspace;
-            // A failed run restores every register it set, so one reset serves every start.
-            registers.clear();
-            registers.resize(self.register_count, UNSET);
-            stack.clear();
-            stack.push(Frame::Barrier);
-            let (pc, position) = self.entry(text, start);
-            let at = (pc, start, position);
-            let (start, end) = self.run(text, at, Some(search), registers, stack)?;
-            let captures = captures(registers);
-            Some(Found {
-                start,
-                end,
-                captures,
-            })
-        })
+        self.run_in_workspace(text, start, search, captures)
     }
 
     /// The pc and position a run from the search start `start` (`next_start`) begins at:
