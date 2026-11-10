@@ -1262,11 +1262,9 @@ impl<H: Host> Vm<H> {
                         && phase == crate::bytecode::ModuleRequestPhase::Evaluation
                     {
                         let mut active = ModuleEvaluationStack::default();
-                        let outer_batch =
-                            std::mem::replace(&mut vm.deferred_dependency_batch, true);
-                        let evaluation =
-                            vm.evaluate_static_module_source(p, module.clone(), &mut active);
-                        vm.deferred_dependency_batch = outer_batch;
+                        let (evaluation, _) = vm.in_dependency_batch(|vm| {
+                            vm.evaluate_static_module_source(p, module.clone(), &mut active)
+                        });
                         evaluation?;
                         match vm
                             .realm
@@ -2076,16 +2074,15 @@ impl<H: Host> Vm<H> {
         active.enter(crate::module_identity::normalize(std::path::Path::new(
             &p.source_name,
         )));
-        let outer_batch = std::mem::replace(&mut self.deferred_dependency_batch, true);
-        let requests =
-            self.evaluate_module_requests(p, &p.source_name, &p.module_requests, &mut active);
-        self.deferred_dependency_batch = outer_batch;
+        let (requests, outermost) = self.in_dependency_batch(|vm| {
+            vm.evaluate_module_requests(p, &p.source_name, &p.module_requests, &mut active)
+        });
         requests?;
         self.advance_dynamic_import_jobs(p, false)?;
         let pending_async_evaluation = self.realm.promise.modules.values().any(|record| {
             record.phase().awaits_async_evaluation()
         });
-        if !outer_batch && pending_async_evaluation {
+        if outermost && pending_async_evaluation {
             self.drain_jobs(p)?;
             self.advance_static_module_jobs(p)?;
         }
@@ -2176,9 +2173,8 @@ impl<H: Host> Vm<H> {
         let mut active = ModuleEvaluationStack::default();
         // An import starts evaluation; it cannot drain jobs waiting for its own
         // top-level await before the requesting promise has joined the record.
-        let outer_batch = std::mem::replace(&mut self.deferred_dependency_batch, true);
-        let evaluation = self.evaluate_static_module_source(p, job.module, &mut active);
-        self.deferred_dependency_batch = outer_batch;
+        let (evaluation, _) =
+            self.in_dependency_batch(|vm| vm.evaluate_static_module_source(p, job.module, &mut active));
         if let Err(error) = evaluation {
             let reason = self.thrown_value_for(p, error);
             self.promise_settle(p, job.promise, PromiseState::Rejected, reason)?;
@@ -2711,16 +2707,14 @@ impl<H: Host> Vm<H> {
         asynchronous: Vec<ModuleSource>,
     ) -> Result<(), JsError> {
         let mut active = ModuleEvaluationStack::default();
-        let outer_batch = std::mem::replace(&mut self.deferred_dependency_batch, true);
-        let launched = (|| {
+        let (launched, outermost) = self.in_dependency_batch(|vm| {
             for dependency in asynchronous {
-                self.evaluate_static_module_source(p, dependency, &mut active)?;
+                vm.evaluate_static_module_source(p, dependency, &mut active)?;
             }
             Ok::<(), JsError>(())
-        })();
-        self.deferred_dependency_batch = outer_batch;
+        });
         launched?;
-        if !outer_batch {
+        if outermost {
             self.drain_jobs(p)?;
             self.settle_pending_async_modules(p)?;
         }
@@ -3513,12 +3507,20 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             let mut active = ModuleEvaluationStack::default();
-            let outer_batch = std::mem::replace(&mut self.deferred_dependency_batch, true);
-            let result = self.evaluate_static_module_source(p, module, &mut active);
-            self.deferred_dependency_batch = outer_batch;
+            let (result, _) = self.in_dependency_batch(|vm| vm.evaluate_static_module_source(p, module, &mut active));
             result?;
         }
         Ok(())
+    }
+
+    /// Runs `f` as one batch of dependency evaluations: modules it evaluates leave their
+    /// pending jobs to the outermost batch (`deferred_dependency_batch`). Whether this batch
+    /// is the outermost comes back with `f`'s result.
+    fn in_dependency_batch<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> (R, bool) {
+        let outer = std::mem::replace(&mut self.deferred_dependency_batch, true);
+        let result = f(self);
+        self.deferred_dependency_batch = outer;
+        (result, !outer)
     }
 
     /// Async-evaluating modules whose evaluation promise has settled: the ones module
