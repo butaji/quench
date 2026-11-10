@@ -578,7 +578,7 @@ mod lane_stack_growth;
 mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
-mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters;
+mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_initialize_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
@@ -6539,7 +6539,7 @@ fn lane_getter_activation<H: Host>(
     let Some((base, getter)) = read.and_then(|(base, atom, cache)| {
         Some((base, vm.cached_field_getter(base, atom, vm.field_cache_index(cache))?))
     }) else {
-        return Err(exit(ip));
+        return proxy_traps::lane_read_get_trap(cx, r, ip, read.map(|(base, atom, _)| (base, atom)));
     };
     lane_read_getter(cx, r, ip, i, getter, base)
 }
