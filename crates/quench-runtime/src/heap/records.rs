@@ -339,7 +339,7 @@ impl RecordBlock {
         true
     }
 
-    fn is_occupied(&self, index: usize) -> bool {
+    #[inline(always)] fn is_occupied(&self, index: usize) -> bool {
         let word_index = index / OCCUPANCY_WORD_BITS;
         let bit = index % OCCUPANCY_WORD_BITS;
         self.occupied[word_index] & (1_u64 << bit) != 0
@@ -353,7 +353,7 @@ impl RecordBlock {
         self.occupied[word_index] &= !(1_u64 << bit);
     }
 
-    fn mark(&mut self, index: usize) -> bool {
+    #[inline(always)] fn mark(&mut self, index: usize) -> bool {
         let word_index = index / OCCUPANCY_WORD_BITS;
         let bit = index % OCCUPANCY_WORD_BITS;
         let mask = 1_u64 << bit;
@@ -630,7 +630,7 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         unsafe { self.base.as_ptr().add(id as usize).read().assume_init() }
     }
 
-    pub(super) fn mark(&mut self, id: RecordId) -> bool {
+    #[inline(always)] pub(super) fn mark(&mut self, id: RecordId) -> bool {
         let (block_index, record_index) = Self::split_id(id);
         self.blocks
             .get_mut(block_index)
