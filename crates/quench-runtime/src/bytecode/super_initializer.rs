@@ -94,18 +94,24 @@ impl Function {
             && records.next().is_none()
     }
 
+    /// Whether this is a derived constructor of simple parameters whose activation binds
+    /// nothing a `SuperInitializer` leaves out: no handler, `arguments`, rest list, or fields
+    /// and private elements of its own.
+    fn constructs_parent_plainly(&self) -> bool {
+        self.derived_constructor
+            && self.handlers.is_empty()
+            && self.arguments_slot.is_none()
+            && self.instance_initializer.is_none()
+            && !self.rest
+            && self.simple_parameters
+    }
+
     /// The body as a `SuperInitializer`, for a derived constructor of simple parameters with
     /// no fields or private elements of its own (`instance_initializer`): the parent read
     /// (`super_base`), the `super(...)` construction of parameters and primitive constants,
     /// the receiver's binding, stores of such values to `this`, and the return of `undefined`.
     pub(crate) fn super_initializer(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperInitializer> {
-        if !self.derived_constructor
-            || !self.handlers.is_empty()
-            || self.arguments_slot.is_some()
-            || self.instance_initializer.is_some()
-            || self.rest
-            || !self.simple_parameters
-        {
+        if !self.constructs_parent_plainly() {
             return None;
         }
         let mut records = self.instructions();

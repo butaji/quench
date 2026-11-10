@@ -10,18 +10,26 @@ const SUPER_CHAIN_CLASSES: usize = 8;
 /// The stores of a chain, the root's first, in the constructed class's parameters.
 type ChainStores = SmallVec<[InitializerStore; CONSTRUCT_PLAN_FIELDS]>;
 
-/// What a class's parameters take, in the constructed class's parameters: `None` for that
-/// class itself, whose parameters are the construction's arguments.
-type Passed<'a> = Option<&'a [InitializerValue]>;
+/// What a class's parameters take: `None` for the constructed class, whose parameters are
+/// the construction's arguments, else the values the class below passes to `super(...)`, in
+/// that class's parameters.
+type Passed<'a> = Option<&'a SuperArguments<'a>>;
 
-/// What parameter `parameter` of a class passed `passed` takes: `undefined` past the values.
+struct SuperArguments<'a> {
+    values: &'a [InitializerValue],
+    below: Passed<'a>,
+}
+
+/// What parameter `parameter` of a class passed `passed` takes, in the constructed class's
+/// parameters: `undefined` past the values.
 fn passed_value(passed: Passed<'_>, parameter: u16) -> InitializerValue {
-    match passed {
-        None => InitializerValue::Parameter { parameter, fallback: None },
-        Some(values) => values
-            .get(usize::from(parameter))
-            .copied()
-            .unwrap_or(InitializerValue::Constant(InitializerConstant::Undefined)),
+    let Some(arguments) = passed else {
+        return InitializerValue::Parameter { parameter, fallback: None };
+    };
+    match arguments.values.get(usize::from(parameter)) {
+        None => InitializerValue::Constant(InitializerConstant::Undefined),
+        Some(InitializerValue::Parameter { parameter, .. }) => passed_value(arguments.below, *parameter),
+        Some(value) => *value,
     }
 }
 
@@ -86,9 +94,19 @@ fn chain_stores<H: Host>(
         return chain_stores(vm, code, running, parent, passed, stores, classes + 1);
     }
     let initializer = body.super_initializer(&code.atoms, &code.constants)?;
-    let arguments = initializer.arguments.iter().map(|value| rebased(*value, passed)).collect::<Option<SmallVec<[InitializerValue; 4]>>>()?;
+    let arguments = SuperArguments { values: &initializer.arguments, below: passed };
     let root = chain_stores(vm, code, running, parent, Some(&arguments), stores, classes + 1)?;
     append(stores, &initializer.stores, passed).map(|()| root)
+}
+
+/// Notes on `callee`'s plan, when the construction left one, the parent it holds with.
+fn plan_super_parent<H: Host>(vm: &mut Vm<H>, callee: Value) {
+    if let Some(index) = construct_plan_index(callee)
+        && vm.lane_stack.construct_plans[index].callee == callee
+        && let Some(class) = vm.object_data(callee)
+    {
+        vm.lane_stack.construct_plans[index].super_parent = class.proto();
+    }
 }
 
 /// `new callee(...)` of a derived class whose chain only initializes `this` (`chain_stores`):
@@ -125,13 +143,8 @@ pub(super) fn lane_super_construction<H: Host>(
     let mut stores = ChainStores::new();
     let root = chain_stores(vm, code, unsafe { (*cx).program }, callee, None, &mut stores, 0).filter(|root| *root != callee)?;
     let (this, added) = lane_initialize_stores(vm, code, callee, root, &stores, lane_construct_argument(r, i))?;
-    if !added {
-        return None;
-    }
-    if let Some(index) = construct_plan_index(callee)
-        && vm.lane_stack.construct_plans[index].callee == callee
-    {
-        vm.lane_stack.construct_plans[index].super_parent = vm.object_data(callee)?.proto();
-    }
-    Some(this)
+    added.then(|| {
+        plan_super_parent(vm, callee);
+        this
+    })
 }
