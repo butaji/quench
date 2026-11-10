@@ -3841,6 +3841,10 @@ fn lane_concatenation<H: Host>(cx: *mut LaneContext<H>, left: Value, right: Valu
 /// line, would cost the calling handler its tail call to the next record.
 #[inline(always)]
 fn lane_relation<H: Host>(operator: u32, left: Value, right: Value) -> Option<bool> {
+    // Two heap values are no Numbers: their identity decides without the Number decode.
+    if left.is_heap() && right.is_heap() && let Some(holds) = Vm::<H>::word_identity_equality(operator, left, right) {
+        return Some(holds);
+    }
     if let Some(holds) = super::operations::number_relation(operator, left, right) {
         return Some(holds);
     }
@@ -7493,7 +7497,7 @@ script_handler! {
     fn lane_jump_binary_false_registers<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
         let (left, right) = (r.get(i.b), r.get(i.c));
         let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(i), left, right) else {
-            sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD>, r, ip, Carried::script(cx))
+            sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD, OP>, r, ip, Carried::script(cx))
         };
         if !holds {
             resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
@@ -7531,7 +7535,7 @@ script_handler! {
         let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(branch), left, right)
         else {
             sibling!(
-                lane_jump_binary_false_registers_other::<H, BACKWARD>,
+                lane_jump_binary_false_registers_other::<H, BACKWARD, OP>,
                 r,
                 branch_ip,
                 Carried::script(cx)
@@ -7549,8 +7553,8 @@ script_handler! {
     /// the lane decides without guest code (`lane_relation`); any other takes the general
     /// path. Out of line, so the integer case keeps few values live.
     #[inline(never)]
-    fn lane_jump_binary_false_registers_other<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(holds) = lane_relation::<H>(u32::from(i.a), r.get(i.b), r.get(i.c)) else {
+    fn lane_jump_binary_false_registers_other<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
+        let Some(holds) = lane_relation::<H>(relation_operator::<OP>(i), r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
         if !holds {
@@ -7708,11 +7712,13 @@ script_handler! {
     /// itself among them, inline; two distinct heap values, which may be equal strings or
     /// BigInts, take `lane_jump_strict_equal_cells`.
     fn lane_jump_strict_equal_false<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
+        let is_record = |value: Value| value.direct_object_index().is_some() || value.direct_array_index().is_some();
         let (left, right) = (r.get(i.b), r.get(i.c));
         let equal = match (left.as_number(), right.as_number()) {
             (Some(left), Some(right)) => left == right,
             _ if left == right => true,
-            _ if left.is_heap() && right.is_heap() => {
+            // An object or array record equals only itself, which `left == right` decided.
+            _ if left.is_heap() && right.is_heap() && !(is_record(left) || is_record(right)) => {
                 sibling!(lane_jump_strict_equal_cells::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
             }
             _ => false,
