@@ -1995,6 +1995,30 @@ impl Lowering<'_, '_> {
         false
     }
 
+    /// Whether `register`, an int32 sum written at `pc`, is read only by the next instruction,
+    /// a further sum or difference with another proved int32 whose own result only a
+    /// truncation reads (`truncated`): `(a + b + c) | 0`. Sums of int32s are exact doubles, so
+    /// the wrapped chain is the ToInt32 of the exact one; any non-int32 input would not be
+    /// (see `truncated`), hence the proof of the other operand here.
+    fn truncated_through_sum(&self, state: &State, pc: usize, register: Register) -> bool {
+        let Some(next) = self.unit.instructions.get(pc + 1).copied() else { return false };
+        if self.blocks[pc + 1].is_some() || !next.op().class().eq(Class::Binary) || next.result_flags() != 0 { return false; }
+        let wraps = super::operations::NumberArithmetic::from_js_instruction(next.op(), next.binary_operator())
+            .is_some_and(super::operations::NumberArithmetic::int32_projection_is_wrapping);
+        let operands = [next.operand_b(), next.operand_c()];
+        let Some(other) = operands.iter().position(|operand| operand.register_index() != Some(register)) else { return false };
+        let other_int = match operands[other].kind() {
+            Some(OperandKind::Register) => operands[other].register_index()
+                .is_some_and(|other| state.values[usize::from(other)].value.ty.is_subtype(Type::INT32)),
+            Some(OperandKind::Constant) => self.program.constants.get(usize::from(operands[other].payload()))
+                .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
+            _ => false,
+        };
+        wraps && other_int && operands[1 - other].register_index() == Some(register)
+            && (next.result_register() == register || !self.is_live(pc + 2, register))
+            && self.truncated(pc + 1, next.result_register())
+    }
+
     /// Where `register` at `at` is next read, past an inlined completion's move and jump (`lane_unit`).
     fn reader(&self, at: usize, register: Register) -> (usize, Register) {
         let instruction = |at: usize| self.unit.instructions.get(at).copied();
@@ -4971,7 +4995,8 @@ impl Lowering<'_, '_> {
                 } else if proved_int {
                     // A sum or difference only `| 0` reads is its ToInt32: the wrapping int32
                     // result, which needs no overflow exit.
-                    let overflow = if arithmetic.int32_projection_is_wrapping() && self.truncated(pc, destination) {
+                    let overflow = if arithmetic.int32_projection_is_wrapping()
+                        && (self.truncated(pc, destination) || self.truncated_through_sum(state, pc, destination)) {
                         crate::staged::Overflow::Wrap
                     } else {
                         crate::staged::Overflow::Exit

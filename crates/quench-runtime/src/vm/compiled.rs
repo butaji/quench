@@ -2240,6 +2240,13 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     let mut regions = Vec::new();
     if scalar && !headers.is_empty() {
         if let Some(found) = lower(lane_region::Coverage::Full) { regions = found; }
+        // The whole-function region enters only at PC 0. Each loop also enters at its own
+        // header, so a pass that leaves (an overflow, a value outside the region's types)
+        // costs that iteration: the back edge reaches the header's entry again.
+        if !regions.is_empty() {
+            regions.extend(headers.iter().filter(|header| **header != 0)
+                .filter_map(|header| lower(lane_region::Coverage::FullFrom(*header))).flatten());
+        }
     }
     if regions.is_empty()
         && let Some(header) = headers.first().copied().or_else(|| (has_calls || !unit.frames.is_empty()).then_some(0))
