@@ -578,8 +578,8 @@ mod lane_stack_growth;
 mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
-mod construct_plan;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index};
+mod construct_plan; mod super_chain; use super_chain::lane_super_construction;
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_initialize_stores, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
@@ -13630,78 +13630,6 @@ fn lane_super_forwarded_parent<H: Host>(vm: &Vm<H>, callee: Value) -> Option<(Va
     }
 }
 
-/// `new callee(...)` of a class whose constructor only constructs its parent
-/// (`Function::super_forwarding`) when that parent is an initializer constructor of the running
-/// program (`Function::only_initializes_this_fields`): the parent's [[Construct]] with `callee`
-/// as `new.target`, whose receiver comes from `callee`'s `prototype`, named by the parent as the
-/// general path names it (`Vm::inline_construct_template_by`), and takes the parent's
-/// stores as cached adds that run no guest code (`lane_initialize_fields`), and which the
-/// derived body returns as it is. A plan recorded under `callee` (`ConstructPlan::super_parent`)
-/// makes later constructions at once. TypeScript's node classes (`class extends Node {
-/// constructor(k, p, e) { super(k, p, e) } }`) otherwise left the lane at every node. `None`
-/// leaves the construction to the general path: another program's or realm's class, a parent
-/// past what forwarding passes, or an add the caches do not answer, whose partial receiver no
-/// code has seen.
-#[inline(never)]
-fn lane_super_construction<H: Host>(
-    cx: *mut LaneContext<H>,
-    r: Registers,
-    i: &LaneInstruction,
-    callee: Value,
-) -> Option<Value> {
-    let vm = unsafe { vm(cx) };
-    if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
-        return None;
-    }
-    if let Some(this) = holding_construct_plan(vm, callee)
-        .filter(|plan| !plan.super_parent.is_undefined())
-        .and_then(|_| lane_planned_construction(vm, callee, r, i))
-    {
-        return Some(this);
-    }
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    let running = unsafe { (*cx).program };
-    let in_running_realm = |record: &FunctionRecord| record.realm == vm.realm.globals;
-    let Some(record @ FunctionRecord { kind: FunctionKind::User(program, function), .. }) = vm.heap.function(callee) else {
-        return None;
-    };
-    if *program != running || !in_running_realm(record) {
-        return None;
-    }
-    let forwarded = code.function_get(*function as usize)?.super_forwarding(&code.atoms, &code.constants)?;
-    let parent = vm.object_data(callee)?.proto();
-    let Some(record @ FunctionRecord { kind: FunctionKind::User(parent_program, parent_function), .. }) =
-        vm.heap.function(parent)
-    else {
-        return None;
-    };
-    let parent_function = *parent_function;
-    if *parent_program != running || !in_running_realm(record) {
-        return None;
-    }
-    let body = code.function_get(parent_function as usize)?;
-    // The parent's parameters read what the class passes: every value, or its own parameters,
-    // which cover the parent's.
-    let covered = match forwarded {
-        crate::bytecode::SuperForwarded::Passed => true,
-        crate::bytecode::SuperForwarded::Parameters(count) => body.params <= count,
-    };
-    if !covered || !Vm::<H>::inline_constructible(body) || !body.only_initializes_this_fields(&code.constants) {
-        return None;
-    }
-    let (this, added) = lane_initialize_fields(vm, code, callee, parent, parent_function, lane_construct_argument(r, i))?;
-    if !added {
-        return None;
-    }
-    if let Some(index) = construct_plan_index(callee)
-        && vm.lane_stack.construct_plans[index].callee == callee
-    {
-        vm.lane_stack.construct_plans[index].super_parent = parent;
-    }
-    Some(this)
-}
-
 /// `new callee(...)` of a class whose constructor only constructs its native `parent`
 /// (`lane_super_forwarded_parent`): the parent's construction with what the constructor
 /// passes on (every value, or its parameters with missing ones `undefined`) and `callee`
@@ -15895,33 +15823,7 @@ fn lane_initialize_fields<H: Host>(
     function: u32,
     argument: impl Fn(u16) -> Value,
 ) -> Option<(Value, bool)> {
-    let plan_index = construct_plan_index(callee);
-    let template = vm.inline_construct_template_by(callee, constructor)?;
-    let (prototype, source_shape) = (template.proto(), template.shape());
-    let this = vm.heap.alloc_object(template);
-    let mut planned = Some(ConstructPlan {
-        callee,
-        epoch: NO_CONSTRUCT_PLAN_EPOCH,
-        callee_layout: (0, 0),
-        prototype,
-        shape: source_shape,
-        ..EMPTY_CONSTRUCT_PLAN
-    });
-    let added = lane_add_initializer_fields(vm, code, this, function, argument, |store, value| {
-        planned = planned.and_then(|plan| plan.with_field(store, value));
-    });
-    if !added {
-        return Some((this, false));
-    }
-    if let Some(mut plan) = planned
-        && let Some(index) = plan_index
-        && let Some(layout) = vm.function_prototype_layout(callee)
-    {
-        plan.callee_layout = layout;
-        plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
-        vm.lane_stack.construct_plans[index] = plan.finish();
-    }
-    Some((this, true))
+    lane_initialize_stores(vm, code, callee, constructor, code.function(function as usize).initializer_stores(&code.constants)?, argument)
 }
 
 /// The receiver `Vm::inline_construct_receiver` allocates for a constructor that forwards its
