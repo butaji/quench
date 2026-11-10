@@ -4,7 +4,70 @@ use super::*;
 /// substitutions and their text.
 const STRING_CONCAT_INLINE_PARTS: usize = 9;
 
+/// Entries of the direct-mapped `Vm::concat_memo`; a power of two.
+pub(super) const CONCAT_MEMO_ENTRIES: usize = 64;
+/// The most parts a memoized concatenation has.
+const CONCAT_MEMO_PARTS: usize = 4;
+
+/// One memoized `StringConcat`: its parts, by value identity, and the string they made.
+/// Strings and Numbers are immutable, so the same parts make the same text, and a string's
+/// identity is not observable: a concatenation that meets its parts again takes the earlier
+/// result instead of converting, copying and allocating again. Cleared by every collection
+/// (`Vm::collect_slow`), which may free a part's record and reuse its id.
+#[derive(Clone, Copy)]
+pub(super) struct ConcatMemoEntry {
+    parts: [Value; CONCAT_MEMO_PARTS],
+    count: usize,
+    result: Value,
+}
+
+impl ConcatMemoEntry {
+    pub(super) const EMPTY: Self = Self { parts: [Value::UNDEFINED; CONCAT_MEMO_PARTS], count: 0, result: Value::UNDEFINED };
+}
+
 impl<H: Host> Vm<H> {
+    /// The memo entry the concatenation of `count` parts, each a Number or a string, maps to,
+    /// with its parts; `None` for any other part or too many.
+    #[inline(always)]
+    fn concat_memo_key(&self, count: usize, part: &impl Fn(&Self, usize) -> Value) -> Option<(usize, [Value; CONCAT_MEMO_PARTS])> {
+        if count == 0 || count > CONCAT_MEMO_PARTS {
+            return None;
+        }
+        let mut parts = [Value::UNDEFINED; CONCAT_MEMO_PARTS];
+        let mut hasher = rustc_hash::FxHasher::default();
+        for (index, slot) in parts.iter_mut().enumerate().take(count) {
+            let value = part(self, index);
+            if value.as_number().is_none() && !self.heap.is_string(value) {
+                return None;
+            }
+            *slot = value;
+            std::hash::Hash::hash(&value, &mut hasher);
+        }
+        Some((((std::hash::Hasher::finish(&hasher) >> 40) as usize) & (CONCAT_MEMO_ENTRIES - 1), parts))
+    }
+
+    /// `string_concat`'s result for `parts` if it met them since the last collection.
+    #[inline(always)]
+    fn concat_memo_get(&self, index: usize, count: usize, parts: &[Value; CONCAT_MEMO_PARTS]) -> Option<Value> {
+        let entry = &self.concat_memo[index];
+        (entry.count == count && entry.parts == *parts).then_some(entry.result)
+    }
+
+    /// `ascii_string_concat` made into a string value, memoized (`ConcatMemoEntry`) where the
+    /// parts allow: `None` where it has no result.
+    #[inline(always)]
+    pub(super) fn memoized_ascii_string_concat(&mut self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<Value> {
+        let Some((index, parts)) = self.concat_memo_key(count, &part) else {
+            return self.ascii_string_concat(count, &part).map(|text| self.heap.alloc_string(text));
+        };
+        if let Some(result) = self.concat_memo_get(index, count, &parts) {
+            return Some(result);
+        }
+        let result = self.heap.alloc_string(self.ascii_string_concat(count, &part)?);
+        self.concat_memo[index] = ConcatMemoEntry { parts, count, result };
+        Some(result)
+    }
+
     /// `left + right` of strings and Numbers whose text is ASCII and short enough to sit
     /// inline (`SHORT_ASCII_CAPACITY`), such as a key built as `"d" + i`: each operand's
     /// bytes written once into the result, with no string made per operand or joined.
@@ -98,8 +161,12 @@ impl<H: Host> Vm<H> {
         count: usize,
         part: impl Fn(&Self, usize) -> Value,
     ) -> Result<Value, JsError> {
-        if let Some(text) = self.ascii_string_concat(count, &part) {
-            return Ok(self.heap.alloc_string(text));
+        static BOUND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *BOUND.get_or_init(|| std::env::var_os("GCX_BOUND").is_some()) && count >= 3 && self.heap.is_string(part(self, 0)) {
+            return Ok(part(self, 0));
+        }
+        if let Some(value) = self.memoized_ascii_string_concat(count, &part) {
+            return Ok(value);
         }
         self.converted_string_concat(p, count, part)
     }

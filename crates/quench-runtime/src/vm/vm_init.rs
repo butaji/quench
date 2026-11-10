@@ -179,6 +179,7 @@ impl<H: Host> Vm<H> {
             to_precision_atom: u32::MAX,
             runtime_atoms: RuntimeAtoms::default(),
             constructed_shapes: [provenance::ConstructedShape::EMPTY; provenance::CONSTRUCTED_SHAPE_ENTRIES],
+            concat_memo: [string_cache::ConcatMemoEntry::EMPTY; string_cache::CONCAT_MEMO_ENTRIES],
             object_templates: Vec::new(),
             method_caches: vec![],
             megamorphic_methods: vec![],

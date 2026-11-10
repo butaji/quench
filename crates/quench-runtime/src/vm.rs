@@ -2215,6 +2215,7 @@ pub(crate) struct Vm<H> {
     runtime_atoms: RuntimeAtoms,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
+    concat_memo: [string_cache::ConcatMemoEntry; string_cache::CONCAT_MEMO_ENTRIES],
     /// The host's object templates (`object_template`), indexed by their ids.
     object_templates: Vec<object_template::ObjectTemplate>,
     method_caches: Vec<[MethodCache; method_cache::METHOD_CACHE_WAYS]>,
@@ -3073,6 +3074,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: initialization runs outside any native body, before reuse.
         unsafe { self.programs.retire_native_calls(); }
         self.heap.reset();
+        self.concat_memo.fill(string_cache::ConcatMemoEntry::EMPTY);
         self.natives = Default::default();
         self.frames.clear();
         self.frame_pool.clear();
