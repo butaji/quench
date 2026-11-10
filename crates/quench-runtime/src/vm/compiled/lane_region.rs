@@ -4919,7 +4919,8 @@ impl Lowering<'_, '_> {
             && operator == super::operations::REMAINDER {
             let left = self.operand_number(state, left, exit)?;
             let right = self.operand_number(state, right, exit)?;
-            let value = super::emit_number_remainder(&mut self.builder, types::I64, left, right);
+            let target = self.helpers.address(self.builder.ins(), LaneHelper::NumberRemainder);
+            let value = super::emit_number_remainder(&mut self.builder, target, left, right);
             self.set_number(state, destination, value);
             return Some(true);
         }

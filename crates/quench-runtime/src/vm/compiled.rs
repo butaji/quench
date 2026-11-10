@@ -284,13 +284,14 @@ pub(super) fn emit_checked_int32_arithmetic(builder: &mut FunctionBuilder<'_>,
     operation.apply(&mut EmitArithmetic::<true> { builder }, left, right)
 }
 
-/// The shared Number remainder denotation, after the caller's Number guards.
-/// Native entries use the host calling convention. This pure scalar helper cannot
-/// enter the VM or collect, so it does not introduce an effect/recovery boundary.
-#[allow(dead_code)]
+/// The shared Number remainder denotation, after the caller's Number guards, called at
+/// `target`: the helper's address as the code's helpers bind it (`LaneHelper::NumberRemainder`),
+/// since a linked image's is not the compiling process's. Native entries use the host calling
+/// convention. This pure scalar helper cannot enter the VM or collect, so it does not
+/// introduce an effect/recovery boundary.
 pub(super) fn emit_number_remainder(
     builder: &mut FunctionBuilder<'_>,
-    pointer: ir::Type,
+    target: ir::Value,
     left: ir::Value,
     right: ir::Value,
 ) -> ir::Value {
@@ -298,8 +299,6 @@ pub(super) fn emit_number_remainder(
     signature.params.extend([AbiParam::new(types::F64), AbiParam::new(types::F64)]);
     signature.returns.push(AbiParam::new(types::F64));
     let signature = builder.import_signature(signature);
-    let address = super::operations::number_remainder as *const () as usize as i64;
-    let target = builder.ins().iconst(pointer, address);
     let call = builder.ins().call_indirect(signature, target, &[left, right]);
     builder.inst_results(call)[0]
 }
@@ -1778,6 +1777,8 @@ lane_helper_inventory! { H;
     CaptureSet => super::dispatch_fast::lane_body_capture_store::<H>,
     /// Strict equality of two distinct strings or BigInts (`lane_strict_equal_cells`).
     StrictEqual => lane_strict_equal_cells::<H>,
+    /// The Number remainder, `(f64, f64) -> f64` (`operations::number_remainder`).
+    NumberRemainder => super::operations::number_remainder,
     /// `instanceof` by its steady case (`lane_instance_of`).
     InstanceOf => lane_instance_of::<H>,
     /// A fused `typeof` test of a heap value (`lane_typeof_is`).
@@ -1946,6 +1947,7 @@ impl LaneHelpers {
         match self {
             Self::Numeric => match helper {
                 LaneHelper::InterruptOwner => builder.iconst(types::I64, lane_interrupt_owner as *const () as usize as i64),
+                LaneHelper::NumberRemainder => builder.iconst(types::I64, super::operations::number_remainder as *const () as usize as i64),
                 _ => unreachable!("frameless Number regions have no VM helper capability"),
             },
             Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
