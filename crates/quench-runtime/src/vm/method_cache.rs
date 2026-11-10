@@ -3,9 +3,6 @@ use super::*;
 mod atoms;
 pub(super) use atoms::{AtomBits, MethodCacheAtoms};
 
-/// Entries of a call site's inline method cache, most recent first; a site that sees more
-/// moves to a megamorphic set.
-pub(super) const METHOD_CACHE_WAYS: usize = 2;
 pub(super) use super::method_site::MethodSite;
 /// The shape a method lookup on a receiver without object data compares: it matches no
 /// recorded entry, the empty entry included.
@@ -307,7 +304,7 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .find(|entry| entry.serves(shape, metadata.atom, proto, this))
                 // The set is the tier after the inline ways.
-                .map(|entry| (*entry, METHOD_CACHE_WAYS));
+                .map(|entry| (*entry, SITE_POLICIES.method.inline_ways));
         }
 
         let cached_call = candidate.and_then(|(entry, tier)| {

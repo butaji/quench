@@ -1,6 +1,7 @@
 //! The most-recently-recorded chains of a site's inherited and accessor field entries.
 
 use super::*;
+use crate::vm::compiled::tier_policy::SitePolicy;
 
 /// The `next` of a chain's oldest entry, and the head of a site with none.
 pub(in crate::vm) const MRU_CHAIN_END: u32 = u32::MAX;
@@ -22,10 +23,11 @@ pub(super) trait MruPool {
 }
 
 /// Records `entry` in the chain that starts at `head`: an entry for its receiver shape is
-/// replaced in place, a chain of `ways` entries reuses its oldest one's storage, and any
-/// other entry is added. Returns the chain's new head, or `None` when the head is unchanged.
-/// `ways` is above one, so the oldest entry is never the head the new entry links to.
-pub(super) fn record_mru_entry<P: MruPool>(pool: &mut P, head: u32, ways: usize, mut entry: P::Entry) -> Option<u32> {
+/// replaced in place, a chain the policy's `after_miss` finds full reuses its oldest one's
+/// storage, and any other entry is added. Returns the chain's new head, or `None` when the head is unchanged.
+/// The policy has more than one way, so the oldest entry is never the head the new entry
+/// links to.
+pub(super) fn record_mru_entry<P: MruPool>(pool: &mut P, head: u32, policy: &SitePolicy, mut entry: P::Entry) -> Option<u32> {
     let (mut index, mut previous, mut length) = (head, MRU_CHAIN_END, 0);
     while index != MRU_CHAIN_END {
         let cached = pool.entry(index);
@@ -42,13 +44,15 @@ pub(super) fn record_mru_entry<P: MruPool>(pool: &mut P, head: u32, ways: usize,
         (previous, index) = (index, next);
     }
     entry.set_next(head);
-    let slot = if length >= ways {
-        // The oldest entry, `index`, follows `previous`.
-        pool.entry_mut(previous).set_next(MRU_CHAIN_END);
-        *pool.entry_mut(index) = entry;
-        index
-    } else {
-        pool.push(entry)
+    let slot = match SiteState::after_miss(length, policy) {
+        Admission::Append => pool.push(entry),
+        Admission::EvictOldest => {
+            // The oldest entry, `index`, follows `previous`.
+            pool.entry_mut(previous).set_next(MRU_CHAIN_END);
+            *pool.entry_mut(index) = entry;
+            index
+        }
+        Admission::Spill | Admission::Reject => return None,
     };
     Some(slot)
 }

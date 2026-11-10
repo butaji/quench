@@ -840,17 +840,7 @@ struct AccessorFieldCache {
 }
 /// A cache site without an accessor entry (`Vm::accessor_field_indices`).
 const NO_ACCESSOR_FIELD: u32 = object::MRU_CHAIN_END;
-/// Receiver shapes one site's inherited entries remember: a method inherited from beyond the
-/// immediate prototype read on instances of several subclasses (DeltaBlue's constraints)
-/// reaches one site with a shape per class. A further shape reuses the oldest entry.
-const INHERITED_FIELD_CACHE_WAYS: usize = 4;
-// Reusing the oldest entry unlinks it from an older-than-head predecessor.
-const _: () = assert!(INHERITED_FIELD_CACHE_WAYS > 1);
-/// Receiver shapes one site's accessor entries remember (`Vm::record_accessor_entry`). A
-/// getter on a prototype is read from instances that differ by which fields their factory
-/// set, as Air's `Arg` kinds do (about ten shapes reading `isStack`); a site past its ways
-/// leaves the lane at each miss and evicts an entry another shape needs next.
-const ACCESSOR_FIELD_CACHE_WAYS: usize = 16;
+use compiled::tier_policy::{Admission, SITE_POLICIES, SiteState};
 use crate::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
 /// A cache site without an inherited entry (`Vm::inherited_field_indices`).
@@ -867,9 +857,6 @@ const KEYED_ADD_INDEX_BITS: u32 = 8;
 /// Keyed adds the VM remembers, direct-mapped by source shape and key: express's JSON body
 /// path makes fifteen a request into header and parameter objects, whose shapes repeat.
 const KEYED_ADD_ENTRIES: usize = 1 << KEYED_ADD_INDEX_BITS;
-/// Source shapes one add site remembers; the oldest is evicted beyond this. Objects whose
-/// optional fields are assigned in varying order reach one add site with several shapes.
-const FIELD_ADD_CACHE_WAYS: usize = 4;
 const EMPTY_CACHE: FieldCache = FieldCache {
     receiver: NO_FIELD_RECEIVER,
     holder: NO_FIELD_HOLDER,
@@ -978,13 +965,13 @@ impl FieldAddCache {
     }
 }
 /// The add transitions one site remembers, oldest first. The first lives in the set and the
-/// rest, up to `FIELD_ADD_CACHE_WAYS`, in a box made when a second arrives: a site is nearly
+/// rest, up to `SITE_POLICIES.field_add.ways`, in a box made when a second arrives: a site is nearly
 /// always monomorphic (1413 of 1426 sets in npm TypeScript, every set but one in V8-v7, census
 /// 2026-10-23), and four inline ways cost each site the room of four entries.
 struct FieldAddCacheSet {
     len: u8,
     first: FieldAddCache,
-    rest: Option<Box<[FieldAddCache; FIELD_ADD_CACHE_WAYS - 1]>>,
+    rest: Option<Box<[FieldAddCache; SITE_POLICIES.field_add.ways - 1]>>,
 }
 impl FieldAddCacheSet {
     const EMPTY: Self = Self {
@@ -1048,7 +1035,7 @@ impl FieldAddCacheSet {
     /// Replaces the entry for the same source shape, atom and prototype chain shapes, else
     /// appends, evicting the oldest entry when the set is full.
     fn insert(&mut self, cache: FieldAddCache) {
-        let mut entries = [FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS];
+        let mut entries = [FieldAddCache::EMPTY; SITE_POLICIES.field_add.ways];
         let len = usize::from(self.len);
         for (slot, entry) in entries.iter_mut().zip(self.entries()) {
             *slot = *entry;
@@ -1065,17 +1052,20 @@ impl FieldAddCacheSet {
                 entries.copy_within(index + 1..len, index);
                 len - 1
             }
-            None if len == FIELD_ADD_CACHE_WAYS => {
-                entries.copy_within(1..len, 0);
-                len - 1
-            }
-            None => len,
+            None => match SiteState::after_miss(len, &SITE_POLICIES.field_add) {
+                Admission::Append => len,
+                Admission::EvictOldest => {
+                    entries.copy_within(1..len, 0);
+                    len - 1
+                }
+                Admission::Spill | Admission::Reject => return,
+            },
         };
         entries[kept] = cache;
         let len = kept + 1;
         self.first = entries[0];
         if len > 1 {
-            let rest = self.rest.get_or_insert_with(|| Box::new([FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS - 1]));
+            let rest = self.rest.get_or_insert_with(|| Box::new([FieldAddCache::EMPTY; SITE_POLICIES.field_add.ways - 1]));
             rest[..len - 1].copy_from_slice(&entries[1..len]);
         }
         self.len = len as u8;
@@ -1090,8 +1080,6 @@ const NO_OBJECT_SHAPE: u32 = u32::MAX;
 /// every site's entries (Node's library wires prototypes hundreds of times at load, each an
 /// invalidation that had refilled every table).
 const FIELD_CACHE_SPARSE_RESET_SHARE: usize = 8;
-// Bound each site's overflow to 256 recorded shapes; unseen shapes keep the generic fallback.
-const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
 struct FieldCacheSet {
     len: u8,
     /// Whether any entry recorded an own field (`NO_FIELD_HOLDER`); a set without one names
@@ -2125,7 +2113,7 @@ pub(crate) struct Vm<H> {
     /// `NO_ACCESSOR_FIELD`.
     accessor_field_indices: site_table::SiteTable<u32>,
     /// Accessor reads (`AccessorFieldCache`), each site's linked newest first through
-    /// `next`, up to `ACCESSOR_FIELD_CACHE_WAYS` receiver shapes a site, as an inherited
+    /// `next`, up to `SITE_POLICIES.accessor.ways` receiver shapes a site, as an inherited
     /// method's site sees one shape per subclass; cleared with the field caches.
     accessor_fields: Vec<AccessorFieldCache>,
     field_add_indices: site_table::SiteTable<u32>,
@@ -2842,7 +2830,7 @@ impl<H: Host> Vm<H> {
                 field_add_cache_depth_counts[usize::from(cache.prototype_depth)] += 1;
             }
         }
-        let mut field_add_set_occupancy = [0usize; FIELD_ADD_CACHE_WAYS + 1];
+        let mut field_add_set_occupancy = [0usize; SITE_POLICIES.field_add.ways + 1];
         for set in &self.field_add_sets {
             field_add_set_occupancy[usize::from(set.len)] += 1;
         }

@@ -1180,7 +1180,8 @@ fn static_index_field_cache_admits_only_shape_backed_storage() {
 
 #[test]
 fn exhausted_field_cache_preserves_generic_reads() {
-    let count = FIELD_MEGAMORPHIC_LIMIT + 1;
+    let compiled::tier_policy::Overflow::Hash { limit: field_megamorphic_limit } = SITE_POLICIES.field_load.overflow else { panic!() };
+    let count = field_megamorphic_limit + 1;
     let source = format!(
         "var sum = 0; function read(value) {{return value.payload;}} for (var index = 1; index <= {count}; index++) {{var value = {{payload:index}}; value['shape' + index] = index; sum += read(value);}} print(sum);"
     );
@@ -1207,13 +1208,13 @@ fn exhausted_field_cache_preserves_generic_reads() {
             assert!(
                 vm.megamorphic_fields
                     .iter()
-                    .any(|set| set.len() == FIELD_MEGAMORPHIC_LIMIT),
+                    .any(|set| set.len() == field_megamorphic_limit),
                 "test must exhaust the existing per-site shape budget"
             );
             assert!(
                 vm.megamorphic_fields
                     .iter()
-                    .all(|set| set.len() <= FIELD_MEGAMORPHIC_LIMIT)
+                    .all(|set| set.len() <= field_megamorphic_limit)
             );
         }
     }

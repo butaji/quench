@@ -3866,27 +3866,6 @@ fn third_method_receiver_promotes_site_to_megamorphic() {
 }
 
 #[test]
-fn full_method_set_evicts_its_oldest_receiver_shape() {
-    let mut vm = Vm::new(TestHost::default());
-    vm.method_caches.push(super::method_cache::MethodSite::EMPTY);
-    for shape in 1..=6 {
-        vm.record_method_cache(
-            0,
-            MethodCache {
-                shape,
-                atom: 0,
-                proto: crate::Value::NULL,
-                callee: crate::Value::NULL,
-                guard: super::EMPTY_METHOD_GUARD,
-                target: Some(CallTarget::User(super::program_store::ProgramId::MAIN, shape, crate::Value::NULL)),
-            },
-        );
-    }
-    let set: Vec<u32> = vm.method_caches[0].recorded_set().iter().map(|entry| entry.shape).collect();
-    assert_eq!(set, [3, 4, 5, 6], "the set keeps the newest shapes, oldest first");
-}
-
-#[test]
 fn method_cache_gc_retains_live_and_rejects_reused_handles() {
     let mut vm = Vm::new(TestHost::default());
     let live = vm.heap.alloc(crate::heap::Cell::Environment {

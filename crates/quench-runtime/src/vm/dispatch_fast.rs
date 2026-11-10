@@ -106,10 +106,6 @@ pub(super) struct LaneInstruction {
     call_link: std::cell::Cell<u16>,
 }
 
-/// The callees a site's history holds unspilled: sites stay monomorphic (mandreel: 131K, none
-/// polymorphic), so one keeps an entry at 32 bytes instead of 112.
-const INLINE_SITE_TARGETS: usize = 1;
-
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 const NO_CALL_LINK: u16 = u16::MAX;
 const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 3 * std::mem::size_of::<u64>());
@@ -1802,7 +1798,7 @@ pub(super) struct LaneStack {
     /// inlines as a guarded switch (`lane_unit::unit`). A link's slot may hold another site's
     /// callee since; this record alone names the site's own. A collection drops the callees it
     /// swept (`forget_dead_callees`).
-    call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[super::compiled::CallTarget; INLINE_SITE_TARGETS]>>>,
+    call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[super::compiled::CallTarget; SITE_POLICIES.call_targets.inline_ways]>>>,
     values: Vec<Value>,
     activations: Vec<Activation>,
     /// Wasm activation payload represented by `values` before lane materialization.
@@ -2016,7 +2012,11 @@ impl LaneStack {
         let mut sites = self.call_sites.borrow_mut();
         let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
         if !site.contains(&target) {
-            if site.len() == super::compiled::tier_policy::POLYMORPHISM { site.remove(0); }
+            match SiteState::after_miss(site.len(), &SITE_POLICIES.call_targets) {
+                Admission::Append => {}
+                Admission::EvictOldest => { site.remove(0); }
+                Admission::Spill | Admission::Reject => return,
+            }
             site.push(target);
         }
     }

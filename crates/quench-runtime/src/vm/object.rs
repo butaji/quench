@@ -1161,8 +1161,9 @@ impl FieldCacheSet {
     fn insert(&mut self, cache: FieldCache) {
         self.holds_own |= cache.holder == NO_FIELD_HOLDER;
         let key = field_cache_key(cache.receiver, cache.holder);
+        let policy = &SITE_POLICIES.field_load;
         if let Some(entries) = &mut self.overflow {
-            if entries.len() < FIELD_MEGAMORPHIC_LIMIT || entries.contains_key(&key) {
+            if entries.contains_key(&key) || SiteState::after_miss(entries.len(), policy) == Admission::Spill {
                 entries.insert(key, cache);
             }
             return;
@@ -1172,18 +1173,24 @@ impl FieldCacheSet {
             .find(|entry| entry.receiver == cache.receiver && entry.holder == cache.holder)
         {
             *entry = cache;
-        } else if usize::from(self.len) < super::compiled::tier_policy::POLYMORPHISM {
-            self.entries[usize::from(self.len)] = cache;
-            self.len += 1;
-        } else {
-            let mut entries = FxHashMap::default();
-            entries.extend(
-                self.entries
-                    .iter()
-                    .map(|entry| (field_cache_key(entry.receiver, entry.holder), *entry)),
-            );
-            entries.insert(key, cache);
-            self.overflow = Some(Box::new(entries));
+            return;
+        }
+        match SiteState::after_miss(usize::from(self.len), policy) {
+            Admission::Append => {
+                self.entries[usize::from(self.len)] = cache;
+                self.len += 1;
+            }
+            Admission::Spill => {
+                let mut entries = FxHashMap::default();
+                entries.extend(
+                    self.entries
+                        .iter()
+                        .map(|entry| (field_cache_key(entry.receiver, entry.holder), *entry)),
+                );
+                entries.insert(key, cache);
+                self.overflow = Some(Box::new(entries));
+            }
+            Admission::EvictOldest | Admission::Reject => {}
         }
     }
     #[cfg(any(feature = "profile-memory", test))]
@@ -2943,7 +2950,7 @@ impl<H: Host> Vm<H> {
     /// replaced, and a full site drops its oldest.
     fn record_accessor_entry(&mut self, site: usize, entry: AccessorFieldCache) {
         let head = self.accessor_field_indices.get(site);
-        if let Some(slot) = record_mru_entry(&mut self.accessor_fields, head, ACCESSOR_FIELD_CACHE_WAYS, entry) {
+        if let Some(slot) = record_mru_entry(&mut self.accessor_fields, head, &SITE_POLICIES.accessor, entry) {
             self.accessor_field_indices.set(site, slot);
             self.note_field_cache_write(site);
         }
@@ -3122,12 +3129,12 @@ impl<H: Host> Vm<H> {
     }
 
     /// Records `cache` as the site's newest inherited entry. An entry for its receiver shape
-    /// is replaced in place; a site holding `INHERITED_FIELD_CACHE_WAYS` entries reuses its
+    /// is replaced in place; a site holding `SITE_POLICIES.inherited.ways` entries reuses its
     /// oldest one's storage, so a site's entries stay bounded however many shapes reach it.
     fn record_inherited_field(&mut self, site: usize, cache: InheritedFieldCache) {
         let head = self.inherited_field_indices.get(site);
         if let Some(slot) =
-            record_mru_entry(self.heap.dependencies_mut(), head, INHERITED_FIELD_CACHE_WAYS, cache)
+            record_mru_entry(self.heap.dependencies_mut(), head, &SITE_POLICIES.inherited, cache)
         {
             self.inherited_field_indices.set(site, slot);
         }
@@ -4317,7 +4324,7 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn prove_field_add_chain(&mut self, set: usize, shape: u32, atom: Atom, link: ProtoLink) -> bool {
         // Each entry records one prototype chain; the receiver's must be one of them.
-        let entries = self.field_add_sets[set].matching(shape, atom).collect::<smallvec::SmallVec<[usize; FIELD_ADD_CACHE_WAYS]>>();
+        let entries = self.field_add_sets[set].matching(shape, atom).collect::<smallvec::SmallVec<[usize; SITE_POLICIES.field_add.ways]>>();
         for index in entries {
             let cache = *self.field_add_sets[set].entry(index);
             let Some(proved) = self.prove_add_chain(&cache, link) else {

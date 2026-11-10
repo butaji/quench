@@ -130,6 +130,124 @@ pub(in crate::vm) struct Wasm {
 /// specializes a site into. One bound for every lattice of site feedback.
 pub(in crate::vm) const POLYMORPHISM: usize = 4;
 
+/// What a site does with a receiver shape that arrives once every way holds an entry.
+#[derive(Clone, Copy)]
+pub(in crate::vm) enum Overflow {
+    /// Spill the entries to a hash of at most `limit`; past it the site is megamorphic.
+    Hash { limit: usize },
+    /// Replace the oldest entry: the site keeps the newest `ways` shapes however many arrive.
+    EvictOldest,
+}
+
+/// One kind of site's room for feedback: `inline_ways` entries live in the site's own slot,
+/// `ways` in all, and `overflow` decides what a further shape does.
+#[derive(Clone, Copy)]
+pub(in crate::vm) struct SitePolicy {
+    pub(in crate::vm) inline_ways: usize,
+    pub(in crate::vm) ways: usize,
+    pub(in crate::vm) overflow: Overflow,
+}
+
+/// The `SitePolicy` row of every kind of site feedback: the interpreter's caches and the
+/// call sites' callee history each read their own row, so a width or overflow rule is
+/// changed in one place. `POLYMORPHISM` stays the width of the guarded switch a tier
+/// specializes a site into.
+pub(in crate::vm) struct SitePolicies {
+    /// Field loads: entries per receiver shape and holder, spilled to a hash past four; unseen
+    /// shapes past the hash's limit keep the generic fallback.
+    pub(in crate::vm) field_load: SitePolicy,
+    /// Field adds, one entry per source shape and prototype chain. Objects whose optional
+    /// fields are assigned in varying order reach one add site with several shapes. The first
+    /// lives in the set, the rest in a box made when a second arrives.
+    pub(in crate::vm) field_add: SitePolicy,
+    /// Inherited field loads: a method inherited from beyond the immediate prototype, read on
+    /// instances of several subclasses (DeltaBlue's constraints), reaches one site with a
+    /// shape per class.
+    pub(in crate::vm) inherited: SitePolicy,
+    /// Accessor field loads: a getter on a prototype is read from instances that differ by
+    /// which fields their factory set, as Air's `Arg` kinds do (about ten shapes reading
+    /// `isStack`); a site past its ways leaves the lane at each miss and evicts an entry
+    /// another shape needs next.
+    pub(in crate::vm) accessor: SitePolicy,
+    /// Method calls: two ways in the site's slot, the rest in its set.
+    pub(in crate::vm) method: SitePolicy,
+    /// Callee history of a call site: sites stay monomorphic (mandreel: 131K, none
+    /// polymorphic), so one entry sits unspilled at 32 bytes instead of 112.
+    pub(in crate::vm) call_targets: SitePolicy,
+}
+
+pub(in crate::vm) const SITE_POLICIES: SitePolicies = SitePolicies {
+    field_load: SitePolicy {
+        inline_ways: POLYMORPHISM,
+        ways: POLYMORPHISM,
+        overflow: Overflow::Hash { limit: 256 },
+    },
+    field_add: SitePolicy { inline_ways: 1, ways: POLYMORPHISM, overflow: Overflow::EvictOldest },
+    inherited: SitePolicy { inline_ways: POLYMORPHISM, ways: POLYMORPHISM, overflow: Overflow::EvictOldest },
+    accessor: SitePolicy { inline_ways: 16, ways: 16, overflow: Overflow::EvictOldest },
+    method: SitePolicy { inline_ways: 2, ways: POLYMORPHISM, overflow: Overflow::EvictOldest },
+    call_targets: SitePolicy { inline_ways: 1, ways: POLYMORPHISM, overflow: Overflow::EvictOldest },
+};
+// An MRU chain reuses its oldest entry, which must not be the head the new entry links to.
+const _: () = assert!(SITE_POLICIES.inherited.ways > 1 && SITE_POLICIES.accessor.ways > 1);
+
+/// How a site's feedback stands, from what it holds and its policy's rule.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(in crate::vm) enum SiteState {
+    Empty,
+    Monomorphic,
+    Polymorphic,
+    /// A site that refused a shape: the entries it holds answer, the rest take the generic
+    /// path. It never leaves this state, since its entries only go with a reset of the site.
+    Megamorphic,
+}
+
+/// What a site does with a shape it holds no entry for (`SiteState::after_miss`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(in crate::vm) enum Admission {
+    /// Add it beside the entries.
+    Append,
+    /// Add it to the overflow hash.
+    Spill,
+    /// Add it in place of the oldest entry.
+    EvictOldest,
+    /// Leave it out.
+    Reject,
+}
+
+impl SiteState {
+    /// The state of a site holding `held` entries under `policy`.
+    pub(in crate::vm) const fn of(held: usize, policy: &SitePolicy) -> Self {
+        let exhausted = match policy.overflow {
+            Overflow::Hash { limit } => held >= limit,
+            Overflow::EvictOldest => false,
+        };
+        match held {
+            0 => Self::Empty,
+            _ if exhausted => Self::Megamorphic,
+            1 => Self::Monomorphic,
+            _ => Self::Polymorphic,
+        }
+    }
+
+    /// The one place a site changes state: the admission of a shape the site holds no entry
+    /// for, which moves a site holding `held` entries one step along Empty, Monomorphic,
+    /// Polymorphic: an append while a way is free, then the policy's overflow rule. A
+    /// hash overflow ends in Megamorphic at its limit, and a megamorphic site rejects every
+    /// shape from then on. An evicting site never
+    /// becomes megamorphic: it churns its newest shapes.
+    pub(in crate::vm) const fn after_miss(held: usize, policy: &SitePolicy) -> Admission {
+        match Self::of(held, policy) {
+            Self::Megamorphic => Admission::Reject,
+            _ if held < policy.ways => Admission::Append,
+            _ => match policy.overflow {
+                Overflow::Hash { .. } => Admission::Spill,
+                Overflow::EvictOldest => Admission::EvictOldest,
+            },
+        }
+    }
+}
+
 /// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
 /// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
 pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
@@ -216,6 +334,26 @@ pub(in crate::vm) const fn by_policy(policy: crate::MemoryPolicy) -> &'static Po
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_site_moves_along_its_policy_and_never_leaves_megamorphic() {
+        use super::{Admission, SITE_POLICIES, SiteState};
+        let loads = &SITE_POLICIES.field_load;
+        let super::Overflow::Hash { limit } = loads.overflow else { panic!("loads spill to a hash") };
+        assert_eq!(SiteState::of(0, loads), SiteState::Empty);
+        assert_eq!(SiteState::of(1, loads), SiteState::Monomorphic);
+        assert_eq!(SiteState::of(loads.ways, loads), SiteState::Polymorphic);
+        assert_eq!(SiteState::after_miss(loads.ways - 1, loads), Admission::Append);
+        assert_eq!(SiteState::after_miss(loads.ways, loads), Admission::Spill);
+        assert_eq!(SiteState::after_miss(limit - 1, loads), Admission::Spill);
+        for held in limit..limit + 3 {
+            assert_eq!(SiteState::of(held, loads), SiteState::Megamorphic);
+            assert_eq!(SiteState::after_miss(held, loads), Admission::Reject);
+        }
+        let methods = &SITE_POLICIES.method;
+        assert_eq!(SiteState::after_miss(methods.ways, methods), Admission::EvictOldest);
+        assert_eq!(SiteState::of(methods.ways, methods), SiteState::Polymorphic);
+    }
+
     use super::*;
 
     #[test]
