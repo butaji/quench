@@ -859,6 +859,15 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 emit_js_guard(&mut self.builder, object, exit);
                 self.refine_object_family(state, bits);
             }
+            // An exact shape the target's other edges proved is guarded on this one, the
+            // owner's header read once, so the edge keeps native code.
+            if let Some(shape) = ty.object_shape() && !state.values[index].value.ty.is_subtype(ty) {
+                let exit = self.guard_exit(state, target as u32);
+                let header = self.object_header(state, Some(register), false, exit);
+                self.prove_shape(state, Some(Some(register)), header.shape, shape, exit);
+                state.values[index] = RegisterFact { tagged: state.values[index].tagged,
+                    ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
+            }
             // A fact this edge does not prove and cannot guard leaves at the target, exactly:
             // the edge loses native code, never the body (AGENTS.md, check once).
             if !self.proves(state, register, ty, target) {
