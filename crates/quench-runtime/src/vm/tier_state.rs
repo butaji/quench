@@ -51,6 +51,11 @@ pub(super) trait Controller {
         feedback.clone()
     }
 
+    /// The entries a dropped body hands its successor's warm-up: its runs that already paid.
+    fn carried(_stats: &Self::Stats) -> u32 {
+        0
+    }
+
     /// Whether a function that ran `entries` times interpreted is worth compiling again.
     fn revives(_policy: &Tiers, _entries: u32) -> bool {
         false
@@ -60,12 +65,14 @@ pub(super) trait Controller {
 /// The speculative bodies built so far, and what they learned.
 pub(super) struct Past<F> {
     pub(super) bodies: u8,
+    /// The compiles the code cache refused: each doubles the next warm-up the owner asks for.
+    pub(super) refused: u8,
     pub(super) feedback: F,
 }
 
 impl<F: Default> Default for Past<F> {
     fn default() -> Self {
-        Self { bodies: 0, feedback: F::default() }
+        Self { bodies: 0, refused: 0, feedback: F::default() }
     }
 }
 
@@ -77,17 +84,22 @@ impl<F> Past<F> {
 
     /// The history after a body that is dropped, planned from `feedback`.
     fn after(&self, feedback: F) -> Self {
-        Self { bodies: self.bodies, feedback }
+        Self { bodies: self.bodies, refused: self.refused, feedback }
     }
 
     /// The history whose next body is the generic one.
     fn spent(feedback: F) -> Self {
-        Self { bodies: SPECULATIVE_BODIES, feedback }
+        Self { bodies: SPECULATIVE_BODIES, refused: 0, feedback }
     }
 
     /// The history after a compile that came to nothing (a stale one): it counts as a body.
     fn wasted(self) -> Self {
-        Self { bodies: self.bodies.saturating_add(1).min(SPECULATIVE_BODIES), feedback: self.feedback }
+        Self { bodies: self.bodies.saturating_add(1).min(SPECULATIVE_BODIES), ..self }
+    }
+
+    /// The history after the code cache refused a compile.
+    fn refusal(self) -> Self {
+        Self { refused: self.refused.saturating_add(1), ..self }
     }
 }
 
@@ -167,7 +179,16 @@ pub(super) enum Tier<C: Controller> {
     Generic { artifact: C::Artifact },
     /// Run by the interpreter: the code generator refused every body, or the function is no
     /// tier's. `entries` counts what it ran since, toward `Controller::revives`.
-    GenericInterpreted { entries: u32, reason: Option<&'static str> },
+    GenericInterpreted { entries: u32, refusal: Refusal },
+}
+
+/// Why the code generator builds nothing for a function.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Refusal {
+    /// The function's shape is no tier's (`reason`), which another tier may still take.
+    Shape(&'static str),
+    /// Its code failed to generate: the same function fails the same way again.
+    Codegen,
 }
 
 /// Why a transition happened, for the diagnostics.
@@ -202,24 +223,45 @@ pub(super) enum Event<C: Controller> {
     /// The owner was entered, or took a backward jump; `favourable` where this entry is the kind
     /// its body would assume.
     Entry { favourable: bool },
-    /// A run of the body completed.
-    Completed,
     /// A run of the body left at `at`.
     GuardLeft { at: C::Leave },
     /// The code generator took the compile.
     Started(Build<C::Pending>),
     /// A compile's code was published.
     Compiled(C::Artifact),
-    /// The compile's facts changed.
-    Stale,
     /// The code generator refused the body.
-    Failed,
+    Failed(Refusal),
+    /// What happened carries nothing more.
+    Note(Note),
+}
+
+/// An event of a tier that carries nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Note {
+    /// A run of the body completed.
+    Completed,
+    /// An entry the tier counts for its diagnostics only.
+    Observed,
+    /// The owner priced the warm-up as over: the body is due.
+    Due,
     /// Speculation does not pay: the next body is generic.
     Generalize,
     /// The body's publication was retired from outside.
     Invalidated,
+    /// The compile's facts changed.
+    Stale,
     /// The code cache refused the body.
     Refused,
+}
+
+impl<C: Controller> Event<C> {
+    pub(super) const COMPLETED: Self = Self::Note(Note::Completed);
+    pub(super) const OBSERVED: Self = Self::Note(Note::Observed);
+    pub(super) const DUE: Self = Self::Note(Note::Due);
+    pub(super) const GENERALIZE: Self = Self::Note(Note::Generalize);
+    pub(super) const INVALIDATED: Self = Self::Note(Note::Invalidated);
+    pub(super) const STALE: Self = Self::Note(Note::Stale);
+    pub(super) const REFUSED: Self = Self::Note(Note::Refused);
 }
 
 impl<C: Controller> Tier<C> {
@@ -253,15 +295,23 @@ impl<C: Controller> Tier<C> {
     pub(super) fn transition(self, event: Event<C>, policy: &Tiers) -> (Self, Why) {
         match event {
             Event::Entry { favourable } => self.entered(favourable, policy),
-            Event::Completed => self.completed(),
             Event::GuardLeft { at } => self.left(at, policy),
             Event::Started(build) => self.started(build),
             Event::Compiled(artifact) => self.compiled(artifact),
-            Event::Stale => self.dropped(Why::Stale, Past::wasted),
-            Event::Failed => self.refused_by_host(),
-            Event::Generalize => self.generalized(),
-            Event::Invalidated => self.invalidated(),
-            Event::Refused => self.dropped(Why::Refused, |past| past),
+            Event::Failed(refusal) => self.refused_by_host(refusal),
+            Event::Note(note) => self.noted(note),
+        }
+    }
+
+    fn noted(self, note: Note) -> (Self, Why) {
+        match note {
+            Note::Completed => self.completed(),
+            Note::Observed => self.observed(),
+            Note::Due => self.due(),
+            Note::Generalize => self.generalized(),
+            Note::Invalidated => self.invalidated(),
+            Note::Stale => self.dropped(Why::Stale, Past::wasted),
+            Note::Refused => self.dropped(Why::Refused, Past::refusal),
         }
     }
 
@@ -281,6 +331,15 @@ impl<C: Controller> Tier<C> {
         unsafe { std::ptr::write(self, next) };
         std::mem::forget(guard);
         why
+    }
+
+    /// The history this state carries, whatever it is: a body a new one replaces keeps its.
+    fn into_past(self) -> Past<C::Feedback> {
+        match self {
+            Self::Cold | Self::GenericInterpreted { .. } => Past::default(),
+            Self::Generic { .. } => Past::spent(C::Feedback::default()),
+            Self::Warming { past, .. } | Self::Queued { past } | Self::Compiling { past, .. } | Self::Speculative { past, .. } => past,
+        }
     }
 
     /// The warm-up's history: the one this state carries, before any body compiled.
@@ -306,16 +365,25 @@ impl<C: Controller> Tier<C> {
         match self {
             Self::Cold => Self::warmed(1, more, Past::default(), policy),
             Self::Warming { entries, favourable: kind, past } => Self::warmed(entries.saturating_add(1), kind.saturating_add(more), past, policy),
-            Self::GenericInterpreted { entries, reason } => Self::interpreted(entries.saturating_add(1), reason, policy),
+            Self::GenericInterpreted { entries, refusal } => Self::interpreted(entries.saturating_add(1), refusal, policy),
             other => (other, Why::Counted),
         }
     }
 
-    fn interpreted(entries: u32, reason: Option<&'static str>, policy: &Tiers) -> (Self, Why) {
-        if C::revives(policy, entries) {
+    fn observed(self) -> (Self, Why) {
+        match self {
+            Self::GenericInterpreted { entries, refusal } => (Self::GenericInterpreted { entries: entries.saturating_add(1), refusal }, Why::Counted),
+            other => (other, Why::Counted),
+        }
+    }
+
+    /// An interpreted function counted `entries`: a shape no tier took may be taken by the
+    /// generic one once enough of them ran.
+    fn interpreted(entries: u32, refusal: Refusal, policy: &Tiers) -> (Self, Why) {
+        if matches!(refusal, Refusal::Shape(_)) && C::revives(policy, entries) {
             return (Self::Warming { entries, favourable: 0, past: Past::spent(C::Feedback::default()) }, Why::Revived);
         }
-        (Self::GenericInterpreted { entries, reason }, Why::Counted)
+        (Self::GenericInterpreted { entries, refusal }, Why::Counted)
     }
 
     fn completed(mut self) -> (Self, Why) {
@@ -325,12 +393,18 @@ impl<C: Controller> Tier<C> {
         (self, Why::Counted)
     }
 
+    /// The warm-up that follows a dropped body: its successor's, carrying what the body earned.
+    fn rewarm(entries: u32, past: Past<C::Feedback>, why: Why) -> (Self, Why) {
+        (Self::Warming { entries, favourable: 0, past }, why)
+    }
+
     fn left(self, at: C::Leave, policy: &Tiers) -> (Self, Why) {
         let Self::Speculative { artifact, past, mut stats } = self else { return (self, Why::Counted) };
+        let entries = C::carried(&stats);
         match C::judge(policy, &mut stats, &past, at) {
             Verdict::Keep => (Self::Speculative { artifact, past, stats }, Why::Counted),
-            Verdict::Respecialize(feedback) => (Self::Warming { entries: 0, favourable: 0, past: past.after(feedback) }, Why::LeftTooOften),
-            Verdict::Generalize => (Self::Warming { entries: 0, favourable: 0, past: Past::spent(C::learned(&stats, &past.feedback)) }, Why::Generalized),
+            Verdict::Respecialize(feedback) => Self::rewarm(entries, past.after(feedback), Why::LeftTooOften),
+            Verdict::Generalize => Self::rewarm(entries, Past::spent(C::learned(&stats, &past.feedback)), Why::Generalized),
         }
     }
 
@@ -342,14 +416,11 @@ impl<C: Controller> Tier<C> {
     }
 
     fn compiled(self, artifact: C::Artifact) -> (Self, Why) {
-        let past = match self {
-            Self::Compiling { past, .. } => past,
-            before => before.warming_past().expect("a compile is published only into a state before a body"),
-        };
+        let past = self.into_past();
         if past.is_spent() {
             return (Self::Generic { artifact }, Why::Published);
         }
-        let past = Past { bodies: past.bodies + 1, feedback: past.feedback };
+        let past = Past { bodies: past.bodies + 1, ..past };
         (Self::Speculative { artifact, past, stats: C::Stats::default() }, Why::Published)
     }
 
@@ -357,34 +428,44 @@ impl<C: Controller> Tier<C> {
     fn dropped(self, why: Why, past: impl FnOnce(Past<C::Feedback>) -> Past<C::Feedback>) -> (Self, Why) {
         match self {
             Self::Compiling { past: kept, .. } | Self::Queued { past: kept } | Self::Warming { past: kept, .. } =>
-                (Self::Warming { entries: 0, favourable: 0, past: past(kept) }, why),
+                Self::rewarm(0, past(kept), why),
+            Self::Cold => Self::rewarm(0, past(Past::default()), why),
             other => (other, Why::Counted),
         }
     }
 
-    fn refused_by_host(self) -> (Self, Why) {
+    fn refused_by_host(self, refusal: Refusal) -> (Self, Why) {
         match self {
             Self::Compiling { .. } | Self::Queued { .. } | Self::Warming { .. } | Self::Cold =>
-                (Self::GenericInterpreted { entries: 0, reason: None }, Why::Failed),
+                (Self::GenericInterpreted { entries: 0, refusal }, Why::Failed),
+            other => (other, Why::Counted),
+        }
+    }
+
+    /// The owner priced the warm-up as over.
+    fn due(self) -> (Self, Why) {
+        match self {
+            Self::Cold => (Self::Queued { past: Past::default() }, Why::Warmed),
+            Self::Warming { past, .. } => (Self::Queued { past }, Why::Warmed),
             other => (other, Why::Counted),
         }
     }
 
     fn generalized(self) -> (Self, Why) {
         match self {
-            Self::Cold => (Self::Warming { entries: 0, favourable: 0, past: Past::spent(C::Feedback::default()) }, Why::Generalized),
+            Self::Cold => Self::rewarm(0, Past::spent(C::Feedback::default()), Why::Generalized),
             Self::Warming { entries, favourable, past } => (Self::Warming { entries, favourable, past: Past::spent(past.feedback) }, Why::Generalized),
             Self::Queued { past } => (Self::Queued { past: Past::spent(past.feedback) }, Why::Generalized),
-            Self::Speculative { past, stats, .. } => (Self::Warming { entries: 0, favourable: 0, past: Past::spent(C::learned(&stats, &past.feedback)) }, Why::Generalized),
+            Self::Speculative { past, stats, .. } => Self::rewarm(C::carried(&stats), Past::spent(C::learned(&stats, &past.feedback)), Why::Generalized),
+            Self::GenericInterpreted { entries, refusal: Refusal::Shape(_) } => Self::rewarm(entries, Past::spent(C::Feedback::default()), Why::Revived),
             other => (other, Why::Counted),
         }
     }
 
     fn invalidated(self) -> (Self, Why) {
         match self {
-            Self::Speculative { past, stats, .. } =>
-                (Self::Warming { entries: 0, favourable: 0, past: past.after(C::learned(&stats, &past.feedback)) }, Why::Invalidated),
-            Self::Generic { .. } => (Self::Warming { entries: 0, favourable: 0, past: Past::spent(C::Feedback::default()) }, Why::Invalidated),
+            Self::Speculative { past, stats, .. } => Self::rewarm(0, past.after(C::learned(&stats, &past.feedback)), Why::Invalidated),
+            Self::Generic { .. } => Self::rewarm(0, Past::spent(C::Feedback::default()), Why::Invalidated),
             compiling @ Self::Compiling { .. } => compiling.dropped(Why::Stale, Past::wasted),
             other => (other, Why::Counted),
         }

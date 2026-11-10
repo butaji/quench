@@ -1,4 +1,5 @@
 use super::*;
+use super::program_store::JsTier;
 use crate::bytecode::index;
 mod loop_stack;
 
@@ -1866,24 +1867,17 @@ impl<H: Host> Vm<H> {
                 // interpreter until the next function entry.
                 let program_id = self.frames[frame].program;
                 let function_id = self.frames[frame].function;
+                let tier = self.programs.js_tier(program_id, function_id);
                 let should_try_general = self.programs.js_jit_general_dispatch_enabled()
-                    && match self.programs.js_tier(program_id, function_id) {
-                        Some(super::program_store::JsTierState::Compiled(compiled)) => {
-                            compiled.is_general_dispatch()
-                        }
-                        Some(super::program_store::JsTierState::GeneralCompileDue) => true,
-                        _ => false,
-                    };
+                    && tier.is_some_and(|tier| tier.baseline_due() || tier.baseline().is_some());
+                let baseline_due = tier.is_some_and(JsTier::baseline_due);
                 if should_try_general
                     && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
                         p,
                         frame,
                         pc,
                         allow_inline_calls,
-                        matches!(
-                            self.programs.js_tier(program_id, function_id),
-                            Some(super::program_store::JsTierState::GeneralCompileDue)
-                        ),
+                        baseline_due,
                     )
                 {
                     match outcome {

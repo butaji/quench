@@ -149,7 +149,7 @@ fn a_body_that_leaves_too_often_is_replaced_without_what_it_left_at() {
 fn a_completed_run_pays_the_leaves_back() {
     let tier = publish(warm(T::Cold), 1);
     let (tier, _) = leave(tier, 0);
-    let tier = tier.transition(Event::Completed, &TIERS).0;
+    let tier = tier.transition(Event::COMPLETED, &TIERS).0;
     let (tier, why) = leave(tier, 0);
     assert!(matches!(tier, Tier::Speculative { .. }) && why == Why::Counted);
 }
@@ -166,28 +166,28 @@ fn after_the_speculative_bodies_the_next_is_the_one_permanent_generic_body() {
     assert!(matches!(tier, Tier::Generic { artifact: 99 }));
     let (tier, why) = leave(tier, 0);
     assert!(matches!(tier, Tier::Generic { .. }) && why == Why::Counted, "a generic body assumes nothing to leave");
-    let tier = tier.transition(Event::Completed, &TIERS).0;
+    let tier = tier.transition(Event::COMPLETED, &TIERS).0;
     assert!(matches!(tier, Tier::Generic { artifact: 99 }));
 }
 
 #[test]
 fn generalizing_skips_to_the_generic_body_from_any_state_before_it() {
-    let (tier, why) = T::Cold.transition(Event::Generalize, &TIERS);
+    let (tier, why) = T::Cold.transition(Event::GENERALIZE, &TIERS);
     assert!(matches!(&tier, Tier::Warming { past, .. } if past.is_spent()) && why == Why::Generalized);
     assert!(matches!(publish(warm(tier), 4), Tier::Generic { artifact: 4 }));
     let speculative = publish(warm(T::Cold), 1);
-    let (tier, why) = speculative.transition(Event::Generalize, &TIERS);
+    let (tier, why) = speculative.transition(Event::GENERALIZE, &TIERS);
     assert!(matches!(&tier, Tier::Warming { past, .. } if past.is_spent()) && why == Why::Generalized);
 }
 
 #[test]
 fn a_retired_body_warms_again_and_a_retired_generic_body_stays_generic() {
     let tier = leave(publish(warm(T::Cold), 1), 2).0;
-    let (tier, why) = tier.transition(Event::Invalidated, &TIERS);
+    let (tier, why) = tier.transition(Event::INVALIDATED, &TIERS);
     let Tier::Warming { past, .. } = &tier else { panic!("warms") };
     assert_eq!((why, past.bodies, past.feedback), (Why::Invalidated, 1, 1 << 2), "its leaves are its successor's feedback");
-    let generic = publish(warm(T::Cold.transition(Event::Generalize, &TIERS).0), 5);
-    let (tier, why) = generic.transition(Event::Invalidated, &TIERS);
+    let generic = publish(warm(T::Cold.transition(Event::GENERALIZE, &TIERS).0), 5);
+    let (tier, why) = generic.transition(Event::INVALIDATED, &TIERS);
     assert!(matches!(&tier, Tier::Warming { past, .. } if past.is_spent()) && why == Why::Invalidated);
     assert!(matches!(publish(warm(tier), 6), Tier::Generic { artifact: 6 }));
 }
@@ -195,27 +195,55 @@ fn a_retired_body_warms_again_and_a_retired_generic_body_stays_generic() {
 #[test]
 fn a_stale_compile_counts_as_a_body_and_a_refused_one_does_not() {
     let compiling = |queued: T| queued.transition(Event::Started(Build::new(Box::new(0), 0)), &TIERS).0;
-    let (tier, why) = compiling(warm(T::Cold)).transition(Event::Stale, &TIERS);
+    let (tier, why) = compiling(warm(T::Cold)).transition(Event::STALE, &TIERS);
     assert!(matches!(&tier, Tier::Warming { past: Past { bodies: 1, .. }, .. }) && why == Why::Stale);
-    let (tier, why) = compiling(warm(T::Cold)).transition(Event::Refused, &TIERS);
+    let (tier, why) = compiling(warm(T::Cold)).transition(Event::REFUSED, &TIERS);
     assert!(matches!(&tier, Tier::Warming { entries: 0, past: Past { bodies: 0, .. }, .. }) && why == Why::Refused);
     let mut tier = T::Cold;
     for _ in 0..usize::from(SPECULATIVE_BODIES) + 2 {
-        tier = compiling(warm(tier)).transition(Event::Stale, &TIERS).0;
+        tier = compiling(warm(tier)).transition(Event::STALE, &TIERS).0;
     }
     assert!(matches!(&tier, Tier::Warming { past, .. } if past.is_spent()), "stale compiles cannot spend more than the budget");
 }
 
 #[test]
 fn a_refused_build_runs_interpreted_and_is_revived_by_its_entries() {
-    let (mut tier, why) = warm(T::Cold).transition(Event::Failed, &TIERS);
+    let (mut tier, why) = warm(T::Cold).transition(Event::Failed(Refusal::Shape("test")), &TIERS);
     assert!(matches!(tier, Tier::GenericInterpreted { entries: 0, .. }) && why == Why::Failed);
     for _ in 1..REVIVE {
         tier = enter(tier).0;
         assert!(matches!(tier, Tier::GenericInterpreted { .. }));
     }
     let (tier, why) = enter(tier);
-    assert!(matches!(&tier, Tier::Warming { past, .. } if past.is_spent()) && why == Why::Revived);
+    assert!(matches!(&tier, Tier::Warming { entries: REVIVE, past, .. } if past.is_spent()) && why == Why::Revived);
+}
+
+#[test]
+fn a_codegen_failure_is_not_revived_by_entries_and_observed_entries_never_revive() {
+    let (mut tier, _) = warm(T::Cold).transition(Event::Failed(Refusal::Codegen), &TIERS);
+    for _ in 0..=REVIVE {
+        tier = enter(tier).0;
+    }
+    assert!(matches!(tier, Tier::GenericInterpreted { refusal: Refusal::Codegen, .. }));
+    let (mut tier, _) = T::Cold.transition(Event::Failed(Refusal::Shape("test")), &TIERS);
+    for _ in 0..=REVIVE {
+        tier = tier.transition(Event::OBSERVED, &TIERS).0;
+    }
+    assert!(matches!(tier, Tier::GenericInterpreted { entries, .. } if entries > REVIVE), "counted, not revived");
+    let (tier, why) = tier.transition(Event::GENERALIZE, &TIERS);
+    assert!(matches!(&tier, Tier::Warming { past, .. } if past.is_spent()) && why == Why::Revived, "the owner may revive it");
+}
+
+#[test]
+fn the_owner_prices_the_warmup_and_a_refused_compile_warms_again_with_a_longer_wait() {
+    let (tier, why) = T::Cold.transition(Event::DUE, &TIERS);
+    assert!(matches!(tier, Tier::Queued { .. }) && why == Why::Warmed);
+    let (tier, why) = tier.transition(Event::REFUSED, &TIERS);
+    let Tier::Warming { entries: 0, past, .. } = &tier else { panic!("warms again") };
+    assert_eq!((why, past.refused), (Why::Refused, 1));
+    let (tier, _) = tier.transition(Event::DUE, &TIERS);
+    let Tier::Queued { past } = tier else { panic!("queued") };
+    assert_eq!(past.refused, 1, "the refusal outlives the warm-up");
 }
 
 #[test]

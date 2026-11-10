@@ -918,11 +918,9 @@ complexity crates/quench-runtime/src/vm/primitive_bench/commutative_reads.rs::al
 complexity crates/quench-runtime/src/vm/primitive_bench/field_reads.rs::entry_reads_at 28
 complexity crates/quench-runtime/src/vm/primitive_bench/indexed_compositions.rs::fractional_stencil 20
 complexity crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 96
-complexity crates/quench-runtime/src/vm/program_store.rs::JitTierManager::note_js_entry 17
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::attach_wasm_signatures 31
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::drop 53
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::install_js_tier_with_cache 27
-complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::note_js_general_dispatch_entry 16
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::reclaim_unreferenced 21
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::record_js_jit_counter_entry 15
 complexity crates/quench-runtime/src/vm/program_store/snapshot.rs::ProgramEntry::write_snapshot 12
@@ -2866,7 +2864,6 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::tests::native_widening_
 function-lines crates/quench-runtime/src/vm/compiled.rs::tests::nested_lane_entry_restores_outer_fault_binding 70
 function-lines crates/quench-runtime/src/vm/compiled.rs::tests::nonleaf_inline_recovers_at_residual_call_without_replaying_effects 54
 function-lines crates/quench-runtime/src/vm/compiled.rs::tests::nullish_latch_preserves_nonobjects_effects_and_changed_links 43
-function-lines crates/quench-runtime/src/vm/compiled.rs::tests::numeric_jit_shared_entry_observes_live_termination 41
 function-lines crates/quench-runtime/src/vm/compiled.rs::tests::private_store_commits_preserve_overlapping_bytes_and_zero_trips 48
 function-lines crates/quench-runtime/src/vm/compiled.rs::tests::rotated_countdown_preserves_empty_loops_and_early_exit_values 78
 function-lines crates/quench-runtime/src/vm/compiled.rs::tests::scalar_loop_rotation_preserves_trip_counts_and_exact_header_recovery 48
@@ -2987,8 +2984,6 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_frame_constru
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_frame_state 63
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_getter_activation 54
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_in_place 41
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlined_activation 41
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_initialize_fields 47
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_inlining_region 57
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_literal_value 49
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_loop_entry 116
@@ -3352,7 +3347,6 @@ function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_compositions
 function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_compositions.rs::indexed_composition 62
 function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_forwarding.rs::indexed_number_forwarding_restores_every_fallback_boundary 44
 function-lines crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 502
-function-lines crates/quench-runtime/src/vm/program_store.rs::JitTierManager::note_js_entry 66
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::attach_wasm_signatures 136
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::drop 338
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::insert_shared 44
@@ -3361,7 +3355,6 @@ function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::inst
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::js_jit_call_site_counts 41
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::note_js_general_dispatch_backedge 54
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::note_js_general_dispatch_entry 77
-function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::note_js_specialized_guard_miss 47
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::reclaim_unreferenced 136
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::record_js_jit_call_site 68
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::record_js_jit_counter_entry 119
@@ -5021,7 +5014,6 @@ magic crates/quench-runtime/src/vm/date/legacy_parse.rs::DayComposer::write 1
 magic crates/quench-runtime/src/vm/date/legacy_parse.rs::TimeComposer::is_expecting 2
 magic crates/quench-runtime/src/vm/date/legacy_parse.rs::TimeComposer::write 2
 magic crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::try_inline_call_apply 1
-magic crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::note_lane_body_run 1
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::copy_arguments 5
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 38
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::fused_width 2

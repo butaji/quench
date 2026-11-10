@@ -552,7 +552,7 @@ fn strict_assignment_retains_unresolvable_references_through_rhs_effects() {
             if mode == crate::ExecutionMode::Compiled {
                 assert!(matches!(
                     vm.programs.js_tier(super::program_store::ProgramId::MAIN, 1),
-                    Some(super::program_store::JsTierState::Compiled(_))
+                    Some(tier) if tier.native().is_some()
                 ));
             }
         }
@@ -590,7 +590,7 @@ fn shorthand_assignment_captures_with_binding_without_reading_its_value() {
             if mode == crate::ExecutionMode::Compiled {
                 assert!(matches!(
                     vm.programs.js_tier(super::program_store::ProgramId::MAIN, 1),
-                    Some(super::program_store::JsTierState::Compiled(_))
+                    Some(tier) if tier.native().is_some()
                 ));
             }
         }
@@ -12659,7 +12659,7 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
         assert!(matches!(
             vm.programs
                 .js_tier(super::program_store::ProgramId::MAIN, function),
-            Some(super::program_store::JsTierState::Compiled(_))
+            Some(tier) if tier.native().is_some()
         ));
     }
 }
@@ -12706,7 +12706,7 @@ fn js_jit_compiles_straight_line_plain_local_temporaries() {
     assert!(matches!(
         vm.programs
             .js_tier(super::program_store::ProgramId::MAIN, scaled),
-        Some(super::program_store::JsTierState::Compiled(_))
+        Some(tier) if tier.native().is_some()
     ));
 }
 
@@ -12749,10 +12749,9 @@ fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
         vm.execute(&program).unwrap();
         // Lane units may inline `add` into `drive` instead of compiling its entry.
         if !lane_methods {
-            let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+            let Some(compiled) = vm
                 .programs
-                .js_tier(super::program_store::ProgramId::MAIN, add)
-            else {
+                .js_tier(super::program_store::ProgramId::MAIN, add).and_then(|tier| tier.native().cloned()) else {
                 panic!("the numeric callee should be compiled");
             };
             assert!(
@@ -12768,10 +12767,9 @@ fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
             .iter()
             .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "plus"))
             .unwrap() as u32;
-        let native = match vm.programs.js_tier(super::program_store::ProgramId::MAIN, plus) {
-            Some(super::program_store::JsTierState::Compiled(compiled)) => compiled.native_entries(),
-            _ => 0,
-        };
+        let native = vm.programs.js_tier(super::program_store::ProgramId::MAIN, plus)
+            .and_then(|tier| tier.native())
+            .map_or(0, |compiled| compiled.native_entries());
         assert!(native < 500, "a short loop-free callee should run in the lane, got {native} native entries");
     }
 }
@@ -12812,19 +12810,8 @@ fn js_jit_routes_rejected_lane_candidates_through_the_general_frame_handoff() {
     let tier = vm
         .programs
         .js_tier(super::program_store::ProgramId::MAIN, label);
-    let Some(super::program_store::JsTierState::Compiled(compiled)) = tier else {
-        let state = match tier {
-            None => "untracked",
-            Some(super::program_store::JsTierState::Hot { .. }) => "hot",
-            Some(super::program_store::JsTierState::PromotionPending) => "promotion-pending",
-            Some(super::program_store::JsTierState::GeneralPromotionPending { .. }) => {
-                "general-promotion-pending"
-            }
-            Some(super::program_store::JsTierState::GeneralCompileDue) => "general-compile-due",
-            Some(super::program_store::JsTierState::Rejected { .. }) => "rejected",
-            Some(super::program_store::JsTierState::Unsupported) => "unsupported",
-            Some(super::program_store::JsTierState::Compiled(_)) => "compiled-other-tier",
-        };
+    let Some(compiled) = tier.and_then(|tier| tier.native().cloned()) else {
+        let state = tier.map_or("untracked", |tier| tier.label());
         panic!("the lane callee should reach GeneralDispatch, got {state}");
     };
     assert!(compiled.is_general_dispatch());
@@ -12869,7 +12856,7 @@ fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
     assert!(matches!(
         vm.programs
             .js_tier(super::program_store::ProgramId::MAIN, mask),
-        Some(super::program_store::JsTierState::Compiled(_))
+        Some(tier) if tier.native().is_some()
     ));
 }
 
@@ -12979,10 +12966,9 @@ fn js_general_dispatch_compiles_tagged_int32_bitwise_ops_and_falls_back_exactly(
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32;
-        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        let Some(native) = compiled
             .programs
-            .js_tier(super::program_store::ProgramId::MAIN, function)
-        else {
+            .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
             panic!("{name} did not compile through GeneralDispatch");
         };
         assert!(native.is_general_dispatch(), "{name} used a specialized compiler");
@@ -13067,7 +13053,7 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
         matches!(
             vm.programs
                 .js_tier(super::program_store::ProgramId::MAIN, 1),
-            Some(super::program_store::JsTierState::Compiled(_))
+            Some(tier) if tier.native().is_some()
         ),
         "{}",
         program.disassemble()
@@ -13075,7 +13061,7 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
     assert!(matches!(
         vm.programs
             .js_tier(super::program_store::ProgramId::MAIN, 2),
-        Some(super::program_store::JsTierState::Compiled(_))
+        Some(tier) if tier.native().is_some()
     ));
 }
 
@@ -13115,14 +13101,11 @@ fn js_jit_repeated_specialized_guard_misses_release_cache_for_general_tier() {
         let due = programs.note_js_specialized_guard_miss(id, function, 5);
         assert_eq!(
             due,
-            programs.js_tier(id, function).is_some_and(|state| matches!(state, super::program_store::JsTierState::GeneralCompileDue)),
+            programs.js_tier(id, function).is_some_and(super::program_store::JsTier::baseline_due),
             "the tier should become due exactly when the miss threshold is reached"
         );
     }
-    assert!(matches!(
-        programs.js_tier(id, function),
-        Some(super::program_store::JsTierState::GeneralCompileDue)
-    ));
+    assert!(programs.js_tier(id, function).is_some_and(super::program_store::JsTier::baseline_due));
     assert_eq!(
         programs.jit_mapped_bytes(),
         0,
@@ -13174,10 +13157,9 @@ fn js_jit_specialized_guard_misses_handoff_to_general_dispatch() {
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
     assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
-    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+    let Some(compiled) = vm
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("repeated tagged guard misses should promote the function");
     };
     assert!(compiled.is_general_dispatch());
@@ -16909,10 +16891,9 @@ fn js_jit_compiles_number_truthiness_branches() {
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).expect("compiled truthiness");
     for function_id in functions {
-        let Some(super::program_store::JsTierState::Compiled(artifact)) = compiled
+        let Some(artifact) = compiled
             .programs
-            .js_tier(super::program_store::ProgramId::MAIN, function_id)
-        else {
+            .js_tier(super::program_store::ProgramId::MAIN, function_id).and_then(|tier| tier.native().cloned()) else {
             panic!("number truthiness function {function_id} was not compiled");
         };
         assert!(artifact.native_entries() > 0);
@@ -16953,10 +16934,7 @@ fn js_jit_general_tier_tracks_hot_function_after_cold_function_churn() {
     assert!(programs.note_js_general_dispatch_entry(id, hot_function, 1, crate::MemoryPolicy::Throughput));
 
     assert_eq!(programs.js_jit_tracked_function_count(), 513);
-    assert!(matches!(
-        programs.js_tier(id, hot_function),
-        Some(super::program_store::JsTierState::GeneralCompileDue)
-    ));
+    assert!(programs.js_tier(id, hot_function).is_some_and(super::program_store::JsTier::baseline_due));
     assert_eq!(programs.js_jit_tracking_exhaustion_count(), 0);
 }
 
@@ -17027,10 +17005,9 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32;
-        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        let Some(native) = compiled
             .programs
-            .js_tier(super::program_store::ProgramId::MAIN, function)
-        else {
+            .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
             panic!("{name} should use the general JavaScript dispatch compiler");
         };
         assert!(native.is_general_dispatch(), "{name} should not need a source shape");
@@ -17111,10 +17088,9 @@ fn js_jit_general_dispatch_loads_rooted_string_and_bigint_constants_natively() {
         .unwrap();
     assert_eq!(compiled.to_string(&program, actual).unwrap(), expected_text);
 
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("literal should use the shared general JavaScript compiler");
     };
     assert!(native.is_general_dispatch());
@@ -17249,10 +17225,9 @@ fn js_jit_general_dispatch_static_global_name_loads_keep_exact_fallbacks() {
     assert_eq!(compiled.to_string(&program, actual).unwrap(), expected);
 
     for (name, function, atom, expected_op) in eligible {
-        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        let Some(native) = compiled
             .programs
-            .js_tier(super::program_store::ProgramId::MAIN, function)
-        else {
+            .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
             panic!("{name} should use the general JavaScript compiler");
         };
         let pcs = name_sites(function, atom);
@@ -17265,10 +17240,9 @@ fn js_jit_general_dispatch_static_global_name_loads_keep_exact_fallbacks() {
     }
 
     for (name, function, atom, has_name_op) in fallback {
-        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        let Some(native) = compiled
             .programs
-            .js_tier(super::program_store::ProgramId::MAIN, function)
-        else {
+            .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
             panic!("{name} should use the general JavaScript compiler");
         };
         let pcs = name_sites(function, atom);
@@ -17333,10 +17307,9 @@ fn js_jit_general_dispatch_lowers_tagged_plain_local_accesses() {
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function as u32)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function as u32).and_then(|tier| tier.native().cloned()) else {
         panic!("transfer should use the shared general JavaScript compiler");
     };
     assert!(native.is_general_dispatch());
@@ -17395,10 +17368,9 @@ fn js_jit_general_dispatch_lowers_return_to_the_shared_frame_dispatcher() {
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("choose should use the shared general JavaScript compiler");
     };
     assert!(native.is_general_dispatch());
@@ -17512,10 +17484,9 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32;
-        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        let Some(native) = compiled
             .programs
-            .js_tier(super::program_store::ProgramId::MAIN, function)
-        else {
+            .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
             panic!("{name} should use the general JavaScript dispatch compiler");
         };
         assert!(native.is_general_dispatch());
@@ -17554,10 +17525,9 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
                     .then_some(pc)
             })
             .collect::<Vec<_>>();
-        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        let Some(native) = compiled
             .programs
-            .js_tier(super::program_store::ProgramId::MAIN, function)
-        else {
+            .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
             panic!("{name} should have a general JavaScript artifact");
         };
         assert!(!native_pcs.is_empty());
@@ -17596,8 +17566,8 @@ fn js_jit_general_dispatch_returns_number_relations_with_exact_fallback() {
             function.header().name.or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == name)
         }).unwrap() as u32;
-        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
-            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        let Some(native) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
             panic!("{name} should use the general JavaScript compiler");
         };
         let body = program.function(function as usize);
@@ -17641,8 +17611,8 @@ fn js_jit_general_dispatch_nullish_branches_preserve_html_dda_and_strictness() {
             function.header().name.or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == name)
         }).unwrap() as u32;
-        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
-            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        let Some(native) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
             panic!("{name} should use the general JavaScript compiler");
         };
         let body = program.function(function as usize);
@@ -17718,10 +17688,9 @@ fn js_jit_general_dispatch_speculates_number_relations_and_falls_back_exactly() 
                     .is_some_and(|atom| &program.atoms[atom as usize] == name)
             })
             .unwrap() as u32;
-        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        let Some(native) = compiled
             .programs
-            .js_tier(super::program_store::ProgramId::MAIN, function)
-        else {
+            .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
             panic!("{name} should use the general JavaScript compiler");
         };
         assert!(native.is_general_dispatch());
@@ -17812,10 +17781,9 @@ fn js_jit_general_dispatch_reads_live_dense_array_elements_and_falls_back_exactl
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
 
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("readIndex should use the general JavaScript compiler");
     };
     assert!(native.is_general_dispatch());
@@ -17925,10 +17893,9 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
 
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("readField should use the general JavaScript compiler");
     };
     assert!(native.is_general_dispatch());
@@ -18018,10 +17985,9 @@ fn js_jit_general_dispatch_stores_own_fields_through_the_field_cache_and_falls_b
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
 
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("writeField should use the general JavaScript compiler");
     };
     assert!(native.is_general_dispatch());
@@ -18098,10 +18064,9 @@ fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
 
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("readX should use the general JavaScript compiler");
     };
     assert!(native.is_general_dispatch());
@@ -18156,8 +18121,8 @@ fn js_jit_general_dispatch_fused_field_copy_preserves_effects_and_collection() {
         function.header().name.or_else(|| function.header().inferred_name)
             .is_some_and(|atom| &program.atoms[atom as usize] == "copy")
     }).unwrap() as u32;
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
-        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+    let Some(native) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("copy should use the general JavaScript compiler");
     };
     let body = program.function(function as usize);
@@ -18202,8 +18167,8 @@ fn js_jit_general_dispatch_loads_initialized_this_and_preserves_lexical_fallback
         function.header().name.or_else(|| function.header().inferred_name)
             .is_some_and(|atom| &program.atoms[atom as usize] == "receiver")
     }).unwrap() as u32;
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
-        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+    let Some(native) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("receiver should use the general JavaScript compiler");
     };
     let body = program.function(function as usize);
@@ -18257,8 +18222,8 @@ fn js_jit_general_dispatch_writes_initialized_this_with_exact_fallback() {
             function.header().name.or_else(|| function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == name)
         }).unwrap() as u32;
-        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
-            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        let Some(native) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
             panic!("{name} should use the general JavaScript compiler");
         };
         let body = program.function(function as usize);
@@ -18303,8 +18268,8 @@ fn js_jit_general_dispatch_reads_captures_across_collection_and_mutation() {
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
-        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+    let Some(native) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("read should use the general JavaScript compiler");
     };
     let body = program.function(function as usize);
@@ -18345,8 +18310,8 @@ fn js_jit_general_dispatch_reads_initialized_this_with_exact_fallback() {
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
-        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+    let Some(native) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("readThis should use the general JavaScript compiler");
     };
     let body = program.function(function as usize);
@@ -18396,10 +18361,9 @@ fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
 
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("addCaptured should use the general JavaScript compiler");
     };
     assert!(native.is_general_dispatch());
@@ -18458,18 +18422,16 @@ fn js_jit_general_dispatch_reenters_callers_at_the_resume_pc() {
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, caller)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, caller).and_then(|tier| tier.native().cloned()) else {
         panic!("caller should use the shared general JavaScript compiler");
     };
     assert!(native.is_general_dispatch());
     assert!(native.native_entries() > 0);
-    let Some(super::program_store::JsTierState::Compiled(native_callee)) = compiled
+    let Some(native_callee) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, callee)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, callee).and_then(|tier| tier.native().cloned()) else {
         panic!("ordinary calls from native code should tier their eligible callee");
     };
     assert!(native_callee.is_general_dispatch());
@@ -18597,10 +18559,9 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
     assert_eq!(actual, expected);
     assert_eq!(actual, Value::number(42.0));
     for function in [caller, callee] {
-        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        let Some(native) = compiled
             .programs
-            .js_tier(super::program_store::ProgramId::MAIN, function)
-        else {
+            .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
             panic!("call continuation function {function} should compile");
         };
         assert!(native.is_general_dispatch());
@@ -18681,17 +18642,15 @@ fn js_jit_calls_compiled_numeric_callees_with_materialized_array_arguments() {
             .unwrap(),
         expected
     );
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, add)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, add).and_then(|tier| tier.native().cloned()) else {
         panic!("the numeric array-call target should compile");
     };
     assert!(native.native_entries() >= 128);
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, drive)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, drive).and_then(|tier| tier.native().cloned()) else {
         panic!("the hot caller should compile after enough function entries");
     };
     assert!(native.is_general_dispatch());
@@ -18782,10 +18741,9 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
         !backedges.is_empty(),
         "test bytecode should contain a loop latch"
     );
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("loop function should use the general JavaScript compiler");
     };
     assert!(native.is_general_dispatch());
@@ -18864,23 +18822,8 @@ fn js_jit_general_dispatch_promotes_a_single_activation_hot_loop() {
     let tier = compiled
         .programs
         .js_tier(super::program_store::ProgramId::MAIN, function);
-    let Some(super::program_store::JsTierState::Compiled(native)) = tier else {
-        let reason = match tier {
-            Some(super::program_store::JsTierState::Hot { observations, numeric }) => {
-                format!("Hot(observations={observations}, numeric={numeric})")
-            }
-            Some(super::program_store::JsTierState::PromotionPending) => "PromotionPending".into(),
-            Some(super::program_store::JsTierState::GeneralPromotionPending { entries }) => {
-                format!("GeneralPromotionPending(entries={entries})")
-            }
-            Some(super::program_store::JsTierState::GeneralCompileDue) => "GeneralCompileDue".into(),
-            Some(super::program_store::JsTierState::Rejected { entries, reason }) => {
-                format!("Rejected(entries={entries}, reason={reason})")
-            }
-            Some(super::program_store::JsTierState::Unsupported) => "Unsupported".into(),
-            Some(super::program_store::JsTierState::Compiled(_)) => "Compiled(other-tier)".into(),
-            None => "untracked".into(),
-        };
+    let Some(native) = tier.and_then(|tier| tier.native().cloned()) else {
+        let reason = tier.map_or("untracked", |tier| tier.label());
         panic!("a hot loop should promote its function into shared GeneralDispatch; tier={reason}");
     };
     assert!(native.is_general_dispatch());
@@ -18945,10 +18888,9 @@ fn js_jit_general_dispatch_attributes_frameless_arrow_loop_work_to_its_owner() {
     compiled.programs.compile_general_baseline_when_hot();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("the frameless arrow's loop work should promote that function");
     };
     assert!(native.is_general_dispatch());
@@ -19016,10 +18958,9 @@ fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
             "shared-tier promotion must be paid by native OSR work"
         );
     }
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("paid native OSR work should hand the loop function to GeneralDispatch");
     };
     assert!(native.is_general_dispatch());
@@ -19084,21 +19025,17 @@ fn js_jit_general_dispatch_attributes_inlined_osr_work_to_the_loop_owner() {
         expected
     );
 
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+    let Some(native) = compiled
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, helper)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, helper).and_then(|tier| tier.native().cloned()) else {
         panic!("OSR work from the inlined helper should promote the helper");
     };
     assert!(native.is_general_dispatch());
     assert!(native.native_entries() > 0);
-    assert!(!matches!(
-        compiled
-            .programs
-            .js_tier(super::program_store::ProgramId::MAIN, caller),
-        Some(super::program_store::JsTierState::Compiled(native))
-            if native.is_general_dispatch()
-    ));
+    assert!(compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, caller)
+        .is_none_or(|tier| tier.baseline().is_none()));
 }
 
 #[cfg(not(quench_profiled))]
@@ -19129,12 +19066,12 @@ fn js_jit_general_baseline_waits_until_entries_pay_for_its_compile() {
         let expected = interpreter.own_property(interpreter.realm.globals, name).unwrap();
         let name = vm.intern_atom("last");
         assert_eq!(vm.own_property(vm.realm.globals, name).unwrap(), expected);
-        vm.programs.js_tier(super::program_store::ProgramId::MAIN, function)
+        vm.programs.js_tier(super::program_store::ProgramId::MAIN, function).is_some_and(|tier| tier.holds_for_general())
     };
     // This body is too small to pay for the general baseline through entries. It must not
     // enter GeneralPromotionPending, because that path has no backedges to accrue work.
     for calls in [48, 20_000] {
-        assert!(!matches!(state(calls), Some(super::program_store::JsTierState::GeneralPromotionPending { .. })));
+        assert!(!state(calls));
     }
 }
 
@@ -19165,10 +19102,9 @@ fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
     vm.programs.compile_general_baseline_when_hot();
     vm.execute(&program).unwrap();
 
-    let Some(super::program_store::JsTierState::Compiled(native)) = vm
+    let Some(native) = vm
         .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
+        .js_tier(super::program_store::ProgramId::MAIN, function).and_then(|tier| tier.native().cloned()) else {
         panic!("the rejected numeric candidate should promote to the general JavaScript tier");
     };
     assert!(native.is_general_dispatch());
@@ -19211,10 +19147,7 @@ fn js_jit_promotion_requires_a_confident_numeric_profile() {
     }
     assert!(matches!(
         programs.js_tier(id, 1),
-        Some(super::program_store::JsTierState::Hot {
-            observations: 16,
-            numeric: 15
-        })
+        Some(super::program_store::JsTier::Warming { entries: 16, favourable: 15, .. })
     ));
 }
 
@@ -19257,10 +19190,7 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
     assert!(programs.note_js_function_entry(id, 1, true, false, true));
     assert!(matches!(
         programs.js_tier(id, 1),
-        Some(super::program_store::JsTierState::Hot {
-            observations: 32,
-            numeric: 31
-        })
+        Some(super::program_store::JsTier::Warming { entries: 32, favourable: 31, .. })
     ));
 }
 
@@ -19283,7 +19213,7 @@ fn js_jit_failed_numeric_look_promotes_general_dispatch_at_32_entries() {
     assert!(!programs.note_js_function_entry(id, 1, false, false, true));
     assert!(matches!(
         programs.js_tier(id, 1),
-        Some(super::program_store::JsTierState::GeneralPromotionPending { .. })
+        Some(super::program_store::JsTier::Warming { past, .. }) if past.is_spent()
     ));
 }
 
@@ -19302,7 +19232,7 @@ fn js_jit_keeps_promotion_pending_until_a_numeric_entry() {
     assert!(!programs.note_js_function_entry(id, 1, false, false, true));
     assert!(matches!(
         programs.js_tier(id, 1),
-        Some(super::program_store::JsTierState::PromotionPending)
+        Some(super::program_store::JsTier::Queued { past }) if !past.is_spent()
     ));
     assert!(programs.note_js_function_entry(id, 1, true, false, true));
 }
@@ -25381,5 +25311,4 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
 
     assert!(result.is_none(), "interrupted native execution must not return a guest result");
     assert_eq!(compiled.native_entries(), 1, "the shared adapter must enter once");
-    assert_eq!(compiled.specialized_guard_misses(), 0, "interrupts are native exits, not entry guard misses");
 }

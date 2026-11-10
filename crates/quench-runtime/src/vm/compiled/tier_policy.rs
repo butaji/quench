@@ -1,6 +1,6 @@
 //! When code moves between tiers: every threshold the tier controllers read, in one table.
 //!
-//! The controllers (`LoopTier` and `LoopSite`, `LaneBody`, `JsTierState`, `WasmTierState`)
+//! The controllers (`LoopTier` and `LoopSite`, `LaneBody`, `JsTier`, `WasmTierState`)
 //! own their states and transitions; this module owns the numbers those transitions compare
 //! against, and what each memory policy lets compile. A tuning experiment changes a row here,
 //! never a controller.

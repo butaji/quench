@@ -7,10 +7,13 @@ use crate::heap::{PromotionAge, WeakHandle};
 use rustc_hash::FxHashMap;
 use std::io::Write as _;
 
+mod js_tier;
 mod lane_publication;
 mod snapshot;
 mod wasm_tier;
+pub(super) use js_tier::JsTier;
 pub(super) use wasm_tier::WasmTierState;
+use super::tier_state::{Event, Refusal};
 
 #[derive(Default)]
 struct JsJitCounters {
@@ -164,30 +167,6 @@ fn general_dispatch_work_required(instructions: u64, priced: bool) -> u64 {
 fn accumulate_general_dispatch_work(accumulated_work: &mut u64, work: usize) {
     *accumulated_work = accumulated_work
         .saturating_add(u64::try_from(work).unwrap_or(u64::MAX));
-}
-
-/// Promote an eligible state once accumulated work reaches the selected
-/// pricing floor. Other tier states keep their established ownership.
-fn promote_general_dispatch_if_paid(
-    state: &mut JsTierState,
-    accumulated_work: u64,
-    instructions: usize,
-    priced: bool,
-) -> bool {
-    if !matches!(
-        state,
-        JsTierState::Hot { .. }
-            | JsTierState::Rejected { .. }
-            | JsTierState::GeneralPromotionPending { .. }
-    ) || !general_dispatch_work_due(
-        accumulated_work,
-        u64::try_from(instructions.max(1)).unwrap_or(u64::MAX),
-        priced,
-    ) {
-        return false;
-    }
-    *state = JsTierState::GeneralCompileDue;
-    true
 }
 
 /// What an entry of a body of `instructions` saves under the general baseline, in units of
@@ -369,28 +348,6 @@ impl JitCodeCacheBudget {
     }
 }
 
-#[derive(Clone)]
-pub(super) enum JsTierState {
-    Hot { observations: u8, numeric: u8 },
-    /// The numeric profile passed its look, so wait for a numeric entry before
-    /// compiling the specialized artifact.
-    PromotionPending,
-    /// The function is hot but not numeric: count its `entries` until they pay for the
-    /// tagged semantics baseline (`general_promotion_due`). Its calls stay as they were.
-    GeneralPromotionPending { entries: u32 },
-    /// The entries paid for the baseline: its calls take a VM frame
-    /// (`Vm::js_tier_needs_general_entry`), whose next entry compiles it.
-    GeneralCompileDue,
-    Rejected {
-        entries: u64,
-        reason: &'static str,
-    },
-    /// Terminal: no tier compiles the function again. Its rejections are deterministic (the same
-    /// bytecode lowers to the same code), so a retry only repeats the compile.
-    Unsupported,
-    Compiled(Rc<super::compiled::CompiledJsFunction>),
-}
-
 /// What one entry of a function does past counting it: whether it promotes the function's
 /// tier state (a diagnostic event) and whether it compiles the function now. All four occur:
 /// a pending numeric promotion compiles at a later numeric entry without promoting again.
@@ -419,7 +376,7 @@ impl JsEntryStep {
 enum JitTierManager {
     #[default]
     Empty,
-    JavaScript(FxHashMap<u32, JsTierState>),
+    JavaScript(FxHashMap<u32, JsTier>),
     Wasm(WasmTiers),
 }
 
@@ -481,55 +438,23 @@ impl JitTierManager {
             return JsEntryStep::Count;
         }
         let full = compiled_functions >= JS_JIT_MAX_FUNCTIONS;
-        let Some(state) = self.js_mut(function) else {
-            if !can_track {
-                return JsEntryStep::Count;
-            }
-            let (initial, step) = if full {
-                (JsTierState::Unsupported, JsEntryStep::Count)
-            } else if first_entry_candidate {
-                (JsTierState::PromotionPending, JsEntryStep::PromoteAndCompile)
-            } else {
-                (JsTierState::Hot { observations: 1, numeric: u8::from(numeric) }, JsEntryStep::Count)
-            };
-            let inserted = self.js_insert(function, initial);
-            debug_assert!(inserted);
-            return step;
-        };
-        match state {
-            JsTierState::Hot { observations, numeric: numeric_entries } => {
-                *observations = observations.saturating_add(1);
-                *numeric_entries = numeric_entries.saturating_add(u8::from(numeric));
-                let promotion = numeric_promotion_decision(*numeric_entries, *observations);
-                let (next, step) = if full {
-                    (Some(JsTierState::Unsupported), JsEntryStep::Count)
-                } else if first_entry_candidate || (promotion == Some(true) && numeric) {
-                    (None, JsEntryStep::PromoteAndCompile)
-                } else if promotion == Some(true) {
-                    (Some(JsTierState::PromotionPending), JsEntryStep::Promote)
-                } else if promotion == Some(false) && general_candidate {
-                    (Some(JsTierState::GeneralPromotionPending { entries: u32::from(*observations) }), JsEntryStep::Promote)
-                } else {
-                    let exhausted = promotion == Some(false) && *observations == u8::MAX;
-                    (exhausted.then_some(JsTierState::Unsupported), JsEntryStep::Count)
-                };
-                if let Some(next) = next {
-                    *state = next;
-                }
-                step
-            }
-            JsTierState::PromotionPending if full => {
-                *state = JsTierState::Unsupported;
-                JsEntryStep::Count
-            }
-            JsTierState::PromotionPending if numeric => JsEntryStep::Compile,
-            JsTierState::PromotionPending
-            | JsTierState::GeneralPromotionPending { .. }
-            | JsTierState::GeneralCompileDue
-            | JsTierState::Rejected { .. }
-            | JsTierState::Unsupported
-            | JsTierState::Compiled(_) => JsEntryStep::Count,
+        if let Some(tier) = self.js_mut(function) {
+            return tier.numeric_entry(numeric, first_entry_candidate, general_candidate, full);
         }
+        if !can_track || full {
+            return JsEntryStep::Count;
+        }
+        let mut tier = JsTier::Cold;
+        let step = if first_entry_candidate {
+            tier.apply(Event::DUE, &TIERS);
+            JsEntryStep::PromoteAndCompile
+        } else {
+            tier.apply(Event::Entry { favourable: numeric }, &TIERS);
+            JsEntryStep::Count
+        };
+        let inserted = self.js_insert(function, tier);
+        debug_assert!(inserted);
+        step
     }
 
     /// Advance the Wasm call-hotness state. Both the lane handoff and the
@@ -565,21 +490,21 @@ impl JitTierManager {
         }
     }
 
-    fn js(&self, function: u32) -> Option<&JsTierState> {
+    fn js(&self, function: u32) -> Option<&JsTier> {
         match self {
             Self::JavaScript(functions) => functions.get(&function),
             Self::Empty | Self::Wasm(_) => None,
         }
     }
 
-    fn js_mut(&mut self, function: u32) -> Option<&mut JsTierState> {
+    fn js_mut(&mut self, function: u32) -> Option<&mut JsTier> {
         match self {
             Self::JavaScript(functions) => functions.get_mut(&function),
             Self::Empty | Self::Wasm(_) => None,
         }
     }
 
-    fn js_insert(&mut self, function: u32, state: JsTierState) -> bool {
+    fn js_insert(&mut self, function: u32, state: JsTier) -> bool {
         if matches!(self, Self::Empty) {
             *self = Self::JavaScript(FxHashMap::default());
         }
@@ -596,7 +521,7 @@ impl JitTierManager {
         }
     }
 
-    fn js_values(&self) -> impl Iterator<Item = &JsTierState> {
+    fn js_values(&self) -> impl Iterator<Item = &JsTier> {
         let functions = match self {
             Self::JavaScript(functions) => Some(functions),
             Self::Empty | Self::Wasm(_) => None,
@@ -1119,15 +1044,15 @@ impl ProgramStore {
             reclaimed_tiers.0 += entry
                 .jit_tiers
                 .js_values()
-                .filter(|state| !matches!(state, JsTierState::Rejected { .. }))
+                .filter(|state| !state.is_rejected())
                 .count();
             reclaimed_rejected += entry
                 .jit_tiers
                 .js_values()
-                .filter(|state| matches!(state, JsTierState::Rejected { .. }))
+                .filter(|state| state.is_rejected())
                 .count();
             for state in entry.jit_tiers.js_values() {
-                if let JsTierState::Compiled(compiled) = state {
+                if let Some(compiled) = state.native() {
                     if compiled.is_general_dispatch()
                         && self
                             .js_general_artifacts
@@ -2019,11 +1944,7 @@ impl ProgramStore {
         self.entry(id).and_then(|entry| entry.jit_tiers.wasm(function)).cloned()
     }
 
-    pub(super) fn js_tier(&self, id: ProgramId, function: u32) -> Option<JsTierState> {
-        self.entry(id)?.jit_tiers.js(function).cloned()
-    }
-
-    pub(super) fn js_tier_ref(&self, id: ProgramId, function: u32) -> Option<&JsTierState> {
+    pub(super) fn js_tier(&self, id: ProgramId, function: u32) -> Option<&JsTier> {
         self.entry(id)?.jit_tiers.js(function)
     }
 
@@ -2128,6 +2049,13 @@ impl ProgramStore {
         !self.general_baseline_priced || general_saved_per_entry(instructions).is_some()
     }
 
+    /// Whether the code cache has room for one more JavaScript function's body. A full one does
+    /// not end a function's tier: it waits for room (`Event::REFUSED` where it filled meanwhile).
+    pub(super) fn js_cache_has_room(&self) -> bool {
+        self.jit_code_cache.js_functions < JS_JIT_MAX_FUNCTIONS
+            && self.jit_code_cache.can_retain(JitArtifactKind::JsFunction, 0)
+    }
+
     /// Whether the general baseline may ever take a body of `instructions` under `policy`:
     /// the tier is switched on, the memory policy compiles JS tiers, and the body could
     /// pay. An `acyclic` body pays only through its entries (`general_baseline_may_pay`);
@@ -2167,6 +2095,7 @@ impl ProgramStore {
             return false;
         }
         let priced = self.general_baseline_priced;
+        let open = self.js_cache_has_room();
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
         let Some(entry) = self.entry_mut(id) else {
             return false;
@@ -2174,59 +2103,26 @@ impl ProgramStore {
         if entry.jit_tiers.is_wasm() {
             return false;
         }
-        let mut promoted = false;
-        let Some(state) = entry.jit_tiers.js_mut(function) else {
+        let Some(tier) = entry.jit_tiers.js_mut(function) else {
             if !can_track {
                 self.js_jit_tracking_exhaustions =
                     self.js_jit_tracking_exhaustions.saturating_add(1);
                 return false;
             }
-            let tracked = entry.jit_tiers.js_insert(
-                function,
-                JsTierState::Hot {
-                    observations: 1,
-                    numeric: 0,
-                },
-            );
+            let mut tier = JsTier::Cold;
+            tier.apply(Event::Entry { favourable: false }, &TIERS);
+            let tracked = entry.jit_tiers.js_insert(function, tier);
             debug_assert!(tracked);
             if tracked {
                 self.js_jit_tracked_functions += 1;
             }
             return false;
         };
-        match state {
-            JsTierState::Hot { observations, .. } => {
-                *observations = observations.saturating_add(1);
-                if *observations >= TIERS.js_function.general_promotion_entries {
-                    *state = JsTierState::GeneralPromotionPending { entries: u32::from(*observations) };
-                    promoted = true;
-                }
-            }
-            JsTierState::PromotionPending => return false,
-            JsTierState::GeneralPromotionPending { entries } => {
-                *entries = entries.saturating_add(1);
-                if priced && !general_promotion_due(*entries, instructions) {
-                    return false;
-                }
-                *state = JsTierState::GeneralCompileDue;
-                return true;
-            }
-            JsTierState::GeneralCompileDue => return true,
-            JsTierState::Rejected { entries, .. } => {
-                *entries = entries.saturating_add(1);
-                if *entries >= u64::from(TIERS.js_function.general_promotion_entries) {
-                    *state = JsTierState::GeneralPromotionPending {
-                        entries: u32::try_from(*entries).unwrap_or(u32::MAX),
-                    };
-                    promoted = true;
-                }
-            }
-            JsTierState::Compiled(_) | JsTierState::Unsupported => return false,
-        }
-        if promoted {
+        let found = tier.general_entry(priced, instructions, open);
+        if found.promoted {
             self.record_js_jit_promotion(id, function);
         }
-        false
+        found.due
     }
 
     /// Accumulate estimated bytecode work from a hot backward edge. The
@@ -2251,15 +2147,7 @@ impl ProgramStore {
         }
         let priced = self.general_baseline_priced;
         if !self.entry(id).is_some_and(|entry| {
-            !entry.jit_tiers.is_wasm()
-                && matches!(
-                    entry.jit_tiers.js(function),
-                    Some(
-                        JsTierState::Hot { .. }
-                            | JsTierState::Rejected { .. }
-                            | JsTierState::GeneralPromotionPending { .. }
-                    )
-                )
+            !entry.jit_tiers.is_wasm() && entry.jit_tiers.js(function).is_some_and(JsTier::awaits_general_work)
         }) {
             return false;
         }
@@ -2274,10 +2162,10 @@ impl ProgramStore {
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
-        let Some(state) = entry.jit_tiers.js_mut(function) else {
+        let Some(tier) = entry.jit_tiers.js_mut(function) else {
             return false;
         };
-        let due = promote_general_dispatch_if_paid(state, accumulated_work, instructions, priced);
+        let due = tier.paid_backedges(accumulated_work, instructions, priced);
         if due {
             self.record_js_jit_promotion(id, function);
         }
@@ -2304,32 +2192,16 @@ impl ProgramStore {
         if entry.jit_tiers.is_wasm() {
             return false;
         }
-        let Some(state) = entry.jit_tiers.js_mut(function) else {
+        let Some(tier) = entry.jit_tiers.js_mut(function) else {
             return false;
         };
-        let (misses, mapped_bytes) = match state {
-            JsTierState::Compiled(compiled) if !compiled.is_general_dispatch() => {
-                let misses = compiled.note_specialized_guard_miss(
-                    TIERS.js_function.specialized_guard_misses,
-                );
-                if misses < TIERS.js_function.specialized_guard_misses {
-                    return false;
-                }
-                (misses, compiled.mapped_bytes())
-            }
-            _ => return false,
-        };
-        let entries = u32::from(misses);
-        let compile_due = !priced || general_promotion_due(entries, instructions);
-        *state = if compile_due {
-            JsTierState::GeneralCompileDue
-        } else {
-            JsTierState::GeneralPromotionPending { entries }
+        let Some(demotion) = tier.guard_miss(priced, instructions) else {
+            return false;
         };
         self.jit_code_cache
-            .release(JitArtifactKind::JsFunction, 1, mapped_bytes);
+            .release(JitArtifactKind::JsFunction, 1, demotion.released_bytes);
         self.record_js_jit_promotion(id, function);
-        compile_due
+        demotion.compile_due
     }
 
     /// Memoize an unsupported bytecode shape separately from tier candidates.
@@ -2345,23 +2217,23 @@ impl ProgramStore {
         let can_reject = self.js_jit_rejected_functions < JS_JIT_MAX_REJECTED_FUNCTIONS;
         let entry = self.entry_mut(id)?;
         let mut inserted = false;
-        let count = if let Some(JsTierState::Rejected { entries, .. }) =
-            entry.jit_tiers.js_mut(function)
-        {
-            *entries = entries.saturating_add(1);
-            *entries
-        } else {
-            if !can_reject {
-                return None;
+        let tier = match entry.jit_tiers.js_mut(function) {
+            Some(tier) if tier.is_rejected() => tier,
+            Some(_) => return None,
+            None => {
+                if !can_reject {
+                    return None;
+                }
+                let mut tier = JsTier::Cold;
+                tier.apply(Event::Failed(Refusal::Shape(reason)), &TIERS);
+                inserted = entry.jit_tiers.js_insert(function, tier);
+                if !inserted {
+                    return None;
+                }
+                entry.jit_tiers.js_mut(function)?
             }
-            inserted = entry
-                .jit_tiers
-                .js_insert(function, JsTierState::Rejected { entries: 1, reason });
-            if !inserted {
-                return None;
-            }
-            1
         };
+        let count = tier.observed_rejection()?.0;
         if inserted {
             self.js_jit_rejected_functions += 1;
         }
@@ -2373,15 +2245,8 @@ impl ProgramStore {
         id: ProgramId,
         function: u32,
     ) -> Option<(u64, &'static str)> {
-        let JsTierState::Rejected { entries, reason } = self
-            .entry_mut(id)?
-            .jit_tiers
-            .js_mut(function)?
-        else {
-            return None;
-        };
-        *entries = entries.saturating_add(1);
-        (*entries >= JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES).then_some((*entries, *reason))
+        let (entries, reason) = self.entry_mut(id)?.jit_tiers.js_mut(function)?.observed_rejection()?;
+        (entries >= JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES).then_some((entries, reason))
     }
 
     pub(super) fn record_js_jit_entry(
@@ -2967,22 +2832,19 @@ impl ProgramStore {
                 );
             }
         }
+        let installed = compiled.is_some();
         if let Some(entry) = self.entry_mut(id) {
-            let tier = match compiled {
-                Some(compiled) => JsTierState::Compiled(compiled),
-                None if general_fallback_after_codegen_rejection && !compilation_succeeded => {
-                    JsTierState::GeneralPromotionPending { entries: 1 }
+            if entry.jit_tiers.js(function).is_none() {
+                entry.jit_tiers.js_insert(function, JsTier::Cold);
+            }
+            if let Some(tier) = entry.jit_tiers.js_mut(function) {
+                match compiled {
+                    Some(compiled) => tier.install(compiled),
+                    None => tier.not_installed(compilation_succeeded, general_fallback_after_codegen_rejection),
                 }
-                None => JsTierState::Unsupported,
-            };
-            if let Some(state) = entry.jit_tiers.js_mut(function) {
-                *state = tier;
-            } else {
-                entry.jit_tiers.js_insert(function, tier);
             }
         }
-        self.js_tier(id, function)
-            .is_some_and(|tier| matches!(tier, JsTierState::Compiled(_)))
+        installed
     }
 
     pub(super) fn cached_js_general_artifact(
@@ -3328,15 +3190,7 @@ impl Drop for ProgramStore {
                 .and_then(Option::as_ref);
             let status = entry
                 .and_then(|entry| entry.jit_tiers.js(*function))
-                .map(|tier| match tier {
-                    JsTierState::Hot { .. } => "hot",
-                    JsTierState::PromotionPending => "promotion-pending",
-                    JsTierState::GeneralPromotionPending { .. } => "general-promotion-pending",
-                    JsTierState::GeneralCompileDue => "general-compile-due",
-                    JsTierState::Rejected { .. } => "unsupported",
-                    JsTierState::Unsupported => "unsupported",
-                    JsTierState::Compiled(_) => "compiled",
-                })
+                .map(JsTier::label)
                 .unwrap_or(if counters.lane_entries != 0 {
                     "lane-only"
                 } else {
@@ -3648,11 +3502,14 @@ fn write_json_string(output: &mut impl std::io::Write, value: &str) -> std::io::
     write!(output, "\"")
 }
 
-fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
+/// Whether `numeric` of `observations` entries pass the profile's look at that count, if
+/// there is one: past the last look the function stays as it is.
+fn numeric_promotion_decision(numeric: u32, observations: u32) -> Option<bool> {
+    let observations = u8::try_from(observations).ok()?;
     let minimum = TIERS.js_function.promotion_looks
         .iter()
         .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
-    Some(numeric >= minimum)
+    Some(numeric >= u32::from(minimum))
 }
 
 /// The label the `profile-lane-exits` function census gives `function` of `entry`'s program.
@@ -3829,9 +3686,10 @@ mod jit_code_cache_tests {
     use super::{
         JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS, WASM_JIT_MAX_BASELINE_MAPPED_BYTES,
         JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,
-        JsTierState,
+        JsTier, Refusal,
         WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS,
     };
+    use crate::vm::tier_state::Event;
 
     #[test]
     fn wasm_module_compiles_whole_once_its_work_or_time_says_it_runs_long() {
@@ -3845,44 +3703,55 @@ mod jit_code_cache_tests {
         assert!(!Policy::NEVER.due(u32::MAX - 1, std::time::Duration::MAX / 2));
     }
 
+    /// A tier warming toward the baseline's compile, after `entries` entries.
+    fn warming(entries: u32) -> JsTier {
+        let mut tier = JsTier::Cold;
+        for _ in 0..entries {
+            tier.apply(Event::Entry { favourable: false }, &super::TIERS);
+        }
+        tier
+    }
+
     #[test]
     fn general_dispatch_backedge_unpriced_mode_waits_for_work_floor() {
-        let mut state = JsTierState::Hot { observations: 1, numeric: 0 };
+        let mut tier = warming(1);
         let mut work = 0;
         let required = super::general_dispatch_work_required(64, false);
         super::accumulate_general_dispatch_work(&mut work, usize::try_from(required - 1).unwrap());
-        assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 64, false));
-        assert!(matches!(state, JsTierState::Hot { .. }));
+        assert!(!tier.paid_backedges(work, 64, false));
+        assert!(matches!(tier, JsTier::Warming { .. }));
         super::accumulate_general_dispatch_work(&mut work, 1);
-        assert!(super::promote_general_dispatch_if_paid(&mut state, work, 64, false));
-        assert!(matches!(state, JsTierState::GeneralCompileDue));
+        assert!(tier.paid_backedges(work, 64, false));
+        assert!(tier.baseline_due());
     }
 
     #[test]
     fn general_dispatch_backedge_priced_mode_uses_existing_compile_cost() {
-        let mut state = JsTierState::Rejected { entries: 8, reason: "test" };
+        let mut tier = JsTier::Cold;
+        tier.apply(Event::Failed(Refusal::Shape("test")), &super::TIERS);
         let mut work = 0;
         // 100 instructions cost the fixed and per-instruction compile cost, which the
         // saved share of observed bytecode work must cover.
         let paid = usize::try_from(super::general_dispatch_work_required(100, true)).unwrap();
         super::accumulate_general_dispatch_work(&mut work, paid - 1);
-        assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 100, true));
+        assert!(!tier.paid_backedges(work, 100, true));
         super::accumulate_general_dispatch_work(&mut work, 1);
-        assert!(super::promote_general_dispatch_if_paid(&mut state, work, 100, true));
-        assert!(matches!(state, JsTierState::GeneralCompileDue));
+        assert!(tier.paid_backedges(work, 100, true));
+        assert!(tier.baseline_due());
     }
 
     #[test]
     fn general_dispatch_backedge_work_saturates_and_promotes_once() {
-        let mut state = JsTierState::GeneralPromotionPending { entries: 1 };
+        let mut tier = warming(1);
+        tier.apply(Event::GENERALIZE, &super::TIERS);
         let mut work = u64::MAX - 3;
         super::accumulate_general_dispatch_work(&mut work, 10);
         assert_eq!(work, u64::MAX);
-        assert!(super::promote_general_dispatch_if_paid(&mut state, work, 1, false));
+        assert!(tier.paid_backedges(work, 1, false));
         super::accumulate_general_dispatch_work(&mut work, usize::MAX);
         assert_eq!(work, u64::MAX);
-        assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 1, false));
-        assert!(matches!(state, JsTierState::GeneralCompileDue));
+        assert!(!tier.paid_backedges(work, 1, false));
+        assert!(tier.baseline_due());
     }
 
     #[test]
@@ -3949,16 +3818,16 @@ mod jit_code_cache_tests {
     #[test]
     fn jit_tier_manager_rejects_cross_frontend_state_for_one_program() {
         let mut tiers = super::JitTierManager::default();
-        assert!(tiers.js_insert(3, super::JsTierState::Unsupported));
+        assert!(tiers.js_insert(3, JsTier::Cold));
         assert!(tiers.wasm_mut_or_default(3).is_none());
         assert!(tiers.wasm_mut_or_default(4).is_none());
-        assert!(matches!(tiers.js(3), Some(super::JsTierState::Unsupported)));
+        assert!(matches!(tiers.js(3), Some(JsTier::Cold)));
         assert_eq!(tiers.js_values().count(), 1);
         assert_eq!(tiers.wasm_values().count(), 0);
 
         let mut wasm_tiers = super::JitTierManager::default();
         assert!(wasm_tiers.wasm_mut_or_default(4).is_some());
-        assert!(!wasm_tiers.js_insert(3, super::JsTierState::Unsupported));
+        assert!(!wasm_tiers.js_insert(3, JsTier::Cold));
         assert_eq!(wasm_tiers.wasm_values().count(), 1);
         assert_eq!(
             wasm_tiers.note_js_entry(3, true, true, false, 0, true),
@@ -3973,7 +3842,7 @@ mod jit_code_cache_tests {
         assert_eq!(first, super::JsEntryStep::PromoteAndCompile);
         assert!(matches!(
             js_tiers.js(1),
-            Some(super::JsTierState::PromotionPending)
+            Some(JsTier::Queued { past }) if !past.is_spent()
         ));
 
         let mut wasm_tiers = super::JitTierManager::default();

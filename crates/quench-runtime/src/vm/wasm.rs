@@ -1735,7 +1735,7 @@ mod tests {
         assert!(matches!(
             vm.programs
                 .js_tier(super::super::program_store::ProgramId::MAIN, 1),
-            Some(super::super::program_store::JsTierState::Compiled(_))
+            Some(tier) if tier.native().is_some()
         ));
         let js_mapped_bytes = vm.programs.jit_mapped_bytes();
         assert!(js_mapped_bytes > 0);
