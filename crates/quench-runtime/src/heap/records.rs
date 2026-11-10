@@ -9,7 +9,7 @@ mod vacancy_tests;
 mod memory_profile;
 mod prefetch;
 mod reservation;
-mod sweep_support;
+pub(super) mod sweep_support;
 use reservation::Reservation;
 use crate::vm::wtf16::JsString;
 use crate::value::Value;
