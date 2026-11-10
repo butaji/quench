@@ -1,130 +1,245 @@
-//! A loop site's compilations (`LoopSite::tier`): its current code, the compile under way on
-//! the code generator's thread, the element views it assumes, and the values earlier code
-//! found were no `i32`.
+//! A loop site's region tier (`LoopSite::tier`): the `Tier` that counts its backward jumps,
+//! compiles its region over the element views its entry found, and judges the runs of that code.
 
 use super::*;
-use super::super::compiled::{ElementViews, LoopEntry, LoopRegion};
+use super::super::compiled::{CompiledOsrRegion, ElementViews, LoopEntry, LoopRegion, OsrCompile, PendingOsrRegion};
+use super::super::tier_state::{Build, Controller, Event, Past, Polled, Refusal, Tier, Verdict};
+use super::super::compiled::tier_policy::Tiers;
+use crate::code_dependencies::PublishedCode;
 
-/// A loop site's compilations: the current code, if any, the compile under way, the element
-/// views both assume (those the latest entry found), and the values earlier code found were
-/// no `i32`, which the next compilation holds as `f64`s.
+/// The region tier's controller. A speculative body holds the operations it computes as `i32`s
+/// and the element views of the entry it compiled for; the generic body holds every operation
+/// as a double.
+pub(super) struct RegionController;
+
+/// The operations whose `i32` speculation the bodies so far dropped, sorted: the next body
+/// holds their results as `f64`s.
+#[derive(Clone, Default)]
+pub(super) struct Widened(Vec<usize>);
+
+/// How a region body's runs went: the entries not yet paid back, and each operation the code
+/// left at with its leaves so far.
 #[derive(Default)]
-pub(super) struct LoopTier {
-    views: ElementViews,
-    pub(super) code: Option<Rc<crate::code_dependencies::PublishedCode<super::super::compiled::CompiledOsrRegion>>>,
-    /// The compile under way, and the entries left before the next look for its code
-    /// (`TIERS.lane_body.compile_poll_interval`, as a lane body's).
-    pending: Option<Box<super::super::compiled::PendingOsrRegion>>,
-    wait: u16,
-    pub(super) compilations: u32,
-    /// Each operation the code left at, with its leaves so far; and those whose int32
-    /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
+pub(super) struct RegionRuns {
+    debt: u32,
     leaves: Vec<(u32, u16)>,
-    widened: Vec<usize>,
 }
 
-impl LoopTier {
+/// A region compiling on the code generator's thread, for the element views its entry found.
+pub(super) struct RegionBuild {
+    region: Box<PendingOsrRegion>,
+    views: ElementViews,
+}
+
+/// A published region and the element views it assumes. A dropped body is retired, so the
+/// facts it subscribed to stop naming it.
+pub(super) struct RegionCode {
+    publication: Rc<PublishedCode<CompiledOsrRegion>>,
+    views: ElementViews,
+}
+
+impl Drop for RegionCode {
+    fn drop(&mut self) {
+        self.publication.retire();
+    }
+}
+
+/// What a run of a region body did.
+#[derive(Clone, Copy)]
+pub(super) enum RegionLeave {
+    /// The native code ran and took `backedges` backward jumps before it left.
+    Ran { backedges: u64 },
+    /// The run left at `pc`, a Number operator whose `i32` speculation a body can drop.
+    Widen { pc: u32 },
+}
+
+/// Why the site's native runs are not paid for by their iterations.
+const UNPAID_ENTRIES: &str = "native-runs-do-not-pay";
+/// Why the site has no region to compile.
+pub(super) const NO_REGION: &str = "no-region";
+
+impl Controller for RegionController {
+    type Pending = RegionBuild;
+    type Artifact = RegionCode;
+    type Feedback = Widened;
+    type Stats = RegionRuns;
+    type Leave = RegionLeave;
+
+    /// The backward jumps the interpreter takes before the first body compiles; later bodies
+    /// compile at the site's next entry.
+    fn warmup(policy: &Tiers, past: &Past<Widened>) -> u32 {
+        if past.bodies == 0 { policy.loops.threshold } else { 0 }
+    }
+
+    /// The warm-up is over once more jumps than it asks for have been taken.
+    #[inline(always)]
+    fn ready(policy: &Tiers, entries: u32, _: u32, past: &Past<Widened>) -> bool {
+        entries > Self::warmup(policy, past)
+    }
+
+    /// A run pays for its entry with the iterations it completed, wherever it leaves: a run
+    /// that took none counts toward `max_exits`. An operation left `widen_after_leaves` times
+    /// joins the widened ones and the body goes.
+    fn judge(policy: &Tiers, stats: &mut RegionRuns, past: &Past<Widened>, at: RegionLeave) -> Verdict<Widened> {
+        match at {
+            RegionLeave::Ran { backedges } => {
+                stats.debt = match u32::try_from(backedges) {
+                    Ok(0) => stats.debt.saturating_add(1),
+                    Ok(paid) => stats.debt.saturating_sub(paid),
+                    Err(_) => 0,
+                };
+                if stats.debt < policy.loops.max_exits { Verdict::Keep } else { Verdict::Interpret(Refusal::Shape(UNPAID_ENTRIES)) }
+            }
+            RegionLeave::Widen { pc } => stats.left_at(policy, pc, &past.feedback),
+        }
+    }
+}
+
+impl RegionRuns {
+    /// Counts a run that left at `pc`: the feedback of the body that drops that operation's
+    /// `i32` speculation once it has left there often enough.
+    fn left_at(&mut self, policy: &Tiers, pc: u32, widened: &Widened) -> Verdict<Widened> {
+        if widened.0.binary_search(&(pc as usize)).is_ok() { return Verdict::Keep; }
+        let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
+        self.leaves[at].1 += 1;
+        if self.leaves[at].1 < policy.loops.widen_after_leaves { return Verdict::Keep; }
+        self.leaves.swap_remove(at);
+        let mut next = widened.0.clone();
+        next.push(pc as usize);
+        next.sort_unstable();
+        Verdict::Respecialize(Widened(next))
+    }
+}
+
+/// A loop site's region tier.
+pub(super) type RegionTier = Tier<RegionController>;
+
+impl RegionTier {
     pub(super) fn is_published(&self) -> bool {
-        self.code.as_ref().is_some_and(|code| code.is_published())
+        self.artifact().is_some_and(|code| code.publication.is_published())
+    }
+
+    /// The published code's publication, which the tests watch retire.
+    #[cfg(all(test, feature = "aot"))]
+    pub(super) fn publication(&self) -> Option<Rc<PublishedCode<CompiledOsrRegion>>> {
+        self.artifact().map(|code| code.publication.clone())
+    }
+
+    /// Whether the site's backward jumps have all been taken in the interpreter that its
+    /// warm-up asks for.
+    pub(super) fn reached(&self) -> bool {
+        match self {
+            Self::Cold => false,
+            Self::Warming { entries, .. } => *entries >= TIERS.loops.threshold,
+            _ => true,
+        }
+    }
+
+    /// Whether the site has native code or may still compile it. A site whose compiles ran
+    /// out or whose entries do not pay, or under a policy that compiles no loop regions, takes
+    /// its backward jump in the interpreter without reading an entry: reading one at every
+    /// iteration had cost V8-v7 Crypto `--jit` a third of its instructions under memory-first.
+    pub(super) fn may_run(&self, policy: crate::MemoryPolicy) -> bool {
+        self.is_published() || (!self.is_interpreted() && super::super::compiled::loop_tier_compiles(policy))
     }
 
     /// Makes the compile under way stale where its code names shape ids, which a shape
-    /// compaction renumbers.
+    /// compaction renumbers, and retires the published code that names them.
     pub(super) fn retire_named_shapes(&self) {
-        if let Some(pending) = &self.pending { pending.retire_named_shapes(); }
+        if let Self::Compiling { build, .. } = self {
+            build.pending().region.retire_named_shapes();
+        }
+        if let Some(code) = self.artifact()
+            && code.publication.lease().is_some_and(|region| !region.facts.shape_dependencies.is_empty()) {
+            code.publication.retire();
+        }
     }
 
-    /// Counts a run of the code that left at `pc`. An operation left `widen_after_leaves`
-    /// times joins the widened ones and the code goes, where a compilation remains: the next
-    /// entry compiles the loop holding that operation's result as a double.
-    pub(super) fn left_at(&mut self, pc: u32) {
-        if self.widened.binary_search(&(pc as usize)).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
-        let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
-        self.leaves[at].1 += 1;
-        if self.leaves[at].1 < TIERS.loops.widen_after_leaves { return; }
-        self.leaves.swap_remove(at);
-        self.widened.push(pc as usize);
-        self.widened.sort_unstable();
-        if let Some(code) = self.code.take() { code.retire(); }
-    }
-
-    /// Whether code over the element `views` an entry found may run: code over the other
-    /// views goes where a compilation remains, which the entry then makes over these.
-    pub(super) fn select(&mut self, views: ElementViews) -> bool {
-        if self.views == views { return true; }
-        if self.compilations >= TIERS.loops.max_compilations { return false; }
-        self.views = views;
-        if let Some(code) = self.code.take() { code.retire(); }
+    /// Whether code over the element `views` an entry found may run: a body over other views
+    /// or one a fact retired goes, and the entry compiles the next over these; the generic
+    /// body keeps its views, and an entry over others is declined.
+    fn admits(&mut self, views: ElementViews) -> bool {
+        let Some(code) = self.artifact() else { return true };
+        let live = code.publication.is_published();
+        if live && code.views == views { return true; }
+        if live && matches!(self, Self::Generic { .. }) { return false; }
+        self.apply(Event::INVALIDATED, &TIERS);
         true
-    }
-
-    /// Whether the site has native code or may still compile it. A site whose compilations
-    /// ran out, or under a policy that compiles no loop regions, takes its backward jump in
-    /// the interpreter without reading an entry: reading one at every iteration had cost
-    /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
-    pub(super) fn may_run(&self, policy: crate::MemoryPolicy) -> bool {
-        self.is_published()
-            || (self.compilations < TIERS.loops.max_compilations && super::super::compiled::loop_tier_compiles(policy))
     }
 
     /// Whether this entry passes to the interpreter's jump while the code compiles: entries
     /// between looks count down, and a look publishes code that is ready.
     pub(super) fn awaits_code(&mut self, heap: &mut crate::heap::Heap, site: &LoopSite) -> bool {
-        let Some(pending) = self.pending.take() else { return false };
-        if self.wait > 0 {
-            self.wait -= 1;
-            self.pending = Some(pending);
-            return true;
-        }
-        use super::super::compiled::OsrCompile;
-        match pending.poll() {
-            Err(pending) => {
-                self.wait = TIERS.lane_body.compile_poll_interval;
-                self.pending = Some(pending);
-                return true;
-            }
-            Ok(OsrCompile::Done(region)) => self.publish(heap, region),
-            Ok(OsrCompile::Stale) => {}
-            Ok(OsrCompile::Failed) => self.compilations = TIERS.loops.max_compilations,
-        }
+        if !self.is_compiling() { return false; }
+        self.poll_build(TIERS.lane_body.compile_poll_interval, |build| look(heap, *build));
+        if self.is_compiling() { return true; }
         if site.diagnostics && self.is_published() {
             site.compile_successes.set(site.compile_successes.get().saturating_add(1));
         }
         false
     }
 
-    /// Holds the compile `started`, while the facts its code names hold, and looks for its
-    /// code at once.
-    fn start(&mut self, started: Option<super::super::compiled::PendingOsrRegion>, heap: &mut crate::heap::Heap, site: &LoopSite) {
-        self.pending = started.filter(|pending| pending.watch(heap)).map(Box::new);
-        self.wait = 0;
-        if self.pending.is_none() {
-            self.compilations = TIERS.loops.max_compilations;
+    /// The operations the next body holds as `f64`s: those the bodies so far widened, and,
+    /// where the speculative bodies are spent, every operation of the loop.
+    fn widened(&self, region: &LoopRegion) -> Vec<usize> {
+        match self.past() {
+            Some(past) if past.is_spent() => (region.header as usize..=region.backedge as usize).collect(),
+            Some(past) => past.feedback.0.clone(),
+            None => Vec::new(),
         }
-        self.awaits_code(heap, site);
-    }
-
-    /// Publishes `region` while the facts its code names hold.
-    fn publish(&mut self, heap: &mut crate::heap::Heap, region: super::super::compiled::CompiledOsrRegion) {
-        let publication = Rc::new(crate::code_dependencies::PublishedCode::new(region));
-        let code = publication.lease().expect("new publication");
-        let dependent: Rc<dyn crate::code_dependencies::DependentCode> = publication.clone();
-        if !code.facts.subscribe(&dependent, heap) {
-            publication.retire();
-        }
-        self.code = Some(publication);
     }
 }
 
-/// Starts compiling `site`'s region over the tier's element views from the running activation,
+/// A look at the compile `build`: its code, published while the facts it names hold.
+fn look(heap: &mut crate::heap::Heap, build: RegionBuild) -> Polled<RegionBuild, RegionCode> {
+    let RegionBuild { region, views } = build;
+    match region.poll() {
+        Err(region) => Polled::Pending(Box::new(RegionBuild { region, views })),
+        Ok(OsrCompile::Done(compiled)) => publish(heap, compiled, views).map_or(Polled::Stale, Polled::Ready),
+        Ok(OsrCompile::Stale) => Polled::Stale,
+        Ok(OsrCompile::Failed) => Polled::Failed,
+    }
+}
+
+/// Publishes `region` while the facts its code names hold.
+fn publish(heap: &mut crate::heap::Heap, region: CompiledOsrRegion, views: ElementViews) -> Option<RegionCode> {
+    let publication = Rc::new(PublishedCode::new(region));
+    let code = publication.lease().expect("new publication");
+    let dependent: Rc<dyn crate::code_dependencies::DependentCode> = publication.clone();
+    let held = code.facts.subscribe(&dependent, heap);
+    let code = RegionCode { publication, views };
+    // A dropped code retires its publication.
+    held.then_some(code)
+}
+
+/// `site`'s region code for the element `views` its entry found, compiled now if the tier has
+/// none and may; or what the lane does instead.
+pub(super) fn lane_loop_code<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, region: &LoopRegion, views: ElementViews)
+    -> Result<Rc<CompiledOsrRegion>, LoopContinuation> {
+    site.region(|tier| {
+        if !tier.admits(views) {
+            return Err(LoopContinuation::Jump);
+        }
+        if tier.artifact().is_none() {
+            // SAFETY: the lane's VM is live, and nothing borrows it across the read.
+            if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
+                return Err(LoopContinuation::Jump);
+            }
+            lane_loop_compile(cx, site, region, views, tier);
+        }
+        tier.artifact().and_then(|code| code.publication.lease()).ok_or(LoopContinuation::Compiling)
+    })
+}
+
+/// Starts compiling `site`'s region over the element `views` from the running activation,
 /// and looks for its code at once: a code generator without its own thread has it ready.
-pub(super) fn lane_loop_compile<H: Host>(
+fn lane_loop_compile<H: Host>(
     cx: *mut LaneContext<H>,
     site: &LoopSite,
-    region: &super::super::compiled::LoopRegion,
-    tier: &mut LoopTier,
+    region: &LoopRegion,
+    views: ElementViews,
+    tier: &mut RegionTier,
 ) {
-    tier.compilations += 1;
     if site.diagnostics {
         site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
     }
@@ -137,11 +252,17 @@ pub(super) fn lane_loop_compile<H: Host>(
     let native_field_loads = native_field_loads(machine, region);
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads };
     let policy = machine.heap.memory_policy();
-    let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
+    let widened = tier.widened(region);
+    let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, views,
         &observation, policy, program, function, helpers,
-        &mut |unit| machine.lane_global_reads(program, function, unit), &tier.widened));
+        &mut |unit| machine.lane_global_reads(program, function, unit), &widened));
     machine.host.after_native_compilation();
-    tier.start(started, &mut machine.heap, site);
+    // The code names facts that may have changed while it was planned.
+    match started.filter(|pending| pending.watch(&mut machine.heap)) {
+        Some(pending) => tier.apply(Event::Started(Build::new(Box::new(RegionBuild { region: Box::new(pending), views }), 0)), &TIERS),
+        None => tier.apply(Event::Failed(Refusal::Codegen), &TIERS),
+    };
+    tier.awaits_code(&mut machine.heap, site);
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.

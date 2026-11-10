@@ -424,7 +424,7 @@ impl JitTierManager {
         if !can_track || full {
             return JsEntryStep::Count;
         }
-        let mut tier = JsTier::Cold;
+        let mut tier = JsTier::default();
         let step = if first_entry_candidate {
             tier.apply(Event::DUE, &TIERS);
             JsEntryStep::PromoteAndCompile
@@ -2064,7 +2064,7 @@ impl ProgramStore {
                     self.js_jit_tracking_exhaustions.saturating_add(1);
                 return false;
             }
-            let mut tier = JsTier::Cold;
+            let mut tier = JsTier::default();
             tier.apply(Event::Entry { favourable: false }, &TIERS);
             let tracked = entry.jit_tiers.js_insert(function, tier);
             debug_assert!(tracked);
@@ -2179,7 +2179,7 @@ impl ProgramStore {
                 if !can_reject {
                     return None;
                 }
-                let mut tier = JsTier::Cold;
+                let mut tier = JsTier::default();
                 tier.apply(Event::Failed(Refusal::Shape(reason)), &TIERS);
                 inserted = entry.jit_tiers.js_insert(function, tier);
                 if !inserted {
@@ -2790,7 +2790,7 @@ impl ProgramStore {
         let installed = compiled.is_some();
         if let Some(entry) = self.entry_mut(id) {
             if entry.jit_tiers.js(function).is_none() {
-                entry.jit_tiers.js_insert(function, JsTier::Cold);
+                entry.jit_tiers.js_insert(function, JsTier::default());
             }
             if let Some(tier) = entry.jit_tiers.js_mut(function) {
                 match compiled {

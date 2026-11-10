@@ -11,6 +11,12 @@ pub(super) enum LaneLeaves {
     Scattered,
 }
 
+impl Default for LaneLeaves {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
 impl LaneLeaves {
     pub(super) const NONE: Self = Self::Few([None; LANE_LEAVE_SITES]);
 
@@ -37,5 +43,17 @@ impl LaneLeaves {
     /// The exits these name, listed.
     pub(super) fn listed(&self) -> Vec<super::super::compiled::LaneExit> {
         self.exits().collect()
+    }
+}
+
+/// The places the next lane body leaves generic, planned from `past`: where its predecessors'
+/// runs left and, where the speculative bodies are spent, every record of the function of
+/// `length` records, so the one permanent body speculates on nothing.
+pub(super) fn generic_exits(past: Option<&super::super::tier_state::Past<LaneLeaves>>, length: usize) -> Vec<super::super::compiled::LaneExit> {
+    use super::super::compiled::LaneExit;
+    match past {
+        Some(past) if past.is_spent() => (0..length).map(LaneExit::At).chain([LaneExit::Entry]).collect(),
+        Some(past) => past.feedback.listed(),
+        None => Vec::new(),
     }
 }

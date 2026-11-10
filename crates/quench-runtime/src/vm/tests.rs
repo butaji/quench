@@ -13416,7 +13416,7 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
         let compiled_output = Rc::new(RefCell::new(Vec::new()));
         let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
         compiled.set_memory_policy(policy);
-        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled); compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), ["1201100"], "{policy:?}");
@@ -13433,7 +13433,7 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
         let analyzes = super::compiled::js_function_tiers_compile(policy);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-reading store loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "store loop native code under {policy:?}");
+        assert_eq!(usize::from(osr.compile_successes > 0), usize::from(compiles), "store loop native code under {policy:?}");
     }
 }
 
@@ -15275,7 +15275,7 @@ print(t + " " + w.array[5] + " " + w.array[77]);
             .expect("hot caller loop lane view")
             .osr_diagnostics();
         let compiles = super::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "inlining loop native code under {policy:?}");
+        assert_eq!(usize::from(osr.compile_successes > 0), usize::from(compiles), "inlining loop native code under {policy:?}");
         assert_eq!(osr.native_region_runs > 0, compiles, "inlining loop native runs under {policy:?}");
     }
 }
@@ -15341,7 +15341,7 @@ print(total + " " + w.arr.slice(35, 50).join(","));
             .expect("hot caller loop lane view")
             .osr_diagnostics();
         let compiles = super::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "inlining loop native code under {policy:?}");
+        assert_eq!(usize::from(osr.compile_successes > 0), usize::from(compiles), "inlining loop native code under {policy:?}");
         assert_eq!(osr.native_region_runs > 0, compiles, "inlining loop native runs under {policy:?}");
         if compiles {
             assert!(osr.exits > 0, "no exit left an inlined callee under {policy:?}");
@@ -16574,7 +16574,7 @@ fn shared_osr_tagged_number_equality_keeps_boolean_negation_and_number_semantics
     assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
     let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
     let diagnostics = super::program_store::derived_lane_view(&views[function_id]).unwrap().osr_diagnostics();
-    assert_eq!(diagnostics.currently_compiled_sites, 1, "{diagnostics:?}");
+    assert_eq!(diagnostics.compile_successes, 1, "{diagnostics:?}");
     assert!(diagnostics.native_region_runs > 0, "{diagnostics:?}");
     assert_eq!(diagnostics.exits, 0, "strict comparisons must not coerce or exit: {diagnostics:?}");
 }

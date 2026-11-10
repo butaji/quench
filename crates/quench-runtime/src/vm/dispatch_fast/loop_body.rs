@@ -3,88 +3,103 @@
 //! backward jump enters it on the activation's registers.
 use super::*;
 use super::super::compiled::{LaneBodyOutcome, LaneBodyWork, LaneExit, PendingLaneMethod, PublishedLaneMethod};
+use super::super::compiled::tier_policy::Tiers;
+use super::super::tier_state::{Build, Controller, Event, Past, Polled, Refusal, Tier, Verdict};
 
-/// What a loop site has of its body.
-pub(super) enum LoopBody {
-    /// Not yet compiled: where its earlier bodies' leaves went (`stuck`) is the next one's
-    /// feedback, over `attempts` bodies.
-    Idle { stuck: LaneLeaves, attempts: u8 },
-    /// Its code compiling on the code generator's thread; `wait` counts the backedges left
-    /// before the next look.
-    Compiling { pending: Box<PendingLaneMethod>, wait: u16, stuck: LaneLeaves, attempts: u8 },
-    /// `exits` counts its runs that left inside the loop, and `leaves` says where they went.
-    Ready { method: std::rc::Rc<PublishedLaneMethod>, exits: u16, leaves: LaneLeaves, stuck: LaneLeaves, attempts: u8 },
-    Declined,
+/// The loop body's controller. Its speculative bodies plan the places their predecessors'
+/// runs left as generic; the generic body leaves at every record.
+pub(super) struct BodyController;
+
+/// How a body's runs went: those that left inside the loop, and where.
+#[derive(Default)]
+pub(super) struct BodyRuns {
+    exits: u16,
+    leaves: LaneLeaves,
 }
 
-/// The bodies a loop site plans, each from its predecessors' leaves.
-const ATTEMPTS: u8 = 4;
-/// The runs of a loop's body that leave inside the loop before the next body plans around them.
-const REOPTIMIZE: u16 = 16;
-/// The backedges between looks for a loop body's compiling code.
-const POLL: u16 = 16;
+impl Controller for BodyController {
+    type Pending = PendingLaneMethod;
+    type Artifact = std::rc::Rc<PublishedLaneMethod>;
+    type Feedback = LaneLeaves;
+    type Stats = BodyRuns;
+    type Leave = LaneExit;
 
-impl LoopBody {
-    pub(super) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
+    /// A loop whose backward jumps are hot plans its body at once.
+    fn warmup(_: &Tiers, _: &Past<LaneLeaves>) -> u32 {
+        0
+    }
 
     /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
     /// next body's feedback (a failed entry contract drops the contract), until the bodies
-    /// run out.
-    #[cold]
-    fn note_leave(&mut self, exit: LaneExit) {
-        let Self::Ready { exits, leaves, stuck, attempts, .. } = self else { return };
-        *leaves = leaves.with(exit);
-        *exits += 1;
-        if *exits < REOPTIMIZE { return; }
-        let next = stuck.union(*leaves);
-        *self = if *attempts + 1 >= ATTEMPTS || next == LaneLeaves::Scattered { Self::Declined }
-            else { Self::Idle { stuck: next, attempts: *attempts + 1 } };
-    }
-
-    /// The body to run, if it is ready.
-    fn ready(&mut self) -> Option<std::rc::Rc<super::super::compiled::LaneMethod>> {
-        match self {
-            Self::Ready { method, stuck, attempts, .. } => {
-                let ready = method.lease();
-                if ready.is_none() { *self = Self::Idle { stuck: *stuck, attempts: *attempts }; }
-                ready
-            }
-            Self::Compiling { wait, .. } if *wait > 0 => { *wait -= 1; None }
-            _ => None,
+    /// run out; where they are scattered, the next body is the generic one.
+    fn judge(policy: &Tiers, stats: &mut BodyRuns, past: &Past<LaneLeaves>, exit: LaneExit) -> Verdict<LaneLeaves> {
+        stats.leaves = stats.leaves.with(exit);
+        stats.exits = stats.exits.saturating_add(1);
+        if stats.exits < policy.loops.body_reoptimize_leaves { return Verdict::Keep; }
+        match past.feedback.union(stats.leaves) {
+            LaneLeaves::Scattered => Verdict::Generalize,
+            next => Verdict::Respecialize(next),
         }
     }
 
-    /// The state after the work for the body (`outcome`), which `stuck` and `attempts` planned.
-    fn after(outcome: LaneBodyOutcome, stuck: LaneLeaves, attempts: u8) -> Self {
-        match outcome {
-            LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: POLL, stuck, attempts },
-            LaneBodyOutcome::Published(method) => Self::Ready { method, exits: 0, leaves: LaneLeaves::NONE, stuck, attempts },
-            LaneBodyOutcome::Stale => Self::Idle { stuck, attempts },
-            LaneBodyOutcome::Declined => Self::Declined,
-        }
+    fn learned(stats: &BodyRuns, feedback: &LaneLeaves) -> LaneLeaves {
+        feedback.union(stats.leaves)
     }
 }
 
-/// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling` and due).
-fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, site: &LoopSite) {
+/// What a loop site has of its body.
+pub(super) type BodyTier = Tier<BodyController>;
+
+impl BodyTier {
+    /// The body to run, if it is ready; a body whose publication a lifecycle edge retired is
+    /// dropped.
+    fn ready(&mut self) -> Option<std::rc::Rc<super::super::compiled::LaneMethod>> {
+        let ready = self.artifact()?.lease();
+        if ready.is_none() { self.apply(Event::INVALIDATED, &TIERS); }
+        ready
+    }
+}
+
+/// What the work for a body (`outcome`) did to it, as an event.
+fn event_of(outcome: LaneBodyOutcome) -> Event<BodyController> {
+    match outcome {
+        LaneBodyOutcome::Compiling(pending) => Event::Started(Build::new(pending, TIERS.loops.body_poll_interval)),
+        LaneBodyOutcome::Published(method) => Event::Compiled(method),
+        LaneBodyOutcome::Stale => Event::STALE,
+        LaneBodyOutcome::Declined => Event::Failed(Refusal::Codegen),
+    }
+}
+
+/// Does `work` for the body of `site`'s loop.
+fn loop_body_work<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, site: &LoopSite, work: LaneBodyWork<'_>) -> LaneBodyOutcome {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let mut body = site.body.borrow_mut();
-    let (pending, stuck, attempts) = match std::mem::replace(&mut *body, LoopBody::Declined) {
-        LoopBody::Compiling { pending, stuck, attempts, .. } => (Some(pending), stuck, attempts),
-        LoopBody::Idle { stuck, attempts } => (None, stuck, attempts),
-        settled => { *body = settled; return; }
-    };
     let function = site.function;
     let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-    let work = match pending {
-        Some(pending) => LaneBodyWork::Poll(pending),
-        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0 },
-    };
-    let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc),
-        &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header));
-    *body = LoopBody::after(outcome, stuck, attempts);
+    vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc),
+        &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header))
+}
+
+/// Plans or polls the body of `site`'s loop, where it is due or compiling.
+fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, site: &LoopSite) {
+    site.body(|tier| match tier {
+        Tier::Compiling { .. } => {
+            tier.poll_build(TIERS.loops.body_poll_interval, |pending| match loop_body_work(cx, own, site, LaneBodyWork::Poll(pending)) {
+                LaneBodyOutcome::Compiling(pending) => Polled::Pending(pending),
+                LaneBodyOutcome::Published(method) => Polled::Ready(method),
+                LaneBodyOutcome::Stale => Polled::Stale,
+                LaneBodyOutcome::Declined => Polled::Failed,
+            });
+        }
+        Tier::Speculative { .. } | Tier::Generic { .. } | Tier::GenericInterpreted { .. } => {}
+        _ => {
+            // SAFETY: the context's program outlives the lane run.
+            let length = unsafe { &*(*cx).code }.function_get(site.function as usize).map_or(0, |body| body.code.len());
+            let generic = generic_exits(tier.past(), length);
+            tier.apply(event_of(loop_body_work(cx, own, site, LaneBodyWork::Start { generic: &generic, shrinks: 0 })), &TIERS);
+        }
+    });
 }
 
 /// Runs the lane body planned to start at `site`'s header, on the activation's registers
@@ -95,9 +110,8 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
     let vm = unsafe { vm(cx) };
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)?;
-    let ready = site.body.borrow_mut().ready();
-    let Some(method) = ready else {
-        if !matches!(*site.body.borrow(), LoopBody::Declined | LoopBody::Compiling { wait: 1.., .. }) { plan_loop_body(cx, own, site); }
+    let Some(method) = site.body(|tier| tier.ready()) else {
+        plan_loop_body(cx, own, site);
         return None;
     };
     if !lane_body_admits(cx, &method) { return None; }
@@ -115,7 +129,7 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
         LaneExit::Returned { .. } | LaneExit::Terminated => false,
         _ => true,
     };
-    if inside { site.body.borrow_mut().note_leave(exit); }
+    if inside { site.body(|tier| tier.leave(exit, &TIERS)); }
     drop(method);
     Some(match resumed {
         LaneBodyLeft::Terminated => LoopAttempt::Leave(super::exit(ip)),

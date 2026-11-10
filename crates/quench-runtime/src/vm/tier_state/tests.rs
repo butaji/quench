@@ -166,18 +166,18 @@ fn after_the_speculative_bodies_the_next_is_the_one_permanent_generic_body() {
         tier = exhaust(tier);
     }
     tier = publish(warm(tier), 99);
-    assert!(matches!(tier, Tier::Generic { artifact: 99 }));
+    assert!(matches!(tier, Tier::Generic { artifact: 99, .. }));
     let (tier, why) = leave(tier, 0);
     assert!(matches!(tier, Tier::Generic { .. }) && why == Why::Counted, "a generic body assumes nothing to leave");
     let tier = tier.transition(Event::COMPLETED, &TIERS).0;
-    assert!(matches!(tier, Tier::Generic { artifact: 99 }));
+    assert!(matches!(tier, Tier::Generic { artifact: 99, .. }));
 }
 
 #[test]
 fn generalizing_skips_to_the_generic_body_from_any_state_before_it() {
     let (tier, why) = T::Cold.transition(Event::GENERALIZE, &TIERS);
     assert!(matches!(&tier, Tier::Warming { past, .. } if past.is_spent()) && why == Why::Generalized);
-    assert!(matches!(publish(warm(tier), 4), Tier::Generic { artifact: 4 }));
+    assert!(matches!(publish(warm(tier), 4), Tier::Generic { artifact: 4, .. }));
     let speculative = publish(warm(T::Cold), 1);
     let (tier, why) = speculative.transition(Event::GENERALIZE, &TIERS);
     assert!(matches!(&tier, Tier::Warming { past, .. } if past.is_spent()) && why == Why::Generalized);
@@ -192,7 +192,7 @@ fn a_retired_body_warms_again_and_a_retired_generic_body_stays_generic() {
     let generic = publish(warm(T::Cold.transition(Event::GENERALIZE, &TIERS).0), 5);
     let (tier, why) = generic.transition(Event::INVALIDATED, &TIERS);
     assert!(matches!(&tier, Tier::Warming { past, .. } if past.is_spent()) && why == Why::Invalidated);
-    assert!(matches!(publish(warm(tier), 6), Tier::Generic { artifact: 6 }));
+    assert!(matches!(publish(warm(tier), 6), Tier::Generic { artifact: 6, .. }));
 }
 
 #[test]
@@ -258,4 +258,57 @@ fn apply_moves_the_state_through_a_transition_in_place() {
     assert!(matches!(tier, Tier::Queued { .. }));
     assert_eq!(tier.apply(Event::Compiled(3), &TIERS), Why::Published);
     assert_eq!(tier.artifact(), Some(&3));
+}
+
+/// Entries in a row the owner may decline before it runs interpreted.
+const MISS_LIMIT: u32 = 3;
+
+#[test]
+fn declined_entries_in_a_row_end_in_the_interpreter_and_a_served_one_forgives_them() {
+    let mut tier = warm(T::Cold);
+    for _ in 0..MISS_LIMIT - 1 {
+        assert_eq!(tier.miss(MISS_LIMIT), Why::Counted);
+    }
+    tier.served();
+    for _ in 0..MISS_LIMIT - 1 {
+        assert_eq!(tier.miss(MISS_LIMIT), Why::Counted, "a served entry starts the count again");
+    }
+    assert_eq!(tier.miss(MISS_LIMIT), Why::Unprofitable);
+    assert!(tier.is_interpreted());
+    let mut generic = publish(warm(T::Cold), 1);
+    generic = (0..SPECULATIVE_BODIES).fold(generic, |tier, _| publish(exhaust(tier), 2));
+    assert!(matches!(generic, Tier::Generic { .. }));
+    assert_eq!((0..MISS_LIMIT).map(|_| generic.miss(MISS_LIMIT)).last(), Some(Why::Unprofitable), "the generic body is declined too");
+}
+
+#[test]
+fn leaving_in_place_counts_without_moving_the_state_until_a_verdict_moves_it() {
+    let mut tier = publish(warm(T::Cold), 7);
+    assert_eq!(tier.leave(0, &TIERS), Why::Counted);
+    assert!(matches!(tier, Tier::Speculative { artifact: 7, .. }));
+    assert_eq!(tier.leave(0, &TIERS), Why::LeftTooOften);
+    assert!(matches!(tier, Tier::Warming { .. }), "the verdict drops the body");
+    let mut cold = T::Cold;
+    assert_eq!(cold.leave(0, &TIERS), Why::Counted, "a tier with no body has nothing to judge");
+}
+
+#[test]
+fn a_compile_is_looked_at_once_its_wait_is_over() {
+    let build = Build::new(Box::new(11), 1);
+    let mut tier = T::Compiling { build, past: Past::default() };
+    let ready = |pending: Box<u32>| Polled::Ready(*pending);
+    assert_eq!(tier.poll_build(4, ready), Why::Counted);
+    assert!(tier.is_compiling(), "the first entry only counts the wait down");
+    assert_eq!(tier.poll_build(4, |pending| Polled::Pending(pending)), Why::Counted);
+    assert!(tier.is_compiling());
+    let mut looks = 0;
+    let why = loop {
+        let why = tier.poll_build(4, ready);
+        looks += 1;
+        if !tier.is_compiling() {
+            break why;
+        }
+    };
+    assert_eq!((why, looks), (Why::Published, 5), "four entries wait, the fifth looks");
+    assert!(matches!(tier, Tier::Speculative { artifact: 11, .. }));
 }

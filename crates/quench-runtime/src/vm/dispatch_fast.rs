@@ -22,6 +22,7 @@
 //! safepoint jump leaves the lane.
 
 use super::compiled::tier_policy::TIERS;
+use super::tier_state::{Event, Refusal};
 use super::dispatch_frame::PendingGeneralCall;
 use smallvec::SmallVec;
 use crate::heap::InlineObjectHeader;
@@ -249,12 +250,6 @@ pub(super) struct LoopSite {
     /// no call record, whose `call_link` names a call target, and the header of no other
     /// site. The record's `call_link` then names the site.
     hookable: bool,
-    /// Backward jumps taken before the region compiles, up to `TIERS.loops.threshold`.
-    taken: std::cell::Cell<u32>,
-    /// The entries native runs have not paid back (`LoopSite::note_run`).
-    exits: std::cell::Cell<u32>,
-    /// Entries declined since the last that ran native code.
-    declines: std::cell::Cell<u32>,
     /// Whether this VM requested OSR diagnostics when its lane view was derived.
     diagnostics: bool,
     lane_backedge_count: std::cell::Cell<u64>,
@@ -265,9 +260,12 @@ pub(super) struct LoopSite {
     widenings: std::cell::Cell<u64>,
     compile_attempts: std::cell::Cell<u64>,
     compile_successes: std::cell::Cell<u64>,
-    tier: std::cell::RefCell<LoopTier>,
+    /// The region's tier: it counts the backward jumps taken before the region compiles, owns
+    /// the region's code, and judges its runs (`loop_tier`). Only `LoopSite::region` reaches it.
+    tier: std::cell::UnsafeCell<RegionTier>,
     /// The function's lane body planned to start at this loop's header (`lane_loop_body`).
-    body: std::cell::RefCell<LoopBody>,
+    /// Only `LoopSite::body` reaches it.
+    body: std::cell::UnsafeCell<BodyTier>,
 }
 
 impl LoopSite {
@@ -281,13 +279,35 @@ impl LoopSite {
     /// entries are not declining, and it has code or may compile it. A site without it
     /// retires at its next backward jump (`lane_loop_retire`).
     fn may_run_natively(&self, policy: crate::MemoryPolicy) -> bool {
-        self.enters() && self.tier.borrow().may_run(policy)
+        self.region(|tier| tier.may_run(policy))
     }
 
     /// Whether the site still enters native code: its runs have not exhausted the exits and
     /// declines `TIERS.loops` allows.
     fn enters(&self) -> bool {
-        self.exits.get() < TIERS.loops.max_exits && self.declines.get() < TIERS.loops.max_declines
+        self.region(|tier| !tier.is_interpreted())
+    }
+
+    /// Counts an entry of the site that native code did not run (`declined`) or ran: declined
+    /// entries in a row end in the interpreter, and a run forgives them.
+    #[inline(always)]
+    fn entered(&self, declined: bool) {
+        self.region(|tier| if declined { tier.miss(TIERS.loops.max_declines); } else { tier.served(); });
+    }
+
+    /// Runs `with` on the region's tier. The site is one thread's, and `with` reaches no other
+    /// borrow of the tier: none of the calls it makes names the site's tier again.
+    #[inline(always)]
+    fn region<R>(&self, with: impl FnOnce(&mut RegionTier) -> R) -> R {
+        // SAFETY: as above; the borrow ends with the call.
+        with(unsafe { &mut *self.tier.get() })
+    }
+
+    /// Runs `with` on the loop body's tier, under the same rule as `region`.
+    #[inline(always)]
+    fn body<R>(&self, with: impl FnOnce(&mut BodyTier) -> R) -> R {
+        // SAFETY: as `region`.
+        with(unsafe { &mut *self.body.get() })
     }
 
     fn is_admitted(&self) -> bool {
@@ -490,7 +510,7 @@ impl LaneView {
                 call_boundary_pcs,
                 admitted: site.is_admitted(),
                 deferred_call,
-                tier_threshold_reached: site.taken.get() >= TIERS.loops.threshold,
+                tier_threshold_reached: site.region(|tier| tier.reached()),
                 lane_backedge_count: site.lane_backedge_count.get(),
                 analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
                 compile_attempts: site.compile_attempts.get(),
@@ -512,7 +532,7 @@ impl LaneView {
             currently_compiled_sites: self
                 .loops
                 .iter()
-                .filter(|site| site.tier.borrow().is_published())
+                .filter(|site| site.region(|tier| tier.is_published()))
                 .count(),
             native_entry_attempts: self
                 .loops
@@ -602,7 +622,6 @@ use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lan
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
-mod loop_runs;
 mod root_calls; #[cfg(test)] pub(super) use root_calls::call_from_script_root_in_frames;
 mod unary_values;
 use unary_values::lane_unary_value;
@@ -636,10 +655,10 @@ mod lane_leaves;
 mod lane_body_tier;
 #[path = "loop_tier.rs"]
 mod loop_tier;
-use loop_tier::{lane_loop_compile, LoopTier};
+use loop_tier::{lane_loop_code, RegionLeave, RegionTier};
 use lane_body_tier::LaneBodyHistory;
 pub(super) use lane_body_stats::{miss_report as lane_miss_report, unlowered_report as lane_unlowered_report};
-use lane_leaves::LaneLeaves;
+use lane_leaves::{generic_exits, LaneLeaves};
 pub(super) use lane_body_stats::LaneBodyStats;
 
 /// Conservative lane-stack admission room for `count` registers: whole blocks, at
@@ -935,12 +954,7 @@ impl LaneView {
         self.clear_hints(&self.field_records);
         self.clear_name_hints();
         for site in &self.loops {
-            let tier = site.tier.borrow();
-            tier.retire_named_shapes();
-            if let Some(publication) = &tier.code
-                && publication.lease().is_some_and(|code| !code.facts.shape_dependencies.is_empty()) {
-                publication.retire();
-            }
+            site.region(|tier| tier.retire_named_shapes());
         }
     }
 
@@ -2698,7 +2712,7 @@ lane_handler! {
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
 mod loop_body;
-use loop_body::{lane_loop_body, LoopBody};
+use loop_body::{lane_loop_body, BodyTier};
 use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_require_object_coercible, staged_to_numeric};
 
 lane_handler! {
@@ -7889,8 +7903,7 @@ script_handler! {
                 return exit(header);
             }
         }
-        if site.taken.get() < TIERS.loops.threshold {
-            site.taken.set(site.taken.get() + 1);
+        if site.region(|tier| tier.count(false, &TIERS)) {
             next!(cx, r, header, Carried::script(cx))
         }
         // A loop its region takes whole (no call it leaves at) stays the region's, which hoists
@@ -7929,7 +7942,7 @@ script_handler! {
             }) {
                 Some(region) => site.region.get_or_init(|| region),
                 None => {
-                    site.exits.set(TIERS.loops.max_exits);
+                    site.region(|tier| tier.apply(Event::Failed(Refusal::Shape(loop_tier::NO_REGION)), &TIERS));
                     lane_loop_retire::<H>(cx, ip, site);
                     next!(cx, r, header, Carried::script(cx))
                 }
@@ -7984,36 +7997,32 @@ enum LoopAttempt {
 /// the site holds its header record, so a loop entered from outside runs natively from its
 /// first iteration.
 #[inline(always)]
-fn lane_loop_native<H: Host>(
-    cx: *mut LaneContext<H>,
-    r: Registers,
-    record: Ip,
-    header: Ip,
-    site: &LoopSite,
-    region: &super::compiled::LoopRegion,
-) -> LoopAttempt {
+fn lane_loop_native<H: Host>(cx: *mut LaneContext<H>, r: Registers, record: Ip, header: Ip, site: &LoopSite,
+    region: &super::compiled::LoopRegion) -> LoopAttempt {
     // SAFETY: the region carries its validated header and latch PCs, and every instruction
     // record remains contiguous in this lane view.
     let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
     // The record is filled where it lives, so its words are neither cleared nor copied.
-    if site.tier.borrow_mut().awaits_code(&mut unsafe { vm(cx) }.heap, site) {
+    if site.region(|tier| tier.awaits_code(&mut unsafe { vm(cx) }.heap, site)) {
         return LoopAttempt::Declined;
     }
     let mut entry = super::compiled::LoopEntry::new();
     let Some(views) = lane_loop_entry(cx, r, region, &mut entry) else {
-        site.declines.set(site.declines.get() + 1);
+        site.entered(true);
         return LoopAttempt::Declined;
     };
     // The tier's state is borrowed only here, so the dispatch below holds no borrow.
     let continuation = lane_loop_run(cx, r, site, region, &mut entry, views);
-    site.declines.set(if matches!(continuation, LoopContinuation::Jump) { site.declines.get() + 1 } else { 0 });
+    site.entered(matches!(continuation, LoopContinuation::Jump));
     lane_loop_hold_header::<H>(header, site);
     match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => LoopAttempt::Declined,
         LoopContinuation::Resume(pc) => LoopAttempt::At(at(pc)),
         LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc); LoopAttempt::Leave(exit(at(pc))) }
-        LoopContinuation::Inlined { frame, pc } => { let frame = region.inlining.as_ref().expect("an inlining region").frames[frame];
-            LoopAttempt::Leave(exit(lane_inlined_activation(cx, r, region, &entry, frame, at(frame.call), pc))) }
+        LoopContinuation::Inlined { frame, pc } => {
+            let frame = region.inlining.as_ref().expect("an inlining region").frames[frame];
+            LoopAttempt::Leave(exit(lane_inlined_activation(cx, r, region, &entry, frame, at(frame.call), pc)))
+        }
         LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
         // SAFETY: the call set the callee's activation and its resume record before the body
         // left (`lane_body_activate`), so the run leaves at a record of that view.
@@ -8023,7 +8032,7 @@ fn lane_loop_native<H: Host>(
     }
 }
 
-/// Counts a leave at `pc` (`LoopTier::left_at`) where it is a Number operator, whose int32
+/// Counts a leave at `pc` (`RegionController::judge`) where it is a Number operator, whose int32
 /// speculation a compilation can drop; a leave at any other guard (a shape, an element)
 /// widens nothing.
 #[cold]
@@ -8035,13 +8044,13 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
         body.code.get(pc as usize).is_some_and(|packed|
             decoded_instruction(body, *packed).op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary)
     });
-    if arithmetic { site.tier.borrow_mut().left_at(pc); }
+    if arithmetic { site.region(|tier| tier.leave(RegionLeave::Widen { pc }, &TIERS)); }
 }
 
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
 /// record runs `lane_loop_header`, and the site keeps the record's own handler.
 fn lane_loop_hold_header<H: Host>(header: Ip, site: &LoopSite) {
-    if !site.hookable || !site.header_handler.get().is_null() || !site.tier.borrow().is_published() {
+    if !site.hookable || !site.header_handler.get().is_null() || !site.region(|tier| tier.is_published()) {
         return;
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view.
@@ -8193,23 +8202,10 @@ fn lane_loop_run<H: Host>(
     views: super::compiled::ElementViews,
 ) -> LoopContinuation {
     use super::compiled::LoopOutcome;
-    let mut tier = site.tier.borrow_mut();
-    if !tier.select(views) {
-        return LoopContinuation::Jump;
-    }
-    if !tier.is_published() {
-        // SAFETY: the lane's VM is live, and nothing borrows it across the read.
-        if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
-            return LoopContinuation::Jump;
-        }
-        lane_loop_compile(cx, site, region, &mut tier);
-        if !tier.is_published() {
-            return LoopContinuation::Compiling;
-        }
-    }
-    let publication = Rc::clone(tier.code.as_ref().expect("compiled above"));
-    let code = publication.lease().expect("compiled above");
-    drop(tier);
+    let code = match lane_loop_code(cx, site, region, views) {
+        Ok(code) => code,
+        Err(continuation) => return continuation,
+    };
     // The native field probe may access the VM only through its synchronous, cache-only
     // callback. Pass raw pointers so no Rust borrow of the VM overlaps that callback.
     let (machine, program, interrupt) = unsafe {
@@ -8289,6 +8285,10 @@ fn lane_loop_run<H: Host>(
             LoopOutcome::Terminated => {}
         }
     }
+    // A run pays for its entry with the iterations it completed, wherever it leaves.
+    if !matches!(outcome, LoopOutcome::NotEntered | LoopOutcome::Terminated) {
+        site.region(|tier| tier.leave(RegionLeave::Ran { backedges: entry.backedge_count() }, &TIERS));
+    }
     let general_dispatch_due = {
         let runtime = unsafe { vm(cx) };
         if runtime.programs.js_jit_general_dispatch_enabled() {
@@ -8319,14 +8319,8 @@ fn lane_loop_run<H: Host>(
     if general_dispatch_due {
         match outcome {
             LoopOutcome::Resume(pc) => return LoopContinuation::Exit(pc),
-            LoopOutcome::Exit(pc) => {
-                site.exits.set(site.exits.get().saturating_add(1));
-                return LoopContinuation::Exit(pc);
-            }
-            LoopOutcome::Inlined { frame, pc } => {
-                site.exits.set(site.exits.get().saturating_add(1));
-                return LoopContinuation::Inlined { frame, pc };
-            }
+            LoopOutcome::Exit(pc) => return LoopContinuation::Exit(pc),
+            LoopOutcome::Inlined { frame, pc } => return LoopContinuation::Inlined { frame, pc },
             LoopOutcome::Callee => return LoopContinuation::Callee,
             LoopOutcome::NotEntered | LoopOutcome::Terminated | LoopOutcome::Returned { .. } => {}
         }
@@ -8335,17 +8329,12 @@ fn lane_loop_run<H: Host>(
         // An entry guard missed: registers are untouched, so the backward jump runs in
         // the interpreter.
         LoopOutcome::NotEntered => LoopContinuation::Jump,
-        // A run pays for its entry with the iterations it completed, wherever it leaves.
-        LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
-        LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
-        LoopOutcome::Inlined { frame, pc } => { site.note_run(entry.backedge_count()); LoopContinuation::Inlined { frame, pc } }
-        // The call made the callee's activation, whose own records the lane runs next; the
-        // run left as any exit does, so it too pays with the iterations it completed.
-        LoopOutcome::Callee => { site.note_run(entry.backedge_count()); LoopContinuation::Callee }
-        LoopOutcome::Returned { pc, value } => {
-            site.note_run(entry.backedge_count());
-            LoopContinuation::Completed(pc, value)
-        }
+        LoopOutcome::Resume(pc) => LoopContinuation::Resume(pc),
+        LoopOutcome::Exit(pc) => LoopContinuation::Exit(pc),
+        LoopOutcome::Inlined { frame, pc } => LoopContinuation::Inlined { frame, pc },
+        // The call made the callee's activation, whose own records the lane runs next.
+        LoopOutcome::Callee => LoopContinuation::Callee,
+        LoopOutcome::Returned { pc, value } => LoopContinuation::Completed(pc, value),
         LoopOutcome::Terminated => LoopContinuation::Safepoint,
     }
 }
@@ -14966,10 +14955,9 @@ fn osr_shape_retirement_unlinks_actual_code_and_keeps_recovery_alive() {
     for view in vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
         .iter().filter_map(super::program_store::derived_lane_view) {
         for site in &view.loops {
-            let tier = site.tier.borrow();
-            if let Some(publication) = &tier.code
+            if let Some(publication) = site.region(|tier| tier.publication())
                 && publication.lease().is_some_and(|code| code.facts.shape_dependencies.contains(&shape)) {
-                publications.push(publication.clone());
+                publications.push(publication);
             }
         }
     }
@@ -19697,9 +19685,6 @@ fn install_loop_sites<'live, H: Host>(
                     jump: records[pc].jump(),
                     header_handler: std::cell::Cell::new(std::ptr::null()),
                     hookable: holds_no_call_link(decoded[header as usize].op()),
-                    taken: std::cell::Cell::new(0),
-                    exits: std::cell::Cell::new(0),
-                    declines: std::cell::Cell::new(0),
                     diagnostics,
                     lane_backedge_count: std::cell::Cell::new(0),
                     native_entry_attempts: std::cell::Cell::new(0),
@@ -19709,7 +19694,7 @@ fn install_loop_sites<'live, H: Host>(
                     widenings: std::cell::Cell::new(0),
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
-                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::IDLE),
+                    tier: std::cell::UnsafeCell::default(), body: std::cell::UnsafeCell::default(),
                 },
             )
         })

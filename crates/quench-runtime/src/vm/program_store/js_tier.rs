@@ -224,7 +224,7 @@ impl JsTier {
     /// The function's baseline body, which a VM frame's general loop runs.
     pub(in crate::vm) fn baseline(&self) -> Option<&Rc<CompiledJsFunction>> {
         match self {
-            Self::Generic { artifact } => Some(artifact),
+            Self::Generic { artifact, .. } => Some(artifact),
             _ => None,
         }
     }

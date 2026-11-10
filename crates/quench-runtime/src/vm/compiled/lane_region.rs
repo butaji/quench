@@ -621,7 +621,7 @@ pub(super) enum Completion {
 /// typed arrays' (`Vm::lane_typed_array_elements`). A region assumes one, proved on each
 /// loop's entering edge, so no access chooses between them; a static image publishes a
 /// typed variant beside the dense one, which its dispatcher tries next at the header, and a
-/// loop site compiles the one its entry found (`LoopTier::views`).
+/// loop site compiles the one its entry found (`RegionCode::views`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(in crate::vm) enum ElementViews {
     #[default]

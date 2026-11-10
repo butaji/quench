@@ -1,6 +1,6 @@
 //! When code moves between tiers: every threshold the tier controllers read, in one table.
 //!
-//! The controllers (`LoopTier` and `LoopSite`, `LaneBody`, `JsTier`, `WasmTierState`)
+//! The controllers (`RegionTier` and `BodyTier` of a loop site, `LaneBody`, `JsTier`, `WasmTier`)
 //! own their states and transitions; this module owns the numbers those transitions compare
 //! against, and what each memory policy lets compile. A tuning experiment changes a row here,
 //! never a controller.
@@ -28,12 +28,14 @@ pub(in crate::vm) struct Loops {
     /// its iterations.
     pub(in crate::vm) max_declines: u32,
     /// Runs that leave at one operation before the site compiles again with that operation's
-    /// int32 speculation dropped (`LoopTier::left_at`): a sum that overflows on most runs
+    /// int32 speculation dropped (`RegionController::judge`): a sum that overflows on most runs
     /// (SHA-256's rounds) is a double's, and one that overflowed once is not.
     pub(in crate::vm) widen_after_leaves: u16,
-    /// Compilations a site may make: each after the first widens a value the last one held as
-    /// an `i32`, and a region has few such values.
-    pub(in crate::vm) max_compilations: u32,
+    /// The runs of a loop's lane body that leave inside the loop before the next body plans
+    /// around where they left.
+    pub(in crate::vm) body_reoptimize_leaves: u16,
+    /// The backedges between looks for a loop body's compiling code.
+    pub(in crate::vm) body_poll_interval: u16,
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
@@ -148,7 +150,7 @@ const FLOOR: Tiers = Tiers {
 };
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8 },
+    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, body_reoptimize_leaves: 16, body_poll_interval: 16 },
     lane_body: LaneBody {
         warmup_entries: 400,
         reoptimize_share: 1,

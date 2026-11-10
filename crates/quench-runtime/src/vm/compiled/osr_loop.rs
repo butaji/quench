@@ -1360,7 +1360,7 @@ pub(crate) struct LoopEntry {
 /// unsigned comparison bounds every `i32` index.
 pub(super) const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
 /// The first record word counts executions of the region's own backward edge: the iterations
-/// a run completed natively, which weigh what its entry paid for (`LoopSite::note_run`).
+/// a run completed natively, which weigh what its entry paid for (`RegionController::judge`).
 const ENTRY_BACKEDGE_COUNT: usize = 0;
 pub(super) const ENTRY_CAPTURES: usize = 1;
 
