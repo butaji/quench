@@ -63,6 +63,7 @@ mod atoms;
 mod control_flow;
 pub(crate) mod initialization;
 mod initializer_stores;
+mod super_initializer;
 pub(crate) use initializer_stores::{InitializerConstant, InitializerStore, InitializerValue};
 mod environment_clone;
 pub use environment_clone::{EnvironmentClone, EnvironmentClones};
@@ -2636,18 +2637,8 @@ impl Function {
             None => Some(active.result_register()),
             Some((source, window)) => (source == active.result_register()).then_some(window),
         };
-        // The parent: the active function's [[GetPrototypeOf]], called with no receiver.
         let parent_of = |active: &WideInstruction, base: &WideInstruction, receiver: &WideInstruction, call: &WideInstruction| {
-            active.op() == Op::LoadCapture
-                && base.op() == Op::LoadName
-                && usize::try_from(base.atom_index()).ok().and_then(|atom| atoms.get(atom)) == Some(SUPER_BASE_BINDING)
-                && receiver.op() == Op::LoadConst
-                && matches!(constants.get(receiver.constant_index()), Some(Constant::Undefined))
-                && call.op() == Op::Call
-                && call.b() == base.result_register()
-                && call.c() == receiver.result_register()
-                && ImmediateLayout::argument_count(call.imm()) == 1
-                && Some(ImmediateLayout::call_window_base(call.imm())) == window_of(active)
+            super_initializer::calls_super_base(atoms, constants, [active, base, receiver, call], window_of(active))
         };
         if self.rest {
             // The implicit constructor spreads its rest list, then returns the receiver; the

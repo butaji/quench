@@ -293,21 +293,17 @@ fn from_array_buffer(c: &mut Context<'_>, buffer: RootId, offset: RootId, length
     if maximum < 0.0 {
         return Err(out_of_bounds(c, Some("offset"))?);
     }
+    // An omitted length stays omitted: the view then tracks a resizable buffer's length.
     let length = if is_undefined(c, length) {
-        maximum
+        length
     } else {
         let length = c.to_number(length)?;
-        if length > 0.0 {
-            if length > maximum {
-                return Err(out_of_bounds(c, Some("length"))?);
-            }
-            length
-        } else {
-            0.0
+        if length > maximum {
+            return Err(out_of_bounds(c, Some("length"))?);
         }
+        c.number(length.max(0.0))
     };
     let offset = c.number(offset);
-    let length = c.number(length);
     construct_view(c, &[buffer, offset, length])
 }
 

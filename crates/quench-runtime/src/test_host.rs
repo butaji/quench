@@ -186,3 +186,12 @@ pub(crate) fn on_worker_stack<R: Send>(run: impl FnOnce() -> R + Send) -> R {
         worker.spawn_scoped(scope, run).unwrap().join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     })
 }
+
+/// The lines `source` prints, run to completion under a host that writes them.
+pub(crate) fn printed(source: &str, file: &str) -> Vec<String> {
+    let lines = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = crate::vm::Vm::new(TestHost::writing_to(lines.clone()));
+    let program = crate::Engine::specialize(source, file).unwrap();
+    vm.execute(&program).unwrap();
+    lines.take()
+}

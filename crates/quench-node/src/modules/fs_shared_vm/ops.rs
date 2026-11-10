@@ -120,7 +120,7 @@ impl Op {
         let args = &padded[..];
         match self {
             Self::Access => access(c, args),
-            Self::Exists => exists(c, args),
+            Self::Exists => super::stats::exists(c, args, flavor),
             Self::Chmod => chmod(c, args),
             Self::Lchmod => Err(failure::plain(c, "ERR_METHOD_NOT_IMPLEMENTED", "The lchmod() method is not implemented", false)),
             Self::Fchmod => fchmod(c, args),
@@ -229,15 +229,6 @@ fn access(c: &mut Context<'_>, args: &[RootId]) -> Call {
     let mode = valid_mode(c, args[1], MAX_ACCESS_MODE, libc::F_OK)?;
     let result = c_path(&path.io).and_then(|target| status(unsafe { libc::access(target.as_ptr(), mode) }));
     Ok(completed(c, result, Syscall::at("access", &path.shown)))
-}
-
-/// `existsSync(path)`: whether `access(path, F_OK)` succeeds; an invalid path is `false`.
-fn exists(c: &mut Context<'_>, args: &[RootId]) -> Call {
-    let exists = match crate::modules::stream_shared_vm::attempt(args::path(c, args[0], "path"))? {
-        Ok(path) => c_path(&path.io).is_ok_and(|target| unsafe { libc::access(target.as_ptr(), libc::F_OK) } == 0),
-        Err(_) => false,
-    };
-    Ok(Ok(Reply::Exists(exists)))
 }
 
 fn chmod(c: &mut Context<'_>, args: &[RootId]) -> Call {

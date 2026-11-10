@@ -117,7 +117,7 @@ impl<H: Host> Vm<H> {
     /// it configurable: then the target constrains no trap result for it, which a descriptor
     /// would show at more cost. `false` where the shape does not answer (an index key, an
     /// arguments object, an exotic or dictionary object, a symbol key).
-    fn shape_leaves_key_unconstrained(&mut self, target: Value, key: Value) -> bool {
+    pub(in crate::vm) fn shape_leaves_key_unconstrained(&mut self, target: Value, key: Value) -> bool {
         let Some(atom) = self.string_key_atom(key) else {
             return false;
         };

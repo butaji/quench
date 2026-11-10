@@ -5,6 +5,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 mod literal;
 mod steady;
+mod literal_matches;
 
 /// Recently matched strings whose prepared subjects are kept (`Vm::regexp_subject`): a
 /// scanner's input plus the few strings it tests between matches.
@@ -1318,8 +1319,7 @@ impl<H: Host> Vm<H> {
         let mut cursor = 0usize;
         while cursor < units.len() {
             if units.at(cursor) != u16::from(b'$') || cursor + 1 == units.len() {
-                output.append_slice(template, cursor..cursor + 1);
-                cursor += 1;
+                cursor = literal_matches::append_template_run(&mut output, template, cursor);
                 continue;
             }
             match units.at(cursor + 1) {
@@ -1987,23 +1987,18 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let subject = self.regexp_subject(input, matcher);
         // Only the last match's captures are observable (the legacy statics), so every match
-        // keeps its range alone; the statics find the last again from its start if read.
-        let ranges = self.regexp_global_matches(
-            p,
-            receiver,
-            input,
-            flags,
-            |start| matcher.find_in_subject(&subject, start).next().map(|found| found.range),
-            Range::clone,
-        )?;
+        // is found as its range alone; the statics find the last again from its start if read.
+        let searcher = matcher.range_searcher(&subject);
+        if !flags.contains(RegExpFlags::STICKY) && let Some(found) = searcher.literal_matches() {
+            return self.regexp_literal_matches(p, receiver, input, matcher, found);
+        }
+        let ranges = self.regexp_global_matches(p, receiver, input, flags, |start| searcher.find(start), Range::clone)?;
         let Some(last) = ranges.last() else {
             return Ok(Value::NULL);
         };
         self.record_regexp_legacy_pending(receiver, input.clone(), matcher, last.start)?;
-        let matched = ranges
-            .into_iter()
-            .map(|range| self.heap.alloc_string(input.substring(range)))
-            .collect();
+        let units = input.units();
+        let matched = ranges.into_iter().map(|range| self.heap.alloc_unit_run(units.slice(range))).collect();
         Ok(self.new_array(matched))
     }
 
