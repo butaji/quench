@@ -15,7 +15,7 @@ pub mod units {
     pub use quench_temporal::units::*;
     /// The most elements an array holds: its length is a `u32`.
     pub const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
-    pub use crate::integer_conversion::{relative_index, to_integer_or_infinity};
+    pub use crate::integer_conversion::{relative_index, to_index, to_integer_or_infinity, to_length};
     pub use crate::value::number_to_u32 as to_uint32;
     /// ToInt32: ToUint32's bits reinterpreted as `i32`.
     pub fn to_int32(value: f64) -> i32 {

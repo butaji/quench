@@ -214,14 +214,8 @@ impl<H: Host> Vm<H> {
         value: Option<Value>,
     ) -> Result<usize, JsError> {
         let number = self.to_number(p, value.unwrap_or(Value::UNDEFINED))?;
-        if number.is_nan() || number == 0.0 {
-            return Ok(0);
-        }
-        let integer = number.trunc();
-        if !integer.is_finite() || integer < 0.0 || integer >= usize::MAX as f64 {
-            return Err(self.range_error(p, "Atomics index is out of range".into()));
-        }
-        Ok(integer as usize)
+        crate::units::to_index(number)
+            .ok_or_else(|| self.range_error(p, "Atomics index is out of range".into()))
     }
 
     fn atomic_validate_index(

@@ -488,10 +488,7 @@ impl<H: Host> Vm<H> {
         let length_atom = self.length_atom;
         let value = self.get_property(p, object, length_atom)?;
         let number = self.to_number(p, value)?;
-        if number.is_nan() || number <= 0.0 {
-            return Ok(0);
-        }
-        Ok(number.floor().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize)
+        Ok(crate::units::to_length(number))
     }
 
     /// The first element a reducer called without an initial value visits

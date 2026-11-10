@@ -25,6 +25,25 @@ pub fn relative_index(number: f64, len: usize) -> usize {
     }
 }
 
+/// ToLength of a Number: NaN and non-positive values are 0, the rest truncate and clamp to
+/// `Number.MAX_SAFE_INTEGER`.
+#[inline]
+pub fn to_length(number: f64) -> usize {
+    if number.is_nan() || number <= 0.0 {
+        0
+    } else {
+        number.min(crate::units::MAX_SAFE_INTEGER) as usize
+    }
+}
+
+/// ToIndex of a Number: `None` where it raises a RangeError (negative, infinite or past
+/// `Number.MAX_SAFE_INTEGER` once truncated); the caller words its own error.
+#[inline]
+pub fn to_index(number: f64) -> Option<usize> {
+    let integer = to_integer_or_infinity(number);
+    (0.0..=crate::units::MAX_SAFE_INTEGER).contains(&integer).then_some(integer as usize)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,5 +65,10 @@ mod tests {
             assert_eq!(relative_index(number, len), expected, "{number}");
         }
         assert!(to_integer_or_infinity(-0.5).is_sign_positive());
+        assert_eq!(to_length(f64::INFINITY), 9_007_199_254_740_991);
+        assert_eq!((to_length(f64::NAN), to_length(-3.0), to_length(2.9)), (0, 0, 2));
+        assert_eq!(to_index(-0.5), Some(0));
+        assert_eq!((to_index(f64::NAN), to_index(-1.0), to_index(f64::INFINITY)), (Some(0), None, None));
+        assert_eq!(to_index(9_007_199_254_740_992.0), None);
     }
 }
