@@ -19,8 +19,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         length: usize,
     ) -> Result<Option<usize>, JsError> {
-        let number = self.to_number(p, value)?;
-        let integer = if number.is_nan() { 0.0 } else { number.trunc() };
+        let integer = crate::units::to_integer_or_infinity(self.to_number(p, value)?);
         let relative = if integer < 0.0 {
             length as f64 + integer
         } else {
@@ -319,7 +318,7 @@ impl<H: Host> Vm<H> {
         let start = args
             .first()
             .copied()
-            .map(|value| self.array_relative_index(p, value, length))
+            .map(|value| self.to_relative_index(p, value, length))
             .transpose()?
             .unwrap_or(0);
         let available = length - start;
@@ -452,14 +451,14 @@ impl<H: Host> Vm<H> {
             .get(1)
             .copied()
             .filter(|value| !value.is_undefined())
-            .map(|value| self.array_relative_index(p, value, length))
+            .map(|value| self.to_relative_index(p, value, length))
             .transpose()?
             .unwrap_or(0);
         let end = args
             .get(2)
             .copied()
             .filter(|value| !value.is_undefined())
-            .map(|value| self.array_relative_index(p, value, length))
+            .map(|value| self.to_relative_index(p, value, length))
             .transpose()?
             .unwrap_or(length);
         if self.fill_plain_array_elements(object, start..end, value) {
@@ -911,14 +910,14 @@ impl<H: Host> Vm<H> {
             .first()
             .copied()
             .filter(|value| !value.is_undefined())
-            .map(|value| self.array_relative_index(p, value, length))
+            .map(|value| self.to_relative_index(p, value, length))
             .transpose()?
             .unwrap_or(0);
         let end = args
             .get(1)
             .copied()
             .filter(|value| !value.is_undefined())
-            .map(|value| self.array_relative_index(p, value, length))
+            .map(|value| self.to_relative_index(p, value, length))
             .transpose()?
             .unwrap_or(length);
         let count = end.saturating_sub(start);
@@ -1080,28 +1079,13 @@ impl<H: Host> Vm<H> {
         (!matches!(self.heap.get(value), Some(Cell::Proxy { .. }))).then_some(false)
     }
 
-    pub(super) fn array_relative_index(
+    pub(super) fn to_relative_index(
         &mut self,
         p: &ResidualProgram,
         value: Value,
         length: usize,
     ) -> Result<usize, JsError> {
-        let number = self.to_number(p, value)?;
-        if number.is_nan() || number == 0.0 {
-            return Ok(0);
-        }
-        if number == f64::NEG_INFINITY {
-            return Ok(0);
-        }
-        if number == f64::INFINITY {
-            return Ok(length);
-        }
-        let integer = number.trunc();
-        Ok(if integer < 0.0 {
-            length.saturating_sub((-integer) as usize)
-        } else {
-            (integer as usize).min(length)
-        })
+        Ok(crate::units::relative_index(self.to_number(p, value)?, length))
     }
 
     pub(super) fn array_includes_native(
@@ -1122,15 +1106,7 @@ impl<H: Host> Vm<H> {
             .map(|value| self.to_number(p, value))
             .transpose()?
             .unwrap_or(0.0);
-        let start = if from.is_nan() || from == 0.0 || from == f64::NEG_INFINITY {
-            0
-        } else if from == f64::INFINITY {
-            length
-        } else if from.is_sign_negative() {
-            length.saturating_sub(from.abs().trunc() as usize)
-        } else {
-            (from.trunc() as usize).min(length)
-        };
+        let start = crate::units::relative_index(from, length);
         for index in start..length {
             let value = self.get_index(p, object, Value::number(index as f64))?;
             if self.same_value_zero(value, search) {

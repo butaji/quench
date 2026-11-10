@@ -1004,20 +1004,6 @@ impl<H: Host> Vm<H> {
         value: Value,
         length: usize,
     ) -> Result<usize, JsError> {
-        let number = self.to_number(p, value)?;
-        if number.is_nan() || number == 0.0 {
-            return Ok(0);
-        }
-        let integer = number.trunc();
-        if integer < 0.0 {
-            if integer.is_infinite() {
-                return Ok(0);
-            }
-            return Ok(length.saturating_sub(integer.abs() as usize));
-        }
-        if integer.is_infinite() {
-            return Ok(length);
-        }
-        Ok((integer as usize).min(length))
+        Ok(crate::units::relative_index(self.to_number(p, value)?, length))
     }
 }
