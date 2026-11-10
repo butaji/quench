@@ -870,8 +870,8 @@ fn slice_buffer(c: &mut Context<'_>, buffer: RootId, offset: RootId, length: Roo
     } else {
         return Err(super::util_shared_vm::argument_type_error_with_expected(c, buffer, "buffer", BUFFER_TYPES)?);
     };
-    let offset = f64::from(super::native_number::uint32(c.to_number(offset)?));
-    let length = f64::from(super::native_number::uint32(c.to_number(length)?));
+    let offset = f64::from(quench_runtime::units::to_uint32(c.to_number(offset)?));
+    let length = f64::from(quench_runtime::units::to_uint32(c.to_number(length)?));
     let size = get(c, buffer, "byteLength")?;
     let size = number(c, size).unwrap_or(0.0);
     for (name, end) in [("offset", offset), ("length", offset + length)] {

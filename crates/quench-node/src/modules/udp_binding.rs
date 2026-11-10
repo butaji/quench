@@ -81,7 +81,7 @@ fn status(c: &mut Context<'_>, result: std::io::Result<()>) -> RootId {
 // V8 Uint32Value used by UDPWrap::DoBind/DoConnect: truncation modulo
 // the uint32 domain, including NaN/infinity/function coercion to zero.
 fn uint32_value(c: &mut Context<'_>, value: RootId) -> Result<u32, RootedError> {
-    Ok(super::native_number::uint32(c.to_number(value)?))
+    Ok(quench_runtime::units::to_uint32(c.to_number(value)?))
 }
 fn address(
     c: &mut Context<'_>,

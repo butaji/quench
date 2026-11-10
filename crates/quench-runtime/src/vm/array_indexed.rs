@@ -80,16 +80,12 @@ impl<H: Host> Vm<H> {
             None => length as isize - 1,
             Some(value) => {
                 let number = self.to_number(p, *value)?;
-                if number.is_nan() || number == 0.0 {
-                    0
-                } else if number == f64::NEG_INFINITY {
-                    return Ok(Value::number(-1.0));
-                } else if number == f64::INFINITY {
-                    length as isize - 1
-                } else if number < 0.0 {
-                    (length as f64 + number.trunc()).floor() as isize
+                let integer = crate::units::to_integer_or_infinity(number);
+                if integer < 0.0 {
+                    // Past the front (even -Infinity) the cast saturates below zero.
+                    (length as f64 + integer) as isize
                 } else {
-                    (number.trunc() as usize).min(length - 1) as isize
+                    (integer as usize).min(length - 1) as isize
                 }
             }
         };
@@ -127,15 +123,10 @@ impl<H: Host> Vm<H> {
             None => 0,
             Some(value) => {
                 let number = self.to_number(p, *value)?;
-                if number.is_nan() || number == 0.0 || number == f64::NEG_INFINITY {
-                    0
-                } else if number.is_infinite() {
+                if number == f64::INFINITY {
                     return Ok(Value::number(-1.0));
-                } else if number < 0.0 {
-                    length.saturating_sub(number.abs().trunc() as usize)
-                } else {
-                    (number.trunc() as usize).min(length)
                 }
+                crate::units::relative_index(number, length)
             }
         };
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -160,12 +151,7 @@ impl<H: Host> Vm<H> {
         let start = match args.get(1) {
             None => 0,
             Some(from) => {
-                let from = from.as_int()?;
-                if from < 0 {
-                    length.saturating_sub(from.unsigned_abs() as usize)
-                } else {
-                    (from as usize).min(length)
-                }
+                crate::units::relative_index(f64::from(from.as_int()?), length)
             }
         };
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -210,19 +196,19 @@ impl<H: Host> Vm<H> {
         let length = self.array_like_length(p, object)?;
         let target = args
             .first()
-            .map(|value| self.array_relative_index(p, *value, length))
+            .map(|value| self.to_relative_index(p, *value, length))
             .transpose()?
             .unwrap_or(0);
         let source = args
             .get(1)
-            .map(|value| self.array_relative_index(p, *value, length))
+            .map(|value| self.to_relative_index(p, *value, length))
             .transpose()?
             .unwrap_or(0);
         let end = args
             .get(2)
             .copied()
             .filter(|value| !value.is_undefined())
-            .map(|value| self.array_relative_index(p, value, length))
+            .map(|value| self.to_relative_index(p, value, length))
             .transpose()?
             .unwrap_or(length);
         let count = end
@@ -502,10 +488,7 @@ impl<H: Host> Vm<H> {
         let length_atom = self.length_atom;
         let value = self.get_property(p, object, length_atom)?;
         let number = self.to_number(p, value)?;
-        if number.is_nan() || number <= 0.0 {
-            return Ok(0);
-        }
-        Ok(number.floor().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize)
+        Ok(crate::units::to_length(number))
     }
 
     /// The first element a reducer called without an initial value visits

@@ -8,11 +8,10 @@ use super::super::compiled::LaneExit;
 /// edges (a shape compaction, a dead native callee) dropped, and those of them no run of
 /// which completed (`LaneView::drop_body`). Each dropped body doubles the next one's warm-up,
 /// so a function whose bodies keep being discarded stops paying a compile for each;
-/// `TIERS.lane_body.max_lifetimes` dropped bodies, or `max_wasted` wasted ones, decline it.
+/// `TIERS.lane_body.max_lifetimes` dropped bodies, decline it.
 #[derive(Clone, Copy, Default)]
 pub(super) struct LaneBodyHistory {
     pub(super) lifetimes: u8,
-    wasted: u8,
     /// The inlining budget halvings its last plan needed to fit (`PendingLaneMethod::shrinks`).
     shrinks: u8,
 }
@@ -32,32 +31,15 @@ fn warm_ticks() -> u32 {
 /// The reading `warm_ticks` would give next, without counting.
 fn warm_clock() -> u32 { warm_ticks().wrapping_sub(1) }
 
-/// What a body whose leaves reached the reoptimization threshold does next.
-enum Verdict {
-    /// It keeps its code, and counts on.
-    Keep,
-    /// It keeps its code and reoptimizes no more.
-    Settle,
-    /// It specializes again, these places generically.
-    Recompile(LaneLeaves),
-    Retire,
-}
-
-/// Past its last recompile, a body any run of which completed keeps its code and any other
-/// retires: a run that leaves after a long native stretch still paid for its entry. Before it, a body that
-/// left only where its predecessors did gained nothing from their feedback: it settles where
-/// its runs mostly complete, and retires otherwise, as one that left from many places and
-/// never completed does. Any other takes the
-/// places it left at, and its predecessors', generically next (`LaneView::specialize_lane_body`).
-fn verdict(recompiles: u8, completed: bool, leaves: LaneLeaves, stuck: LaneLeaves) -> Verdict {
-    let repeated = leaves != LaneLeaves::NONE && leaves.within(&stuck);
-    match (recompiles >= TIERS.lane_body.max_recompiles, completed) {
-        (true, true) => Verdict::Keep,
-        (true, false) => Verdict::Retire,
-        (false, true) if repeated => Verdict::Settle,
-        _ if repeated || (leaves == LaneLeaves::Scattered && !completed) => Verdict::Retire,
-        _ => Verdict::Recompile(stuck.union(leaves)),
-    }
+/// What a body whose leaves reached the reoptimization threshold does next: it specializes
+/// again, these places generically, until `max_recompiles` bodies have; the last of them has
+/// every place any body left at generic, and is permanent. A body never retires to the lane.
+fn verdict(recompiles: u8, leaves: LaneLeaves, stuck: LaneLeaves) -> Option<LaneLeaves> {
+    // Leaves only where the predecessors' bodies left, and those places already generic,
+    // would plan the same body again: it stays.
+    let nothing_new = leaves != LaneLeaves::Scattered && stuck != LaneLeaves::Scattered
+        && leaves.exits().all(|exit| stuck.exits().any(|known| known == exit));
+    (recompiles < TIERS.lane_body.max_recompiles && !(recompiles > 0 && nothing_new)).then(|| stuck.union(leaves))
 }
 
 impl LaneView {
@@ -67,39 +49,36 @@ impl LaneView {
     pub(super) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool) {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        let LaneBody::Specialized { exits, leaves_at, completed, recompiles, tier_prologue, stuck, .. } = body else { return };
+        let LaneBody::Specialized { exits, leaves_at, completed, completions, recompiles, tier_prologue, stuck, .. } = body else { return };
         if completed_region || matches!(exit, LaneExit::Returned { .. }) {
             completed.set(true);
+            completions.set(completions.get().saturating_add(1));
             return;
         }
         exits.set(exits.get().saturating_add(1));
         leaves_at.set(leaves_at.get().with(exit));
-        if exits.get() < TIERS.lane_body.reoptimize_exits << *recompiles {
+        // Leaves past the first `reoptimize_exits` that exceed `reoptimize_share` percent of the runs.
+        let (leaves, runs) = (u64::from(exits.get()), u64::from(exits.get()) + u64::from(completions.get()));
+        if exits.get() < TIERS.lane_body.reoptimize_exits || leaves * 100 <= runs * u64::from(TIERS.lane_body.reoptimize_share) {
             return;
         }
-        let next = match verdict(*recompiles, completed.get(), leaves_at.get(), *stuck) {
-            Verdict::Keep => return,
-            Verdict::Settle => return *recompiles = TIERS.lane_body.max_recompiles,
-            Verdict::Retire => LaneBody::Declined,
-            Verdict::Recompile(stuck) => {
-                // A body no run of which completed was a wasted compile, whatever comes next,
-                // but one whose runs all left at its entry contract proved only that: its
-                // replan drops the contract (`LaneExit::Entry`).
-                let entry_only = leaves_at.get().exits().all(|exit| exit == LaneExit::Entry);
-                if !completed.get() && !entry_only { self.note_wasted_compile(); }
-                LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck }
+        let Some(stuck) = verdict(*recompiles, leaves_at.get(), *stuck) else {
+            // A body that keeps leaving where no other body would, and has never completed a
+            // run, gains nothing from its entry: its function runs in the lane again.
+            if !completed.get() {
+                // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
+                unsafe { (*self.prologue.get()).handler = *tier_prologue };
+                let LaneBody::Specialized { method, .. } = std::mem::replace(body, LaneBody::Declined) else { unreachable!() };
+                self.retired.borrow_mut().push(method);
+                self.release_from_tier();
             }
+            return;
         };
+        let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck };
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
-        let retires = matches!(next, LaneBody::Declined);
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
-        if retires {
-            *body = LaneBody::Retired { _method: method };
-            self.release_from_tier();
-        } else {
-            self.retired.borrow_mut().push(method);
-        }
+        self.retired.borrow_mut().push(method);
     }
 
     /// The entries before its next body specializes: the warm-up, doubled per dropped body.
@@ -120,16 +99,10 @@ impl LaneView {
     /// Whether its history affords another compile.
     pub(super) fn affords_compile(&self) -> bool {
         let history = self.history.get();
-        history.lifetimes <= TIERS.lane_body.max_lifetimes && history.wasted < TIERS.lane_body.max_wasted
+        history.lifetimes <= TIERS.lane_body.max_lifetimes
     }
 
-    /// A compile none of whose runs completed counts toward `TIERS.lane_body.max_wasted`.
-    fn note_wasted_compile(&self) {
-        let history = self.history.get();
-        self.history.set(LaneBodyHistory { wasted: history.wasted.saturating_add(1), ..history });
-    }
-
-    /// A compile a lifecycle edge outran counts as a dropped body, never a wasted one: no run
+    /// A compile a lifecycle edge outran counts as a dropped body: no run
     /// of it took place.
     pub(super) fn note_dropped_compile(&self) {
         let history = self.history.get();
@@ -141,12 +114,11 @@ impl LaneView {
     /// outlives the shape ids the edge renumbered. One no run of which completed counts as
     /// wasted (`LaneBodyHistory`).
     pub(super) fn drop_body(&self, body: &mut LaneBody) {
-        let LaneBody::Specialized { completed, leaves_at, stuck, recompiles, .. } = body else { return };
-        let (completed, stuck, recompiles) = (completed.get(), stuck.union(leaves_at.get()), *recompiles);
+        let LaneBody::Specialized { leaves_at, stuck, recompiles, .. } = body else { return };
+        let (stuck, recompiles) = (stuck.union(leaves_at.get()), *recompiles);
         let history = self.history.get();
         self.history.set(LaneBodyHistory {
             lifetimes: history.lifetimes.saturating_add(1),
-            wasted: history.wasted + u8::from(!completed),
             ..history
         });
         *body = LaneBody::Unspecialized { entries: 0, recompiles, stuck };
@@ -157,15 +129,15 @@ impl LaneView {
         // A body whose entry would not pay for itself serves native callers only
         // (`lane_body_call`, direct calls); the lane's own entries keep the records, and it
         // has no trial to run.
-        let (tier_prologue, runs) = if method.lease().expect("a body just published is live").amortizes_entry() {
+        let tier_prologue = if method.lease().expect("a body just published is live").amortizes_entry() {
             // SAFETY: as `claim_for_tier`; no handler reads the prologue now.
-            (unsafe { std::mem::replace(&mut (*self.prologue.get()).handler, entry as *const ()) }, 0)
+            unsafe { std::mem::replace(&mut (*self.prologue.get()).handler, entry as *const ()) }
         } else {
             self.release_from_tier();
-            (unsafe { (*self.prologue.get()).handler }, TIERS.lane_body.trial_runs)
+            unsafe { (*self.prologue.get()).handler }
         };
         use std::cell::Cell;
-        LaneBody::Specialized { method, tier_prologue, runs: Cell::new(runs), leaves: Cell::new(0), exits: Cell::new(0),
+        LaneBody::Specialized { method, tier_prologue, completions: Cell::new(0), exits: Cell::new(0),
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
     }
 
@@ -189,7 +161,10 @@ impl LaneView {
         }
         let (outcome, recompiles, stuck) = match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized { entries, recompiles, stuck } if entries.saturating_add(1) >= self.warmup_entries() || self.recurrent(entries.saturating_add(1)) => {
-                if !self.affords_compile() { return false; }
+                if !self.affords_compile() {
+                    *body = LaneBody::Unspecialized { entries, recompiles, stuck };
+                    return false;
+                }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
                 (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks }), recompiles, stuck)

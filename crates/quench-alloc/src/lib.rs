@@ -33,6 +33,9 @@ use std::ptr;
 use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
+mod filing;
+use filing::PageState;
+
 /// One allocator page: the unit a size class takes and returns.
 pub const PAGE_BYTES: usize = 4096;
 /// Block alignment and the step between the smallest size classes.
@@ -99,8 +102,7 @@ struct Page {
     /// Blocks handed out and not freed back to the owner (remote frees count until merged).
     used: u32,
     class: u8,
-    /// Linked into its class's list of pages with free blocks.
-    in_partial: bool,
+    state: PageState,
     /// Linked into the owner's `remote_pages`, so another remote free need not link it.
     remote_queued: AtomicBool,
     prev: *mut Page,
@@ -460,10 +462,7 @@ impl Heap {
             }
         }
         let page = if !self.partial[class].is_null() {
-            let page = self.partial[class];
-            // SAFETY: partial pages are initialized and linked.
-            unsafe { self.unlink_partial(page) };
-            page
+            self.partial[class]
         } else {
             // SAFETY: a new page is reserved, writable memory.
             let page = unsafe { self.new_page() };
@@ -473,7 +472,8 @@ impl Heap {
             unsafe { init_page(page, class, self) };
             page
         };
-        self.current[class] = page;
+        // SAFETY: the page is an initialized page of this heap and class, partial or fresh.
+        unsafe { self.file_page(page, PageState::Current) };
         // SAFETY: the page was just made current for this class and has a free block.
         unsafe { take_block(page, class) }
     }
@@ -513,27 +513,6 @@ impl Heap {
                     self.settle(page);
                 }
                 page = next;
-            }
-        }
-    }
-
-    /// Files a page that just gained free blocks: the empty pool when it has none in use,
-    /// else its class's partial list, unless it is the class's current page.
-    unsafe fn settle(&mut self, page: *mut Page) {
-        // SAFETY: an initialized page of this heap.
-        unsafe {
-            let class = usize::from((*page).class);
-            if page == self.current[class] {
-                return;
-            }
-            if (*page).used == 0 {
-                if (*page).in_partial {
-                    self.unlink_partial(page);
-                }
-                (*page).next = self.empty;
-                self.empty = page;
-            } else if !(*page).in_partial {
-                self.link_partial(page, class);
             }
         }
     }
@@ -623,37 +602,6 @@ impl Heap {
             unsafe { libc::madvise(run[0] as *mut libc::c_void, run.len() * PAGE_BYTES, libc::MADV_DONTNEED) };
         }
     }
-
-    unsafe fn link_partial(&mut self, page: *mut Page, class: usize) {
-        // SAFETY: `page` is an initialized page of `class` not in any list.
-        unsafe {
-            (*page).in_partial = true;
-            (*page).prev = ptr::null_mut();
-            (*page).next = self.partial[class];
-            if !self.partial[class].is_null() {
-                (*self.partial[class]).prev = page;
-            }
-        }
-        self.partial[class] = page;
-    }
-
-    unsafe fn unlink_partial(&mut self, page: *mut Page) {
-        // SAFETY: `page` is linked in its class's partial list.
-        unsafe {
-            let class = usize::from((*page).class);
-            if (*page).prev.is_null() {
-                self.partial[class] = (*page).next;
-            } else {
-                (*(*page).prev).next = (*page).next;
-            }
-            if !(*page).next.is_null() {
-                (*(*page).next).prev = (*page).prev;
-            }
-            (*page).in_partial = false;
-            (*page).prev = ptr::null_mut();
-            (*page).next = ptr::null_mut();
-        }
-    }
 }
 
 fn page_of(block: *mut u8) -> *mut Page {
@@ -668,7 +616,7 @@ unsafe fn init_page(page: *mut Page, class: usize, owner: *mut Heap) {
             bump: PAGE_HEADER_BYTES as u32,
             used: 0,
             class: class as u8,
-            in_partial: false,
+            state: PageState::Full,
             remote_queued: AtomicBool::new(false),
             prev: ptr::null_mut(),
             next: ptr::null_mut(),

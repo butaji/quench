@@ -8,6 +8,16 @@ enum CollectionEntries {
     Values,
 }
 include!("collections_set_relations.rs");
+/// The brand of a collection or Date cell a receiver must hold (`Vm::require_brand`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Brand {
+    Map,
+    Set,
+    WeakMap,
+    WeakSet,
+    Date,
+}
+
 impl<H: Host> Vm<H> {
     /// A virtual field read (`AtomClass::VIRTUAL_FIELD`) of a collection or buffer view that
     /// runs no guest code: the walk from the receiver through ordinary prototypes meets no
@@ -776,11 +786,7 @@ impl<H: Host> Vm<H> {
             | Native::MapValues
             | Native::MapEntries
             | Native::MapForEach => {
-                if !matches!(self.heap.get(this), Some(Cell::Map { .. })) {
-                    return Err(
-                        self.type_error(p, "Map method called on incompatible receiver".into())
-                    );
-                }
+                self.require_brand(p, this, Brand::Map, "Map method")?;
                 match native {
                     Native::MapGet => {
                         let key = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -856,11 +862,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             Native::MapGetOrInsert | Native::MapGetOrInsertComputed => {
-                if !matches!(self.heap.get(this), Some(Cell::Map { .. })) {
-                    return Err(
-                        self.type_error(p, "Map method called on incompatible receiver".into())
-                    );
-                }
+                self.require_brand(p, this, Brand::Map, "Map method")?;
                 let key = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let computed_callback = if native == Native::MapGetOrInsertComputed {
                     let callback = args.get(1).copied().unwrap_or(Value::UNDEFINED);
@@ -918,12 +920,7 @@ impl<H: Host> Vm<H> {
                 Ok(this)
             }
             Native::SetHas => {
-                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
-                    return Err(self.type_error(
-                        p,
-                        "Set.prototype.has called on incompatible receiver".into(),
-                    ));
-                }
+                self.require_brand(p, this, Brand::Set, "Set.prototype.has")?;
                 Ok(
                     if self
                         .set_entry_index(this, args.first().copied().unwrap_or(Value::UNDEFINED))
@@ -936,12 +933,7 @@ impl<H: Host> Vm<H> {
                 )
             }
             Native::SetDelete => {
-                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
-                    return Err(self.type_error(
-                        p,
-                        "Set.prototype.delete called on incompatible receiver".into(),
-                    ));
-                }
+                self.require_brand(p, this, Brand::Set, "Set.prototype.delete")?;
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let Some(index) = self.set_entry_index(this, value) else {
                     return Ok(Value::FALSE);
@@ -959,12 +951,7 @@ impl<H: Host> Vm<H> {
                 Ok(Value::TRUE)
             }
             Native::SetClear => {
-                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
-                    return Err(self.type_error(
-                        p,
-                        "Set.prototype.clear called on incompatible receiver".into(),
-                    ));
-                }
+                self.require_brand(p, this, Brand::Set, "Set.prototype.clear")?;
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(self.type_error(
                         p,
@@ -976,31 +963,16 @@ impl<H: Host> Vm<H> {
                 Ok(Value::UNDEFINED)
             }
             Native::SetKeys | Native::SetValues => {
-                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
-                    return Err(self.type_error(
-                        p,
-                        "Set.prototype.values called on incompatible receiver".into(),
-                    ));
-                }
+                self.require_brand(p, this, Brand::Set, "Set.prototype.values")?;
                 self.collection_iterator(this, IteratorKind::SetValues)
             }
             Native::SetEntries => {
-                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
-                    return Err(self.type_error(
-                        p,
-                        "Set.prototype.entries called on incompatible receiver".into(),
-                    ));
-                }
+                self.require_brand(p, this, Brand::Set, "Set.prototype.entries")?;
                 self.collection_iterator(this, IteratorKind::SetEntries)
             }
             Native::SetForEach => {
                 let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
-                    return Err(self.type_error(
-                        p,
-                        "Set.prototype.forEach called on incompatible receiver".into(),
-                    ));
-                }
+                self.require_brand(p, this, Brand::Set, "Set.prototype.forEach")?;
                 if !self.is_function(callback) {
                     return Err(self.type_error(p, "callback is not callable".into()));
                 }
@@ -1067,7 +1039,7 @@ impl<H: Host> Vm<H> {
             | Native::AsyncGeneratorReturn
             | Native::AsyncGeneratorThrow => self.async_generator_method(p, native, this, args),
             Native::WeakMapGet => {
-                self.validate_weak_map_receiver(p, this)?;
+                self.require_brand(p, this, Brand::WeakMap, "WeakMap method")?;
                 // A value that cannot be held weakly was never added: identity alone decides.
                 let key = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
@@ -1076,7 +1048,7 @@ impl<H: Host> Vm<H> {
                 Ok(entries.get(key).unwrap_or(Value::UNDEFINED))
             }
             Native::WeakMapSet => {
-                self.validate_weak_map_receiver(p, this)?;
+                self.require_brand(p, this, Brand::WeakMap, "WeakMap method")?;
                 let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
@@ -1086,7 +1058,7 @@ impl<H: Host> Vm<H> {
                 Ok(this)
             }
             Native::WeakMapHas => {
-                self.validate_weak_map_receiver(p, this)?;
+                self.require_brand(p, this, Brand::WeakMap, "WeakMap method")?;
                 // A value that cannot be held weakly was never added: identity alone decides.
                 let key = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
@@ -1095,7 +1067,7 @@ impl<H: Host> Vm<H> {
                 Ok(Value::boolean(entries.contains(key)))
             }
             Native::WeakMapDelete => {
-                self.validate_weak_map_receiver(p, this)?;
+                self.require_brand(p, this, Brand::WeakMap, "WeakMap method")?;
                 // A value that cannot be held weakly was never added: identity alone decides.
                 let key = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
@@ -1104,7 +1076,7 @@ impl<H: Host> Vm<H> {
                 Ok(Value::boolean(entries.remove(key)))
             }
             Native::WeakMapGetOrInsert => {
-                self.validate_weak_map_receiver(p, this)?;
+                self.require_brand(p, this, Brand::WeakMap, "WeakMap method")?;
                 let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 if let Some(value) = self.heap.get(this).and_then(|cell| match cell {
                     Cell::WeakMap { entries, .. } => entries.get(key),
@@ -1122,7 +1094,7 @@ impl<H: Host> Vm<H> {
                 Ok(value)
             }
             Native::WeakMapGetOrInsertComputed => {
-                self.validate_weak_map_receiver(p, this)?;
+                self.require_brand(p, this, Brand::WeakMap, "WeakMap method")?;
                 let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let callback = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 if !self.is_function(callback) {
@@ -1144,7 +1116,7 @@ impl<H: Host> Vm<H> {
                 Ok(value)
             }
             Native::WeakSetAdd => {
-                self.validate_weak_set_receiver(p, this)?;
+                self.require_brand(p, this, Brand::WeakSet, "WeakSet method")?;
                 let value = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 if let Some(Cell::WeakSet { entries, .. }) = self.heap.get_mut(this) {
                     entries.insert(value);
@@ -1152,12 +1124,12 @@ impl<H: Host> Vm<H> {
                 Ok(this)
             }
             Native::WeakSetHas => {
-                self.validate_weak_set_receiver(p, this)?;
+                self.require_brand(p, this, Brand::WeakSet, "WeakSet method")?;
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 Ok(Value::boolean(self.weak_set_has(this, value)))
             }
             Native::WeakSetDelete => {
-                self.validate_weak_set_receiver(p, this)?;
+                self.require_brand(p, this, Brand::WeakSet, "WeakSet method")?;
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let removed = match self.heap.get_mut(this) {
                     Some(Cell::WeakSet { entries, .. }) => entries.remove(value),
@@ -1411,28 +1383,32 @@ impl<H: Host> Vm<H> {
             None => self.heap.non_number_key_hash(key),
         }
     }
-    fn validate_weak_map_receiver(
+    /// Fails with `TypeError: <subject> called on incompatible receiver` unless `receiver`
+    /// holds the `brand` cell.
+    pub(super) fn require_brand(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
+        brand: Brand,
+        subject: &str,
     ) -> Result<(), JsError> {
-        if matches!(self.heap.get(receiver), Some(Cell::WeakMap { .. })) {
+        let held = match self.heap.get(receiver) {
+            Some(Cell::Map { .. }) => Brand::Map,
+            Some(Cell::Set { .. }) => Brand::Set,
+            Some(Cell::WeakMap { .. }) => Brand::WeakMap,
+            Some(Cell::WeakSet { .. }) => Brand::WeakSet,
+            Some(Cell::Date { .. }) => Brand::Date,
+            _ => return Err(self.incompatible_receiver(p, subject)),
+        };
+        if held == brand {
             Ok(())
         } else {
-            Err(self.type_error(p, "WeakMap method called on incompatible receiver".into()))
+            Err(self.incompatible_receiver(p, subject))
         }
     }
 
-    fn validate_weak_set_receiver(
-        &mut self,
-        p: &ResidualProgram,
-        receiver: Value,
-    ) -> Result<(), JsError> {
-        if matches!(self.heap.get(receiver), Some(Cell::WeakSet { .. })) {
-            Ok(())
-        } else {
-            Err(self.type_error(p, "WeakSet method called on incompatible receiver".into()))
-        }
+    fn incompatible_receiver(&mut self, p: &ResidualProgram, subject: &str) -> JsError {
+        self.type_error(p, format!("{subject} called on incompatible receiver"))
     }
 
     fn is_weak_key_value(&self, value: Value) -> bool {

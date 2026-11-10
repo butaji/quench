@@ -2449,11 +2449,7 @@ impl<H: Host> Vm<H> {
             let length_number = self.to_number(p, self.heap.root_value(length_value).unwrap());
             self.heap.release_root(length_value);
             let length_number = length_number?;
-            let length = if length_number.is_nan() || length_number <= 0.0 {
-                0
-            } else {
-                length_number.floor().min(MAX_SAFE_INTEGER) as usize
-            };
+            let length = crate::units::to_length(length_number);
             elements
                 .try_reserve(length)
                 .map_err(|_| self.type_error(p, "array-like list is too large".into()))?;

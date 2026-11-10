@@ -383,7 +383,7 @@ impl Units<'_> {
                 break;
             }
         }
-        let bits = to_uint32(result);
+        let bits = quench_runtime::units::to_uint32(result);
         let magnitude = bits >> 1;
         if bits & 1 == 0 {
             f64::from(magnitude)
@@ -391,14 +391,6 @@ impl Units<'_> {
             f64::from((-(f64::from(magnitude)) as i64 as i32) | i32::MIN)
         }
     }
-}
-
-fn to_uint32(value: f64) -> u32 {
-    const TWO_TO_32: f64 = 4_294_967_296.0;
-    if !value.is_finite() {
-        return 0;
-    }
-    value.trunc().rem_euclid(TWO_TO_32) as u32
 }
 
 /// Node's `#parseMap(map, line, column)`, appending to `mappings`.

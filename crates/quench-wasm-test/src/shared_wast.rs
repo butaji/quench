@@ -93,7 +93,7 @@ const SPECTEST_MEMORY_MAX: u32 = 2;
 const SPECTEST_TABLE_MIN: u32 = 10;
 const SPECTEST_TABLE_MAX: u32 = 20;
 
-/// The environment variable through which the spec runner passes `-jit` to
+/// The environment variable through which the spec runner passes its mode to
 /// its per-file workers.
 pub const EXECUTION_MODE_VARIABLE: &str = "QUENCH_EXECUTION_MODE";
 

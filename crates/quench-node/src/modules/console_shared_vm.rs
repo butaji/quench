@@ -221,7 +221,7 @@ const BREAK_LENGTH: usize = 80;
 pub(crate) const SINGLE_LINE_START: usize = 10;
 /// `inspectDefaultOptions.maxArrayLength`: longer arrays end in `... n more items`, which this
 /// path leaves to `inspect`.
-const MAX_ARRAY_LENGTH: usize = 100;
+const MAX_ARRAY_LENGTH: usize = super::console_format_shared_vm::DEFAULT_MAX_ARRAY_LENGTH;
 /// Arrays of more entries are grouped into columns (`groupArrayElements`).
 const MAX_UNGROUPED_ARRAY_ENTRIES: usize = 6;
 /// `groupArrayElements`: the comma and space after each entry.

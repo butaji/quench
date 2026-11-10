@@ -88,8 +88,6 @@ const MILLIS_PER_SECOND: f64 = 1e3;
 const MICROS_PER_MILLI: f64 = 1e3;
 /// A milestone not yet reached.
 const UNREACHED_MILESTONE: f64 = -1.0;
-/// `setResourceTimingBufferSize`'s WebIDL `unsigned long`.
-const UNSIGNED_LONG_MODULUS: f64 = 4_294_967_296.0;
 
 pub(super) fn operation(name: &str) -> quench_runtime::HostFunctionId {
     crate::host::shared_vm::operation(name)
@@ -529,8 +527,8 @@ pub(crate) fn set_resource_timing_buffer_size(c: &mut Context<'_>, receiver: Roo
     brand(c, receiver)?;
     let size = required(c, args, "maxSize")?;
     let size = c.to_number(size)?;
-    let size = if size.is_finite() { size.trunc().rem_euclid(UNSIGNED_LONG_MODULUS) } else { 0.0 };
-    super::perf_timeline::set_resource_limit(c, size as usize);
+    // WebIDL `unsigned long`.
+    super::perf_timeline::set_resource_limit(c, quench_runtime::units::to_uint32(size) as usize);
     Ok(c.undefined())
 }
 

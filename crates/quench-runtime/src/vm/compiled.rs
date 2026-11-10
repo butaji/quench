@@ -1807,6 +1807,8 @@ lane_helper_inventory! { H;
     FieldAdd => lane_field_add::<H>,
     /// A loop's hoisted typed array view (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
+    /// A value step the interpreter defines (`dispatch_fast::lane_body_value_step`).
+    ValueStep => super::dispatch_fast::lane_body_value_step::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
