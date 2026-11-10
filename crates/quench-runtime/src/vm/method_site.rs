@@ -44,7 +44,7 @@ impl MethodSite {
     /// Records `cache` as the site's newest entry: inline while the ways hold, then in the
     /// set. An inline entry the set also holds is refreshed with it, so a lookup that finds
     /// the inline copy first never meets a stale one.
-    fn record(&mut self, cache: MethodCache) {
+    pub(super) fn record(&mut self, cache: MethodCache) {
         if let Some(set) = &mut self.set {
             for entry in self.inline.iter_mut().filter(|entry| entry.records_same(&cache)) {
                 *entry = cache;
@@ -63,7 +63,7 @@ impl MethodSite {
     }
 
     /// Keeps the entries `keep` accepts, in order; a set left empty is dropped.
-    fn retain(&mut self, mut keep: impl FnMut(&MethodCache) -> bool) {
+    pub(super) fn retain(&mut self, mut keep: impl FnMut(&MethodCache) -> bool) {
         retain_compact(&mut self.inline, &mut keep);
         if let Some(set) = &mut self.set {
             set.len = retain_compact(&mut set.entries[..usize::from(set.len)], &mut keep) as u8;
@@ -77,7 +77,7 @@ impl MethodSite {
 impl MethodCacheSet {
     /// Replaces the entry that records the same lookup and callee, else appends, evicting
     /// the oldest entry when the set is full.
-    fn record(&mut self, cache: MethodCache) {
+    pub(super) fn record(&mut self, cache: MethodCache) {
         let len = usize::from(self.len);
         if let Some(entry) = self.entries[..len].iter_mut().find(|entry| entry.records_same(&cache)) {
             *entry = cache;
