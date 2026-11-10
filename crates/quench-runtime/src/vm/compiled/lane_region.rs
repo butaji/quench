@@ -622,11 +622,11 @@ pub(super) enum Completion {
 /// Which arrays a region's loops index in place (`LoopArray`): dense arrays' elements, or
 /// typed arrays' (`Vm::lane_typed_array_elements`). A region assumes one, proved on each
 /// loop's entering edge, so no access chooses between them; a static image publishes a
-/// typed variant beside the dense one, which its dispatcher tries next at the header.
+/// typed variant beside the dense one, which its dispatcher tries next at the header, and
+/// an OSR region takes the one its arrays held at the entry that compiled it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum ElementViews {
+pub(in crate::vm) enum ElementViews {
     Dense,
-    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     Typed,
 }
 
@@ -1084,7 +1084,7 @@ fn loop_arrays(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> Vec<L
     arrays
 }
 
-fn invariant_reads(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> BTreeMap<usize, Vec<InvariantRead>> {
+fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> BTreeMap<usize, Vec<InvariantRead>> {
     let mut hoists = BTreeMap::new();
     let boundaries = leaders(&unit.instructions);
     for &(header, back) in loops {
@@ -1092,6 +1092,8 @@ fn invariant_reads(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> B
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
             .map(|candidate| candidate.atom_index()).collect();
+        // An element store may append, which changes its array's `length`.
+        let resizes = body.iter().any(|candidate| stores_element(*candidate));
         let mut reads: Vec<InvariantRead> = body.iter().enumerate().filter_map(|(offset, candidate)| {
             let pc = header + offset;
             if candidate.op().class().eq(Class::LoadCapture)
@@ -1100,7 +1102,7 @@ fn invariant_reads(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> B
             }
             if !candidate.op().class().eq(Class::GetField) { return None; }
             match candidate.field_lookup() {
-            Some(FieldLookup::Atom { atom, base, .. }) if !stored.contains(&atom) => {
+            Some(FieldLookup::Atom { atom, base, .. }) if !stored.contains(&atom) && !(resizes && names_length(program, atom)) => {
                 let owner = invariant_field_owner(unit, header, pc, base.register_index()?, &written, &boundaries)?;
                 Some(InvariantRead { pc, owner: Some(owner), rooted: false })
             }
@@ -1616,7 +1618,7 @@ pub(super) fn lower(
     lowering.refine_loop_inputs(entry_pc, &initial, &instructions, &leaders, &loops, &own_shape);
     lowering.require_object_latches(&instructions, &leaders, &loops);
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, &loops, &leaders)); }
-    lowering.hoists = invariant_reads(unit, &loops);
+    lowering.hoists = invariant_reads(program, unit, &loops);
     lowering.loop_arrays = loop_arrays(unit, &loops);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
@@ -2318,6 +2320,9 @@ impl Lowering<'_, '_> {
             if self.blocks[pc].is_some() { reachable = self.facts.at(pc).is_some(); }
             if !reachable { continue; }
             let owner = match instruction.op().class() {
+                // An array's `length` is its length word (`array_length`), read with no record.
+                Class::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Atom { atom, base, .. })
+                    if base != crate::bytecode::FieldBase::THIS && super::names_length(self.program, atom)) => None,
                 Class::GetField => {
                     let base = self.field_base(pc, *instruction);
                     base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
@@ -5181,7 +5186,7 @@ mod tests {
                 instruction.op().control_flow_layout().jumps()
                     .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
             let loops = local_loops(&unit, &program.constants, header);
-            let reads = invariant_reads(&unit, &loops);
+            let reads = invariant_reads(&program, &unit, &loops);
             let captures: Vec<_> = reads.values().flatten().map(|read| read.pc).filter(|&pc|
                 unit.instructions[pc].op().is_load_capture()
                     && matches!(unit.origins[pc], super::super::lane_unit::Origin::Inlined { .. })).collect();
@@ -5379,7 +5384,7 @@ mod tests {
             assert_eq!(unit.frames.len(), 1, "exercise an actual inline marker: {name}");
             let loops = local_loops(&unit, &program.constants, 0);
             assert!(!loops.is_empty(), "exercise an eligible loop: {name}");
-            let reads = invariant_reads(&unit, &loops);
+            let reads = invariant_reads(&program, &unit, &loops);
             assert!(!reads.values().flatten().any(|read|
                 unit.instructions[read.pc].op().is_load_capture()
                     && matches!(unit.origins[read.pc], super::super::lane_unit::Origin::Inlined { .. })),

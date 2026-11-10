@@ -53,6 +53,7 @@ use std::rc::{Rc, Weak};
 mod osr_loop;
 mod osr_compile;
 pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
+pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
 #[path = "compiled/facts.rs"]
@@ -6047,6 +6048,7 @@ impl CompiledOsrRegion {
             // The counter is the `words` field's first word, not the struct's offset 0:
             // `LoopEntry` is not `repr(C)`.
             native.dispatch.loop_entry = entry.words_mut() as usize;
+            native.dispatch.inlined = entry.scratch_address();
             // The loop entry's captures in the dense slot view the lane capture reads use.
             let captures = if region.captures.is_empty() { Vec::new() } else {
                 let len = region.captures.iter().map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);
@@ -6117,7 +6119,8 @@ impl CompiledOsrRegion {
                     LaneExit::Entry => LoopOutcome::NotEntered,
                     LaneExit::Terminated => LoopOutcome::Terminated,
                     LaneExit::Callee => LoopOutcome::Callee,
-                    LaneExit::Inlined { .. } | LaneExit::Returned { .. } => LoopOutcome::Exit(0),
+                    LaneExit::Inlined { frame, pc } => LoopOutcome::Inlined { frame, pc },
+                    LaneExit::Returned { .. } => LoopOutcome::Exit(0),
                 }
             };
         }) };

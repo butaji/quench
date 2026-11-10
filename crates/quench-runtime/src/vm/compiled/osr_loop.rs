@@ -68,6 +68,10 @@ pub(crate) enum LoopOutcome {
     Resume(u32),
     /// The instruction at this PC needs the general path, which executes it.
     Exit(u32),
+    /// The instruction at callee PC `pc` of inlined frame `frame` needs the general path:
+    /// native code wrote the frame's live registers to the entry's scratch registers, from
+    /// which the lane makes the callee's activation (`lane_inlined_activation`).
+    Inlined { frame: usize, pc: u32 },
     /// The region completed its activation with `value` at the record `pc`: a `Return`
     /// inside the loop, or a returning call. The lane completes the activation as its own
     /// body would (`lane_return_value_general`), which is not an exit.
@@ -695,10 +699,6 @@ pub(crate) const CALLEE_CAPTURE: u16 = 1 << 15;
 /// `this` read its current slots; no function's slot reaches it.
 pub(crate) const THIS_CAPTURE: u16 = CALLEE_CAPTURE - 1;
 
-/// The exit PC native code reports for an inlined callee's instruction: its region PC with
-/// this bit, which no function PC has (`MAX_REGION_INSTRUCTIONS`).
-pub(crate) const INLINED_EXIT: u32 = 1 << 31;
-
 /// What `inline_region` needs of a call's callee.
 pub(crate) struct InlineCallee<'a> {
     pub(crate) callee: Value,
@@ -872,7 +872,7 @@ fn pure_setup(op: Op) -> bool {
 /// which reruns them. The read itself and the moves of the object arguments drop out, so the
 /// registers they write, which the setup's function may reuse otherwise, hold nothing for
 /// the region. Leaving at a callee's instruction makes the callee's activation
-/// (`INLINED_EXIT`).
+/// (`LoopOutcome::Inlined`).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn inline_region<'a>(
     function: &Function,
@@ -1321,21 +1321,6 @@ impl LoopRegion {
     pub(crate) fn held_field(&self, register: Register) -> Option<usize> {
         self.held.get(&register).map(|(_, index)| *index)
     }
-
-    /// Whether native code leaving at the `INLINED_EXIT` PC `pc` wrote back `register`.
-    pub(crate) fn wrote_back(&self, pc: u32, register: Register) -> bool {
-        self.is_live(pc & !INLINED_EXIT, register)
-    }
-
-    /// The frame and callee PC of an `INLINED_EXIT` PC native code reported.
-    pub(crate) fn inlined_exit(&self, pc: u32) -> Option<(&InlineFrame, u32)> {
-        let inlining = self.inlining.as_ref()?;
-        (pc & INLINED_EXIT != 0).then_some(())?;
-        match inlining.origins.get(((pc & !INLINED_EXIT) - self.header) as usize)? {
-            Origin::Inlined { frame, pc } => Some((&inlining.frames[usize::from(*frame)], *pc)),
-            Origin::Caller(_) | Origin::Leave(_) => None,
-        }
-    }
 }
 
 /// The entry record native code reads: each capture's value, then each cached field's,
@@ -1370,16 +1355,13 @@ const FIELD_STORE_WORDS: usize = 1;
 /// The heap views native reads use (`LoopEntry::push_native_heap`): the object records'
 /// base, the property values' base and count, and the array records' base.
 const NATIVE_HEAP_WORDS: usize = 4;
-/// The scratch registers' address an inlining region's record ends with.
-const SCRATCH_WORDS: usize = 1;
 const ENTRY_WORDS: usize =
     ENTRY_CAPTURES
         + MAX_REGION_CAPTURES
         + ARRAY_WORDS * MAX_REGION_ARRAYS
         + MAX_REGION_FIELDS
         + FIELD_STORE_WORDS * MAX_REGION_FIELD_STORES
-        + NATIVE_HEAP_WORDS
-        + SCRATCH_WORDS;
+        + NATIVE_HEAP_WORDS;
 
 impl LoopEntry {
     pub(crate) fn new() -> Self {
@@ -1421,9 +1403,10 @@ impl LoopEntry {
             .collect()
     }
 
-    /// Arrays follow the fields, in the region's order. An array longer than
-    /// `MAX_INDEXED_LENGTH` declines the entry.
-    pub(crate) fn push_array(&mut self, elements: *mut Value, length: usize, capacity: usize) -> Option<()> {
+    /// Arrays follow the fields, in the region's order: the first element's address, a
+    /// dense backing's or a typed array's. An array longer than `MAX_INDEXED_LENGTH`
+    /// declines the entry.
+    pub(crate) fn push_array(&mut self, elements: *mut u8, length: usize, capacity: usize) -> Option<()> {
         (length <= MAX_INDEXED_LENGTH).then_some(())?;
         let end = self.length + ARRAY_WORDS;
         self.words[self.length..end].copy_from_slice(&[
@@ -1466,17 +1449,22 @@ impl LoopEntry {
         Value::from_bits(unsafe { self.words[word].assume_init() })
     }
 
-    /// An inlining region's last word: its scratch registers' address.
-    pub(crate) fn push_scratch(&mut self) {
-        let address = self.scratch.as_mut_ptr().addr() as u64;
-        self.push(address);
+    /// An inlining region's scratch registers, each `undefined` until native code leaving at
+    /// an inlined instruction writes the frame registers live there (`JsStepDispatch::inlined`).
+    pub(crate) fn clear_scratch(&mut self) {
+        self.scratch.fill(std::mem::MaybeUninit::new(Value::UNDEFINED.to_bits()));
+    }
+
+    /// The scratch registers' address, which native code writes at an inlined leave.
+    pub(crate) fn scratch_address(&mut self) -> usize {
+        self.scratch.as_mut_ptr().addr()
     }
 
     /// The value an inlined callee's register `register` of an inlining region took when
-    /// native code left at an inlined instruction where it is live.
+    /// native code left at an inlined instruction: `undefined` where it was not live.
     ///
     /// # Safety
-    /// The exit wrote the register back: it is live at the exit's PC (`LoopRegion::is_live`).
+    /// The entry cleared the scratch registers (`clear_scratch`).
     pub(crate) unsafe fn scratch_value(&self, inlining: &Inlining, register: Register) -> Value {
         // SAFETY: as the caller promises.
         Value::from_bits(unsafe { self.scratch[usize::from(register - inlining.caller_registers)].assume_init() })
@@ -2452,12 +2440,12 @@ fn admit(
     Some(())
 }
 
-/// The values a compilation starts from: what the region's registers and captures held when
-/// it compiled, and what earlier compilations found was no `i32` (`Widening`).
 /// The observations a compilation starts from: the holderless own-data field reads
-/// the native OSR reader may load directly, by region field index.
+/// the native OSR reader may load directly, by region field index, and the element views
+/// the region's arrays proved at the entry that compiles it (`lane_loop_entry`).
 pub(crate) struct Observation<'a> {
     pub(crate) native_field_loads: &'a [Vec<NativeFieldLoad>],
+    pub(in crate::vm) views: super::lane_region::ElementViews,
 }
 
 
