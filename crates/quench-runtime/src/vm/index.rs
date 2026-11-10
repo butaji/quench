@@ -411,9 +411,9 @@ impl<H: Host> Vm<H> {
         };
         let adds = self.heap.record_array(object).is_some_and(|array| {
             let elements = array.elements();
-            !array.has_indexed_descriptors() && array.arguments_map().is_none() && elements.owner_count() == 1
+            array.element_access().extends_in_place() && elements.owner_count() == 1
                 && (index == elements.len() || elements.get(index).is_some_and(|element| element.is_deleted()))
-        }) && self.object_data(object).is_some_and(|data| data.is_extensible() && !data.is_frozen())
+        })
             && self.property_attributes(object, PropertyKey::string(self.length_atom)).is_none_or(|attributes| attributes.writable)
             && self.inherited_index_unclaimed(object, index);
         adds && self.store_validated_array_element(object, index, value)
@@ -435,7 +435,7 @@ impl<H: Host> Vm<H> {
         let Some(array) = array(&mut self.heap, object, value) else {
             return false;
         };
-        if array.has_indexed_descriptors() || array.is_frozen() || array.arguments_map().is_some() {
+        if !array.element_access().replaces_present() {
             return false;
         }
         if !array.elements().get(index).is_some_and(|value| !value.is_deleted()) {
@@ -559,7 +559,7 @@ impl<H: Host> Vm<H> {
     /// claims (`set_index_mode`, `general_elements`); `false` before any effect.
     pub(super) fn store_plain_element(&mut self, object: Value, index: usize, value: Value) -> bool {
         let Some(data) = self.heap.array(object) else { return false };
-        if data.has_indexed_descriptors() || data.is_frozen() { return false; }
+        if !data.element_access().stores_plain() { return false; }
         match data.elements().get(index) {
             Some(present) if !present.is_deleted() => { self.replace_dense_element(object, index, value); true }
             Some(_) => !data.is_arguments_object() && self.inherited_index_unclaimed(object, index)

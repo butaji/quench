@@ -27,10 +27,74 @@
 //! could carry one past a change: entering a nested run, ending its own, and restoring a
 //! context a native's callback copied.
 
-use super::{ArrayElements, ArrayObject, Heap};
+use super::{ArrayElements, ArrayObject, Heap, Object};
 use crate::value::Value;
 use std::mem::MaybeUninit;
 use std::ptr::NonNull;
+
+/// What an array's element facts admit, the one statement of every element read and write
+/// guard. Facts weaken it in a fixed order: indexed descriptors or a mapped `arguments` map
+/// leave the elements to the generic algorithms; frozen leaves them readable only; being a
+/// prototype leaves in-place replacement to the paths that retire dependents.
+#[derive(Clone, Copy)]
+pub(crate) struct ElementAccess<'a>(&'a Object);
+
+impl Object {
+    #[inline(always)]
+    pub(crate) fn element_access(&self) -> ElementAccess<'_> {
+        ElementAccess(self)
+    }
+}
+
+impl ElementAccess<'_> {
+    /// Present elements read as own data properties: no indexed descriptors and no
+    /// `arguments` exotic behaviour (sparse storage is the caller's, as it is a heap fact).
+    #[inline(always)]
+    pub(crate) fn reads_dense(self) -> bool {
+        !self.0.has_indexed_descriptors() && !self.0.is_arguments_object()
+    }
+
+    /// Elements that no descriptor or `arguments` map claims.
+    #[inline(always)]
+    pub(crate) fn plain_elements(self) -> bool {
+        !self.0.has_indexed_descriptors() && self.0.arguments_map().is_none()
+    }
+
+    /// A present element may be replaced by a checked store, which notifies a prototype's
+    /// dependents (`ArrayObject::replace_in_place`) and a mapped `arguments` object's binding.
+    #[inline(always)]
+    pub(crate) fn replaces_present(self) -> bool {
+        self.plain_elements() && !self.0.is_frozen()
+    }
+
+    /// An element may be added in place at the dense length: `replaces_present`, and the
+    /// array takes new elements.
+    #[inline(always)]
+    pub(crate) fn extends_in_place(self) -> bool {
+        self.replaces_present() && self.0.is_extensible()
+    }
+
+    /// A store of a plain element needs no [[Set]] step beyond the array's own elements
+    /// (an `arguments` map syncs its binding in the store).
+    #[inline(always)]
+    pub(crate) fn stores_plain(self) -> bool {
+        !self.0.has_indexed_descriptors() && !self.0.is_frozen()
+    }
+
+    /// The dense elements take a new one by length or index: `stores_plain`, extensible, and
+    /// not an `arguments` object.
+    #[inline(always)]
+    pub(crate) fn takes_dense_elements(self) -> bool {
+        self.stores_plain() && self.0.is_extensible() && !self.0.is_arguments_object()
+    }
+
+    /// A proof may replace elements without a barrier or a notice: `replaces_present`, and
+    /// no prototype has read the array, as a replacement would have to retire its dependents.
+    #[inline(always)]
+    pub(crate) fn replaces_unwatched(self) -> bool {
+        self.replaces_present() && !self.0.was_used_as_prototype()
+    }
+}
 
 /// Proof slots of a lane run. A record reads the slot of its base register
 /// (`ArrayStorageProofs::slot`): a loop's distinct base registers rarely share one, and the
@@ -126,8 +190,7 @@ impl ArrayStorageProofs {
     /// Proves `array`, the record array `base` names, in `register`'s slot.
     fn prove(&mut self, register: u16, base: Value, array: &mut ArrayObject) {
         let slot = Self::slot(register);
-        let replaces = !array.has_indexed_descriptors() && !array.is_frozen() && array.arguments_map().is_none()
-            && !array.was_used_as_prototype();
+        let replaces = array.element_access().replaces_unwatched();
         let length = array.elements().len();
         let (values, writable) = match array.unique_values().filter(|_| replaces) {
             Some(values) => (values, length),

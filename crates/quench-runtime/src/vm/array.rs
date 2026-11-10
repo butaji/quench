@@ -484,12 +484,8 @@ impl<H: Host> Vm<H> {
         let Some(dense) = self.heap.array(array).map(|array| array.elements().len()) else {
             return false;
         };
-        let plain = self.object_data(array).is_some_and(|object| {
-            object.is_extensible()
-                && !object.is_frozen()
-                && !object.has_indexed_descriptors()
-                && !object.is_arguments_object()
-        }) && self.prototypes_hold_no_index(array);
+        let plain = self.object_data(array).is_some_and(|object| object.element_access().takes_dense_elements())
+            && self.prototypes_hold_no_index(array);
         if !plain {
             return false;
         }
@@ -589,12 +585,7 @@ impl<H: Host> Vm<H> {
         if object.holds_ordinary_elements() {
             return Some(object.elements().len());
         }
-        if object.has_indexed_descriptors()
-            || object.is_frozen()
-            || !object.is_extensible()
-            || object.is_arguments_object()
-            || self.heap.sparse_length(this).is_some()
-        {
+        if !object.element_access().takes_dense_elements() || self.heap.sparse_length(this).is_some() {
             return None;
         }
         let length = object.elements().len();
@@ -618,10 +609,7 @@ impl<H: Host> Vm<H> {
         range: std::ops::Range<usize>,
     ) -> Option<&[Value]> {
         let object = self.heap.array(this)?;
-        if object.has_indexed_descriptors()
-            || object.is_arguments_object()
-            || self.heap.sparse_length(this).is_some()
-        {
+        if !object.element_access().reads_dense() || self.heap.sparse_length(this).is_some() {
             return None;
         }
         let elements = object.elements().get(range)?;

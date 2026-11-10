@@ -3167,9 +3167,7 @@ impl<H: Host> Vm<H> {
         };
         let (source, position) = (*source, ext.position(*index));
         let array = self.heap.array(source)?;
-        if array.has_indexed_descriptors()
-            || array.is_arguments_object()
-            || self.heap.sparse_length(source).is_some()
+        if !array.element_access().reads_dense() || self.heap.sparse_length(source).is_some()
         {
             return None;
         }
@@ -3207,9 +3205,7 @@ impl<H: Host> Vm<H> {
             _ => return None,
         };
         let array = self.heap.array(source)?;
-        if array.has_indexed_descriptors()
-            || array.is_arguments_object()
-            || self.heap.sparse_length(source).is_some()
+        if !array.element_access().reads_dense() || self.heap.sparse_length(source).is_some()
         {
             return None;
         }
@@ -3366,9 +3362,7 @@ impl<H: Host> Vm<H> {
         };
         let (source, position) = (*source, ext.position(*index));
         let array = self.heap.array(source)?;
-        if array.has_indexed_descriptors()
-            || array.is_arguments_object()
-            || self.heap.sparse_length(source).is_some()
+        if !array.element_access().reads_dense() || self.heap.sparse_length(source).is_some()
         {
             return None;
         }
