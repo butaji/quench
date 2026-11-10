@@ -28,7 +28,7 @@ impl Lowering<'_, '_> {
                 emit_js_guard(&mut self.builder, same, exit);
                 self.define_dependent(state, register, value, ty);
             }
-            GlobalRead::Stable { .. } | GlobalRead::Dynamic => {
+            GlobalRead::Stable { .. } | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } => {
                 let exit = self.guard_exit(state, pc as u32);
                 let proof = super::EmitProof::GlobalRead { miss: exit };
                 self.step(state, frame::Edges::ValueGuarded { miss: exit },

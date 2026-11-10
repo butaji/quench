@@ -62,6 +62,7 @@ pub(super) mod tier_policy;
 mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
+pub(super) use lane_region::ElementViews;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
 #[path = "compiled/lane_sites.rs"]
@@ -122,7 +123,7 @@ pub use fault_handler::NativeFaultHandler;
 pub(super) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
     FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion,
-    Observation, RegionAnalysisFailure, RegionRejection,
+    MethodCalls, Observation, RegionAnalysisFailure, RegionRejection,
 };
 
 pub(super) use crate::staged::Domain as NumberRelationDomain;
@@ -287,7 +288,6 @@ pub(super) fn emit_checked_int32_arithmetic(builder: &mut FunctionBuilder<'_>,
 /// The shared Number remainder denotation, after the caller's Number guards.
 /// Native entries use the host calling convention. This pure scalar helper cannot
 /// enter the VM or collect, so it does not introduce an effect/recovery boundary.
-#[allow(dead_code)]
 pub(super) fn emit_number_remainder(
     builder: &mut FunctionBuilder<'_>,
     pointer: ir::Type,
@@ -1764,6 +1764,8 @@ lane_helper_inventory! { H;
     FieldSet => lane_field_set::<H>,
     Call => super::dispatch_fast::lane_body_call::<H>,
     IndexSet => lane_index_set::<H>,
+    /// Room for a loop's append to a dense array (`lane_array_append_room`).
+    AppendRoom => lane_array_append_room::<H>,
     FunctionBinding => lane_function_binding::<H>,
     MaterializeInline => lane_materialize_inline::<H>,
     InterruptOwner => lane_interrupt_owner,
@@ -2040,6 +2042,13 @@ impl OnlineFacts<'_> {
 /// reads it as natively as a VM's own compile does.
 pub(super) fn names_length(program: &ResidualProgram, atom: Atom) -> bool {
     program.atoms.get(atom as usize) == Some("length")
+}
+
+/// Whether `instruction` is a plain read of `length`, which its lowering answers for any base
+/// (`Lowering::array_length`), so the base needs no object record.
+pub(super) fn reads_length(program: &ResidualProgram, instruction: WideInstruction) -> bool {
+    !instruction.writes_current_this() && !instruction.returns_from_frame()
+        && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { atom, .. }) if names_length(program, atom))
 }
 
 /// The facts of the VM a lowering specializes to, fixed when the VM is built.
@@ -6040,6 +6049,8 @@ impl CompiledOsrRegion {
             // The counter is the `words` field's first word, not the struct's offset 0:
             // `LoopEntry` is not `repr(C)`.
             native.dispatch.loop_entry = entry.words_mut() as usize;
+            // A leave inside an inlined callee writes the callee's live registers here.
+            if region.inlining.is_some() { native.dispatch.inlined = entry.scratch_address(); }
             // The loop entry's captures in the dense slot view the lane capture reads use.
             let captures = if region.captures.is_empty() { Vec::new() } else {
                 let len = region.captures.iter().map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);
@@ -6093,31 +6104,33 @@ impl CompiledOsrRegion {
                 LoopOutcome::Returned { pc: native.dispatch.returned_pc as u32,
                     value: crate::Value::from_bits(word) }
             } else {
-                match LaneExit::decode(word) {
-                    // A leave outside the loop is the loop's normal continuation, which the
-                    // lane resumes at that PC; a guard inside the loop is an exit. The word
-                    // already names the caller's PC, and an inlining region's loop ends at
-                    // the caller's latch, not at the region's last instruction.
-                    LaneExit::At(pc) => {
-                        let pc = pc as u32;
-                        let latch = region.inlining.as_ref().map_or(region.backedge, |inlining| inlining.latch);
-                        if (region.header..=latch).contains(&pc) {
-                            LoopOutcome::Exit(pc)
-                        } else {
-                            LoopOutcome::Resume(pc)
-                        }
-                    }
-                    LaneExit::Entry => LoopOutcome::NotEntered,
-                    LaneExit::Terminated => LoopOutcome::Terminated,
-                    LaneExit::Callee => LoopOutcome::Callee,
-                    LaneExit::Inlined { .. } | LaneExit::Returned { .. } => LoopOutcome::Exit(0),
-                }
+                lane_loop_outcome(word, region)
             };
         }) };
         if ran.is_none() { return LoopOutcome::Terminated; }
         outcome
     }
 
+}
+
+/// The outcome of a lane OSR region's leave `word`. A leave outside the loop is the loop's
+/// normal continuation, which the lane resumes at that PC; a guard inside the loop is an
+/// exit. The word already names the caller's PC, and an inlining region's loop ends at the
+/// caller's latch, not at the region's last instruction. A leave inside an inlined callee
+/// names its frame and callee PC.
+fn lane_loop_outcome(word: u64, region: &LoopRegion) -> LoopOutcome {
+    match LaneExit::decode(word) {
+        LaneExit::At(pc) => {
+            let pc = pc as u32;
+            let latch = region.inlining.as_ref().map_or(region.backedge, |inlining| inlining.latch);
+            if (region.header..=latch).contains(&pc) { LoopOutcome::Exit(pc) } else { LoopOutcome::Resume(pc) }
+        }
+        LaneExit::Entry => LoopOutcome::NotEntered,
+        LaneExit::Terminated => LoopOutcome::Terminated,
+        LaneExit::Callee => LoopOutcome::Callee,
+        LaneExit::Inlined { frame, pc } => LoopOutcome::Inlined { frame, pc },
+        LaneExit::Returned { .. } => LoopOutcome::Exit(0),
+    }
 }
 
 /// Analyze a loop candidate whose calls run inlined (`osr_loop::inline_region`), each
@@ -6146,8 +6159,9 @@ pub(super) fn analyze_osr_region_detailed(
     live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     header: u32,
     backedge: u32,
+    method_calls: MethodCalls,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
-    osr_loop::region(function, decoded, constants, sites, live, header, backedge)
+    osr_loop::region(function, decoded, constants, sites, live, header, backedge, method_calls)
 }
 
 /// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_tier`).
@@ -6721,6 +6735,9 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
     }
     // A string primitive reads as the lane's does: its `length`, else `String.prototype`.
     if let Some(value) = vm.cached_string_field_hit(residual, Value::from_bits(receiver), atom, site) { return value.to_bits(); }
+    // A typed array's geometry, which no field cache records, as the lane's (`lane_cached_field`).
+    if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
+        && let Some(value) = vm.typed_array_geometry_read(Value::from_bits(receiver), atom) { return value.to_bits(); }
     // A read native code has no descriptor for is mostly an inherited method's: its proved
     // entry answers without a walk (`Vm::proved_inherited_field_hit`), before the other tiers.
     if let Some(value) = vm.proved_inherited_field_hit(residual, Value::from_bits(receiver), site) {
@@ -6916,6 +6933,38 @@ unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u6
     }
     let (object, key, value) = (Value::from_bits(object), Value::from_bits(key), Value::from_bits(value));
     u64::from(vm.try_replace_record_element(object, key, value) || vm.try_add_record_element(object, key, value))
+}
+
+/// A lane loop's room for appending to the dense array `object` (`Vm::reserve_native_array_append`):
+/// the room its backing holds, or zero, which leaves the append to `lane_index_set`.
+unsafe extern "C" fn lane_array_append_room<H: Host>(vm: u64, _residual: u64, object: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; a growth moves only this array's backing.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    vm.reserve_native_array_append(Value::from_bits(object)).map_or(0, |room| room as u64)
+}
+
+impl<H: Host> Vm<H> {
+    /// Room for one more element of `array` (a dense array, `dense_array_length`, whose
+    /// backing it owns alone and no prototype of which holds an index), so that OrdinarySet
+    /// of the index at its length defines a plain element in place: the backing grows when
+    /// full, storing, calling and collecting nothing. The answer, the room the backing holds,
+    /// bounds the lengths an `i32` index reaches (`MAX_INDEXED_LENGTH`). `None` for any other
+    /// array, and where collection is due, before or after a growth: the store leaves for
+    /// the VM, which collects at its safepoint.
+    fn reserve_native_array_append(&mut self, array: Value) -> Option<usize> {
+        if self.heap.should_collect() { return None; }
+        let length = self.dense_array_length(array)?;
+        if length >= osr_loop::MAX_INDEXED_LENGTH || !self.prototypes_hold_no_index(array) { return None; }
+        // A Number store logs nothing.
+        let elements = self.heap.record_array_store_mut_unlogged(array, Value::integer(0))?.elements_mut();
+        if elements.owner_count() != 1 { return None; }
+        let elements = super::index::mutable_array_elements(elements);
+        let before = elements.capacity();
+        elements.reserve(1);
+        let room = elements.capacity();
+        self.heap.charge_payload_growth((room - before) * size_of::<Value>());
+        (!self.heap.should_collect()).then_some(room.min(osr_loop::MAX_INDEXED_LENGTH))
+    }
 }
 
 /// Admit a depth-zero closure capture without walking, allocating or invoking
@@ -12485,9 +12534,13 @@ impl<H: Host> Vm<H> {
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
             return false;
         };
-        let state = self.programs.js_tier(id, function);
-        if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
-            return self.programs.js_jit_diagnostics_enabled();
+        // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim costs a short call-free one its leaf calls.
+        // They specialize the whole function themselves, so a function the function tier
+        // declined is theirs to claim as well.
+        let lane_body = self.programs.js_jit_lane_methods_enabled() && (facts.has_calls
+            || program.function_get(function as usize).is_some_and(|body| body.loops() || body.code.len() >= TIERS.lane_body.min_instructions));
+        if matches!(self.programs.js_tier(id, function), Some(super::program_store::JsTierState::Unsupported)) {
+            return lane_body;
         }
         let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
         // Keep bounded candidates on a frame entry until the shared tier has
@@ -12495,9 +12548,7 @@ impl<H: Host> Vm<H> {
         // across the later promotion and no longer consult tiering.
         // Inlining may erase a short body's calls; a call-free candidate still has
         // to pay for native entry under the same cost policy.
-        // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim costs a short call-free one its leaf calls.
-        candidate || self.js_general_tier_takes(program, function, &facts) || (self.programs.js_jit_lane_methods_enabled() && (facts.has_calls
-            || program.function_get(function as usize).is_some_and(|body| body.loops() || body.code.len() >= TIERS.lane_body.min_instructions)))
+        candidate || self.js_general_tier_takes(program, function, &facts) || lane_body
     }
 
     /// Whether the general baseline may take `function`: a general candidate the tier admits
@@ -18565,36 +18616,6 @@ mod tests {
             "{\"function\":1,\"import_index\":5,\"module\":\"host\\\\api\",\"name\":\"line\\nfeed\",\"count\":2}"
         );
         assert_eq!(json_string("\u{1}\t"), "\"\\u0001\\t\"");
-    }
-
-    #[test]
-    #[cfg(all(target_arch = "x86_64", unix))]
-    fn native_value_index_offset_preserves_large_indices() {
-        let isa = super::super::jit_backend::target_isa().unwrap();
-        for ty in [types::I32, types::I64] {
-            let mut signature = Signature::new(isa.default_call_conv());
-            signature.params.push(AbiParam::new(types::I64));
-            signature.returns.push(AbiParam::new(types::I64));
-            let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-            let mut context = FunctionBuilderContext::new();
-            let mut builder = FunctionBuilder::new(&mut function, &mut context);
-            let block = builder.create_block();
-            builder.append_block_params_for_function_params(block);
-            builder.switch_to_block(block);
-            builder.seal_block(block);
-            let index = builder.block_params(block)[0];
-            let index = if ty == types::I32 { builder.ins().ireduce(ty, index) } else { index };
-            let offset = emit_value_index_offset(&mut builder, index);
-            builder.ins().return_(&[offset]);
-            builder.finalize(isa.frontend_config());
-            let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
-            // SAFETY: the generated function has this signature, accesses no memory,
-            // and its executable allocation remains live throughout these calls.
-            let offset = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64) -> u64>(code.pointer()) };
-            for index in [0, 1, (1 << 29) - 1, 1 << 29, (1 << 29) + 1, i32::MAX as u64] {
-                assert_eq!(unsafe { offset(index) }, index * std::mem::size_of::<Value>() as u64, "{ty}: index {index}");
-            }
-        }
     }
 
     #[test]

@@ -90,6 +90,7 @@ pub(crate) enum Class {
     DefineField,
     DefinePrivateField,
     MarkPrivateName,
+    YieldStar,
     DefinePropertyRecord,
     Delete,
     InitializeTdz,
@@ -176,6 +177,7 @@ macro_rules! class_of {
     (Throw) => { Class::Throw };
     (Await) => { Class::Await };
     (Yield) => { Class::Yield };
+    (YieldStar) => { Class::YieldStar };
     (DefineArrayElement) => { Class::DefineArrayElement };
     (StoreLocalPlain) => { Class::StoreLocalPlain };
     (LoadLocalPlain) => { Class::LoadLocalPlain };

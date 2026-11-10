@@ -187,14 +187,16 @@ fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
     fields
 }
 
-/// Starts compiling `region`'s code from `observation`, or `None` where it lowers no code.
+/// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
+/// `None` where it lowers no code (a typed plan hoisting no view would leave at an access).
 pub(in crate::vm) fn start_osr_region(
-    region: &LoopRegion,
+    region: &LoopRegion, views: super::ElementViews,
     observation: &Observation<'_>,
     policy: crate::MemoryPolicy,
     program: &ResidualProgram,
     function_id: u32,
     helpers: LaneHelpers,
+    widened: &[usize],
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
     let fields = loop_fields(region, observation);
@@ -202,26 +204,26 @@ pub(in crate::vm) fn start_osr_region(
     // at the call's exact PC, with no callee inlined. The inlined unit is an optimization over
     // that plan, used only where the general plan declines; an inlined callee the region
     // cannot prove exactly then costs the region nothing but the inlining.
-    let plan = |unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, header: usize, backedge: usize| {
+    let plan = |unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, header: usize, backedge: usize, generic: &[usize]| {
         super::lane_region::RegionSpecializer {
             function_id, unit, helpers, fields: &fields,
-            global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
+            global_reads: &Default::default(), facts: VmFacts::STATIC, generic,
             direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
             entry_fields,
             plan: super::lane_region::RegionPlan {
                 coverage: super::lane_region::Coverage::Loop { header, backedge, poll: false },
-                completion: super::lane_region::Completion::StatusAndPc,
-                views: super::lane_region::ElementViews::Dense,
+                completion: super::lane_region::Completion::StatusAndPc, views,
             },
-        }.specialize(program).ok()
+        }.specialize(program).ok().filter(|lowered| views == super::ElementViews::Dense || lowered.hoists_arrays)
     };
     let inlined = region.inlining.is_some().then(|| inlining_unit(region)).flatten();
     let lane = inlined
         .as_ref()
-        .and_then(|(unit, fields)| plan(unit, fields, 0, unit.instructions.len().saturating_sub(1)))
+        .and_then(|(unit, fields)| plan(unit, fields, 0, unit.instructions.len().saturating_sub(1), &[]))
         .or_else(|| {
             let plain = loop_unit(program.function(function_id as usize));
-            plan(&plain, &plain_entry_fields(region), region.header as usize, region.backedge as usize)
+            // The plain unit's PCs are the function's, which the site's leaves name.
+            plan(&plain, &plain_entry_fields(region), region.header as usize, region.backedge as usize, widened)
         });
     // One plan lowers a loop: the region specializer, the same plan a lane body and a static
     // typed region use. A region it declines stays in the interpreter; there is no second
@@ -302,12 +304,12 @@ mod tests {
                 && (instruction.jump_target() as usize) <= pc)
                 .then(|| (instruction.jump_target(), pc as u32))
         }).expect("the function has a loop");
-        let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge)
+        let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
             .expect("the loop is admitted");
         let observation = Observation { native_field_loads: &[] };
-        let pending = start_osr_region(&region, &observation,
+        let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
             crate::MemoryPolicy::Throughput, &program, id,
-            super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>())
+            super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &[])
             .expect("the loop plans");
         assert_eq!(pending.header, region.header, "the loop goes through RegionSpecializer");
     }

@@ -68,6 +68,10 @@ pub(crate) enum LoopOutcome {
     Resume(u32),
     /// The instruction at this PC needs the general path, which executes it.
     Exit(u32),
+    /// The instruction at callee PC `pc` of inlined frame `frame` needs the general path:
+    /// the lane makes the callee's activation there from the registers native code left in
+    /// the entry's scratch window (`LoopEntry::scratch_value`).
+    Inlined { frame: usize, pc: u32 },
     /// The region completed its activation with `value` at the record `pc`: a `Return`
     /// inside the loop, or a returning call. The lane completes the activation as its own
     /// body would (`lane_return_value_general`), which is not an exit.
@@ -212,6 +216,23 @@ pub(crate) enum RegionRejection {
 pub(crate) struct RegionAnalysisFailure {
     pub(crate) reason: RegionRejection,
     pub(crate) pc: u32,
+}
+
+/// What a plain region does at a call whose callee a field read gives (a method call): leave
+/// the loop to the inliner, which makes its region once the site is hot (a call boundary,
+/// `RegionAnalysisFailure::is_call_boundary`), or leave at the call as at any other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MethodCalls {
+    Inliner,
+    Exit,
+}
+
+impl MethodCalls {
+    /// Whether a region with call receivers `objects` (an inlining one, which leaves at a
+    /// call it kept) leaves its method calls to the inliner.
+    fn inlined(self, objects: &std::collections::BTreeSet<Register>) -> bool {
+        self == Self::Inliner && objects.is_empty()
+    }
 }
 
 impl RegionAnalysisFailure {
@@ -593,7 +614,7 @@ fn tagged_registers_with_failure(
                     }
                 }
                 // Entry captures and cached fields can carry arbitrary boxed values.
-                Class::LoadCapture | Class::GetField | Class::GetIndex => {}
+                Class::LoadCapture | Class::GetField | Class::GetIndex | Class::MakeArray => {}
                 Class::Binary if number_comparison(instruction).is_some() => {}
                 // The type-name index is still a boxed Number at bytecode level. Its
                 // lowering reads only immediate tags and exits before the operation for
@@ -694,10 +715,6 @@ pub(crate) const CALLEE_CAPTURE: u16 = 1 << 15;
 /// The capture slot that carries the activation's `this` into a region whose field reads of
 /// `this` read its current slots; no function's slot reaches it.
 pub(crate) const THIS_CAPTURE: u16 = CALLEE_CAPTURE - 1;
-
-/// The exit PC native code reports for an inlined callee's instruction: its region PC with
-/// this bit, which no function PC has (`MAX_REGION_INSTRUCTIONS`).
-pub(crate) const INLINED_EXIT: u32 = 1 << 31;
 
 /// What `inline_region` needs of a call's callee.
 pub(crate) struct InlineCallee<'a> {
@@ -872,7 +889,7 @@ fn pure_setup(op: Op) -> bool {
 /// which reruns them. The read itself and the moves of the object arguments drop out, so the
 /// registers they write, which the setup's function may reuse otherwise, hold nothing for
 /// the region. Leaving at a callee's instruction makes the callee's activation
-/// (`INLINED_EXIT`).
+/// (`LoopOutcome::Inlined`).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn inline_region<'a>(
     function: &Function,
@@ -1243,7 +1260,7 @@ pub(super) fn inline_region<'a>(
         Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks))),
         header_live,
         header,
-        &receivers,
+        &receivers, MethodCalls::Inliner,
     )
     .ok()?;
     // Dynamic receiver reads use the loop's caller registers and exact caller PCs. Keep
@@ -1320,21 +1337,6 @@ impl LoopRegion {
     /// writes only with that field's reads (`held_registers`).
     pub(crate) fn held_field(&self, register: Register) -> Option<usize> {
         self.held.get(&register).map(|(_, index)| *index)
-    }
-
-    /// Whether native code leaving at the `INLINED_EXIT` PC `pc` wrote back `register`.
-    pub(crate) fn wrote_back(&self, pc: u32, register: Register) -> bool {
-        self.is_live(pc & !INLINED_EXIT, register)
-    }
-
-    /// The frame and callee PC of an `INLINED_EXIT` PC native code reported.
-    pub(crate) fn inlined_exit(&self, pc: u32) -> Option<(&InlineFrame, u32)> {
-        let inlining = self.inlining.as_ref()?;
-        (pc & INLINED_EXIT != 0).then_some(())?;
-        match inlining.origins.get(((pc & !INLINED_EXIT) - self.header) as usize)? {
-            Origin::Inlined { frame, pc } => Some((&inlining.frames[usize::from(*frame)], *pc)),
-            Origin::Caller(_) | Origin::Leave(_) => None,
-        }
     }
 }
 
@@ -1423,7 +1425,7 @@ impl LoopEntry {
 
     /// Arrays follow the fields, in the region's order. An array longer than
     /// `MAX_INDEXED_LENGTH` declines the entry.
-    pub(crate) fn push_array(&mut self, elements: *mut Value, length: usize, capacity: usize) -> Option<()> {
+    pub(crate) fn push_array<T>(&mut self, elements: *mut T, length: usize, capacity: usize) -> Option<()> {
         (length <= MAX_INDEXED_LENGTH).then_some(())?;
         let end = self.length + ARRAY_WORDS;
         self.words[self.length..end].copy_from_slice(&[
@@ -1466,17 +1468,22 @@ impl LoopEntry {
         Value::from_bits(unsafe { self.words[word].assume_init() })
     }
 
-    /// An inlining region's last word: its scratch registers' address.
-    pub(crate) fn push_scratch(&mut self) {
-        let address = self.scratch.as_mut_ptr().addr() as u64;
-        self.push(address);
+    /// The scratch window an inlining region's leave inside an inlined callee writes the
+    /// callee's live registers to, at each register's offset past the caller's
+    /// (`JsStepDispatch::inlined`).
+    /// Every word starts `undefined`, so a register the leave did not write reads as a value
+    /// even if the callee's and the unit's liveness ever disagreed; only inlining regions
+    /// ask for the window.
+    pub(super) fn scratch_address(&mut self) -> usize {
+        self.scratch.fill(std::mem::MaybeUninit::new(Value::UNDEFINED.to_bits()));
+        self.scratch.as_mut_ptr().addr()
     }
 
     /// The value an inlined callee's register `register` of an inlining region took when
     /// native code left at an inlined instruction where it is live.
     ///
     /// # Safety
-    /// The exit wrote the register back: it is live at the exit's PC (`LoopRegion::is_live`).
+    /// The exit wrote the register back: it is live at the callee's PC the exit names.
     pub(crate) unsafe fn scratch_value(&self, inlining: &Inlining, register: Register) -> Value {
         // SAFETY: as the caller promises.
         Value::from_bits(unsafe { self.scratch[usize::from(register - inlining.caller_registers)].assume_init() })
@@ -1648,6 +1655,7 @@ pub(super) fn region(
     live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     header: u32,
     backedge: u32,
+    method_calls: MethodCalls,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     let (start, end) = (header as usize, backedge as usize);
     if start > end || end >= decoded.len() || end - start >= MAX_REGION_INSTRUCTIONS {
@@ -1666,6 +1674,7 @@ pub(super) fn region(
         header_live,
         header,
         &std::collections::BTreeSet::new(),
+        method_calls,
     )
 }
 
@@ -1683,12 +1692,13 @@ fn admit_region(
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
+    method_calls: MethodCalls,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
-    if let Err(offset) = iteration::iterates_natively(&instructions, header) {
+    if let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls) {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op()), header, offset));
     }
     match admit_register_roles(
-        instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects,
+        instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, method_calls,
     ) {
         Ok(region) => Ok(region),
         Err(failure) => {
@@ -1842,7 +1852,7 @@ fn admit_lifetime_roles(
             field(InstructionField::B, instruction.b())?,
             field(InstructionField::C, instruction.c())?, instruction.imm()));
     }
-    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new())
+    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new(), MethodCalls::Inliner)
         .inspect_err(|&failure| {
             if crate::trace::Channel::OsrReject.on() {
                 eprintln!("QUENCH_JS_JIT_OSR_LIFETIME_REJECT header={header} failure={failure:?}");
@@ -1887,6 +1897,7 @@ fn admit_register_roles(
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
+    method_calls: MethodCalls,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     let backedge = header + instructions.len() as u32 - 1;
     // A held register keeps the value its path read at entry, which a store to any name on
@@ -1921,7 +1932,7 @@ fn admit_register_roles(
             continue;
         }
         if let Some((offset, _)) =
-            definitions.find(|(_, instruction)| !matches!(instruction.op().class(), Class::GetIndex | Class::GetField | Class::Move | Class::LoadCapture | Class::LoadEnvLocal))
+            definitions.find(|(_, instruction)| !matches!(instruction.op().class(), Class::GetIndex | Class::GetField | Class::Move | Class::LoadCapture | Class::LoadEnvLocal | Class::MakeArray))
         {
             return Err(RegionAnalysisFailure::at(RegionRejection::ArrayRedefined, header, offset));
         }
@@ -2072,11 +2083,9 @@ fn admit_register_roles(
                 field_stores.insert(offset as u32, index);
             }
         }
-        // A field-resolved method call is owned by the existing inliner. Falling back to
-        // the generic exact-PC gateway here would run its loop out of line and regress the
-        // inliner's behavior and coverage. Dynamic/direct calls have no such owner.
-        // An inlining region (one with call receivers, `objects`) leaves at a call it kept.
-        if objects.is_empty() && instruction.op().is_ordinary_call() {
+        // A field-resolved method call is the inliner's (`MethodCalls::inlined`), unless the
+        // inliner declined it. Dynamic/direct calls have no such owner.
+        if method_calls.inlined(objects) && instruction.op().is_ordinary_call() {
             let callee_register = instruction.register_b();
             if instructions[..offset]
                 .iter()
@@ -2348,6 +2357,10 @@ fn admit(
                 admission.result(instruction)?;
             }
         }
+        // An array literal allocates by the lane's own (`compiled::lane_new_array`), leaving
+        // where a collection is due; it and its elements take no register role.
+        Class::MakeArray => (instruction.result_flags() == 0).then_some(())?,
+        Class::DefineArrayElement => {}
         Class::SetIndex => {
             admission.number(instruction.register_a())?;
             if !dynamic_arrays.contains(&instruction.register_b()) {
@@ -2383,7 +2396,7 @@ fn admit(
         }
         // The interpreter runs every other instruction at its exact PC, with the whole state
         // written back (binding lookup, calls, allocation, GC, throws).
-        _ if exits_before_effects(instruction.op()) => {}
+        _ if exits_before_effects(instruction) => {}
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
         Class::Return | Class::Jump => {}
@@ -2426,15 +2439,9 @@ fn admit(
                         admission.tagged(register)?;
                     }
                 }
-            } else if super::super::operations::NumberRelation::from_operator(
-                instruction.binary_operator_field(),
-            )
-            .is_some() || bitwise_condition(instruction).is_some()
-            {
+            } else {
                 admission.source(instruction.operand_b())?;
                 admission.source(instruction.operand_c())?;
-            } else {
-                return None;
             }
         }
         Class::JumpFalse | Class::JumpTrue => {
@@ -2529,6 +2536,7 @@ impl Webs {
 pub(super) fn number_reads(instruction: WideInstruction) -> Vec<Register> {
     let register = |operand: Operand| operand.register_index();
     match instruction.op().class() {
+        _ if exits_before_effects(instruction) => Vec::new(),
         Class::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => Vec::new(),
         Class::Move | Class::IncDec | Class::Unary | Class::ToNumeric => vec![instruction.register_b()],
         Class::Binary | Class::NumericAdd | Class::NumericMultiply | Class::JumpBinaryFalse => [
@@ -2586,31 +2594,37 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
 fn number_definition(instruction: WideInstruction) -> Option<Register> {
     matches!(instruction.op().class(), Class::LoadConst | Class::Move | Class::LoadCapture | Class::Binary
         | Class::NumericAdd | Class::NumericMultiply | Class::IncDec | Class::Unary | Class::ToNumeric
-        | Class::GetIndex | Class::GetField | Class::LoadEnvLocal)
+        | Class::GetIndex | Class::GetField | Class::LoadEnvLocal | Class::MakeArray)
     .then(|| instruction.result_register())
 }
 
-/// The instructions this tier lowers to native code (`admit`).
+/// The instructions this tier lowers to native code (`admit`): a conditional jump only on a
+/// relation or a bitwise and, so one on `in` or `instanceof` is an exit.
 /// Every other one leaves at its exact PC before its effects and the interpreter runs its own
 /// definition, so the tier covers every opcode; analysis and emission keep that boundary.
-fn lowered_natively(op: Op) -> bool {
-    admitted_store(op) || matches!(op.class(),
-        Class::LoadConst | Class::Move | Class::LoadCapture | Class::Binary | Class::NumericAdd
-        | Class::NumericMultiply | Class::ToNumeric | Class::IncDec | Class::Unary
-        | Class::RequireObjectCoercible | Class::GetIndex | Class::GetField | Class::SetIndex
-        | Class::LoadEnvLocal | Class::Return | Class::Jump | Class::JumpBinaryFalse
-        | Class::JumpFalse | Class::JumpTrue)
+fn lowered_natively(instruction: WideInstruction) -> bool {
+    let op = instruction.op();
+    admitted_store(op) || match op.class() {
+        Class::JumpBinaryFalse => super::super::operations::NumberRelation::from_operator(instruction.binary_operator_field())
+            .is_some() || bitwise_condition(instruction).is_some(),
+        class => matches!(class,
+            Class::LoadConst | Class::Move | Class::LoadCapture | Class::Binary | Class::NumericAdd
+            | Class::NumericMultiply | Class::ToNumeric | Class::IncDec | Class::Unary
+            | Class::RequireObjectCoercible | Class::GetIndex | Class::GetField | Class::SetIndex
+            | Class::LoadEnvLocal | Class::Return | Class::Jump | Class::JumpFalse | Class::JumpTrue
+            | Class::MakeArray | Class::DefineArrayElement),
+    }
 }
 
-fn exits_before_effects(op: Op) -> bool { !lowered_natively(op) }
+fn exits_before_effects(instruction: WideInstruction) -> bool { !lowered_natively(instruction) }
 /// The register a native run defines at an instruction: an exit's definition is the VM's.
-fn native_definition(at: WideInstruction) -> Option<Register> { at.defined_register().filter(|_| lowered_natively(at.op())) }
+fn native_definition(at: WideInstruction) -> Option<Register> { at.defined_register().filter(|_| lowered_natively(at)) }
 
 /// The region PCs control continues at from the instruction at `pc`, and the PCs outside it
 /// where the lane resumes; as lowered.
 fn successors(region: &LoopRegion, pc: u32) -> Vec<u32> {
     let instruction = region.instructions[(pc - region.header) as usize];
-    if exits_before_effects(instruction.op()) {
+    if exits_before_effects(instruction) {
         return Vec::new();
     }
     let mut successors = Vec::with_capacity(2);

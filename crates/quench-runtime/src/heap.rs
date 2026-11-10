@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 mod access;
 mod array_elements;
-pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
 pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope};
 use array_proofs::retire_array_storage_proofs;
@@ -2727,14 +2727,10 @@ impl Heap {
                 self.gc_profile.survivors_min = live as u64;
                 self.gc_profile.survivors_max = live as u64;
             } else {
-                self.gc_profile.allocations_between_collections_min = self
-                    .gc_profile
-                    .allocations_between_collections_min
-                    .min(allocations_between_collections);
-                self.gc_profile.allocations_between_collections_max = self
-                    .gc_profile
-                    .allocations_between_collections_max
-                    .max(allocations_between_collections);
+                self.gc_profile.allocations_between_collections_min =
+                    self.gc_profile.allocations_between_collections_min.min(allocations_between_collections);
+                self.gc_profile.allocations_between_collections_max =
+                    self.gc_profile.allocations_between_collections_max.max(allocations_between_collections);
                 self.gc_profile.survivors_min = self.gc_profile.survivors_min.min(live as u64);
                 self.gc_profile.survivors_max = self.gc_profile.survivors_max.max(live as u64);
             }
@@ -4628,9 +4624,7 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
                 widen_inline_storage(data, properties, data.shape(), length, slot, value);
             }
         }
-        // A prototype's store of the value its slot holds changes nothing its readers took, as
-        // three.js's constructors store `Vector3.prototype.isVector3 = true` for each instance.
-        // SAFETY: as above.
+        // A prototype's store of the value it holds changes nothing its readers took. SAFETY: as above.
         ExactStorage::Extended { .. } if data.was_used_as_prototype() && unsafe { read_exact_slot(data, properties, slot) } == value => {}
         ExactStorage::Extended { inline } => {
             data.note_value_write(slot);
