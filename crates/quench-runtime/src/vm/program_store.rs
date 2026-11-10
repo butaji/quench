@@ -3315,6 +3315,7 @@ impl Drop for ProgramStore {
                 }
             }
         }
+        eprintln!("{}", super::dispatch_fast::lane_miss_report());
         let mut records: Vec<_> = diagnostics.iter().collect();
         records.sort_unstable_by_key(|(key, _)| **key);
         let stderr = std::io::stderr();

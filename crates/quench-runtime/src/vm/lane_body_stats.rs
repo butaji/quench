@@ -95,3 +95,31 @@ impl End {
         }
     }
 }
+
+/// Why a lane body's call or construction helper answered `LANE_CALL_MISSED`, which leaves the
+/// body at the call. One slot per refusal site in `lane_body_call`, `lane_body_construct` and
+/// `lane_body_native_call`; read by the diagnostics report (`miss_report`).
+const MISS_REASONS: [&str; 25] = [
+    "call:shadow-active", "call:no-script-calls", "call:constructing", "call:with-scope", "call:returning-not-admitted",
+    "call:receiver", "call:entry-not-activation", "call:too-many-args", "call:no-activation-room", "call:read-answer",
+    "construct:shadow-active", "construct:no-script-constructs", "construct:construct-target", "construct:with-scope", "construct:collection-due",
+    "construct:returning", "construct:no-target", "construct:not-constructor-or-forwards", "construct:entry-not-activation", "construct:too-many-args",
+    "construct:no-activation-room", "construct:no-receiver", "native:returning", "native:not-native", "native:in-place-declined",
+];
+static MISSES: [std::sync::atomic::AtomicU64; MISS_REASONS.len()] = [const { std::sync::atomic::AtomicU64::new(0) }; MISS_REASONS.len()];
+
+/// Counts a miss for `reason` (an index of `MISS_REASONS`) and answers the helper's miss.
+#[cold]
+pub(in crate::vm) fn miss(reason: usize) -> u64 {
+    MISSES[reason].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    super::super::compiled::LANE_CALL_MISSED
+}
+
+/// The report line of the misses, `QUENCH_LANE_MISSES {...}`, most frequent first.
+pub(in crate::vm) fn miss_report() -> String {
+    let mut counts: Vec<_> = MISS_REASONS.iter().zip(&MISSES)
+        .map(|(name, count)| (*name, count.load(std::sync::atomic::Ordering::Relaxed))).filter(|(_, count)| *count != 0).collect();
+    counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    let fields = counts.iter().map(|(name, count)| format!("\"{name}\":{count}")).collect::<Vec<_>>().join(",");
+    format!("QUENCH_LANE_MISSES {{{fields}}}")
+}
