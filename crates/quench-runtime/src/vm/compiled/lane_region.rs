@@ -1017,6 +1017,8 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         Class::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
         // A dense element, read natively; any other element leaves (`emit_dense_element_read`).
         Class::GetIndex => !instruction.returns_from_frame(),
+        // A null or undefined operand leaves before any effect (`staged::require_object_coercible`).
+        Class::RequireObjectCoercible => !instruction.returns_from_frame(),
         _ => instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     }
 }
@@ -1045,15 +1047,15 @@ fn retains_array_views(constants: &[crate::bytecode::Constant], instruction: Wid
     }
 }
 
-/// Loops with one external entry and no interior entry, whose native operations
-/// only read or replace existing own fields and array elements. Misses leave before guest effects.
-/// A sole native entry at the header can supply the same entry proofs.
 /// Whether a loop may hold `instruction` natively: a read, an own-field or element store, or a
 /// call lowered as an intrinsic (`intrinsic`).
 fn stays_native(constants: &[Constant], instruction: WideInstruction, intrinsic: bool) -> bool {
     intrinsic || reads_only(constants, instruction) || stores_own(instruction) || stores_element(instruction)
 }
 
+/// Loops with one external entry and no interior entry, whose native operations
+/// only read or replace existing own fields and array elements. Misses leave before guest effects.
+/// A sole native entry at the header can supply the same entry proofs.
 fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Constant], start: usize,
     intrinsics: &native_calls::Intrinsics) -> Vec<(usize, usize)> {
     let instructions = &unit.instructions;

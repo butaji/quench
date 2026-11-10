@@ -251,10 +251,37 @@ fn transfer(
     }
 }
 
+/// The transfer of a ToNumeric or a Number's unary operator, whose operand is a Number or whose
+/// instruction leaves (`Lowering::instruction`, `Lowering::unary`); `None` for any other.
+fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Flow> {
+    let op = instruction.op();
+    match op.class() {
+        // A Number is its own ToNumeric; an untyped operand is taken for an int32 and tested once.
+        Class::ToNumeric if !instruction.returns_from_frame() => {
+            let source = types.get(usize::from(instruction.register_b())).copied().unwrap_or(Type::ANY);
+            let ty = if source.is_subtype(Type::NUMBER) { source } else { Type::INT32 };
+            set(types, instruction.register_b(), ty);
+            set(types, instruction.result_register(), ty);
+            Some(Flow::Next)
+        }
+        Class::Unary if instruction.result_flags() == 0 && !instruction.writes_current_this()
+            && op.js_denotation() == crate::bytecode::JsDenotation::NumericUnary
+            && super::super::operations::NumberUnary::from_js_instruction(op, instruction.unary_operator()).is_some() => {
+            prove_number(types, [instruction.operand_b(), instruction.operand_b()]);
+            set(types, instruction.result_register(), Type::NUMBER);
+            Some(Flow::Next)
+        }
+        // A null or undefined operand leaves; the operand's type is unchanged.
+        Class::RequireObjectCoercible => Some(Flow::Next),
+        _ => None,
+    }
+}
+
 /// `transfer`, where an element read observed to hold Numbers (`Facts::observed`) defines a Number.
 fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool, observed_number: bool) -> Flow {
-    let flow = transfer(types, instruction, constants, written, native_calls);
+    let flow = unary_transfer(types, instruction)
+        .unwrap_or_else(|| transfer(types, instruction, constants, written, native_calls));
     if observed_number && instruction.op().class().eq(Class::GetIndex) {
         for register in written(instruction) { set(types, register, Type::NUMBER); }
     }
