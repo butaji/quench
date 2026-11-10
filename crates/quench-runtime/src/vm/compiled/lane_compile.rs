@@ -233,10 +233,18 @@ impl<H: Host> Vm<H> {
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &[Option<DirectCallee>], generic: &[LaneExit], budget: usize, entry: Option<u32>) -> Option<PendingLaneMethod> {
-        self.host.before_native_compilation();
-        let planned = self.plan_lane_method(program, function, targets, captures, direct, generic, budget, entry);
-        self.host.after_native_compilation();
-        let (plan, native) = planned?;
+        // A plan whose IR would make more code than a body may take is planned again with
+        // less inlined before anything compiles: compiling it first costs all of its compile.
+        let mut budget = budget;
+        let (plan, native) = loop {
+            self.host.before_native_compilation();
+            let planned = self.plan_lane_method(program, function, targets, captures, direct, generic, budget, entry);
+            self.host.after_native_compilation();
+            let (plan, native) = planned?;
+            let oversized = native.dfg.num_insts() * lane_region::LANE_BODY_CODE_BYTES_PER_IR > lane_region::LANE_BODY_MAX_CODE_BYTES;
+            if !oversized || plan.unit.frames.is_empty() || budget == 0 { break (plan, native); }
+            budget /= REPLAN_BUDGET_DIVISOR;
+        };
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
@@ -247,7 +255,17 @@ impl<H: Host> Vm<H> {
             &watcher, &mut self.heap, self.method_cache_atoms.readers()) {
             return None;
         }
-        let code = super::jit_backend::run_in_background(move || lane_code(native));
+        let census = self.programs.js_jit_diagnostics_enabled()
+            .then(|| (function, entry.is_some(), plan.unit.instructions.len(), native.dfg.num_insts()));
+        let code = super::jit_backend::run_in_background(move || {
+            let started = std::time::Instant::now();
+            let code = lane_code(native);
+            if let Some((function, osr, unit, ir)) = census {
+                eprintln!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"us\":{},\"bytes\":{}}}",
+                    started.elapsed().as_micros(), code.as_ref().map_or(0, |code| code.len()));
+            }
+            code
+        });
         self.programs.note_pending_native_calls(&watch, plan.callees());
         Some(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code })
     }

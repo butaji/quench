@@ -79,6 +79,9 @@ const NUMBER_ENTRY_MISS: i64 = 1;
 /// guards and exits cost. A larger body is planned again with less inlined
 /// (`Vm::compile_lane_method`).
 const LANE_BODY_CODE_BYTES_PER_INSTRUCTION: usize = 128;
+/// The machine bytes an IR instruction of a lane body costs at most, measured over the V8-v7
+/// bodies (6.7 to 7.3), which a plan's size is judged by before it compiles.
+pub(super) const LANE_BODY_CODE_BYTES_PER_IR: usize = 8;
 pub(super) const LANE_BODY_MAX_CODE_BYTES: usize =
     super::lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS * LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
 
