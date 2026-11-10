@@ -3,8 +3,8 @@ use std::process::{Command, Output};
 
 fn run(binary: &str, jit: bool) -> Output {
     let mut command = Command::new(binary);
-    if jit {
-        command.arg("--jit");
+    if !jit && binary != "node" {
+        command.arg("--no-jit");
     }
     command
         .arg(concat!(
