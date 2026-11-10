@@ -275,6 +275,12 @@ impl LoopSite {
         self.inline_region.get().and_then(|region| region.as_deref()).or_else(|| self.region.get())
     }
 
+    /// Whether the site still enters native code: its runs have not exhausted the exits and
+    /// declines `TIERS.loops` allows.
+    fn enters(&self) -> bool {
+        self.exits.get() < TIERS.loops.max_exits && self.declines.get() < TIERS.loops.max_declines
+    }
+
     fn is_admitted(&self) -> bool {
         !self.promotion_only
             && self.analysis_failure.is_none_or(|failure| failure.is_call_boundary())
@@ -7888,8 +7894,7 @@ script_handler! {
             lane_loop_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
-        if site.exits.get() >= TIERS.loops.max_exits
-            || site.declines.get() >= TIERS.loops.max_declines
+        if !site.enters()
             || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy())
         {
             lane_loop_retire::<H>(cx, ip, site);
@@ -7897,10 +7902,13 @@ script_handler! {
         }
         let region = match site.region.get() {
             Some(region) => region,
-            None => match lane_inlining_region(cx, r, site) {
+            // The calls do not run inlined: the loop leaves at them, as at any other call.
+            None => match lane_inlining_region(cx, r, site).or_else(|| {
+                let _ = site.inline_region.set(None);
+                loop_tier::lane_method_call_region(cx, site)
+            }) {
                 Some(region) => site.region.get_or_init(|| region),
                 None => {
-                    // The calls do not run inlined: the loop stays the interpreter's.
                     site.exits.set(TIERS.loops.max_exits);
                     lane_loop_retire::<H>(cx, ip, site);
                     next!(cx, r, header, Carried::script(cx))
@@ -8042,8 +8050,7 @@ script_handler! {
         // SAFETY: a record runs this handler only while a site holds it.
         let site = unsafe { &*lane_header_site(ip) };
         if !script_below_floor(cx)
-            && site.exits.get() < TIERS.loops.max_exits
-            && site.declines.get() < TIERS.loops.max_declines
+            && site.enters()
             && let Some(region) = site.active_region()
         {
             match lane_loop_native::<H>(cx, r, ip, ip, site, region) {
@@ -8067,10 +8074,11 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     let specialize = |work: super::compiled::LaneBodyWork| {
-        // Entry warm-up leaves closed loops to their admitted regions. A region that leaves
-        // for calls still lets a lane body inline those callees into its typed unit.
+        // Entry warm-up leaves closed loops to their admitted regions while those still enter
+        // native code. A region that leaves for calls still lets a lane body inline those
+        // callees into its typed unit.
         if matches!(work, super::compiled::LaneBodyWork::Start { .. })
-            && own.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some())
+            && own.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters())
         {
             return super::compiled::LaneBodyOutcome::Declined;
         }
@@ -8295,8 +8303,9 @@ fn lane_loop_run<H: Host>(
         // A run pays for its entry with the iterations it completed, wherever it leaves.
         LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
         LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
-        // The call made the callee's activation, whose own records the lane runs next.
-        LoopOutcome::Callee => LoopContinuation::Callee,
+        // The call made the callee's activation, whose own records the lane runs next; the
+        // run left as any exit does, so it too pays with the iterations it completed.
+        LoopOutcome::Callee => { site.note_run(entry.backedge_count()); LoopContinuation::Callee }
         LoopOutcome::Returned { pc, value } => {
             site.note_run(entry.backedge_count());
             LoopContinuation::Completed(pc, value)
@@ -8358,12 +8367,12 @@ fn lane_loop_entry<H: Host>(
         }
     }
     let vm = unsafe { vm(cx) };
-    // No guest call or allocation occurs in a native run. Field writes replace guarded
-    // own slots, and element stores change no shape slot. Immutable fields keep their
-    // entry values; admitted same-receiver Number writes update SSA field cells. Other
-    // possible aliases are rejected by region admission. Any miss, accessor, private
-    // name or non-Number declines before native effects. Nested receivers follow the
-    // earlier field's value.
+    // No guest call or collection occurs in a native run, and an array literal it allocates
+    // is no entry value. Field writes replace guarded own slots, and element stores change
+    // no shape slot. Immutable fields keep their entry values; admitted same-receiver Number
+    // writes update SSA field cells. Other possible aliases are rejected by region
+    // admission. Any miss, accessor, private name or non-Number declines before native
+    // effects. Nested receivers follow the earlier field's value.
     for (index, field) in region.fields.iter().enumerate() {
         // A field native code reads at its instruction (`LoopRegion::is_dynamic_field`) takes
         // its entry value only to seed its representation: a receiver it does not answer for
@@ -8479,19 +8488,11 @@ fn lane_inlining_region<H: Host>(
     r: Registers,
     site: &LoopSite,
 ) -> Option<super::compiled::LoopRegion> {
-    let machine = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let program = unsafe { (*cx).program };
-    let function_index = machine
-        .lane_stack
-        .activations
-        .last()
-        .map_or(machine.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
-    let function = code.function_get(function_index as usize)?;
-    let decoded: Vec<WideInstruction> = function.instructions().collect();
+    let (function_index, function, decoded, constants) = loop_tier::lane_loop_function(cx, code)?;
     let live = code.register_root_masks(function_index)?;
-    let constants = machine.programs.constants(program).to_vec();
     // The callee is the last of the fields its read reads through, each read from the
     // registers and the fields before it as they are now.
     let mut resolve = |chain: &[super::compiled::FieldUse], capture: Option<u16>| -> Option<super::compiled::InlineCallee<'_>> {
@@ -19693,7 +19694,7 @@ fn install_loop_sites<'live, H: Host>(
                 sites,
                 live(),
                 header,
-                pc as u32,
+                pc as u32, super::compiled::MethodCalls::Inliner,
             ) {
                 Ok(region) => {
                     let call_boundary_pcs = region.call_boundary_pcs();

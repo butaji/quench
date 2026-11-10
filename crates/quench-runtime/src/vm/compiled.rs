@@ -123,7 +123,7 @@ pub use fault_handler::NativeFaultHandler;
 pub(super) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
     FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion,
-    Observation, RegionAnalysisFailure, RegionRejection,
+    MethodCalls, Observation, RegionAnalysisFailure, RegionRejection,
 };
 
 pub(super) use crate::staged::Domain as NumberRelationDomain;
@@ -6155,8 +6155,9 @@ pub(super) fn analyze_osr_region_detailed(
     live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     header: u32,
     backedge: u32,
+    method_calls: MethodCalls,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
-    osr_loop::region(function, decoded, constants, sites, live, header, backedge)
+    osr_loop::region(function, decoded, constants, sites, live, header, backedge, method_calls)
 }
 
 /// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_tier`).

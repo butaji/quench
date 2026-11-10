@@ -304,7 +304,7 @@ mod tests {
                 && (instruction.jump_target() as usize) <= pc)
                 .then(|| (instruction.jump_target(), pc as u32))
         }).expect("the function has a loop");
-        let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge)
+        let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
             .expect("the loop is admitted");
         let observation = Observation { native_field_loads: &[] };
         let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,

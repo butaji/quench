@@ -48,6 +48,8 @@ fn depart(vm: &mut Vm<TestHost>, anchor: Value, shape: u32, round: i32) -> u32 {
     next
 }
 
+/// The OSR site of `function_id`'s outermost loop: the first header's, closed by its last
+/// backward jump.
 fn osr_site(vm: &Vm<TestHost>, function_id: usize) -> crate::vm::dispatch_fast::OsrSiteDiagnostics {
     let osr = vm
         .programs
@@ -57,8 +59,8 @@ fn osr_site(vm: &Vm<TestHost>, function_id: usize) -> crate::vm::dispatch_fast::
         .and_then(crate::vm::program_store::derived_lane_view)
         .expect("receiver-departure loop lane view")
         .osr_diagnostics();
-    let [site] = osr.sites.as_slice() else { panic!("one loop, one OSR site: {osr:?}") };
-    site.clone()
+    osr.sites.iter().min_by_key(|site| (site.header_pc, std::cmp::Reverse(site.backedge_pc)))
+        .unwrap_or_else(|| panic!("a loop, an OSR site: {osr:?}")).clone()
 }
 
 #[test]
@@ -331,4 +333,50 @@ fn shared_osr_typed_element_kinds_the_lowering_lacks_stay_with_the_interpreter()
       }
       print(out.join(","));
     "#, &[]);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_loops_leave_at_in_tests_they_do_not_lower() {
+    // `in` on an array (its holes, then an index a prototype answers) and on objects with and
+    // without the key: the loop leaves at the test, and the interpreter runs it.
+    assert_typed_osr(r#"
+      function hasIndex(a, n) { let s = 0; for (let i = 0; i < n; i++) { s = (s * 31 + i) | 0; if ((i & 63) === 0) { if ((i & 127) in a) s = (s + 1) | 0; } } return s; }
+      function hasKey(o, n) { let s = 0; for (let i = 0; i < n; i++) { s = (s * 31 + i) | 0; if ((i & 63) === 0) { if ("k" in o) s = (s + 7) | 0; } } return s; }
+      var holes = [1, , 3], out = [];
+      holes[100] = 4;
+      for (var round = 0; round < 40; round++) {
+        if (round === 20) { delete holes[0]; Array.prototype[1] = 9; }
+        out.push(hasIndex(holes, 3000), hasKey(round & 1 ? { k: 1 } : { j: 1 }, 3000));
+      }
+      delete Array.prototype[1];
+      print(out.join(","));
+    "#, &["hasIndex", "hasKey"]);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_array_literals_allocate_in_native_loops() {
+    // A literal each iteration allocates by the lane's own; a due collection leaves first.
+    assert_typed_osr(r#"
+      function pairs(n) { let s = 0; for (let i = 0; i < n; i++) { const p = [i, i * 2]; s = (s + p[0] + p[1]) | 0; } return s; }
+      var out = [];
+      for (var round = 0; round < 40; round++) out.push(pairs(3000));
+      print(out.join(","));
+    "#, &["pairs"]);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_counted_loops_leave_at_nested_for_of_and_builtin_calls() {
+    // A `for...of` over an Array, then a Set, and a builtin method call, each on a path some
+    // iterations take: the counted loop leaves there, and the iterator protocol and the call
+    // run in the interpreter.
+    assert_typed_osr(r#"
+      function nested(a, n) { let s = 0; for (let i = 0; i < n; i++) { s = (s * 31 + i) | 0; if ((i & 255) === 0) for (const v of a) s = (s + v) | 0; } return s; }
+      function builtin(n) { let s = 0; for (let i = 0; i < n; i++) { s = (s + i * 3) | 0; if ((i & 255) === 0) s = (s + Math.max(s, i)) | 0; } return s; }
+      var out = [];
+      for (var round = 0; round < 40; round++) out.push(nested(round < 20 ? [1, 2, 3] : new Set([4, 5]), 3000), builtin(3000));
+      print(out.join(","));
+    "#, &["nested", "builtin"]);
 }

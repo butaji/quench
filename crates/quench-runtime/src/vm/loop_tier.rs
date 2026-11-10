@@ -216,3 +216,30 @@ fn push_dense_array<H: Host>(vm: &mut Vm<H>, value: Value, written: bool, entry:
     let elements = super::super::index::mutable_array_elements(elements);
     entry.push_array(elements.as_mut_ptr(), elements.len(), elements.capacity())
 }
+
+/// The running activation's function in `code`, the context's program: its index, body and
+/// decoded code, and the program's constants, from which a loop site's region is analyzed.
+pub(super) fn lane_loop_function<H: Host>(cx: *mut LaneContext<H>, code: &ResidualProgram)
+    -> Option<(u32, &crate::bytecode::Function, Vec<WideInstruction>, Vec<Value>)> {
+    let machine = unsafe { vm(cx) };
+    let function_index = machine
+        .lane_stack
+        .activations
+        .last()
+        .map_or(machine.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+    let function = code.function_get(function_index as usize)?;
+    let constants = machine.programs.constants(unsafe { (*cx).program }).to_vec();
+    Some((function_index, function, function.instructions().collect(), constants))
+}
+
+/// The plain region of `site`'s loop, which leaves at each method call the inliner declined
+/// (`MethodCalls::Exit`).
+#[inline(never)]
+pub(super) fn lane_method_call_region<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite) -> Option<LoopRegion> {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let (function_index, function, decoded, constants) = lane_loop_function(cx, code)?;
+    super::super::compiled::analyze_osr_region_detailed(function, &decoded, &constants, &code.field_sites,
+        code.shared_register_root_masks(function_index), site.header, site.backedge,
+        super::super::compiled::MethodCalls::Exit).ok()
+}
