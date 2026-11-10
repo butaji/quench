@@ -71,6 +71,8 @@ mod lane_sites;
 use lane_allocations::{lane_binary, lane_new_array, lane_new_object, lane_new_object_pair};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
+#[path = "compiled/lane_facts.rs"]
+mod lane_facts;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
 mod static_loops;
@@ -1807,6 +1809,8 @@ lane_helper_inventory! { H;
     FieldAdd => lane_field_add::<H>,
     /// A loop's hoisted typed array view (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
+    /// A value step the interpreter defines (`dispatch_fast::lane_body_value_step`).
+    ValueStep => super::dispatch_fast::lane_body_value_step::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.

@@ -499,19 +499,11 @@ mod tests {
         .unwrap()
     }
 
-    fn memcpy_reference_index(index: i64, length: usize) -> usize {
-        if index < 0 {
-            length.saturating_sub(usize::try_from(index.unsigned_abs()).unwrap_or(usize::MAX))
-        } else {
-            usize::try_from(index).unwrap_or(usize::MAX).min(length)
-        }
-    }
-
     fn memcpy_reference(mut bytes: Vec<u8>, dest: i32, src: i32, num: i32) -> Vec<u8> {
         let length = bytes.len();
-        let target = memcpy_reference_index(i64::from(dest), length);
-        let start = memcpy_reference_index(i64::from(src), length);
-        let end = memcpy_reference_index(i64::from(src) + i64::from(num), length);
+        let target = crate::units::relative_index(f64::from(dest), length);
+        let start = crate::units::relative_index(f64::from(src), length);
+        let end = crate::units::relative_index(f64::from(src) + f64::from(num), length);
         let count = end.saturating_sub(start).min(length - target);
         bytes.copy_within(start..start + count, target);
         bytes

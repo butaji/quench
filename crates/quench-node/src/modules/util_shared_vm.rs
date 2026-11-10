@@ -7,7 +7,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 // Node src/node_util.cc validates the native stack-frame request against this limit.
 const NODE_CALL_SITE_FRAME_LIMIT: usize = 200;
 
-pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
+pub(crate) use quench_runtime::units::MAX_SAFE_INTEGER;
 
 /// The public module and original inspector share one canonical function identity.
 #[derive(Clone, Copy)]
@@ -941,7 +941,7 @@ pub(crate) fn guess_handle_type(
 ) -> Result<RootId, RootedError> {
     let missing = context.undefined();
     let value = context.to_number(args.first().copied().unwrap_or(missing))?;
-    let fd = super::native_number::uint32(value) as i32;
+    let fd = quench_runtime::units::to_uint32(value) as i32;
     Ok(context.number(super::fd_handle_type::guess(fd) as u8 as f64))
 }
 

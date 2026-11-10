@@ -3,6 +3,9 @@ use super::*;
 pub(super) use super::shape_lookup::derive_shape_lookup_index;
 pub(super) use super::field_cache::FieldCacheProbe;
 use crate::value::HeapReference;
+mod mru_chain;
+pub(super) use mru_chain::MRU_CHAIN_END;
+use mru_chain::record_mru_entry;
 
 #[cfg(all(test, feature = "aot"))]
 mod tests {
@@ -2938,34 +2941,12 @@ impl<H: Host> Vm<H> {
 
     /// Records `entry` among the site's accessor entries: one for its receiver shape is
     /// replaced, and a full site drops its oldest.
-    fn record_accessor_entry(&mut self, site: usize, mut entry: AccessorFieldCache) {
+    fn record_accessor_entry(&mut self, site: usize, entry: AccessorFieldCache) {
         let head = self.accessor_field_indices.get(site);
-        let (mut index, mut previous, mut length) = (head, NO_ACCESSOR_FIELD, 0);
-        while index != NO_ACCESSOR_FIELD {
-            let cached = self.accessor_fields[index as usize];
-            if cached.receiver == entry.receiver {
-                entry.next = cached.next;
-                self.accessor_fields[index as usize] = entry;
-                return;
-            }
-            length += 1;
-            if cached.next == NO_ACCESSOR_FIELD {
-                break;
-            }
-            (previous, index) = (index, cached.next);
+        if let Some(slot) = record_mru_entry(&mut self.accessor_fields, head, ACCESSOR_FIELD_CACHE_WAYS, entry) {
+            self.accessor_field_indices.set(site, slot);
+            self.note_field_cache_write(site);
         }
-        let slot = if length >= ACCESSOR_FIELD_CACHE_WAYS {
-            // The oldest entry, `index`, follows `previous`, as in `record_inherited_field`.
-            self.accessor_fields[previous as usize].next = NO_ACCESSOR_FIELD;
-            index
-        } else {
-            self.accessor_fields.push(entry);
-            (self.accessor_fields.len() - 1) as u32
-        };
-        entry.next = head;
-        self.accessor_fields[slot as usize] = entry;
-        self.accessor_field_indices.set(site, slot);
-        self.note_field_cache_write(site);
     }
 
     /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
@@ -3143,33 +3124,13 @@ impl<H: Host> Vm<H> {
     /// Records `cache` as the site's newest inherited entry. An entry for its receiver shape
     /// is replaced in place; a site holding `INHERITED_FIELD_CACHE_WAYS` entries reuses its
     /// oldest one's storage, so a site's entries stay bounded however many shapes reach it.
-    fn record_inherited_field(&mut self, site: usize, mut cache: InheritedFieldCache) {
+    fn record_inherited_field(&mut self, site: usize, cache: InheritedFieldCache) {
         let head = self.inherited_field_indices.get(site);
-        let (mut index, mut previous, mut length) = (head, NO_INHERITED_FIELD, 0);
-        while index != NO_INHERITED_FIELD {
-            let entry = self.heap.dependencies().inherited(index);
-            if entry.receiver == cache.receiver {
-                cache.next = entry.next;
-                *self.heap.dependencies_mut().inherited_mut(index) = cache;
-                return;
-            }
-            length += 1;
-            if entry.next == NO_INHERITED_FIELD {
-                break;
-            }
-            (previous, index) = (index, entry.next);
+        if let Some(slot) =
+            record_mru_entry(self.heap.dependencies_mut(), head, INHERITED_FIELD_CACHE_WAYS, cache)
+        {
+            self.inherited_field_indices.set(site, slot);
         }
-        let slot = if length >= INHERITED_FIELD_CACHE_WAYS {
-            // The oldest entry, `index`, follows `previous`: more than one way keeps it apart
-            // from the head the new entry links to.
-            self.heap.dependencies_mut().inherited_mut(previous).next = NO_INHERITED_FIELD;
-            index
-        } else {
-            self.heap.dependencies_mut().push_inherited(cache.clone())
-        };
-        cache.next = head;
-        *self.heap.dependencies_mut().inherited_mut(slot) = cache;
-        self.inherited_field_indices.set(site, slot);
     }
 
     /// An inherited data field cached by `inherited_field`: the receiver keeps its shape and

@@ -179,8 +179,7 @@ fn argument(args: &[RootId], index: usize, c: &mut Context<'_>) -> RootId {
 fn int32(c: &mut Context<'_>, args: &[RootId], index: usize) -> Result<i32, RootedError> {
     let value = argument(args, index, c);
     let number = c.to_number(value)?;
-    // ECMAScript ToInt32: wrap modulo 2^32.
-    Ok(if number.is_finite() { number.trunc().rem_euclid(4_294_967_296.0) as u32 as i32 } else { 0 })
+    Ok(quench_runtime::units::to_int32(number))
 }
 
 fn text(c: &mut Context<'_>, args: &[RootId], index: usize) -> Result<String, RootedError> {

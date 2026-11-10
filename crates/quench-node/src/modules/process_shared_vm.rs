@@ -26,7 +26,7 @@ pub(crate) fn collect_garbage(
 const STDOUT_FD: i32 = 1;
 const STDERR_FD: i32 = 2;
 use crate::CASE_RESULT_ENV;
-const MAX_SAFE_EXIT_CODE: f64 = 9_007_199_254_740_991.0;
+const MAX_SAFE_EXIT_CODE: f64 = quench_runtime::units::MAX_SAFE_INTEGER;
 const UNHANDLED_REJECTION_CLI_GUIDANCE: &str = "To terminate the node process on unhandled promise rejection, use the CLI flag `--unhandled-rejections=strict` (see https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode).";
 
 pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {

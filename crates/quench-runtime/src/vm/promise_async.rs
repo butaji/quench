@@ -1,7 +1,7 @@
 use super::activation::{Completion, Continuation};
 use super::promise::{PromiseReaction, PromiseState};
 use super::*;
-use crate::heap::AwaitState;
+use crate::heap::{AwaitKind, AwaitRole, AwaitState};
 
 /// What an await reaction resumes with, read from its `AwaitState`.
 #[derive(Clone, Copy, Debug)]
@@ -10,9 +10,8 @@ struct AwaitResume {
     /// suspends into it again (`Vm::await_again`).
     state: Value,
     promise: Value,
-    generator: Option<Value>,
+    role: AwaitRole,
     rejected: bool,
-    yielded: bool,
 }
 
 impl<H: Host> Vm<H> {
@@ -105,7 +104,7 @@ impl<H: Host> Vm<H> {
                         Some(destination),
                         promise,
                     );
-                    vm.enqueue_async_resume(p, Some(continuation), promise, None, value, false)?;
+                    vm.enqueue_async_resume(p, AwaitKind::function(continuation), promise, value)?;
                 }
                 super::FrameOutcome::Await { frame: None, .. } => {
                     return Err(JsError("async frame lost at suspension".into()));
@@ -201,27 +200,23 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// Suspends `continuation` on `source`: one `AwaitState` cell holds it and is both
-    /// handlers of the await's reaction, so it lives exactly as long as that reaction.
-    /// Awaits `source` for a suspended activation: `continuation`, or none for an async
-    /// generator's `yield`, whose continuation stays in its generator's record
-    /// (`async_generator_yield`).
+    /// Suspends the activation `kind` holds on `source`: one `AwaitState` cell holds it and
+    /// is both handlers of the await's reaction, so it lives exactly as long as that
+    /// reaction. An async generator's `yield` holds no frame, whose continuation stays in
+    /// its generator's record (`async_generator_yield`).
     pub(super) fn enqueue_async_resume(
         &mut self,
         p: &ResidualProgram,
-        continuation: Option<Continuation>,
+        kind: AwaitKind,
         promise: Value,
-        generator: Option<Value>,
         source: Value,
-        yielded: bool,
     ) -> Result<(), JsError> {
-        let state = self.heap.alloc_await_state(AwaitState {
-            continuation: continuation.map(Box::new),
-            realm: self.realm.globals,
-            promise,
-            generator,
-            yielded,
-        });
+        let generator = match &kind {
+            AwaitKind::AsyncFunction(_) => None,
+            AwaitKind::AsyncGeneratorAwait { generator, .. }
+            | AwaitKind::AsyncGeneratorYield { generator } => Some(*generator),
+        };
+        let state = self.heap.alloc_await_state(AwaitState::arm(kind, self.realm.globals, promise));
         // Host lifecycle observers can run before a reaction holds the state.
         self.with_call_roots([state, source], |vm| {
             vm.attach_await_reactions(p, state, promise, generator, source)
@@ -241,9 +236,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let realm = self.realm.globals;
         let state = self.heap.await_state_mut(resume.state).expect("a running await reaction keeps its state");
-        debug_assert!(state.continuation.is_none() && state.generator.is_none() && !state.yielded);
-        state.continuation = Some(Box::new(continuation));
-        state.realm = realm;
+        debug_assert!(matches!(state, AwaitState::Spent), "an await state re-arms only once spent");
+        *state = AwaitState::arm(AwaitKind::function(continuation), realm, resume.promise);
         self.with_call_roots([resume.state, source], |vm| {
             vm.attach_await_reactions(p, resume.state, resume.promise, None, source)
         })
@@ -321,23 +315,19 @@ impl<H: Host> Vm<H> {
         let Some(state) = self.heap.await_state_mut(state) else {
             return Err(JsError("await reaction without its state".into()));
         };
-        let continuation = state.continuation.take().map(|continuation| *continuation);
-        let realm = state.realm;
-        let resume = AwaitResume {
-            state: spent,
-            promise: state.promise,
-            generator: state.generator,
-            rejected,
-            yielded: state.yielded,
+        let Some((kind, realm, promise)) = state.resume() else {
+            return Err(JsError("stale async continuation".into()));
         };
+        let (role, continuation) = kind.into_role();
+        let resume = AwaitResume { state: spent, promise, role, rejected };
         let previous_global = self.switch_realm_global(realm);
         let result = self.with_call_roots(
-            [Some(resume.promise), resume.generator, Some(value)]
+            [Some(resume.promise), resume.role.generator(), Some(value)]
                 .into_iter()
                 .flatten(),
             |vm| {
                 vm.resume_async_continuation(p, resume, continuation, value)?;
-                if let Some(generator) = resume.generator {
+                if let Some(generator) = resume.role.generator() {
                     vm.resume_async_generator_queue(p, generator)?;
                 }
                 Ok(Value::UNDEFINED)
@@ -357,8 +347,8 @@ impl<H: Host> Vm<H> {
         // A yield's await leaves its continuation in the generator's record: a fulfilled
         // value completes the request and the generator stays suspended there; a rejected
         // one resumes it at the yield with the rejection.
-        let continuation = match (continuation, resume.generator) {
-            (None, Some(generator)) if resume.yielded => {
+        let continuation = match (continuation, resume.role) {
+            (None, AwaitRole::AsyncGeneratorYield(generator)) => {
                 if !resume.rejected {
                     if let Some(record) = self.generator_record_mut(generator) {
                         record.stop();
@@ -366,12 +356,12 @@ impl<H: Host> Vm<H> {
                     let result = self.iterator_result(value, false)?;
                     return self.promise_resolve_value(p, resume.promise, result);
                 }
-                self.generator_record_mut(generator).and_then(|record| record.continuation.take())
+                self.generator_record_mut(generator).and_then(|record| record.resume())
             }
             (continuation, _) => continuation,
         };
         let Some(continuation) = continuation else {
-            if let Some(generator) = resume.generator {
+            if let Some(generator) = resume.role.generator() {
                 self.fail_async_generator(
                     p,
                     generator,
@@ -399,12 +389,6 @@ impl<H: Host> Vm<H> {
         continuation: Continuation,
         value: Value,
     ) -> Result<(), JsError> {
-        if resume.yielded
-            && let Some(generator) = resume.generator
-            && let Some(record) = self.generator_record_mut(generator)
-        {
-            record.state = super::activation::GeneratorState::Executing;
-        }
         let resume_register = continuation.resume_register;
         let mut frame = continuation.resume(self.with_stack.len());
         if !resume.rejected
@@ -430,7 +414,7 @@ impl<H: Host> Vm<H> {
             Ok(result) => result,
             Err(error) => {
                 self.pool_frame(frame);
-                if let Some(generator) = resume.generator {
+                if let Some(generator) = resume.role.generator() {
                     self.fail_async_generator(p, generator, resume.promise, error)?;
                 } else {
                     let reason = error
@@ -445,7 +429,7 @@ impl<H: Host> Vm<H> {
             super::FrameOutcome::Complete(value)
             | super::FrameOutcome::ConstructComplete { value, .. } => {
                 self.pool_frame(frame);
-                if let Some(generator) = resume.generator {
+                if let Some(generator) = resume.role.generator() {
                     self.finish_async_generator(p, generator, resume.promise, value)?;
                 } else {
                     self.promise_resolve_value(p, resume.promise, value)?;
@@ -462,16 +446,17 @@ impl<H: Host> Vm<H> {
                     Some(destination),
                     resume.promise,
                 );
-                if resume.generator.is_none() {
+                if resume.role.generator().is_none() {
                     self.await_again(p, resume, continuation, value)?;
                 } else {
+                    let AwaitRole::AsyncGeneratorAwait(generator) = resume.role else {
+                        unreachable!("an await inside an async generator body resumes its generator");
+                    };
                     self.enqueue_async_resume(
                         p,
-                        Some(continuation),
+                        AwaitKind::generator_await(generator, continuation),
                         resume.promise,
-                        resume.generator,
                         value,
-                        false,
                     )?;
                 }
             }
@@ -479,7 +464,7 @@ impl<H: Host> Vm<H> {
                 frame: Some(frame), ..
             } => {
                 self.pool_frame(frame);
-                if let Some(generator) = resume.generator {
+                if let Some(generator) = resume.role.generator() {
                     self.fail_async_generator(
                         p,
                         generator,
@@ -494,7 +479,7 @@ impl<H: Host> Vm<H> {
                 frame: Some(frame), ..
             } => {
                 self.pool_frame(frame);
-                if let Some(generator) = resume.generator {
+                if let Some(generator) = resume.role.generator() {
                     self.fail_async_generator(
                         p,
                         generator,
@@ -517,7 +502,7 @@ impl<H: Host> Vm<H> {
                 delegated_result,
                 frame: None,
             } => {
-                if let Some(generator) = resume.generator {
+                if let Some(generator) = resume.role.generator() {
                     self.async_generator_yield(
                         p,
                         generator,

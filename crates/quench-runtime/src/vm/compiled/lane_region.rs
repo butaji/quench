@@ -79,6 +79,9 @@ const NUMBER_ENTRY_MISS: i64 = 1;
 /// guards and exits cost. A larger body is planned again with less inlined
 /// (`Vm::compile_lane_method`).
 const LANE_BODY_CODE_BYTES_PER_INSTRUCTION: usize = 128;
+/// The machine bytes an IR instruction of a lane body costs at most, measured over the V8-v7
+/// bodies (6.7 to 7.3), which a plan's size is judged by before it compiles.
+pub(super) const LANE_BODY_CODE_BYTES_PER_IR: usize = 8;
 pub(super) const LANE_BODY_MAX_CODE_BYTES: usize =
     super::lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS * LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
 
@@ -2438,6 +2441,7 @@ impl Lowering<'_, '_> {
             Class::Return if plain && self.completion == Completion::StatusAndPc && instruction.register_a() < self.unit.registers => {
                 Some(self.complete(state, pc, instruction.register_a()))
             }
+            _ if self.is_value_step(instruction) => Some(self.value_step(state, pc, instruction)),
             Class::Call if self.completion == Completion::StatusAndPc
                 && (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
@@ -2744,6 +2748,86 @@ impl Lowering<'_, '_> {
                 self.exit(state, pc32);
                 false
             }
+        }
+    }
+
+    /// The continuation of a lane helper's `status`: its completion continues at `completed`, a
+    /// miss leaves at `missed`, and a leave in a callee, or a termination, stops the body.
+    fn helper_status(&mut self, status: ir::Value, completed: ir::Block, missed: ir::Block) {
+        let other = self.builder.create_block();
+        let left = self.builder.create_block();
+        self.builder.set_cold_block(left);
+        let done = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_COMPLETED as i64);
+        self.ins().brif(done, completed, &[], other, &[]);
+        self.builder.switch_to_block(other);
+        let miss = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_MISSED as i64);
+        self.ins().brif(miss, missed, &[], left, &[]);
+        self.builder.switch_to_block(left);
+        let terminated = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_TERMINATED as i64);
+        let stopped = self.builder.create_block();
+        let callee = self.builder.create_block();
+        self.ins().brif(terminated, stopped, &[], callee, &[]);
+        self.builder.switch_to_block(stopped);
+        let status = self.ins().iconst(types::I32, TERMINATED_STATUS);
+        let leave = self.leave;
+        self.ins().jump(leave, &[status.into()]);
+        self.builder.switch_to_block(callee);
+        let word = self.ins().iconst(types::I64, LaneExit::Callee.word() as i64);
+        let stop = self.stop;
+        self.ins().jump(stop, &[word.into()]);
+    }
+
+    /// Whether `instruction` is a plain value step the lane's helper makes (`Lowering::value_step`).
+    fn is_value_step(&self, instruction: WideInstruction) -> bool {
+        instruction.result_flags() == 0 && self.completion == Completion::StatusAndPc
+            && instruction.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP)
+    }
+
+    /// An opcode whose step the interpreter defines (`Vm::value_step`), by the lane's helper
+    /// of it (`dispatch_fast::lane_body_value_step`): the registers it reads are written to
+    /// the lane's, the helper runs, and its result is read back; a raised error leaves at `pc`.
+    fn value_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        let Some(super::lane_unit::Origin::Caller(call_pc)) = self.unit.origins.get(pc).copied() else {
+            self.exit(state, pc as u32);
+            return false;
+        };
+        let missed = self.guard_exit(state, pc as u32);
+        self.canonicalize(state, pc);
+        self.spill_written(pc);
+        let completed = self.builder.create_block();
+        let status = self.record_helper(LaneHelper::ValueStep, call_pc);
+        self.helper_status(status, completed, missed);
+        self.builder.switch_to_block(completed);
+        state.call_effect();
+        self.reload_property_arena();
+        if let Some(destination) = crate::vm::dispatch::value_step_result(instruction) { self.reload_result(state, destination); }
+        true
+    }
+
+    /// A lane helper of the record at `call_pc`, by the lane's context: its status word.
+    fn record_helper(&mut self, helper: LaneHelper, call_pc: u32) -> ir::Value {
+        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+        let call_word = self.ins().iconst(types::I64, i64::from(call_pc));
+        self.helper_call(helper, &[context, call_word])
+    }
+
+    /// A helper's result, read from the lane's register `destination` as the register's value.
+    fn reload_result(&mut self, state: &mut State, destination: Register) {
+        let base = self.registers_base;
+        let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));
+        self.set_tagged(state, destination, bits);
+    }
+
+    /// The live registers the body wrote, stored to the lane's registers for a helper to read.
+    fn spill_written(&mut self, pc: usize) {
+        let caller_registers = self.unit.caller_registers;
+        let written: Vec<Register> = self.written.iter().map(|register| register as Register)
+            .take_while(|register| *register < caller_registers).collect();
+        for register in written {
+            if !self.is_live(pc, register) { continue; }
+            let bits = self.builder.use_var(self.registers.tagged[usize::from(register)]);
+            let base = self.registers_base;
+            self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
         }
     }
 
@@ -3178,15 +3262,7 @@ impl Lowering<'_, '_> {
         };
         let missed = self.guard_exit(state, pc as u32);
         self.canonicalize(state, pc);
-        let caller_registers = self.unit.caller_registers;
-        let written: Vec<Register> = self.written.iter().map(|register| register as Register)
-            .take_while(|register| *register < caller_registers).collect();
-        for register in written {
-            if !self.is_live(pc, register) { continue; }
-            let bits = self.builder.use_var(self.registers.tagged[usize::from(register)]);
-            let base = self.registers_base;
-            self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
-        }
+        self.spill_written(pc);
         let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
         self.reentries.push(completed);
         match self.direct.get(&pc).copied().filter(|_| instruction.op().class().eq(Class::Call)) {
@@ -3195,30 +3271,8 @@ impl Lowering<'_, '_> {
             None => self.native_call(pc, instruction, generic, completed),
         }
         self.builder.switch_to_block(generic);
-        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
-        let call_word = self.ins().iconst(types::I64, i64::from(call_pc));
-        let status = self.helper_call(helper, &[context, call_word]);
-        let other = self.builder.create_block();
-        let left = self.builder.create_block();
-        self.builder.set_cold_block(left);
-        let done = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_COMPLETED as i64);
-        self.ins().brif(done, completed, &[], other, &[]);
-        self.builder.switch_to_block(other);
-        let miss = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_MISSED as i64);
-        self.ins().brif(miss, missed, &[], left, &[]);
-        self.builder.switch_to_block(left);
-        let terminated = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_TERMINATED as i64);
-        let stopped = self.builder.create_block();
-        let callee = self.builder.create_block();
-        self.ins().brif(terminated, stopped, &[], callee, &[]);
-        self.builder.switch_to_block(stopped);
-        let status = self.ins().iconst(types::I32, TERMINATED_STATUS);
-        let leave = self.leave;
-        self.ins().jump(leave, &[status.into()]);
-        self.builder.switch_to_block(callee);
-        let word = self.ins().iconst(types::I64, LaneExit::Callee.word() as i64);
-        let stop = self.stop;
-        self.ins().jump(stop, &[word.into()]);
+        let status = self.record_helper(helper, call_pc);
+        self.helper_status(status, completed, missed);
         self.builder.switch_to_block(completed);
         // A returning call's completion is its activation's: the lane completes it with the
         // result, which the call left in its register (`LaneExit::Returned`).
@@ -3232,10 +3286,7 @@ impl Lowering<'_, '_> {
         // arena: proofs of their shapes and storage retire, and the arena's base reloads.
         state.call_effect();
         self.reload_property_arena();
-        let destination = instruction.result_register();
-        let base = self.registers_base;
-        let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));
-        self.set_tagged(state, destination, bits);
+        self.reload_result(state, instruction.result_register());
         true
     }
 

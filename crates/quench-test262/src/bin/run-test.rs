@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf, process::ExitCode};
 
 use quench_test262::{
-    take_execution_mode, take_dynamic_source, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome, TestVariant, JIT_FLAG, AOT_FLAG,
+    take_execution_mode, take_dynamic_source, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome, TestVariant, NO_JIT_FLAG, AOT_FLAG,
 };
 
 fn main() -> ExitCode {
@@ -40,7 +40,7 @@ fn run() -> ExitCode {
     } else { None };
     if args.len() > 1 { return fail("run-test requires exactly one test path".into()); }
     let Some(path) = args.into_iter().next().map(PathBuf::from) else {
-        eprintln!("usage: cargo run -p quench-test262 --bin run-test -- [{JIT_FLAG}|{AOT_FLAG}] [--variant NAME] <test.js>");
+        eprintln!("usage: cargo run -p quench-test262 --bin run-test -- [{NO_JIT_FLAG}|{AOT_FLAG}] [--variant NAME] <test.js>");
         return ExitCode::from(2);
     };
     let root = test262_root();

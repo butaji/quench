@@ -72,7 +72,6 @@ const EVENTS: [Event; 3] = [Event::Message, Event::Close, Event::Error];
 
 /// Web IDL's integer moduli.
 pub(crate) const UNSIGNED_SHORT_MODULUS: f64 = 65536.0;
-const UNSIGNED_LONG_MODULUS: f64 = 4294967296.0;
 /// `initMessageEvent(type, bubbles, cancelable, data, origin, lastEventId, source, ports)`:
 /// where its init members start.
 const INIT_MESSAGE_FIELDS_START: usize = 3;
@@ -176,10 +175,9 @@ fn convert(c: &mut Context<'_>, interface: &Interface, name: &str, kind: Kind, v
             c.boolean(truthy)
         }
         Kind::UnsignedShort | Kind::UnsignedLong => {
-            let modulus = if kind == Kind::UnsignedShort { UNSIGNED_SHORT_MODULUS } else { UNSIGNED_LONG_MODULUS };
             let number = if undefined { 0.0 } else { c.to_number(value)? };
-            let number = if number.is_finite() { number.trunc().rem_euclid(modulus) } else { 0.0 };
-            c.number(number)
+            let short = number.is_finite().then(|| number.trunc().rem_euclid(UNSIGNED_SHORT_MODULUS)).unwrap_or(0.0);
+            c.number(if kind == Kind::UnsignedShort { short } else { f64::from(quench_runtime::units::to_uint32(number)) })
         }
         Kind::Source => {
             if is_nullish(c, value) {

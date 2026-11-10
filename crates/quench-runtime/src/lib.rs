@@ -13,8 +13,14 @@ mod execution_interrupt;
 /// Numeric facts shared by the runtime and its hosts.
 pub mod units {
     pub use quench_temporal::units::*;
-    /// `Number.MAX_SAFE_INTEGER`.
-    pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    /// The most elements an array holds: its length is a `u32`.
+    pub const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
+    pub use crate::integer_conversion::{relative_index, to_index, to_integer_or_infinity, to_length};
+    pub use crate::value::number_to_u32 as to_uint32;
+    /// ToInt32: ToUint32's bits reinterpreted as `i32`.
+    pub fn to_int32(value: f64) -> i32 {
+        to_uint32(value) as i32
+    }
     pub const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
     pub const BINARY_RADIX: u32 = 2;
     pub const OCTAL_RADIX: u32 = 8;
@@ -49,6 +55,7 @@ mod heap;
 )]
 mod jit_coverage;
 mod host;
+mod integer_conversion;
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
 mod memory_edge;
 mod module_identity;

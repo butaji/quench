@@ -1242,7 +1242,8 @@ dod-dense-hash crates/quench-runtime/src/shared_backing.rs 1
 dod-dense-hash crates/quench-runtime/src/value_vec.rs 4
 dod-dense-hash crates/quench-runtime/src/vm.rs 9
 dod-dense-hash crates/quench-runtime/src/vm/compiled.rs 2
-dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_compile.rs 3
+dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_compile.rs 2
+dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_facts.rs 1
 dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_region.rs 15
 dod-dense-hash crates/quench-runtime/src/vm/compiled/lane_region/stable.rs 2
 dod-dense-hash crates/quench-runtime/src/vm/compiled/osr_loop.rs 29
@@ -2888,7 +2889,6 @@ function-lines crates/quench-runtime/src/vm/compiled/guard_aarch64.rs::tests::un
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::base_field_read 43
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::binary 198
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::bounded_increment 41
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::call 73
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::direct_call 100
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::entry_facts 199
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::equality 82
@@ -5392,7 +5392,6 @@ native_form StoreName 1
 native_form StringCaseIndex 1
 native_form SuperConstArrayObject2 1
 native_form Throw 1
-native_form ToPropertyKey 1
 native_form Yield 1
 native_form YieldStar 1
 native_ir crates/quench-runtime/src/vm/compiled/eager.rs 29
@@ -5425,4 +5424,4 @@ native_ir crates/quench-runtime/src/vm/compiled/lane_region/stable.rs 7
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/store_domains.rs 2
 native_ir crates/quench-runtime/src/vm/compiled/object_slots.rs 45
 native_ir crates/quench-runtime/src/vm/compiled/object_slots/emit.rs 43
-native_refusals 24
+native_refusals 26

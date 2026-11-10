@@ -42,7 +42,7 @@ fn run()->Result<(),String> {
         let path=suite.join("test").join(relative);
         let config=vec![format!("TEST262_DIR={}",suite.display()),format!("TEST262_TEST_TIMEOUT_MS={}",TIMEOUT.as_millis())];
         let mut aot_command=config.clone();aot_command.push(aot.into());
-        let mut jit_command=config.clone();jit_command.extend([pinned_jit.to_string_lossy().into_owned(),"--jit".into(),"--variant".into(),variant.into(),path.to_string_lossy().into_owned()]);
+        let mut jit_command=config.clone();jit_command.extend([pinned_jit.to_string_lossy().into_owned(),"--variant".into(),variant.into(),path.to_string_lossy().into_owned()]);
         let mut node_command=config;node_command.extend([node.to_string_lossy().into_owned(),"--experimental-vm-modules".into(),oracle.to_string_lossy().into_owned(),relative.into(),variant.into()]);
         let engines=[("aot",aot_command),("jit",jit_command),("node",node_command)];
         let directory=output.join(index.to_string());fs::create_dir(&directory).map_err(|e|e.to_string())?;
