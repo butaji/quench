@@ -4173,7 +4173,6 @@ hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::empty_frame 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::iteration_environment 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::push_wasm_frame 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::push_wasm_frame_with_registers 1
-hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::rest_parameter_array 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::run_general_loop 27
 hot-alloc crates/quench-runtime/src/vm/dispatch_wasm.rs::Vm<H>::step_wasm 1
 hot-alloc crates/quench-runtime/src/vm/environment.rs::Vm<H>::name_not_defined 1

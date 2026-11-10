@@ -24,6 +24,16 @@ impl<H: Host> Vm<H> {
     }
 }
 
+/// Appends to `output` the units of a replacement template from `start` up to its next `$`
+/// past `start`, which are taken as they are, and returns where that `$` is: a template's
+/// text between its `$`s is one run.
+pub(super) fn append_template_run(output: &mut crate::vm::wtf16::JsStringBuilder, template: &JsString, start: usize) -> usize {
+    let units = template.units();
+    let end = (start + 1..units.len()).find(|&index| units.at(index) == u16::from(b'$')).unwrap_or(units.len());
+    output.append_slice(template, start..end);
+    end
+}
+
 #[cfg(test)]
 #[path = "literal_matches_tests.rs"]
 mod tests;

@@ -1326,8 +1326,7 @@ impl<H: Host> Vm<H> {
         let mut cursor = 0usize;
         while cursor < units.len() {
             if units.at(cursor) != u16::from(b'$') || cursor + 1 == units.len() {
-                output.append_slice(template, cursor..cursor + 1);
-                cursor += 1;
+                cursor = literal_matches::append_template_run(&mut output, template, cursor);
                 continue;
             }
             match units.at(cursor + 1) {
