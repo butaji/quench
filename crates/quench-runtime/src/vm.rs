@@ -217,6 +217,8 @@ mod primitive_bench;
 pub(crate) use operations::number_is_truthy;
 mod primitives;
 pub(crate) mod program_store;
+#[allow(dead_code)] // Its controllers adopt it commit by commit.
+mod tier_state;
 mod promise;
 mod promise_aggregate;
 mod promise_async;

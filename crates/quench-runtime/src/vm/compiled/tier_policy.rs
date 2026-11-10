@@ -125,6 +125,11 @@ pub(in crate::vm) struct Wasm {
 /// specializes a site into. One bound for every lattice of site feedback.
 pub(in crate::vm) const POLYMORPHISM: usize = 4;
 
+/// The speculative bodies a tier compiles for one owner (`tier_state::Tier`) before the next is
+/// the permanent generic one: a body is replaced by a successor that drops what its leaves
+/// showed, once per distinct case a site's feedback may hold.
+pub(in crate::vm) const SPECULATIVE_BODIES: u8 = POLYMORPHISM as u8;
+
 /// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
 /// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
 pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
