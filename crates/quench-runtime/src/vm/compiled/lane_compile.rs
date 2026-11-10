@@ -408,8 +408,9 @@ impl LaneMethod {
     /// holds it keeps its own body.
     pub(in crate::vm) fn feedback(&self, exit: LaneExit, program: &ResidualProgram) -> LaneExit {
         let LaneExit::Inlined { frame, pc } = exit else { return exit };
+        let Some(inlined) = self.inlined.get(frame) else { return exit };
         let calls_here = self.inlined.iter().any(|call| call.parent == Some(frame) && call.call == pc);
-        let constructs_here = program.function_get(self.inlined[frame].target.function as usize)
+        let constructs_here = program.function_get(inlined.target.function as usize)
             .and_then(|body| body.instructions().nth(pc as usize))
             .is_some_and(|instruction| instruction.op().class() == crate::bytecode::Class::Construct);
         if !calls_here && !constructs_here {

@@ -837,11 +837,10 @@ enum LaneBody {
     Specialized {
         method: std::rc::Rc<super::compiled::PublishedLaneMethod>,
         tier_prologue: *const (),
-        /// Its runs from the prologue and those that left before completing, counted up to
-        /// `TIERS.lane_body.trial_runs` (`LaneView::note_lane_body_run`).
-        runs: std::cell::Cell<u16>,
-        leaves: std::cell::Cell<u16>,
-        /// Its leaves since it specialized, toward `TIERS.lane_body.reoptimize_exits`, and where
+        /// Its runs that completed since it specialized: the leaves are judged against them
+        /// (`LaneView::note_lane_body_end`).
+        completions: std::cell::Cell<u32>,
+        /// Its leaves since it specialized, toward `TIERS.lane_body.reoptimize_exits` and `TIERS.lane_body.reoptimize_share`, and where
         /// they went (`LaneLeaves`).
         exits: std::cell::Cell<u16>,
         leaves_at: std::cell::Cell<LaneLeaves>,
@@ -851,9 +850,6 @@ enum LaneBody {
         /// Its predecessor's few leaves, where it left only there.
         stuck: LaneLeaves,
     },
-    /// A body whose runs mostly left: its function runs in the lane again, and its code stays
-    /// for the direct callers that name it until they retire with it at a shape compaction.
-    Retired { _method: std::rc::Rc<super::compiled::PublishedLaneMethod> },
     Declined,
 }
 
@@ -866,7 +862,6 @@ impl LaneView {
             LaneBody::Unspecialized { .. } => "unspecialized",
             LaneBody::Compiling { .. } => "compiling",
             LaneBody::Specialized { .. } => "specialized",
-            LaneBody::Retired { .. } => "retired",
             LaneBody::Declined => "declined",
         }
     }
@@ -877,7 +872,7 @@ impl LaneView {
         // execution or recovery can reenter and change the view's publication.
         match unsafe { &*self.tier_lane.get() } {
             LaneBody::Specialized { method, .. } => method.lease(),
-            LaneBody::Unspecialized { .. } | LaneBody::Compiling { .. } | LaneBody::Retired { .. } | LaneBody::Declined => None,
+            LaneBody::Unspecialized { .. } | LaneBody::Compiling { .. } | LaneBody::Declined => None,
         }
     }
 
@@ -904,28 +899,6 @@ impl LaneView {
             unsafe { (*self.prologue.get()).handler = *tier_prologue };
             self.drop_body(body);
         }
-    }
-
-    /// Counts a run of the specialized body from its prologue, and whether it `left` before
-    /// completing; at `TIERS.lane_body.trial_runs`, a body whose runs mostly left retires
-    /// (`LaneBody::Retired`), its prologue taking back the tier's handler.
-    fn note_lane_body_run(&self, left: bool) {
-        // SAFETY: as `lane_body`; the run that counts has finished.
-        let body = unsafe { &mut *self.tier_lane.get() };
-        let LaneBody::Specialized { runs, leaves, tier_prologue, .. } = body else { return };
-        if runs.get() >= TIERS.lane_body.trial_runs {
-            return;
-        }
-        runs.set(runs.get() + 1);
-        leaves.set(leaves.get() + u16::from(left));
-        if runs.get() < TIERS.lane_body.trial_runs || leaves.get() <= TIERS.lane_body.trial_runs / 2 {
-            return;
-        }
-        // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
-        unsafe { (*self.prologue.get()).handler = *tier_prologue };
-        let LaneBody::Specialized { method, .. } = std::mem::replace(body, LaneBody::Declined) else { unreachable!() };
-        *body = LaneBody::Retired { _method: method };
-        self.release_from_tier();
     }
 
     /// Whether it has no body yet and counts entries toward one, its first or a next.
@@ -959,10 +932,6 @@ impl LaneView {
             self.drop_body(body);
         }
         self.retired.borrow_mut().clear();
-        // Its direct callers name shapes too, so they retire with this compaction.
-        if matches!(body, LaneBody::Retired { .. }) {
-            *body = LaneBody::Declined;
-        }
         self.clear_hints(&self.field_records);
         self.clear_name_hints();
         for site in &self.loops {
@@ -12825,7 +12794,7 @@ script_handler! {
             vm.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Forwarded { through: r.get(i.b), callee }, function });
         }
         if let Some(FunctionKind::Native(native)) = kind {
-            if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+            if i.a & crate::bytecode::RETURN_REGISTER != 0 {
                 return exit(ip);
             }
             let value = lane_native_value(cx, ip, i, native, callee, receiver, args);
@@ -14764,18 +14733,15 @@ macro_rules! lane_body_conclude {
         {
             // SAFETY: as `lane_leave_counts`; a completed run carries no warming callee.
             unsafe { (*cx).callee_warming = false };
-            own.note_lane_body_run(false);
             own.note_lane_body_end(exit, false);
             drop(method);
             // SAFETY: the record that completes the activation is one of its function's.
             lane_return_value!(cx, unsafe { base.add(pc) }, value)
         }
         let counts = lane_leave_counts(cx, exit);
-        let left = counts && !matches!(exit, super::compiled::LaneExit::Returned { .. });
         let (resumed, feedback) = lane_body_left(cx, r, own, &method, exit);
         drop(method);
         // Counted once nothing reads the body: a retirement or reoptimization moves it.
-        own.note_lane_body_run(left);
         if counts {
             own.note_lane_body_end(feedback, false);
         }
@@ -15353,19 +15319,22 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
         r.set(i.a & crate::bytecode::REGISTER_MASK, array);
         return LANE_CALL_COMPLETED;
     }
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
+    // A returning construction completes as a returning call does (`lane_returning_call_admitted`).
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
         return lane_body_stats::miss(lane_body_stats::Miss::ConstructReturning);
     }
     // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
-    let Some(target) = vm.script_call_entry(callee).map(|entry| unsafe { *entry }) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
+    let Some(target) = lane_body_construct_target(cx, vm, callee) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
     if !target.constructs { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructor); }
-    // The activation of the lane's own construction (`lane_script_construct`): a target that
-    // keeps or gathers values, or is passed more than it has parameters, by the keeping form.
-    let how = match lane_call_activation(&target, argc, i.c) {
-        Some(LaneActivation::Environment) | None => return lane_body_stats::miss(lane_body_stats::Miss::ConstructEntryNotActivation),
-        Some(how) => how,
-    };
+    // A forwarding constructor takes the lane's keeping construction, which makes its receiver.
+    let forwarding = target.forwards();
+    let Some(how) = lane_call_activation(&target, argc, i.c) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructEntryNotActivation) };
     if matches!(how, LaneActivation::Plain) && !lane_activation_room(vm, &target) { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoActivationRoom); }
+    if forwarding {
+        // SAFETY: a construction passes its arguments from register `c` on.
+        let passed = unsafe { r.0.add(usize::from(i.c)).cast_const() };
+        return lane_body_activate(cx, r, ip, &target, passed, argc, Value::DELETED, true, LaneActivation::Forwarded);
+    }
     let built = if target.initializes {
         // SAFETY: the context's program outlives the lane run.
         lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, lane_construct_argument(r, i))
@@ -15382,6 +15351,14 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     // SAFETY: a construction passes its arguments from register `c` on.
     let passed = unsafe { r.0.add(usize::from(i.c)).cast_const() };
     lane_body_activate(cx, r, ip, &target, passed, argc, this, true, how)
+}
+
+/// The target a lane body's construction of `callee` activates: the cached one, else the one
+/// the lane's construction resolves (`lane_script_target`).
+fn lane_body_construct_target<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>, callee: Value) -> Option<ScriptCallTarget> {
+    let entry = vm.script_call_entry(callee).or_else(|| lane_script_target(cx, callee).and_then(|_| vm.script_call_entry(callee)))?;
+    // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
+    Some(unsafe { *entry })
 }
 
 /// The target a lane body's call of `callee` activates: the site's linked entry, else the one
@@ -15421,6 +15398,8 @@ enum LaneActivation {
     Keeping(u16),
     /// A target whose window holds its environment and locals (`lane_activate_environment`).
     Environment,
+    /// A forwarding constructor, whose receiver and activation `lane_construct_keeping_activation` makes.
+    Forwarded,
 }
 
 /// The activation a lane body's call makes of `target` (`how`), its registers; the helper's
@@ -15443,6 +15422,17 @@ fn lane_body_push<H: Host>(
         // The activation the lane's own call makes where values are kept or gathered.
         LaneActivation::Keeping(window) => lane_activate_keeping::<H, false>(
             cx, r, ip, target, ActivationArguments::Window(window), this, constructs, None).map_err(|_| refused())?.0,
+        LaneActivation::Forwarded => {
+            // SAFETY: the body's context and the record it constructs at.
+            match lane_construct_keeping_activation(cx, r, ip, unsafe { &*ip }) {
+                Ok(KeepingConstruction::Activated(registers, _)) => registers,
+                Ok(KeepingConstruction::Finished(this)) => {
+                    r.set(unsafe { &*ip }.a & crate::bytecode::REGISTER_MASK, this);
+                    return Err(super::compiled::LANE_CALL_COMPLETED);
+                }
+                Err(_) => return Err(refused()),
+            }
+        }
         LaneActivation::Environment => {
             // SAFETY: the call's window is registers of the running function.
             let window = unsafe { lane_call_window(r, &*ip) };

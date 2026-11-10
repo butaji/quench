@@ -42,10 +42,9 @@ pub(in crate::vm) struct LaneBody {
     /// sites have linked their targets, which the body inlines (`lane_unit::unit`), and that
     /// only a function called repeatedly pays for compiling one.
     pub(in crate::vm) warmup_entries: u16,
-    /// The runs over which a specialized body proves it completes more often than it leaves:
-    /// a body whose runs mostly leave pays its entry and the lane's resumption for work the
-    /// lane does anyway (`LaneView::note_lane_body_run`).
-    pub(in crate::vm) trial_runs: u16,
+    /// The share of a body's runs, in percent, its leaves may reach, from `reoptimize_exits`
+    /// leaves on, before it specializes again.
+    pub(in crate::vm) reoptimize_share: u8,
     /// The leaves after which a body specializes again from the feedback its sites hold then:
     /// a region compiled while its call graph warmed keeps leaving at sites whose targets came
     /// later, the deoptimization that reoptimizes. Each recompile doubles it, as JSC's exit
@@ -142,7 +141,7 @@ pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
     loops: Loops { threshold: 2, ..MEASURED.loops },
-    lane_body: LaneBody { warmup_entries: 2, trial_runs: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, ..MEASURED.lane_body },
+    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
 };
@@ -151,10 +150,10 @@ const MEASURED: Tiers = Tiers {
     loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8 },
     lane_body: LaneBody {
         warmup_entries: 400,
-        trial_runs: 1024,
+        reoptimize_share: 1,
         reoptimize_exits: 64,
         max_recompiles: 4,
-        max_wasted: 2,
+        max_wasted: u8::MAX,
         max_lifetimes: 8,
         min_instructions: 24,
         compile_poll_interval: 64,
@@ -221,7 +220,7 @@ mod tests {
     #[test]
     fn the_tier_table_is_consistent() {
         let lane = &TIERS.lane_body;
-        assert!(lane.warmup_entries > 0 && lane.trial_runs > 0);
+        assert!(lane.warmup_entries > 0);
         // The warm-up doubles per dropped body, at most seven times, and must not overflow.
         assert!(u32::from(lane.warmup_entries) << 7 <= u32::from(u16::MAX));
         // The reoptimization threshold doubles per recompile and must not overflow its counter.
