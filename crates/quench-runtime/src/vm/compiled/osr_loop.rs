@@ -1052,7 +1052,7 @@ pub(super) fn inline_region<'a>(
         (instruction.result_flags() == 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
         let argc = ImmediateLayout::argument_count(instruction.imm());
         let window = ImmediateLayout::call_window_base(instruction.imm());
-        let (function_register, mut receiver) = (instruction.register_b(), instruction.register_c());
+        let (function_register, receiver) = (instruction.register_b(), instruction.register_c());
         // The callee's read: the last write of its register before the call, in a straight run.
         let read_offset = (0..offset).rev().find(|index| caller[*index].defined_register() == Some(function_register))?;
         let read = header + read_offset as u32;
@@ -1063,43 +1063,17 @@ pub(super) fn inline_region<'a>(
         let mut callee_path = if capture.is_some() { None } else {
             Some(field_path(definition, sites, &std::collections::BTreeMap::new())?)
         };
-        // A receiver the region writes is the call's own: a field read right before the
-        // callee's, which reads the callee from it (`this.m.am(…)`), and nothing else
-        // reads until the call, nor after it. The region gives that read a register of its
-        // own, holding the field's value (`held_registers`), and the setup resumes at it.
-        let mut resume_offset = read_offset;
-        let checked = defines(receiver) && receivers::stored(caller, read_offset, receiver, sites, &|atom| caller_stored.contains(&atom));
-        if checked {
-            checked_reads.insert(pc, read);
-            // The callee resolves now through the receiver's own path; native code checks
-            // the read each iteration, so the path is never an entry snapshot.
-            let own = read_offset - 1;
-            let receiver_path = field_path(caller[own], sites, &std::collections::BTreeMap::new())?;
-            let callee_path = callee_path.as_mut()?;
-            (callee_path.root == FieldReceiver::Register(receiver)).then_some(())?;
-            callee_path.root = receiver_path.root;
-            callee_path.steps.splice(0..0, receiver_path.steps);
-        } else if let Some((root, held)) = receivers::rerooted(caller, read_offset, receiver, &defines, callee_path.as_ref(), &captured) {
-            (callee_path.as_mut()?.root, receiver) = (root, held);
-        } else if defines(receiver) {
-            let callee_path = callee_path.as_mut()?;
-            let own = read_offset.checked_sub(1)?;
-            let receiver_path = field_path(caller[own], sites, &std::collections::BTreeMap::new())?;
-            (caller[own].defined_register() == Some(receiver)
-                && receiver_path.root != FieldReceiver::Register(receiver)
-                && callee_path.root == FieldReceiver::Register(receiver)
-                && callee_path.steps.len() == 1
-                && caller[read_offset + 1..offset].iter().all(|instruction| !mentions(*instruction, receiver, sites))
-                && !crate::compile::liveness::register_in(mask(pc + 1)?, usize::from(receiver)))
-            .then_some(())?;
-            let fresh = Register::try_from(total).ok()?;
-            total += 1;
-            rewritten.insert(header + own as u32, WideInstruction::new(Op::GetField, fresh, caller[own].b(), caller[own].c(), caller[own].imm()));
-            callee_path.root = receiver_path.root;
-            callee_path.steps.splice(0..0, receiver_path.steps);
-            receiver = fresh;
-            resume_offset = own;
-        }
+        // A receiver the region writes is the call's own: the callee is re-read through it,
+        // or guarded at the read (`calls::reroot_receiver`).
+        let (mut receiver, mut resume_offset) = (receiver, read_offset);
+        let checked = calls::reroot_receiver(caller, pc, offset, read_offset, receiver, sites, &|atom| caller_stored.contains(&atom), callee_path.as_ref(), captured.get(&receiver), &defines, &mask)?
+            .apply(&mut callee_path, &mut receiver, &mut resume_offset, |own| {
+                let fresh = Register::try_from(total).ok()?;
+                total += 1;
+                rewritten.insert(header + own as u32, WideInstruction::new(Op::GetField, fresh, caller[own].b(), caller[own].c(), caller[own].imm()));
+                Some(fresh)
+            })?;
+        if checked { checked_reads.insert(pc, read); }
         let resume = header + resume_offset as u32;
         let at_resume = mask(resume)?;
         let run = &caller[resume_offset + 1..offset];
@@ -6990,6 +6964,8 @@ mod coverage_tests;
 mod truncation;
 #[path = "osr_loop/globals.rs"]
 mod globals;
+#[path = "osr_loop/calls.rs"]
+mod calls;
 use globals::{capture_index, rewrite_entry_reads};
 
 #[cfg(test)]
