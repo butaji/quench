@@ -405,3 +405,7 @@ impl From<u8> for JsBigInt {
         Self::from_digits(false, &[Digit::from(value)])
     }
 }
+
+#[cfg(test)]
+#[path = "value_tests.rs"]
+mod js_tests;

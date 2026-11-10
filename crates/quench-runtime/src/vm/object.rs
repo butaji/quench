@@ -4079,7 +4079,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(attributes) = self.property_accessor(object, atom) {
             if let Some(setter) = attributes.setter {
-                self.call_value(p, setter, object, &[value])?;
+                self.call_stored_setter(p, site, setter, object, value)?;
             } else if strict || self.is_private_name(atom) {
                 return Err(self.rejected_assignment_error(p, object, atom, false));
             }

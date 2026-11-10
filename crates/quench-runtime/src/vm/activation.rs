@@ -52,13 +52,12 @@ pub(crate) enum CallCompletion {
     /// A lane's array iteration whose callback became this frame: its return steps and
     /// finishes the iteration (`Vm::finish_array_step`), which yields the method's value.
     ArrayStep(Box<super::array_indexed::ArrayStepCall>),
+    /// A store's setter the lane activated: the assignment yields the value stored, which
+    /// the caller's register still holds, whatever the setter returns.
+    Assigned,
 }
 
 impl CallCompletion {
-    #[inline(always)]
-    pub(super) fn constructor_this(&self) -> Option<Value> {
-        match self { Self::Constructor(this) => Some(*this), _ => None }
-    }
 
     #[inline(always)]
     pub(super) fn is_settling(&self) -> bool { matches!(self, Self::Promise(_)) }
@@ -424,7 +423,7 @@ mod tests {
         let mut constructor = CallCompletion::Constructor(this);
         assert!(constructor.take_generator().is_none());
         assert!(constructor.take_promise().is_none());
-        assert_eq!(constructor.constructor_this(), Some(this));
+        assert!(matches!(constructor, CallCompletion::Constructor(receiver) if receiver == this));
         let mut vm = super::super::Vm::new(crate::test_host::TestHost::default());
         let root = vm.heap.root(Value::number(42.0));
         let mut promise = CallCompletion::Promise(root);

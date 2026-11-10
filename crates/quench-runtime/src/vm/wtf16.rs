@@ -10,7 +10,7 @@ mod short_ascii;
 mod concat_all;
 mod search;
 pub(super) use concat_all::JsStringBuilder;
-mod split;
+pub(crate) mod split;
 mod text_hash;
 mod conversions;
 pub(crate) use text_hash::{str_text_hash, table_hash, TextHash};

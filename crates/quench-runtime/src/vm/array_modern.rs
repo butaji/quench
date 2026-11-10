@@ -7,6 +7,9 @@ enum ArrayFromTarget {
     TypedArray,
 }
 
+#[path = "array_default_sort.rs"]
+mod default_sort;
+
 impl<H: Host> Vm<H> {
     pub(super) fn array_modern_native(
         &mut self,
@@ -868,11 +871,7 @@ impl<H: Host> Vm<H> {
                     vm.compare_sort_callback(p, prepared, *left, *right)
                 })
             }),
-            None => super::sort::try_stable_sort_by(&mut values, |left, right| {
-                let left = self.to_string(p, *left)?;
-                let right = self.to_string(p, *right)?;
-                Ok(left.cmp(&right))
-            }),
+            None => self.sort_by_string_order(p, &mut values),
         };
         let outcome = sorted.and_then(|()| self.store_sorted(p, object, &values, undefined_count, length, mutate));
         self.active_call_roots.truncate(roots);
