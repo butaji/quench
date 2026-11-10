@@ -88,6 +88,8 @@ mod code_heap;
 pub(super) use code_heap::{CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
+#[path = "compiled/lane_storage.rs"]
+mod lane_storage;
 #[path = "compiled/general_call.rs"]
 mod general_call;
 #[path = "compiled/general_capture.rs"]
@@ -7090,8 +7092,7 @@ impl<H: Host> Vm<H> {
             (*dispatch).refresh_object_bases(self);
             (*dispatch).stores_specialized = usize::from(self.specialized && residual.specialized);
             let vm = self as *mut Self;
-            (*dispatch).vm = vm.addr();
-            (*dispatch).bind_native_storage(vm);
+            (*dispatch).bind_lane_storage(vm);
             // A run starts with no native frames; its direct calls place their callees past
             // the stack's values.
             let (top, end, activations) = self.lane_stack_spare();
@@ -7538,9 +7539,7 @@ impl JsStepDispatch {
         self.frameless = frameless::general_frameless_admit::<H> as *const () as usize;
         // SAFETY: the VM outlives this entry; the eval flags hold through it (`lane_function_matches`).
         let vm_ref = unsafe { &*vm };
-        self.call_targets = if vm_ref.direct_eval || vm_ref.parameter_eval { NO_CALL_TARGETS.as_ptr() }
-            else { vm_ref.call_targets.as_ptr() } as usize;
-        self.proper_tail_calls = u64::from(vm_ref.host.proper_tail_calls());
+        self.bind_run_storage(vm_ref);
         (self.construct_receiver, self.construct_result, self.array_construct, self.object, self.define_field) = constructions::construct_helpers::<H>();
         self.binary = general_binary::general_binary::<H> as *const () as usize;
         (self.element_get, self.element_set) = (general_elements::general_element_get::<H> as *const () as usize,

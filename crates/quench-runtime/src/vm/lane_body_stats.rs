@@ -159,3 +159,4 @@ pub(in crate::vm) fn miss_report() -> String {
     let fields = counts.iter().map(|(name, count)| format!("\"{name}\":{count}")).collect::<Vec<_>>().join(",");
     format!("QUENCH_LANE_MISSES {{{fields}}}")
 }
+

@@ -14723,6 +14723,18 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
+        // A returned run completes the activation: no leave to resolve, no frame to materialize.
+        if let super::compiled::LaneExit::Returned { pc, value } = exit
+            && !vm.programs.js_jit_diagnostics_enabled()
+        {
+            // SAFETY: as `lane_leave_counts`; a completed run carries no warming callee.
+            unsafe { (*cx).callee_warming = false };
+            own.note_lane_body_run(false);
+            own.note_lane_body_end(exit, false);
+            drop(method);
+            // SAFETY: the record that completes the activation is one of its function's.
+            lane_return_value!(cx, unsafe { base.add(pc) }, value)
+        }
         let counts = lane_leave_counts(cx, exit);
         let left = counts && !matches!(exit, super::compiled::LaneExit::Returned { .. });
         let (resumed, feedback) = lane_body_left(cx, r, own, &method, exit);
