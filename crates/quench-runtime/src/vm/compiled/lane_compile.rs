@@ -91,7 +91,7 @@ fn lane_code(function: ir::Function) -> LaneCode {
     compile_native_function(function, &*isa, lane_region::LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
 }
 
-use super::super::dispatch_fast::lane_body_stats::{miss as plan_miss, Miss};
+use super::super::dispatch_fast::lane_body_stats::{miss as plan_miss, Reason, Site};
 use lane_facts::{amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
 
 impl<H: Host> Vm<H> {
@@ -124,13 +124,13 @@ impl<H: Host> Vm<H> {
         let valid = std::cell::Cell::new(true);
         let unit = lane_unit::with_budget(program, function, body, budget,
             &|caller, pc| self.lane_bindings(program, function, generic, targets, &valid, caller, pc),
-            &|callee| program.function_get(callee as usize)).or_else(|| { plan_miss(Miss::PlanNoUnit); None })?;
-        if !valid.get() { plan_miss(Miss::PlanInvalidBindings); return None; }
+            &|callee| program.function_get(callee as usize)).or_else(|| { plan_miss(Site::Plan, Reason::NoUnit); None })?;
+        if !valid.get() { plan_miss(Site::Plan, Reason::InvalidBindings); return None; }
         unit.frames.iter().all(|frame| match frame.target.callee {
             CalleeBinding::Identity(callee) | CalleeBinding::Forwarded { callee, .. } => self.lane_inlined_target_admitted(program, callee, frame.target.function),
             CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
                 && numeric_restartable(program, frame.target.function),
-        }).then_some(unit).or_else(|| { plan_miss(Miss::PlanFrameNotAdmitted); None })
+        }).then_some(unit).or_else(|| { plan_miss(Site::Plan, Reason::FrameNotAdmitted); None })
     }
 
     /// Plans `function`'s lane body at `budget`: its unit, proofs and lowering, and the
@@ -142,7 +142,7 @@ impl<H: Host> Vm<H> {
         generic: &[LaneExit], budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
         let unit = self.lane_plan_unit(program, function, targets, generic, budget)?;
         let mut left_at = unit_leaves(&unit, generic);
-        let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(Miss::PlanNoEntry); None })?;
+        let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(Site::Plan, Reason::NoEntry); None })?;
         // A leave at the first instruction is a wrong entry speculation: the next body drops
         // its entry contract (`LaneExit::Entry`) and lowers the instruction as any other.
         let first = entry.unwrap_or(0);
@@ -168,8 +168,8 @@ impl<H: Host> Vm<H> {
             invalidation: invalidation.address(), constants }), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
-            &leaves, &direct_sites, &frame_captures, entry).or_else(|| { plan_miss(Miss::PlanNotLowered); None })?;
-        if lowered.region.native == 0 { plan_miss(Miss::PlanNothingNative); return None; }
+            &leaves, &direct_sites, &frame_captures, entry).or_else(|| { plan_miss(Site::Plan, Reason::NotLowered); None })?;
+        if lowered.region.native == 0 { plan_miss(Site::Plan, Reason::NothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         Some((LanePlan { unit, lowered, fields, direct, direct_sites, function, invalidation, budget }, native))
     }

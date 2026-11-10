@@ -105,65 +105,65 @@ impl End {
     }
 }
 
-/// Why a lane body's call or construction helper answered `LANE_CALL_MISSED`, which leaves the
-/// body at the call: one variant per refusal site in `lane_body_call`, `lane_body_construct` and
-/// `lane_body_native_call`, named `site:reason` in the diagnostics report (`miss_report`).
+/// Where a lane body's call or construction path answered `LANE_CALL_MISSED`, which leaves the
+/// body at the call, and why (`Reason`): the refusal sites of `lane_body_call`,
+/// `lane_body_construct`, `lane_body_native_call`, the helper construction and the body plan.
+/// A refusal is one `(Site, Reason)` pair counted in one table, named `site:reason` in the
+/// diagnostics report (`miss_report`).
+#[derive(Clone, Copy)]
+pub(in crate::vm) enum Site { Call, Construct, HelperConstruct, Plan, Native }
+
+const SITE_NAMES: [&str; Site::Native as usize + 1] = ["call", "construct", "helper-construct", "plan", "native"];
+
 macro_rules! miss_reasons {
     ($($variant:ident => $name:literal),+ $(,)?) => {
         #[derive(Clone, Copy)]
-        pub(in crate::vm) enum Miss { $($variant),+ }
-        const MISS_NAMES: [&str; [$($name),+].len()] = [$($name),+];
+        pub(in crate::vm) enum Reason { $($variant),+ }
+        const REASON_NAMES: [&str; [$($name),+].len()] = [$($name),+];
     };
 }
 miss_reasons! {
-    CallShadowActive => "call:shadow-active",
-    CallNoScriptCalls => "call:no-script-calls",
-    CallConstructing => "call:constructing",
-    CallWithScope => "call:with-scope",
-    CallReturningNotAdmitted => "call:returning-not-admitted",
-    CallReceiver => "call:receiver",
-    CallEntryNotActivation => "call:entry-not-activation",
-    CallNoActivationRoom => "call:no-activation-room",
-    CallReadAnswer => "call:read-answer",
-    ConstructShadowActive => "construct:shadow-active",
-    ConstructNoScriptConstructs => "construct:no-script-constructs",
-    ConstructConstructTarget => "construct:construct-target",
-    ConstructWithScope => "construct:with-scope",
-    ConstructCollectionDue => "construct:collection-due",
-    ConstructReturning => "construct:returning",
-    ConstructNoTarget => "construct:no-target",
-    ConstructNotConstructor => "construct:not-constructor",
-    ConstructEntryNotActivation => "construct:entry-not-activation",
-    ConstructNoActivationRoom => "construct:no-activation-room",
-    ConstructNoReceiver => "construct:no-receiver",
-    HelperConstructContext => "helper-construct:context",
-    HelperConstructBusy => "helper-construct:target-or-collection",
-    HelperConstructNoPlan => "helper-construct:no-plan",
-    PlanNoUnit => "plan:no-unit",
-    PlanInvalidBindings => "plan:invalid-bindings",
-    PlanFrameNotAdmitted => "plan:frame-not-admitted",
-    PlanNoEntry => "plan:no-entry-instruction",
-    PlanNotLowered => "plan:not-lowered",
-    PlanNothingNative => "plan:nothing-native",
-    NativeReturning => "native:returning",
-    NativeNotNative => "native:not-native",
-    NativeInPlaceDeclined => "native:in-place-declined",
+    ShadowActive => "shadow-active",
+    NoScriptCalls => "no-script-calls",
+    Constructing => "constructing",
+    WithScope => "with-scope",
+    Returning => "returning",
+    Receiver => "receiver",
+    EntryNotActivation => "entry-not-activation",
+    NoActivationRoom => "no-activation-room",
+    ReadAnswer => "read-answer",
+    ConstructTarget => "construct-target",
+    CollectionDue => "collection-due",
+    NoTarget => "no-target",
+    NotConstructor => "not-constructor",
+    NoReceiver => "no-receiver",
+    Context => "context",
+    Busy => "target-or-collection",
+    NoPlan => "no-plan",
+    NoUnit => "no-unit",
+    InvalidBindings => "invalid-bindings",
+    FrameNotAdmitted => "frame-not-admitted",
+    NoEntry => "no-entry-instruction",
+    NotLowered => "not-lowered",
+    NothingNative => "nothing-native",
+    NotNative => "not-native",
+    InPlaceDeclined => "in-place-declined",
 }
-static MISSES: [std::sync::atomic::AtomicU64; MISS_NAMES.len()] = [const { std::sync::atomic::AtomicU64::new(0) }; MISS_NAMES.len()];
+static MISSES: [std::sync::atomic::AtomicU64; SITE_NAMES.len() * REASON_NAMES.len()] = [const { std::sync::atomic::AtomicU64::new(0) }; SITE_NAMES.len() * REASON_NAMES.len()];
 
-/// Counts a miss for `reason` and answers the helper's miss.
+/// Counts a miss of `site` for `reason` and answers the helper's miss.
 #[cold]
-pub(in crate::vm) fn miss(reason: Miss) -> u64 {
-    MISSES[reason as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+pub(in crate::vm) fn miss(site: Site, reason: Reason) -> u64 {
+    MISSES[site as usize * REASON_NAMES.len() + reason as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     super::super::compiled::LANE_CALL_MISSED
 }
 
 /// The report line of the misses, `QUENCH_LANE_MISSES {...}`, most frequent first.
 pub(in crate::vm) fn miss_report() -> String {
-    let mut counts: Vec<_> = MISS_NAMES.iter().zip(&MISSES)
-        .map(|(name, count)| (*name, count.load(std::sync::atomic::Ordering::Relaxed))).filter(|(_, count)| *count != 0).collect();
+    let mut counts: Vec<_> = MISSES.iter().enumerate()
+        .map(|(index, count)| (index, count.load(std::sync::atomic::Ordering::Relaxed))).filter(|(_, count)| *count != 0).collect();
     counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-    let fields = counts.iter().map(|(name, count)| format!("\"{name}\":{count}")).collect::<Vec<_>>().join(",");
+    let fields = counts.iter().map(|(index, count)| format!("\"{}:{}\":{count}", SITE_NAMES[index / REASON_NAMES.len()], REASON_NAMES[index % REASON_NAMES.len()])).collect::<Vec<_>>().join(",");
     format!("QUENCH_LANE_MISSES {{{fields}}}")
 }
 
