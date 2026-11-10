@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 
 mod workspace;
+use workspace::class_run_of;
 
 use super::{
     canonical, canonical_preimages_of, class_is_single_unit, class_item_matches, class_matches, equal, escape_matches, is_line_terminator, is_word_mode, merge_flags,
@@ -580,6 +581,8 @@ pub(crate) struct Program {
     /// prefix holds this only in an ASCII subject, whose units have no other case forms
     /// (the Kelvin sign and long s are past ASCII); other subjects run the program.
     literal_length: Option<usize>,
+    /// The unit test a pattern of one unbounded greedy `+` repeat is (`class_run_of`).
+    class_run: Option<UnitTest>,
 }
 
 /// The compiled form of a construct this matcher does not run.
@@ -1383,6 +1386,7 @@ impl Program {
                 && compiler.instructions[..prefix.len()].iter().all(|instruction| matches!(instruction, Inst::Unit(_)))
         });
         Some(Self {
+            class_run: class_run_of(&compiler.instructions, capture_count),
             instructions: compiler.instructions.into_boxed_slice(),
             sets: compiler.sets.into_boxed_slice(),
             lists: compiler.lists.into_boxed_slice(),
@@ -1390,10 +1394,7 @@ impl Program {
             capture_count,
             register_count: compiler.registers as usize,
             anchored,
-            anchored_first: anchored
-                .then(|| anchored_first_units(expr, flags))
-                .flatten()
-                .map(|units| Box::new(MatchSet::from(units))),
+            anchored_first: anchored.then(|| anchored_first_units(expr, flags)).flatten().map(|units| Box::new(MatchSet::from(units))),
             scan: starts.as_ref().map_or(AsciiScan::Nothing, |starts| AsciiScan::of(starts.units.ascii)),
             starts: starts.map(MatchStarts::from),
             literal_length: (whole_literal && capture_count == 0 && !prefix.is_empty()).then_some(prefix.len()),
@@ -1519,6 +1520,9 @@ impl Program {
                 end: start + length,
                 captures: Vec::new(),
             });
+        }
+        if let Some(found) = self.class_run_found(text, first, sticky) {
+            return found;
         }
         let (start, search) = self.run_start(text, first, sticky)?;
         self.run_in_workspace(text, start, search, captures)

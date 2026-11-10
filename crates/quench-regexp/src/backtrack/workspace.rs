@@ -1,5 +1,5 @@
 //! The registers and stack a search runs in, shared by every program on a thread.
-use super::{Frame, Found, Program, Search, Text, UNSET};
+use super::{Frame, Found, Inst, Program, Search, Text, UnitTest, UNBOUNDED, UNSET};
 use std::cell::Cell;
 use std::ops::Range;
 
@@ -83,11 +83,16 @@ impl Program {
         found
     }
 
+    fn is_class_run(&self) -> bool {
+        self.class_run.is_some()
+    }
+
     /// The bounds of each match of a scan from `first`, in order, passed to `found`: each
     /// search starts where the one before ended, one unit on from an empty match. Every
-    /// search runs in one workspace, taken once; a pattern that is a literal needs none.
+    /// search runs in one workspace, taken once; a literal or class-run pattern needs none.
+
     pub(crate) fn find_all_bounds<T: Text + ?Sized>(&self, text: &T, first: usize, mut found: impl FnMut(Range<usize>)) {
-        let mut workspace = (self.literal_length.is_none() || text.bytes().is_none()).then(take_workspace);
+        let mut workspace = ((self.literal_length.is_none() && !self.is_class_run()) || text.bytes().is_none()).then(take_workspace);
         let mut at = first;
         loop {
             let range = match &mut workspace {
@@ -103,5 +108,33 @@ impl Program {
         if let Some(workspace) = workspace {
             return_workspace(workspace);
         }
+    }
+}
+
+/// The unit test of a program that is one greedy repeat of a unit, at least once and with no
+/// maximum, and nothing else (`\\s+`): an ASCII subject's match is the run of such units from
+/// where the search finds the first (`Program::class_run_found`), with no run of the program.
+pub(super) fn class_run_of(instructions: &[Inst], capture_count: usize) -> Option<UnitTest> {
+    match instructions {
+        [Inst::UnitRepeat { test, min: 1, max: UNBOUNDED, greedy: true }, Inst::Match] if capture_count == 0 => Some(*test),
+        _ => None,
+    }
+}
+
+impl Program {
+    /// The match of a `class_run` pattern over an ASCII subject: `Some(None)` where no
+    /// unit can start one, `Some(Some(found))` for the run of units from the first start, and
+    /// `None` where the pattern or subject is another kind, or the start scan was wrong.
+    #[inline(always)]
+    pub(super) fn class_run_found<T: Text + ?Sized>(&self, text: &T, first: usize, sticky: bool) -> Option<Option<Found>> {
+        let (test, Some(_)) = (self.class_run?, text.bytes()) else {
+            return None;
+        };
+        let last = if sticky { first } else { text.len() };
+        let Some(start) = self.next_start(text, first, last) else {
+            return Some(None);
+        };
+        let end = self.run_end(test, text, start, text.len());
+        (end > start).then(|| Some(Found { start, end, captures: Vec::new() }))
     }
 }
