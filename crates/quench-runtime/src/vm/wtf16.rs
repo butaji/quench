@@ -8,6 +8,8 @@ use std::rc::Rc;
 mod append_buffer;
 mod short_ascii;
 mod concat_all;
+mod parts;
+pub(crate) use parts::{Part, Parts, MAX_PARTS};
 mod search;
 pub(super) use concat_all::JsStringBuilder;
 pub(crate) mod split;
@@ -101,6 +103,8 @@ enum Repr {
     Flat(FlatUnits),
     /// A rope, or wide units, whose host text is made on demand.
     Shared(Rc<JsStringInner>),
+    /// Parts not yet written out (`parts`).
+    Parts(Parts),
 }
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(size_of::<JsString>() == size_of::<FlatUnits>());
@@ -715,7 +719,7 @@ impl JsString {
         match &self.repr {
             Repr::Flat(_) => 0,
             Repr::Shared(inner) if inner.flat.get().is_some() => 1,
-            Repr::Shared(_) => 2,
+            Repr::Shared(_) | Repr::Parts(_) => 2,
         }
     }
 
@@ -746,7 +750,7 @@ impl JsString {
     /// The halves of a string that is still a rope.
     fn rope_halves(&self) -> Option<(Self, Self)> {
         match &self.repr {
-            Repr::Flat(_) => None,
+            Repr::Flat(_) | Repr::Parts(_) => None,
             Repr::Shared(inner) => inner
                 .halves()
                 .map(|(left, right)| (Self::from_node(left), Self::from_node(right))),
@@ -758,6 +762,7 @@ impl JsString {
         match &self.repr {
             Repr::Flat(_) => true,
             Repr::Shared(inner) => inner.flat.get().is_some(),
+            Repr::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -766,6 +771,7 @@ impl JsString {
         match &self.repr {
             Repr::Flat(units) => Rc::new(JsStringInner::flat(units.clone())),
             Repr::Shared(inner) => inner.clone(),
+            Repr::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -823,7 +829,7 @@ impl JsString {
     /// reader that can take UTF-8 reads it without making them.
     pub(crate) fn unflattened_host(&self) -> Option<&str> {
         match &self.repr {
-            Repr::Flat(_) => None,
+            Repr::Flat(_) | Repr::Parts(_) => None,
             Repr::Shared(inner) => inner.unflattened_host(),
         }
     }
@@ -849,6 +855,7 @@ impl JsString {
         match &self.repr {
             Repr::Flat(units) => Some(units),
             Repr::Shared(inner) => inner.flat.get(),
+            Repr::Parts(_) => None,
         }
     }
 
@@ -858,6 +865,7 @@ impl JsString {
         let inner = match &self.repr {
             Repr::Flat(units) => return units,
             Repr::Shared(inner) => inner,
+            Repr::Parts(_) => parts::not_written_out(),
         };
         match inner.flat.get() {
             Some(units) => units,
@@ -886,6 +894,7 @@ impl JsString {
     /// flattens V8-v7 RegExp's input variants this way (306 ropes, 995K units).
     pub(crate) fn flat_unkept(&self) -> std::borrow::Cow<'_, FlatUnits> {
         match &self.repr {
+            Repr::Parts(_) => parts::not_written_out(),
             Repr::Flat(units) => std::borrow::Cow::Borrowed(units),
             Repr::Shared(inner) => match inner.flat.get() {
                 Some(units) => std::borrow::Cow::Borrowed(units),
@@ -904,7 +913,7 @@ impl JsString {
     pub(crate) fn unkept_flat(&self) -> JsString {
         match &self.repr {
             Repr::Flat(_) => self.clone(),
-            Repr::Shared(_) => Self::from_flat(self.flat_unkept().into_owned()),
+            Repr::Shared(_) | Repr::Parts(_) => Self::from_flat(self.flat_unkept().into_owned()),
         }
     }
 
@@ -933,7 +942,7 @@ impl JsString {
     /// The host text a `Wide` string made, if any.
     fn existing_host(&self) -> Option<&Rc<str>> {
         match &self.repr {
-            Repr::Flat(_) => None,
+            Repr::Flat(_) | Repr::Parts(_) => None,
             Repr::Shared(inner) => inner.existing_host(),
         }
     }
@@ -975,7 +984,7 @@ impl JsString {
                     let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
                     Rc::<str>::from(String::from_utf16_lossy(units))
                 }),
-                Repr::Flat(_) => unreachable!("a flat string held by value is ASCII"),
+                Repr::Flat(_) | Repr::Parts(_) => unreachable!("a flat string held by value is ASCII"),
             },
         }
     }
@@ -1000,11 +1009,7 @@ impl JsString {
     /// Bytes of flat units this string holds; a rope owns only its node until it flattens.
     #[inline]
     pub(crate) fn flat_unit_bytes(&self) -> usize {
-        let flat = match &self.repr {
-            Repr::Flat(units) => Some(units),
-            Repr::Shared(inner) => inner.flat.get(),
-        };
-        match flat {
+        match self.existing_flat() {
             // A slice holds its record; its root was charged for the units it shares.
             Some(FlatUnits::AsciiSlice(_)) => std::mem::size_of::<AsciiSlice>(),
             Some(FlatUnits::WideSlice(_)) => std::mem::size_of::<WideSlice>(),
@@ -1033,6 +1038,7 @@ impl JsString {
         match &self.repr {
             Repr::Flat(units) => units.len(),
             Repr::Shared(inner) => inner.length as usize,
+            Repr::Parts(_) => parts::not_written_out(),
         }
     }
 

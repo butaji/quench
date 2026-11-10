@@ -41,6 +41,7 @@ mod slots;
 mod snapshot;
 mod string_alloc;
 mod string_atoms;
+mod string_parts;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
@@ -3259,9 +3260,7 @@ impl Heap {
                 value,
                 array,
                 &self.properties,
-                |string| {
-                    string_records.mark(string);
-                },
+                |string| string_parts::mark_flat(string_records, string),
                 work,
                 object_roots,
                 trace_kind,
@@ -3326,8 +3325,9 @@ impl Heap {
             let mark_bits = mark_bits!(self);
             ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
         } else if let Some(record_id) = value.direct_string_index() {
-            // A string holds no heap edges: marking it is the whole visit.
+            // A string holds no edges but its parts': marking it and tracing them is the visit.
             if self.string_records.mark(record_id) {
+                string_parts::trace_parts(&self.string_records, record_id, work);
                 #[cfg(feature = "profile-aggregate")]
                 {
                     self.gc_profile.marked += 1;
@@ -4251,7 +4251,7 @@ impl Heap {
         owner: Value,
         array: &ArrayObject,
         properties: &ValueArena,
-        mut mark_string: impl FnMut(RecordId),
+        mut mark_string: impl FnMut(RecordId) -> bool,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
@@ -4280,15 +4280,14 @@ impl Heap {
     /// (`mark_value`): an array of strings adds nothing to the mark stack, which had held a
     /// value per element at the heap's peak (V8-v7 RegExp: 141 KiB). Profiling builds leave
     /// every value to `mark_value`, which counts each visit.
-    fn mark_leaf(mark_string: &mut impl FnMut(RecordId), value: Value) -> bool {
+    fn mark_leaf(mark_string: &mut impl FnMut(RecordId) -> bool, value: Value) -> bool {
         if cfg!(feature = "profile-aggregate") {
             return false;
         }
         let Some(record_id) = value.direct_string_index() else {
             return false;
         };
-        mark_string(record_id);
-        true
+        mark_string(record_id)
     }
     /// An iterator's edges besides its object: its source, cached next method, helper
     /// state and suspended generator.

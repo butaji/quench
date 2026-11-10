@@ -254,9 +254,7 @@ impl<'heap> ParallelMarkView<'heap> {
                     value,
                     array,
                     properties,
-                    |string| {
-                        strings.mark_if_new(string);
-                    },
+                    |string| super::string_parts::mark_flat_if_new(&strings, string),
                     work,
                     &mut object_roots,
                     trace_kind,
@@ -311,11 +309,12 @@ impl<'heap> ParallelMarkView<'heap> {
                 unsafe { self.awaits.get(id) }.extend_roots(work);
                 CellKind::AwaitState
             }
-            // Strings and vectors hold no heap edges: marking one is the whole visit.
+            // A vector holds no heap edges: marking one is the whole visit; a string's are its parts.
             HeapReference::StringRecord(id) => {
                 if !self.strings.mark_if_new(id) {
                     return;
                 }
+                super::string_parts::trace_parts_if_new(&self.strings, id, work);
                 CellKind::String
             }
             HeapReference::V128Record(id) => {
