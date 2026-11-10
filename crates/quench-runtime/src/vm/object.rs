@@ -1225,9 +1225,9 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn object_site_shape(&mut self, program: &ResidualProgram, site: usize) -> u32 {
         if self.specialized && program.specialized {
-            let cache_site = self.object_cache_index(site);
-            if self.object_shapes.get(cache_site) != NO_OBJECT_SHAPE {
-                return self.object_shapes.get(cache_site);
+            let shape = self.object_shapes.get(self.object_cache_index(site));
+            if shape != NO_OBJECT_SHAPE {
+                return shape;
             }
         }
         self.derive_object_site_shape(program, site)
