@@ -1487,6 +1487,22 @@ impl Program {
         self.find(text, first, sticky, false).map(|found| found.start..found.end)
     }
 
+    /// Where a run of a search from `first` starts, once the start scan has found it: `None`
+    /// where no run can match (`next_start`, and an anchored pattern's first units).
+    #[inline(always)]
+    fn run_start<T: Text + ?Sized>(&self, text: &T, first: usize, sticky: bool) -> Option<(usize, Search)> {
+        let search = Search { last: if sticky { first } else { text.len() } };
+        let start = self.next_start(text, first, search.last)?;
+        // An anchored search has the one start, which a first unit outside the anchored
+        // pattern's first units fails before a run.
+        if let Some(units) = &self.anchored_first {
+            if start >= text.len() || !units.contains(text.unit(start)) {
+                return None;
+            }
+        }
+        Some((start, search))
+    }
+
     /// `find`, with the captures of a match built from its registers by `captures`.
     #[inline(always)]
     fn search<T: Text + ?Sized>(
@@ -1504,17 +1520,7 @@ impl Program {
                 captures: Vec::new(),
             });
         }
-        let search = Search {
-            last: if sticky { first } else { text.len() },
-        };
-        let start = self.next_start(text, first, search.last)?;
-        // An anchored search has the one start, which a first unit outside the anchored
-        // pattern's first units fails before a run.
-        if let Some(units) = &self.anchored_first {
-            if start >= text.len() || !units.contains(text.unit(start)) {
-                return None;
-            }
-        }
+        let (start, search) = self.run_start(text, first, sticky)?;
         self.run_in_workspace(text, start, search, captures)
     }
 
