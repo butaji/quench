@@ -69,8 +69,8 @@ pub(in crate::vm) enum LaneBodyOutcome {
 const REPLAN_BUDGET_DIVISOR: usize = 2;
 
 /// The code of one lane body, compiled on the calling thread.
-fn lane_code(function: ir::Function) -> LaneCode {
-    let isa = super::jit_backend::target_isa()
+fn lane_code(function: ir::Function, level: super::jit_backend::CompileLevel) -> LaneCode {
+    let isa = super::jit_backend::target_isa_level(level)
         .ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
     compile_native_function(function, &*isa, lane_region::LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
 }
@@ -212,7 +212,7 @@ impl<H: Host> Vm<H> {
         let method = loop {
             let Some((plan, native)) = self.plan_lane_method(program, function, targets, captures, &direct, generic, budget)
             else { break None };
-            match lane_code(native) {
+            match lane_code(native, super::jit_backend::CompileLevel::run_default()) {
                 Ok(code) => break plan.finish(&code),
                 Err(reason) if plan.replans(reason) => budget /= 2,
                 Err(_) => break None,
@@ -242,7 +242,7 @@ impl<H: Host> Vm<H> {
             &watcher, &mut self.heap, self.method_cache_atoms.readers()) {
             return None;
         }
-        let code = super::jit_backend::run_in_background(move || lane_code(native));
+        let code = super::jit_backend::run_in_background(move || lane_code(native, super::jit_backend::CompileLevel::run_default()));
         self.programs.note_pending_native_calls(&watch, plan.callees());
         Some(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code })
     }
