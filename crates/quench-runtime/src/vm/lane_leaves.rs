@@ -38,4 +38,9 @@ impl LaneLeaves {
         let exits: &[_] = match self { Self::Few(exits) => exits, Self::Scattered => &[] };
         exits.iter().flatten().copied()
     }
+
+    /// The exits these name, listed.
+    pub(super) fn listed(&self) -> Vec<super::super::compiled::LaneExit> {
+        self.exits().collect()
+    }
 }

@@ -136,6 +136,9 @@ miss_reasons! {
     ConstructEntryNotActivation => "construct:entry-not-activation",
     ConstructNoActivationRoom => "construct:no-activation-room",
     ConstructNoReceiver => "construct:no-receiver",
+    HelperConstructContext => "helper-construct:context",
+    HelperConstructBusy => "helper-construct:target-or-collection",
+    HelperConstructNoPlan => "helper-construct:no-plan",
     NativeReturning => "native:returning",
     NativeNotNative => "native:not-native",
     NativeInPlaceDeclined => "native:in-place-declined",
@@ -158,3 +161,22 @@ pub(in crate::vm) fn miss_report() -> String {
     format!("QUENCH_LANE_MISSES {{{fields}}}")
 }
 
+/// Instructions a body compile left to the lane (`QUENCH_LANE_UNLOWERED`), by opcode.
+static UNLOWERED: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
+
+/// Counts one instruction of `op` that a lane body compile hands back to the lane.
+pub(in crate::vm) fn unlowered(op: impl std::fmt::Debug) {
+    let name = format!("{op:?}");
+    let mut counts = UNLOWERED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match counts.iter_mut().find(|(known, _)| *known == name) {
+        Some((_, count)) => *count += 1,
+        None => counts.push((name, 1)),
+    }
+}
+
+pub(in crate::vm) fn unlowered_report() -> String {
+    let mut counts = UNLOWERED.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    let fields = counts.iter().map(|(name, count)| format!("\"{name}\":{count}")).collect::<Vec<_>>().join(",");
+    format!("QUENCH_LANE_UNLOWERED {{{fields}}}")
+}
