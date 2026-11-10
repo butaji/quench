@@ -344,7 +344,7 @@ pub(super) struct LaneView {
     /// The frameless body the prologue runs once the JavaScript tier declined the
     /// function (`Vm::compile_lane_method`).
     tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// The clock reading (`lane_body_tier::now_ms`) of the entry its body began warming at, which a function
+    /// The warming tick (`lane_body_tier::warm_ticks`) of the entry its body began warming at, which a function
     /// entered rarely but for long (`LaneView::recurrent`) specializes by.
     warm_since: std::cell::Cell<u32>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).

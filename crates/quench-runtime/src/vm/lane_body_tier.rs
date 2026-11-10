@@ -20,13 +20,17 @@ pub(super) struct LaneBodyHistory {
 /// The entries and the milliseconds of warming past which a function specializes by its
 /// recurrence alone (`LaneView::recurrent`).
 const RECURRENT_ENTRIES: u16 = 16;
-const RECURRENT_MILLIS: u32 = 50;
+const RECURRENT_TICKS: u32 = 256;
 
-/// Milliseconds on the process's monotonic clock.
-fn now_ms() -> u32 {
-    thread_local! { static START: std::time::Instant = std::time::Instant::now(); }
-    START.with(|start| start.elapsed().as_millis() as u32)
+/// The warming entries every function has counted so far: a clock of the work the program does
+/// while its functions warm, which, unlike wall time, a rerun repeats.
+fn warm_ticks() -> u32 {
+    thread_local! { static TICKS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) }; }
+    TICKS.with(|ticks| { let next = ticks.get().wrapping_add(1); ticks.set(next); next })
 }
+
+/// The reading `warm_ticks` would give next, without counting.
+fn warm_clock() -> u32 { warm_ticks().wrapping_sub(1) }
 
 /// What a body whose leaves reached the reoptimization threshold does next.
 enum Verdict {
@@ -104,13 +108,13 @@ impl LaneView {
     }
 
     /// Whether a function entered rarely has still been entered at least `RECURRENT_ENTRIES` times
-    /// over `RECURRENT_MILLIS` of its warming: an entry that runs long (a driver whose callees
+    /// over `RECURRENT_TICKS` warming entries of the program: an entry that runs long (a driver whose callees
     /// are hot) costs more than the many cheap entries the warm-up counts, and its callees'
     /// bodies run from the lane until it specializes and inlines them. Read every
-    /// `RECURRENT_ENTRIES`th entry, so the clock costs a function nothing measurable.
+    /// `RECURRENT_ENTRIES`th entry.
     fn recurrent(&self, entries: u16) -> bool {
         entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && self.history.get().lifetimes == 0
-            && now_ms().wrapping_sub(self.warm_since.get()) >= RECURRENT_MILLIS
+            && warm_clock().wrapping_sub(self.warm_since.get()) >= RECURRENT_TICKS
     }
 
     /// Whether its history affords another compile.
@@ -191,7 +195,8 @@ impl LaneView {
                 (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks }), recompiles, stuck)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
-                if entries == 0 { self.warm_since.set(now_ms()); }
+                let ticks = warm_ticks();
+                if entries == 0 { self.warm_since.set(ticks); }
                 *body = LaneBody::Unspecialized { entries: entries + 1, recompiles, stuck };
                 return true;
             }
