@@ -19,10 +19,6 @@ pub(crate) enum GlobalRead {
     Frozen { value: Value, ty: Type },
     /// The lane's own read at run time (`LaneHelper::GlobalGet`).
     Dynamic,
-    /// At a field read of a Stable global (`Math.imul`): the member's value when the body was
-    /// compiled, the native function `native`. A call of the register it defines runs the
-    /// native's operation inline while the callee is still that value (`Lowering::native_call`).
-    NativeMember { value: Value, native: super::Native },
 }
 
 /// What each by-name global read of a function or unit takes, by PC: a flat table, empty at
@@ -31,13 +27,8 @@ pub(crate) enum GlobalRead {
 pub(crate) struct GlobalReads(Box<[Option<GlobalRead>]>);
 
 impl GlobalReads {
-    /// The read at `pc`, if the instruction there is a by-name global read.
-    pub(crate) fn get(&self, pc: &usize) -> Option<&GlobalRead> {
-        self.0.get(*pc).and_then(Option::as_ref)
-    }
-
     pub(crate) fn contains_key(&self, pc: &usize) -> bool {
-        self.get(pc).is_some()
+        self.0.get(*pc).is_some_and(Option::is_some)
     }
 
     /// The reads at the PCs of `range`, in order.

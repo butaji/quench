@@ -2,7 +2,7 @@
 //! callee's read (`inline_region`).
 
 use std::collections::BTreeMap;
-use super::{field_path, FieldPath, FieldReceiver, FieldSite, Register, RegisterSet, WideInstruction};
+use super::{field_path, FieldPath, FieldReceiver, FieldSite, Register, RegisterSet, WideInstruction, THIS_CAPTURE};
 
 /// Whether the receiver is read through a name the loop stores, so it changes in the loop:
 /// the callee's read stays, and native code checks the callee after it (`InlineGuard::AtRead`).
@@ -13,13 +13,18 @@ pub(super) fn stored(caller: &[WideInstruction], read: usize, receiver: Register
             .is_some_and(|path| path.steps.iter().any(|(atom, _)| stored(*atom))))
 }
 
+/// `field_path` of an instruction whose roots are the registers it names, not captures.
+pub(super) fn field_path_unrooted(instruction: WideInstruction, sites: &[crate::bytecode::FieldSite]) -> Option<FieldPath> {
+    field_path(instruction, sites, &BTreeMap::new())
+}
+
 /// The root a receiver the loop writes reads as, and the register holding it there: the
 /// capture it holds (`captured`), or the register it is copied from right before the callee's
 /// read when the loop never writes that one (`p.m()` with `p` held outside the loop).
-pub(super) fn rerooted(caller: &[WideInstruction], read: usize, receiver: Register, defines: &dyn Fn(Register) -> bool,
-    callee: Option<&FieldPath>, captured: &BTreeMap<Register, FieldPath>) -> Option<(FieldReceiver, Register)> {
+pub(super) fn rerooted_with(caller: &[WideInstruction], read: usize, receiver: Register, defines: &dyn Fn(Register) -> bool,
+    callee: Option<&FieldPath>, captured: Option<&FieldPath>) -> Option<(FieldReceiver, Register)> {
     callee.is_some_and(|path| path.root == FieldReceiver::Register(receiver)).then_some(())?;
-    if let Some(path) = captured.get(&receiver) {
+    if let Some(path) = captured {
         return Some((path.root, receiver));
     }
     let copy = caller[read.checked_sub(1)?];
@@ -45,4 +50,12 @@ pub(super) fn captured(instructions: &[WideInstruction], header_live: RegisterSe
 }
 
 impl FieldReceiver {
+    /// The capture slot holding the receiver: `this`'s (`THIS_CAPTURE`) or a captured value's.
+    pub(super) fn capture_slot(self) -> Option<u16> {
+        match self {
+            FieldReceiver::This => Some(THIS_CAPTURE),
+            FieldReceiver::Capture(slot) => Some(slot),
+            FieldReceiver::Register(_) | FieldReceiver::Field(_) => None,
+        }
+    }
 }

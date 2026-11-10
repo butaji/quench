@@ -72,24 +72,3 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
         _ => lane_native_call::<H>,
     }
 }
-
-/// A lane body's call of a native that completes in place (`Vm::in_place_native_value`: no
-/// guest code, no raised error, no frame observed), its value in the call's register, which
-/// the body reads as it reads a completed script call's: the body stays native across
-/// `Math.imul`, a string method or a collection read instead of leaving at each. Any other
-/// callee or case is a miss, which leaves the body at the call.
-pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction, callee: Value) -> u64 {
-    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
-    let vm = unsafe { vm(cx) };
-    // A returning call's completion is its activation's, which the lane makes.
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 { return LANE_CALL_MISSED; }
-    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return LANE_CALL_MISSED };
-    let native = *native;
-    // SAFETY: the context's program outlives the lane run; the window is registers of the
-    // running function, which the native reads before anything can move them.
-    let (code, args) = unsafe { (&*(*cx).code, lane_call_window(r, i)) };
-    let Some(value) = vm.in_place_native_value(code, native, callee, r.get(i.c), args) else { return LANE_CALL_MISSED };
-    note_allocation(vm);
-    r.set(i.a, value);
-    LANE_CALL_COMPLETED
-}

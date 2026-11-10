@@ -1,18 +1,19 @@
-//! Eager native publication: every requested body compiled at once with no
-//! code-cache budget, its frozen whole-program facts, the per-function tier
-//! dispatcher and the general-dispatch fallback tables, addressed directly
-//! because nothing is linked.
+//! Eager native publication: every requested body compiled at once with no code-cache
+//! budget, its frozen whole-program facts, the per-function tier dispatcher and the
+//! general-dispatch fallback tables, addressed directly because nothing is linked.
 use super::*;
 
+/// Eager publication has no code-cache admission budget: all requested bodies
+/// must compile or the whole program fails. Owners release code and operands together.
 #[cfg(feature = "aot")]
-pub(crate) fn compile_eager_native<H: Host>(
+pub(in crate::vm) fn compile_eager_native<H: Host>(
     program: ResidualProgram, options: super::native_graph::NativeJsCodegenOptions,
 ) -> Result<crate::NativeJsProgram<H>, String> {
     #[cfg(feature = "jit")]
     if options.backend == super::native_graph::NativeJsBackend::Stencil && super::native_stencil::available() {
         return super::native_stencil::compile_program(program).map(|(native, _)| native);
     }
-    use super::specializer::Specializer;
+    use super::specialize::Specializer;
     program.freeze_native_diagnostics();
     let isa = super::jit_backend::target_isa_for("speed", super::jit_backend::CodePublication::RelocatableObject)
         .ok_or("native target unavailable")?;
@@ -32,20 +33,29 @@ pub(crate) fn compile_eager_native<H: Host>(
         fields: &frozen_field_facts, constants: constant_base, isa, options, entries: Vec::new(),
         owners: EagerOwners::default(), counts: Default::default(), invalidation: invalidation.clone(),
         last_tier: last_tier.as_ptr() as usize, host: std::marker::PhantomData };
-    let (entries, mut owners, mut counts) = super::specialize::CallThreaded::frozen(extension).specialize(&program)?;
+    let (entries, owners, mut counts) = super::specialize::CallThreaded::frozen(extension).specialize(&program)?;
     counts.frozen_globals = globals.len();
     counts.frozen_fields = frozen_field_facts.len();
-    let frozen = crate::vm::native_program::FrozenAssumptions {
-        invalidation: owners.invalidation.clone(),
-        atoms: std::mem::take(&mut owners.frozen_atoms).into_iter().collect(),
-        globals: globals.keys().copied().collect(),
-        fields: frozen_field_facts.keys().copied().collect(),
-        constants: constant_block,
-        watch: Rc::new(crate::code_dependencies::PublishedCode::with_invalidation((), invalidation)),
-        last_tier,
-    };
+    let frozen = frozen_assumptions(&owners, (&globals, &frozen_field_facts), constant_block, &invalidation, last_tier);
     // SAFETY: every entry was lowered from its exact function for host H.
     unsafe { crate::NativeJsProgram::from_entries_with_counts(program, entries, Rc::new(owners), counts, Some(frozen)) }
+}
+
+/// The image's whole-program assumptions: the facts its code folded (held method atoms,
+/// globals, prototype fields) and the words it reads them through.
+#[cfg(feature = "aot")]
+fn frozen_assumptions(owners: &EagerOwners, (globals, fields): (&super::frozen_facts::FrozenValues, &super::frozen_facts::FrozenValues),
+    constants: Rc<std::cell::RefCell<Box<[Value]>>>, invalidation: &crate::code_dependencies::Invalidation,
+    last_tier: Rc<std::cell::Cell<u64>>) -> crate::vm::native_program::FrozenAssumptions {
+    crate::vm::native_program::FrozenAssumptions {
+        invalidation: owners.invalidation.clone(),
+        atoms: owners.frozen_atoms.iter().collect(),
+        globals: globals.atoms().collect(),
+        fields: fields.atoms().collect(),
+        constants,
+        watch: Rc::new(crate::code_dependencies::PublishedCode::with_invalidation((), invalidation.clone())),
+        last_tier,
+    }
 }
 
 /// Everything the eager entries address: code, operand arrays and the per-PC
@@ -59,7 +69,7 @@ pub(super) struct EagerOwners {
     /// The word the image's stable facts are checked against.
     invalidation: crate::code_dependencies::Invalidation,
     /// Method atoms the image holds unnamed (`StableFacts::atoms`).
-    frozen_atoms: std::collections::BTreeSet<Atom>,
+    frozen_atoms: crate::vm::AtomSet,
 }
 
 /// The call-threaded generating extension for live Cranelift code: semantic
@@ -69,9 +79,9 @@ struct EagerCraneliftExtension<'p, H> {
     program: &'p ResidualProgram,
     targets: Vec<Vec<lane_unit::StaticTargets>>,
     /// Whole-program globals the frozen regions may fold.
-    globals: &'p std::collections::BTreeMap<Atom, Value>,
+    globals: &'p super::frozen_facts::FrozenValues,
     /// Whole-program prototype values the frozen regions may fold.
-    fields: &'p std::collections::BTreeMap<Atom, Value>,
+    fields: &'p super::frozen_facts::FrozenValues,
     /// The address of the image's constant block.
     constants: usize,
     isa: std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>,
@@ -94,8 +104,6 @@ impl<'p, H: Host> super::specialize::CallThreadedExtension for EagerCraneliftExt
         let isa = &*isa;
         let sites = sites.into_boxed_slice();
         self.counts.functions += 1;
-        // A body whose precise windows exceed the map budget keeps the conservative
-        // all-live roots instead, which `NativeJsProgram` reports.
         self.counts.wide_frame_functions += usize::from(self.program.function_get(function_id as usize)
             .is_some_and(|function| crate::compile::liveness::windows::is_conservative(function, function.instructions().count())));
         self.counts.semantic_entry_sites += sites.iter().filter(|site| site.calls_semantic_entry()).count();
@@ -189,16 +197,19 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
             return Ok(None);
         }
         let (fallback, operands, table) = self.lower_fallback(function_id, sites, function.code.len(), isa)?;
-        let (mut code, units) = (Vec::new(), self.frozen_units(program, function_id, isa));
+        let scalar = lower_static_scalar_regions(program, function_id, isa);
+        let scalar_entries: Vec<_> = scalar.iter().map(|region|
+            StaticRegionEntry { range: region.range.clone(), fields: &region.fields, function: &region.function }).collect();
+        let units = self.frozen_units(program, function_id, isa);
         let typed_entries: Vec<_> = units.iter().map(|unit|
-            StaticTypedRegionEntry { header: unit.header, function: &unit.function, gated: !unit.scalar }).collect();
+            StaticTypedRegionEntry { header: unit.header, function: &unit.function }).collect();
         // T2: general dispatch with the typed regions; T1: the same baseline without
         // them; T0: the call-threaded body. The dispatcher reads the image's invalidation
         // word and selects, all three bodies already resident.
         let callout = JsGeneralCallout::Address(fallback.pointer() as usize);
         let Some((ladder, typed, scalars)) = self.lower_ladder(program, function_id, sites, isa,
-            callout, &typed_entries) else { return Ok(None) };
-        code.push(fallback);
+            callout, &scalar_entries, &typed_entries) else { return Ok(None) };
+        let mut code = vec![fallback];
         code.extend(ladder);
         self.owners.operand_arrays.push(operands);
         self.owners.entry_tables.push(table);
@@ -210,14 +221,15 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
     #[allow(clippy::too_many_arguments)]
     fn lower_ladder(&mut self, program: &ResidualProgram, function_id: u32,
         sites: &[super::specialize::InstructionSite], isa: &dyn cranelift_codegen::isa::TargetIsa,
-        callout: JsGeneralCallout, typed_entries: &[StaticTypedRegionEntry<'_>],
+        callout: JsGeneralCallout, scalar_entries: &[StaticRegionEntry<'_>],
+        typed_entries: &[StaticTypedRegionEntry<'_>],
     ) -> Option<(Vec<CodeMemory>, usize, usize)> {
         let typed = typed_entries.len();
-        let scalars = typed_entries.len();
-        let (specialized, _) = GeneralDispatchSpecializer { function_id, isa, callout,
-            typed_regions: typed_entries }.lower(program).ok()?;
-        let (general, _) = GeneralDispatchSpecializer { function_id, isa, callout,
-            typed_regions: &[] }.lower(program).ok()?;
+        let scalars = scalar_entries.len();
+        let (specialized, _) = lower_js_general_dispatch(program, function_id, isa,
+            callout, scalar_entries, typed_entries).ok()?;
+        let (general, _) = lower_js_general_dispatch(program, function_id, isa,
+            callout, &[], &[]).ok()?;
         let specialized = publish_eager_graph(specialized, isa).ok()?;
         let general = publish_eager_graph(general, isa).ok()?;
         let threaded = compile_eager_body::<H>(sites, function_id, isa, None).ok()?;
@@ -240,7 +252,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
             method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[],
         }), ..VmFacts::STATIC };
         let function = program.function(function_id as usize);
-        let reads = frozen_global_reads(program, function, self.globals);
+        let reads = frozen_global_reads(function, self.globals);
         let units = lower_static_typed_regions_process::<H>(program, function_id, &self.targets, isa, facts, &reads);
         for unit in &units {
             self.owners.frozen_atoms.extend(unit.stable.atoms.iter().copied());
@@ -260,7 +272,6 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
             lower_eager_fallback(instruction_count, table.as_ptr(), operands.as_ptr(), isa)?, isa)?;
         Ok((fallback, operands, table))
     }
-
 }
 
 /// The AOT tier the dispatcher selected (0 call-threaded, 1 general, 2 specialized).
@@ -446,10 +457,9 @@ fn compile_eager_body<H: Host>(
 }
 
 #[cfg(feature = "aot")]
-fn publish_eager_graph(function: ir::Function, isa: &dyn cranelift_codegen::isa::TargetIsa) -> Result<CodeMemory, String> {
+pub(super) fn publish_eager_graph(function: ir::Function, isa: &dyn cranelift_codegen::isa::TargetIsa) -> Result<CodeMemory, String> {
     super::jit_backend::compile_function(function, isa, None, |compiled, _| {
         if !compiled.buffer.relocs().is_empty() { return Err(NativeCompileRejection::Relocations); }
         CodeMemory::new(compiled.code_buffer()).ok_or(NativeCompileRejection::Publish)
     }).map_err(|error| error.reason().to_owned())
 }
-

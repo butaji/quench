@@ -152,13 +152,13 @@ pub(super) fn apply(
     }
     // Each pass hands the liveness of the code it leaves unchanged to the next.
     let mut liveness = None;
-    if coalesce_distant_producer_moves(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
+    while coalesce_distant_producer_moves(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
     if forward_move_sources(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
-    if rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness) {
+    while rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness) {
         changed_passes += 1;
     }
     if crate::trace::Channel::Rewrite.on() {
@@ -172,8 +172,8 @@ pub(super) fn apply(
 
 /// Coalesces the copies frame-register promotion leaves: each promoted load or store of a
 /// local becomes a `Move` beside the instruction that produces or consumes its value. The
-/// same producer and consumer coalescing as `apply` folds them away, one round of each, as
-/// `apply` makes its own: later rounds' code saved less run time than their compile cost.
+/// same producer and consumer coalescing as `apply` folds them away; dropping the `Nop`s a
+/// round leaves makes the next copies adjacent to their consumers, until none changes.
 pub(super) fn coalesce_promoted_moves(
     function: &mut BcFunction,
     methods: &(impl liveness::MethodArguments + ?Sized),
@@ -181,10 +181,16 @@ pub(super) fn coalesce_promoted_moves(
     superinstructions: &[Superinstruction],
 ) {
     let mut liveness = None;
-    let mut changed = coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness);
-    changed |= forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness);
-    changed |= remove_dead_moves(function, methods, field_sites, superinstructions, &mut liveness);
-    if changed {
+    loop {
+        let mut changed = false;
+        while coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness) {
+            changed = true;
+        }
+        changed |= forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness);
+        changed |= remove_dead_moves(function, methods, field_sites, superinstructions, &mut liveness);
+        if !changed {
+            return;
+        }
         remove_nops(function, &mut liveness);
     }
 }

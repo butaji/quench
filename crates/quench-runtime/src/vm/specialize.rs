@@ -34,7 +34,14 @@ impl Division {
     }
 }
 
-pub(crate) use super::specializer::Specializer;
+/// Futamura's first projection: the interpreter specialized to one program.
+/// Implementations differ in their division and in how the residual code is
+/// published (linked object, Cranelift in live memory, copied stencils).
+pub(crate) trait Specializer {
+    type Residual;
+
+    fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String>;
+}
 
 /// Where control continues after an instruction's semantic entry returns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

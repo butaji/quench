@@ -360,18 +360,20 @@ impl<H: Host> Vm<H> {
 
     /// The collation an `Intl.Collator` resolved, `None` for anything else.
     fn collator_collation(&self, collator: Value) -> Option<Collation> {
-        let locale = self.collator_locale_slot(collator)?;
-        let string = |slot, default: &str| self.collator_string_slot(collator, slot).unwrap_or_else(|| default.into());
-        let sensitivity = string(COLLATOR_SENSITIVITY_SLOT, "variant");
-        let (usage, case_first) = (string(COLLATOR_USAGE_SLOT, "sort"), string(COLLATOR_CASE_FIRST_SLOT, "false"));
-        let options = quench_intl::CollatorOptions {
+        Some(Collation {
+            locale: self.collator_locale_slot(collator)?,
             ignore_punctuation: self.collator_bool_slot(collator, COLLATOR_IGNORE_PUNCTUATION_SLOT),
-            sensitivity: &sensitivity,
-            usage: &usage,
+            sensitivity: self
+                .collator_string_slot(collator, COLLATOR_SENSITIVITY_SLOT)
+                .unwrap_or_else(|| "variant".into()),
+            usage: self
+                .collator_string_slot(collator, COLLATOR_USAGE_SLOT)
+                .unwrap_or_else(|| "sort".into()),
             numeric: self.collator_bool_slot(collator, COLLATOR_NUMERIC_SLOT),
-            case_first: &case_first,
-        };
-        Some(Collation(quench_intl::resolve_collator(&locale, &options)))
+            case_first: self
+                .collator_string_slot(collator, COLLATOR_CASE_FIRST_SLOT)
+                .unwrap_or_else(|| "false".into()),
+        })
     }
 
     /// `String.prototype.localeCompare`'s collation for `locales` and `options`: a collator
@@ -510,12 +512,26 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// A collator's resolved collation, which each comparison reuses (`quench_intl::ResolvedCollator`).
-pub(super) struct Collation(quench_intl::ResolvedCollator);
+/// A collator's resolved locale and options, as `quench_intl` compares by them.
+pub(super) struct Collation {
+    locale: String,
+    ignore_punctuation: bool,
+    sensitivity: String,
+    usage: String,
+    numeric: bool,
+    case_first: String,
+}
 
 impl Collation {
     pub(super) fn compare(&self, left: &str, right: &str) -> f64 {
-        self.0.compare(left, right)
+        let options = quench_intl::CollatorOptions {
+            ignore_punctuation: self.ignore_punctuation,
+            sensitivity: &self.sensitivity,
+            usage: &self.usage,
+            numeric: self.numeric,
+            case_first: &self.case_first,
+        };
+        quench_intl::compare_collator(left, right, &self.locale, &options)
     }
 }
 

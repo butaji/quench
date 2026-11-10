@@ -13,7 +13,7 @@ impl<H: Host> Vm<H> {
         let global = |function: u32| program.function_get(function as usize)
             .is_some_and(|body| body.names_resolve_statically(program))
             && self.programs.names_are_global(self.active_program);
-        let reads: Vec<(usize, GlobalRead)> = unit.instructions.iter().enumerate()
+        unit.instructions.iter().enumerate()
             .filter(|(_, instruction)| instruction.op().is_throwing_name_load())
             .filter(|(pc, instruction)| {
                 let atom = instruction.atom_index();
@@ -32,21 +32,6 @@ impl<H: Host> Vm<H> {
                 let immutable = super::super::builtins::immutable_globals().into_iter().find(|(global, _)| *global == name);
                 (pc, immutable.map_or_else(|| self.stable_global_read(program, atom, site), |(_, value)| GlobalRead::Constant(value)))
             })
-            .collect();
-        let members: Vec<(usize, GlobalRead)> = reads.iter().filter_map(|(pc, read)| self.native_member(unit, *pc, read)).collect();
-        reads.into_iter().chain(members).collect()
-    }
-
-    /// The field read that follows the global read `read` at `pc` and reads its register, where
-    /// the member it names is an own data property holding a native function now.
-    fn native_member(&self, unit: &lane_unit::Unit, pc: usize, read: &GlobalRead) -> Option<(usize, GlobalRead)> {
-        let (GlobalRead::Constant(object) | GlobalRead::Stable { value: object, .. }) = *read else { return None };
-        let (base, member) = (unit.instructions.get(pc)?.result_register(), unit.instructions.get(pc + 1)?);
-        if !member.op().is_get_field() { return None; }
-        let Some(crate::bytecode::FieldLookup::Atom { base: read_base, atom, .. }) = member.field_lookup() else { return None };
-        if read_base.register_index() != Some(base) { return None; }
-        let value = self.own_plain_data(object, atom)??;
-        let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(native), .. } = self.heap.function(value)? else { return None };
-        Some((pc + 1, GlobalRead::NativeMember { value, native: *native }))
+            .collect()
     }
 }

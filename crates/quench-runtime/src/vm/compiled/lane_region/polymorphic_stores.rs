@@ -31,7 +31,6 @@ impl Lowering<'_, '_> {
         let write = self.ins().iconst(types::I64, (u64::from(atom) << u16::BITS | u64::from(site)) as i64);
         let payload = self.payload;
         let stored = self.helper_call(LaneHelper::FieldAdd, &[payload, object, write, value]);
-        self.forget_append_rooms(self.at);
         let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
         emit_js_guard(&mut self.builder, hit, exit);
     }

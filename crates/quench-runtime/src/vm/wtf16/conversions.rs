@@ -1,8 +1,6 @@
 //! `JsString`'s standard conversions and formatting.
 use super::JsString;
 
-mod case;
-
 impl std::fmt::Debug for JsString {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter

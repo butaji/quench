@@ -140,22 +140,9 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         });
         let lane_helpers = u32::try_from(functions.len()).map_err(|_| "native helper symbol count exceeds u32")?;
         let inline_targets = super::compiled::static_call_targets(program);
-        // Whole-program facts the closed image can fold with a read-site guard. The
-        // expected value is embedded in the code and checked against the live cell or
-        // prototype, so no invalidation word or serialized assumption is needed.
-        let frozen_globals = super::compiled::frozen_globals(program);
-        let frozen_fields = super::compiled::frozen_fields(program);
-        let frozen_facts = super::compiled::VmFacts {
-            frozen_fields: Some(&frozen_fields),
-            ..super::compiled::VmFacts::STATIC
-        };
         let typed_units: Vec<_> = (0..program.function_count()).map(|id|
             if options.regions(program.function(id).code.len()).is_none() {
-                let reads = super::compiled::frozen_global_reads(program, program.function(id), &frozen_globals);
-                super::compiled::lower_static_typed_regions(program, id as u32, &inline_targets, &*isa,
-                    super::compiled::LaneHelpers::Linked(lane_helpers,
-                        u32::try_from(program.function_count()).expect("validated native namespace")),
-                    frozen_facts, &reads)
+                super::compiled::lower_static_typed_regions_linked(program, id as u32, &inline_targets, &*isa, lane_helpers)
             } else { Vec::new() }).collect();
         if typed_units.iter().any(|units| !units.is_empty()) {
             functions.push(NativeFunction::Import {
@@ -190,24 +177,26 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         let region_count = (0..program.function_count())
             .try_fold(0usize, |count, id| count.checked_add(options.region_count(program.function(id).code.len())))
             .ok_or("native region count overflow")?;
-        // A function's static regions are its loop regions and its bounded scalar ranges
-        // (`lower_static_typed_regions`); each publishes under its own symbol.
-        let scalar_count = typed_units.iter().try_fold(0usize, |count, regions| count
-            .checked_add(regions.iter().filter(|region| region.scalar).count()))
-            .ok_or("native scalar symbol count overflow")?;
-        let scalar_base = (first_definition as usize)
+        let scalar_regions: Vec<_> = (0..program.function_count()).map(|id| {
+            let body = program.function(id);
+            if id == 0 || options.regions(body.code.len()).is_some()
+                || !super::compiled::js_general_dispatch_candidate(program, body)
+            {
+                Vec::new()
+            } else {
+                super::compiled::lower_static_scalar_regions(program, id as u32, &*isa)
+            }
+        }).collect();
+        let fallback_base = (first_definition as usize)
             .checked_add(program.function_count())
             .and_then(|base| base.checked_add(region_count))
-            .ok_or("native scalar symbol count overflow")?;
-        let fallback_base = scalar_base.checked_add(scalar_count)
             .ok_or("native fallback symbol count overflow")?;
-        u32::try_from(fallback_base).map_err(|_| "native scalar symbol count exceeds u32")?;
+        u32::try_from(fallback_base).map_err(|_| "native fallback symbol count exceeds u32")?;
         let mut data = Vec::with_capacity(program.function_count());
         let mut region_definitions = Vec::new();
         let mut fallback_definitions = Vec::new();
         let mut fallback_tables = Vec::new();
-        let mut scalar_definitions = Vec::new();
-        for (id, typed_units) in typed_units.into_iter().enumerate() {
+        for (id, scalar_regions) in scalar_regions.into_iter().enumerate() {
             let body = program.function(id);
             let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
             let sites = &bodies[id];
@@ -219,8 +208,8 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             for site in sites {
                 site.operands.append_native_bytes(&mut bytes);
             }
-            let units: Vec<_> = typed_units.iter().map(|unit|
-                super::compiled::StaticTypedRegionEntry { header: unit.header, function: &unit.function, gated: !unit.scalar }).collect();
+            let units: Vec<_> = typed_units[id].iter().map(|unit|
+                super::compiled::StaticTypedRegionEntry { header: unit.header, function: &unit.function }).collect();
             let native = if let Some(regions) = options.regions(body.code.len()) {
                 let region_base = (first_definition as usize)
                     .checked_add(program.function_count())
@@ -283,7 +272,13 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                 match super::compiled::lower_js_general_dispatch(
                     program, function_id, &*isa,
                     super::compiled::JsGeneralCallout::Relocatable { fallback },
-                    &units,
+                    &scalar_regions.iter().map(|region| {
+                        super::compiled::StaticRegionEntry {
+                            range: region.range.clone(),
+                            fields: &region.fields,
+                            function: &region.function,
+                        }
+                    }).collect::<Vec<_>>(), &units,
                 ) {
                     Ok((native, _)) => {
                         let table = program.function_count().checked_add(usize::from(has_narrow_table))
@@ -313,12 +308,6 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                 name: format!("{namespace}_function_{id}"),
                 function: native,
             });
-            for (index, region) in typed_units.into_iter().filter(|region| region.scalar).enumerate() {
-                scalar_definitions.push(NativeFunction::Definition {
-                    name: format!("{namespace}_function_{id}_scalar_{index}"),
-                    function: region.function,
-                });
-            }
         }
         if has_narrow_table {
             data.push(NativeData {
@@ -358,7 +347,6 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             addresses.push(NativeFunctionAddress { offset, function });
         }
         functions.extend(region_definitions);
-        functions.extend(scalar_definitions);
         functions.extend(fallback_definitions);
         u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
         let entry_table = data.len();
@@ -765,45 +753,6 @@ pub(super) fn lower_region_dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The linked image folds a whole-program global with a read-site guard: the expected
-    /// value is embedded and compared with the live global cell at each read.
-    #[test]
-    fn linked_image_folds_a_whole_program_global() {
-        let program = crate::Engine::specialize(
-            "var SCALE = 3; function scale(x) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + x * SCALE) | 0; } return s; } globalThis.answer = scale(2); globalThis.SCALE = 5; globalThis.answer2 = scale(2);",
-            "frozen-global-lower.js").unwrap();
-        let module = lower_native_js_module(&program, "frozen_global").unwrap();
-        let ir = module.functions.iter().filter_map(|function| match function {
-            NativeFunction::Definition { function, .. } => Some(function.display().to_string()),
-            NativeFunction::Import { .. } => None,
-        }).collect::<Vec<_>>().join("\n");
-        // 3 is a tagged Number (`0x7ffd_0000_0000_0003`); the read-site guard compares the
-        // live global cell with exactly that word.
-        assert!(ir.contains("0x7ffd_0000_0000_0003"),
-            "the expected global value is embedded:\n{ir}");
-        assert!(ir.contains("icmp eq"), "the read-site guard compares the live cell:\n{ir}");
-    }
-
-    /// The linked image folds a whole-program prototype value with a read-site guard: the
-    /// expected value is embedded and compared with the live slot, so a changed prototype
-    /// fails the guard and the shared body computes the guest answer.
-    #[test]
-    fn linked_image_folds_a_whole_program_field() {
-        let program = crate::Engine::specialize(
-            "function C(){} C.prototype.k = 7; function f(a){ let s = 0; for (let i = 0; i < 8; i++) { s = (s + a[i & 1].k) | 0; } return s; } f([new C(), new C()]);",
-            "frozen-field-lower.js").unwrap();
-        let module = lower_native_js_module(&program, "frozen_field").unwrap();
-        let ir = module.functions.iter().filter_map(|function| match function {
-            NativeFunction::Definition { function, .. } => Some(function.display().to_string()),
-            NativeFunction::Import { .. } => None,
-        }).collect::<Vec<_>>().join("\n");
-        // 7 is a tagged Number (`0x7ffd_0000_0000_0007`); the read-site guard compares the
-        // live slot with exactly that word.
-        assert!(ir.contains("0x7ffd_0000_0000_0007"),
-            "the expected field value is embedded:\n{ir}");
-        assert!(ir.contains("icmp eq"), "the read-site guard compares the live slot:\n{ir}");
-    }
 
     #[test]
     fn native_objects_include_entry_and_deferred_functions_in_js_and_ts() {
