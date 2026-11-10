@@ -30,6 +30,9 @@ pub(super) fn lower_rest(
     if lower_require_iterator_result(builder, instruction, next, register_offset, arguments, payload, exact) {
         return PcLowering::Native;
     }
+    if lower_array_literal(builder, instruction, next, register_offset, arguments, payload, exact) {
+        return PcLowering::Native;
+    }
     if let Some(next) = next && instruction.op() == crate::bytecode::Op::Binary
         && lower_binary(builder, program, (instruction, next), register_offset, (arguments, payload), exact) {
         return PcLowering::Native;
@@ -55,6 +58,46 @@ fn lower_require_iterator_result(builder: &mut FunctionBuilder<'_>, instruction:
     let object = builder.ins().icmp_imm_u(IntCC::NotEqual, passed, 0);
     let fallback = builder.create_block();
     builder.ins().brif(object, next, &[], fallback, &[]);
+    builder.switch_to_block(fallback);
+    exact.emit(builder, fallback);
+    true
+}
+
+/// Lowers a literal's array construction natively: `MakeArray` allocates its hole array
+/// (a due collection leaves to the step) and `DefineArrayElement` fills a hole in the fresh
+/// array in place; both leave where the step must run.
+fn lower_array_literal(builder: &mut FunctionBuilder<'_>, instruction: WideInstruction,
+    next: Option<ir::Block>, register_offset: &dyn Fn(u16) -> Option<i32>,
+    arguments: ir::Value, payload: ir::Value, exact: &JsExactFallback) -> bool {
+    let Some(next) = next else { return false };
+    let class = instruction.op().class();
+    if class.eq(Class::MakeArray) {
+        if instruction.result_flags() != 0 { return false; }
+        let Some(destination) = register_offset(instruction.result_register()) else { return false };
+        let length = builder.ins().iconst(types::I64, instruction.array_length() as i64);
+        let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, hole_array));
+        let array = emit_lane_helper_call(builder, payload, helper, &[payload, length]);
+        let allocated = builder.ins().icmp_imm_u(IntCC::NotEqual, array, Value::DELETED.to_bits() as i64);
+        let (store, fallback) = (builder.create_block(), builder.create_block());
+        builder.ins().brif(allocated, store, &[], fallback, &[]);
+        builder.switch_to_block(store);
+        builder.ins().store(MemFlagsData::trusted(), array, arguments, destination);
+        builder.ins().jump(next, &[]);
+        builder.switch_to_block(fallback);
+        exact.emit(builder, fallback);
+        return true;
+    }
+    if !class.eq(Class::DefineArrayElement) { return false; }
+    let (Some(array), Some(value)) = (register_offset(instruction.register_b()), register_offset(instruction.register_a()))
+        else { return false };
+    let array = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, array);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, value);
+    let index = builder.ins().iconst(types::I64, i64::from(instruction.array_index()));
+    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, define_element));
+    let defined = emit_lane_helper_call(builder, payload, helper, &[payload, array, value, index]);
+    let ok = builder.ins().icmp_imm_u(IntCC::NotEqual, defined, 0);
+    let fallback = builder.create_block();
+    builder.ins().brif(ok, next, &[], fallback, &[]);
     builder.switch_to_block(fallback);
     exact.emit(builder, fallback);
     true

@@ -79,6 +79,33 @@ pub(super) unsafe extern "C" fn general_array_construct<H: Host>(vm: u64, _resid
 ///
 /// # Safety
 /// As `general_user_call`.
+/// `MakeArray`'s fresh array of `length` holes (`Vm::hole_array`), or `Value::DELETED` where
+/// a collection is due or the record space must grow, leaving the step to allocate.
+///
+/// # Safety
+/// As `general_user_call`.
+pub(super) unsafe extern "C" fn general_hole_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let array = vm.hole_array(length as usize);
+    super::super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    array.to_bits()
+}
+
+/// `DefineArrayElement` of a literal: `value` at `index` of its fresh array, which owns its
+/// backing (a hole replaced in place, no allocation); zero where the step must define it.
+///
+/// # Safety
+/// As `general_user_call`.
+pub(super) unsafe extern "C" fn general_define_element<H: Host>(vm: u64, _residual: u64, _payload: u64,
+    array: u64, value: u64, index: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    u64::from(vm.define_literal_element(Value::from_bits(array), index as usize, Value::from_bits(value)))
+}
+
 pub(super) unsafe extern "C" fn general_object<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
     // SAFETY: as the caller promises.
     let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
