@@ -415,3 +415,11 @@ pub(super) fn lane_initialize_stores<H: Host>(
     }
     Some((this, true))
 }
+
+/// Where the lane continues after a returned construction (`return new C(...)`) made `this`
+/// in place: the innermost activation completed with it (`lane_complete_activation`), else
+/// the frame's own return of it (`lane_frame_return`).
+#[inline(always)]
+pub(super) fn lane_return_constructed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
+    lane_complete_activation(cx, ip, this).unwrap_or_else(|| Resumed::Exit(lane_frame_return(unsafe { vm(cx) }, ip, this)))
+}

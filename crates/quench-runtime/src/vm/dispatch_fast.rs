@@ -579,7 +579,7 @@ mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_initialize_stores, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_initialize_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
@@ -12696,9 +12696,12 @@ script_handler! {
                 if let Some(parent) = lane_super_forwarded_parent(vm, callee) {
                     resume!(cx, lane_construct_forwarded_parent(cx, r, ip, i, callee, parent));
                 }
-                if !returns && let Some(this) = lane_super_construction(cx, r, i, callee) {
+                if let Some(this) = lane_super_construction(cx, r, i, callee) {
                     // Allocating the receiver can make a collection due.
                     note_allocation(vm);
+                    if returns {
+                        resume!(cx, lane_return_constructed(cx, ip, this))
+                    }
                     r.set(i.a, this);
                     next!(cx, r, following(ip), Carried::script(cx))
                 }
@@ -13796,10 +13799,7 @@ script_handler! {
         };
         // Allocating the receiver can make a collection due.
         note_allocation(vm);
-        if let Some(resumed) = lane_complete_activation(cx, ip, this) {
-            resume!(cx, resumed)
-        }
-        lane_frame_return(vm, ip, this)
+        resume!(cx, lane_return_constructed(cx, ip, this))
     }
 }
 
