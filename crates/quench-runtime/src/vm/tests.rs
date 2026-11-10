@@ -3539,19 +3539,8 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
                 "{mode}: dictionary shape entered a megamorphic field cache for {name}"
             );
             assert!(
-                vm.method_caches
-                    .iter()
-                    .flatten()
-                    .all(|cache| cache.shape != shape),
-                "{mode}: dictionary shape entered a monomorphic method cache for {name}"
-            );
-            assert!(
-                vm.megamorphic_methods.iter().all(|cache| {
-                    cache.entries[..usize::from(cache.len)]
-                        .iter()
-                        .all(|entry| entry.shape != shape)
-                }),
-                "{mode}: dictionary shape entered a megamorphic method cache for {name}"
+                vm.method_caches.iter().flat_map(|site| site.entries()).all(|cache| cache.shape != shape),
+                "{mode}: dictionary shape entered a method cache for {name}"
             );
         }
 
@@ -3855,7 +3844,7 @@ fn untaken_closure_branch_does_not_allocate_environments() {
 #[test]
 fn third_method_receiver_promotes_site_to_megamorphic() {
     let mut vm = Vm::new(TestHost::default());
-    vm.method_caches.push([super::EMPTY_METHOD_CACHE; 2]);
+    vm.method_caches.push(super::method_cache::MethodSite::EMPTY);
     for shape in 1..=4 {
         vm.record_method_cache(
             0,
@@ -3873,7 +3862,28 @@ fn third_method_receiver_promotes_site_to_megamorphic() {
             },
         );
     }
-    assert_eq!(vm.megamorphic_methods[0].len, 4);
+    assert_eq!(vm.method_caches[0].recorded_set().len(), 4);
+}
+
+#[test]
+fn full_method_set_evicts_its_oldest_receiver_shape() {
+    let mut vm = Vm::new(TestHost::default());
+    vm.method_caches.push(super::method_cache::MethodSite::EMPTY);
+    for shape in 1..=6 {
+        vm.record_method_cache(
+            0,
+            MethodCache {
+                shape,
+                atom: 0,
+                proto: crate::Value::NULL,
+                callee: crate::Value::NULL,
+                guard: super::EMPTY_METHOD_GUARD,
+                target: Some(CallTarget::User(super::program_store::ProgramId::MAIN, shape, crate::Value::NULL)),
+            },
+        );
+    }
+    let set: Vec<u32> = vm.method_caches[0].recorded_set().iter().map(|entry| entry.shape).collect();
+    assert_eq!(set, [3, 4, 5, 6], "the set keeps the newest shapes, oldest first");
 }
 
 #[test]
@@ -3903,7 +3913,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
             with_objects: Box::default(),
         }),
     });
-    vm.method_caches.push([
+    vm.method_caches.push(super::method_cache::MethodSite { set: None, inline: [
         MethodCache {
             shape: 1,
             atom: 0,
@@ -3928,7 +3938,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
                 dead,
             )),
         },
-    ]);
+    ] });
     vm.heap.collect([live]);
     vm.retain_live_method_caches();
     assert!(matches!(

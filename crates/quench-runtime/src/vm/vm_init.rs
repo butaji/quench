@@ -181,7 +181,6 @@ impl<H: Host> Vm<H> {
             constructed_shapes: [provenance::ConstructedShape::EMPTY; provenance::CONSTRUCTED_SHAPE_ENTRIES],
             object_templates: Vec::new(),
             method_caches: vec![],
-            megamorphic_methods: vec![],
             method_cache_atoms: Default::default(),
             #[cfg(feature = "profile-aggregate")]
             invalidated_methods: FxHashMap::default(),
