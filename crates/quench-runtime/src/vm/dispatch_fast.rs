@@ -7564,15 +7564,28 @@ script_handler! {
     }
 }
 
+/// The integer constant of a jump test against a constant (`lane_jump_binary_false_small`): the
+/// record's own 16 bits, or with `TABLE` the program's constant its `c` indexes, for one past them.
+#[inline(always)]
+fn lane_small_constant<H: Host, const TABLE: bool>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> Value {
+    if TABLE {
+        // SAFETY: the run's program keeps its constants (`LaneContext::constants`), and the
+        // view was derived with `c` indexing an integer one.
+        unsafe { *(&*(*cx).constants).get_unchecked(usize::from(i.c)) }
+    } else {
+        Value::integer(i32::from(i.c as i16))
+    }
+}
+
 script_handler! {
     /// `lane_jump_binary_false` of a register and an integer constant small enough for the
     /// record's `c` field, both decoded when the view was derived
     /// (`specialize_register_operands`): Number comparison of an integer register
     /// (`integer_relation`); any other takes `lane_jump_binary_false_small_other`.
-    fn lane_jump_binary_false_small<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
-        let right = Value::integer(i32::from(i.c as i16));
+    fn lane_jump_binary_false_small<BACKWARD: bool, OP: u32, TABLE: bool>(cx, r, ip, i, view) {
+        let right = lane_small_constant::<H, TABLE>(cx, i);
         let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(i), r.get(i.b), right) else {
-            sibling!(lane_jump_binary_false_small_other::<H, BACKWARD>, r, ip, view)
+            sibling!(lane_jump_binary_false_small_other::<H, BACKWARD, TABLE>, r, ip, view)
         };
         if !holds {
             resume!(cx, lane_jump::<H>(r, ip, BACKWARD, view, None));
@@ -7587,8 +7600,8 @@ script_handler! {
     /// operator's result (`if (x & MASK)`) or another relation (`lane_relation_other`). Out of
     /// line, so the integer case keeps few values live and makes no call.
     #[inline(never)]
-    fn lane_jump_binary_false_small_other<BACKWARD: bool>(cx, r, ip, i, view) {
-        let right = Value::integer(i32::from(i.c as i16));
+    fn lane_jump_binary_false_small_other<BACKWARD: bool, TABLE: bool>(cx, r, ip, i, view) {
+        let right = lane_small_constant::<H, TABLE>(cx, i);
         let Some(holds) = super::operations::number_relation(u32::from(i.a), r.get(i.b), right)
             .or_else(|| lane_relation_other::<H>(u32::from(i.a), r.get(i.b), right))
         else {
@@ -19725,6 +19738,16 @@ fn install_loop_sites<'live, H: Host>(
     (sites, rejections)
 }
 
+/// The relation jump against the integer constant `index`, and the operand `record.c` holds:
+/// the value itself where it fits 16 bits, else its constant-table index.
+fn integer_constant_relation_jump<H: Host>(constants: &[Value], operator: u32, index: u16, backward: bool) -> Option<(Handler, u16)> {
+    let value = constants.get(usize::from(index))?.as_int()?;
+    Some(match i16::try_from(value) {
+        Ok(small) => (relation_jump_handler::<H, true>(operator, backward), small as u16),
+        Err(_) => (relation_jump_table_handler::<H>(operator, backward), index),
+    })
+}
+
 /// Gives each lane record whose operands are registers the handler for that operand shape,
 /// with the decoded registers in its fields, so it decodes no operand kinds: `Binary` of a
 /// specialized operator (`operator_handler`), also with a constant right operand carried in
@@ -19892,15 +19915,11 @@ fn specialize_register_operands<H: Host>(
         }
         if right_kind == Constant
             && record.handler != get_index
-            && let Some(small) = constants
-                .get(usize::from(right.payload()))
-                .and_then(|constant| constant.as_int())
-                .and_then(|value| i16::try_from(value).ok())
+            && let Some((handler, operand)) = integer_constant_relation_jump::<H>(constants, u32::from(instruction.a()), right.payload(), backward)
         {
-            let handler = relation_jump_handler::<H, true>(u32::from(instruction.a()), backward);
             record.handler = handler as *const ();
             record.b = left.payload();
-            record.c = small as u16;
+            record.c = operand;
             continue;
         }
         if right_kind != Register {
@@ -20630,10 +20649,25 @@ fn relation_jump_handler<H: Host, const SMALL: bool>(operator: u32, backward: bo
     macro_rules! pick {
         ($op:expr) => {
             match (SMALL, backward) {
-                (true, true) => lane_jump_binary_false_small::<H, true, { $op }> as Handler,
-                (true, false) => lane_jump_binary_false_small::<H, false, { $op }> as Handler,
+                (true, true) => lane_jump_binary_false_small::<H, true, { $op }, false> as Handler,
+                (true, false) => lane_jump_binary_false_small::<H, false, { $op }, false> as Handler,
                 (false, true) => lane_jump_binary_false_registers::<H, true, { $op }> as Handler,
                 (false, false) => lane_jump_binary_false_registers::<H, false, { $op }> as Handler,
+            }
+        };
+    }
+    relation_operators!(operator, pick)
+}
+
+/// `relation_jump_handler` against an integer constant outside the record's 16 bits, read from
+/// the program's constants (`lane_small_constant`).
+fn relation_jump_table_handler<H: Host>(operator: u32, backward: bool) -> Handler {
+    macro_rules! pick {
+        ($op:expr) => {
+            if backward {
+                lane_jump_binary_false_small::<H, true, { $op }, true> as Handler
+            } else {
+                lane_jump_binary_false_small::<H, false, { $op }, true> as Handler
             }
         };
     }
