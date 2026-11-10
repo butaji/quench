@@ -2504,9 +2504,9 @@ fn admit(
 /// the native OSR reader may load directly, by region field index.
 pub(crate) struct Observation<'a> {
     pub(crate) native_field_loads: &'a [Vec<NativeFieldLoad>],
-    /// The registers holding arrays whose sampled elements were all Numbers at entry: reads
-    /// through them are typed Numbers, leaving where one is not.
-    pub(crate) number_arrays: &'a [Register],
+    /// The registers holding arrays whose sampled elements were all int32s, or all Numbers, at
+    /// entry, with that type: reads through them have it, leaving where one does not.
+    pub(crate) number_arrays: &'a [(Register, crate::typed_ir::Type)],
     /// The registers holding int32s at entry, whose loop may keep them as int32s where every
     /// definition in it yields one (`RegionSpecializer::int_entries`).
     pub(crate) int_entries: &'a [Register],

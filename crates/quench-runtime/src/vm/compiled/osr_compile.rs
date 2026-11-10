@@ -217,10 +217,13 @@ pub(in crate::vm) fn start_osr_region(
     let mut plan = |unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, header: usize, backedge: usize, generic: &[usize]| {
         // The element reads through an array observed to hold Numbers, where no earlier body
         // left (`generic`): typed Numbers, each leaving at an element that is not one.
-        let number_reads: Vec<usize> = unit.instructions.iter().enumerate()
-            .filter(|(pc, instruction)| instruction.op().is_get_index() && !generic.contains(pc)
-                && instruction.operand_b().register_index().is_some_and(|register| observation.number_arrays.contains(&register)))
-            .map(|(pc, _)| pc).collect();
+        let number_reads: Vec<super::facts::ObservedRead> = unit.instructions.iter().enumerate()
+            .filter(|(pc, instruction)| instruction.op().is_get_index() && !generic.contains(pc))
+            .filter_map(|(pc, instruction)| {
+                let register = instruction.operand_b().register_index()?;
+                let ty = observation.number_arrays.iter().find(|(array, _)| *array == register)?.1;
+                Some(super::facts::ObservedRead { pc, ty })
+            }).collect();
         super::lane_region::RegionSpecializer {
             number_reads: &number_reads, int_entries: observation.int_entries,
             function_id, unit, helpers, fields: &fields,
