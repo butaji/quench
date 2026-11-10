@@ -17,6 +17,9 @@ const LARGE_MIN_BYTES: usize = 1 << 20;
 /// Larger blocks are rare one-offs such as Wasm memories; keeping one resident would cost
 /// more than the faults it saves.
 const LARGE_MAX_BYTES: usize = 32 << 20;
+/// The most bytes a thread keeps at once: what recurring blocks may add to its peak
+/// (typescript-lib peaked 25 MB higher in one round of two before this bound, 2026-11-10).
+const KEPT_MAX_BYTES: usize = 16 << 20;
 /// Blocks kept at once per thread; a cycle rarely recurs with more distinct large blocks.
 const SLOTS: usize = 4;
 /// Collections a kept block may go unused before it is returned to the system, so only a
@@ -178,6 +181,10 @@ fn keep(block: *mut u8, layout: Layout) -> bool {
                 .find(|slot| slot.is_empty())
                 .or_else(|| slots.iter().max_by_key(|slot| slot.idle.get()).filter(|slot| slot.idle.get() > 0));
             let Some(slot) = slot else { return false };
+            let others: usize = slots.iter().filter(|other| !other.is_empty() && !ptr::eq(*other, slot)).map(|other| other.bytes.get()).sum();
+            if others + layout.size() > KEPT_MAX_BYTES {
+                return false;
+            }
             if !slot.is_empty() {
                 slot.release();
             }
@@ -316,5 +323,16 @@ mod tests {
         assert!(keep(block, layout(LARGE_MIN_BYTES)), "the size was requested again");
         assert_eq!(take(layout(LARGE_MIN_BYTES)), block);
         free(block, LARGE_MIN_BYTES);
+    }
+
+    #[test]
+    fn kept_bytes_stay_within_the_bound() {
+        let size = KEPT_MAX_BYTES / 2 + LARGE_MIN_BYTES;
+        recurring(size);
+        let (first, second) = (system_block(size), system_block(size));
+        assert!(keep(first, layout(size)));
+        assert!(!keep(second, layout(size)), "two would exceed the bound");
+        free(second, size);
+        drain();
     }
 }
