@@ -7895,9 +7895,9 @@ script_handler! {
         }
         // A loop its region takes whole (no call it leaves at) stays the region's, which hoists
         // the typed element views a lane body does not yet.
-        if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
-            && (!site.call_boundary_pcs.is_empty() || site.analysis_failure.is_some())
-            && let Some(attempt) = lane_loop_body::<H>(cx, r, ip, site)
+        let body_loop = unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
+            && (!site.call_boundary_pcs.is_empty() || site.analysis_failure.is_some());
+        if body_loop && let Some(attempt) = lane_loop_body::<H>(cx, r, ip, site)
         {
             match attempt {
                 LoopAttempt::Declined => {}
@@ -7909,7 +7909,7 @@ script_handler! {
         }
         // A loop whose body is still to come keeps its backward jump, which a loop no region
         // runs would otherwise retire before the body is planned.
-        if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled() && site.body.borrow().pending() && site.region.get().is_none() {
+        if body_loop && site.body.borrow().pending() && site.region.get().is_none() {
             next!(cx, r, header, Carried::script(cx))
         }
         // A loop no region runs takes its plain jump from now on.
@@ -15324,8 +15324,8 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
         r.set(i.a & crate::bytecode::REGISTER_MASK, array);
         return LANE_CALL_COMPLETED;
     }
-    // A returning construction completes as a returning call does (`lane_returning_call_admitted`).
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+    // A returning construction takes the plan only: the lane completes it with its callee's result.
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return lane_body_stats::miss(lane_body_stats::Miss::ConstructReturning);
     }
     // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
