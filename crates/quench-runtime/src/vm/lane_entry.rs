@@ -35,7 +35,12 @@ fn lane_entry_capture<H: Host>(
         return Some(());
     }
     if slot == super::compiled::THIS_CAPTURE {
-        entry.push_capture(unsafe { lane_held_this(cx) });
+        let this = unsafe { lane_held_this(cx) };
+        // An unbound `this` (a lexical or a dead-zone binding) needs the general lookup.
+        if this.is_deleted() {
+            return None;
+        }
+        entry.push_capture(this);
         return Some(());
     }
     if slot & super::compiled::CALLEE_CAPTURE != 0 {

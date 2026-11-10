@@ -1,7 +1,9 @@
-//! Global-name reads in native OSR regions. A `LoadName` becomes an entry capture of its
-//! binding: a native run never crosses a `StoreName` (which exits before its effects) or a
-//! call boundary, and an inlined callee's body admits no `StoreName`, so the value the entry
-//! materializes holds for the whole run. A function with dynamic scope access keeps its loads.
+//! Reads a native OSR region takes from its entry record: a global name and `this`. A
+//! `LoadName` becomes an entry capture of its binding: a native run never crosses a
+//! `StoreName` (which exits before its effects) or a call boundary, and an inlined callee's
+//! body admits no `StoreName`, so the value the entry materializes holds for the whole run.
+//! `this` likewise cannot change during a run. A function with dynamic scope access keeps its
+//! name loads.
 use super::*;
 
 /// The capture immediate depth that marks a rewritten global-name read. A real lexical depth
@@ -11,9 +13,10 @@ pub(super) const GLOBAL_DEPTH: u16 = u16::MAX;
 pub(super) const MAX_REGION_GLOBALS: usize = 8;
 
 /// Rewrites each `LoadName` of `instructions` to a `LoadCapture` at `GLOBAL_DEPTH` reading the
-/// binding materialized in the entry record. Returns the atoms by slot; a function with
-/// dynamic scope access keeps its loads and no atoms.
-pub(super) fn rewrite_global_reads(
+/// binding materialized in the entry record, and each `LoadThis` to a `LoadCapture` of
+/// `THIS_CAPTURE`. Returns the atoms by slot; a function with dynamic scope access keeps its
+/// name loads and no atoms.
+pub(super) fn rewrite_entry_reads(
     function: &Function,
     instructions: &[WideInstruction],
 ) -> (Vec<WideInstruction>, Vec<(crate::bytecode::Atom, u16)>) {
@@ -22,6 +25,10 @@ pub(super) fn rewrite_global_reads(
     }
     let mut globals = Vec::new();
     let rewritten = instructions.iter().map(|instruction| {
+        if instruction.op().class() == Class::LoadThis && instruction.result_flags() == 0 {
+            return WideInstruction::new(Op::LoadCapture, instruction.a(), 0, 0,
+                ImmediateLayout::capture_immediate(0, THIS_CAPTURE));
+        }
         if instruction.op().class() != Class::LoadName {
             return *instruction;
         }

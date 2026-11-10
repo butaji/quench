@@ -1000,7 +1000,7 @@ pub(super) fn inline_region<'a>(
 ) -> Option<LoopRegion> {
     let (start, end) = (header as usize, backedge as usize);
     (start <= end && end < decoded.len()).then_some(())?;
-    let (caller_decoded, globals) = rewrite_global_reads(function, &decoded[start..=end]); let caller = &caller_decoded[..];
+    let (caller_decoded, globals) = rewrite_entry_reads(function, &decoded[start..=end]); let caller = &caller_decoded[..];
     let defines = |register: Register| caller.iter().any(|instruction| instruction.defined_register() == Some(register));
     let targets: std::collections::BTreeSet<u32> = caller
         .iter()
@@ -1803,7 +1803,7 @@ pub(super) fn region(
         });
     }
     let header_live = live.and_then(|live| live.get(start));
-    let (instructions, globals) = rewrite_global_reads(function, &decoded[start..=end]);
+    let (instructions, globals) = rewrite_entry_reads(function, &decoded[start..=end]);
     admit_region(
         instructions,
         usize::from(function.registers),
@@ -6990,7 +6990,7 @@ mod coverage_tests;
 mod truncation;
 #[path = "osr_loop/globals.rs"]
 mod globals;
-use globals::{capture_index, rewrite_global_reads};
+use globals::{capture_index, rewrite_entry_reads};
 
 #[cfg(test)]
 mod tests {
