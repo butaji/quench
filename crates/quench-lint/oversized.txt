@@ -4168,7 +4168,6 @@ hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::generic_handler 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::install_loop_sites 3
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::lane_fields_fit 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::lane_site_targets 1
-hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::lane_specialize 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::may_loop 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::memory_register 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::proved_handler 1

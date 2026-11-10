@@ -15,6 +15,8 @@ pub(super) struct LaneBodyHistory {
     wasted: u8,
     /// The inlining budget halvings its last plan needed to fit (`PendingLaneMethod::shrinks`).
     shrinks: u8,
+    /// The warm-ups its compile waited for its callees' bodies (`LaneView::waits_for_callees`).
+    callee_waits: u8,
 }
 
 /// What a body whose leaves reached the reoptimization threshold does next.
@@ -96,6 +98,17 @@ impl LaneView {
     pub(super) fn affords_compile(&self) -> bool {
         let history = self.history.get();
         history.lifetimes <= TIERS.lane_body.max_lifetimes && history.wasted < TIERS.lane_body.max_wasted
+    }
+
+    /// Whether its compile waits one more warm-up for callees still warming, whose bodies it
+    /// then calls by their entries (`compiled::DirectCallee`).
+    pub(super) fn waits_for_callees(&self) -> bool {
+        let history = self.history.get();
+        let waits = history.callee_waits < TIERS.lane_body.max_callee_waits;
+        if waits {
+            self.history.set(LaneBodyHistory { callee_waits: history.callee_waits + 1, ..history });
+        }
+        waits
     }
 
     /// A compile none of whose runs completed counts toward `TIERS.lane_body.max_wasted`.
@@ -195,22 +208,64 @@ impl LaneView {
                 self.note_dropped_compile();
                 LaneBody::Unspecialized { entries: 0, recompiles, stuck }
             }
+            super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: 0, recompiles, stuck },
             super::super::compiled::LaneBodyOutcome::Declined => LaneBody::Declined,
         }
     }
 
     /// `specialize_lane_body` at once, past the warm-up: a hot loop's backward jump has run
-    /// its calls, so their sites have linked (`lane_loop_body_or_retire`).
+    /// its calls, so their sites have linked (`lane_loop_retire`).
     pub(super) fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce(super::super::compiled::LaneBodyWork) -> super::super::compiled::LaneBodyOutcome) {
+        self.skip_warm_up();
+        self.specialize_lane_body(entry, specialize);
+        // Its entries are few (the loop is what is hot): the next one looks for its code, or
+        // compiles where this one waited for its callees' bodies (`LaneBodyOutcome::Deferred`).
+        self.skip_warm_up();
         // SAFETY: as `lane_body`; specializing runs no lane body.
-        // A function whose bodies lifecycle edges discarded warms as any entry does.
+        if let LaneBody::Compiling { wait, .. } = unsafe { &*self.tier_lane.get() } {
+            wait.set(0);
+        }
+    }
+
+    /// A function whose bodies lifecycle edges discarded warms as any entry does.
+    fn skip_warm_up(&self) {
+        // SAFETY: as `lane_body`; no lane body runs here.
         if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() }
             && self.history.get().lifetimes == 0
         {
             *entries = TIERS.lane_body.warmup_entries - 1;
         }
-        self.specialize_lane_body(entry, specialize);
     }
+}
+
+/// The target of the callee the call at `pc` of `view` last reached itself, by the site's own
+/// record (`lane_site_targets`): the entry its record links is another callee's once the
+/// target cache replaced it.
+pub(super) fn site_target<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, pc: usize) -> Option<super::ScriptCallTarget> {
+    let callee = super::lane_site_targets(vm, view, pc as u32).first().filter(|site| site.through().is_none())?.identity()?;
+    // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
+    vm.script_call_entry(callee).map(|target| unsafe { *target })
+}
+
+/// What a first compile of `view` comes to before any planning. Entry warm-up leaves closed
+/// loops to their admitted regions while those still enter native code (a region that leaves
+/// for calls still lets a lane body inline those callees into its typed unit). A function
+/// whose callees still compile waits for their bodies, which it then calls by their entries
+/// (`compiled::DirectCallee`), and `waits_for_callees` for those still counting entries.
+pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, body: Option<&crate::bytecode::Function>) -> Option<super::super::compiled::LaneBodyOutcome> {
+    use super::super::compiled::LaneBodyOutcome;
+    if view.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters()) {
+        return Some(LaneBodyOutcome::Declined);
+    }
+    let body = body?;
+    let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {
+        super::decoded_instruction(body, *packed).op().is_call()
+            && site_target(vm, view, pc).is_some_and(|target| {
+                // SAFETY: a resolved target's view outlives its program.
+                target.program == vm.active_program && !target.view.is_null() && !std::ptr::eq(target.view, view) && pending(unsafe { &*target.view })
+            })
+    });
+    (calls(LaneView::compiling) || (calls(LaneView::warming) && view.waits_for_callees())).then_some(LaneBodyOutcome::Deferred)
 }
 
 /// Whether a compiling `body` lets this entry pass without looking for its code, counting it
