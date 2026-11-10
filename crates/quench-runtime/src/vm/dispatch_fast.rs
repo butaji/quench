@@ -12236,8 +12236,8 @@ script_handler! {
             super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
                 sibling!(lane_generator_step::<H>, r, ip, Carried::script(cx))
             }
-            super::iterators::IterationStep::Array => {}
-            _ => sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script(cx)),
+            super::iterators::IterationStep::Call => sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script(cx)),
+            _ => {}
         }
         let Some(result) = lane_array_iteration_result(vm, iterator) else {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
@@ -12308,7 +12308,10 @@ script_handler! {
 /// `lane_iterator_step`'s step and result, out of line: the first result allocates.
 #[inline(never)]
 fn lane_array_iteration_result<H: Host>(vm: &mut Vm<H>, iterator: Value) -> Option<Value> {
-    let step = vm.step_present_array_value(iterator)?;
+    let step = match vm.step_present_array_value(iterator) {
+        Some(step) => step,
+        None => Some(vm.step_collection_value(iterator)?),
+    };
     let result = vm.reused_iterator_result(step.unwrap_or(Value::UNDEFINED), step.is_none());
     note_allocation(vm);
     Some(result)
