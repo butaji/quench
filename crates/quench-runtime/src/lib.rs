@@ -13,8 +13,8 @@ mod execution_interrupt;
 /// Numeric facts shared by the runtime and its hosts.
 pub mod units {
     pub use quench_temporal::units::*;
-    /// `Number.MAX_SAFE_INTEGER`.
-    pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    /// The most elements an array holds: its length is a `u32`.
+    pub const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
     pub const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
     pub const BINARY_RADIX: u32 = 2;
     pub const OCTAL_RADIX: u32 = 8;

@@ -7,7 +7,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 // Node src/node_util.cc validates the native stack-frame request against this limit.
 const NODE_CALL_SITE_FRAME_LIMIT: usize = 200;
 
-pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
+pub(crate) use quench_runtime::units::MAX_SAFE_INTEGER;
 
 /// The public module and original inspector share one canonical function identity.
 #[derive(Clone, Copy)]
