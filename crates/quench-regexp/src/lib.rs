@@ -12,6 +12,8 @@ use std::{
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
 mod backtrack;
+mod range_search;
+pub use range_search::{LiteralMatches, RangeSearcher};
 mod stack;
 
 pub fn is_stack_exhaustion_message(message: &str) -> bool {
@@ -289,6 +291,8 @@ struct CompleteMatcher {
     /// search (`CompleteMatcher::required_wide`): most programs search only ASCII subjects,
     /// and a finder is several hundred bytes (110 of V8-v7 RegExp's 237 patterns had one).
     required_wide: OnceCell<Option<LiteralFinder>>,
+    /// The finder of a pattern that is its literal alone (`range_search::literal_run`).
+    literal_run: range_search::LiteralRun,
     /// The fewest code points any match consumes (`min_length`). A code point is at least
     /// one unit of any subject, so a search with fewer units left has no match.
     min_length: usize,
@@ -328,6 +332,7 @@ impl CompleteMatcher {
         })
         .map(|bytes| literal_finder(&bytes));
         let min_length = min_length(&program);
+        let literal_run = range_search::LiteralRun::of(&program, &required_literal);
         let tree = OnceCell::new();
         if backtracking.is_none() {
             let _ = tree.set(program);
@@ -338,6 +343,7 @@ impl CompleteMatcher {
             backtracking,
             required_bytes,
             required_wide: OnceCell::new(),
+            literal_run,
             min_length,
         }
     }
@@ -494,16 +500,6 @@ impl Regex {
         Matches {
             item: self.find_units(units, first_unit_at(units, start)),
         }
-    }
-
-    /// A searcher of `subject`'s match ranges, as `find_range_in_subject` finds them, with
-    /// the backend chosen once for every search of a loop over the subject's matches.
-    pub fn range_searcher<'a>(&'a self, subject: &'a Subject) -> RangeSearcher<'a> {
-        let backend = match (subject.ascii(), self.complete().backtracking.as_ref()) {
-            (Some(bytes), Some(program)) => RangeBackend::Backtracking { program, bytes },
-            _ => RangeBackend::General,
-        };
-        RangeSearcher { regex: self, subject, backend }
     }
 
     /// The match that starts exactly at `start`, as a sticky (`y`) search requires, or in
@@ -815,44 +811,6 @@ impl Subject {
     pub fn is_ascii_text_of(&self, text: &std::rc::Rc<str>, range: &std::ops::Range<usize>) -> bool {
         matches!(&self.text, SubjectText::Ascii { text: own, range: own_range }
             if std::rc::Rc::ptr_eq(own, text) && own_range == range)
-    }
-}
-
-/// `Regex::range_searcher`'s searcher.
-pub struct RangeSearcher<'a> {
-    regex: &'a Regex,
-    subject: &'a Subject,
-    backend: RangeBackend<'a>,
-}
-
-/// The backend that answers a range search of an ASCII subject: the steps
-/// `find_range_in_subject` takes for every search, decided once.
-enum RangeBackend<'a> {
-    /// The backtracking program over the subject's bytes.
-    Backtracking { program: &'a backtrack::Program, bytes: &'a [u8] },
-    General,
-}
-
-impl RangeSearcher<'_> {
-    /// `Regex::find_range_in_subject(subject, start)`.
-    pub fn find(&self, start: usize) -> Option<Range<usize>> {
-        let regex = self.regex;
-        if start > self.subject.len() {
-            return None;
-        }
-        match self.backend {
-            RangeBackend::Backtracking { program, bytes } => {
-                let complete = regex.complete();
-                if bytes.len().saturating_sub(start) < complete.min_length {
-                    return None;
-                }
-                if let Some(literal) = complete.required_bytes.as_ref() {
-                    literal.find(&bytes[start..])?;
-                }
-                program.find_bounds(bytes, start, false)
-            }
-            RangeBackend::General => regex.find_range_in_subject(self.subject, start, false),
-        }
     }
 }
 

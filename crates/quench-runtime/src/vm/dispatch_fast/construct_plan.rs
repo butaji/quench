@@ -223,11 +223,24 @@ pub(super) fn lane_add_initializer_fields<H: Host>(
     this: Value,
     function: u32,
     argument: impl Fn(u16) -> Value,
-    mut each: impl FnMut(&crate::bytecode::InitializerStore, Value),
+    each: impl FnMut(&crate::bytecode::InitializerStore, Value),
 ) -> bool {
     let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
         return false;
     };
+    lane_add_stores(vm, code, this, stores, argument, each)
+}
+
+/// `lane_add_initializer_fields` of `stores`, a body's or a class chain's (`chain_stores`).
+#[inline(always)]
+pub(super) fn lane_add_stores<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    this: Value,
+    stores: &[crate::bytecode::InitializerStore],
+    argument: impl Fn(u16) -> Value,
+    mut each: impl FnMut(&crate::bytecode::InitializerStore, Value),
+) -> bool {
     for store in stores {
         let Some(value) = initializer_store_value(vm, store, &argument) else {
             return false;
@@ -363,4 +376,50 @@ pub(super) fn holding_construct_plan_index<H: Host>(vm: &Vm<H>, callee: Value) -
         && (plan.super_parent.is_undefined()
             || vm.object_data(callee).is_some_and(|class| class.proto() == plan.super_parent)))
     .then_some(index)
+}
+
+/// `lane_initialize_fields` of `stores`: the receiver, and whether every store was a cached add.
+pub(super) fn lane_initialize_stores<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    callee: Value,
+    constructor: Value,
+    stores: &[crate::bytecode::InitializerStore],
+    argument: impl Fn(u16) -> Value,
+) -> Option<(Value, bool)> {
+    let plan_index = construct_plan_index(callee);
+    let template = vm.inline_construct_template_by(callee, constructor)?;
+    let (prototype, source_shape) = (template.proto(), template.shape());
+    let this = vm.heap.alloc_object(template);
+    let mut planned = Some(ConstructPlan {
+        callee,
+        epoch: NO_CONSTRUCT_PLAN_EPOCH,
+        callee_layout: (0, 0),
+        prototype,
+        shape: source_shape,
+        ..EMPTY_CONSTRUCT_PLAN
+    });
+    let added = lane_add_stores(vm, code, this, stores, argument, |store, value| {
+        planned = planned.and_then(|plan| plan.with_field(store, value));
+    });
+    if !added {
+        return Some((this, false));
+    }
+    if let Some(mut plan) = planned
+        && let Some(index) = plan_index
+        && let Some(layout) = vm.function_prototype_layout(callee)
+    {
+        plan.callee_layout = layout;
+        plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
+        vm.lane_stack.construct_plans[index] = plan.finish();
+    }
+    Some((this, true))
+}
+
+/// Where the lane continues after a returned construction (`return new C(...)`) made `this`
+/// in place: the innermost activation completed with it (`lane_complete_activation`), else
+/// the frame's own return of it (`lane_frame_return`).
+#[inline(always)]
+pub(super) fn lane_return_constructed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
+    lane_complete_activation(cx, ip, this).unwrap_or_else(|| Resumed::Exit(lane_frame_return(unsafe { vm(cx) }, ip, this)))
 }

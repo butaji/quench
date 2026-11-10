@@ -29,12 +29,17 @@ impl From<JsError> for IteratorHelperFailure {
 pub(super) const ITERATOR_RESULT_VALUE_SLOT: usize = 0;
 pub(super) const ITERATOR_RESULT_DONE_SLOT: usize = 1;
 
+#[path = "collection_steps.rs"]
+mod collection_steps;
+
 /// What an iteration step's call is (`Vm::iteration_step`): one the lane makes in place, of
 /// an array iterator or a generator, or any other call.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum IterationStep {
     Array,
     Generator,
+    /// A String, Map or Set iterator's (`collection_steps`).
+    Collection,
     Call,
 }
 
@@ -3071,63 +3076,12 @@ impl<H: Host> Vm<H> {
                 kind if kind.is_array_iterator() => {
                     vm.array_iterator_item(p, this, source, kind, index)?
                 }
-                _ => match (kind, vm.heap.get(source)) {
-                    // A string iterator's position is the code unit its next code point
-                    // starts at, so each step reads one code point.
-                    (IteratorKind::String, _) if let Some(text) = vm.heap.string(source) => {
-                        let units = text.units();
-                        let run = (index < units.len()).then(|| {
-                            let pair = units.get(index + 1).is_some_and(|low| {
-                                crate::unicode::decode_surrogate_pair(units.at(index), low).is_some()
-                            });
-                            next_position = index + 1 + usize::from(pair);
-                            super::wtf16::JsString::from_unit_run(units.slice(index..next_position))
-                        });
-                        run.map(|run| (vm.heap.alloc_string(run), None))
-                    }
-                    (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
-                        entries.next_live(index).map(|(slot, (key, _))| {
-                            next_position = slot + 1;
-                            (key, None)
-                        })
-                    }
-                    (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => {
-                        entries.next_live(index).map(|(slot, (_, value))| {
-                            next_position = slot + 1;
-                            (value, None)
-                        })
-                    }
-                    (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => {
-                        entries.next_live(index).map(|(slot, (key, value))| {
-                            next_position = slot + 1;
-                            (key, Some(value))
-                        })
-                    }
-                    (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => {
-                        entries.next_live(index).map(|(slot, value)| {
-                            next_position = slot + 1;
-                            (value, None)
-                        })
-                    }
-                    (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => {
-                        entries.next_live(index).map(|(slot, value)| {
-                            next_position = slot + 1;
-                            (value, Some(value))
-                        })
-                    }
-                    _ => None,
-                },
+                _ => vm.collection_iterator_item(kind, source, index).map(|(item, after)| {
+                    next_position = after;
+                    item
+                }),
             };
-            let item = selected.map(|(value, second)| {
-                second.map_or(value, |second| {
-                    vm.heap.alloc(Cell::Array {
-                        object: crate::heap::ArrayObject::new(
-                            Self::empty_object(vm.array_proto),
-                            vec![value, second],
-                        ),
-                    })
-                })
-            });
+            let item = selected.map(|item| vm.iterator_item_value(item));
             if let Some(value) = item {
                 if !kind.is_array_iterator()
                     && let Some(IteratorRecord {
@@ -3299,6 +3253,9 @@ impl<H: Host> Vm<H> {
                     && self.is_current_realm_native(method, Native::GeneratorNext) =>
             {
                 IterationStep::Generator
+            }
+            Some(IteratorRecord { kind, .. }) if collection_steps::next_native(*kind).is_some_and(|native| self.is_current_realm_native(method, native)) => {
+                IterationStep::Collection
             }
             _ => IterationStep::Call,
         }
