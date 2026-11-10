@@ -15,15 +15,6 @@ const TRIM_THRESHOLD_BYTES: libc::c_int = 16 * 1024 * 1024;
 /// The glibc variable that sets the trim threshold instead.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";
-/// Under the throughput policy, the size from which glibc maps a request on its own: its
-/// largest (`DEFAULT_MMAP_THRESHOLD_MAX` on 64-bit), so a large block freed and requested
-/// again (a multi-megabyte `JSON.stringify` result per call) is reused from the arena instead
-/// of mapped and faulted in each time. JetStream 3.0 --jit, back to back (x86_64 Linux VM, 4
-/// cores, 2026-11-10): json-stringify-inspector 243 -> 301 with max RSS x0.78,
-/// json-parse-inspector RSS x0.89, acorn/babylon/typescript-lib/web-ssr within noise, RSS
-/// x1.00-1.01. The memory-first policy keeps `main`'s 1 MiB pin, which returns such blocks.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-const THROUGHPUT_MMAP_THRESHOLD_BYTES: libc::c_int = 32 * 1024 * 1024;
 
 /// The allocator setting the process's `policy` takes, applied once when it is selected
 /// (`select_memory_policy`); an explicit `TRIM_THRESHOLD_VARIABLE` wins.
@@ -47,11 +38,6 @@ pub(crate) fn apply(policy: MemoryPolicy) {
         unsafe {
             libc::mallopt(libc::M_TRIM_THRESHOLD, TRIM_THRESHOLD_BYTES);
         }
-    }
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    if policy == MemoryPolicy::Throughput && std::env::var_os(crate::host::process_start::MMAP_THRESHOLD_VARIABLE).is_none() {
-        // SAFETY: mallopt only adjusts allocator parameters.
-        unsafe { libc::mallopt(libc::M_MMAP_THRESHOLD, THROUGHPUT_MMAP_THRESHOLD_BYTES) };
     }
     #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
     let _ = policy;
