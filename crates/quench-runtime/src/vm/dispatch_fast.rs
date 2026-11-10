@@ -15351,15 +15351,19 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
         r.set(i.a & crate::bytecode::REGISTER_MASK, array);
         return LANE_CALL_COMPLETED;
     }
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
+    // A returning construction completes as a returning call does (`lane_returning_call_admitted`).
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
         return lane_body_stats::miss(lane_body_stats::Miss::ConstructReturning);
     }
     // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
-    let Some(target) = vm.script_call_entry(callee).map(|entry| unsafe { *entry }) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
-    if !target.constructs || target.forwards() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructorOrForwards); }
-    if !target.entry.activates() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructEntryNotActivation); }
-    if argc > target.params || argc > FIXED_ARGUMENT_COPIES { return lane_body_stats::miss(lane_body_stats::Miss::ConstructTooManyArgs); }
-    if !lane_activation_room(vm, &target) { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoActivationRoom); }
+    let Some(target) = vm.script_call_entry(callee).or_else(|| {
+        // An uncached callee resolves as the lane's construction does (`lane_script_target`).
+        lane_script_target(cx, callee)?;
+        vm.script_call_entry(callee)
+    }).map(|entry| unsafe { *entry }) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
+    if !target.constructs { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructorOrForwards); }
+    let Some(how) = lane_call_activation(&target, argc, i.c) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructEntryNotActivation) };
+    if matches!(how, LaneActivation::Plain) && !lane_activation_room(vm, &target) { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoActivationRoom); }
     let built = if target.initializes {
         // SAFETY: the context's program outlives the lane run.
         lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, lane_construct_argument(r, i))
@@ -15375,7 +15379,7 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     }
     // SAFETY: a construction passes its arguments from register `c` on.
     let passed = unsafe { r.0.add(usize::from(i.c)).cast_const() };
-    lane_body_activate(cx, r, ip, &target, passed, argc, this, true, LaneActivation::Plain)
+    lane_body_activate(cx, r, ip, &target, passed, argc, this, true, how)
 }
 
 /// The target a lane body's call of `callee` activates: the site's linked entry, else the one

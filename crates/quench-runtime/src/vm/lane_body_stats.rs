@@ -134,7 +134,6 @@ miss_reasons! {
     ConstructNoTarget => "construct:no-target",
     ConstructNotConstructorOrForwards => "construct:not-constructor-or-forwards",
     ConstructEntryNotActivation => "construct:entry-not-activation",
-    ConstructTooManyArgs => "construct:too-many-args",
     ConstructNoActivationRoom => "construct:no-activation-room",
     ConstructNoReceiver => "construct:no-receiver",
     HelperConstructContext => "helper-construct:context",
