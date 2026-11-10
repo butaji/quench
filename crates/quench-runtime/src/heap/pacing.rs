@@ -608,7 +608,7 @@ const MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET: usize = 512 << 10;
 /// fully, and each full collection marks the whole live set: at one live set Splay ran 26 full
 /// collections a run (gc-tuning binary, static, pinned, 2026-11-01: Score 5140-5204 at
 /// 31.8 MB; 3/2: 5960-6124 at 39.3 MB; 2/1: 5782-5847 at 47.9 MB).
-const THROUGHPUT_FULL_ONLY_HEADROOM: Ratio = Ratio::new(3, 2);
+const THROUGHPUT_FULL_ONLY_HEADROOM: Ratio = Ratio::new(5, 2);
 
 /// Memory-first lets half a live set of allocation pass between full collections once most of
 /// each young generation survives, not a whole one, which let the heap reach twice its live
