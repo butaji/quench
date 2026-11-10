@@ -1597,6 +1597,7 @@ pub(super) fn lower(
     }
     lowering.refine_loop_inputs(entry_pc, &initial, &instructions, &leaders, &loops, &own_shape);
     lowering.require_object_latches(&instructions, &leaders, &loops);
+    for &pc in generic { lowering.facts.widen(pc); }
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, &loops, &leaders)); }
     lowering.hoists = invariant_reads(program, unit, &loops);
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders);

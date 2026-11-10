@@ -48,6 +48,14 @@ impl Facts {
         Some(&self.types[start..start + self.registers])
     }
 
+    /// Drop every register's type at the block led by `pc` to `ANY`: a previous body left
+    /// at this block's edge, so the types the analysis and the contracts chose for its inputs
+    /// did not hold there, and a body speculating on them again would leave again.
+    pub(super) fn widen(&mut self, pc: usize) {
+        let Some(start) = self.offsets.get(pc).copied().flatten().map(|offset| offset.get() - 1) else { return };
+        self.types[start..start + self.registers].fill(Type::ANY);
+    }
+
     /// Select a guarded block input contract. Every native edge must conform
     /// before the lowering consumes this row; this is not a source inference.
     pub(super) fn require(&mut self, pc: usize, register: Register, required: Type) {
