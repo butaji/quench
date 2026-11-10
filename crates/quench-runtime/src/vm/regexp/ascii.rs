@@ -6,15 +6,10 @@ use super::*;
 /// where the pattern has no compiled matcher over bytes.
 pub(super) fn ascii_match_ranges(matcher: &quench_regexp::Regex, bytes: &[u8], global: bool) -> Option<smallvec::SmallVec<[Range<usize>; 8]>> {
     let mut ranges = smallvec::SmallVec::new();
-    let mut next = matcher.find_range_ascii(bytes, 0, false)?;
-    while let Some(range) = next {
-        let resume = if range.is_empty() { range.end + 1 } else { range.end };
-        ranges.push(range);
-        if !global {
-            break;
-        }
-        next = matcher.find_range_ascii(bytes, resume, false).flatten();
+    if global {
+        return matcher.find_all_ranges_ascii(bytes, |range| ranges.push(range)).then_some(ranges);
     }
+    ranges.extend(matcher.find_range_ascii(bytes, 0, false)?);
     Some(ranges)
 }
 

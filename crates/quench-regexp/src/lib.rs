@@ -552,6 +552,21 @@ impl Regex {
         Some(program.find_bounds(bytes, start, sticky))
     }
 
+    /// The ranges of every match of a scan over an ASCII subject's `bytes`, passed to `found`
+    /// in order (each search starts where the one before ended, one unit on from an empty
+    /// match), in one run of the matcher's workspace; `false` where the pattern did not
+    /// compile to the backtracking matcher.
+    pub fn find_all_ranges_ascii(&self, bytes: &[u8], found: impl FnMut(Range<usize>)) -> bool {
+        match self.ascii_program(bytes, 0, false) {
+            None => false,
+            Some(None) => true,
+            Some(Some(program)) => {
+                program.find_all_bounds(bytes, 0, found);
+                true
+            }
+        }
+    }
+
     /// The backtracking program to run over an ASCII subject's `bytes` from `start`, or
     /// `Some(None)` where the search finds nothing before a run: the rest is shorter than
     /// any match, or lacks the literal every match consumes (a sticky search tries the one

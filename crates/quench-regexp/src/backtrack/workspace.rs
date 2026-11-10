@@ -43,9 +43,7 @@ fn return_workspace(workspace: Box<Workspace>) {
 
 impl Program {
     /// The run of `search` from `start` in the thread's workspace, with the captures of a
-    /// match built from its registers by `captures`. The registers hold `UNSET` between
-    /// searches, so only a larger program grows them, and a run leaves them for the next
-    /// to reset.
+    /// match built from its registers by `captures`.
     #[inline(always)]
     pub(super) fn run_in_workspace<T: Text + ?Sized>(
         &self,
@@ -55,7 +53,23 @@ impl Program {
         captures: impl FnOnce(&[usize]) -> Vec<Option<Range<usize>>>,
     ) -> Option<Found> {
         let mut workspace = take_workspace();
-        let Workspace { registers, stack } = &mut *workspace;
+        let found = self.run_in(&mut workspace, text, start, search, captures);
+        return_workspace(workspace);
+        found
+    }
+
+    /// `run_in_workspace` in a workspace the caller holds. The registers hold `UNSET`
+    /// between runs, so only a larger program grows them, and each run resets them after.
+    #[inline(always)]
+    fn run_in<T: Text + ?Sized>(
+        &self,
+        workspace: &mut Workspace,
+        text: &T,
+        start: usize,
+        search: Search,
+        captures: impl FnOnce(&[usize]) -> Vec<Option<Range<usize>>>,
+    ) -> Option<Found> {
+        let Workspace { registers, stack } = workspace;
         if registers.len() < self.register_count {
             registers.resize(self.register_count, UNSET);
         }
@@ -66,7 +80,28 @@ impl Program {
         let ran = self.run(text, (pc, start, position), Some(search), registers, stack);
         let found = ran.map(|(start, end)| Found { start, end, captures: captures(registers) });
         registers.fill(UNSET);
-        return_workspace(workspace);
         found
+    }
+
+    /// The bounds of each match of a scan from `first`, in order, passed to `found`: each
+    /// search starts where the one before ended, one unit on from an empty match. Every
+    /// search runs in one workspace, taken once; a pattern that is a literal needs none.
+    pub(crate) fn find_all_bounds<T: Text + ?Sized>(&self, text: &T, first: usize, mut found: impl FnMut(Range<usize>)) {
+        let mut workspace = (self.literal_length.is_none() || text.bytes().is_none()).then(take_workspace);
+        let mut at = first;
+        loop {
+            let range = match &mut workspace {
+                Some(workspace) => self.run_start(text, at, false).and_then(|(start, search)| {
+                    self.run_in(workspace, text, start, search, |_| Vec::new()).map(|found| found.start..found.end)
+                }),
+                None => self.find_bounds(text, at, false),
+            };
+            let Some(range) = range else { break };
+            at = if range.is_empty() { range.end + 1 } else { range.end };
+            found(range);
+        }
+        if let Some(workspace) = workspace {
+            return_workspace(workspace);
+        }
     }
 }
