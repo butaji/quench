@@ -35,7 +35,11 @@ fn warm_clock() -> u32 { warm_ticks().wrapping_sub(1) }
 /// again, these places generically, until `max_recompiles` bodies have; the last of them has
 /// every place any body left at generic, and is permanent. A body never retires to the lane.
 fn verdict(recompiles: u8, leaves: LaneLeaves, stuck: LaneLeaves) -> Option<LaneLeaves> {
-    (recompiles < TIERS.lane_body.max_recompiles).then(|| stuck.union(leaves))
+    // Leaves only where the predecessors' bodies left, and those places already generic,
+    // would plan the same body again: it stays.
+    let nothing_new = leaves != LaneLeaves::Scattered && stuck != LaneLeaves::Scattered
+        && leaves.exits().all(|exit| stuck.exits().any(|known| known == exit));
+    (recompiles < TIERS.lane_body.max_recompiles && !(recompiles > 0 && nothing_new)).then(|| stuck.union(leaves))
 }
 
 impl LaneView {
@@ -58,7 +62,18 @@ impl LaneView {
         if exits.get() < TIERS.lane_body.reoptimize_exits || leaves * 100 <= runs * u64::from(TIERS.lane_body.reoptimize_share) {
             return;
         }
-        let Some(stuck) = verdict(*recompiles, leaves_at.get(), *stuck) else { return };
+        let Some(stuck) = verdict(*recompiles, leaves_at.get(), *stuck) else {
+            // A body that keeps leaving where no other body would, and has never completed a
+            // run, gains nothing from its entry: its function runs in the lane again.
+            if !completed.get() {
+                // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
+                unsafe { (*self.prologue.get()).handler = *tier_prologue };
+                let LaneBody::Specialized { method, .. } = std::mem::replace(body, LaneBody::Declined) else { unreachable!() };
+                self.retired.borrow_mut().push(method);
+                self.release_from_tier();
+            }
+            return;
+        };
         let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck };
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
