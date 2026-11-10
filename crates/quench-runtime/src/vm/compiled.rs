@@ -888,6 +888,9 @@ pub(super) struct DenseArrayView {
     /// alone, is not frozen and has no extras (indexed descriptors, an arguments map or a
     /// prototype watch), as `Vm::try_replace_record_element` requires.
     pub(super) writable: bool,
+    /// Whether its backing counts no values (`emit_dense_array_uncounted` ran on the edge
+    /// that proved the view): a store through it then writes the element alone.
+    pub(super) uncounted: bool,
 }
 
 /// The emission proofs a staged value operation carries: a field projection or a dense
@@ -928,7 +931,7 @@ pub(super) fn emit_dense_array_view(
         emit_js_guard(builder, plain, fallback);
     }
     let values = builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64);
-    DenseArrayView { values, length, writable }
+    DenseArrayView { values, length, writable, uncounted: false }
 }
 
 /// The backing's first value and length of the array `base` (tagged) an earlier view
@@ -973,7 +976,11 @@ pub(super) fn emit_dense_element_replace(
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
     let mut stage = object_slots::Emit { builder, property_values: None };
-    crate::staged::elements::replace_element(&mut stage, view.values, address, old, value);
+    if view.uncounted {
+        crate::staged::elements::replace_uncounted_element(&mut stage, address, value);
+    } else {
+        crate::staged::elements::replace_element(&mut stage, view.values, address, old, value);
+    }
 }
 
 /// Mark a writable view's backing as holding uncounted other values (`OTHERS_UNKNOWN`), so

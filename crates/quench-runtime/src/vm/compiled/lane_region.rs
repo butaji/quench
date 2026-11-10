@@ -1000,6 +1000,8 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         _ if instruction.op().traits().has(Traits::FRAME_ONLY) => true,
         Class::LoadConst => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
         Class::IncDec => instruction.numeric_local_target().is_none(),
+        // ToNumeric of a Number is the Number; any other operand leaves (`Lowering::instruction`).
+        Class::ToNumeric => !instruction.returns_from_frame(),
         Class::LoadCapture => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
         Class::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
         // A dense element, read natively; any other element leaves (`emit_dense_element_read`).
@@ -2868,8 +2870,7 @@ impl Lowering<'_, '_> {
     /// no step is left unresolved.
     fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>)
         -> crate::staged::Step<ir::Value, ()> {
-        let locals = (self.completion != Completion::Number).then(|| emit_js_payload_word(
-            &mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, native_locals)));
+        let locals = self.completion != Completion::Number;
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
@@ -3937,7 +3938,7 @@ impl Lowering<'_, '_> {
             let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
             // A grown backing may count its values again; stores through the view keep none.
             if array.writable {
-                super::emit_dense_array_uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true });
+                super::emit_dense_array_uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true, uncounted: false });
             }
             self.builder.def_var(variables.values, values);
             self.builder.def_var(variables.length, length);
@@ -3961,7 +3962,7 @@ impl Lowering<'_, '_> {
     fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, exit: ir::Block) -> ir::Value {
         let (values, length) = self.hoisted_view(array);
         if self.views == ElementViews::Dense {
-            let view = super::DenseArrayView { values, length, writable: array.writable };
+            let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable };
             return super::emit_dense_element(&mut self.builder, view, index, exit).1;
         }
         let kind = self.hoisted_kind(array);
@@ -3987,7 +3988,7 @@ impl Lowering<'_, '_> {
             let key = self.tagged(state, instruction.register_c());
             let (slow, done) = (self.builder.create_block(), self.builder.create_block());
             self.builder.set_cold_block(slow);
-            let view = super::DenseArrayView { values, length, writable: true };
+            let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
             // The view's backing counts no values (`hoist_arrays`): the store writes the element.
             self.index_write(state, index, value, view, slow);
             self.ins().jump(done, &[]);

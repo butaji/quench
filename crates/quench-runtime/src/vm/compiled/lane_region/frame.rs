@@ -26,15 +26,23 @@ pub(super) struct EmitFrame<'a> {
     pub(super) constants: &'a [crate::bytecode::Constant],
     /// The entry's `this` binding, where the lowering has entry facts.
     pub(super) this: Option<Variable>,
-    /// The activation's local slots (`JsStepDispatch::native_locals`), where this region
-    /// may read or write them; `None` for a numeric region, whose activation has none.
-    pub(super) locals: Option<ir::Value>,
+    /// Whether this region may read or write the activation's local slots
+    /// (`JsStepDispatch::native_locals`); a numeric region's activation has none.
+    pub(super) locals: bool,
     /// The running body's dispatch payload, which semantic helpers take.
     pub(super) payload: ir::Value,
     /// The helper table a callout addresses.
     pub(super) helpers: LaneHelpers,
     /// The poll instructions a fault-polling body records for later patching.
     pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
+}
+
+impl EmitFrame<'_> {
+    /// The activation's local slots, read where an instruction uses them.
+    fn native_locals(&self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
+        self.locals.then(|| super::super::emit_js_payload_word(stage.builder, self.payload,
+            std::mem::offset_of!(super::super::JsStepDispatch, native_locals)))
+    }
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -239,7 +247,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
         -> Option<(ir::Value, RegisterFact)> {
-        let locals = self.locals?;
+        let locals = self.native_locals(stage)?;
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
         let value = stage.builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
@@ -249,7 +257,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn store_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, value: ir::Value,
         _miss: Option<ir::Block>) -> bool {
-        let Some(locals) = self.locals else { return false };
+        let Some(locals) = self.native_locals(stage) else { return false };
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
         stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);

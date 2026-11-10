@@ -34,6 +34,13 @@ pub(crate) fn replace_element<S: Stage>(stage: &mut S, values: S::Word, address:
     stage.store_u64(address, 0, value);
 }
 
+/// `replace_element` on a backing whose count is `OTHERS_UNKNOWN`: the count stays unknown
+/// (`recount`), so the write is the element's alone.
+#[inline(always)]
+pub(crate) fn replace_uncounted_element<S: Stage>(stage: &mut S, address: S::Word, value: S::Word) {
+    stage.store_u64(address, 0, value);
+}
+
 /// A backing's count of other values once a write added `added` and overwrote `removed`;
 /// `OTHERS_UNKNOWN` stays unknown. Subtracting first keeps an exact count from overflowing.
 #[inline(always)]
