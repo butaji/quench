@@ -198,9 +198,14 @@ pub enum SharedInput {
     },
 }
 
-/// Execute one entry through the shared VM and the canonical `NodeHost`.
+/// The mode an entry runs in unless told otherwise: native tiers on. `--no-jit` selects the
+/// interpreter alone.
+const DEFAULT_MODE: quench_runtime::ExecutionMode = quench_runtime::ExecutionMode::Compiled;
+
+/// Execute one entry through the shared VM and the canonical `NodeHost`, in the default
+/// mode (`DEFAULT_MODE`).
 pub fn execute_shared(input: SharedInput, argv: Vec<String>) -> Result<SharedCompletion, String> {
-    execute_shared_with_execution_mode(input, argv, quench_runtime::ExecutionMode::Interpreted)
+    execute_shared_with_execution_mode(input, argv, DEFAULT_MODE)
 }
 
 /// Execute through the shared VM with the selected interpreter/JIT tier mode.
@@ -296,12 +301,13 @@ pub(crate) fn execute_worker(
     input: SharedInput,
     argv: Vec<String>,
     worker: crate::modules::worker_shared_vm::WorkerContext,
+    mode: quench_runtime::ExecutionMode,
 ) -> Result<SharedCompletion, String> {
     execute_shared_on_worker(
         input,
         argv,
         Some(worker),
-        quench_runtime::ExecutionMode::Interpreted,
+        mode,
         Teardown::Free,
     )
 }
@@ -711,14 +717,13 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut input = None;
     let mut eval_source = None;
     let mut print = false;
-    // Native tiers run by default; `--no-jit` keeps execution in the interpreter.
-    let mut jit = true;
+    let mut mode = DEFAULT_MODE;
     let mut guest_arguments = Vec::new();
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--jit" => jit = true,
-            "--no-jit" => jit = false,
+            "--jit" => mode = quench_runtime::ExecutionMode::Compiled,
+            "--no-jit" => mode = quench_runtime::ExecutionMode::Interpreted,
             "--env-file" | "--env-file-if-exists" => {
                 let Some(path) = args.get(index + 1) else {
                     return Ok(cli_usage_error(&format!(
@@ -967,11 +972,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     execute_shared_with_teardown(
         input,
         argv,
-        if jit {
-            quench_runtime::ExecutionMode::Compiled
-        } else {
-            quench_runtime::ExecutionMode::Interpreted
-        },
+        mode,
         Teardown::ProcessExit,
     )
     .map(SharedCompletion::exit_code)
