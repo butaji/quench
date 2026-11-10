@@ -486,6 +486,12 @@ fn tagged_registers_with_failure(
         // its values' webs instead (`representations`), as its register may hold Numbers too.
         .chain(instructions.iter().filter_map(|instruction| array_read(*instruction))
             .filter(|register| !dynamic_arrays.contains(register)))
+        // A global name's value is a JS value, and a call form also defines `undefined`.
+        .chain(instructions.iter()
+            .filter(|instruction| matches!(instruction.op().class(), Class::LoadName | Class::LoadNameCall))
+            .map(|instruction| instruction.result_register()))
+        .chain(instructions.iter().filter(|instruction| instruction.op().is_load_name_call())
+            .map(|instruction| instruction.register_b()))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| {
             if !instruction.op().is_ordinary_call() {
                 return Vec::new();
@@ -2258,6 +2264,21 @@ fn admit_register_roles(
     })
 }
 
+/// `instruction`'s result as a field or global-name read takes it: tagged where the pre-pass
+/// marks the result (a tagged value's field, a global name's value), else a Number.
+fn field_result(admission: &mut Admission<'_>, instruction: WideInstruction,
+    tagged: &std::collections::BTreeSet<Register>) -> Option<()> {
+    if instruction.op().is_load_name_call() {
+        admission.tagged(instruction.register_b())?;
+    }
+    if tagged.contains(&instruction.result_register()) {
+        admission.tagged(instruction.result_register())?;
+    } else {
+        admission.result(instruction)?;
+    }
+    Some(())
+}
+
 fn admit(
     admission: &mut Admission<'_>,
     instruction: WideInstruction,
@@ -2349,14 +2370,9 @@ fn admit(
             }
             admission.source(instruction.operand_c())?;
         }
-        // Its field is the region's (`LoopRegion::field_reads`).
-        Class::GetField => {
-            if tagged.contains(&instruction.result_register()) {
-                admission.tagged(instruction.result_register())?;
-            } else {
-                admission.result(instruction)?;
-            }
-        }
+        // Its field is the region's (`Lowering::get_field`). A global name reads as a tagged
+        // value by the lane's read; its call form also defines the receiver `undefined`.
+        Class::GetField | Class::LoadName | Class::LoadNameCall => field_result(admission, instruction, tagged)?,
         // An array literal allocates by the lane's own (`compiled::lane_new_array`), leaving
         // where a collection is due; it and its elements take no register role.
         Class::MakeArray => (instruction.result_flags() == 0).then_some(())?,
@@ -2608,7 +2624,8 @@ fn lowered_natively(instruction: WideInstruction) -> bool {
         Class::JumpBinaryFalse => super::super::operations::NumberRelation::from_operator(instruction.binary_operator_field())
             .is_some() || bitwise_condition(instruction).is_some(),
         class => matches!(class,
-            Class::LoadConst | Class::Move | Class::LoadCapture | Class::Binary | Class::NumericAdd
+            Class::LoadConst | Class::Move | Class::LoadCapture | Class::LoadName | Class::LoadNameCall
+            | Class::Binary | Class::NumericAdd
             | Class::NumericMultiply | Class::ToNumeric | Class::IncDec | Class::Unary
             | Class::RequireObjectCoercible | Class::GetIndex | Class::GetField | Class::SetIndex
             | Class::LoadEnvLocal | Class::Return | Class::Jump | Class::JumpFalse | Class::JumpTrue

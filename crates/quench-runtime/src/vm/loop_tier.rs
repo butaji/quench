@@ -133,10 +133,17 @@ pub(super) fn lane_loop_compile<H: Host>(
     let program = machine.programs.get(machine.active_program);
     let function = site.function();
     let helpers = super::super::compiled::process_lane_helpers::<H>();
+    // A by-name global read lowers by the lane's, under the entry's dynamic proof: the
+    // function's own unit names the read sites the region's plain plan runs.
+    let global_reads = program.as_deref().map(|program| {
+        let unit = super::super::compiled::loop_unit(program.function(function as usize));
+        machine.lane_global_reads(program, function, &unit)
+    });
     machine.host.before_native_compilation();
     let started = observe(machine, region, |observation| {
         super::super::compiled::start_osr_region(region, tier.views, observation,
-            machine.heap.memory_policy(), program.as_deref()?, function, helpers, &tier.widened)
+            machine.heap.memory_policy(), program.as_deref()?, function, helpers, &tier.widened,
+            global_reads.as_ref()?)
     });
     machine.host.after_native_compilation();
     tier.start(started, &mut machine.heap, site);

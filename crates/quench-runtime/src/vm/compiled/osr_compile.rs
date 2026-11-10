@@ -57,7 +57,7 @@ pub(in crate::vm) enum OsrCompile {
 /// The function's full decoded code as a plain lane unit: the loop coverage selects
 /// `header..=backedge`, so every other PC is an exact-PC exit and the loop's PCs stay the
 /// function's.
-fn loop_unit(function: &Function) -> lane_unit::Unit {
+pub(in crate::vm) fn loop_unit(function: &Function) -> lane_unit::Unit {
     let instructions: Vec<_> = function.instructions().collect();
     let count = instructions.len();
     lane_unit::Unit {
@@ -197,6 +197,7 @@ pub(in crate::vm) fn start_osr_region(
     function_id: u32,
     helpers: LaneHelpers,
     widened: &[usize],
+    global_reads: &crate::vm::global_facts::GlobalReads,
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
     let fields = loop_fields(region, observation);
@@ -207,7 +208,7 @@ pub(in crate::vm) fn start_osr_region(
     let plan = |unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, header: usize, backedge: usize, generic: &[usize]| {
         super::lane_region::RegionSpecializer {
             function_id, unit, helpers, fields: &fields,
-            global_reads: &Default::default(), facts: VmFacts::STATIC, generic,
+            global_reads, facts: VmFacts::STATIC, generic,
             direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
             entry_fields,
             plan: super::lane_region::RegionPlan {
@@ -309,7 +310,8 @@ mod tests {
         let observation = Observation { native_field_loads: &[] };
         let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
             crate::MemoryPolicy::Throughput, &program, id,
-            super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &[])
+            super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &[],
+            &Default::default())
             .expect("the loop plans");
         assert_eq!(pending.header, region.header, "the loop goes through RegionSpecializer");
     }

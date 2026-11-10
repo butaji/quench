@@ -62,6 +62,7 @@ pub(super) mod tier_policy;
 mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
+pub(in crate::vm) use osr_compile::loop_unit;
 pub(super) use lane_region::ElementViews;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
