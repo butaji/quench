@@ -2,14 +2,8 @@
 //! against Node's output.
 use crate::test_host::printed;
 
-/// A setter's store yields the value stored whatever the setter returns, through plain,
-/// compound and logical assignments; throws, recursion, strict and sloppy getter-only
-/// stores, an inherited setter's receiver, a redefinition mid-loop, a proxy up the chain,
-/// closures, `arguments`, static and primitive receivers, and generator and async callers
-/// keep their semantics.
-#[test]
-fn setter_stores_match_node() {
-    let source = r#"
+/// The stores `setter_stores_match_node` runs.
+const SOURCE: &str = r#"
 const o = []; let log = [];
 class Box { constructor() { this._v = 0; } get v() { return this._v; } set v(x) { this._v = x & 0xff; return "ignored"; } }
 class Sub extends Box { set w(x) { this._w = x; return { obj: 1 }; } }
@@ -49,5 +43,13 @@ o.push([...gen()].join());
 class S { static set s(v) { S._s = v; } } function st(n) { for (let i = 0; i < n; i++) S.s = i; return S._s; } o.push(st(3000));
 Object.defineProperty(Number.prototype, "ns", { set(v) { "use strict"; log.push(typeof this); }, configurable: true }); function prim(n) { for (let i = 0; i < n; i++) (5).ns = i; return log[log.length - 1]; } o.push(prim(100));
 "#;
-    assert_eq!(printed(source, "setters.js"), ["4999|135|4999|1000|232|237|237|237|238|238|300|44|big4991:4990|done|1|TypeError|2999:own:false|1501:2999|1:49|5998:1:2999|0,1,2|2999|number|207"]);
+
+/// A setter's store yields the value stored whatever the setter returns, through plain,
+/// compound and logical assignments; throws, recursion, strict and sloppy getter-only
+/// stores, an inherited setter's receiver, a redefinition mid-loop, a proxy up the chain,
+/// closures, `arguments`, static and primitive receivers, and generator and async callers
+/// keep their semantics.
+#[test]
+fn setter_stores_match_node() {
+    assert_eq!(printed(SOURCE, "setters.js"), ["4999|135|4999|1000|232|237|237|237|238|238|300|44|big4991:4990|done|1|TypeError|2999:own:false|1501:2999|1:49|5998:1:2999|0,1,2|2999|number|207"]);
 }
