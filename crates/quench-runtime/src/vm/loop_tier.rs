@@ -34,7 +34,7 @@ impl LoopTier {
         if let Some(pending) = &self.pending { pending.retire_named_shapes(); }
     }
 
-    /// Counts a run of the code that left at `pc`. An operation left `widen_after_leaves`
+    /// Counts a run of the code that left at `pc`. An operation or element read left `widen_after_leaves`
     /// times joins the widened ones and the code goes, where a compilation remains: the next
     /// entry compiles the loop holding that operation's result as a double.
     pub(super) fn left_at(&mut self, pc: u32) {
@@ -123,7 +123,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     site: &LoopSite,
     region: &super::super::compiled::LoopRegion,
     tier: &mut LoopTier,
-    number_arrays: &[crate::bytecode::Register],
+    number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
     int_entries: &[crate::bytecode::Register],
 ) {
     tier.compilations += 1;
@@ -240,13 +240,17 @@ pub(super) fn lane_method_call_region<H: Host>(cx: *mut LaneContext<H>, site: &L
 /// How many elements of an entry array are sampled for Numbers.
 const SAMPLED_ELEMENTS: usize = 64;
 
-/// The registers of `region`'s arrays whose first elements, sampled on entry, are all Numbers
-/// (int32 or double, no hole): an observation (a guess the code checks at every read), not a proof.
-pub(super) fn number_arrays<H: Host>(vm: &Vm<H>, r: Registers, region: &LoopRegion) -> Vec<Register> {
+/// The registers of `region`'s arrays whose first elements, sampled on entry, are all int32s or all
+/// Numbers (int32 or double, no hole), with that type: an observation (a guess the code checks at
+/// every read), not a proof.
+pub(super) fn number_arrays<H: Host>(vm: &Vm<H>, r: Registers, region: &LoopRegion) -> Vec<(Register, crate::typed_ir::Type)> {
+    use crate::typed_ir::Type;
     region.arrays.iter().filter(|array| array.field.is_none()).filter_map(|array| {
         let elements = vm.heap.record_array(r.get(array.register))?.elements().as_slice();
         let sample = &elements[..elements.len().min(SAMPLED_ELEMENTS)];
-        (!sample.is_empty() && sample.iter().all(|value| value.as_number().is_some())).then_some(array.register)
+        if sample.is_empty() { return None; }
+        if sample.iter().all(|value| value.as_int().is_some()) { Some((array.register, Type::INT32)) }
+        else { sample.iter().all(|value| value.as_number().is_some()).then_some((array.register, Type::NUMBER)) }
     }).collect()
 }
 

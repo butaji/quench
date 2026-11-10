@@ -445,7 +445,7 @@ struct Lowering<'a, 'f> {
     /// An OSR region's field reads answered from the entry record, by unit PC.
     entry_fields: &'a BTreeMap<usize, u32>,
     /// The element reads observed to hold Numbers (`RegionSpecializer::number_reads`).
-    number_reads: &'a [usize],
+    observed: super::facts::Observed<'a>,
     /// The registers observed to hold int32s at entry (`RegionSpecializer::int_entries`).
     int_entries: &'a [Register],
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
@@ -1300,7 +1300,7 @@ pub(super) struct RegionSpecializer<'p> {
     pub(super) entry_fields: &'p BTreeMap<usize, u32>,
     /// The unit PCs of element reads observed to hold Numbers (sorted): each leaves where its
     /// element is not one, and its result is typed a Number.
-    pub(super) number_reads: &'p [usize],
+    pub(super) number_reads: &'p [super::facts::ObservedRead],
     /// The registers whose values at entry were int32s: candidates for an int32 entry contract
     /// (`refine_inductive_inputs`), kept where every definition in the loop yields an int32.
     pub(super) int_entries: &'p [Register],
@@ -1365,7 +1365,7 @@ pub(super) fn lower(
     frame_captures: &[(usize, usize)],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     entry_fields: &BTreeMap<usize, u32>,
-    number_reads: &[usize],
+    number_reads: &[super::facts::ObservedRead],
     int_entries: &[Register],
     coverage: Coverage,
     completion: Completion,
@@ -1460,6 +1460,7 @@ pub(super) fn lower(
     builder.append_block_param(stop, types::I64);
     builder.set_cold_block(leave);
     builder.set_cold_block(stop);
+    let observed = super::facts::Observed(number_reads);
     let mut lowering = Lowering {
         builder,
         program,
@@ -1468,7 +1469,7 @@ pub(super) fn lower(
         helpers,
         fields,
         entry_fields,
-        number_reads,
+        observed,
         int_entries,
         interrupt,
         fault_poll,
@@ -1573,7 +1574,7 @@ pub(super) fn lower(
         let [field] = fields.get(&cache_site)?.as_slice() else { return None };
         field.own_direct().then_some((base.register_index()?, field.shape))
     };
-    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], number_reads);
+    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], observed);
     lowering.intrinsics = native_calls::intrinsic_calls(unit, global_reads, |pc| direct.contains_key(&pc));
     let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics);
     // One entry query of the call depth replaces each binding's helper with its cached
@@ -1616,7 +1617,7 @@ pub(super) fn lower(
             }
         }
         if refined {
-            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], number_reads);
+            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], observed);
         }
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
@@ -2568,8 +2569,12 @@ impl Lowering<'_, '_> {
                             self.set_tagged(state, instruction.result_register(), value);
                         }
                     }
-                    // The element an observation typed a Number (`number_reads`), proved here.
-                    if self.number_reads.binary_search(&pc).is_ok() { self.number(state, instruction.result_register(), exit); }
+                    // The element an observation typed (`number_reads`), proved here.
+                    match self.observed.at(pc) {
+                        Some(ty) if ty == Type::INT32 => { self.int(state, instruction.result_register(), exit); }
+                        Some(_) => { self.number(state, instruction.result_register(), exit); }
+                        None => {}
+                    }
                     true
                 })
             }
@@ -3580,7 +3585,7 @@ impl Lowering<'_, '_> {
                 }
             });
         if let Some(facts) = super::facts::inductive_int32(initial, candidates, header..=back,
-            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, self.number_reads) {
+            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, self.observed) {
             self.facts = facts;
         }
     }
@@ -3606,7 +3611,7 @@ impl Lowering<'_, '_> {
             }
         }
         if let Some(facts) = super::facts::loop_int32(entry, initial, candidates, instructions, boundaries,
-            &self.program.constants, &writes, own_shape, self.native_calls, self.number_reads) {
+            &self.program.constants, &writes, own_shape, self.native_calls, self.observed) {
             self.facts = facts;
         }
     }
@@ -3983,7 +3988,7 @@ impl Lowering<'_, '_> {
     /// element exits.
     fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, (pc, destination): (usize, Register), exit: ir::Block) {
         let (values, length) = self.hoisted_view(array);
-        let number = self.number_reads.binary_search(&pc).is_ok();
+        let number = self.observed.at(pc).is_some();
         if self.views == ElementViews::Dense && number {
             // An element read as a Number (`number_reads`) needs no hole test of its own: a hole
             // is a NaN pattern, which the Number proof's one NaN test sends to the tag check
