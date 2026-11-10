@@ -66,7 +66,7 @@ struct Pass<'a> {
     facts_undo: Vec<(Fact, Option<bool>)>,
     epoch: u32,
     next_epoch: u32,
-    changed: bool,
+    folded: bool,
 }
 
 impl Pass<'_> {
@@ -152,7 +152,6 @@ impl Pass<'_> {
                     if let ValueDef::Result(leader_inst, _) = self.func.dfg.value_def(leader) {
                         self.func.dfg.replace_with_aliases(inst, leader_inst);
                         self.func.layout.remove_inst(inst);
-                        self.changed = true;
                     }
                 } else {
                     let old = self.numbered.insert(key, result);
@@ -164,7 +163,7 @@ impl Pass<'_> {
                 if let Some(holds) = self.known(arg) {
                     let taken = blocks[usize::from(!holds)];
                     self.func.dfg.insts[inst] = InstructionData::Jump { opcode: Opcode::Jump, destination: taken };
-                    self.changed = true;
+                    self.folded = true;
                 }
                 continue;
             }
@@ -175,8 +174,9 @@ impl Pass<'_> {
     }
 }
 
-/// Run the pass; whether it changed the function. The caller recomputes the CFG and removes
-/// the blocks a folded branch left unreachable.
+/// Run the pass; whether it folded a branch. Only then does the CFG change: the caller
+/// recomputes it and removes the blocks the fold left unreachable. Value numbering alone
+/// leaves it and the dominator tree valid.
 pub(crate) fn run(func: &mut Function, cfg: &ControlFlowGraph, domtree: &DominatorTree) -> bool {
     let Some(entry) = func.layout.entry_block() else { return false };
     let mut predecessors = SecondaryMap::<Block, u32>::with_default(0);
@@ -191,7 +191,7 @@ pub(crate) fn run(func: &mut Function, cfg: &ControlFlowGraph, domtree: &Dominat
         facts_undo: Vec::new(),
         epoch: 0,
         next_epoch: 0,
-        changed: false,
+        folded: false,
     };
     enum Step {
         Enter(Block),
@@ -253,5 +253,5 @@ pub(crate) fn run(func: &mut Function, cfg: &ControlFlowGraph, domtree: &Dominat
             }
         }
     }
-    pass.changed
+    pass.folded
 }
