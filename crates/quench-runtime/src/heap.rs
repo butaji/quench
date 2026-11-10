@@ -245,12 +245,12 @@ const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
 /// MemoryFirst heap rarely reaches it.
 const PARALLEL_MARK_MINIMUM_CELLS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
-// Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
-// larger hosts start with four total markers, with an explicit env override.
-const PARALLEL_MARK_SMALL_HOST_MAX_CPUS: usize = 4;
-const PARALLEL_MARK_SMALL_HOST_DEFAULT_THREADS: usize = 1;
-const PARALLEL_MARK_LARGE_HOST_DEFAULT_THREADS: usize = PARALLEL_MARK_MAX_THREADS;
-const PARALLEL_MARK_SPLIT_THRESHOLD: usize = 256;
+/// The deepest a marker's stack grows before it offers half to an idle worker. A pointer-deep
+/// graph keeps its stack shallow (V8-v7 Splay's tree and payload trees), so at 256 helpers
+/// starved: Splay's full mark took 345 ms on one marker and 245 ms on four, 140 ms at 16
+/// (4-vCPU Linux x86_64, `profile-gc-time` experiment build, five runs each; 32 gave 147 ms,
+/// 8 gave 139-179 ms).
+const PARALLEL_MARK_SPLIT_THRESHOLD: usize = 16;
 const PARALLEL_MARK_STACK_SIZE_BYTES: usize = 256 * 1024;
 const PARALLEL_SWEEP_SLAB_BATCH_SIZE: usize = 8;
 const RC_DROP_LOCK_STRIPES: usize = 64;
