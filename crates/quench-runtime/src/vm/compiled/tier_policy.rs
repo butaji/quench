@@ -62,10 +62,15 @@ pub(in crate::vm) struct LaneBody {
     /// The warm-ups a function's first compile waits for callees still warming toward the
     /// bodies it would call directly; a callee that never gets one stops holding it back.
     pub(in crate::vm) max_callee_waits: u8,
+    /// The times a function specializes again because a callee published its body
+    /// (`LaneView::respecialize_callers`): each makes more of its calls direct, and the bound
+    /// ends the exchange between functions that call each other.
+    pub(in crate::vm) max_callee_recompiles: u8,
     /// The length below which a lane body without loops or inlined calls declines
     /// (`Vm::compile_lane_method`).
     pub(in crate::vm) min_instructions: usize,
-    /// The entries between looks for a compiling body's code. A look costs a channel poll
+    /// The most entries between looks for a compiling body's code, which start one entry apart
+    /// and double (`LaneBody::Compiling`). A look costs a channel poll
     /// and the specialization's bookkeeping, some 300 instructions, at each backward jump of
     /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
     /// most this many entries once ready.
@@ -160,6 +165,7 @@ const MEASURED: Tiers = Tiers {
         max_wasted: 2,
         max_lifetimes: 8,
         max_callee_waits: 2,
+        max_callee_recompiles: 3,
         min_instructions: 24,
         compile_poll_interval: 64,
     },

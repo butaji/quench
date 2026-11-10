@@ -375,12 +375,7 @@ pub(crate) fn initialize(c: &mut Context<'_>) -> Result<(), RootedError> {
     let emitter = get(c, global, "__nodeEventEmitter")?;
     if c.is_object_rooted(emitter)? {
         let emitter_prototype = get(c, emitter, "prototype")?;
-        // `process`'s constructor is a function named `process` whose prototype inherits
-        // from `EventEmitter.prototype`.
-        let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("processConstructor"), "process")?;
-        let prototype = get(c, constructor, "prototype")?;
-        c.set_prototype_rooted(prototype, emitter_prototype)?;
-        c.set_prototype_rooted(process, prototype)?;
+        super::process_prototype::inherit_emitter(c, process, emitter_prototype)?;
     }
     let kill = get(c, process, "kill")?;
     if !c.truthy_rooted(kill)? {

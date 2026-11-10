@@ -25,12 +25,6 @@ const DEFAULT_LABEL: &str = "default";
 const TRACE_NAME: &str = "Trace";
 /// `console.clear`'s `cursorTo(0, 0)` and `clearScreenDown`.
 const CLEAR_SCREEN: &str = "\x1b[1;1H\x1b[0J";
-const TABLE_INDEX: &str = "(index)";
-const TABLE_VALUES: &str = "Values";
-/// `console.table` inspects cell values with this array limit.
-const TABLE_MAX_ARRAY_LENGTH: usize = 3;
-/// A cell object with more keys than this is written at depth -1.
-const TABLE_SHALLOW_KEYS: usize = 2;
 /// Milliseconds per second, minute and hour (`formatTime`).
 const SECOND_MS: f64 = 1000.0;
 const MINUTE_MS: f64 = 60.0 * SECOND_MS;
@@ -454,7 +448,7 @@ fn run(c: &mut Context<'_>, console: RootId, method: Method, args: &[RootId]) ->
             if !c.is_object_rooted(data)? {
                 return run(c, console, Method::Log, &[data]);
             }
-            let rendered = table_text(c, data, properties)?;
+            let rendered = super::console_table::text(c, data, properties)?;
             let line = c.string_rooted(&rendered);
             run(c, console, Method::Log, &[line])?;
         }
@@ -465,115 +459,6 @@ fn run(c: &mut Context<'_>, console: RootId, method: Method, args: &[RootId]) ->
 fn table(c: &mut Context<'_>, console: RootId, name: &str) -> Result<RootId, RootedError> {
     let state = state(c, console)?;
     get(c, state, name)
-}
-
-/// `console.table`'s cell: `inspect` on one line, three array entries, shallow for an object
-/// of more than two keys.
-fn cell(c: &mut Context<'_>, value: RootId) -> Result<String, RootedError> {
-    let shallow = c.is_object_rooted(value)?
-        && !c.is_array_rooted(value)?
-        && c.enumerable_own_keys_rooted(value, false, true)?.len() > TABLE_SHALLOW_KEYS;
-    let options = Options {
-        depth: Some(if shallow { -1.0 } else { 0.0 }),
-        max_array_length: TABLE_MAX_ARRAY_LENGTH,
-        layout: format::Layout::SingleLine,
-        ..Options::default()
-    };
-    format::inspect(c, value, options)
-}
-
-/// The rows and columns of `console.table(data, properties)` for an array or object.
-fn table_text(c: &mut Context<'_>, data: RootId, properties: RootId) -> Result<String, RootedError> {
-    let filter = if c.rooted_value(properties).is_some_and(|value| value.is_undefined()) {
-        None
-    } else {
-        Some(c.array_like_values_rooted(properties)?)
-    };
-    let index_keys = c.enumerable_own_keys_rooted(data, false, true)?;
-    let mut columns: Vec<(String, Vec<Option<String>>)> = Vec::new();
-    let mut values = vec![None; index_keys.len()];
-    let mut has_primitives = false;
-    let mut index_column = Vec::with_capacity(index_keys.len());
-    for (row, &key) in index_keys.iter().enumerate() {
-        index_column.push(Some(c.to_string(key)?));
-        let item = c.get_property_rooted(data, key)?;
-        let primitive = !c.is_object_rooted(item)? && !c.is_callable_rooted(item)?;
-        if filter.is_none() && primitive {
-            has_primitives = true;
-            values[row] = Some(cell(c, item)?);
-            continue;
-        }
-        let keys = match &filter {
-            Some(keys) => keys.clone(),
-            None => c.enumerable_own_keys_rooted(item, false, true)?,
-        };
-        for key in keys {
-            let name = c.to_string(key)?;
-            let position = match columns.iter().position(|(column, _)| *column == name) {
-                Some(position) => position,
-                None => {
-                    columns.push((name.clone(), vec![None; index_keys.len()]));
-                    columns.len() - 1
-                }
-            };
-            let own = !primitive && c.own_property_fields_rooted(item, key)?.is_some();
-            let text = if own {
-                let value = c.get_property_rooted(item, key)?;
-                cell(c, value)?
-            } else {
-                String::new()
-            };
-            columns[position].1[row] = Some(text);
-        }
-    }
-    let mut head = vec![TABLE_INDEX.to_owned()];
-    let mut body = vec![index_column];
-    for (name, column) in columns {
-        head.push(name);
-        body.push(column);
-    }
-    if has_primitives {
-        head.push(TABLE_VALUES.to_owned());
-        body.push(values);
-    }
-    Ok(render_table(&head, &body))
-}
-
-/// `getStringWidth` of a cell, counting characters.
-fn width(text: &str) -> usize {
-    text.chars().count()
-}
-
-/// Node's `cli_table` box drawing.
-fn render_table(head: &[String], columns: &[Vec<Option<String>>]) -> String {
-    let rows = columns.iter().map(Vec::len).max().unwrap_or(0);
-    let mut widths = head.iter().map(|name| width(name)).collect::<Vec<_>>();
-    for (index, column) in columns.iter().enumerate() {
-        for value in column.iter().flatten() {
-            widths[index] = widths[index].max(width(value));
-        }
-    }
-    let render_row = |cells: &[&str]| {
-        let mut out = String::from("│ ");
-        for (index, cell) in cells.iter().enumerate() {
-            out += cell;
-            out += &" ".repeat(widths[index] - width(cell));
-            if index != cells.len() - 1 {
-                out += " │ ";
-            }
-        }
-        out + " │"
-    };
-    let divider = widths.iter().map(|width| "─".repeat(width + 2)).collect::<Vec<_>>();
-    let head_cells = head.iter().map(String::as_str).collect::<Vec<_>>();
-    let mut result = format!("┌{}┐\n{}\n├{}┤\n", divider.join("┬"), render_row(&head_cells), divider.join("┼"));
-    for row in 0..rows {
-        let cells = columns.iter().map(|column| column.get(row).cloned().flatten().unwrap_or_default()).collect::<Vec<_>>();
-        let cells = cells.iter().map(String::as_str).collect::<Vec<_>>();
-        result += &render_row(&cells);
-        result.push('\n');
-    }
-    result + &format!("└{}┘", divider.join("┴"))
 }
 
 /// Defines `console`'s members after its writers: the methods bound to it, the streams,

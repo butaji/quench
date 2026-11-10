@@ -11,8 +11,6 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 const MAX_LENGTH: u64 = (1 << f64::MANTISSA_DIGITS) - 1;
 /// Bytes per UCS-2 code unit.
 const UCS2_WIDTH: usize = std::mem::size_of::<u16>();
-/// The largest code unit Node's latin1 encoding represents.
-const LATIN1_MAX: u16 = 0xff;
 /// Bits per byte, for unpacking the little-endian WebSocket mask word.
 const MASK_BYTE_BITS: u32 = u8::BITS;
 /// Bytes in a WebSocket mask (RFC 6455, section 5.3).
@@ -56,9 +54,9 @@ const NATIVES: &[(&str, &str, Registration)] = &[
     ("swap16", "bufferBindingSwap16", Registration::Fast),
     ("swap32", "bufferBindingSwap32", Registration::Fast),
     ("swap64", "bufferBindingSwap64", Registration::Fast),
-    ("isUtf8", "bufferBindingIsUtf8", Registration::Fast),
-    ("isAscii", "bufferBindingIsAscii", Registration::Fast),
-    ("isLatin1", "bufferBindingIsLatin1", Registration::Fast),
+    ("isUtf8", "bufferBindingIsUtf8", Registration::Method),
+    ("isAscii", "bufferBindingIsAscii", Registration::Method),
+    ("isLatin1", "bufferBindingIsLatin1", Registration::Method),
     ("mask", "bufferBindingMask", Registration::Fast),
     ("stringLengthUtf8", "bufferBindingStringLengthUtf8", Registration::Fast),
     ("asciiSlice", "bufferBindingAsciiSlice", Registration::Method),
@@ -698,28 +696,6 @@ swaps! {
     swap16 => u16;
     swap32 => u32;
     swap64 => u64;
-}
-
-fn validate(c: &mut Context<'_>, args: &[RootId], valid: fn(&[u8]) -> bool) -> Result<RootId, RootedError> {
-    let value = arg(c, args, 0);
-    let result = c.with_buffer_bytes_rooted(value, valid).unwrap_or(true);
-    Ok(c.boolean(result))
-}
-
-pub(crate) fn is_utf8(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    validate(c, args, |bytes| std::str::from_utf8(bytes).is_ok())
-}
-
-pub(crate) fn is_ascii(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    validate(c, args, <[u8]>::is_ascii)
-}
-
-/// `isLatin1(string)`: every code unit fits Node's one-byte latin1.
-pub(crate) fn is_latin1(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let string = arg(c, args, 0);
-    let units = string_units(c, string)?;
-    let result = units.iter().all(|unit| *unit <= LATIN1_MAX);
-    Ok(c.boolean(result))
 }
 
 /// `stringLengthUtf8(buffer)`: the UTF-16 length of the bytes decoded with maximal-subpart

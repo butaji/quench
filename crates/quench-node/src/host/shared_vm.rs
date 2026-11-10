@@ -617,9 +617,9 @@ node_bindings! {
         method "bufferBindingSwap16" (0) => crate::modules::buffer_binding_shared_vm::swap16,
         method "bufferBindingSwap32" (0) => crate::modules::buffer_binding_shared_vm::swap32,
         method "bufferBindingSwap64" (0) => crate::modules::buffer_binding_shared_vm::swap64,
-        method "bufferBindingIsUtf8" (0) => crate::modules::buffer_binding_shared_vm::is_utf8,
-        method "bufferBindingIsAscii" (0) => crate::modules::buffer_binding_shared_vm::is_ascii,
-        method "bufferBindingIsLatin1" (0) => crate::modules::buffer_binding_shared_vm::is_latin1,
+        method "bufferBindingIsUtf8" (1) => crate::modules::buffer_predicates::is_utf8,
+        method "bufferBindingIsAscii" (1) => crate::modules::buffer_predicates::is_ascii,
+        method "bufferBindingIsLatin1" (1) => crate::modules::buffer_predicates::is_latin1,
         method "bufferBindingMask" (0) => crate::modules::buffer_binding_shared_vm::mask,
         method "bufferBindingStringLengthUtf8" (0) => crate::modules::buffer_binding_shared_vm::string_length_utf8,
         method "bufferBindingAsciiSlice" (0) => crate::modules::buffer_binding_shared_vm::ascii_slice,
@@ -2820,7 +2820,7 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         let stream = context.get_property_rooted(process, key)?;
         context.set_prototype_rooted(stream, prototype)?;
     }
-    context.set_prototype_rooted(process, prototype)?;
+    crate::modules::process_prototype::inherit_emitter(context, process, prototype)?;
     context.call_rooted(emitter, process, &[])?;
     let key = context.string_rooted("on");
     let on = context.get_property_rooted(process, key)?;

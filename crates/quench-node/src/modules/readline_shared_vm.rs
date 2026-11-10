@@ -692,7 +692,7 @@ fn code_point_at(units: &[u16], index: usize) -> u32 {
 
 /// The columns one character occupies, as `getStringWidth(char, false)` measures it.
 #[cfg(quench_icu)]
-fn character_width(units: &[u16]) -> u32 {
+pub(crate) fn character_width(units: &[u16]) -> u32 {
     super::text_decoder_icu::string_width(units, false, true)
 }
 
@@ -732,7 +732,7 @@ const ZERO_WIDTH: &[(u32, u32)] = &[
 ];
 
 #[cfg(not(quench_icu))]
-fn character_width(units: &[u16]) -> u32 {
+pub(crate) fn character_width(units: &[u16]) -> u32 {
     let code = code_point_at(units, 0);
     let within = |ranges: &[(u32, u32)]| ranges.iter().any(|(low, high)| (*low..=*high).contains(&code));
     if within(FULL_WIDTH) {
