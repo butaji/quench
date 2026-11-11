@@ -137,12 +137,12 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 
 /// The machine code of `region`, entered at the shared native entry ABI, or the instruction that
 /// has no row. `ints` are the registers that held an int32 as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows.
-pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<Vec<u8>, String> {
+pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<(Vec<u8>, bool), String> {
     let started = std::time::Instant::now();
     let built = assemble(region, dense, widened, seen);
     let nanos = started.elapsed().as_nanos() as u64;
     note(|totals, rejects| match &built {
-        Ok(code) => {
+        Ok((code, _)) => {
             totals.regions += 1;
             totals.ops += u64::from(region.backedge - region.header) + 1;
             totals.bytes += code.len() as u64;
@@ -156,7 +156,9 @@ pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [
     built
 }
 
-fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<Vec<u8>, String> {
+/// The code, and whether it reads no heap row: such a region needs from its payload only the entry
+/// record's address (`Crossing::Bare`).
+fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<(Vec<u8>, bool), String> {
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
@@ -179,7 +181,8 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     for (k, row) in decoded.iter().enumerate() {
         body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs))?);
     }
-    link(&layout, &body)
+    let bare = decoded.iter().all(|row| row.heap.is_none());
+    Ok((link(&layout, &body)?, bare))
 }
 
 impl<H: crate::Host> crate::vm::Vm<H> {

@@ -51,7 +51,7 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
-mod osr_compile; pub(in crate::vm) mod fast_region; mod fast_rows;
+mod osr_compile; pub(in crate::vm) mod fast_region; mod fast_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
 pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
@@ -6004,7 +6004,7 @@ pub(super) struct CompiledOsrRegion {
     _code: CodeMemory,
     entry: Entry,
     pub(super) facts: OsrFacts,
-    lean: bool, // a stencil region: it runs without the general tier's views (`JsNativeActivation::with`)
+    crossing: Crossing,
 }
 
 impl CompiledOsrRegion {
@@ -6030,7 +6030,8 @@ impl CompiledOsrRegion {
         lane_context: usize,
     ) -> LoopOutcome {
         // SAFETY: the caller's contract; the region runs the same lane entry ABI.
-        unsafe { self.run_lane(registers, entry, region, vm, program, function, frame, interrupt, lane_context) }
+        unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(self.entry, registers, entry, region, interrupt) }
+            else { self.run_lane(registers, entry, region, vm, program, function, frame, interrupt, lane_context) } }
     }
 
     /// Runs a loop compiled through the lane region specializer: the shared lane entry ABI,
@@ -6054,7 +6055,7 @@ impl CompiledOsrRegion {
         let mut outcome = LoopOutcome::Terminated;
         #[cfg(test)]
         LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
-        let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, !self.lean, |native, vm| {
+        let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, self.crossing == Crossing::General, |native, vm| {
             native.dispatch.bind_native_storage(vm);
             native.dispatch.lane_context = lane_context;
             // A region's `THIS`-based reads take the running activation's receiver, as a
@@ -6453,6 +6454,8 @@ pub(super) struct JsNativeStep {
 /// different build than the runtime it links: the layout is declared, not left to the compiler.
 #[repr(C)]
 struct JsStepDispatch {
+    /// The loop entry record whose counter a region's backward edges bump; first, as a `Crossing::Bare` payload is this word alone.
+    loop_entry: usize,
     program_id: ProgramId,
     frame: usize,
     allow_inline_calls: bool,
@@ -6559,9 +6562,6 @@ struct JsStepDispatch {
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
     allocated: usize,
     collect_at: usize,
-    /// The loop entry record a lane OSR region counts its taken backward edges in
-    /// (`LoopEntry::backedge_count`); zero for every other lane run.
-    loop_entry: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]

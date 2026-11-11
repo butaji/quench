@@ -44,8 +44,8 @@ pub(in crate::vm) struct PendingOsrRegion {
     header: u32,
     clif: Option<String>,
     facts: OsrFacts,
-    /// A stencil region: it reads none of the general tier's views, so a run builds none (`CompiledOsrRegion::lean`).
-    lean: bool,
+    /// What a run of the code builds around it.
+    crossing: super::Crossing,
 }
 
 /// What a background loop-region compile came to.
@@ -310,13 +310,13 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usiz
     }
     let built = super::fast_region::build(region, views == super::ElementViews::Dense, widened,
         [observation.int_registers, observation.double_registers]);
-    let Ok(code) = built else { return fast_only.then_some(None) };
+    let Ok((code, bare)) = built else { return fast_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, region.header, &code, None, "");
     }
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let code = super::super::jit_backend::run_in_background(move || Ok(code));
-    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, lean: true,
+    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean },
         facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new() } }))
 }
 
@@ -358,7 +358,7 @@ pub(in crate::vm) fn start_osr_region(
         compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, lean: false })
+    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General })
 }
 
 impl PendingOsrRegion {
@@ -382,12 +382,12 @@ impl PendingOsrRegion {
             std::task::Poll::Ready(Some(Ok(code))) => code,
             std::task::Poll::Ready(_) => return Ok(OsrCompile::Failed),
         };
-        let Self { header, clif, facts, lean, .. } = *self;
+        let Self { header, clif, facts, crossing, .. } = *self;
         let Some((memory, entry)) = publish_entry(&code) else { return Ok(OsrCompile::Failed) };
         if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
             dump_native_code(directory, header, &memory, &clif);
         }
-        Ok(OsrCompile::Done(CompiledOsrRegion { _code: memory, entry, facts, lean }))
+        Ok(OsrCompile::Done(CompiledOsrRegion { _code: memory, entry, facts, crossing }))
     }
 }
 
