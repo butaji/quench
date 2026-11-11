@@ -282,7 +282,7 @@ impl LoopPlanner<'_> {
         generic: &[usize]) -> Option<super::lane_region::LoweredRegion> {
         let number_reads = observed_reads(unit, self.observation, generic);
         super::lane_region::RegionSpecializer {
-            number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures,
+            number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
             global_reads: &global_reads(unit), facts: VmFacts::STATIC, generic,
             direct: &BTreeMap::new(), frame_captures: &[], isa: self.isa,

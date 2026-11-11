@@ -2555,6 +2555,9 @@ pub(crate) struct Observation<'a> {
     pub(crate) int_registers: &'a [Register],
     /// The registers that held a Number that is no int32.
     pub(crate) double_registers: &'a [Register],
+    /// The depth-zero capture slots holding int32s when compiled: a read of such a capture
+    /// takes the checked integer view where its uses are integer arithmetic.
+    pub(crate) int_captures: &'a [u16],
 }
 
 

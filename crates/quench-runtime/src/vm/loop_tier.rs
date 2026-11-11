@@ -140,6 +140,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
     int_entries: &[crate::bytecode::Register],
     typed_captures: &[u16],
+    int_captures: &[u16],
 ) {
     tier.compilations += 1;
     super::super::compiled::fast_region::count(super::super::compiled::fast_region::Event::Compiled);
@@ -158,7 +159,7 @@ pub(super) fn lane_loop_compile<H: Host>(
         let value = r.get(register);
         value.as_number().is_some() && value.as_int().is_none()
     });
-    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures,
+    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
         int_registers: &ints, double_registers: &doubles };
     let policy = machine.heap.memory_policy();
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
@@ -272,6 +273,21 @@ pub(super) fn typed_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> 
     slots.dedup();
     slots.retain(|slot| super::lane_read_capture_value::<H, true>(cx, 0, *slot).0
         .is_some_and(|value| unsafe { vm(cx) }.lane_typed_array_elements(value, false).is_some()));
+    slots
+}
+
+/// The depth-zero capture slots the running function reads that hold int32s now (an observation
+/// the compiled loop's entry guard checks): a loop's integer arithmetic on such a capture stays int32.
+pub(super) fn int_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let Some((_, function, _, _)) = lane_loop_function(cx, code) else { return Vec::new() };
+    let mut slots: Vec<u16> = function.instructions()
+        .filter(|instruction| instruction.op().is_load_capture() && instruction.capture_depth() == 0)
+        .map(|instruction| crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())).collect();
+    slots.sort_unstable();
+    slots.dedup();
+    slots.retain(|slot| super::lane_read_capture_value::<H, true>(cx, 0, *slot).0.is_some_and(|value| value.as_int().is_some()));
     slots
 }
 

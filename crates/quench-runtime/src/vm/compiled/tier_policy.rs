@@ -69,6 +69,7 @@ pub(in crate::vm) struct LaneBody {
     /// (`LaneView::respecialize_callers`): each makes more of its calls direct, and the bound
     /// ends the exchange between functions that call each other.
     pub(in crate::vm) max_callee_recompiles: u8,
+    pub(in crate::vm) late_call_calls: u32,
     /// The length below which a lane body without loops or inlined calls declines
     /// (`Vm::compile_lane_method`).
     pub(in crate::vm) min_instructions: usize,
@@ -186,6 +187,7 @@ const MEASURED: Tiers = Tiers {
         max_lifetimes: 8,
         max_callee_waits: 2,
         max_callee_recompiles: 3,
+        late_call_calls: 4096,
         min_instructions: 40,
         compile_poll_interval: 64,
         compile_cost_per_ir: 5,
