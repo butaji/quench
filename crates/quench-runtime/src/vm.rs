@@ -912,19 +912,19 @@ impl site_table::SiteEntry for FieldCache {
 }
 /// Layout facts for generated code that reads a field cache entry as `SiteEntry for
 /// FieldCache` stores it: three words, each complemented against `EMPTY_CACHE`.
-pub(super) struct NativeFieldCacheLayout {
-    pub(super) entry_size: usize,
-    pub(super) receiver_offset: usize,
-    pub(super) holder_offset: usize,
-    pub(super) slot_offset: usize,
-    pub(super) receiver_complement: u32,
-    pub(super) holder_complement: u32,
-    pub(super) slot_complement: u32,
+pub(crate) struct NativeFieldCacheLayout {
+    pub(crate) entry_size: usize,
+    pub(crate) receiver_offset: usize,
+    pub(crate) holder_offset: usize,
+    pub(crate) slot_offset: usize,
+    pub(crate) receiver_complement: u32,
+    pub(crate) holder_complement: u32,
+    pub(crate) slot_complement: u32,
     /// The holder an own data field's entry names.
-    pub(super) own_holder: u32,
+    pub(crate) own_holder: u32,
 }
 
-pub(super) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLayout {
+pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLayout {
     entry_size: std::mem::size_of::<<FieldCache as site_table::SiteEntry>::Stored>(),
     receiver_offset: 0,
     holder_offset: std::mem::size_of::<u32>(),
