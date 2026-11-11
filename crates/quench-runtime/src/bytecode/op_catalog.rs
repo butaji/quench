@@ -64,6 +64,7 @@ pub(crate) enum Class {
     WasmFillRegisters,
     WasmMemoryAddress,
     WasmMemorySize,
+    WasmMemoryGrow,
     WasmMemoryFill,
     WasmMemoryCopy,
     WasmIndirectTarget,
@@ -189,6 +190,7 @@ macro_rules! class_of {
     (WasmFillRegisters) => { Class::WasmFillRegisters };
     (WasmMemoryAddress) => { Class::WasmMemoryAddress };
     (WasmMemorySize) => { Class::WasmMemorySize };
+    (WasmMemoryGrow) => { Class::WasmMemoryGrow };
     (WasmMemoryFill) => { Class::WasmMemoryFill };
     (WasmMemoryCopy) => { Class::WasmMemoryCopy };
     (WasmIndirectTarget) => { Class::WasmIndirectTarget };

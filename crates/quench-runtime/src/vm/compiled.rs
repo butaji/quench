@@ -76,6 +76,7 @@ pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 mod static_loops;
 #[path = "compiled/wasm_callable.rs"]
 mod wasm_callable;
+mod memory_pages;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
 pub(super) use lane_unit::static_call_targets;
@@ -8464,9 +8465,6 @@ struct Analysis<'a, H: Host> {
     /// `unreachable` is enabled only for a bounded, explicitly selected root
     /// experiment until its compile-time memory cost is measured.
     experimental_root_compilation: bool,
-    /// A root-only function may call out only while callouts are safe for its
-    /// current memory view. A VM callee can grow unguarded memory.
-    root_only: bool,
     /// Rejection reasons exist only for explicit diagnostic runs.
     compile_rejections: Option<&'a std::cell::RefCell<Vec<Option<String>>>>,
     /// Whether bodies unroll their innermost loops (`program_unrolls`), decided once the
@@ -8487,6 +8485,12 @@ impl<H: Host> Analysis<'_, H> {
             *rejection = Some(reason.clone());
             eprintln!("QUENCH_WASM_JIT_REJECTION {index} {reason}");
         }
+    }
+
+    /// Whether a known call of a function outside the callable set compiles as a VM callout
+    /// (`callout_known_fallback`): wherever callouts are, since the callee may grow memory.
+    fn calls_out_to_uncompiled(&self) -> bool {
+        self.callouts
     }
 
     fn constant(&self, index: usize) -> Option<Value> {
@@ -8691,7 +8695,7 @@ impl<H: Host> Analysis<'_, H> {
                 .expect("queued instructions have a state");
             if instruction.op().class().eq(Class::CallKnown)
                 && !callable.contains(usize::from(instruction.known_function_index()))
-                && !self.experimental_root_compilation
+                && !self.calls_out_to_uncompiled()
             {
                 let callee = instruction.known_function_index();
                 self.reject(index, || format!("uncompiled-callee:{callee}@{pc}"));
@@ -8810,6 +8814,7 @@ impl<H: Host> Analysis<'_, H> {
         // The memory register is read only by direct accesses through it.
         if memory_register.is_some_and(|memory| {
             !direct_access(op) && !op.traits().has(Traits::WASM_MEMORY)
+                && op.class() != Class::WasmMemoryGrow
                 && !op.is_wasm_instance_binding()
                 && crate::bytecode::InstructionField::ALL.iter().any(|field| {
                     op.field_layout(*field).reads_register()
@@ -8994,14 +8999,8 @@ impl<H: Host> Analysis<'_, H> {
                 (value(state, instruction.c())? == kind).then_some(())?;
                 set(state, instruction.a(), Slot::Value(kind))
             }
-            Class::WasmMemorySize => {
-                let memory = instruction.b();
-                if Some(memory) != memory_register
-                    || state.get(memory, function.registers) != Some(Slot::Memory)
-                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
-                {
-                    return None;
-                }
+            Class::WasmMemorySize | Class::WasmMemoryGrow => {
+                self.pages_operands(function, instruction, state, memory_register, *memory_slot)?;
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
             Class::WasmMemoryFill => {
@@ -9051,9 +9050,7 @@ impl<H: Host> Analysis<'_, H> {
             }
             Class::CallKnown => {
                 let callee = u32::from(instruction.known_function_index());
-                if !callable.contains(callee as usize)
-                    && (!self.experimental_root_compilation || (self.root_only && !self.callouts))
-                {
+                if !callable.contains(callee as usize) && !self.calls_out_to_uncompiled() {
                     return None;
                 }
                 let signature = self.signature(callee)?;
@@ -11259,16 +11256,8 @@ impl<H: Host> Emitter<'_, '_, H> {
             };
             return true;
         }
-        if op.is_wasm_memory_size() {
-            let bytes = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
-            let pages = self.body.core.builder.ins().ushr_imm_u(bytes, 16);
-            let pages = self.body.core.builder.ins().ireduce(types::I32, pages);
-            self.write(a, Kind::I32, pages);
+        if matches!(op.class(), Class::WasmMemorySize | Class::WasmMemoryGrow) {
+            self.memory_pages(op, a, c);
             return true;
         }
         if op.is_wasm_memory_copy() {
@@ -13378,7 +13367,6 @@ impl<H: Host> Vm<H> {
             env,
             callouts: true,
             experimental_root_compilation: root.is_some(),
-            root_only,
             compile_rejections: compile_rejections.as_ref(),
             unrolls: false,
         };
