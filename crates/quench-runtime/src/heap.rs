@@ -1113,7 +1113,7 @@ impl Heap {
         })
     }
 
-    pub(crate) fn mark_prototype(&mut self, prototype: Value) {
+    #[inline] pub(crate) fn mark_prototype(&mut self, prototype: Value) {
         if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
         }
@@ -2036,6 +2036,7 @@ impl Heap {
         self.allocated += text.beside / payload_unit();
     }
 
+    #[inline]
     pub fn should_collect(&self) -> bool {
         self.allocated >= self.collect_at
     }

@@ -705,7 +705,7 @@ impl Heap {
         }
     }
 
-    pub(crate) fn object_record(&self, value: Value) -> Option<&Object> {
+    #[inline] pub(crate) fn object_record(&self, value: Value) -> Option<&Object> {
         let record_id = value.direct_object_index()?;
         Some(self.object_record_by_id(record_id))
     }

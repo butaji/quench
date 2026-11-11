@@ -346,7 +346,7 @@ pub(super) fn lane_construct_argument(r: Registers, i: &LaneInstruction) -> impl
 }
 
 /// The construct plan cache entry `callee` owns, when it names a heap cell.
-pub(super) fn construct_plan_index(callee: Value) -> Option<usize> {
+#[inline] pub(super) fn construct_plan_index(callee: Value) -> Option<usize> {
     callee.heap_index().map(|index| index as usize & (CONSTRUCT_PLANS - 1))
 }
 
