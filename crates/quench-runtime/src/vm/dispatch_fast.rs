@@ -5026,7 +5026,7 @@ script_handler! {
                         requicken::<H>(ip, lane_load_root_lexical::<H>);
                     }
                 }
-                None => capture_binding::requicken_root_binding::<H>(ip, slot),
+                None => capture_binding::requicken_root_binding::<H>(ip),
             }
         }
         #[cfg(feature = "profile-lane-exits")]
