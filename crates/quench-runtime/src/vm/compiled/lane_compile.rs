@@ -260,8 +260,6 @@ impl<H: Host> Vm<H> {
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>, called: bool) -> Result<PendingLaneMethod, Unstarted> {
-        if let Ok(only) = std::env::var("QUENCH_ONLY") { if !only.split(',').any(|f| f.parse() == Ok(function)) { return Err(Unstarted::Declined); } }
-        if let Ok(skip) = std::env::var("QUENCH_SKIP") { if skip.split(',').any(|f| f.parse() == Ok(function)) { return Err(Unstarted::Declined); } }
         let (plan, native) = self.plan_lane_method_sized(program, function, targets, captures, direct, generic, budget, entry)
             .ok_or(Unstarted::Declined)?;
         // A body that cannot amortize a lane entry would serve native callers only

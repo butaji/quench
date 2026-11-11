@@ -270,7 +270,3 @@ mod tests {
     }
 }
 
-pub(in crate::vm) fn exp_min_amortize() -> usize {
-    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("QUENCH_MINAM").ok().and_then(|v| v.parse().ok()).unwrap_or(TIERS.lane_body.min_instructions))
-}
