@@ -954,6 +954,44 @@ fn lane_calls_passing_extra_values_keep_them_only_for_legacy_reflection() {
 }
 
 #[test]
+fn hot_bodies_construct_forwarding_classes_from_nested_calls() {
+    // A hot function builds vectors through a forwarding constructor while its own callers
+    // are native: the construction resolves its target and keeps the forwarded fields.
+    let source = r#"
+      var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+      var V = Class.create();
+      V.prototype = {
+        initialize: function (x, y, z) { this.x = x; this.y = y; this.z = z; },
+        cross: function (w) { return new V(this.y * w.z - this.z * w.y, this.z * w.x - this.x * w.z, this.x * w.y - this.y * w.x); },
+        dot: function (w) { return this.x * w.x + this.y * w.y + this.z * w.z; }
+      };
+      function shade(a, b) { var c = a.cross(b); var d = c.cross(a); return c.dot(b) + d.dot(a); }
+      function trace(n) {
+        var s = 0;
+        for (var i = 0; i < n; i++) { s += shade(new V(i, 2, 3), new V(1, i, 5)); }
+        return s;
+      }
+      var r = 0;
+      for (var k = 0; k < 40; k++) { r += trace(200); }
+      print(r);
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "hot-forwarding-construct.js").unwrap();
+    vm.execute(&program).unwrap();
+    let mut expected = 0i64;
+    for i in 0..200i64 {
+        let (a, b) = ((i, 2, 3), (1, i, 5));
+        let cross = |p: (i64, i64, i64), q: (i64, i64, i64)| (p.1 * q.2 - p.2 * q.1, p.2 * q.0 - p.0 * q.2, p.0 * q.1 - p.1 * q.0);
+        let dot = |p: (i64, i64, i64), q: (i64, i64, i64)| p.0 * q.0 + p.1 * q.1 + p.2 * q.2;
+        let c = cross(a, b);
+        let d = cross(c, a);
+        expected += dot(c, b) + dot(d, a);
+    }
+    assert_eq!(output.borrow().as_slice(), [(expected * 40).to_string()]);
+}
+
+#[test]
 fn lane_constructions_forward_plain_loaded_arguments() {
     // A loop the lane runs constructs through a forwarding constructor
     // (`this.initialize.apply(this, arguments)`): its frameless activation reads the
