@@ -29,6 +29,7 @@ pub(crate) mod ic;
 pub(crate) mod object;
 pub(crate) mod store;
 pub(crate) mod holder;
+pub(crate) mod call;
 pub(crate) mod value;
 mod steps;
 pub(crate) use steps::step;
