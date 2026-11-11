@@ -4,6 +4,7 @@
 //! one load and one compare per link, with the target link a per-site operand.
 
 use super::{object, value, Stage};
+use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
 /// 1 where the chain of the object record at `record` holds the link `target` within `depth`
 /// links, 0 where it ends (null) first. A link that names no object record (an array, a
@@ -87,7 +88,6 @@ pub(crate) unsafe fn concrete_instance_of(records: *const u8, record: *const u8,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
     use crate::heap::ProtoLink;
 
     /// Records laid out `record_size` apart, each holding its prototype link at the meta word.
