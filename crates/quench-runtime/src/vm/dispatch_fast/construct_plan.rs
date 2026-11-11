@@ -99,6 +99,11 @@ impl ConstructPlan {
     /// computes it. `None` when a computed field's argument is no Number.
     pub(super) fn values<H: Host>(&self, vm: &mut Vm<H>, _code: &ResidualProgram, argument: impl Fn(u16) -> Value) -> Option<[Value; CONSTRUCT_PLAN_FIELDS]> {
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+        // No field is constant, captured or computed: one pass over the passed and defaulted
+        // fields (`passed_values`).
+        if self.constant | self.computed | self.captured == 0 {
+            return Some(self.passed_values(vm, values, argument));
+        }
         for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
             if self.constant & (1 << field) != 0 {
                 *value = self.fallbacks[field];
@@ -117,6 +122,18 @@ impl ConstructPlan {
             *value = initializer_value(vm, argument(self.parameters[field]), fallback);
         }
         Some(values)
+    }
+
+    /// `values` of a plan with no constant, captured or computed field: each field the
+    /// argument its parameter names, or its fallback where the store defaults a falsy one.
+    #[inline(always)]
+    fn passed_values<H: Host>(&self, vm: &Vm<H>, mut values: [Value; CONSTRUCT_PLAN_FIELDS], argument: impl Fn(u16) -> Value) -> [Value; CONSTRUCT_PLAN_FIELDS] {
+        let fields = usize::from(self.fields).min(CONSTRUCT_PLAN_FIELDS);
+        for field in 0..fields {
+            let passed = argument(self.parameters[field]);
+            values[field] = if self.defaulted >> field & 1 != 0 { initializer_value(vm, passed, Some(self.fallbacks[field])) } else { passed };
+        }
+        values
     }
 
     /// The receiver this plan allocates with its fields `field(k)` in order and `undefined`
