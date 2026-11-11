@@ -1387,10 +1387,11 @@ pub(super) fn lower_body(
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)], entry: Option<usize>,
+    number_reads: &[super::facts::ObservedRead],
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
     let region = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
-        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
+        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], typed_captures: &[], int_captures: &[],
         plan: RegionPlan { coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::StatusAndPc, views: ElementViews::Dense } }
         .specialize(program).ok()?;
