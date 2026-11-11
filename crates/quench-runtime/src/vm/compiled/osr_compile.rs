@@ -298,6 +298,26 @@ impl LoopPlanner<'_> {
 /// bound stays bounded by the lane plan's own admission.
 const REGION_CODE_BUDGET: usize = 2 * osr_loop::MAX_CODE_BYTES;
 
+/// The FastJIT tier's answer for `region`: `Some(code)` where it builds or (under `--f-jit`) declines the
+/// region, `None` where Cranelift compiles it. Number loops whose every instruction has a stencil row skip Cranelift.
+fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usize], observation: &Observation<'_>)
+    -> Option<Option<PendingOsrRegion>> {
+    let fast_only = crate::jit_mode::fast_only();
+    if !crate::jit_mode::fast_regions() || region.inlining.is_some() {
+        return fast_only.then_some(None);
+    }
+    let built = super::fast_region::build(region, views == super::ElementViews::Dense, widened,
+        [observation.int_registers, observation.double_registers]);
+    let Ok(code) = built else { return fast_only.then_some(None) };
+    if let Some(directory) = native_dump_directory() {
+        dump_native_bytes(directory, region.header, &code, None, "");
+    }
+    let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
+    let code = super::super::jit_backend::run_in_background(move || Ok(code));
+    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None,
+        facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new() } }))
+}
+
 /// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
 /// `None` where it lowers no code (a typed plan hoisting no view would leave at an access).
 pub(in crate::vm) fn start_osr_region(
@@ -311,24 +331,8 @@ pub(in crate::vm) fn start_osr_region(
     widened: &[usize],
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
-    if crate::jit_mode::fast_only() && region.inlining.is_some() {
-        return None;
-    }
-    if crate::jit_mode::fast_regions() && region.inlining.is_none() {
-        // Number loops whose every instruction has a stencil row skip Cranelift.
-        if let Ok(code) = super::fast_region::build(region, views == super::ElementViews::Dense, widened, [observation.int_registers, observation.double_registers]) {
-            if let Some(directory) = native_dump_directory() {
-                dump_native_bytes(directory, region.header, &code, None, "");
-            }
-            let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-            let code = super::super::jit_backend::run_in_background(move || Ok(code));
-            return Some(PendingOsrRegion { code, watch, header: region.header, clif: None,
-                facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new() } });
-        }
-        // `--f-jit` has no Cranelift tier: a region with no stencil rows stays interpreted.
-        if crate::jit_mode::fast_only() {
-            return None;
-        }
+    if let Some(decided) = fast_pending(region, views, widened, observation) {
+        return decided;
     }
     let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views };
     let mut plan = |unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, header: usize, backedge: usize, generic: &[usize]|
