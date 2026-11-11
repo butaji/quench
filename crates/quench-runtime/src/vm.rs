@@ -189,6 +189,8 @@ mod symbol_write_proof;
 mod symbol_load_proof;
 mod private_site_home;
 mod private_keys;
+mod getter_slot;
+mod private_access;
 mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
@@ -829,9 +831,8 @@ struct AccessorFieldCache {
     /// own slot each receiver of the shape fills with its own accessor.
     holder: Value,
     slot: u16,
-    /// Where the holder's shape keeps the accessor at `slot` (`SlotAccessor`): the shape the
-    /// entry proves (the receiver's for `OWN_ACCESSOR`, else the prototype holder's, which the
-    /// epoch covers) fixes it.
+    /// Where the holder's shape keeps the accessor at `slot` (`SlotAccessor`), fixed by the shape the
+    /// entry proves: the receiver's for `OWN_ACCESSOR`, else the holder's, which the epoch covers.
     slot_accessor: SlotAccessor,
     /// The `prototype_layout_epoch` the chain was proved under.
     epoch: u64,
@@ -2129,10 +2130,9 @@ pub(crate) struct Vm<H> {
     /// Per cache site, the index of its newest accessor entry in `accessor_fields`, or
     /// `NO_ACCESSOR_FIELD`.
     accessor_field_indices: site_table::SiteTable<u32>,
-    /// Accessor reads (`AccessorFieldCache`), each site's linked newest first through
-    /// `next`, up to `ACCESSOR_FIELD_CACHE_WAYS` receiver shapes a site, as an inherited
-    /// method's site sees one shape per subclass; cleared with the field caches.
-    accessor_fields: Vec<AccessorFieldCache>,
+    /// Accessor reads (`AccessorFieldCache`), each site's linked newest first through `next`, up to
+    /// `ACCESSOR_FIELD_CACHE_WAYS` receiver shapes a site; cleared with the field caches.
+    accessor_fields: getter_slot::AccessorFields,
     field_add_indices: site_table::SiteTable<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     /// The layouts and strings JSON parses share within a collection epoch.

@@ -6457,6 +6457,10 @@ script_handler! {
     /// `childNodeKeys[this.type]` was written to the emptied lane stack, not its frame).
     #[inline(never)]
     fn lane_get_field_getter<>(cx, r, ip, i, view) {
+        if let Some(value) = unsafe { lane_returned_slot(cx, r, i) } {
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
         match lane_getter_activation(cx, r, ip, i) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             // A native getter that raised is not called again: the general path raises it.
@@ -6464,6 +6468,19 @@ script_handler! {
             Err(_) => sibling!(lane_get_field::<H>, unsafe { (*cx).registers }, ip, Carried::script(cx)),
         }
     }
+}
+
+/// What a `GetField` that met a getter reads where the site's accessor entry records the
+/// receiver slot the getter returns (`Vm::returned_slot_read`); a returning read completes its
+/// activation, so only a read that writes its register is answered.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn lane_returned_slot<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    let base = (i.a & crate::bytecode::RETURN_REGISTER == 0).then(|| unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) })??;
+    vm.returned_slot_read(base, vm.field_cache_index(i.c))
 }
 
 /// The base of a `GetField` of a register or `this` that a frameless activation makes in
@@ -7027,7 +7044,7 @@ script_handler! {
     /// `DeclarePrivateName` (`Vm::declare_private_field`) of the home in `b`.
     #[inline(never)]
     fn lane_declare_private_name<>(cx, r, ip, i, view) {
-        (unsafe { vm(cx) }).declare_private_field(r.get(i.b), i.imm());
+        (unsafe { vm(cx) }).declare_private_field(r.get(i.b), i.imm(), i.c != 0);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }

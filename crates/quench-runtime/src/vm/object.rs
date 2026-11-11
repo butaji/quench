@@ -109,7 +109,7 @@ const SHAPE_INDEX_WALK_DISTANCE: usize = 32;
 const SHAPE_INDEX_LONG_WALKS: u8 = 8;
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 /// `AccessorFieldCache::holder` of an accessor the receiver holds itself.
-const OWN_ACCESSOR: Value = Value::UNDEFINED;
+pub(super) const OWN_ACCESSOR: Value = Value::UNDEFINED;
 
 struct FieldCacheHit {
     value: Value,
@@ -2946,6 +2946,7 @@ impl<H: Host> Vm<H> {
             let cached = self.accessor_fields[index as usize];
             if cached.receiver == entry.receiver {
                 entry.next = cached.next;
+                self.note_accessor_return(index, &entry);
                 self.accessor_fields[index as usize] = entry;
                 return;
             }
@@ -2964,6 +2965,7 @@ impl<H: Host> Vm<H> {
             (self.accessor_fields.len() - 1) as u32
         };
         entry.next = head;
+        self.note_accessor_return(slot, &entry);
         self.accessor_fields[slot as usize] = entry;
         self.accessor_field_indices.set(site, slot);
         self.note_field_cache_write(site);
@@ -2993,14 +2995,7 @@ impl<H: Host> Vm<H> {
         } else {
             self.heap.ordinary_object(cache.holder)?
         };
-        match cache.slot_accessor {
-            super::SlotAccessor::Getter => self.heap.property_get(holder, usize::from(cache.slot)),
-            super::SlotAccessor::Pair => match self.heap.get(self.heap.property_get(holder, usize::from(cache.slot))?) {
-                Some(Cell::AccessorPair { getter, .. }) => Some(*getter),
-                _ => None,
-            },
-            super::SlotAccessor::Attributes => self.slot_attributes(holder, usize::from(cache.slot))?.getter,
-        }
+        self.accessor_entry_getter(cache, holder)
     }
 
     /// What native accessor `getter` returns for `this` where its call is a read of the

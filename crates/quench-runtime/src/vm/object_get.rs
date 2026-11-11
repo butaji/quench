@@ -1102,7 +1102,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn mark_private_name(&mut self, p: &ResidualProgram, object: Value, home: Value, atom: Atom) -> Result<(), JsError> {
         let brand = PrivateBrand { home, name: atom };
         if object != home {
-            let Some((addable, branded)) = self.object_data(object).map(|data| (self.private_element_addable(data), data.has_private_name(brand))) else {
+            let Some((addable, branded)) = self.object_data(object).map(|data| (self.private_element_addable(data), self.carries_brand(object, brand))) else {
                 return Err(self.type_error(p, "Cannot add private method to a non-extensible object".into()));
             };
             if !addable {
@@ -1111,6 +1111,10 @@ impl<H: Host> Vm<H> {
             if branded {
                 return Err(self.type_error(p, "Cannot add private method to an object that already has it".into()));
             }
+        }
+        // A declared method's brand is a key of the object's shape (`private_keys`).
+        if let Some(key) = self.private_brand_key_of(home, atom) {
+            return self.private_field_add_key(p, object, atom, key, Value::UNDEFINED);
         }
         if let Some(object) = self.object_data_mut(object) {
             object.add_private_name(brand);

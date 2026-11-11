@@ -1001,7 +1001,7 @@ impl<H: Host> Vm<H> {
                 );
             }
             Op::DeclarePrivateName => {
-                self.declare_private_field(self.read(f, i.register_b()), i.atom_index());
+                self.declare_private_field(self.read(f, i.register_b()), i.atom_index(), i.c() != 0);
             }
             Op::MarkPrivateName => {
                 self.mark_private_name(p, self.read(f, i.register_b()), self.read(f, i.register_c()), i.atom_index())?;

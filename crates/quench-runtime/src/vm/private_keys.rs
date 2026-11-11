@@ -71,7 +71,7 @@ impl crate::snapshot::Snap for PrivateHomes {
 #[derive(Default)]
 pub(super) struct PrivateKeys {
     /// Each atom's declaration, indexed by atom: `UNDECLARED`, `MULTI`, or one more than the
-    /// index of its home in `singles`.
+    /// index of its home in `singles`, with `METHOD` for a private method's brand.
     decls: Vec<u32>,
     /// The `(name, home)` of each name one home declared; a name that turned `Multi` (once,
     /// for good) leaves its entry, which `decls` no longer indexes.
@@ -86,7 +86,10 @@ pub(super) struct PrivateKeys {
 }
 
 const UNDECLARED: u32 = 0;
-const MULTI: u32 = u32::MAX;
+const MULTI: u32 = u32::MAX >> 1;
+/// The flag of a declared private method or accessor name: its key marks the brand of an
+/// object its class constructed, a slot no read of the name returns.
+const METHOD: u32 = !MULTI;
 
 impl PrivateKeys {
     pub(super) fn clear(&mut self) {
@@ -100,7 +103,7 @@ impl PrivateKeys {
         if self.decls.len() <= index {
             self.decls.resize(index + 1, UNDECLARED);
         }
-        self.decls[index] = match decl {
+        self.decls[index] = (self.decls[index] & METHOD) | match decl {
             PrivateDecl::Single(home) => {
                 self.singles.push((atom, home));
                 self.singles.len() as u32
@@ -112,7 +115,7 @@ impl PrivateKeys {
     /// Who declared `atom`; `None` for a name no class declared as a field.
     #[inline(always)]
     pub(super) fn decl(&self, atom: Atom) -> Option<PrivateDecl> {
-        match self.decls.get(atom as usize).copied().unwrap_or(UNDECLARED) {
+        match self.decls.get(atom as usize).copied().unwrap_or(UNDECLARED) & !METHOD {
             UNDECLARED => None,
             MULTI => Some(PrivateDecl::Multi),
             single => Some(PrivateDecl::Single(self.singles[single as usize - 1].1)),
@@ -120,7 +123,7 @@ impl PrivateKeys {
     }
 
     /// Every declared name with its declaration.
-    fn each_decl(&self) -> impl Iterator<Item = (Atom, PrivateDecl)> + '_ {
+    pub(super) fn each_decl(&self) -> impl Iterator<Item = (Atom, PrivateDecl)> + '_ {
         (0..self.decls.len() as Atom).filter_map(|atom| Some((atom, self.decl(atom)?)))
     }
 
@@ -128,13 +131,33 @@ impl PrivateKeys {
     /// key is `atom` itself.
     #[inline(always)]
     pub(super) fn single(&self, atom: Atom) -> bool {
-        self.decls.get(atom as usize).is_some_and(|decl| !matches!(*decl, UNDECLARED | MULTI))
+        self.decls.get(atom as usize).is_some_and(|decl| !matches!(*decl, UNDECLARED | MULTI) && *decl & METHOD == 0)
     }
 
     /// Whether `atom` names a declared private field.
     #[inline(always)]
     pub(super) fn declared(&self, atom: Atom) -> bool {
-        self.decls.get(atom as usize).is_some_and(|decl| *decl != UNDECLARED)
+        self.decls.get(atom as usize).is_some_and(|decl| *decl != UNDECLARED && *decl & METHOD == 0)
+    }
+
+    /// Whether `atom` names a declared private method or accessor, whose key is a brand.
+    #[inline(always)]
+    pub(super) fn method(&self, atom: Atom) -> bool {
+        self.decls.get(atom as usize).is_some_and(|decl| *decl & METHOD != 0)
+    }
+
+    /// Whether one home alone declared `atom`, a field or a method.
+    fn keyed(&self, atom: Atom) -> bool {
+        self.decls.get(atom as usize).is_some_and(|decl| !matches!(*decl & !METHOD, UNDECLARED | MULTI))
+    }
+
+    /// Marks `atom`, before its first declaration, as a private method or accessor name.
+    fn declare_method(&mut self, atom: Atom) {
+        let index = atom as usize;
+        if self.decls.len() <= index {
+            self.decls.resize(index + 1, UNDECLARED);
+        }
+        self.decls[index] |= METHOD;
     }
 
     /// Drops what a collection freed: a `Multi` name's key of a dead home, and a dead
@@ -144,7 +167,7 @@ impl PrivateKeys {
     pub(super) fn prune_dead(&mut self, live: impl Fn(Value) -> bool) {
         self.keys.retain(|(home, _), _| live(*home));
         let dead: Vec<Atom> = self.singles.iter()
-            .filter(|(atom, home)| self.single(*atom) && !live(*home))
+            .filter(|(atom, home)| self.keyed(*atom) && !live(*home))
             .map(|(atom, _)| *atom)
             .collect();
         for atom in &dead {
@@ -156,18 +179,27 @@ impl PrivateKeys {
 
 impl<H: Host> Vm<H> {
     /// `DeclarePrivateName`: the class evaluation whose home is `home` declares private field
-    /// name `atom`, before any of its code can access it.
-    pub(super) fn declare_private_field(&mut self, home: Value, atom: Atom) {
+    /// name `atom` (or, with `method`, a private method or accessor name an instance carries
+    /// as its brand), before any of its code can access it.
+    pub(super) fn declare_private_field(&mut self, home: Value, atom: Atom, method: bool) {
         if std::mem::take(&mut self.private_homes.fields.flush) {
             self.invalidate_field_caches();
         }
         match self.private_homes.fields.decl(atom) {
+            // A method's brand takes a key of its own: the name's atom keys the method its
+            // home holds, which an own slot of that key would shadow.
+            None if method => {
+                self.private_homes.fields.declare_method(atom);
+                self.private_homes.fields.set(atom, PrivateDecl::Single(home));
+                let key = self.fresh_private_key(atom);
+                self.private_homes.fields.keys.insert((home, atom), key);
+            }
             None => self.private_homes.fields.set(atom, PrivateDecl::Single(home)),
             Some(PrivateDecl::Single(first)) if first == home => {}
             Some(PrivateDecl::Single(first)) => {
                 // The first home keeps the name's own atom, which its objects hold.
                 self.private_homes.fields.set(atom, PrivateDecl::Multi);
-                self.private_homes.fields.keys.insert((first, atom), atom);
+                self.private_homes.fields.keys.entry((first, atom)).or_insert(atom);
                 let key = self.fresh_private_key(atom);
                 self.private_homes.fields.keys.insert((home, atom), key);
                 // Entries recorded while the name had one home prove no brand now.
@@ -192,6 +224,16 @@ impl<H: Host> Vm<H> {
     /// declared field (a private method or accessor) or `home` never declared it.
     #[inline(always)]
     pub(super) fn private_field_key_of(&self, home: Value, atom: Atom) -> Option<Atom> {
+        (!self.private_homes.fields.method(atom)).then(|| self.private_brand_key_of(home, atom))?
+    }
+
+    /// The shape key of declared private name `atom` under `home`, a field's or a method's
+    /// brand (`PrivateKeys::method`), which `PrivateKeys::keys` holds for every home.
+    #[inline(always)]
+    pub(super) fn private_brand_key_of(&self, home: Value, atom: Atom) -> Option<Atom> {
+        if self.private_homes.fields.method(atom) {
+            return self.private_homes.fields.keys.get(&(home, atom)).copied();
+        }
         match self.private_homes.fields.decl(atom)? {
             PrivateDecl::Single(first) => (first == home).then_some(atom),
             PrivateDecl::Multi => self.private_homes.fields.keys.get(&(home, atom)).copied(),
@@ -342,8 +384,8 @@ impl<H: Host> Vm<H> {
 
 impl crate::snapshot::Snap for PrivateKeys {
     fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
-        let decls: Vec<(Atom, Option<Value>)> = self.each_decl()
-            .map(|(atom, decl)| (atom, match decl { PrivateDecl::Single(home) => Some(home), PrivateDecl::Multi => None }))
+        let decls: Vec<(Atom, Option<Value>, bool)> = self.each_decl()
+            .map(|(atom, decl)| (atom, match decl { PrivateDecl::Single(home) => Some(home), PrivateDecl::Multi => None }, self.method(atom)))
             .collect();
         decls.snap(writer)?;
         self.keys.snap(writer)?;
@@ -351,128 +393,15 @@ impl crate::snapshot::Snap for PrivateKeys {
     }
     fn unsnap(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
         let mut keys = Self::default();
-        for (atom, home) in Vec::<(Atom, Option<Value>)>::unsnap(reader)? {
+        for (atom, home, method) in Vec::<(Atom, Option<Value>, bool)>::unsnap(reader)? {
+            if method {
+                keys.declare_method(atom);
+            }
             keys.set(atom, home.map_or(PrivateDecl::Multi, PrivateDecl::Single));
         }
         keys.keys = crate::snapshot::Snap::unsnap(reader)?;
         keys.flush = true;
         keys.fresh = crate::snapshot::Snap::unsnap(reader)?;
         Ok(keys)
-    }
-}
-
-impl<H: Host> Vm<H> {
-    /// The value of the private field `brand` names on `object`: its shape slot, else a
-    /// private element of an undeclared name (`Object::private_field`).
-    #[inline(always)]
-    pub(super) fn brand_field_value(&self, object: Value, brand: crate::heap::PrivateBrand) -> Option<Value> {
-        if let Some(key) = self.private_field_key_of(brand.home, brand.name) {
-            return self.private_field_at(object, key);
-        }
-        self.object_data(object)?.private_field(brand)
-    }
-
-    /// Stores the private field `brand` names on `object`; `false` where it has none.
-    #[inline(always)]
-    pub(super) fn set_brand_field(&mut self, object: Value, brand: crate::heap::PrivateBrand, value: Value) -> bool {
-        if let Some(key) = self.private_field_key_of(brand.home, brand.name) {
-            let Some(slot) = self.private_field_slot(object, key) else { return false };
-            self.heap.property_set(object, slot, value);
-            return true;
-        }
-        self.object_data_mut(object).is_some_and(|data| data.set_private_field(brand, value))
-    }
-
-    /// Whether `object` carries `brand`: a declared field's shape key, or a private element.
-    #[inline(always)]
-    pub(super) fn carries_brand(&self, object: Value, brand: crate::heap::PrivateBrand) -> bool {
-        match self.private_field_key_of(brand.home, brand.name) {
-            Some(key) => self.private_field_slot(object, key).is_some(),
-            None => self.object_data(object).is_some_and(|data| data.has_private_name(brand)),
-        }
-    }
-
-    /// The private field names `home` declared, for an eval in its scope.
-    pub(super) fn declared_private_fields(&self, home: Value) -> Vec<Atom> {
-        self.private_homes.fields.each_decl()
-            .filter(|(atom, decl)| match decl {
-                PrivateDecl::Single(first) => *first == home,
-                PrivateDecl::Multi => self.private_homes.fields.keys.contains_key(&(home, *atom)),
-            })
-            .map(|(atom, _)| atom)
-            .collect()
-    }
-}
-
-impl<H: Host> Vm<H> {
-    /// A general read of private name `atom` of `object` at `site`: a field the site's own
-    /// entry or the object's shape holds, else an undeclared name's private element. `None`
-    /// leaves methods, accessors and a missing brand to the ordinary `[[Get]]`.
-    #[inline(always)]
-    pub(super) fn private_field_get(&mut self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<Value> {
-        if self.private_homes.fields.single(atom)
-            && let super::object::FieldCacheProbe::Hit(value) = self.cached_field_hit(p, object, site)
-        {
-            return Some(value);
-        }
-        self.private_field_read(p, object, atom, Some(site)).or_else(|| self.private_field_value(p, object, atom))
-    }
-}
-
-impl<H: Host> Vm<H> {
-    /// Whether reads of `atom` need more than a field cache's own entries: a private name
-    /// other than a field one home alone declared (`PrivateKeys::single`).
-    #[inline(always)]
-    pub(super) fn private_special(&self, atom: Atom) -> bool {
-        self.is_private_name(atom) && !self.private_homes.fields.single(atom)
-    }
-
-    /// A read of private name `atom` past its site's caches: a declared field's value, or a
-    /// TypeError for an object without it; `None` for a private method or accessor name.
-    pub(super) fn private_get_miss(&mut self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<Result<Value, crate::JsError>> {
-        if let Some(value) = self.private_field_read(p, object, atom, Some(site)) {
-            return Some(Ok(value));
-        }
-        if !self.private_homes.fields.declared(atom) {
-            return None;
-        }
-        let name = self.atom_name(atom);
-        let member = crate::bytecode::private_identity_label(name).unwrap_or(name).to_owned();
-        Some(Err(self.type_error(p, format!("Cannot read private member #{member} from an object whose class did not declare it"))))
-    }
-}
-
-impl<H: Host> Vm<H> {
-    /// A field read's answer past its site's probe for a private name (`private_get_miss`):
-    /// its shape slot or a TypeError, which no prototype answers.
-    #[inline(always)]
-    pub(super) fn private_miss_read(&mut self, p: &ResidualProgram, object: Value, atom: Atom, site: u16, probe: &super::object::FieldCacheProbe) -> Option<Result<Value, crate::JsError>> {
-        if matches!(probe, super::object::FieldCacheProbe::Hit(_)) || !self.is_private_name(atom) {
-            return None;
-        }
-        self.private_get_miss(p, object, atom, site)
-    }
-
-    /// A store of private name `atom` past its caches: `true` once a field's slot or an
-    /// undeclared name's private element took it, a TypeError for a declared field's name on
-    /// an object without the field, `false` for a method or accessor name.
-    pub(super) fn private_set_answered(&mut self, p: &ResidualProgram, object: Value, atom: Atom, value: Value, site: u16) -> Result<bool, crate::JsError> {
-        if self.private_field_write(p, object, atom, value, Some(site)) || self.set_private_field_value(p, object, atom, value) {
-            return Ok(true);
-        }
-        if self.private_homes.fields.declared(atom) {
-            return Err(self.type_error(p, "Cannot write private member to an object whose class did not declare it".into()));
-        }
-        Ok(false)
-    }
-
-    /// `DefineField`: a private name's PrivateFieldAdd (`private_field_define`), else
-    /// CreateDataProperty through the site's add cache (`define_field_cached`).
-    #[inline(always)]
-    pub(super) fn define_field(&mut self, p: &ResidualProgram, object: Value, atom: Atom, value: Value, site: u16) -> Result<(), crate::JsError> {
-        if self.is_private_name(atom) {
-            return self.private_field_define(p, object, atom, value, site);
-        }
-        self.define_field_cached(p, object, atom, value, site)
     }
 }

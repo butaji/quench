@@ -6,13 +6,16 @@ impl FunctionCompiler<'_, '_> {
     /// name it (`Vm::declare_private_field`).
     pub(in crate::compile) fn store_class_home(&mut self, class: &Class<'_>, home_atom: Atom, class_value: Register, prototype: Register) {
         self.store_atom(home_atom, prototype);
+        // A field's name, and an instance method's or accessor's, whose brand is its key.
         for element in &class.body.body {
-            if let ClassElement::PropertyDefinition(field) = element
-                && let PropertyKey::PrivateIdentifier(identifier) = &field.key
-            {
+            let (key, home, method) = match element {
+                ClassElement::PropertyDefinition(field) => (&field.key, if field.r#static { class_value } else { prototype }, 0),
+                ClassElement::MethodDefinition(method) if !method.r#static => (&method.key, prototype, 1),
+                _ => continue,
+            };
+            if let PropertyKey::PrivateIdentifier(identifier) = key {
                 let atom = self.owner.private_name_atom(identifier.span);
-                let home = if field.r#static { class_value } else { prototype };
-                self.emit(Op::DeclarePrivateName, 0, home, 0, atom);
+                self.emit(Op::DeclarePrivateName, 0, home, method, atom);
             }
         }
     }

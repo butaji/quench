@@ -879,7 +879,6 @@ complexity crates/quench-runtime/src/vm/number.rs::math_numbers 15
 complexity crates/quench-runtime/src/vm/number.rs::math_unary_operation 37
 complexity crates/quench-runtime/src/vm/number.rs::parse_float 17
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::append_shape 16
-complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_field_getter 11
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_inherited_field_value 13
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_own_writable_slot 13
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::field_miss_data_value 14
