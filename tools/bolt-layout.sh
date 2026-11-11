@@ -26,7 +26,7 @@
 #    run phase, for diagnostic layouts of the server path. The scored engine suites are never
 #    run. The corpus used is written to target/layout-corpus/MANIFEST and printed at the end.
 # 3. Profiles start-up (cachegrind) and the run phase after the entry's compilation
-#    (callgrind, split at quench_entry_compiled), without and with --jit, under the
+#    (callgrind, split at quench_entry_compiled), with --no-jit and by default (JIT), under the
 #    default memory policy the scored binary runs.
 # 4. Writes crates/quench-node/link/x86_64-linux-static.order, converts the profiles for
 #    BOLT, relinks, and writes the bolted binary beside the relinked one (`-bolt`).
@@ -180,16 +180,16 @@ callgrind() { # NAME ARGS... : run-phase profile, split at the entry's compilati
 export -f cachegrind callgrind
 numbered='^[0-9]{3}\.js$'
 packages='^(micro-[0-9]{3}|npm-[a-z-]+)\.js$'
-programs | xargs -P "$jobs" -I{} bash -c 'cachegrind {} "$corpus/{}"'
+programs | xargs -P "$jobs" -I{} bash -c 'cachegrind {} --no-jit "$corpus/{}"'
 for mode in no-jit jit; do
-    jit=(); [[ "$mode" == jit ]] && jit=(--jit)
+    jit=(); [[ "$mode" == no-jit ]] && jit=(--no-jit)
     cachegrind "wasm-kernels-$mode" "${jit[@]}" quench-bench/wasm-micros/kernels.cjs 3
 done
-programs "$numbered" | xargs -P "$jobs" -I{} bash -c 'cachegrind jit-{} --jit "$corpus/{}"'
-programs "$packages" | xargs -P "$jobs" -I{} bash -c 'cachegrind jitmf-{} --jit "$corpus/{}"'
-programs "$numbered" | xargs -P "$jobs" -I{} bash -c 'callgrind jit-{} --jit "$corpus/{}"'
-programs "$packages" | xargs -P "$jobs" -I{} bash -c 'callgrind jitmf-{} --jit "$corpus/{}"'
-programs | xargs -P "$jobs" -I{} bash -c 'callgrind {} "$corpus/{}"'
+programs "$numbered" | xargs -P "$jobs" -I{} bash -c 'cachegrind jit-{} "$corpus/{}"'
+programs "$packages" | xargs -P "$jobs" -I{} bash -c 'cachegrind jitmf-{} "$corpus/{}"'
+programs "$numbered" | xargs -P "$jobs" -I{} bash -c 'callgrind jit-{} "$corpus/{}"'
+programs "$packages" | xargs -P "$jobs" -I{} bash -c 'callgrind jitmf-{} "$corpus/{}"'
+programs | xargs -P "$jobs" -I{} bash -c 'callgrind {} --no-jit "$corpus/{}"'
 if (( ${QUENCH_LAYOUT_HTTP_ROUNDS:-0} > 0 )); then
     QUENCH_BENCH_ROUNDS="$QUENCH_LAYOUT_HTTP_ROUNDS" callgrind http-echo-isolation.js \
         "$root_dir/tests/npm-perf/workloads/http-echo-isolation.cjs"

@@ -100,8 +100,8 @@ console.log(s);`,
 ];
 
 const ENGINES = [
-  { id: "quench", binary: "quench", args: [] },
-  { id: "quench-jit", binary: "quench", args: ["--jit"] },
+  { id: "quench", binary: "quench", args: ["--no-jit"] },
+  { id: "quench-jit", binary: "quench", args: [] },
   { id: "node-jitless", binary: "node", args: ["--jitless"] },
   { id: "node", binary: "node", args: [] },
   { id: "bun-no-jit", binary: "bun", args: [], env: { BUN_JSC_useJIT: "0" } },

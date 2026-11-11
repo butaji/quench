@@ -1,7 +1,7 @@
 // Generic WebAssembly kernels for the link-order training corpus (never a scored bench):
 // integer and floating-point loops, linear memory of each width, direct and indirect calls,
 // a branch-table state machine, globals and memory growth. Training runs this file without and
-// with `--jit`, so the interpreter's Wasm handlers and the compiler's pipeline are laid out
+// by default (JIT), so the interpreter's Wasm handlers and the compiler's pipeline are laid out
 // with the rest of the executed code. The modules are built with V8's `wasm-module-builder.js`
 // from Node's WPT fixtures.
 "use strict";

@@ -411,7 +411,7 @@ pub struct RootScopeMark {
 }
 
 impl<'a, H: Host> NativeContext<'a, H> {
-    /// Count actual heap record/arena capacities and unique live payloads without guest effects.
+    pub fn execution_mode(&self) -> crate::ExecutionMode { self.vm.execution_mode() } // a host's worker inherits it
     /// An owned cancellation handle for a native operation; no Vm reference escapes.
     pub fn execution_interrupt_handle(&self) -> crate::ExecutionInterrupt {
         self.vm.execution_interrupt_handle()

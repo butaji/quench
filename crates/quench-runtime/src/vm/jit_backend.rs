@@ -35,14 +35,6 @@ const VERIFY_IR: bool = cfg!(debug_assertions) || super::compiled::tier_policy::
 pub(super) enum CodePublication {
     #[cfg(feature = "jit")]
     ExecutableMemory,
-    /// Executable memory for a large lane body (`compiled::lane_compile`, at least
-    /// `LANE_SINGLE_PASS_MIN_INSTS` instructions), whose registers are allocated in one pass. Lane bodies are the largest units and compile on the code
-    /// generator thread while the interpreter runs them: JetStream 3 `--jit`, 25 tests, 6
-    /// interleaved rounds (2026-11-07) measured +3.8% geomean (richards +16%, Air +11%,
-    /// delta-blue +10%; earley-boyer -7%). Single-pass for every JIT unit measured -0.7%
-    /// (navier-stokes -22%, stanford-crypto-aes -17%): small hot loops keep backtracking.
-    #[cfg(feature = "jit")]
-    LaneBody,
     #[cfg(feature = "aot")]
     RelocatableObject,
     /// Copy-and-patch stencils: executable memory whose continuations are
@@ -58,8 +50,6 @@ impl CodePublication {
         match self {
             #[cfg(feature = "jit")]
             Self::ExecutableMemory => &[("is_pic", "false")],
-            #[cfg(feature = "jit")]
-            Self::LaneBody => &[("is_pic", "false"), ("regalloc_algorithm", "single_pass")],
             #[cfg(feature = "aot")]
             Self::RelocatableObject => &[("is_pic", "true")],
             #[cfg(all(feature = "aot", feature = "jit"))]
@@ -68,23 +58,50 @@ impl CodePublication {
     }
 }
 
+/// How much effort one compile spends. `Optimized` is the shipping configuration; `Quick`
+/// compiles a body at a fraction of the cost (no mid-end optimization, one-pass register
+/// allocation) for code that has not proven itself hot. A caller chooses per compile; every
+/// compile uses `Optimized` until a tier policy asks otherwise.
+#[cfg(any(feature = "jit", feature = "aot"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(super) enum CompileLevel {
+    Quick,
+    #[default]
+    Optimized,
+}
+
+#[cfg(any(feature = "jit", feature = "aot"))]
+impl CompileLevel {
+    /// The level a compile uses unless its caller chooses: `Optimized`, or `Quick` while the
+    /// `quick-compile` experiment measures that level.
+    pub(super) fn run_default() -> Self {
+        if crate::trace::Dev::QuickCompile.on() { Self::Quick } else { Self::Optimized }
+    }
+
+    /// The Cranelift settings a level fixes, applied after the publication's.
+    fn settings(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Quick => &[("opt_level", "none"), ("regalloc_algorithm", "single_pass")],
+            Self::Optimized => &[],
+        }
+    }
+}
+
 /// The Cranelift opt level of JavaScript JIT code. Measured on JetStream 3 `--jit` (2 interleaved
 /// rounds, TOD-1467, 2026-11-07): while lane bodies compiled on the main thread, `none` won
 /// +4.5% over the JavaScript tests; once they compiled on the code-generator thread, `none` for
 /// main-thread compiles measured +1.2% and for every compile -0.1%, both within noise, and the
-/// Wasm tests lost 5-6%. The single-pass register allocator lost 2.7% (Wasm -25%), and
-/// `unwind_info=false` measured nothing.
+/// Wasm tests lost 5-6%. The single-pass register allocator lost 2.7% (Wasm -25%) for all JIT
+/// code, and left 46% of lane-body machine code as stack spill traffic (richards bodies,
+/// 2026-11-10: 91981 instructions against 69653 with the backtracking allocator; richards +34%,
+/// delta-blue +12% in lane mode, other six V8-v7 tests within noise; peak RSS +30% on the two
+/// largest bodies' tests). `unwind_info=false` measured nothing.
 const JS_JIT_OPT_LEVEL: &str = "speed";
 
 /// The executable-memory ISA of every JavaScript JIT tier.
 pub(super) fn target_isa() -> Option<Arc<TargetIsa>> {
-    target_isa_at(JS_JIT_OPT_LEVEL)
-}
-
-/// The ISA of lane bodies: JavaScript JIT code whose register allocation runs in one pass.
-pub(super) fn lane_body_isa() -> Option<Arc<TargetIsa>> {
     #[cfg(feature = "jit")]
-    { target_isa_for(JS_JIT_OPT_LEVEL, CodePublication::LaneBody) }
+    { target_isa_level(CompileLevel::run_default()) }
     #[cfg(not(feature = "jit"))]
     { None }
 }
@@ -102,10 +119,25 @@ pub(super) fn target_isa_for(
     opt_level: &str,
     publication: CodePublication,
 ) -> Option<Arc<TargetIsa>> {
-    type IsaCache = HashMap<(String, CodePublication), Arc<TargetIsa>>;
+    target_isa_with(opt_level, publication, CompileLevel::Optimized)
+}
+
+/// The executable-memory ISA of JavaScript JIT code compiled at `level`.
+#[cfg(feature = "jit")]
+pub(super) fn target_isa_level(level: CompileLevel) -> Option<Arc<TargetIsa>> {
+    target_isa_with(JS_JIT_OPT_LEVEL, CodePublication::ExecutableMemory, level)
+}
+
+#[cfg(any(feature = "jit", feature = "aot"))]
+fn target_isa_with(
+    opt_level: &str,
+    publication: CodePublication,
+    level: CompileLevel,
+) -> Option<Arc<TargetIsa>> {
+    type IsaCache = HashMap<(String, CodePublication, CompileLevel), Arc<TargetIsa>>;
     static CACHE: OnceLock<Mutex<IsaCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = (opt_level.to_owned(), publication);
+    let key = (opt_level.to_owned(), publication, level);
     let mut entries = cache.lock().ok()?;
     if let Some(isa) = entries.get(&key) {
         return Some(Arc::clone(isa));
@@ -113,7 +145,7 @@ pub(super) fn target_isa_for(
 
     let mut flags = settings::builder();
     flags.set("opt_level", opt_level).ok()?;
-    for (name, value) in publication.settings() {
+    for (name, value) in publication.settings().iter().chain(level.settings()) {
         flags.set(name, value).ok()?;
     }
     for check in ["enable_verifier", "regalloc_checker"] {

@@ -112,6 +112,9 @@ setting! {
         JsUnpricedGeneralDispatch = "js-unpriced-general-dispatch",
         /// The lane prologue specializes declined functions into frameless lane bodies.
         JsLaneMethods = "js-lane-methods",
+        /// Every JavaScript JIT compile at `CompileLevel::Quick` (no mid-end optimization,
+        /// one-pass register allocation), to measure the level's cost and code quality.
+        QuickCompile = "quick-compile",
         /// Selective Wasm hot-root tiering (`wasm-selective`).
         WasmSelective = "wasm-selective",
         /// A bounded root compilation of the residual Wasm function `wasm-root=N`.
