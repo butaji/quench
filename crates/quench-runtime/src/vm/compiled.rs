@@ -4253,9 +4253,6 @@ fn trap_status(trap: crate::WasmTrap) -> i64 {
         .expect("compiled code raises only listed traps")
 }
 
-/// Stack compiled code may use below its entry before a call traps as
-/// exhausted; the interpreter's own guards bound the remainder.
-const COMPILED_STACK_BUDGET: usize = 512 * 1024;
 /// Stack left for a guarded leaf-JS entry after the Rust adapter has run. The
 /// JS denotations admitted here have no calls, VM callouts, or internal polls.
 const JS_LEAF_STACK_RESERVE: usize = 16 * 1024;
@@ -4380,7 +4377,7 @@ impl CallContext {
         &mut self, payload: *mut (), interrupt: *const std::sync::atomic::AtomicBool,
         poll_page: Option<(usize, usize)>,
     ) {
-        self.stack_limit = native_stack_limit();
+        self.stack_limit = crate::stack::stack_floor();
         self.interrupt = interrupt;
         self.adapter_payload = payload;
         self.poll_start = poll_page.map_or(0, |(start, _)| start);
@@ -4432,15 +4429,11 @@ impl CallContext {
     /// but needs its own guard-resume stack pointer and raised completion, as a
     /// nested `run_compiled` invocation would. Its stack limit is never below
     /// the caller's: recursion through the callout (a runaway `call_indirect`)
-    /// spends the outermost entry's budget and traps as exhausted, rather than
+    /// spends the thread's one budget and traps as exhausted, rather than
     /// taking a fresh budget at each level until the native stack overflows.
     fn nested_entry(&self) -> Self {
-        let marker = 0u8;
-        let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
         Self {
-            stack_limit: self
-                .stack_limit
-                .max(stack_pointer.saturating_sub(COMPILED_STACK_BUDGET)),
+            stack_limit: self.stack_limit.max(crate::stack::stack_floor()),
             interrupt: self.interrupt,
             table: self.table,
             vm: self.vm,
@@ -12334,13 +12327,6 @@ fn native_poll_page(interrupt: &crate::ExecutionInterrupt) -> Option<(usize, usi
     interrupt.poll_page()
 }
 
-/// The stack limit a native entry starting at the current stack pointer runs under.
-fn native_stack_limit() -> usize {
-    let marker = 0u8;
-    let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
-    stack_pointer.saturating_sub(COMPILED_STACK_BUDGET)
-}
-
 thread_local! {
     /// The context every leaf entry (`NativeEntryMode::Leaf`) runs with. A leaf makes no
     /// calls, polls or callouts, so it reads only the stack limit its entry checks and the
@@ -12356,7 +12342,7 @@ fn run_leaf(payload: *mut (), arguments: *const u64, entry: Entry) -> (u32, u64)
         // SAFETY: a leaf makes no calls, so no other use of this thread's leaf context
         // overlaps this one.
         let context = unsafe { &mut *context.get() };
-        context.stack_limit = native_stack_limit();
+        context.stack_limit = crate::stack::stack_floor();
         context.adapter_payload = payload;
         let mut result = 0u64;
         // SAFETY: the payload, arguments and result outlive the leaf call.
@@ -14010,8 +13996,6 @@ impl<H: Host> Vm<H> {
                 None => (0, 0, None, Value::UNDEFINED),
             };
             let raw = self.compiled_raw_args(args, &function.params)?;
-            let marker = 0u8;
-            let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
             let mut globals: smallvec::SmallVec<[*mut Value; 8]> = smallvec::SmallVec::new();
             for slot in &compiled.globals {
                 let binding = self.heap.environment_slot(env, *slot as usize)?;
@@ -14049,7 +14033,7 @@ impl<H: Host> Vm<H> {
             };
             let poll = self.execution_interrupt.poll_page();
             let mut context = CallContext {
-                stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
+                stack_limit: crate::stack::stack_floor(),
                 interrupt: self.execution_interrupt.atomic_flag(),
                 table: compiled.table.as_ptr(),
                 vm: (self as *mut Self).cast(),

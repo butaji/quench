@@ -117,11 +117,22 @@ pub struct StackBudget {
     origin: usize,
 }
 
+/// Where the thread's budget is measured from: the first live transition's stack pointer,
+/// or the current one when none is live.
+fn budget_origin(active: usize) -> usize {
+    if active == 0 { current_stack_pointer() } else { STACK_ORIGIN.with(Cell::get) }
+}
+
+/// The lowest stack address the thread's budget admits. Native code that checks its own
+/// stack pointer (compiled code) stops here, where `StackGuard::enter` stops transitions.
+pub fn stack_floor() -> usize {
+    budget_origin(ACTIVE_TRANSITIONS.with(Cell::get)).saturating_sub(STACK_BUDGET_BYTES)
+}
+
 impl StackBudget {
     pub fn here() -> Self {
         let active = ACTIVE_TRANSITIONS.with(Cell::get);
-        let origin = if active == 0 { current_stack_pointer() } else { STACK_ORIGIN.with(Cell::get) };
-        Self { remaining: MAX_RECURSIVE_TRANSITIONS.saturating_sub(active), origin }
+        Self { remaining: MAX_RECURSIVE_TRANSITIONS.saturating_sub(active), origin: budget_origin(active) }
     }
 
     /// Whether a transition `depth` levels below the entry fits.

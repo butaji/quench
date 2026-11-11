@@ -211,3 +211,26 @@ console.log(total);
     assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
     assert_eq!(quench.stdout, node.stdout);
 }
+
+/// Reference calls recurse as deep as Node's in every tier: hot `call_indirect` recursion
+/// 5000 levels deep stays within the thread's stack budget rather than a per-entry slice of it
+/// (Dart's flute benchmark recurses through `call_ref`).
+#[test]
+fn deep_call_indirect_recursion_completes_like_node() {
+    // (module (type $t (func (param i32) (result i32))) (table 1 funcref) (elem (i32.const 0) $f)
+    //   (func $f (export "f") (type $t) (if (result i32) (i32.eqz (local.get 0)) (then (i32.const 0))
+    //     (else (i32.add (call_indirect (type $t) (i32.sub (local.get 0) (i32.const 1)) (i32.const 0))
+    //       (i32.const 1))))))
+    let source = r#"
+const bytes = new Uint8Array([0,97,115,109,1,0,0,0,1,6,1,96,1,127,1,127,3,2,1,0,4,4,1,112,0,1,7,5,1,1,102,0,0,9,7,1,0,65,0,11,1,0,10,26,1,24,0,32,0,69,4,127,65,0,5,32,0,65,1,107,65,0,17,0,0,65,1,106,11,11]);
+const { f } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+let total = 0;
+for (let round = 0; round < 100; round++) total += f(5000);
+console.log(total);
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
