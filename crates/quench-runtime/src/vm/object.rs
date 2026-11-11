@@ -2176,11 +2176,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn holder_hint_hit(&self, index: u16, atom: Atom, object: Value) -> Option<Value> {
         let hint = self.holder_hints.get(usize::from(index))?;
         let receiver = self.hinted_receiver(object)?;
-        (hint.atom == atom
-            && hint.receiver == receiver.exact_shape()
-            && hint.prototype == receiver.proto_link()
-            && hint.watch.is_published())
-        .then_some(hint.value)
+        // SAFETY: the hint's watch is live as long as the hint.
+        (hint.atom == atom).then(|| unsafe {
+            crate::staged::holder::concrete_holder_read(receiver, hint.receiver, hint.prototype.bits(), std::rc::Rc::as_ptr(&hint.watch), hint.value)
+        })?
     }
 
     /// `holder_hint_hit` for a string primitive, whose read `String.prototype` answers

@@ -84,7 +84,7 @@ pub(crate) const NARROW_INDEX_SHIFT: u32 = NARROW_CODE_SHIFT + NARROW_CODE_BITS;
 pub(crate) const NARROW_INDEX_BITS: u32 = u32::BITS - NARROW_INDEX_SHIFT - 2;
 /// Integer width of a narrow integer: its top two bits copy the sign.
 pub(crate) const NARROW_INTEGER_BITS: u32 = u32::BITS - NARROW_CODE_SHIFT - 1;
-const LOWER_WORD: u64 = u32::MAX as u64;
+pub(crate) const LOWER_WORD: u64 = u32::MAX as u64;
 /// Upper words of narrow non-integers by code: the eight heap reference families in
 /// `HEAP_FAMILY_BITS` order, then the tagged constants. Unused codes hold zero, the upper word
 /// of a number, which `to_narrow` never looks up.

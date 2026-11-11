@@ -122,5 +122,10 @@ impl Stage for Concrete {
         !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(record_id as u32, crate::Value::from_bits(value)) }
     }
     #[inline(always)]
+    fn assumption(&mut self, watch: u64) -> bool {
+        // SAFETY: the operand is the address of a live watch (`staged::holder::concrete_holder_read`).
+        unsafe { (*(watch as *const crate::code_dependencies::PublishedCode<()>)).is_published() }
+    }
+    #[inline(always)]
     fn table(&mut self, table: Table) -> u64 { self.tables[table as usize] }
 }
