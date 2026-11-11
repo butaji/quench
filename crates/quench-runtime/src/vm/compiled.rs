@@ -920,26 +920,15 @@ pub(super) fn emit_dense_array_view(
     writable: bool,
     fallback: ir::Block,
 ) -> DenseArrayView {
-    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
-
     let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
         std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
     let mut stage = object_slots::Emit { builder, property_values: None };
-    let crate::staged::elements::Backing { record, header, values, length } =
-        crate::staged::elements::array_backing(&mut stage, record_base, base, fallback)
-            .expect("the emit stage continues past its guards");
+    let backing = crate::staged::elements::array_backing(&mut stage, record_base, base, fallback)
+        .expect("the emit stage continues past its guards");
+    let crate::staged::elements::Backing { values, length, .. } = backing;
     if writable {
-        let owners = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_owners_offset as i32);
-        let unique = builder.ins().icmp_imm_u(IntCC::Equal, owners, 1);
-        emit_js_guard(builder, unique, fallback);
-        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), record,
-            (ARRAY.object_offset + OBJECT.meta_offset) as i32);
-        let frozen = builder.ins().band_imm_u(meta, i64::from(ARRAY.frozen_mask));
-        let unfrozen = builder.ins().icmp_imm_u(IntCC::Equal, frozen, 0);
-        emit_js_guard(builder, unfrozen, fallback);
-        let extras = emit_array_extras(builder, record);
-        let plain = builder.ins().icmp_imm_u(IntCC::Equal, extras, 0);
-        emit_js_guard(builder, plain, fallback);
+        crate::staged::elements::writable_backing(&mut stage, backing, fallback)
+            .expect("the emit stage continues past its guards");
     }
     // The view's length is an `i32`, the width an int32 index has.
     let length = builder.ins().ireduce(types::I32, length);

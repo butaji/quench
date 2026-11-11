@@ -51,6 +51,25 @@ pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base:
     Some(Backing { record, header, values, length })
 }
 
+/// `backing` as an in-place replacement needs it: its elements owned by this array alone, the
+/// array not frozen and without extras (indexed descriptors, an arguments map, sparse
+/// elements or a prototype watch), as `Vm::try_replace_record_element` requires. `None`
+/// leaves at `miss`.
+#[inline(always)]
+pub(crate) fn writable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<()> {
+    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
+    let owners = stage.load_u32(backing.header, ARRAY.header_owners_offset as i32);
+    let unique = stage.eq_imm(owners, 1u32);
+    stage.guard(unique, miss)?;
+    let meta = stage.load_u32(backing.record, (ARRAY.object_offset + OBJECT.meta_offset) as i32);
+    let frozen = stage.and_imm(meta, u64::from(ARRAY.frozen_mask));
+    let unfrozen = stage.eq_imm(frozen, 0u32);
+    stage.guard(unfrozen, miss)?;
+    let payload = stage.load_u64(backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
+    let plain = super::object::plain_payload(stage, payload);
+    stage.guard(plain, miss)
+}
+
 /// Replaces the present element at `address` of the dense backing at `values`, which held
 /// `old`, with `value`: the backing's count of values that are no int32 (its others) follows
 /// the write, and a count native code made unknown (`OTHERS_UNKNOWN`) stays unknown. The
