@@ -5,6 +5,7 @@
 
 use super::*;
 use std::collections::BTreeMap;
+use super::super::program_store::lane_publication::LaneKey;
 
 type LaneCode = Result<Vec<u8>, super::jit_backend::NativeCompileRejection>;
 
@@ -35,6 +36,8 @@ pub(in crate::vm) struct PendingLaneMethod {
     generic: Vec<LaneExit>,
     watch: Rc<crate::code_dependencies::PublishedCode<()>>,
     code: super::jit_backend::Pending<LaneCode>,
+    /// What it compiles from (`LanePlan::key`).
+    key: LaneKey,
 }
 
 /// What a pending body's compile came to.
@@ -56,8 +59,10 @@ pub(in crate::vm) enum LaneBodyWork<'a> {
 
 /// Why a body did not start compiling.
 enum Unstarted {
+    /// A body published under the same key still holds.
+    Installed(Rc<PublishedLaneMethod>),
     /// Not yet worth compiling.
-    Deferred,
+    Unpaid,
     Declined,
 }
 
@@ -70,6 +75,8 @@ pub(in crate::vm) enum LaneBodyOutcome {
     /// Its function has not run long enough to pay for the compile, or callees it would call
     /// directly still warm toward their bodies: it counts on.
     Deferred,
+    /// Its function's entries have not yet paid for the compile (`pays_compile`).
+    Unpaid,
     Declined,
 }
 
@@ -245,7 +252,10 @@ impl<H: Host> Vm<H> {
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
         if entry.is_none() && !amortizes_entry(&plan.unit) { return Err(Unstarted::Declined); }
-        if let Some(entries) = observed && !self.pays_compile(program, function, entries, native.dfg.num_insts()) { return Err(Unstarted::Deferred); }
+        let key: LaneKey = (self.active_program.raw(), function, entry, plan.key(generic, entry, budget));
+        if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
+        if let Some(entries) = observed && !self.pays_compile(program, function, entries, native.dfg.num_insts()) { return Err(Unstarted::Unpaid); }
+        if !self.programs.admit_lane_compile(&key, TIERS.lane_body.max_compiles) { plan_miss(Miss::PlanCompileBound); return Err(Unstarted::Declined); }
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
         if !plan.dependencies().subscribe(&plan.lowered.region.stable,
@@ -253,18 +263,18 @@ impl<H: Host> Vm<H> {
             return Err(Unstarted::Declined);
         }
         let census = self.programs.js_jit_diagnostics_enabled()
-            .then(|| (function, entry.is_some(), plan.unit.instructions.len(), native.dfg.num_insts()));
+            .then(|| (function, entry.is_some(), plan.unit.instructions.len(), native.dfg.num_insts(), key.3));
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
             let code = lane_code(native);
-            if let Some((function, osr, unit, ir)) = census {
-                eprintln!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"us\":{},\"bytes\":{}}}",
+            if let Some((function, osr, unit, ir, key)) = census {
+                eprintln!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"key\":\"{key:016x}\",\"us\":{},\"bytes\":{}}}",
                     started.elapsed().as_micros(), code.as_ref().map_or(0, |code| code.len()));
             }
             code
         });
         self.programs.note_pending_native_calls(&watch, plan.callees());
-        Ok(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code })
+        Ok(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code, key })
     }
 
     /// Whether `function`'s `entries` so far did interpreted work enough that the compiled share
@@ -308,7 +318,8 @@ impl<H: Host> Vm<H> {
             let direct = direct(self);
             let started = match self.start_lane_method(program, function, targets, captures, &direct, &generic, budget, entry, observed) {
                 Ok(started) => started,
-                Err(Unstarted::Deferred) => return LaneBodyOutcome::Deferred,
+                Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
+                Err(Unstarted::Unpaid) => return LaneBodyOutcome::Unpaid,
                 Err(Unstarted::Declined) => return LaneBodyOutcome::Declined,
             };
             // The plan's IR and lowering state, tens of megabytes for the largest bodies, are
@@ -327,11 +338,13 @@ impl<H: Host> Vm<H> {
         if !pending.watch.is_published() || pending.plan.direct.iter().any(|callee| !callee.method.is_published()) {
             return Ok(LaneBodyOutcome::Stale);
         }
+        let key = pending.key;
         Ok(match pending.poll() {
             Err(pending) => LaneBodyOutcome::Compiling(pending),
             Ok(LaneCompile::Replan(generic, budget)) => return Err((generic, budget / REPLAN_BUDGET_DIVISOR)),
             Ok(LaneCompile::Done(method)) => method
                 .and_then(|method| self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()))
+                .inspect(|published| self.programs.note_installed_lane(key, published))
                 .map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published),
         })
     }
@@ -371,6 +384,15 @@ impl PendingLaneMethod {
 }
 
 impl LanePlan {
+    /// What a compile of this plan comes to, as one number: its unit, the leaves and entry it
+    /// was planned from, its field proofs and direct callees. Equal keys make equal code.
+    fn key(&self, generic: &[LaneExit], entry: Option<u32>, budget: usize) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        format!("{:?}{:?}{:?}{:?}{:?}{:?}{}", self.unit.instructions, self.unit.frames, self.fields, generic, entry, budget, self.direct.len()).hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Whether its code names shape ids: its field sites', or its direct callees' bodies'.
     fn names_shapes(&self) -> bool {
         !self.fields.is_empty() || !self.direct.is_empty()

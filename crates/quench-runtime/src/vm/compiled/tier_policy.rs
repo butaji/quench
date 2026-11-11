@@ -56,6 +56,9 @@ pub(in crate::vm) struct LaneBody {
     /// threshold backs off, and `max_recompiles` bounds it.
     pub(in crate::vm) reoptimize_exits: u16,
     pub(in crate::vm) max_recompiles: u8,
+    /// The most compiles of one function's body, or of one of its loop entries: a request of
+    /// another plan past them is declined, so what each came to is the last that holds.
+    pub(in crate::vm) max_compiles: u8,
     /// The most bodies of one function lifecycle edges may discard before it runs in the lane
     /// for good: past them a compile costs more than its runs regain.
     pub(in crate::vm) max_lifetimes: u8,
@@ -172,6 +175,7 @@ const MEASURED: Tiers = Tiers {
         retire_share: 10,
         reoptimize_exits: 64,
         max_recompiles: 1,
+        max_compiles: 3,
         max_lifetimes: 8,
         max_callee_waits: 2,
         max_callee_recompiles: 3,

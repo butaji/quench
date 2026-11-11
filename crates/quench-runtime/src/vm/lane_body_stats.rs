@@ -143,6 +143,7 @@ miss_reasons! {
     PlanInvalidBindings => "plan:invalid-bindings",
     PlanFrameNotAdmitted => "plan:frame-not-admitted",
     PlanNoEntry => "plan:no-entry-instruction",
+    PlanCompileBound => "plan:compile-bound",
     PlanNotLowered => "plan:not-lowered",
     PlanNothingNative => "plan:nothing-native",
     NativeReturning => "native:returning",

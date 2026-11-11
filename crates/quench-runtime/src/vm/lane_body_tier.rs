@@ -18,6 +18,8 @@ pub(super) struct LaneBodyHistory {
     callee_waits: u8,
     /// The bodies it specialized past because a callee published one (`respecialize_callers`).
     callee_recompiles: u8,
+    /// Whether a compile of its body waited for its entries to pay for it (`LaneBodyOutcome::Unpaid`).
+    unpaid: bool,
 }
 
 /// The base `TIERS.lane_body.reoptimize_share` is a share of.
@@ -258,6 +260,11 @@ impl LaneView {
                 LaneBody::Unspecialized { entries: 0, recompiles, stuck }
             }
             super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
+            // Its entries decide when it looks again (`attempts_at`), no hot loop's skip.
+            super::super::compiled::LaneBodyOutcome::Unpaid => {
+                self.history.set(LaneBodyHistory { unpaid: true, ..self.history.get() });
+                LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck }
+            }
             super::super::compiled::LaneBodyOutcome::Declined => LaneBody::Declined,
         }
     }
@@ -276,7 +283,7 @@ impl LaneView {
     fn skip_warm_up(&self) {
         // SAFETY: as `lane_body`; no lane body runs here.
         if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() }
-            && self.history.get().lifetimes == 0
+            && self.history.get().lifetimes == 0 && !self.history.get().unpaid
         {
             *entries = TIERS.lane_body.warmup_entries - 1;
         }

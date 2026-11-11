@@ -13,7 +13,8 @@ pub(super) enum LoopBody {
     /// before the next look.
     Compiling { pending: Box<PendingLaneMethod>, wait: u16, stuck: LaneLeaves, attempts: u8 },
     /// `exits` counts its runs that left inside the loop, and `leaves` says where they went.
-    Ready { method: std::rc::Rc<PublishedLaneMethod>, exits: u16, leaves: LaneLeaves, stuck: LaneLeaves, attempts: u8 },
+    /// `runs` counts its runs, those that left inside the loop among them.
+    Ready { method: std::rc::Rc<PublishedLaneMethod>, runs: u32, exits: u16, leaves: LaneLeaves, stuck: LaneLeaves, attempts: u8 },
     Declined,
 }
 
@@ -21,6 +22,9 @@ pub(super) enum LoopBody {
 const ATTEMPTS: u8 = 4;
 /// The runs of a loop's body that leave inside the loop before the next body plans around them.
 const REOPTIMIZE: u16 = 16;
+/// The share of a loop body's runs, in percent, that may leave inside the loop for it to stay.
+const KEEP_SHARE: u64 = 10;
+const PERCENT: u64 = 100;
 /// The backedges between looks for a loop body's compiling code.
 const POLL: u16 = 16;
 
@@ -32,11 +36,19 @@ impl LoopBody {
     /// run out.
     #[cold]
     fn note_leave(&mut self, exit: LaneExit) {
-        let Self::Ready { exits, leaves, stuck, attempts, .. } = self else { return };
+        let Self::Ready { runs, exits, leaves, stuck, attempts, .. } = self else { return };
         *leaves = leaves.with(exit);
         *exits += 1;
         if *exits < REOPTIMIZE { return; }
         let next = stuck.union(*leaves);
+        // Leaves only where the bodies before it left, those places already generic, would
+        // plan the same body again: it stays while most of its runs complete, and its loop
+        // has no body otherwise.
+        if next == *stuck && next != LaneLeaves::Scattered {
+            if u64::from(*exits) * PERCENT > u64::from(*runs) * KEEP_SHARE { *self = Self::Declined; }
+            else { (*exits, *leaves) = (0, LaneLeaves::NONE); }
+            return;
+        }
         *self = if *attempts + 1 >= ATTEMPTS || next == LaneLeaves::Scattered { Self::Declined }
             else { Self::Idle { stuck: next, attempts: *attempts + 1 } };
     }
@@ -44,8 +56,9 @@ impl LoopBody {
     /// The body to run, if it is ready.
     fn ready(&mut self) -> Option<std::rc::Rc<super::super::compiled::LaneMethod>> {
         match self {
-            Self::Ready { method, stuck, attempts, .. } => {
+            Self::Ready { method, runs, stuck, attempts, .. } => {
                 let ready = method.lease();
+                *runs = runs.saturating_add(1);
                 if ready.is_none() { *self = Self::Idle { stuck: *stuck, attempts: *attempts }; }
                 ready
             }
@@ -58,8 +71,8 @@ impl LoopBody {
     fn after(outcome: LaneBodyOutcome, stuck: LaneLeaves, attempts: u8) -> Self {
         match outcome {
             LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: POLL, stuck, attempts },
-            LaneBodyOutcome::Published(method) => Self::Ready { method, exits: 0, leaves: LaneLeaves::NONE, stuck, attempts },
-            LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred => Self::Idle { stuck, attempts },
+            LaneBodyOutcome::Published(method) => Self::Ready { method, runs: 0, exits: 0, leaves: LaneLeaves::NONE, stuck, attempts },
+            LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred | LaneBodyOutcome::Unpaid => Self::Idle { stuck, attempts },
             LaneBodyOutcome::Declined => Self::Declined,
         }
     }

@@ -7,7 +7,7 @@ use crate::heap::{PromotionAge, WeakHandle};
 use rustc_hash::FxHashMap;
 use std::io::Write as _;
 
-mod lane_publication;
+pub(in crate::vm) mod lane_publication;
 mod snapshot;
 mod wasm_tier;
 pub(super) use wasm_tier::WasmTierState;
@@ -884,6 +884,10 @@ struct OwnedScript {
 pub(crate) struct ProgramStore {
     /// Weak native-call proofs; guest functions are never rooted by compiled code.
     native_call_bindings: std::cell::RefCell<Vec<lane_publication::NativeCallBinding>>,
+    /// The bodies published by what they compile from (`lane_publication::LaneKey`).
+    /// The compiles each body or loop entry has had (`lane_publication::LaneKey`'s first three).
+    lane_compiles: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, Option<u32>), u8>>,
+    lane_installed: std::cell::RefCell<std::collections::BTreeMap<lane_publication::LaneKey, Weak<crate::vm::compiled::PublishedLaneMethod>>>,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
@@ -943,6 +947,8 @@ impl Default for ProgramStore {
         crate::jit_coverage::sample_this_thread();
         Self {
             native_call_bindings: Default::default(),
+            lane_installed: Default::default(),
+            lane_compiles: Default::default(),
             programs: Vec::new(),
             global_eval_programs: FxHashMap::default(),
             owned_scripts: FxHashMap::default(),
