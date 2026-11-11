@@ -373,11 +373,15 @@ impl<'a, 'f> Emit<'a, 'f> {
         self.b.switch_to_block(barrier);
         let failed = self.constant(NATIVE_FAIL as i64);
         self.b.ins().return_(&[failed]);
-        let resumes = std::mem::take(&mut self.resumes);
-        for (resume, block) in resumes {
+        // The resume blocks stay listed: a resume pushes frames of its own kind, which name
+        // their ids from the list (`resume_id`), so it never grows here.
+        let listed = self.resumes.len();
+        for index in 0..listed {
+            let (resume, block) = self.resumes[index];
             self.b.switch_to_block(block);
             self.resume(resume);
         }
+        debug_assert_eq!(self.resumes.len(), listed, "no resume made another");
     }
 
     /// Jumps by `id` to the restore block, the barrier block or a resume block.
