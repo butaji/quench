@@ -3676,7 +3676,12 @@ impl Lowering<'_, '_> {
         boundaries: &CompoundBitSet, loops: &[(usize, usize)],
         own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) {
         let mut candidates = Vec::new();
-        for &(header, back) in loops.iter().filter(|(header, _)| *header != self.coverage.entry()) {
+        // The region's own entry loop takes contracts only where its body is local (no calls):
+        // the entry guards a contracted register pays once are worth it on numeric loops,
+        // not on loops that call out at their edges.
+        for &(header, back) in loops.iter().filter(|(header, back)| {
+            *header != self.coverage.entry() || self.entry_loop_local(*header, *back)
+        }) {
             let Some(types) = self.facts.at(header) else { continue };
             let mut defined: CompoundBitSet = CompoundBitSet::with_capacity(types.len());
             for instruction in &instructions[header..=back] {
@@ -3692,6 +3697,13 @@ impl Lowering<'_, '_> {
             &self.program.constants, &writes, own_shape, self.native_calls) {
             self.facts = facts;
         }
+    }
+
+    /// Whether the loop from `header` to `back` is a local loop: every instruction only reads
+    /// or replaces existing own fields and dense elements, so no call crosses its body.
+    fn entry_loop_local(&self, header: usize, back: usize) -> bool {
+        self.unit.instructions[header..=back].iter().all(|instruction|
+            reads_only(&self.program.constants, *instruction) || stores_own(*instruction) || stores_element(*instruction))
     }
 
     /// The type already proved for an operand at a use. Feedback is not enough:
