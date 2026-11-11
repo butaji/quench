@@ -1636,7 +1636,7 @@ impl ArrayObject {
         Self { object, elements }
     }
 
-    pub(crate) fn elements(&self) -> &super::ArrayElements {
+    #[inline] pub(crate) fn elements(&self) -> &super::ArrayElements {
         &self.elements
     }
 
@@ -2101,7 +2101,7 @@ impl Object {
         EXTRAS_TAG | address
     }
 
-    fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
+    #[inline] fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
         let word = self.payload;
         (word & EXTRAS_TAG_MASK == EXTRAS_TAG)
             .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)
@@ -2124,7 +2124,7 @@ impl Object {
         true
     }
 
-    fn extras(&self) -> Option<&ObjectExtras> {
+    #[inline] fn extras(&self) -> Option<&ObjectExtras> {
         // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime.
         self.extras_pointer().map(|extras| unsafe { &*extras })
     }
@@ -2522,7 +2522,7 @@ impl Object {
         }
     }
 
-    pub(crate) fn was_used_as_prototype(&self) -> bool {
+    #[inline] pub(crate) fn was_used_as_prototype(&self) -> bool {
         self.extras()
             .is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
     }
@@ -2546,7 +2546,7 @@ impl Object {
         }
     }
 
-    pub(crate) fn shape(&self) -> u32 {
+    #[inline] pub(crate) fn shape(&self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
     /// The shape with its dictionary and exotic bits (`ValueVec::exact_auxiliary`): a cache
@@ -2569,7 +2569,7 @@ impl Object {
         self.note_prototype_layout_change();
         self.renumber_shape(shape);
     }
-    pub(crate) fn is_extensible(&self) -> bool {
+    #[inline] pub(crate) fn is_extensible(&self) -> bool {
         self.properties().is_extensible()
     }
     /// Whether a cached add transition (`FieldAddCache`) applies to this object as to the
@@ -2586,7 +2586,7 @@ impl Object {
     pub(crate) fn has_exotic_access(&self) -> bool {
         self.auxiliary & crate::value_vec::EXOTIC_ACCESS != 0
     }
-    fn brand(&self) -> ObjectBrand {
+    #[inline] fn brand(&self) -> ObjectBrand {
         self.extras().map_or(ObjectBrand::Ordinary, |extras| extras.brand)
     }
     #[inline(always)]

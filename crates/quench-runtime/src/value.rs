@@ -505,7 +505,7 @@ impl Value {
         Some((left.as_number()?, right.as_number()?))
     }
 
-    pub fn as_bool(self) -> Option<bool> {
+    #[inline] pub fn as_bool(self) -> Option<bool> {
         ((self.0 & TAG_MASK) == TAG_BOOL).then_some(self.0 & 1 != 0)
     }
 
@@ -592,11 +592,11 @@ impl Value {
             || self.direct_iterator_index().is_some()
     }
 
-    pub fn is_undefined(self) -> bool {
+    #[inline] pub fn is_undefined(self) -> bool {
         self.0 == TAG_UNDEFINED
     }
 
-    pub fn is_null(self) -> bool {
+    #[inline] pub fn is_null(self) -> bool {
         self.0 == TAG_NULL
     }
 
@@ -663,7 +663,7 @@ impl Value {
         unsafe { out.set_len(start + kept) };
     }
 
-    pub(crate) fn is_deleted(self) -> bool {
+    #[inline] pub(crate) fn is_deleted(self) -> bool {
         self.0 == TAG_DELETED
     }
 
