@@ -896,7 +896,7 @@ impl<H: Host> Vm<H> {
             }
             Op::MakeConstArray => {
                 let v = self
-                    .const_array_value(self.frames[f].program, i)
+                    .const_array_value(self.frames[f].program, i.constant_index(), usize::from(i.element_count()))
                     .ok_or_else(|| JsError::validation("constant array is outside program".into()))?;
                 self.write(f, i.result_register(), v);
             }
@@ -1888,16 +1888,13 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
-    /// The new array `MakeConstArray` record `i` of `program` makes from its constant
-    /// elements; `None` for a range outside the program's constants.
-    pub(super) fn const_array_value(&mut self, program: ProgramId, i: WideInstruction) -> Option<Value> {
-        let elements = self.programs.const_array(program, i.constant_index(), usize::from(i.element_count()))?;
-        Some(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                elements,
-            ),
-        }))
+    /// The new array of the `count` constants from `start` of `program` (a `MakeConstArray`
+    /// record's immediate and element count); `None` for a range outside the program's
+    /// constants.
+    pub(super) fn const_array_value(&mut self, program: ProgramId, start: usize, count: usize) -> Option<Value> {
+        let elements = self.programs.const_array(program, start, count)?;
+        let prototype = self.array_prototype_for_realm(self.realm.globals);
+        Some(self.heap.alloc(Cell::Array { object: crate::heap::ArrayObject::fresh(prototype, elements) }))
     }
 }
 

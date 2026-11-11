@@ -8,6 +8,7 @@ use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
 
 impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        self.write_out_all_strings();
         if !self.abandoned_contexts.is_empty() {
             return Err(SnapshotError::unsupported("host contexts awaiting release"));
         }
@@ -32,10 +33,7 @@ impl Heap {
             return Err(SnapshotError::unsupported("a Wasm vector"));
         }
         write_records(writer, &self.iterator_records, |writer, record| record.write_snapshot(writer))?;
-        write_records(writer, &self.string_records, |writer, record: &JsString| {
-            record.write_snapshot(writer);
-            Ok(())
-        })?;
+        write_records(writer, &self.string_records, |writer, record: &JsString| Ok(record.write_snapshot(writer)))?;
         self.properties.write_snapshot(writer);
         self.roots.write_snapshot(writer);
         let sparse = self.sparse_arrays.as_deref();

@@ -58,7 +58,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     /// The static value of `value`, reading the `const` bindings folded so far.
-    pub(super) fn static_value(&mut self, value: &Expression<'_>) -> Option<Constant> {
+    pub(in crate::compile) fn static_value(&mut self, value: &Expression<'_>) -> Option<Constant> {
         binding_time::expression_in(value, &mut |name| self.static_constant(name))
     }
 
