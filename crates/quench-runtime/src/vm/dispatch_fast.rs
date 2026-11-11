@@ -7916,8 +7916,12 @@ script_handler! {
         }
         // A loop its region takes whole (no call it leaves at) stays the region's, which hoists
         // the typed element views a lane body does not yet.
+        // A loop with calls takes the shared OSR region with its callees inlined where that
+        // resolves (`lane_inlining_region`); the function's lane body only where inlining was
+        // declined, or where the region analysis failed for a reason other than a call.
         let body_loop = unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
-            && (!site.call_boundary_pcs.is_empty() || site.analysis_failure.is_some());
+            && if site.call_boundary_pcs.is_empty() { site.analysis_failure.is_some() }
+                else { site.inline_region.get().is_some_and(Option::is_none) };
         if body_loop && let Some(attempt) = lane_loop_body::<H>(cx, r, ip, site)
         {
             match attempt {
