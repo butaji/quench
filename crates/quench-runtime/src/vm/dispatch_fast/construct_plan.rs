@@ -241,14 +241,44 @@ pub(super) fn lane_add_stores<H: Host>(
     argument: impl Fn(u16) -> Value,
     mut each: impl FnMut(&crate::bytecode::InitializerStore, Value),
 ) -> bool {
+    // A body that defines fields cannot repeat a define its activation would then make again
+    // (a private field's PrivateFieldAdd throws), so its defines all hit or none is made.
+    if stores.first().is_some_and(|store| store.define) && !lane_defines_hit(vm, this, stores, &argument) {
+        return false;
+    }
     for store in stores {
         let Some(value) = initializer_store_value(vm, store, &argument) else {
             return false;
         };
-        if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
+        // A define's entry needs no prototype proof (`Vm::proved_field_define_hit`).
+        let added = if store.define {
+            vm.proved_field_define_hit(this, store.atom, value, store.site)
+        } else {
+            vm.field_add_atom_eligible(store.atom) && vm.primary_field_add_hit(code, this, store.atom, value, store.site)
+        };
+        if !added {
             return false;
         }
         each(store, value);
+    }
+    true
+}
+
+/// Whether every store of `stores`, all defines, has a value and a cached define to `this`
+/// from the shape the previous one reaches (`Vm::proved_field_define_hit`).
+fn lane_defines_hit<H: Host>(vm: &Vm<H>, this: Value, stores: &[crate::bytecode::InitializerStore], argument: &impl Fn(u16) -> Value) -> bool {
+    let Some(record_id) = this.direct_object_index() else { return false };
+    let receiver = vm.heap.object_record_by_id(record_id);
+    if !receiver.admits_cached_add() || receiver.boxed_primitive().is_some() || receiver.stack_data().is_some() || receiver.has_error_data() {
+        return false;
+    }
+    let mut shape = receiver.exact_shape();
+    for store in stores {
+        let Some((_, cache)) = (store.define && !vm.method_caches_may_name(store.atom) && initializer_store_value(vm, store, argument).is_some())
+            .then(|| vm.field_add_entry(vm.field_cache_index(store.site), shape, store.atom)).flatten() else {
+            return false;
+        };
+        shape = cache.target_shape;
     }
     true
 }

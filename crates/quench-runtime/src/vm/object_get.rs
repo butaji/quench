@@ -982,7 +982,7 @@ impl<H: Host> Vm<H> {
     /// `None`, leaving the access to the general path, which throws or calls it.
     pub(super) fn private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom) -> Option<Value> {
         let home = self.private_name_home(p, atom)?;
-        self.object_data(target)?.private_field(PrivateBrand { home, name: atom })
+        self.brand_field_value(target, PrivateBrand { home, name: atom })
     }
 
     /// The private brand of `atom` that function `function` of the running program, whose
@@ -1060,7 +1060,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<Value> {
         let brand = self.memoized_private_brand(p, environment, function, atom)?;
-        self.object_data(target)?.private_field(brand)
+        self.brand_field_value(target, brand)
     }
 
     /// The store of private field `atom` of `target` under the running frame's home for the
@@ -1068,7 +1068,7 @@ impl<H: Host> Vm<H> {
     /// accessor, which the general path throws for or calls.
     pub(super) fn set_private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom, value: Value) -> bool {
         let Some(home) = self.private_name_home(p, atom) else { return false; };
-        self.object_data_mut(target).is_some_and(|object| object.set_private_field(PrivateBrand { home, name: atom }, value))
+        self.set_brand_field(target, PrivateBrand { home, name: atom }, value)
     }
 
     /// Whether `object` may gain a private element: always, unless the host applies
@@ -1078,6 +1078,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
+        if let Some(added) = self.private_field_add(p, target, home, atom, value) {
+            return added;
+        }
         let Some(addable) = self.object_data(target).map(|object| self.private_element_addable(object)) else {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
         };
@@ -1176,8 +1179,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<Value> {
         let home = self.private_name_home(p, atom)?;
-        self.object_data(target)
-            .is_some_and(|object| object.has_private_name(PrivateBrand { home, name: atom }))
+        self.carries_brand(target, PrivateBrand { home, name: atom })
             .then_some(home)
     }
 
@@ -1273,12 +1275,7 @@ impl<H: Host> Vm<H> {
             environment = *parent;
         }
         let home = homes.into_iter().map(|(_, home)| home).find(|home| {
-            self.object_data(*home).is_some_and(|object| {
-                object.has_private_name(PrivateBrand {
-                    home: *home,
-                    name: atom,
-                })
-            })
+            self.carries_brand(*home, PrivateBrand { home: *home, name: atom })
         })?;
         // Eval-introduced private bindings live only in environments made for that eval, so
         // a cached chain never gains a nearer one.

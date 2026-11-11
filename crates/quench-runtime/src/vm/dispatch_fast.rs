@@ -6847,7 +6847,7 @@ fn lane_set_field<H: Host>(
     // inline, the add out of line.
     let private = vm.is_private_name(i.imm());
     let stored = if private {
-        lane_private_field_store(cx, ip, code, object, i.imm(), r.get(i.a))
+        lane_private_field_store(cx, ip, code, object, i.imm(), r.get(i.a), i.c)
     } else {
         vm.cached_field_write_hit(code, object, i.imm(), r.get(i.a), i.c)
     };
@@ -6951,11 +6951,19 @@ fn lane_private_field_store<H: Host>(
     object: Value,
     atom: crate::bytecode::Atom,
     value: Value,
+    site: u16,
 ) -> bool {
+    let machine = unsafe { vm(cx) };
+    // A field of a name one home declared is a shape slot of the name's own atom
+    // (`Vm::private_field_write`), which the site's own entry answers.
+    if machine.private_homes.fields.single(atom) {
+        return machine.cached_field_store_hit(code, object, atom, value, site)
+            || machine.private_field_write(code, object, atom, value, Some(site));
+    }
     let Some(brand) = lane_private_brand(cx, ip, code, atom) else {
         return false;
     };
-    (unsafe { vm(cx) }).object_data_mut(object).is_some_and(|data| data.set_private_field(brand, value))
+    (unsafe { vm(cx) }).set_brand_field(object, brand, value)
 }
 
 /// Leave the lane at `ip` after its instruction failed with `error` before any effect: a frame
@@ -6988,7 +6996,7 @@ script_handler! {
         }
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        if let Err(error) = vm.define_field_cached(code, object, i.imm(), r.get(i.a), i.c) {
+        if let Err(error) = vm.define_field(code, object, i.imm(), r.get(i.a), i.c) {
             return lane_raise(cx, ip, error);
         }
         // Adding a property can allocate.
@@ -7010,6 +7018,15 @@ script_handler! {
         }
         // Adding a private element can allocate.
         note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `DeclarePrivateName` (`Vm::declare_private_field`) of the home in `b`.
+    #[inline(never)]
+    fn lane_declare_private_name<>(cx, r, ip, i, view) {
+        (unsafe { vm(cx) }).declare_private_field(r.get(i.b), i.imm());
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -7078,8 +7095,10 @@ script_handler! {
     fn lane_check_private<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let present = lane_private_brand(cx, ip, code, i.imm()).is_some_and(|brand| {
-            (unsafe { vm(cx) }).object_data(r.get(i.a)).is_some_and(|data| data.private_field(brand).is_some())
+        let single = unsafe { vm(cx) }.private_homes.fields.single(i.imm());
+        let present = (single && unsafe { vm(cx) }.private_field_at(r.get(i.a), i.imm()).is_some())
+            || lane_private_brand(cx, ip, code, i.imm()).is_some_and(|brand| {
+            (unsafe { vm(cx) }).brand_field_value(r.get(i.a), brand).is_some()
         });
         if !present {
             sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
@@ -7113,7 +7132,7 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let carries = lane_private_brand(cx, ip, code, i.imm()).and_then(|brand| {
-            (unsafe { vm(cx) }).object_data(r.get(i.b)).map(|data| data.has_private_name(brand))
+            { let vm = unsafe { vm(cx) }; vm.object_data(r.get(i.b)).map(|_| vm.carries_brand(r.get(i.b), brand)) }
         });
         let Some(carries) = carries else {
             sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
@@ -7133,12 +7152,25 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let read = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }.and_then(|object| {
+            let machine = unsafe { vm(cx) };
+            // A field of a name one home declared is a shape slot of the name's own atom,
+            // which the site's own entry answers, or the read records it.
+            if machine.private_homes.fields.single(i.imm()) {
+                if machine.specialized_operations_enabled(code)
+                    && let Some(value) = machine.primary_own_field_hit(code, object, i.c)
+                {
+                    return Some(PrivateRead::Value(value));
+                }
+                if let Some(value) = machine.private_field_read(code, object, i.imm(), Some(i.c)) {
+                    return Some(PrivateRead::Value(value));
+                }
+            }
             let brand = lane_private_brand(cx, ip, code, i.imm())?;
-            let data = (unsafe { vm(cx) }).object_data(object)?;
-            match data.private_field(brand) {
+            let machine = unsafe { vm(cx) };
+            match machine.brand_field_value(object, brand) {
                 Some(value) => Some(PrivateRead::Value(value)),
                 // A method or accessor of a brand the object carries (`Vm::site_private_element`).
-                None if data.has_private_name(brand) => {
+                None if machine.carries_brand(object, brand) => {
                     match (unsafe { vm(cx) }).site_private_element(ip.addr(), brand, object)? {
                         super::private_site_home::PrivateElement::Method(value) => Some(PrivateRead::Value(value)),
                         super::private_site_home::PrivateElement::Getter(getter) => Some(PrivateRead::Getter(object, getter)),
@@ -11458,7 +11490,7 @@ impl<H: Host> Vm<H> {
                 constructs,
                 initializes: constructs && body.only_initializes_this_fields(&code.constants),
                 leaf: (entry == CallEntry::Activates)
-                    .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
+                    .then(|| leaf_body(body, code, |atom| self.private_special(atom)))
                     .flatten()
                     // The claim is a fact of the body (`js_tier_may_claim`): it holds for the view.
                     .filter(|_| !tier_may_claim)
@@ -17937,6 +17969,7 @@ const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::DefinePrivateField => Some(lane_define_private_field::<H>),
         Class::MarkPrivateName => Some(lane_mark_private_name::<H>),
+        Class::DeclarePrivateName => Some(lane_declare_private_name::<H>),
         Class::CheckPrivate => Some(lane_check_private::<H>),
         Class::PrivateIn => Some(lane_private_in::<H>),
         _ => None,

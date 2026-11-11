@@ -355,7 +355,7 @@ fn construction_is_private(function: &Function) -> bool {
 /// whose initializers resolve the class scope through its environment by name.
 fn initializes_instance_elements(function: &Function) -> bool {
     function.instructions().any(|instruction| matches!(instruction.op(),
-        Op::DefineField | Op::DefinePrivateField | Op::DefineComputedField | Op::MarkPrivateName))
+        Op::DefineField | Op::DefinePrivateField | Op::DefineComputedField | Op::MarkPrivateName | Op::DeclarePrivateName))
 }
 
 fn has_closure(function: &Function) -> bool {

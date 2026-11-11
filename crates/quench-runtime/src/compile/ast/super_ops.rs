@@ -1,6 +1,22 @@
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
+    /// Stores the class's instance home, its `prototype`, then declares each private field
+    /// name under its home, the class for a static field, before any code of the class can
+    /// name it (`Vm::declare_private_field`).
+    pub(in crate::compile) fn store_class_home(&mut self, class: &Class<'_>, home_atom: Atom, class_value: Register, prototype: Register) {
+        self.store_atom(home_atom, prototype);
+        for element in &class.body.body {
+            if let ClassElement::PropertyDefinition(field) = element
+                && let PropertyKey::PrivateIdentifier(identifier) = &field.key
+            {
+                let atom = self.owner.private_name_atom(identifier.span);
+                let home = if field.r#static { class_value } else { prototype };
+                self.emit(Op::DeclarePrivateName, 0, home, 0, atom);
+            }
+        }
+    }
+
     pub(super) fn super_get(
         &mut self,
         base: Register,

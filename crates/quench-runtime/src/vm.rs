@@ -188,6 +188,7 @@ mod shape_memo;
 mod symbol_write_proof;
 mod symbol_load_proof;
 mod private_site_home;
+mod private_keys;
 mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
@@ -2229,9 +2230,8 @@ pub(crate) struct Vm<H> {
     /// The JavaScript wrapper of each exported Wasm closure, so every export of one
     /// function is one object. Weak: a wrapper nothing holds is made again on demand.
     wasm_exported_functions: FxHashMap<Value, WeakHandle>,
-    /// Private-name home objects found by `private_name_home`, kept while their starting
-    /// environment is live.
-    private_homes: FxHashMap<PrivateHomeKey, Value>,
+    /// Private-name homes (`private_name_home`) and declared fields' keys (`private_keys`).
+    private_homes: private_keys::PrivateHomes,
     /// The collation `String.prototype.localeCompare` resolves without locales or options
     /// (`Vm::locale_compare_collation`); the host's default locale fixes it.
     default_collation: Option<std::rc::Rc<intl_collator::Collation>>,

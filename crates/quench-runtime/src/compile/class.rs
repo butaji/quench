@@ -336,7 +336,7 @@ impl FunctionCompiler<'_, '_> {
             prototype_atom,
         );
         self.define_class_method(prototype, class_value, None, Some("constructor"));
-        self.store_atom(constructor_home_atom, prototype);
+        self.store_class_home(class, constructor_home_atom, class_value, prototype);
 
         // Static methods/accessors exist before static fields execute. Data
         // fields acquire their brand only when their initializer completes;
@@ -759,15 +759,9 @@ impl FunctionCompiler<'_, '_> {
         }
         let this = self.reg();
         self.emit(Op::LoadThis, this, 0, 0, 0);
-        let private_field = |field: &ClassField<'_>| {
-            matches!(
-                field,
-                ClassField::Property(field)
-                    if matches!(&field.key, PropertyKey::PrivateIdentifier(_))
-            )
-        };
-        // Only private elements read the private home object.
-        let home = if private_methods.is_empty() && !fields.iter().any(private_field) {
+        // Only private methods read the private home object; a private field's define names
+        // its home through the frame, as its reads do.
+        let home = if private_methods.is_empty() {
             0
         } else {
             let home_atom = self
@@ -827,7 +821,8 @@ impl FunctionCompiler<'_, '_> {
             );
             if private {
                 let field_atom = name.unwrap();
-                self.emit(Op::DefinePrivateField, value, this, home, field_atom);
+                let cache = self.owner.cache_site();
+                self.emit(Op::DefineField, value, this, cache, field_atom);
             } else if let Some(key) = computed_key {
                 self.emit(Op::DefineComputedField, value, this, key, 0);
             } else if matches!(field, ClassField::AutoAccessor { .. }) {

@@ -924,6 +924,7 @@ opcodes!($;
     ToNumeric => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
     CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
     MarkPrivateName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Unused, Register, Register),
+    DeclarePrivateName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Unused, Register, Unused),
     DefinePrivateField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, Register),
     SetField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore, @ Register, @ fields(Register, Register, CacheSiteIndex),
     DefineComputedField => WRITE_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
@@ -2469,6 +2470,7 @@ impl Function {
         let mut fallbacks: SmallVec<[Option<f64>; 4]> = smallvec::smallvec![None; usize::from(self.params)];
         let mut stores = Vec::new();
         let mut temporaries = initializer_stores::Temporaries::default();
+        let mut class_fields = initializer_stores::ClassFields::default();
         let mut pc = 0;
         let store = |instruction: &WideInstruction| instruction.stores_to_this().then_some(());
         loop {
@@ -2504,27 +2506,20 @@ impl Function {
                     && set.register_a() == copy.result_register()
                     && fallbacks[usize::from(p)].is_none() =>
                 {
-                    stores.push(InitializerStore {
-                        atom: set.imm(),
-                        site: set.c(),
-                        value: InitializerValue::Parameter { parameter: p, fallback: Some(k) },
-                    });
+                    initializer_stores::push_store(&mut stores, InitializerStore::assigned(set, InitializerValue::Parameter { parameter: p, fallback: Some(k) }));
                     pc += 5;
                 }
                 set if store(set).is_some() && let Some(p) = parameter(set.register_a()) => {
-                    stores.push(InitializerStore {
-                        atom: set.imm(),
-                        site: set.c(),
-                        value: InitializerValue::Parameter { parameter: p, fallback: fallbacks[usize::from(p)] },
-                    });
+                    initializer_stores::push_store(&mut stores, InitializerStore::assigned(set, InitializerValue::Parameter { parameter: p, fallback: fallbacks[usize::from(p)] }));
                     pc += 1;
                 }
                 // `this.f = k` or `this.f = p op k` of a temporary (`Temporaries::value`).
                 set if store(set).is_some() && let Some(value) = temporaries.value(set.register_a()) => {
-                    stores.push(InitializerStore { atom: set.imm(), site: set.c(), value });
+                    initializer_stores::push_store(&mut stores, InitializerStore::assigned(set, value));
                     pc += 1;
                 }
-                written if temporaries.write(written, self.params, &fallbacks, constants) => pc += 1,
+                // A temporary, or `this` and a class field's define or store through it.
+                written if class_fields.step(written, self.params, &fallbacks, constants, &mut temporaries, &mut stores) => pc += 1,
                 _ => break,
             }
         }
@@ -2553,7 +2548,7 @@ impl Function {
         let all_read = fallbacks.iter().enumerate().all(|(p, fallback)| {
             fallback.is_none() || stores.iter().any(|stored: &InitializerStore| stored.parameter().map(usize::from) == Some(p))
         });
-        (completes && all_read && !stores.is_empty()).then(|| stores.into_boxed_slice())
+        (completes && all_read && initializer_stores::plannable(&stores)).then(|| stores.into_boxed_slice())
     }
 
     /// Whether the body reaches its `arguments` binding only by reading its length or an

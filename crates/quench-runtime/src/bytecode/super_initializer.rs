@@ -156,6 +156,6 @@ fn this_stores(temporaries: &mut Temporaries<'_>, records: &mut impl Iterator<It
         if !record.stores_to_this() {
             return (returns_undefined(temporaries, &record) && records.next().is_none()).then_some(stores);
         }
-        stores.push(InitializerStore { atom: record.imm(), site: record.c(), value: temporaries.value(record.register_a())? });
+        stores.push(InitializerStore { atom: record.imm(), site: record.c(), value: temporaries.value(record.register_a())?, define: false });
     }
 }

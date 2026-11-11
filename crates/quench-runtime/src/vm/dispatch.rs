@@ -931,7 +931,7 @@ impl<H: Host> Vm<H> {
                         }
                         // A private field reads straight from the object's private elements;
                         // methods, accessors and a missing brand take the ordinary [[Get]].
-                        match self.is_private_name(atom).then(|| self.private_field_value(p, base, atom)).flatten() {
+                        match self.is_private_name(atom).then(|| self.private_field_get(p, base, atom, cache_site)).flatten() {
                             Some(value) => value,
                             None => self.get_field_cached(p, base, atom, cache_site)?,
                         }
@@ -971,7 +971,9 @@ impl<H: Host> Vm<H> {
                 let object = self.read(f, i.register_a());
                 let atom = i.atom_index();
                 // A private field found under its home's brand proves the brand check.
-                if self.private_field_value(p, object, atom).is_some() {
+                if self.private_field_read(p, object, atom, None).is_some()
+                    || self.private_field_value(p, object, atom).is_some()
+                {
                     return Ok(StepResult::Continue);
                 }
                 self.check_private_brand(p, object, atom)?;
@@ -997,6 +999,9 @@ impl<H: Host> Vm<H> {
                     i.result_register(),
                     if result { Value::TRUE } else { Value::FALSE },
                 );
+            }
+            Op::DeclarePrivateName => {
+                self.declare_private_field(self.read(f, i.register_b()), i.atom_index());
             }
             Op::MarkPrivateName => {
                 self.mark_private_name(p, self.read(f, i.register_b()), self.read(f, i.register_c()), i.atom_index())?;
@@ -1257,7 +1262,7 @@ impl<H: Host> Vm<H> {
             Op::DefineField => {
                 let object = self.read(f, i.register_b());
                 let value = self.read(f, i.register_a());
-                self.define_field_cached(p, object, i.atom_index(), value, i.cache_site_index())?;
+                self.define_field(p, object, i.atom_index(), value, i.cache_site_index())?;
             }
             Op::DefineComputedField => {
                 let object = self.read(f, i.register_b());

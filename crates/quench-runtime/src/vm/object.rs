@@ -1360,6 +1360,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         self.prepare_named_function_info_lookup(object, atom);
         let probe = self.cached_field_hit(p, object, site);
+        if let Some(read) = self.private_miss_read(p, object, atom, site, &probe) { return read; }
         #[cfg(feature = "profile-lane-exits")]
         self.record_field_probe_path(
             site as usize,
@@ -4028,7 +4029,7 @@ impl<H: Host> Vm<H> {
             let key = self.atom_name(atom).to_owned();
             return Err(self.nullish_assignment_error(p, object, &key));
         }
-        if self.is_private_name(atom) && self.set_private_field_value(p, object, atom, value) {
+        if self.is_private_name(atom) && self.private_set_answered(p, object, atom, value, site)? {
             return Ok(());
         }
         if let Some((target, handler)) = self.proxy_parts(object) {
@@ -4189,7 +4190,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
+    pub(super) fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
         if !self.field_cache_records(site) {
             return;
         }
@@ -4229,7 +4230,7 @@ impl<H: Host> Vm<H> {
     /// The add entry of cache site index `site` for receivers of `shape` adding `atom`, with
     /// the index of the site's set.
     #[inline(always)]
-    fn field_add_entry(&self, site: usize, shape: u32, atom: Atom) -> Option<(usize, &FieldAddCache)> {
+    pub(super) fn field_add_entry(&self, site: usize, shape: u32, atom: Atom) -> Option<(usize, &FieldAddCache)> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors; every non-sentinel
         // index was installed together with its set.
         let set = unsafe { self.field_add_indices.get_unchecked(site) };
@@ -4255,7 +4256,7 @@ impl<H: Host> Vm<H> {
 
     /// Adds `atom` to `object` of `shape` at `slot` by a cached transition to `target_shape`.
     #[inline(always)]
-    fn apply_cached_field_add(
+    pub(super) fn apply_cached_field_add(
         &mut self,
         object: Value,
         atom: Atom,
@@ -4846,7 +4847,6 @@ fn keyed_add_index(shape: u32, atom: Atom) -> usize {
     hasher.write_u64(u64::from(shape) << u32::BITS | u64::from(atom));
     (hasher.finish() >> (u64::BITS - super::KEYED_ADD_INDEX_BITS)) as usize
 }
-
 
 /// Whether the prototype `holder` has the exact shape `shape` a field cache recorded for a
 /// holder. Caches never record a module namespace (`immediate_prototype_data_field`), whose

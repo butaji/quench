@@ -860,8 +860,7 @@ impl<H: Host> Vm<H> {
         // A home stays reachable through its environment; entries of swept environments go
         // before their slots can name new cells.
         let heap = &self.heap;
-        self.private_homes
-            .retain(|key, _| heap.is_live(key.environment));
+        self.private_homes.retain_live(|value| heap.is_live(value));
         self.private_site_homes.prune_dead(|value| heap.is_live(value));
         if full && self.programs.has_unchecked_reclaimable() {
             self.reclaim_unreferenced_programs();
