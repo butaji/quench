@@ -14,10 +14,11 @@ impl Lowering<'_, '_> {
     /// stack takes `helper`. The caller wrote back its registers.
     pub(super) fn direct_call(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
         let (base, payload, result) = (self.registers_base, self.payload, self.result);
-        let (admitted, this) = self.direct_receiver(instruction, callee);
+        let (mut admitted, this) = self.direct_receiver(instruction, callee);
         let cell = self.word_const(callee.cell as i64);
         let (top, next, shadow, [fits, room]) = self.direct_room(callee, cell);
-        self.direct_admit(&[admitted, fits, room], helper);
+        admitted.extend([fits, room]);
+        self.direct_admit(&admitted, helper);
         let status = self.direct_enter(instruction, callee, cell, (this, top, next, shadow));
         let returned = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_RETURNED));
         let (back, check, left, missed) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block(), self.builder.create_block());

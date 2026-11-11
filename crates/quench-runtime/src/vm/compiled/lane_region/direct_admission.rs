@@ -5,22 +5,22 @@ use super::*;
 use super::super::entry_cell::EntryCell;
 
 impl Lowering<'_, '_> {
-    /// Whether the callee and receiver the call names are the descriptor's, and the `this`
+    /// What admits the callee and receiver the call names (the descriptor's), and the `this`
     /// it binds. A sloppy callee binds an object receiver itself and an `undefined` or `null`
     /// one to the global object (`lane_receiver_this`); any other receiver takes the helper.
-    pub(super) fn direct_receiver(&mut self, instruction: WideInstruction, callee: &DirectCallee) -> (ir::Value, ir::Value) {
+    pub(super) fn direct_receiver(&mut self, instruction: WideInstruction, callee: &DirectCallee) -> (Vec<ir::Value>, ir::Value) {
         let base = self.registers_base;
         let callee_bits = self.word_load(base, register_offset(instruction.register_b()));
         let same = self.word_cmp_imm(IntCC::Equal, callee_bits, callee.callee.to_bits() as i64);
         let this = self.word_load(base, register_offset(instruction.register_c()));
-        let Some(global) = callee.sloppy else { return (same, this) };
+        let Some(global) = callee.sloppy else { return (vec![same], this) };
         let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), this);
         let undefined = self.word_cmp_imm(IntCC::Equal, this, Value::UNDEFINED.to_bits() as i64);
         let null = self.word_cmp_imm(IntCC::Equal, this, Value::NULL.to_bits() as i64);
         let nullish = self.word_or(undefined, null);
         let bound = self.word_or(object, nullish);
         let global = self.word_const(global.to_bits() as i64);
-        (self.word_and(same, bound), self.word_select(object, this, global))
+        (vec![same, bound], self.word_select(object, this, global))
     }
 
     /// The lane stack's top and the callee window's end, the shadow stack's top, and whether
