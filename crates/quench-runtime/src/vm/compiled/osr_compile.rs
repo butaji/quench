@@ -249,6 +249,9 @@ fn observed_reads(unit: &lane_unit::Unit, observation: &Observation<'_>, generic
         .filter_map(|(pc, instruction)| {
             let register = instruction.operand_b().register_index()?;
             let ty = observation.number_arrays.iter().find(|(array, _)| *array == register)?.1;
+            // An inlined callee's reads are Numbers whatever the entry showed: its registers
+            // hold nothing at entry that the sample could have seen.
+            let ty = if unit.frames.is_empty() { ty } else { crate::typed_ir::Type::NUMBER };
             Some(super::facts::ObservedRead { pc, ty })
         }).collect()
 }
