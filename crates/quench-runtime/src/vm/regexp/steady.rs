@@ -368,9 +368,21 @@ impl<H: Host> Vm<H> {
                 None => return false,
             },
         };
-        self.object_data(intrinsics.prototype)
-            .and_then(|data| self.heap.property_get(data, proof.exec_slot))
-            .is_some_and(|exec| self.is_native_function(exec, Native::RegExpExec))
+        let Some(data) = self.object_data(intrinsics.prototype) else {
+            return false;
+        };
+        let exec = if proof.exec_slot < crate::value_vec::INLINE_PROPERTY_COUNT { data.inline_property(proof.exec_slot) } else { None };
+        let Some(exec) = exec.or_else(|| self.heap.property_get(data, proof.exec_slot)) else {
+            return false;
+        };
+        if intrinsics.builtin_exec.get() == Some(exec) {
+            return true;
+        }
+        let builtin = self.is_native_function(exec, Native::RegExpExec);
+        if builtin {
+            intrinsics.builtin_exec.set(Some(exec));
+        }
+        builtin
     }
 
     /// What a steady call (`steady_regexp_call`) of the RegExp `receiver` over the string
