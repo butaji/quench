@@ -3,6 +3,7 @@
 
 use super::*;
 use super::super::entry_cell::EntryCell;
+use super::super::super::dispatch_fast::LaneRecoverySpace;
 
 impl Lowering<'_, '_> {
     /// What admits the callee and receiver the call names (the descriptor's), and the `this`
@@ -25,8 +26,8 @@ impl Lowering<'_, '_> {
 
     /// The lane stack's top and the callee window's end, the shadow stack's top, and whether
     /// both stacks hold the window and the space the callee's published body needs to
-    /// recover (`EntryCell::values`, `activations`), each as its own condition so each is one
-    /// compare and branch (`direct_admit`).
+    /// recover (`EntryCell::recovery`), each as its own condition so each is one compare and
+    /// branch (`direct_admit`).
     pub(super) fn direct_room(&mut self, callee: &DirectCallee, cell: ir::Value) -> (ir::Value, ir::Value, ir::Value, [ir::Value; 2]) {
         let word = std::mem::size_of::<Value>() as i64;
         let payload = self.payload;
@@ -34,14 +35,16 @@ impl Lowering<'_, '_> {
         let top = load(self, payload, std::mem::offset_of!(JsStepDispatch, native_top));
         let end = load(self, payload, std::mem::offset_of!(JsStepDispatch, native_end));
         let next = self.word_add_imm(top, i64::from(callee.registers) * word);
-        let values = load(self, cell, std::mem::offset_of!(EntryCell, values));
+        let recovery = load(self, cell, std::mem::offset_of!(EntryCell, recovery));
+        let values = load(self, recovery, std::mem::offset_of!(LaneRecoverySpace, values));
         let bytes = self.word_mul_imm(values, word);
         let reserved = self.word_add(next, bytes);
         let fits = self.word_cmp(IntCC::UnsignedLessThanOrEqual, reserved, end);
         let shadow = load(self, payload, std::mem::offset_of!(JsStepDispatch, shadow_top));
         let shadow_end = load(self, payload, std::mem::offset_of!(JsStepDispatch, shadow_end));
-        let activations = load(self, cell, std::mem::offset_of!(EntryCell, activations));
-        let frame_bytes = self.word_mul_imm(activations, std::mem::size_of::<ShadowFrame>() as i64);
+        let activations = load(self, recovery, std::mem::offset_of!(LaneRecoverySpace, activations));
+        let frames = self.word_add_imm(activations, 1);
+        let frame_bytes = self.word_mul_imm(frames, std::mem::size_of::<ShadowFrame>() as i64);
         let recovered = self.word_add(shadow, frame_bytes);
         let room = self.word_cmp(IntCC::UnsignedLessThanOrEqual, recovered, shadow_end);
         (top, next, shadow, [fits, room])
