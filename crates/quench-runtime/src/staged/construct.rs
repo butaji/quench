@@ -29,23 +29,17 @@ pub(crate) fn construct_result<S: Stage>(stage: &mut S, value: S::Word, receiver
     // after one tag test, a direct object after two, and only another heap reference reaches the rest.
     let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
     let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
-    let result = stage.choose(heap, |stage| {
+    stage.choose_leaving(heap, |stage| {
         let object = is_direct_object(stage, value);
-        stage.choose(object, |_| value, |stage| {
+        stage.choose_leaving(object, |_| Some(value), |stage| {
             let array = is_direct_array(stage, value);
             let function = is_direct_function(stage, value);
             let record = stage.any(array, function);
-            let undecided = stage.constant(UNDECIDED);
-            stage.select(record, value, undecided)
+            stage.guard(record, miss)?;
+            Some(value)
         })
-    }, receiver);
-    let decided = stage.ne_imm(result, UNDECIDED);
-    stage.guard(decided, miss)?;
-    Some(result)
+    }, |stage| Some(receiver(stage)))
 }
-
-/// The word no value has: a heap reference whose cell decides.
-const UNDECIDED: u64 = u64::MAX;
 
 /// The value of `new C(...)`: allocates the receiver with `allocate`, runs the initializer with
 /// `initialize(receiver)`, and yields the receiver unless the initializer returned an object
