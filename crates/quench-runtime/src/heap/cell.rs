@@ -1987,7 +1987,7 @@ impl Object {
     }
 
     /// Construction before publication has no shape dependents.
-    fn initialize_properties(&mut self, properties: ValueVec) {
+    #[inline(always)] fn initialize_properties(&mut self, properties: ValueVec) {
         let (start, auxiliary) = properties.into_parts();
         // Exotic access is a fact of the object, not of the storage that replaces its own.
         self.auxiliary = auxiliary | (self.auxiliary & crate::value_vec::EXOTIC_ACCESS);
