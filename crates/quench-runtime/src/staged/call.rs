@@ -14,7 +14,7 @@
 use super::Stage;
 
 /// Words in one call record.
-pub(crate) const RECORD_WORDS: u64 = 8;
+pub(crate) const RECORD_WORDS: u64 = 9;
 /// Bytes in one call record.
 pub(crate) const RECORD_BYTES: u64 = RECORD_WORDS * WORD_BYTES;
 const WORD_BYTES: u64 = std::mem::size_of::<u64>() as u64;
@@ -27,6 +27,7 @@ const ENV_AT: i32 = THIS_AT + WORD_BYTES as i32;
 const CAPTURE_AT: i32 = ENV_AT + WORD_BYTES as i32;
 const CALLEE_AT: i32 = CAPTURE_AT + WORD_BYTES as i32;
 const META_AT: i32 = CALLEE_AT + WORD_BYTES as i32;
+const WINDOW_AT: i32 = META_AT + WORD_BYTES as i32;
 
 /// The meta word: the callee's function id in the low half, then the completion kind byte,
 /// then the flag byte whose top bit is `WIDE_FLAG`.
@@ -34,7 +35,12 @@ pub(crate) const COMPLETION_SHIFT: u32 = 32;
 pub(crate) const FLAGS_SHIFT: u32 = 40;
 pub(crate) const WIDE_FLAG: u64 = 1 << (FLAGS_SHIFT + 7);
 
-/// One call's saved words.
+/// One call's saved words. Stored or derived, per word (thread 9's measurement, 374.3 vs 381.6
+/// Ir on the mid-calls-leaf micro; deriving base, registers or the closure at return costs ~4
+/// loads each, more than the store saves): `site`, `base`, `registers`, `this`, `env`, `capture`,
+/// `callee`, `meta` and `window` are stored by the interpreter. A native projection writes only
+/// `site`, `this`, `env` at an exit and derives the rest from the function records, so it
+/// calls `push_record` with the derived words materialized.
 #[derive(Clone, Copy)]
 pub(crate) struct Record<W> {
     pub(crate) site: W,
@@ -45,6 +51,7 @@ pub(crate) struct Record<W> {
     pub(crate) capture: W,
     pub(crate) callee: W,
     pub(crate) meta: W,
+    pub(crate) window: W,
 }
 
 /// The call site, `(function, pc)` packed in one word: the function in the high half.
@@ -120,6 +127,7 @@ pub(crate) fn push_record<S: Stage>(stage: &mut S, top: S::Word, record: Record<
     stage.store_u64(top, CAPTURE_AT, record.capture);
     stage.store_u64(top, CALLEE_AT, record.callee);
     stage.store_u64(top, META_AT, record.meta);
+    stage.store_u64(top, WINDOW_AT, record.window);
     stage.add_imm(top, RECORD_BYTES)
 }
 
@@ -136,6 +144,7 @@ pub(crate) fn load_record<S: Stage>(stage: &mut S, at: S::Word) -> Record<S::Wor
         capture: stage.load_u64(at, CAPTURE_AT),
         callee: stage.load_u64(at, CALLEE_AT),
         meta: stage.load_u64(at, META_AT),
+        window: stage.load_u64(at, WINDOW_AT),
     }
 }
 
@@ -146,6 +155,57 @@ pub(crate) fn pop_record<S: Stage>(stage: &mut S, top: S::Word) -> (S::Word, Rec
     (below, load_record(stage, below))
 }
 
+/// The entry cell a call validates against (provisional offsets until thread 13 fixes the cell;
+/// one cache line): the validity word (generation and program, never-matching once retired)
+/// and the facts word (registers, room, params, entry kind), each one 64-bit load.
+pub(crate) struct CellLayout {
+    pub(crate) validity_offset: i32,
+    pub(crate) facts_offset: i32,
+}
+pub(crate) const CELL: CellLayout = CellLayout { validity_offset: 0, facts_offset: 8 };
+/// The facts word: registers, room and params in 16-bit fields from the low end, then the entry
+/// kind byte (`ENTRY_ACTIVATES` for a plain activation).
+const FACT_BITS: u32 = u16::BITS;
+const ROOM_SHIFT: u32 = FACT_BITS;
+const PARAMS_SHIFT: u32 = 2 * FACT_BITS;
+const ENTRY_SHIFT: u32 = 3 * FACT_BITS;
+pub(crate) const ENTRY_ACTIVATES: u64 = 0;
+
+/// What an admitted call reads from its cell: the facts word's fields.
+#[derive(Clone, Copy)]
+pub(crate) struct Admitted<W> {
+    pub(crate) registers: W,
+    pub(crate) room: W,
+}
+
+/// Admits a plain call through the cell at `cell`: leaving at `miss` unless its validity word is
+/// `expected` (one compare), its entry is a plain activation, `argc` fits its params and `room`
+/// (the lane stack's free words) holds its window. One load of each cell word.
+#[inline(always)]
+pub(crate) fn admit_call<S: Stage>(stage: &mut S, cell: S::Word, expected: S::Word, argc: S::Word, free: S::Word,
+    miss: S::Miss) -> Option<Admitted<S::Word>> {
+    let validity = stage.load_u64(cell, CELL.validity_offset);
+    let difference = stage.sub(validity, expected);
+    let valid = stage.eq_imm(difference, 0u32);
+    stage.guard(valid, miss)?;
+    let facts = stage.load_u64(cell, CELL.facts_offset);
+    let kind = stage.shr_imm(facts, ENTRY_SHIFT);
+    let plain = stage.eq_imm(kind, ENTRY_ACTIVATES);
+    stage.guard(plain, miss)?;
+    let params = stage.shr_imm(facts, PARAMS_SHIFT);
+    let params = stage.and_imm(params, u64::from(u16::MAX));
+    let over = stage.ult(params, argc);
+    let fits = stage.not(over);
+    stage.guard(fits, miss)?;
+    let room = stage.shr_imm(facts, ROOM_SHIFT);
+    let room = stage.and_imm(room, u64::from(u16::MAX));
+    let short = stage.ult(free, room);
+    let roomy = stage.not(short);
+    stage.guard(roomy, miss)?;
+    let registers = stage.and_imm(facts, u64::from(u16::MAX));
+    Some(Admitted { registers, room })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,12 +213,12 @@ mod tests {
 
     fn record<W: Copy + From<u8>>(seed: u8, site: W) -> Record<W> {
         let word = |offset: u8| W::from(seed + offset);
-        Record { site, base: word(1), registers: word(2), this: word(3), env: word(4), capture: word(5), callee: word(6), meta: word(7) }
+        Record { site, base: word(1), registers: word(2), this: word(3), env: word(4), capture: word(5), callee: word(6), meta: word(7), window: word(8) }
     }
 
     #[test]
     fn a_record_round_trips_through_push_and_pop() {
-        let mut stack = [0_u64; 16];
+        let mut stack = [0_u64; 18];
         let base = stack.as_mut_ptr() as u64;
         let mut stage = Concrete::new(std::ptr::null());
         let (first, second) = (CallSite { function: 7, pc: 12 }, CallSite { function: u32::MAX, pc: 3 });
@@ -193,5 +253,31 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(popped, 0);
         assert_eq!((holes, other), (vec![1 << 32 | 2], vec![9 << 32 | 8]));
+    }
+
+    fn cell(validity: u64, registers: u64, room: u64, params: u64, entry: u64) -> [u64; 2] {
+        [validity, registers | room << ROOM_SHIFT | params << PARAMS_SHIFT | entry << ENTRY_SHIFT]
+    }
+
+    #[test]
+    fn a_call_is_admitted_by_one_validity_compare_and_the_cell_facts() {
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut admit = |cell: [u64; 2], expected: u64, argc: u64, free: u64| {
+            admit_call(&mut stage, cell.as_ptr() as u64, expected, argc, free, ()).map(|a| (a.registers, a.room))
+        };
+        assert_eq!(admit(cell(7, 5, 8, 2, 0), 7, 2, 100), Some((5, 8)));
+        assert_eq!(admit(cell(7, 5, 8, 2, 0), 9, 2, 100), None, "retired or another program");
+        assert_eq!(admit(cell(7, 5, 8, 2, 1), 7, 2, 100), None, "not a plain activation");
+        assert_eq!(admit(cell(7, 5, 8, 2, 0), 7, 3, 100), None, "more arguments than params");
+        assert_eq!(admit(cell(7, 5, 8, 2, 0), 7, 2, 7), None, "no room");
+    }
+
+    /// The admission has no per-site hole: the cell and the expected word are the caller's.
+    #[test]
+    fn the_admission_has_no_per_site_hole() {
+        let mut trace = crate::staged::trace::Trace::default();
+        let words = [trace.constant(0), trace.constant(1), trace.constant(2), trace.constant(3)];
+        admit_call(&mut trace, words[0], words[1], words[2], words[3], ());
+        assert!(trace.holes.is_empty());
     }
 }
