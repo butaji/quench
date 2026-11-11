@@ -34,10 +34,10 @@ mod emit_tests;
 // Instructions (top level): definition
 
 pub use crate::isa::aarch64::lower::isle::generated_code::{
-    ALUOp, ALUOp3, AMode, APIKey, AtomicRMWLoopOp, AtomicRMWOp, BitOp, BranchTargetType, FPUOp1,
-    FPUOp2, FPUOp3, FpuRoundMode, FpuToIntOp, IntToFpuOp, MInst as Inst, MoveWideOp, VecALUModOp,
-    VecALUOp, VecExtendOp, VecLanesOp, VecMisc2, VecPairOp, VecRRLongOp, VecRRNarrowOp,
-    VecRRPairLongOp, VecRRRLongModOp, VecRRRLongOp, VecShiftImmModOp, VecShiftImmOp,
+    ALUOp, ALUOp3, AMode, APIKey, AtomicRMWLoopOp, AtomicRMWOp, BfmOp, BitOp, BranchTargetType,
+    FPUOp1, FPUOp2, FPUOp3, FpuRoundMode, FpuToIntOp, IntToFpuOp, MInst as Inst, MoveWideOp,
+    VecALUModOp, VecALUOp, VecExtendOp, VecLanesOp, VecMisc2, VecPairOp, VecRRLongOp,
+    VecRRNarrowOp, VecRRPairLongOp, VecRRRLongModOp, VecRRRLongOp, VecShiftImmModOp, VecShiftImmOp,
 };
 
 /// A floating-point unit (FPU) operation with two args, a register and an immediate.
@@ -58,6 +58,16 @@ pub enum FPUOpRIMod {
     Sli32(FPULeftShiftImm),
     /// Shift left and insert. Rd |= Rn << #imm
     Sli64(FPULeftShiftImm),
+}
+
+impl BfmOp {
+    /// Get the assembly mnemonic for this opcode.
+    pub fn op_str(&self) -> &'static str {
+        match self {
+            BfmOp::UBfm => "ubfm",
+            BfmOp::SBfm => "sbfm",
+        }
+    }
 }
 
 impl BitOp {
@@ -488,6 +498,27 @@ fn aarch64_get_operands(inst: &mut Inst, collector: &mut impl OperandVisitor) {
             collector.reg_use(rt);
             collector.reg_use(rn);
         }
+        Inst::AtomicCAS128 { args } => {
+            let AtomicCAS128Args {
+                rd_lo,
+                rd_hi,
+                rs_lo,
+                rs_hi,
+                rt_lo,
+                rt_hi,
+                rn,
+                flags: _,
+            } = &mut **args;
+            // `casp` requires two consecutive even-aligned register pairs,
+            // which regalloc2 cannot express, so pin everything down.
+            collector.reg_fixed_use(rs_lo, xreg(24));
+            collector.reg_fixed_use(rs_hi, xreg(25));
+            collector.reg_fixed_def(rd_lo, xreg(24));
+            collector.reg_fixed_def(rd_hi, xreg(25));
+            collector.reg_fixed_use(rt_lo, xreg(26));
+            collector.reg_fixed_use(rt_hi, xreg(27));
+            collector.reg_fixed_use(rn, xreg(28));
+        }
         Inst::AtomicCASLoop {
             addr,
             expected,
@@ -789,6 +820,17 @@ fn aarch64_get_operands(inst: &mut Inst, collector: &mut impl OperandVisitor) {
         }
         Inst::Extend { rd, rn, .. } => {
             collector.reg_def(rd);
+            collector.reg_use(rn);
+        }
+        Inst::BitfieldMove { rd, rn, .. } => {
+            // The UBFM and SBFM instructions overwrite all bits in `rd`,
+            // unlike BFM which is represented as `BitfieldMoveMod` instead.
+            collector.reg_def(rd);
+            collector.reg_use(rn);
+        }
+        Inst::BitfieldMoveMod { rd, ri, rn, .. } => {
+            collector.reg_reuse_def(rd, 1); // `rd` == `ri`.
+            collector.reg_use(ri);
             collector.reg_use(rn);
         }
         Inst::Args { args } => {
@@ -1116,16 +1158,10 @@ impl MachInst for Inst {
         vec![vec![0x1f, 0x20, 0x03, 0xd5]]
     }
 
-    fn rc_for_type(ty: Type) -> CodegenResult<(&'static [RegClass], &'static [Type])> {
-        match ty {
-            I8 => Ok((&[RegClass::Int], &[I8])),
-            I16 => Ok((&[RegClass::Int], &[I16])),
-            I32 => Ok((&[RegClass::Int], &[I32])),
-            I64 => Ok((&[RegClass::Int], &[I64])),
-            F16 => Ok((&[RegClass::Float], &[F16])),
-            F32 => Ok((&[RegClass::Float], &[F32])),
-            F64 => Ok((&[RegClass::Float], &[F64])),
-            F128 => Ok((&[RegClass::Float], &[F128])),
+    fn rc_for_type(ty: &Type) -> CodegenResult<(&[RegClass], &[Type])> {
+        match *ty {
+            I8 | I16 | I32 | I64 => Ok((&[RegClass::Int], slice::from_ref(ty))),
+            F16 | F32 | F64 | F128 => Ok((&[RegClass::Float], slice::from_ref(ty))),
             I128 => Ok((&[RegClass::Int, RegClass::Int], &[I64, I64])),
             _ if ty.is_vector() && ty.bits() <= 128 => {
                 let types = &[types::I8X2, types::I8X4, types::I8X8, types::I8X16];
@@ -1177,10 +1213,6 @@ impl MachInst for Inst {
         //
         // We pick a conservative bound that comfortably covers these.
         128
-    }
-
-    fn ref_type_regclass(_: &settings::Flags) -> RegClass {
-        RegClass::Int
     }
 
     fn gen_block_start(
@@ -1644,6 +1676,28 @@ impl Inst {
                 let rn = pretty_print_ireg(rn, OperandSize::Size64);
 
                 format!("{op} {rd}, {rs}, {rt}, [{rn}]")
+            }
+            Inst::AtomicCAS128 { args } => {
+                let &AtomicCAS128Args {
+                    rd_lo,
+                    rd_hi,
+                    rs_lo,
+                    rs_hi,
+                    rt_lo,
+                    rt_hi,
+                    rn,
+                    flags: _,
+                } = &**args;
+                let size = OperandSize::Size64;
+                let rd_lo = pretty_print_ireg(rd_lo.to_reg(), size);
+                let rd_hi = pretty_print_ireg(rd_hi.to_reg(), size);
+                let rs_lo = pretty_print_ireg(rs_lo, size);
+                let rs_hi = pretty_print_ireg(rs_hi, size);
+                let rt_lo = pretty_print_ireg(rt_lo, size);
+                let rt_hi = pretty_print_ireg(rt_hi, size);
+                let rn = pretty_print_ireg(rn, size);
+
+                format!("caspal {rd_lo}, {rd_hi}, {rs_lo}, {rs_hi}, {rt_lo}, {rt_hi}, [{rn}]")
             }
             &Inst::AtomicCASLoop {
                 ty,
@@ -2301,6 +2355,7 @@ impl Inst {
                     // Note: the real operand arrangement is .4s, .16b, .16b;
                     // this debug print renders all lanes as .4s.
                     VecALUModOp::Sdot => ("sdot", VectorSize::Size32x4),
+                    VecALUModOp::Usdot => ("usdot", VectorSize::Size32x4),
                 };
                 let rd = pretty_print_vreg_vector(rd.to_reg(), size);
                 let ri = pretty_print_vreg_vector(ri, size);
@@ -2610,6 +2665,36 @@ impl Inst {
                     format!("{op} {rd}, {rn}")
                 }
             }
+            &Inst::BitfieldMove {
+                size,
+                bfm_op,
+                rd,
+                rn,
+                immr,
+                imms,
+            } => {
+                let op = bfm_op.op_str();
+                let rd = pretty_print_ireg(rd.to_reg(), size);
+                let rn = pretty_print_ireg(rn, size);
+                let immr = immr.pretty_print(0);
+                let imms = imms.pretty_print(0);
+                format!("{op} {rd}, {rn}, {immr}, {imms}")
+            }
+            &Inst::BitfieldMoveMod {
+                size,
+                rd,
+                ri,
+                rn,
+                immr,
+                imms,
+            } => {
+                let rd = pretty_print_ireg(rd.to_reg(), size);
+                let ri = pretty_print_ireg(ri, size);
+                let rn = pretty_print_ireg(rn, size);
+                let immr = immr.pretty_print(0);
+                let imms = imms.pretty_print(0);
+                format!("bfm {rd}, {ri}, {rn}, {immr}, {imms}")
+            }
             &Inst::Call { ref info } => {
                 let try_call = info
                     .try_call_info
@@ -2772,29 +2857,17 @@ impl Inst {
                 let rtmp1 = pretty_print_reg(rtmp1.to_reg());
                 let rtmp2 = pretty_print_reg(rtmp2.to_reg());
                 let default_target = BranchTarget::Label(default).pretty_print(0);
+                let num_targets = targets.len();
                 format!(
-                    concat!(
-                        "b.hs {} ; ",
-                        "csel {}, xzr, {}, hs ; ",
-                        "csdb ; ",
-                        "adr {}, pc+16 ; ",
-                        "ldrsw {}, [{}, {}, uxtw #2] ; ",
-                        "add {}, {}, {} ; ",
-                        "br {} ; ",
-                        "jt_entries {:?}"
-                    ),
-                    default_target,
-                    rtmp2,
-                    ridx,
-                    rtmp1,
-                    rtmp2,
-                    rtmp1,
-                    rtmp2,
-                    rtmp1,
-                    rtmp1,
-                    rtmp2,
-                    rtmp1,
-                    targets
+                    "mov {rtmp2}, #{num_targets} ; \
+                     csel {rtmp2}, {ridx}, {rtmp2}, lo ; \
+                     csdb ; \
+                     adr {rtmp1}, pc+16 ; \
+                     ldrsw {rtmp2}, [{rtmp1}, {rtmp2}, uxtw #2] ; \
+                     add {rtmp1}, {rtmp1}, {rtmp2} ; \
+                     br {rtmp1} ; \
+                     jt_entries {targets:?} ; \
+                     default {default_target}"
                 )
             }
             &Inst::LoadExtNameGot { rd, ref name } => {
@@ -3003,8 +3076,8 @@ impl MachInstLabelUse for LabelUse {
     /// Perform the patch.
     fn patch(self, buffer: &mut [u8], use_offset: CodeOffset, label_offset: CodeOffset) {
         let pc_rel = (label_offset as i64) - (use_offset as i64);
-        debug_assert!(pc_rel <= self.max_pos_range() as i64);
-        debug_assert!(pc_rel >= -(self.max_neg_range() as i64));
+        assert!(pc_rel <= self.max_pos_range() as i64);
+        assert!(pc_rel >= -(self.max_neg_range() as i64));
         let pc_rel = pc_rel as u32;
         let insn_word = u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
         let mask = match self {
