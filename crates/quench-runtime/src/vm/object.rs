@@ -91,13 +91,11 @@ impl AtomClass {
     /// Engine-internal names, which begin with NUL and never name a source binding.
     pub(super) const INTERNAL: u8 = 1 << 7;
 
-    #[inline(always)]
-    pub(super) fn contains(self, bits: u8) -> bool {
+    #[inline(always)] pub(super) fn contains(self, bits: u8) -> bool {
         self.0 & bits == bits
     }
 
-    #[inline(always)]
-    pub(super) fn intersects(self, bits: u8) -> bool {
+    #[inline(always)] pub(super) fn intersects(self, bits: u8) -> bool {
         self.0 & bits != 0
     }
 }
@@ -1436,13 +1434,15 @@ impl<H: Host> Vm<H> {
         let Some(receiver) = self.heap.object(object) else {
             return probe;
         };
-        if let Some(record) = receiver.proto_link().object_record_id() {
-            let holder = self.heap.object_record_by_id(record);
-            if let Some(cache) = self.megamorphic_field_cache(self.field_cache_index(site), receiver.exact_shape(), holder.exact_shape()) {
-                // SAFETY: as `ordinary_holder_entry_value`: the entry was recorded for an
-                // immediate-prototype data property of these exact shapes.
-                return FieldCacheProbe::Hit(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) });
-            }
+        // The holder is an object record, as most prototypes are, or another cell, as
+        // `Array.prototype` of an array receiver (`ordinary_holder_entry_value`).
+        let holder = match receiver.proto_link().object_record_id() {
+            Some(record) => Some(self.heap.object_record_by_id(record)), None => self.heap.object(receiver.proto()),
+        };
+        if let Some(holder) = holder && let Some(cache) = self.megamorphic_field_cache(self.field_cache_index(site), receiver.exact_shape(), holder.exact_shape()) {
+            // SAFETY: as `ordinary_holder_entry_value`: the entry was recorded for an
+            // immediate-prototype data property of these exact shapes.
+            return FieldCacheProbe::Hit(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) });
         }
         probe
     }
