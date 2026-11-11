@@ -15789,7 +15789,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     };
     // SAFETY: the capacity check above leaves room for the activation.
     unsafe { stack.push_activation(activation) };
-    stack.forwarders.extend(skipped);
+    if let Some(skipped) = skipped { stack.forwarders.push(skipped); }
     // SAFETY: the program store keeps a derived view alive with its program.
     let base = unsafe { (*target.view).records() };
     unsafe {
