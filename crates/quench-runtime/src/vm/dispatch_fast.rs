@@ -14078,8 +14078,9 @@ fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl 
     {
         return None;
     }
-    let values = plan.values(vm, argument)?;
-    Some(vm.lane_stack.construct_plans[index].allocate(&mut vm.heap, |field| values[field]))
+    let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+    plan.fill_values(vm, &mut values, argument)?;
+    Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
 }
 
 /// Records in `callee`'s holding plan of no fields, whose forwarding resolved
