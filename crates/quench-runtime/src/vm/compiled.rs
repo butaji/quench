@@ -12563,7 +12563,7 @@ impl<H: Host> Vm<H> {
         id: ProgramId,
         function: u32,
     ) -> bool {
-        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm {
+        if !self.js_function_compiles() || program.kind == crate::bytecode::ProgramKind::Wasm {
             return false;
         }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
