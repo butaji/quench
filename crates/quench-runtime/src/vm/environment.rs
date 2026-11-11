@@ -1615,7 +1615,7 @@ impl<H: Host> Vm<H> {
 
     /// The initialized binding `slot` of `slots` holds, itself or through its owner.
     #[inline(always)]
-    fn slot_binding(&self, slots: &crate::heap::EnvironmentSlots, slot: u16) -> Option<Value> {
+    pub(super) fn slot_binding(&self, slots: &crate::heap::EnvironmentSlots, slot: u16) -> Option<Value> {
         let value = match slots.state(usize::from(slot))? {
             crate::heap::EnvironmentSlotState::Owned(value) => value,
             // A shared slot names its owner, which holds the slot itself.

@@ -5026,7 +5026,7 @@ script_handler! {
                         requicken::<H>(ip, lane_load_root_lexical::<H>);
                     }
                 }
-                None => {}
+                None => capture_binding::requicken_root_binding::<H>(ip, slot),
             }
         }
         #[cfg(feature = "profile-lane-exits")]
@@ -13134,7 +13134,7 @@ fn lane_native_value<H: Host>(
 mod named_keys;
 mod denoted;
 mod wasm_calls;
-mod capture_update_calls;
+mod capture_update_calls; mod capture_binding;
 use capture_update_calls::capture_update_call_handler;
 use wasm_calls::{known_call_handler, reference_call_handler};
 use denoted::{denoted_handler, unary_handler};
