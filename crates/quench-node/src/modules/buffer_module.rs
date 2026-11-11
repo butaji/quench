@@ -10,7 +10,7 @@ use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 
 /// `buffer.kMaxLength`: the largest typed array the engine makes.
-pub(crate) const MAX_LENGTH: f64 = 9_007_199_254_740_991.0;
+pub(crate) const MAX_LENGTH: f64 = quench_runtime::units::MAX_SAFE_INTEGER;
 /// `buffer.INSPECT_MAX_BYTES`.
 const INSPECT_MAX_BYTES: usize = 50;
 /// `Buffer.poolSize`.
@@ -140,15 +140,7 @@ fn to_integer(c: &mut Context<'_>, value: RootId, default: f64) -> Result<f64, R
 
 /// `adjustOffset(offset, length)`.
 fn adjust_offset(c: &mut Context<'_>, offset: RootId, length: usize) -> Result<usize, RootedError> {
-    let offset = c.to_number(offset)?.trunc();
-    let length = length as f64;
-    Ok(if offset == 0.0 || offset.is_nan() {
-        0.0
-    } else if offset < 0.0 {
-        (offset + length).max(0.0)
-    } else {
-        offset.min(length)
-    } as usize)
+    Ok(quench_runtime::units::relative_index(c.to_number(offset)?, length))
 }
 
 /// The canonical `Buffer` constructor and its prototype.

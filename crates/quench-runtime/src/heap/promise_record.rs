@@ -65,16 +65,29 @@ pub(crate) struct PromiseRecord {
     pub(crate) result: Value,
     pub(crate) reactions: PromiseReactions,
     pub(crate) rejection: PromiseRejectionState,
-    /// Set once the host is told of the rejection; identifiers start at one.
-    pub(crate) rejection_id: Option<std::num::NonZeroU64>,
     pub(crate) host_context: StoredHostContext,
     /// A module's async evaluation waits on this promise: settling it makes module
     /// advancement due (`PromiseRuntime::async_module_settled`).
     pub(crate) module_evaluation: bool,
 }
 
+/// Where a promise's rejection is in the host's reporting. From `AwaitingReport` on, the
+/// state carries the identifier the host knows the rejection by (they start at one), which
+/// is allocated as the rejection is queued for report, so no reported state lacks one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PromiseRejectionState {
+    Unobserved,
+    Observed,
+    AwaitingReport(std::num::NonZeroU64),
+    Reporting(std::num::NonZeroU64),
+    Reported(std::num::NonZeroU64),
+    HandledReported(std::num::NonZeroU64),
+    Handled(std::num::NonZeroU64),
+}
+
+/// `PromiseRejectionState` without its identifier, as the snapshot tags it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PromiseRejectionPhase {
     Unobserved,
     Observed,
     AwaitingReport,
@@ -82,6 +95,38 @@ pub(crate) enum PromiseRejectionState {
     Reported,
     HandledReported,
     Handled,
+}
+
+impl PromiseRejectionState {
+    /// The phase and the identifier it carries, for the snapshot.
+    pub(crate) fn parts(self) -> (PromiseRejectionPhase, Option<std::num::NonZeroU64>) {
+        use PromiseRejectionPhase as P;
+        match self {
+            Self::Unobserved => (P::Unobserved, None),
+            Self::Observed => (P::Observed, None),
+            Self::AwaitingReport(id) => (P::AwaitingReport, Some(id)),
+            Self::Reporting(id) => (P::Reporting, Some(id)),
+            Self::Reported(id) => (P::Reported, Some(id)),
+            Self::HandledReported(id) => (P::HandledReported, Some(id)),
+            Self::Handled(id) => (P::Handled, Some(id)),
+        }
+    }
+
+    /// The state of a phase and identifier, `None` for a reported phase without one. The
+    /// unreported phases ignore it.
+    pub(crate) fn from_parts(phase: PromiseRejectionPhase, id: Option<std::num::NonZeroU64>) -> Option<Self> {
+        use PromiseRejectionPhase as P;
+        Some(match (phase, id) {
+            (P::Unobserved, _) => Self::Unobserved,
+            (P::Observed, _) => Self::Observed,
+            (P::AwaitingReport, Some(id)) => Self::AwaitingReport(id),
+            (P::Reporting, Some(id)) => Self::Reporting(id),
+            (P::Reported, Some(id)) => Self::Reported(id),
+            (P::HandledReported, Some(id)) => Self::HandledReported(id),
+            (P::Handled, Some(id)) => Self::Handled(id),
+            _ => return None,
+        })
+    }
 }
 
 impl PromiseRecord {

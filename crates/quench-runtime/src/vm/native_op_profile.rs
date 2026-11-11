@@ -1,9 +1,9 @@
 //! Optional census of semantic-operation fallbacks reached from native images.
 
-use crate::bytecode::{Op, WideInstruction};
+use crate::bytecode::{OPCODE_COUNT, WideInstruction, opcode_name};
 use std::{collections::HashMap, sync::{Mutex, Once, atomic::{AtomicU64, Ordering}}};
 
-static COUNTS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
+static COUNTS: [AtomicU64; OPCODE_COUNT] = [const { AtomicU64::new(0) }; OPCODE_COUNT];
 static REPORT: Once = Once::new();
 pub(super) enum StoreStorage { Arena, Inline, OtherRecord, NonRecord }
 impl StoreStorage {
@@ -67,7 +67,7 @@ extern "C" fn report() {
         .collect();
     counts.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(*count));
     for (opcode, count) in counts {
-        eprintln!("QUENCH_NATIVE_OPERATION {} {count}", Op::NAMES[opcode]);
+        eprintln!("QUENCH_NATIVE_OPERATION {} {count}", opcode_name(opcode));
     }
     if let Some(sites) = SITES.lock().expect("native operation site census").take() {
         let mut reasons: HashMap<(usize, &'static str), u64> = HashMap::new();
@@ -77,12 +77,12 @@ extern "C" fn report() {
         let mut reasons: Vec<_> = reasons.into_iter().collect();
         reasons.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(*count));
         for ((opcode, reason), count) in reasons {
-            eprintln!("QUENCH_NATIVE_REASON {} {reason} {count}", Op::NAMES[opcode]);
+            eprintln!("QUENCH_NATIVE_REASON {} {reason} {count}", opcode_name(opcode));
         }
         let mut sites: Vec<_> = sites.into_iter().collect();
         sites.sort_unstable_by_key(|(_, (count, _))| std::cmp::Reverse(*count));
         for ((program, function, pc, opcode, reason), (count, label)) in sites.into_iter().take(REPORTED_SITES) {
-            eprintln!("QUENCH_NATIVE_SITE {program} {function} {pc} {} {count} {reason} {label}", Op::NAMES[opcode]);
+            eprintln!("QUENCH_NATIVE_SITE {program} {function} {pc} {} {count} {reason} {label}", opcode_name(opcode));
         }
     }
 }

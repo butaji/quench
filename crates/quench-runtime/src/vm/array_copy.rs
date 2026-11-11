@@ -102,7 +102,7 @@ impl<H: Host> Vm<H> {
                         .copied()
                         .map(|root| {
                             let value = self.heap.root_value(root).unwrap();
-                            self.array_relative_index(p, value, length)
+                            self.to_relative_index(p, value, length)
                         })
                         .transpose()?
                         .unwrap_or(0);

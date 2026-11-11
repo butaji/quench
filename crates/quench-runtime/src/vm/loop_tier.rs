@@ -21,6 +21,8 @@ pub(super) struct LoopTier {
     /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
     leaves: Vec<(u32, u16)>,
     widened: Vec<usize>,
+    /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
+    abandoned: Vec<usize>,
 }
 
 impl LoopTier {
@@ -34,17 +36,19 @@ impl LoopTier {
         if let Some(pending) = &self.pending { pending.retire_named_shapes(); }
     }
 
-    /// Counts a run of the code that left at `pc`. An operation left `widen_after_leaves`
+    /// Counts a run of the code that left at `pc`. An operation or element read left `widen_after_leaves`
     /// times joins the widened ones and the code goes, where a compilation remains: the next
     /// entry compiles the loop holding that operation's result as a double.
-    pub(super) fn left_at(&mut self, pc: u32) {
-        if self.widened.binary_search(&(pc as usize)).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
+    pub(super) fn left_at(&mut self, pc: u32, read: bool) {
+        let widened = self.widened.binary_search(&(pc as usize)).is_ok();
+        if !(read || !widened) || self.abandoned.binary_search(&(pc as usize)).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
         let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
         self.leaves[at].1 += 1;
         if self.leaves[at].1 < TIERS.loops.widen_after_leaves { return; }
         self.leaves.swap_remove(at);
-        self.widened.push(pc as usize);
-        self.widened.sort_unstable();
+        let list = if widened { &mut self.abandoned } else { &mut self.widened };
+        list.push(pc as usize);
+        list.sort_unstable();
         if let Some(code) = self.code.take() { code.retire(); }
     }
 
@@ -116,13 +120,17 @@ impl LoopTier {
     }
 }
 
-/// Starts compiling `site`'s region from the running activation (`r`, `entry`), and looks
-/// for its code at once: a code generator without its own thread has it ready.
+/// Starts compiling `site`'s region over the tier's element views from the running activation,
+/// and looks for its code at once: a code generator without its own thread has it ready.
 pub(super) fn lane_loop_compile<H: Host>(
     cx: *mut LaneContext<H>,
     site: &LoopSite,
     region: &super::super::compiled::LoopRegion,
     tier: &mut LoopTier,
+    number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
+    int_entries: &[crate::bytecode::Register],
+    typed_captures: &[u16],
+    int_captures: &[u16],
 ) {
     tier.compilations += 1;
     if site.diagnostics {
@@ -133,31 +141,15 @@ pub(super) fn lane_loop_compile<H: Host>(
     let program = machine.programs.get(machine.active_program);
     let function = site.function();
     let helpers = super::super::compiled::process_lane_helpers::<H>();
-    // A by-name global read lowers by the lane's, under the entry's dynamic proof: the
-    // function's own unit names the read sites the region's plain plan runs.
-    let global_reads = program.as_deref().map(|program| {
-        let unit = super::super::compiled::loop_unit(program.function(function as usize));
-        machine.lane_global_reads(program, function, &unit)
-    });
     machine.host.before_native_compilation();
-    let started = observe(machine, region, |observation| {
-        super::super::compiled::start_osr_region(region, tier.views, observation,
-            machine.heap.memory_policy(), program.as_deref()?, function, helpers, &tier.widened,
-            global_reads.as_ref()?)
-    });
+    let native_field_loads = native_field_loads(machine, region);
+    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures };
+    let policy = machine.heap.memory_policy();
+    let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
+        &observation, policy, program, function, helpers,
+        &mut |unit| machine.lane_global_reads(program, function, unit), &tier.widened));
     machine.host.after_native_compilation();
     tier.start(started, &mut machine.heap, site);
-}
-
-/// Runs `compile` on what the running activation (`r`, `entry`) shows `region`'s values to be:
-/// the holderless own-data fields its native reads may load directly.
-fn observe<H: Host, T>(
-    machine: &Vm<H>,
-    region: &super::super::compiled::LoopRegion,
-    compile: impl FnOnce(&super::super::compiled::Observation<'_>) -> T,
-) -> T {
-    let native_field_loads = native_field_loads(machine, region);
-    compile(&super::super::compiled::Observation { native_field_loads: &native_field_loads })
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.
@@ -249,4 +241,58 @@ pub(super) fn lane_method_call_region<H: Host>(cx: *mut LaneContext<H>, site: &L
     super::super::compiled::analyze_osr_region_detailed(function, &decoded, &constants, &code.field_sites,
         code.shared_register_root_masks(function_index), site.header, site.backedge,
         super::super::compiled::MethodCalls::Exit).ok()
+}
+
+/// The depth-zero capture slots the running function reads that hold typed arrays now (an observation
+/// the compiled loop's entry checks): a loop indexing such a capture views it as a typed array.
+pub(super) fn typed_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let Some((_, function, _, _)) = loop_tier::lane_loop_function(cx, code) else { return Vec::new() };
+    let mut slots: Vec<u16> = function.instructions()
+        .filter(|instruction| instruction.op().is_load_capture() && instruction.capture_depth() == 0)
+        .map(|instruction| crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())).collect();
+    slots.sort_unstable();
+    slots.dedup();
+    slots.retain(|slot| super::lane_read_capture_value::<H, true>(cx, 0, *slot).0
+        .is_some_and(|value| unsafe { vm(cx) }.lane_typed_array_elements(value, false).is_some()));
+    slots
+}
+
+/// The depth-zero capture slots the running function reads that hold int32s now (an observation
+/// the compiled loop's entry guard checks): a loop's integer arithmetic on such a capture stays int32.
+pub(super) fn int_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let Some((_, function, _, _)) = lane_loop_function(cx, code) else { return Vec::new() };
+    let mut slots: Vec<u16> = function.instructions()
+        .filter(|instruction| instruction.op().is_load_capture() && instruction.capture_depth() == 0)
+        .map(|instruction| crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())).collect();
+    slots.sort_unstable();
+    slots.dedup();
+    slots.retain(|slot| super::lane_read_capture_value::<H, true>(cx, 0, *slot).0.is_some_and(|value| value.as_int().is_some()));
+    slots
+}
+
+/// How many elements of an entry array are sampled for Numbers.
+const SAMPLED_ELEMENTS: usize = 64;
+
+/// The registers of `region`'s arrays whose first elements, sampled on entry, are all int32s or all
+/// Numbers (int32 or double, no hole), with that type: an observation (a guess the code checks at
+/// every read), not a proof.
+pub(super) fn number_arrays<H: Host>(vm: &Vm<H>, r: Registers, region: &LoopRegion) -> Vec<(Register, crate::typed_ir::Type)> {
+    use crate::typed_ir::Type;
+    region.arrays.iter().filter(|array| array.field.is_none()).filter_map(|array| {
+        let elements = vm.heap.record_array(r.get(array.register))?.elements().as_slice();
+        let sample = &elements[..elements.len().min(SAMPLED_ELEMENTS)];
+        if sample.is_empty() { return None; }
+        if sample.iter().all(|value| value.as_int().is_some()) { Some((array.register, Type::INT32)) }
+        else { sample.iter().all(|value| value.as_number().is_some()).then_some((array.register, Type::NUMBER)) }
+    }).collect()
+}
+
+/// The registers of the running activation that hold int32s at entry and that the loop writes:
+/// an observation the compiled code's entry contract checks, as `number_arrays`'.
+pub(super) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<Register> {
+    region.entry_registers().filter(|register| r.get(*register).as_int().is_some()).collect()
 }

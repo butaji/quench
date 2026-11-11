@@ -2,6 +2,8 @@
 use super::*;
 #[path = "frame_calls.rs"] pub(super) mod calls;
 #[path = "frame_truthiness.rs"] mod truthiness;
+#[path = "frame_operands.rs"] mod operands;
+pub(in crate::vm) use operands::{operand_int, operand_number};
 use truthiness::register_truthiness;
 
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
@@ -28,15 +30,36 @@ pub(super) struct EmitFrame<'a> {
     pub(super) constants: &'a [crate::bytecode::Constant],
     /// The entry's `this` binding, where the lowering has entry facts.
     pub(super) this: Option<Variable>,
-    /// The activation's local slots (`JsStepDispatch::native_locals`), where this region
-    /// may read or write them; `None` for a numeric region, whose activation has none.
-    pub(super) locals: Option<ir::Value>,
+    /// Whether this region may read or write the activation's local slots
+    /// (`JsStepDispatch::native_locals`); a numeric region's activation has none.
+    pub(super) locals: bool,
     /// The running body's dispatch payload, which semantic helpers take.
     pub(super) payload: ir::Value,
     /// The helper table a callout addresses.
     pub(super) helpers: LaneHelpers,
     /// The poll instructions a fault-polling body records for later patching.
     pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
+}
+
+impl EmitFrame<'_> {
+    /// The activation's local slots, read where an instruction uses them.
+    fn native_locals(&self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
+        self.locals.then(|| super::super::emit_js_payload_word(stage.builder, self.payload,
+            std::mem::offset_of!(super::super::JsStepDispatch, native_locals)))
+    }
+}
+
+impl EmitFrame<'_> {
+    /// A literal's allocation by the lane's own `helper`, whose DELETED answer leaves at the proof's miss edge.
+    fn allocate(&mut self, stage: &mut Emit<'_, '_>, helper: LaneHelper, destination: Register, arguments: &[ir::Value],
+        proof: EmitProof) -> Option<ir::Value> {
+        let EmitProof::Allocation { miss } = proof else { return None };
+        let payload = self.payload;
+        let address = self.helpers.address(stage.builder.ins(), helper);
+        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[&[payload], arguments].concat());
+        calls::finish_allocation(stage, self, destination, value, miss);
+        Some(value)
+    }
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -160,29 +183,33 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         calls::safepoint(self, stage, proof)
     }
 
-
     /// An object literal: the lane's own allocator, whose DELETED answer (a due collection)
     /// leaves at the proof's miss edge.
     #[inline(always)]
     fn allocate_object(&mut self, stage: &mut Emit<'_, '_>, destination: Register, proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::Allocation { miss } = proof else { return None };
-        let payload = self.payload;
-        let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewObject);
-        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload]);
-        calls::finish_allocation(stage, self, destination, value, miss);
-        Some(value)
+        self.allocate(stage, LaneHelper::NewObject, destination, &[], proof)
     }
 
     /// An array literal: the lane's own allocator, with its holes or its written elements.
     #[inline(always)]
     fn allocate_array(&mut self, stage: &mut Emit<'_, '_>, destination: Register, length: ir::Value,
         elements: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::Allocation { miss } = proof else { return None };
-        let payload = self.payload;
-        let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewArray);
-        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload, length, elements]);
-        calls::finish_allocation(stage, self, destination, value, miss);
-        Some(value)
+        self.allocate(stage, LaneHelper::NewArray, destination, &[length, elements], proof)
+    }
+
+    /// An array literal of program constants (`lane_new_const_array`).
+    #[inline(always)]
+    fn allocate_const_array(&mut self, stage: &mut Emit<'_, '_>, destination: Register, constant: ir::Value,
+        count: ir::Value, proof: EmitProof) -> Option<ir::Value> {
+        self.allocate(stage, LaneHelper::NewConstArray, destination, &[constant, count], proof)
+    }
+
+    /// A two-property object literal (`lane_new_object_pair`).
+    #[inline(always)]
+    fn allocate_object_pair(&mut self, stage: &mut Emit<'_, '_>, destination: Register, site: u32, first: ir::Value,
+        second: ir::Value, proof: EmitProof) -> Option<ir::Value> {
+        let site = stage.builder.ins().iconst(types::I64, i64::from(site));
+        self.allocate(stage, LaneHelper::NewObjectPair, destination, &[site, first, second], proof)
     }
 
     /// A typed array element: the kind's load, as a Number word.
@@ -236,7 +263,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
         -> Option<(ir::Value, RegisterFact)> {
-        let locals = self.locals?;
+        let locals = self.native_locals(stage)?;
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
         let value = stage.builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
@@ -246,7 +273,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn store_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, value: ir::Value,
         _miss: Option<ir::Block>) -> bool {
-        let Some(locals) = self.locals else { return false };
+        let Some(locals) = self.native_locals(stage) else { return false };
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
         stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
@@ -471,43 +498,3 @@ pub(super) fn register_number_value(builder: &mut FunctionBuilder<'_>, registers
         }
     }
 }
-
-/// An operand's int32 value, statically where it is a constant int32.
-pub(super) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &mut State, constants: &[crate::bytecode::Constant], operand: crate::bytecode::Operand,
-    otherwise: ir::Block) -> Option<ir::Value> {
-    match operand.kind()? {
-        crate::bytecode::OperandKind::Register =>
-            Some(register_int_value(builder, registers, state, operand.register_index()?, otherwise)),
-        crate::bytecode::OperandKind::Constant => {
-            let constant = constants.get(usize::from(operand.payload()))?;
-            let value = super::super::facts::immediate(constant)?;
-            if super::super::facts::is_int32(value) {
-                Some(builder.ins().iconst(types::I32, i64::from(value.wasm_bits32() as i32)))
-            } else {
-                builder.ins().jump(otherwise, &[]);
-                let dead = builder.create_block();
-                builder.switch_to_block(dead);
-                Some(builder.ins().iconst(types::I32, 0))
-            }
-        }
-        _ => None,
-    }
-}
-
-/// An operand's binary64 value, statically where it is a constant Number.
-pub(super) fn operand_number(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &mut State, constants: &[crate::bytecode::Constant], operand: crate::bytecode::Operand,
-    otherwise: ir::Block) -> Option<ir::Value> {
-    match operand.kind()? {
-        crate::bytecode::OperandKind::Register =>
-            Some(register_number_value(builder, registers, state, operand.register_index()?, otherwise)),
-        crate::bytecode::OperandKind::Constant => {
-            let value = constants.get(usize::from(operand.payload()))
-                .and_then(super::super::facts::immediate)?.as_number()?;
-            Some(builder.ins().f64const(value))
-        }
-        _ => None,
-    }
-}
-

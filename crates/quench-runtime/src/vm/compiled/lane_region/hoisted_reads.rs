@@ -43,7 +43,8 @@ fn prove_receiver(state: &mut State, instruction: WideInstruction, (owner, ty): 
         _ => owner,
     };
     let fact = &mut state.values[usize::from(owner)];
-    *fact = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(ty, Representation::Tagged) };
+    // An unboxed register has no tagged view to keep (`Lowering::refine_owner`).
+    if fact.tagged.current() { *fact = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(ty, Representation::Tagged) }; }
     if let Some(header) = header {
         state.proofs.headers[usize::from(owner)] = Some(header);
     }

@@ -9,6 +9,7 @@ use crate::test_host::TestHost;
 use std::cell::RefCell;
 use std::rc::Rc;
 #[path = "osr_retirement_tests.rs"] mod osr_retirement_tests;
+#[path = "forced_deopt_tests.rs"] mod forced_deopt_tests;
 #[test]
 fn deferred_math_joins_startup_intrinsics_before_guest_mutation() {
     let program = Engine::specialize(r#"
@@ -951,6 +952,125 @@ fn lane_calls_passing_extra_values_keep_them_only_for_legacy_reflection() {
     let program = Engine::specialize(source, "lane-extra-values.js").unwrap();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["3:1999,2,3|1999,5,6|8000000"]);
+}
+
+#[test]
+fn hot_bodies_construct_forwarding_classes_from_nested_calls() {
+    // A hot function builds vectors through a forwarding constructor while its own callers
+    // are native: the construction resolves its target and keeps the forwarded fields.
+    let source = r#"
+      var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+      var V = Class.create();
+      V.prototype = {
+        initialize: function (x, y, z) { this.x = x; this.y = y; this.z = z; },
+        cross: function (w) { return new V(this.y * w.z - this.z * w.y, this.z * w.x - this.x * w.z, this.x * w.y - this.y * w.x); },
+        dot: function (w) { return this.x * w.x + this.y * w.y + this.z * w.z; }
+      };
+      function shade(a, b) { var c = a.cross(b); var d = c.cross(a); return c.dot(b) + d.dot(a); }
+      function trace(n) {
+        var s = 0;
+        for (var i = 0; i < n; i++) { s += shade(new V(i, 2, 3), new V(1, i, 5)); }
+        return s;
+      }
+      var r = 0;
+      for (var k = 0; k < 40; k++) { r += trace(200); }
+      print(r);
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "hot-forwarding-construct.js").unwrap();
+    vm.execute(&program).unwrap();
+    let mut expected = 0i64;
+    for i in 0..200i64 {
+        let (a, b) = ((i, 2, 3), (1, i, 5));
+        let cross = |p: (i64, i64, i64), q: (i64, i64, i64)| (p.1 * q.2 - p.2 * q.1, p.2 * q.0 - p.0 * q.2, p.0 * q.1 - p.1 * q.0);
+        let dot = |p: (i64, i64, i64), q: (i64, i64, i64)| p.0 * q.0 + p.1 * q.1 + p.2 * q.2;
+        let c = cross(a, b);
+        let d = cross(c, a);
+        expected += dot(c, b) + dot(d, a);
+    }
+    assert_eq!(output.borrow().as_slice(), [(expected * 40).to_string()]);
+}
+
+#[test]
+fn forwarded_construct_plans_retire_when_their_prototype_or_method_changes() {
+    // A plan made while hot holds under one dependency: a new method value, a new
+    // prototype object and a replaced method each take the next construction off it.
+    let source = r#"
+      var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+      var V = Class.create();
+      V.prototype = { initialize: function (x, y) { this.x = x; this.y = y; } };
+      function make(i) { return new V(i, 2); }
+      function run(n) { var s = 0; for (var i = 0; i < n; i++) { var v = make(i); s += v.x + v.y; } return s; }
+      function warm() { for (var k = 0; k < 40; k++) { run(300); } }
+      var out = [];
+      warm(); out.push(run(10));
+      V.prototype.initialize = function (x, y) { this.x = x * 10; this.y = y; };
+      out.push(run(10));
+      warm();
+      V.prototype = { initialize: function (x, y) { this.x = -x; this.y = y; } };
+      out.push(run(10));
+      warm();
+      V.prototype.initialize = function (x, y) { this.x = x; this.y = 100; };
+      out.push(run(10));
+      print(out.join());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "retiring-construct-plans.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["65,470,-25,1045"]);
+}
+
+#[test]
+fn hot_bodies_construct_through_forwarded_initializers_that_do_more_than_store() {
+    // A hot function builds objects through a forwarding constructor whose initializer calls
+    // a function and returns an object: the construction yields the receiver whatever the
+    // initializer returns, and a prototype change after the bodies are hot takes the next
+    // construction off the native path.
+    let source = r#"
+      var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+      var C = Class.create();
+      function scale(v) { return v * 3; }
+      C.prototype = { initialize: function (x, y) { this.x = scale(x); this.y = y + 1; return { x: -1 }; } };
+      function make(i) { return new C(i, 2); }
+      function run(n) { var s = 0; for (var i = 0; i < n; i++) { var c = make(i); s += c.x + c.y; } return s; }
+      var out = [];
+      for (var k = 0; k < 60; k++) { run(300); }
+      out.push(run(10));
+      C.prototype.initialize = function (x, y) { this.x = x; this.y = 0; };
+      out.push(run(10));
+      print(out.join());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "hot-forwarded-initializer.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["165,45"]);
+}
+
+#[test]
+fn lane_bodies_join_unboxed_parameters_that_a_field_read_proves_objects() {
+    // `x` is an int32 or float parameter on some entries and an object on others: the unit
+    // joins its unboxed view with the object proof of `x['a']` and must keep lowering
+    // without a tagged view for it (it once reached an unreachable arm).
+    let source = r#"
+      function f1(x, y, i) { let s = 0; let k = i & 7; for (let j = 0; j < 5; j++) s = (s + ((((x|0) != (x*y)) + (x)['a']) || ((y?(x*y):k) != (3 ^ (x%5))))); return s; }
+      function P(v) { this.v = v; }
+      const A = [-3, new P(3), 1.5, NaN, [1, 2, 3]], B = [1.5, -2147483648, { a: 1 }, 7, null];
+      let h = 0;
+      for (let i = 0; i < 3500; i++) { try { h = (h * 31 + String(f1(A[i % 5], B[(i >> 1) % 5], i)).length) | 0; } catch (e) { h = (h * 31 + 1) | 0; } }
+      print(h);
+    "#;
+    let run = |tiers: bool| {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if tiers { vm.programs.enable_js_lane_methods(); }
+        let program = Engine::specialize(source, "tagged-view-join.js").unwrap();
+        vm.execute(&program).unwrap();
+        output.borrow().clone()
+    };
+    assert_eq!(run(true), run(false));
 }
 
 #[test]
@@ -6758,7 +6878,7 @@ fn async_continuation_lifetime_follows_reachable_callbacks_and_jobs() {
 fn pending_await_continuations(vm: &mut Vm<TestHost>) -> usize {
     let mut pending = 0;
     vm.heap
-        .for_each_await_state(|state| pending += usize::from(state.continuation.is_some()));
+        .for_each_await_state(|state| pending += usize::from(state.holds_continuation()));
     pending
 }
 
@@ -6797,13 +6917,11 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     let continuation =
         Continuation::suspend(frame, Completion::Yield(Value::UNDEFINED), None, Value::UNDEFINED);
     let state = vm.heap.alloc(crate::heap::Cell::AwaitState(Box::new(
-        crate::heap::AwaitState {
-            continuation: Some(Box::new(continuation)),
-            realm: Value::UNDEFINED,
-            promise: Value::UNDEFINED,
-            generator: None,
-            yielded: false,
-        },
+        crate::heap::AwaitState::arm(
+            crate::heap::AwaitKind::function(continuation),
+            Value::UNDEFINED,
+            Value::UNDEFINED,
+        ),
     )));
     let root = vm.heap.root(state);
     vm.collect_now(&program);
@@ -6812,7 +6930,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     assert!(vm.heap.is_live(original));
     assert!(vm.heap.is_live(scope));
     let take = |vm: &mut Vm<TestHost>| match vm.heap.await_state_mut(state) {
-        Some(state) => state.continuation.take(),
+        Some(state) => state.take_function_continuation().map(|continuation| *continuation),
         _ => panic!("await state"),
     };
     assert_eq!(take(&mut vm).unwrap().frame.original_arguments, [original]);
@@ -9199,15 +9317,13 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     done: false,
                     ext: crate::heap::IteratorExt {
                         generator: Some(Box::new(GeneratorRecord {
-                            continuation: Some(continuation),
-                            realm,
-                            state: super::activation::GeneratorState::Suspended,
                             requests: [AsyncGeneratorRequest {
                                 operation: AsyncGeneratorOperation::Next,
                                 promise: request_promise,
                                 value: request_value,
                             }]
                             .into(),
+                            ..GeneratorRecord::new(continuation, realm)
                         })),
                         ..Default::default()
                     },
@@ -9215,13 +9331,11 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 vm.heap.root(value)
             } else {
                 let value = vm.heap.alloc(super::Cell::AwaitState(Box::new(
-                    crate::heap::AwaitState {
-                        continuation: Some(Box::new(continuation)),
-                        realm: Value::UNDEFINED,
+                    crate::heap::AwaitState::arm(
+                        crate::heap::AwaitKind::function(continuation),
+                        Value::UNDEFINED,
                         promise,
-                        generator: None,
-                        yielded: false,
-                    },
+                    ),
                 )));
                 vm.heap.root(value)
             };
@@ -9236,15 +9350,14 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             }
             let value = vm.heap.root_value(owner).unwrap();
             let resumed = if let Some(state) = vm.heap.await_state_mut(value) {
-                *state.continuation.take().unwrap()
+                *state.take_function_continuation().unwrap()
             } else {
                 match vm.heap.iterator_mut(value) {
                 Some(crate::heap::IteratorRecord { ext, .. }) => ext
                     .generator
                     .as_mut()
                     .expect("generator owner")
-                    .continuation
-                    .take()
+                    .take_suspended()
                     .unwrap(),
                 _ => panic!("suspended owner"),
                 }
@@ -14113,11 +14226,7 @@ fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
     let interpreted = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
     let expected = interpreted.borrow().clone();
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "fill"))
-        .unwrap();
+    let function_id = program.functions.iter().position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "fill")).unwrap();
     for policy in crate::MemoryPolicy::ALL {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
@@ -14354,11 +14463,7 @@ fn shared_osr_returns_inside_a_loop_resume_the_lane_at_the_return() {
     let interpreted = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
     assert_eq!(interpreted.borrow().as_slice(), ["-4498"]);
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "cmp"))
-        .unwrap();
+    let function_id = program.functions.iter().position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "cmp")).unwrap();
     for policy in crate::MemoryPolicy::ALL {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
@@ -14502,7 +14607,7 @@ fn shared_osr_gives_a_loop_storing_a_captured_binding_each_iteration_to_the_lane
     let osr = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("loop lane view").osr_diagnostics();
     let [site] = osr.sites.as_slice() else { panic!("one source loop, one OSR site: {osr:?}") };
     assert!(!site.admitted && site.native_region_runs == 0, "every iteration leaves at the store: {site:?}");
-    assert_eq!(site.analysis_rejection, Some(super::compiled::RegionRejection::UnsupportedInstruction(crate::bytecode::Op::StoreEnvLocal)));
+    assert_eq!(site.analysis_rejection, Some(super::compiled::RegionRejection::UnsupportedInstruction(crate::bytecode::Op::StoreEnvLocal as u16)));
 }
 
 #[test]
@@ -15572,11 +15677,7 @@ fn shared_osr_widens_an_int32_field_that_holds_a_double() {
       print(t);
     "#;
     let program = Engine::specialize(source, "osr-field-widening.js").unwrap();
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "sum"))
-        .unwrap();
+    let function_id = program.functions.iter().position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "sum")).unwrap();
     let interpreted_output = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
     assert_eq!(interpreted_output.borrow().as_slice(), ["87325000"]);

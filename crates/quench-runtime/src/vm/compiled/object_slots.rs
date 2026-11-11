@@ -43,6 +43,8 @@ pub(super) struct ObjectHeader {
     pub(super) record: ObjectRecord,
     pub(super) shape: ir::Value,
     pub(super) inline: ir::Value,
+    /// The record's address, computed once for the header loads and every later read.
+    pub(super) address: ir::Value,
 }
 
 /// A verified direct-object locator. Indexed records keep the admitted base and
@@ -100,7 +102,7 @@ impl ObjectRecord {
             Some(shape) => builder.ins().iconst(types::I32, i64::from(shape)),
             None => builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32),
         };
-        ObjectHeader { record: self, shape, inline: inline_storage(builder, address) }
+        ObjectHeader { record: self, shape, inline: inline_storage(builder, address), address }
     }
 }
 
@@ -140,13 +142,13 @@ impl ObjectHeader {
         builder.ins().jump(join, &[ir::BlockArg::Value(function_object)]);
         builder.switch_to_block(join);
         let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32);
-        Self { record: ObjectRecord::Address(record), shape, inline: inline_storage(builder, record) }
+        Self { record: ObjectRecord::Address(record), shape, inline: inline_storage(builder, record), address: record }
     }
 }
 
 /// The stage whose residual `staged` operations that address no arena emit into `builder`.
 pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
-    Emit { builder, property_values: None, remainder: None }
+    Emit { builder, property_values: None }
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.
@@ -485,13 +487,13 @@ impl CheckedObject {
         miss: ir::Block,
     ) -> Option<Self> {
         if !plan.valid() { return None; }
-        let mut stage = Emit { builder, property_values: Some(base), remainder: None };
+        let mut stage = Emit { builder, property_values: Some(base) };
         crate::staged::own_layout(&mut stage, record, inline, Form::of(plan.storage, plan.storage_len),
             plan.storage_len, access, miss).map(Self)
     }
 
     /// Read fresh contents using only the established layout and slot bound.
     pub(super) fn read(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> ir::Value {
-        crate::staged::read_slot(&mut Emit { builder, property_values: None, remainder: None }, self.0, slot)
+        crate::staged::read_slot(&mut Emit { builder, property_values: None }, self.0, slot)
     }
 }

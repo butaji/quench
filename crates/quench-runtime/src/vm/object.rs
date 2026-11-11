@@ -1439,13 +1439,18 @@ impl<H: Host> Vm<H> {
         let Some(receiver) = self.heap.object(object) else {
             return probe;
         };
-        if let Some(record) = receiver.proto_link().object_record_id() {
-            let holder = self.heap.object_record_by_id(record);
-            if let Some(cache) = self.megamorphic_field_cache(self.field_cache_index(site), receiver.exact_shape(), holder.exact_shape()) {
-                // SAFETY: as `ordinary_holder_entry_value`: the entry was recorded for an
-                // immediate-prototype data property of these exact shapes.
-                return FieldCacheProbe::Hit(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) });
-            }
+        // The holder is an object record, as most prototypes are, or another cell, as
+        // `Array.prototype` of an array receiver (`ordinary_holder_entry_value`).
+        let holder = match receiver.proto_link().object_record_id() {
+            Some(record) => Some(self.heap.object_record_by_id(record)),
+            None => self.heap.object(receiver.proto()),
+        };
+        if let Some(holder) = holder
+            && let Some(cache) = self.megamorphic_field_cache(self.field_cache_index(site), receiver.exact_shape(), holder.exact_shape())
+        {
+            // SAFETY: as `ordinary_holder_entry_value`: the entry was recorded for an
+            // immediate-prototype data property of these exact shapes.
+            return FieldCacheProbe::Hit(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) });
         }
         probe
     }
@@ -1514,12 +1519,10 @@ impl<H: Host> Vm<H> {
     /// `None` where its shape differs.
     #[inline(always)]
     pub(super) fn own_field_entry_hit(&self, cache: FieldCache, receiver: &Object) -> Option<Value> {
-        // The exact shape matches only outside dictionary storage (`Object::exact_shape`).
-        if cache.receiver != receiver.exact_shape() {
-            return None;
-        }
+        // The exact shape matches only outside dictionary storage (`Object::exact_shape`); the
+        // read is the staged `[GuardShape, LoadSlot]`, which the native tiers run from the same rows.
         // SAFETY: as for `cached_field_hit`; the exact match rules out a dictionary.
-        Some(unsafe { self.heap.property_get_flat(receiver, cache.slot as usize) })
+        unsafe { self.heap.own_field_hit(receiver, cache.receiver, cache.slot) }
     }
 
     /// The own-field hint (`FieldCache::own`) of `object`'s own data property `atom`: its exact
@@ -1771,16 +1774,16 @@ impl<H: Host> Vm<H> {
         let Some(record_id) = object.direct_object_index() else {
             return false;
         };
-        if hint.receiver != self.heap.object_record_by_id(record_id).exact_shape() || hint.holder != NO_FIELD_HOLDER {
+        if hint.holder != NO_FIELD_HOLDER {
             return false;
         }
-        let slot = usize::from(hint.slot);
-        // SAFETY: this exact own-data shape proves the slot outside dictionary storage.
+        // SAFETY: a direct object Value names a live record; the hint's slot is one its shape covers.
         let stored = unsafe {
             if TRACKED {
-                self.heap.record_property_set_flat::<false>(record_id, slot, value, crate::heap::PropertyStoreLayout::Preserve)
+                hint.receiver == self.heap.object_record_by_id(record_id).exact_shape()
+                    && self.heap.record_property_set_flat::<false>(record_id, usize::from(hint.slot), value, crate::heap::PropertyStoreLayout::Preserve)
             } else {
-                self.heap.record_property_set_unobserved(record_id, slot, value)
+                crate::staged::store::concrete_own_store(&mut self.heap, record_id, hint.receiver, hint.slot, value)
             }
         };
         if !stored {
@@ -2178,11 +2181,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn holder_hint_hit(&self, index: u16, atom: Atom, object: Value) -> Option<Value> {
         let hint = self.holder_hints.get(usize::from(index))?;
         let receiver = self.hinted_receiver(object)?;
-        (hint.atom == atom
-            && hint.receiver == receiver.exact_shape()
-            && hint.prototype == receiver.proto_link()
-            && hint.watch.is_published())
-        .then_some(hint.value)
+        // SAFETY: the hint's watch is live as long as the hint.
+        (hint.atom == atom).then(|| unsafe {
+            crate::staged::holder::concrete_holder_read(receiver, hint.receiver, hint.prototype.bits(), std::rc::Rc::as_ptr(&hint.watch), hint.value)
+        })?
     }
 
     /// `holder_hint_hit` for a string primitive, whose read `String.prototype` answers

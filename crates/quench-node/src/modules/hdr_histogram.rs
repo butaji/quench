@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn statistics_follow_hdr_histogram() {
-        let (lowest, highest, figures) = (1, (1 << 53) - 1, 3);
+        let (lowest, highest, figures) = (1, quench_runtime::units::MAX_SAFE_INTEGER_U64 as i64, 3);
         let mut bytes = vec![0; buffer_len(lowest, highest, figures).expect("valid bounds")];
         let mut histogram = Histogram::initialize(&mut bytes, lowest, highest, figures);
         for value in [1, 2, 3, 100, 1000, 2047, 2048, 2049, 4095, 4096, 12345, 123456, 1234567, 98765432, (1 << 40) + 12345, 5] {

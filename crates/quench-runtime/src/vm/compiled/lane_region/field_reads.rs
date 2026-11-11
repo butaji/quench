@@ -4,6 +4,24 @@
 use super::*;
 
 impl Lowering<'_, '_> {
+    /// Whether a reached instruction reads or stores a named field: only then does the body
+    /// look at the receiver's record and the property arena at entry.
+    pub(super) fn accesses_fields(&self, instructions: &[WideInstruction]) -> bool {
+        instructions.iter().enumerate().any(|(pc, instruction)| self.facts.reached(pc) && instruction.op().is_named_field_access())
+    }
+
+    /// The entry facts of a body that never looks at the receiver's record: no object, no
+    /// shape, no arena.
+    pub(super) fn absent_receiver(&mut self) -> LaneReceiver {
+        let receiver = LaneReceiver { object: self.builder.declare_var(types::I64), shape: self.builder.declare_var(types::I32),
+            inline: self.builder.declare_var(types::I8), properties: self.builder.declare_var(types::I64) };
+        let (zero, none, outside) = (self.word_const(0), self.int_const(types::I32, i64::from(super::super::NO_FIELD_RECEIVER)), self.int_const(types::I8, 0));
+        for (variable, value) in [(receiver.object, zero), (receiver.properties, zero), (receiver.shape, none), (receiver.inline, outside)] {
+            self.builder.def_var(variable, value);
+        }
+        receiver
+    }
+
     /// Folds the read of `first` through `base` (its register and whether it is a proved
     /// receiver) into `destination` when the closed program gives the field one value: the
     /// field is read once here as data and required to hold it, so a changed prototype

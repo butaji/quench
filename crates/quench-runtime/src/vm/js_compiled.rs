@@ -135,8 +135,6 @@ pub(super) struct JsEntryFacts {
     /// Whether the function is a numeric tier candidate (`function_candidate`); only such a
     /// function enters native code at its entry before the general tier holds it.
     pub(super) candidate: bool,
-    /// Calls whose cost a frameless unit can remove by specializing their targets.
-    pub(super) has_calls: bool,
     /// Whether the general baseline admits it, and without backward jumps
     /// (`js_general_dispatch_shape`).
     pub(super) general: bool,
@@ -156,7 +154,6 @@ impl JsEntryFacts {
         let shape = super::compiled::js_general_dispatch_shape(function);
         Self {
             candidate,
-            has_calls,
             general: shape.is_some(),
             general_acyclic: shape == Some(true),
         }

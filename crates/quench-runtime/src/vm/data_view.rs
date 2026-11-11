@@ -181,7 +181,7 @@ impl<H: Host> Vm<H> {
         value: Option<Value>,
     ) -> Result<usize, JsError> {
         let number = self.to_number(p, value.unwrap_or(Value::UNDEFINED))?;
-        data_view_index_of(number)
+        crate::units::to_index(number)
             .ok_or_else(|| self.range_error(p, "DataView index is out of range".into()))
     }
 
@@ -323,7 +323,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let (buffer, offset, length) = self.data_view_view(this)?;
-        let index = data_view_index_of(args.first().copied().unwrap_or(Value::UNDEFINED).immediate_number()?)?;
+        let index = crate::units::to_index(args.first().copied().unwrap_or(Value::UNDEFINED).immediate_number()?)?;
         if data_view_setter(native)
             && (args.get(1).copied().unwrap_or(Value::UNDEFINED).immediate_number().is_none()
                 || matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. })))
@@ -574,15 +574,6 @@ fn data_view_bits_of_number(native: Native, value: f64) -> u64 {
         Native::DataViewSetFloat64 => value.to_bits(),
         _ => u64::from(crate::value::number_to_u32(value)),
     }
-}
-
-/// ToIndex of a Number for a DataView index; `None` where it raises a RangeError.
-fn data_view_index_of(number: f64) -> Option<usize> {
-    if number.is_nan() || number == 0.0 {
-        return Some(0);
-    }
-    let integer = number.trunc();
-    (integer.is_finite() && (0.0..=MAX_SAFE_INTEGER).contains(&integer)).then_some(integer as usize)
 }
 
 /// Whether `native` is a DataView element `get` or `set` method.

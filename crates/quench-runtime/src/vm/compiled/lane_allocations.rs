@@ -16,6 +16,19 @@ pub(super) unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64
     object.to_bits()
 }
 
+/// A two-property object literal of literal `site`'s shape holding `first` and `second`, as
+/// the lane makes it (`dispatch_fast::lane_object_pair`); `DELETED` where a collection is due.
+pub(super) unsafe extern "C" fn lane_new_object_pair<H: Host>(vm: u64, residual: u64, payload: u64, site: u64,
+    first: u64, second: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; the residual is the running program.
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let object = vm.object_pair(residual, site as usize, Value::from_bits(first), Value::from_bits(second));
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    object.to_bits()
+}
+
 /// A binary operator one operand of which is a string or BigInt, by the interpreter's own
 /// definition (`Vm::binary`); `DELETED` where an operand is an object (its coercion may run
 /// guest code), the operator throws, or a collection is due: the interpreter runs it then.
@@ -27,6 +40,19 @@ pub(super) unsafe extern "C" fn lane_binary<H: Host>(vm: u64, residual: u64, pay
     let Ok(value) = vm.binary(residual, operator as u32, left, right) else { return Value::DELETED.to_bits() };
     dispatch.refresh_object_bases(vm);
     value.to_bits()
+}
+
+/// A lane body's array literal of the `count` program constants from `constant`, as the lane's
+/// own (`dispatch_fast::lane_make_const_array`); `DELETED` where a collection is due or the
+/// range is outside the constants.
+pub(super) unsafe extern "C" fn lane_new_const_array<H: Host>(vm: u64, _residual: u64, payload: u64, constant: u64, count: u64) -> u64 {
+    // SAFETY: as `lane_new_object`.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let Some(array) = vm.const_array_value(dispatch.program_id, constant as usize, count as usize) else { return Value::DELETED.to_bits() };
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    array.to_bits()
 }
 
 /// A lane body's array literal of `length` holes, or of the `elements` its definitions

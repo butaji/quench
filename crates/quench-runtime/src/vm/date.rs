@@ -69,8 +69,6 @@ const MILLISECONDS_PER_HOUR: f64 = 3_600_000.0;
 const HOURS_PER_DAY: f64 = 24.0;
 const MILLISECONDS_PER_DAY: f64 = MILLISECONDS_PER_HOUR * HOURS_PER_DAY;
 pub(super) const DATE_TIME_CLIP_LIMIT_MS: f64 = 8.64e15;
-const INT32_MODULUS: f64 = 4_294_967_296.0;
-const INT32_SIGN_BOUNDARY: f64 = 2_147_483_648.0;
 const LEGACY_DATE_YEAR_MIN: f64 = 0.0;
 const LEGACY_DATE_YEAR_MAX: f64 = 99.0;
 const LEGACY_DATE_YEAR_MAX_INT: i32 = 99;
@@ -504,7 +502,7 @@ impl<H: Host> Vm<H> {
             return Ok(Some(f64::NAN));
         }
         if setter.legacy_year {
-            let year = to_int32(components[YEAR_COMPONENT]);
+            let year = crate::units::to_int32(components[YEAR_COMPONENT]);
             components[YEAR_COMPONENT] = if (0..=LEGACY_DATE_YEAR_MAX_INT).contains(&year) {
                 f64::from(year + LEGACY_DATE_YEAR_OFFSET)
             } else {
@@ -1013,19 +1011,6 @@ fn time_clip(value: f64) -> f64 {
     } else {
         f64::NAN
     }
-}
-
-fn to_int32(value: f64) -> i32 {
-    if !value.is_finite() || value == 0.0 {
-        return 0;
-    }
-    let modulo = value.trunc().rem_euclid(INT32_MODULUS);
-    let signed = if modulo >= INT32_SIGN_BOUNDARY {
-        modulo - INT32_MODULUS
-    } else {
-        modulo
-    };
-    signed as i32
 }
 
 fn format_date_iso(milliseconds: f64) -> Option<String> {

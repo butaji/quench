@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::Class;
 
 impl<H: Host> Vm<H> {
     pub(super) fn execute_const_array_object2(
@@ -11,10 +12,10 @@ impl<H: Host> Vm<H> {
         let site = instruction.superinstruction_index();
         let parts = &program.superinstructions[site].wide;
         let [array, first, second, object] = [&parts[0], &parts[1], &parts[2], &parts[3]];
-        debug_assert_eq!(array.op(), Op::MakeConstArray);
-        debug_assert_eq!(first.op(), Op::Binary);
-        debug_assert_eq!(second.op(), Op::Binary);
-        debug_assert_eq!(object.op(), Op::MakeObject2);
+        debug_assert!(array.op().class().eq(Class::MakeConstArray));
+        debug_assert!(first.op().class().eq(Class::Binary));
+        debug_assert!(second.op().class().eq(Class::Binary));
+        debug_assert!(object.op().class().eq(Class::MakeObject2));
 
         let start = array.constant_index();
         let end = start + array.element_count() as usize;

@@ -1,6 +1,16 @@
 //! Capture reads: dense slot loads and the VM's own lookups where they miss.
 use super::*;
 
+/// Whether a capture read may take the lane's own lookup for a root-held binding, and where it runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RootedRead {
+    No,
+    /// In a loop body, where the helper call spills every live value: only once the code has left here.
+    InBody,
+    /// On a loop's entry edge, where nothing is live across the call.
+    OnEntry,
+}
+
 impl Lowering<'_, '_> {
     /// A depth-zero capture read: one load from the dense slots of the activation that reads
     /// it, the running one's (`Entry::capture_values`) or a published callee's, fixed by the
@@ -10,7 +20,7 @@ impl Lowering<'_, '_> {
     /// statically bound callees' slots, else the lane's own read (`capture_miss`). Each read loads
     /// where it runs, after any call that may have stored to the slot.
     pub(super) fn load_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, exit: ir::Block,
-        admitted_callee: Option<ir::Value>, rooted: bool) -> ir::Value {
+        admitted_callee: Option<ir::Value>, rooted: RootedRead) -> ir::Value {
         let slot = crate::bytecode::ImmediateLayout::capture_slot(instruction.imm());
         let frame = match self.unit.origins.get(pc).copied() {
             Some(super::super::lane_unit::Origin::Inlined { frame, .. }) => Some(frame),
@@ -23,7 +33,7 @@ impl Lowering<'_, '_> {
         let value = self.builder.append_block_param(join, types::I64);
         match dense {
             Some((values, len)) => {
-                let mut stage = Emit { builder: &mut self.builder, property_values: None, remainder: None };
+                let mut stage = Emit { builder: &mut self.builder, property_values: None };
                 let read = crate::staged::environment::dense_capture(&mut stage, values, len, slot, slow)
                     .expect("the emit stage continues past its guards");
                 self.ins().jump(join, &[ir::BlockArg::Value(read)]);
@@ -59,9 +69,15 @@ impl Lowering<'_, '_> {
     /// frame's call bound, else the lane's own read of the activation's slots, root-held or
     /// not yet viewed, where it may read a root-held binding (`InvariantRead::rooted`); a
     /// miss, or a region with no lane context, leaves.
-    fn capture_miss(&mut self, instruction: WideInstruction, callee: Option<ir::Value>, exit: ir::Block, rooted: bool) -> ir::Value {
+    fn capture_miss(&mut self, instruction: WideInstruction, callee: Option<ir::Value>, exit: ir::Block, rooted: RootedRead) -> ir::Value {
         let Some(callee) = callee else {
-            if rooted && self.completion == Completion::StatusAndPc { return self.capture_get(instruction, exit); }
+            // A loop's read leaves at a root-held binding until the code has left here: the
+            // helper is a call every value live around the loop is spilled across (`left_here`).
+            let loop_code = matches!(self.coverage, Coverage::Loop { .. });
+            if rooted != RootedRead::No && self.completion == Completion::StatusAndPc
+                && (self.left_here || !loop_code || rooted == RootedRead::OnEntry) {
+                return self.capture_get(instruction, exit);
+            }
             self.ins().jump(exit, &[]);
             let dead = self.builder.create_block();
             self.builder.switch_to_block(dead);

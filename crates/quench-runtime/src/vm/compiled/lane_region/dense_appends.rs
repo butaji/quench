@@ -26,18 +26,18 @@ impl Lowering<'_, '_> {
         let at_end = self.ins().icmp(IntCC::Equal, index, length);
         let aliased = self.aliased_view(array, pc as usize);
         let reserves = self.ins().band_not(at_end, aliased);
-        self.ins().brif(reserves, attempt, &[], general, &[]);
+        self.ins().brif(reserves, super::super::forced_or(attempt, general), &[], general, &[]);
         self.builder.switch_to_block(attempt);
         self.builder.seal_block(attempt);
         let room = self.helper_call(LaneHelper::AppendRoom, &[base]);
         let granted = self.ins().icmp_imm_u(IntCC::NotEqual, room, 0);
         let reserved = self.builder.create_block();
-        self.ins().brif(granted, reserved, &[], general, &[]);
+        self.ins().brif(granted, super::super::forced_or(reserved, general), &[], general, &[]);
         self.builder.switch_to_block(reserved);
         self.builder.seal_block(reserved);
         self.reload_dense_arrays(pc as usize);
         let room = self.ins().ireduce(types::I32, room);
-        let variables = self.array_variables(array.register);
+        let variables = self.array_variables(array);
         self.builder.def_var(variables.room, room);
         self.append_within_room(array, index, value, general, done);
         self.builder.switch_to_block(general);
@@ -48,9 +48,9 @@ impl Lowering<'_, '_> {
     /// an index other than the length, or no room, continues at `miss`.
     fn append_within_room(&mut self, array: LoopArray, index: ir::Value, value: ir::Value, miss: ir::Block, done: ir::Block) {
         let (values, length) = self.hoisted_view(array);
-        let variables = self.array_variables(array.register);
+        let variables = self.array_variables(array);
         let room = self.builder.use_var(variables.room);
-        let mut stage = Emit { builder: &mut self.builder, property_values: None, remainder: None };
+        let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let grown = crate::staged::elements::append_element(&mut stage, values, length, room, index, value, miss)
             .expect("the emit stage continues past its guards");
         self.builder.def_var(variables.length, grown);
@@ -60,14 +60,14 @@ impl Lowering<'_, '_> {
     /// Whether another view hoisted around `pc` holds `array`'s array: an append through one
     /// would leave the other's length behind, so neither appends natively.
     fn aliased_view(&mut self, array: LoopArray, pc: usize) -> ir::Value {
-        let others: Vec<Register> = self.loop_arrays.iter()
-            .filter(|other| other.register != array.register && (other.header..=other.back).contains(&pc))
-            .map(|other| other.register).collect();
-        let bits = self.array_variables(array.register).bits;
+        let others: Vec<LoopArray> = self.loop_arrays.iter()
+            .filter(|other| other.source != array.source && (other.header..=other.back).contains(&pc))
+            .copied().collect();
+        let bits = self.array_variables(array).bits;
         let bits = self.builder.use_var(bits);
         let mut aliased = self.ins().iconst(types::I8, 0);
-        for register in others {
-            let other = self.array_variables(register).bits;
+        for other in others {
+            let other = self.array_variables(other).bits;
             let other = self.builder.use_var(other);
             let same = self.ins().icmp(IntCC::Equal, bits, other);
             aliased = self.ins().bor(aliased, same);
@@ -78,11 +78,10 @@ impl Lowering<'_, '_> {
     /// Unproves the append room of every dense view hoisted around `pc`, after a helper that
     /// may have changed a prototype or a backing: the next append reserves again.
     pub(super) fn forget_append_rooms(&mut self, pc: usize) {
-        if self.views != ElementViews::Dense { return; }
-        let registers: Vec<Register> = self.loop_arrays.iter()
-            .filter(|array| (array.header..=array.back).contains(&pc)).map(|array| array.register).collect();
-        for register in registers {
-            let room = self.array_variables(register).room;
+        let arrays: Vec<LoopArray> = self.loop_arrays.iter()
+            .filter(|array| array.views == ElementViews::Dense && (array.header..=array.back).contains(&pc)).copied().collect();
+        for array in arrays {
+            let room = self.array_variables(array).room;
             let unproved = self.ins().iconst(types::I32, 0);
             self.builder.def_var(room, unproved);
         }

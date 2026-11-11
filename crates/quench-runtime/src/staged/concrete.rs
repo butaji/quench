@@ -7,12 +7,21 @@ use super::{Stage, Table};
 #[derive(Clone, Copy)]
 pub(crate) struct Concrete {
     tables: [u64; Table::COUNT],
+    /// The heap whose store barrier `store_gate` reads; null where no store runs.
+    heap: *const crate::heap::Heap,
 }
 
 impl Concrete {
     #[inline(always)]
     pub(crate) fn new(property_values: *const crate::Value) -> Self {
-        Self { tables: [property_values as u64] }
+        Self { tables: [property_values as u64], heap: std::ptr::null() }
+    }
+
+    /// The stage of stores into `heap`'s objects.
+    #[inline(always)]
+    pub(crate) fn storing(heap: *const crate::heap::Heap) -> Self {
+        // SAFETY: the caller's heap is live.
+        Self { tables: [unsafe { (*heap).arena_values_base() } as u64], heap }
     }
 }
 
@@ -21,6 +30,17 @@ impl Stage for Concrete {
     type Proof = ();
     type Cond = bool;
     type Miss = ();
+    type Imm = u64;
+
+    #[inline(always)]
+    fn site(&mut self, v: u64) -> u64 { v }
+    #[inline(always)]
+    fn load_site(&mut self, base: u64, offset: u64) -> u64 {
+        // SAFETY: as `load_u64`; the offset is a layout offset the site proved.
+        unsafe { ((base as *const u8).offset(offset as isize) as *const u64).read() }
+    }
+    #[inline(always)]
+    fn shape_in_site(&mut self, shape: u64, shapes: &[u32]) -> bool { self.shape_in(shape, shapes) }
 
     #[inline(always)]
     fn constant(&mut self, bits: u64) -> u64 { bits }
@@ -41,23 +61,23 @@ impl Stage for Concrete {
     #[inline(always)]
     fn or(&mut self, a: u64, b: u64) -> u64 { a | b }
     #[inline(always)]
-    fn add_imm(&mut self, a: u64, imm: u64) -> u64 { a.wrapping_add(imm) }
+    fn add_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a.wrapping_add(imm) }
     #[inline(always)]
-    fn mul_imm(&mut self, a: u64, imm: u64) -> u64 { a.wrapping_mul(imm) }
+    fn mul_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a.wrapping_mul(imm) }
     #[inline(always)]
-    fn and_imm(&mut self, a: u64, imm: u64) -> u64 { a & imm }
+    fn and_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a & imm }
     #[inline(always)]
-    fn or_imm(&mut self, a: u64, imm: u64) -> u64 { a | imm }
+    fn or_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a | imm }
     #[inline(always)]
-    fn shr_imm(&mut self, a: u64, shift: u32) -> u64 { a >> shift }
+    fn shr_imm(&mut self, a: u64, shift: impl Into<u64>) -> u64 { a >> shift.into() }
     #[inline(always)]
     fn sar32_imm(&mut self, a: u64, shift: u32) -> u64 { u64::from(((a as u32 as i32) >> shift) as u32) }
     #[inline(always)]
-    fn eq_imm(&mut self, a: u64, imm: u64) -> bool { a == imm }
+    fn eq_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { let imm = imm.into(); a == imm }
     #[inline(always)]
-    fn ne_imm(&mut self, a: u64, imm: u64) -> bool { a != imm }
+    fn ne_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { let imm = imm.into(); a != imm }
     #[inline(always)]
-    fn ugt_imm(&mut self, a: u64, imm: u64) -> bool { a > imm }
+    fn ugt_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { let imm = imm.into(); a > imm }
     #[inline(always)]
     fn ult(&mut self, a: u64, b: u64) -> bool { a < b }
     #[inline(always)]
@@ -96,6 +116,26 @@ impl Stage for Concrete {
     fn guard(&mut self, cond: bool, _miss: ()) -> Option<()> { cond.then_some(()) }
     #[inline(always)]
     fn known(&self, cond: bool) -> Option<bool> { Some(cond) }
+    #[inline(always)]
+    fn store_gate(&mut self, record_id: u64, value: u64) -> bool {
+        // SAFETY: a stage that stores holds its live heap.
+        !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(record_id as u32, crate::Value::from_bits(value)) }
+    }
+    #[inline(always)]
+    fn number_operator(&mut self, operator: u64, passed: u64, constant: u64) -> (u64, bool) {
+        let operated = crate::Value::from_bits(passed).as_number().zip(crate::Value::from_bits(constant).as_number())
+            .and_then(|(passed, constant)| crate::vm::operations::static_number_binary(operator as u32, passed, constant))
+            .and_then(|constant| match constant {
+                crate::bytecode::Constant::Number(number) => Some(crate::Value::number(number).to_bits()),
+                _ => None,
+            });
+        (operated.unwrap_or(0), operated.is_some())
+    }
+    #[inline(always)]
+    fn assumption(&mut self, watch: u64) -> bool {
+        // SAFETY: the operand is the address of a live watch (`staged::holder::concrete_holder_read`).
+        unsafe { (*(watch as *const crate::code_dependencies::PublishedCode<()>)).is_published() }
+    }
     #[inline(always)]
     fn table(&mut self, table: Table) -> u64 { self.tables[table as usize] }
 }

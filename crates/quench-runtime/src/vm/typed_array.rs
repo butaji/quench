@@ -816,11 +816,7 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TypedArrayWith {
             let index = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-            let index = if index.is_nan() || index == 0.0 {
-                0.0
-            } else {
-                index.trunc()
-            };
+            let index = crate::units::to_integer_or_infinity(index);
             let relative = if index < 0.0 {
                 length as f64 + index
             } else {
@@ -1092,19 +1088,7 @@ impl<H: Host> Vm<H> {
         length: usize,
     ) -> Result<usize, JsError> {
         let Some(value) = value else { return Ok(0) };
-        let number = self.to_number(p, *value)?;
-        let integer = if number.is_finite() {
-            number.trunc()
-        } else {
-            number
-        };
-        Ok(if integer.is_nan() || integer == 0.0 {
-            0
-        } else if integer < 0.0 {
-            length.saturating_sub(integer.abs() as usize)
-        } else {
-            (integer as usize).min(length)
-        })
+        Ok(crate::units::relative_index(self.to_number(p, *value)?, length))
     }
 
     /// ToUint8: the low bits of ToUint32, as 2^8 divides 2^32.

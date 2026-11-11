@@ -13,7 +13,7 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 /// `inspectDefaultOptions.depth`.
 pub(crate) const DEFAULT_DEPTH: f64 = 2.0;
 /// `inspectDefaultOptions.maxArrayLength`.
-const DEFAULT_MAX_ARRAY_LENGTH: usize = 100;
+pub(crate) const DEFAULT_MAX_ARRAY_LENGTH: usize = 100;
 
 /// The options of one inspection.
 #[derive(Clone, Copy, PartialEq)]

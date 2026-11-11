@@ -38,18 +38,15 @@ pub(crate) struct Reached<W, C> {
 /// The value `ops` read from `start`, prototypes found in the record table at `records`, or
 /// `miss` where a guard fails. `None` where the stage leaves at `miss`, or the list ends
 /// before a load.
+#[inline(always)]
 pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
     miss: S::Miss) -> Option<S::Word> {
     for op in ops {
         match *op {
-            IcOp::GuardShape(shape) => {
-                let exact = shape_word(stage, &at);
-                let same = stage.eq_imm(exact, u64::from(shape));
-                stage.guard(same, miss)?;
-            }
+            IcOp::GuardShape(shape) => guard_shape(stage, &at, shape, miss)?,
             IcOp::GuardShapes(shapes) => {
                 let exact = shape_word(stage, &at);
-                let member = stage.shape_in(exact, shapes);
+                let member = stage.shape_in_site(exact, shapes);
                 stage.guard(member, miss)?;
             }
             IcOp::Prototype => {
@@ -58,15 +55,28 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
                 let records = records.expect("a read through a prototype has the record table");
                 at = Reached { record: object_record_at(stage, records, id), shape: None, inline: None };
             }
-            IcOp::LoadSlot { slot, form, storage_len } => {
-                let inline = at.inline.unwrap_or_else(|| inline_storage(stage, at.record));
-                let layout = own_layout(stage, at.record, inline, form, storage_len, PackedAccess::Reload, miss)?;
-                return Some(read_slot(stage, layout, slot));
-            }
+            IcOp::LoadSlot { slot, form, storage_len } => return load_slot(stage, &at, slot, form, storage_len, miss),
             IcOp::LoadPrototypeSlot(slot) => return prototype_slot(stage, at.record, slot, miss),
         }
     }
     None
+}
+
+/// `IcOp::GuardShape`: continues where the reached record's exact shape is `shape`.
+#[inline(always)]
+fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<()> {
+    let exact = shape_word(stage, at);
+    let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(exact, shape) };
+    stage.guard(same, miss)
+}
+
+/// `IcOp::LoadSlot`: the value at `slot` of the reached record.
+#[inline(always)]
+fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, slot: u16, form: Form, storage_len: usize,
+    miss: S::Miss) -> Option<S::Word> {
+    let inline = at.inline.unwrap_or_else(|| inline_storage(stage, at.record));
+    let layout = own_layout(stage, at.record, inline, form, storage_len, PackedAccess::Reload, miss)?;
+    Some(read_slot(stage, layout, slot))
 }
 
 /// The reached record's exact shape word: the caller's where it holds one, else loaded.
@@ -83,11 +93,28 @@ fn prototype_slot<S: Stage>(stage: &mut S, record: S::Word, slot: u16, miss: S::
     let extras = has_extras(stage, payload);
     stage.guard(extras, miss)?;
     let pointer = extras_pointer(stage, payload);
-    let present = stage.ne_imm(pointer, 0);
+    let present = stage.ne_imm(pointer, 0u32);
     stage.guard(present, miss)?;
     let start = stage.load_u32(pointer, OBJECT.extras_arena_start_offset as i32);
     let run = arena_run(stage, start);
-    Some(stage.load_u64(run, i32::from(slot) * OBJECT.property_value_size as i32))
+    { let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64); Some(stage.load_site(run, offset)) }
+}
+
+/// The own field a site's hint proved: the value at `slot` of `object` where its exact shape
+/// is `shape`, else `None` (the interpreter's `GetField` hit: `GuardShape` then `LoadSlot`, the
+/// ops `run` interprets, through `Concrete`), through the arena whose values start at `property_values`.
+///
+/// # Safety
+/// `object` is a live record, and `property_values` is the base of the arena that holds its
+/// run; a hint's slot is one its shape covers.
+#[inline(always)]
+pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, property_values: *const crate::Value,
+    shape: u32, slot: u16) -> Option<crate::Value> {
+    let mut stage = super::Concrete::new(property_values);
+    let record = object as *const crate::heap::Object as u64;
+    let at = Reached { record, shape: None, inline: None };
+    guard_shape(&mut stage, &at, shape, ())?;
+    load_slot(&mut stage, &at, slot, Form::Either, usize::from(slot) + 1, ()).map(crate::Value::from_bits)
 }
 
 #[cfg(test)]
@@ -156,5 +183,25 @@ mod tests {
                     "slot {slot} of {len}");
             }
         }
+    }
+
+    /// A row calls `site` in an order its operand values never change: the same ops over two
+    /// sites give one trace and differ only in what the holes took.
+    #[test]
+    fn site_values_change_holes_not_the_trace() {
+        let read = |shapes: &[u32], shape: u32, slot: u16| {
+            let mut trace = super::super::trace::Trace::default();
+            let at = Reached { record: 0, shape: None, inline: None };
+            let record = trace.constant(0);
+            let at = Reached { record, ..at };
+            let ops = [IcOp::GuardShapes(shapes), IcOp::GuardShape(shape),
+                IcOp::LoadSlot { slot, form: Form::Either, storage_len: usize::from(slot) + 1 }];
+            run(&mut trace, &ops, at, None, ()).expect("a load ends the read");
+            trace
+        };
+        let (first, second) = (read(&[3, 9], 5, 1), read(&[40, 70], 6, 0));
+        assert_eq!(first.ops, second.ops, "the trace never depends on a site value");
+        assert_eq!(first.holes, [3, 9, 5, 32, 8]);
+        assert_eq!(second.holes, [40, 70, 6, 0, 0]);
     }
 }

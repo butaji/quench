@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 mod access;
 mod array_elements;
+mod store_gate;
 pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
 pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope};
@@ -34,7 +35,7 @@ mod memory_profile;
 mod pacing;
 mod parallel_mark; mod planned;
 mod promise_record;
-pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
+pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState};
 mod records;
 mod root;
 mod slots;
@@ -183,6 +184,30 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     mark_offset: records::NATIVE_RECORD_MARK_OFFSET,
     property_value_size: std::mem::size_of::<Value>(),
     property_value_align: std::mem::align_of::<Value>(),
+};
+
+/// Layout facts for code generators reading a dense environment-slot storage
+/// (`EnvironmentSlots::dense`, `dense_plain`): the storage word holds a pointer to the slice
+/// header; the header's top bit marks a sparse storage and the rest is the length; the
+/// slots follow the header, one `Value` word each.
+#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeEnvironmentLayout {
+    /// Offset in the storage word of the header pointer.
+    pub(crate) header_pointer_offset: i32,
+    /// Header bit set on a sparse storage; the length is the other bits.
+    pub(crate) sparse_mark: u64,
+    /// Offset from the header to the first slot.
+    pub(crate) slots_offset: u64,
+    pub(crate) slot_size: u64,
+}
+
+#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
+pub(crate) const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironmentLayout {
+    header_pointer_offset: 0,
+    sparse_mark: thin_slice::NATIVE_MARK_BIT,
+    slots_offset: thin_slice::NATIVE_WORD_ELEMENTS_OFFSET as u64,
+    slot_size: std::mem::size_of::<Value>() as u64,
 };
 
 const _: () =
@@ -3608,6 +3633,13 @@ impl Heap {
         // SAFETY: the caller proves the exact slot exists.
         unsafe { read_exact_slot(object, &self.properties, slot) }
     }
+    /// The own field a hint (`shape`, `slot`) proves of `object`, `None` on another exact shape.
+    /// # Safety
+    /// As for `property_get_flat`, where the shape matches.
+    #[inline(always)]
+    pub(crate) unsafe fn own_field_hit(&self, object: &Object, shape: u32, slot: u16) -> Option<Value> {
+        unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) }
+    }
     /// `property_get_flat` of a prototype holder, whose values usually live behind extras
     /// (`Object::extras_storage_start`), read without first testing the forms a holder
     /// seldom has.
@@ -3793,46 +3825,6 @@ impl Heap {
     pub(crate) fn tracks_slot_representations(&self) -> bool {
         self.properties.tracks()
     }
-
-    /// `record_property_set_flat::<false>` of a store that keeps its layout and makes no call:
-    /// `false` also leaves to the caller a store the arena's slot representations observe
-    /// (`ValueArena::tracks`) or one that would widen inline storage.
-    ///
-    /// # Safety
-    /// As `record_property_set_flat`.
-    #[inline(always)]
-    pub(crate) unsafe fn record_property_set_unobserved(&mut self, record_id: u32, slot: usize, value: Value) -> bool {
-        if self.properties.tracks() {
-            return false;
-        }
-        // An integer, the common stored value, holds no reference the barrier logs: its one
-        // tag test also gives its narrow form.
-        let narrow = match value.as_int() {
-            Some(integer) => Value::narrow_integer(integer),
-            None if self.object_records.store_logs(record_id, value) => return false,
-            None => value.to_narrow(),
-        };
-        // SAFETY: the caller proves the record live; the barrier logs nothing for this store.
-        let data = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
-        match data.exact_storage() {
-            ExactStorage::PackedInline => data.store_packed_narrow(slot, narrow),
-            ExactStorage::Plain(start) => {
-                // SAFETY: as `store_exact_slot`.
-                unsafe { self.properties.set_flat_at(start, slot, value) };
-                true
-            }
-            // A prototype's store moves the epoch its readers hold under, a call left to the
-            // caller.
-            ExactStorage::Extended { .. } if data.was_used_as_prototype() => false,
-            ExactStorage::Extended { inline } => {
-                data.note_value_write(slot);
-                // SAFETY: as `store_exact_slot`.
-                unsafe { store_extended_slot(data, &mut self.properties, slot, value, inline) };
-                true
-            }
-        }
-    }
-
     /// `record_property_set_flat` with the write barrier for an object in a slot cell (a
     /// RegExp, Map, Date or any other object without a record) whose exact shape is `shape`:
     /// one owner lookup; `false` leaves any other value to the caller unchanged.

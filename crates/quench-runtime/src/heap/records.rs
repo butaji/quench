@@ -129,7 +129,7 @@ const _: () = assert!(RECORD_SPACE_CAPACITY <= u32::MAX as usize);
 /// Each record family owns one fixed address range. Block metadata controls
 /// allocation and sweep, but resolving a live locator never walks it.
 pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> {
-    base: NonNull<MaybeUninit<T>>,
+    pub(super) base: NonNull<MaybeUninit<T>>,
     reservation: Reservation,
     blocks: Vec<RecordBlock>,
     next_id: u32,
@@ -137,13 +137,13 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> 
     free_cursor: RecordId,
     /// The reusable IDs of the occupancy word the scan last reached, starting at
     /// `free_word_base`; allocation takes them highest first before scanning further.
-    free_word: u64,
-    free_word_base: RecordId,
+    pub(super) free_word: u64,
+    pub(super) free_word_base: RecordId,
     /// The occupancy word `free_word` was loaded from: a claim sets its bit through this
     /// pointer, with no block or word index. Valid while `free_word` is nonzero, as blocks are
     /// added only once no free word is left (`claim_slow`), and set by `load_free_word` alone.
-    free_word_occupied: *mut u64,
-    live: usize,
+    pub(super) free_word_occupied: *mut u64,
+    pub(super) live: usize,
     /// Old records written since the last collection, each logged once by the write barrier.
     remembered: Vec<RecordId>,
     /// Where young records can be. Every sweep frees each occupied, unmarked record it
@@ -379,14 +379,12 @@ impl RecordBlock {
 }
 
 impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
-    /// Allocates a dense identity in this record space. The family's Value
-    /// tag carries this ID directly, independent of legacy Cell slot allocation.
+    /// A dense identity claimed with no value written (the Value tag carries it): its record is
+    /// uninitialized, to be written before the next safepoint (`try_insert` writes it at once).
     #[inline(always)]
-    pub(super) fn try_insert(&mut self, value: T) -> Result<RecordId, T> {
-        // The common allocation, inline: an id from the loaded free word, else the next fresh
-        // id in a block that exists. Reservation, new blocks and loading the next free word
-        // take `claim_slow`, which names no value: an allocation inlined into a lane handler
-        // then passes it no address of the handler's stack.
+    pub(super) fn claim_uninit(&mut self) -> Option<RecordId> {
+        // The common allocation, inline: an id from the loaded free word, else the next fresh id
+        // in a block that exists; `claim_slow` names no value (no address of the caller's stack).
         let id = if self.free_word != 0 {
             self.take_free_word_id()
         } else if self.free_cursor == 0
@@ -397,16 +395,23 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             let id = self.next_id;
             let (block_index, record_index) = Self::split_id(id);
             if !self.blocks[block_index].claim(record_index) {
-                return Err(value);
+                return None;
             }
             self.next_id += 1;
             id
         } else {
-            let Some(id) = self.claim_slow() else {
-                return Err(value);
-            };
-            id
+            self.claim_slow()?
         };
+        self.live += 1;
+        Some(id)
+    }
+
+    #[inline(always)]
+    pub(super) fn record_ptr(&mut self, id: RecordId) -> *mut T { unsafe { self.base.as_ptr().add(id as usize).cast::<T>() } }
+
+    #[inline(always)]
+    pub(super) fn try_insert(&mut self, value: T) -> Result<RecordId, T> {
+        let Some(id) = self.claim_uninit() else { return Err(value) };
         // SAFETY: the occupancy bit claims this previously uninitialized id, in the reserved
         // range (a free word and a block exist only after reservation).
         unsafe {
@@ -415,7 +420,6 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
                 .add(id as usize)
                 .write(MaybeUninit::new(value));
         };
-        self.live += 1;
         Ok(id)
     }
 

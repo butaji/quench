@@ -130,7 +130,7 @@ impl Lowering<'_, '_> {
 /// from `entry`, which ask no Number of the function's parameters.
 pub(super) fn heap_primitive_pcs(entry: usize, initial: &[Type], instructions: &[WideInstruction], leaders: &CompoundBitSet,
     constants: &[crate::bytecode::Constant], native_calls: bool) -> CompoundBitSet {
-    let facts = super::super::facts::analyze(entry, initial, instructions, leaders, constants, &writes, &|_| None, native_calls, &[]);
+    let facts = super::super::facts::analyze(entry, initial, instructions, leaders, constants, &writes, &|_| None, native_calls, &[], super::super::facts::Observed::NONE);
     let mut pcs = CompoundBitSet::with_capacity(instructions.len());
     for (pc, instruction) in instructions.iter().enumerate().filter(|(pc, instruction)| super::super::facts::generic_operator(**instruction) && facts.reached(*pc)) {
         let operand = |operand| super::super::facts::operand_type(constants, operand, |register|

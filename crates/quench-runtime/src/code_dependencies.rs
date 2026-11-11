@@ -25,24 +25,40 @@ impl Invalidation {
     fn set(&self) { self.0.set(1); }
 }
 
+/// A dependency with no code behind it: published until something it was subscribed to
+/// retires it (`PublishedCode::retire`), for proofs held as data rather than as code.
+pub(crate) fn new_dependency() -> Rc<PublishedCode<()>> { Rc::new(PublishedCode::new(())) }
+
 /// Publication owns future entry; execution and recovery own independent leases.
 /// No borrow of the publication survives acquiring a lease or retiring it.
 pub(crate) struct PublishedCode<T> {
     code: std::cell::RefCell<Option<Rc<T>>>,
     /// Set when the code retires, for runs already inside it (`Invalidation`).
     invalidation: Invalidation,
+    /// The entry word to put back (`stub`) if it still holds this code's `entry`.
+    entry_link: std::cell::Cell<Option<(*const std::cell::Cell<usize>, usize, usize)>>,
 }
 
 impl<T> PublishedCode<T> {
+    /// Names the entry word whose `entry` this code retiring takes back to `stub`.
+    pub(crate) fn on_retire(&self, word: &std::cell::Cell<usize>, entry: usize, stub: usize) {
+        self.entry_link.set(Some((std::ptr::from_ref(word), entry, stub)));
+    }
     pub(crate) fn new(code: T) -> Self { Self::with_invalidation(code, Invalidation::default()) }
     /// Code compiled to read `invalidation` at its invalidation points.
     pub(crate) fn with_invalidation(code: T, invalidation: Invalidation) -> Self {
-        Self { code: std::cell::RefCell::new(Some(Rc::new(code))), invalidation }
+        Self { code: std::cell::RefCell::new(Some(Rc::new(code))), invalidation, entry_link: std::cell::Cell::new(None) }
     }
     pub(crate) fn lease(&self) -> Option<Rc<T>> { self.code.borrow().clone() }
     pub(crate) fn is_published(&self) -> bool { self.code.borrow().is_some() }
     pub(crate) fn retire(&self) {
         self.invalidation.set();
+        if let Some((word, entry, stub)) = self.entry_link.take() {
+            // SAFETY: the word is a view's, which outlives the publications it names (the
+            // view owns its body and its pins).
+            let word = unsafe { &*word };
+            if word.get() == entry { word.set(stub); }
+        }
         self.code.borrow_mut().take();
     }
 }

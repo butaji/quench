@@ -22,7 +22,8 @@ pub(crate) const ENCODINGS: &[&str] = &[
     "base64url",
 ];
 
-pub(crate) const MAX_STRING_BYTES: usize = 0x1fff_ffe8;
+pub(crate) const MAX_STRING_BYTES: usize =
+    quench_runtime::NativeContext::<crate::host::NodeHost>::MAX_STRING_CODE_UNITS;
 #[derive(Debug)]
 pub(crate) struct StringTooLong;
 fn make_string(bytes: &[u8], encoding: &str) -> Result<Vec<u16>, StringTooLong> {

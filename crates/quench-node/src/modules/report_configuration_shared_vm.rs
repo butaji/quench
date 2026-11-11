@@ -73,33 +73,33 @@ impl State {
     }
 }
 
-fn setting_position(option: &str) -> usize {
-    SETTINGS.iter().position(|setting| setting.option == option).expect("declared report setting")
+fn setting_position(property: &str) -> usize {
+    SETTINGS.iter().position(|setting| setting.property == property).expect("declared report setting")
 }
-fn value(context: &mut Context<'_>, option: &str) -> SettingValue {
-    context.host_mut().shared_state().borrow().report_config.values[setting_position(option)].clone()
+fn value(context: &mut Context<'_>, property: &str) -> SettingValue {
+    context.host_mut().shared_state().borrow().report_config.values[setting_position(property)].clone()
 }
-fn flag(context: &mut Context<'_>, option: &str) -> bool {
-    matches!(value(context, option), SettingValue::Boolean(true))
+fn flag(context: &mut Context<'_>, property: &str) -> bool {
+    matches!(value(context, property), SettingValue::Boolean(true))
 }
-fn text(context: &mut Context<'_>, option: &str) -> String {
-    match value(context, option) {
+fn text(context: &mut Context<'_>, property: &str) -> String {
+    match value(context, property) {
         SettingValue::String(text) => text,
-        SettingValue::Boolean(_) => unreachable!("report setting {option} is a string"),
+        SettingValue::Boolean(_) => unreachable!("report setting {property} is a string"),
     }
 }
 fn store(context: &mut Context<'_>, index: usize, value: SettingValue) {
     context.host_mut().shared_state().borrow_mut().report_config.values[index] = value;
 }
 
-const DIRECTORY: &str = "--report-dir";
-const FILENAME: &str = "--report-filename";
-const COMPACT: &str = "--report-compact";
-const EXCLUDE_NETWORK: &str = "--report-exclude-network";
-const EXCLUDE_ENV: &str = "--report-exclude-env";
+const DIRECTORY: &str = "directory";
+const FILENAME: &str = "filename";
+const COMPACT: &str = "compact";
+const EXCLUDE_NETWORK: &str = "excludeNetwork";
+const EXCLUDE_ENV: &str = "excludeEnv";
 use crate::modules::keys::SIGNAL;
-const REPORT_ON_SIGNAL: &str = "--report-on-signal";
-const REPORT_ON_UNCAUGHT_EXCEPTION: &str = "--report-uncaught-exception";
+const REPORT_ON_SIGNAL: &str = "reportOnSignal";
+const REPORT_ON_UNCAUGHT_EXCEPTION: &str = "reportOnUncaughtException";
 
 /// `process.report`: an enumerable, configurable getter of the one report object.
 pub(crate) fn install(context: &mut Context<'_>, process: RootId) -> Result<(), RootedError> {
@@ -247,7 +247,7 @@ pub(crate) fn set_property(context: &mut Context<'_>, _: RootId, args: &[RootId]
             add_signal_listener(context, Some(name))?;
             store(context, index, parsed);
         }
-        _ if setting.option == REPORT_ON_SIGNAL => {
+        _ if setting.property == REPORT_ON_SIGNAL => {
             store(context, index, parsed);
             remove_signal_listener(context)?;
             add_signal_listener(context, None)?;

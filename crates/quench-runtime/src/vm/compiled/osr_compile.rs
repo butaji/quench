@@ -2,8 +2,8 @@
 //! generator's thread compiles, and the next look publishes the code.
 
 use super::{
-    compile_native_function, dump_native_code, native_dump_directory, lane_unit, osr_loop,
-    publish_entry, tier_policy, CompiledOsrRegion, LaneHelpers, LoopRegion,
+    compile_native_function, dump_native_code, names_length, native_dump_directory, lane_unit, osr_loop,
+    publish_entry, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
 use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
@@ -69,27 +69,9 @@ pub(in crate::vm) fn loop_unit(function: &Function) -> lane_unit::Unit {
     }
 }
 
-/// Map an inlining loop region onto the lane unit: its instructions' jump targets become
-/// unit PCs, its origins name the caller/inlined frame of each instruction, and its frames
-/// carry the callee identity, function, call window and result.
-fn inlining_unit(region: &LoopRegion) -> Option<(lane_unit::Unit, BTreeMap<usize, u32>)> {
-    let inlining = region.inlining.as_deref()?;
-    let count = region.instructions().len();
-    let header = region.header as usize;
-    let mut instructions = region.instructions().to_vec();
-    for instruction in &mut instructions {
-        if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget {
-            let target = instruction.imm() as usize;
-            let local = target.checked_sub(header).filter(|local| *local < count).unwrap_or(count);
-            instruction.set_jump_target(local as u32);
-        }
-    }
-    let mut origins: Vec<lane_unit::Origin> = inlining.origins.iter().take(count).map(|origin| match origin {
-        osr_loop::Origin::Caller(pc) => lane_unit::Origin::Caller(*pc),
-        osr_loop::Origin::Inlined { frame, pc } => lane_unit::Origin::Inlined { frame: usize::from(*frame), pc: *pc },
-        osr_loop::Origin::Leave(pc) => lane_unit::Origin::Caller(*pc),
-    }).collect();
-    let frames: Vec<lane_unit::Frame> = inlining.frames.iter().map(|frame| lane_unit::Frame {
+/// The lane unit's frames for an inlining region's inlined callees.
+fn unit_frames(region: &LoopRegion, inlining: &osr_loop::Inlining) -> Vec<lane_unit::Frame> {
+    inlining.frames.iter().map(|frame| lane_unit::Frame {
         recovery: lane_unit::CallRecovery::Materialize,
         parent: None,
         call: frame.call,
@@ -110,12 +92,13 @@ fn inlining_unit(region: &LoopRegion) -> Option<(lane_unit::Unit, BTreeMap<usize
         registers: frame.registers,
         alternative: None,
         function_call: None,
-    }).collect();
-    // Each frame's call marker: a `Nop` where its body begins, at which the lane binds the
-    // callee and passes the call's arguments, as `lane_unit::unit`
-    // emits it. The region's own parameter moves precede the marker and write the same
-    // registers.
-    let mut inserted: Vec<(usize, u32)> = (0..frames.len()).filter_map(|frame| {
+    }).collect()
+}
+
+/// Where each inlined frame's call marker goes: its first instruction's position and the PC
+/// to resume at, where a failed identity guard must rerun the callee's read too.
+fn marker_sites(origins: &[lane_unit::Origin], frames: &[lane_unit::Frame]) -> Vec<(usize, u32)> {
+    (0..frames.len()).filter_map(|frame| {
         let at = origins.iter().position(|origin|
             matches!(origin, lane_unit::Origin::Inlined { frame: at, .. } if *at == frame))?;
         // A failed identity guard must rerun the callee's read too: the region resolved it
@@ -125,7 +108,43 @@ fn inlining_unit(region: &LoopRegion) -> Option<(lane_unit::Unit, BTreeMap<usize
             _ => frames[frame].call,
         };
         Some((at, call))
-    }).collect();
+    }).collect()
+}
+
+/// The region's instructions with each jump target a region-local PC (one past the end where it leaves).
+fn localized_jumps(region: &LoopRegion) -> Vec<WideInstruction> {
+    let count = region.instructions().len();
+    let header = region.header as usize;
+    let mut instructions = region.instructions().to_vec();
+    for instruction in &mut instructions {
+        if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget {
+            let target = instruction.imm() as usize;
+            let local = target.checked_sub(header).filter(|local| *local < count).unwrap_or(count);
+            instruction.set_jump_target(local as u32);
+        }
+    }
+    instructions
+}
+
+/// The region's static field reads, by the unit PC each instruction took, answered from
+/// the entry record: an instruction at region offset `o` moved past every marker at or
+/// before it (`inserted`).
+fn inlined_entry_fields(region: &LoopRegion, program: &ResidualProgram, inserted: &[(usize, u32)]) -> BTreeMap<usize, u32> {
+    let unit_pc = |offset: usize| offset + inserted.iter().filter(|(at, _)| *at <= offset).count();
+    region.field_reads().iter()
+        .filter(|(_, index)| entry_read(region, **index, program))
+        .filter_map(|(offset, index)| Some((unit_pc(*offset as usize),
+            u32::try_from(osr_loop::field_word(region, *index)).ok()?)))
+        .collect()
+}
+
+/// Inserts each frame's call marker: a `Nop` where its body begins, at which the lane binds the
+/// callee and passes the call's arguments, as `lane_unit::unit` emits it. The region's own
+/// parameter moves precede the marker and write the same registers. Returns the insertions
+/// (position, resume PC) and the markers' unit PCs.
+fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &mut Vec<lane_unit::Origin>,
+    frames: &[lane_unit::Frame]) -> (Vec<(usize, u32)>, Vec<usize>) {
+    let mut inserted = marker_sites(origins, frames);
     inserted.sort_unstable_by_key(|(at, _)| *at);
     inserted.dedup_by_key(|(at, _)| *at);
     let mut markers: Vec<usize> = inserted.iter().map(|(at, _)| *at).collect();
@@ -136,23 +155,32 @@ fn inlining_unit(region: &LoopRegion) -> Option<(lane_unit::Unit, BTreeMap<usize
     // A jump target lands on the marker at its own position, as the call's PC did: an
     // insertion at the target itself is that marker, so only earlier ones move it.
     let shift = |target: usize| target + inserted.iter().filter(|(at, _)| *at < target).count();
-    for instruction in &mut instructions {
+    for instruction in instructions.iter_mut() {
         if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget {
             instruction.set_jump_target(shift(instruction.imm() as usize) as u32);
         }
     }
     for marker in &mut markers { *marker = shift(*marker); }
+    (inserted, markers)
+}
+
+/// Map an inlining loop region onto the lane unit: its instructions' jump targets become
+/// unit PCs, its origins name the caller/inlined frame of each instruction, and its frames
+/// carry the callee identity, function, call window and result.
+fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane_unit::Unit, BTreeMap<usize, u32>)> {
+    let inlining = region.inlining.as_deref()?;
+    let count = region.instructions().len();
+    let mut instructions = localized_jumps(region);
+    let mut origins: Vec<lane_unit::Origin> = inlining.origins.iter().take(count).map(|origin| match origin {
+        osr_loop::Origin::Caller(pc) => lane_unit::Origin::Caller(*pc),
+        osr_loop::Origin::Inlined { frame, pc } => lane_unit::Origin::Inlined { frame: usize::from(*frame), pc: *pc },
+        osr_loop::Origin::Leave(pc) => lane_unit::Origin::Caller(*pc),
+    }).collect();
+    let frames = unit_frames(region, inlining);
+    let (inserted, markers) = insert_markers(&mut instructions, &mut origins, &frames);
     let registers = frames.iter().map(|frame| frame.base + frame.registers)
         .max().unwrap_or(0).max(inlining.caller_registers);
-    // The region's static field reads, by the unit PC each instruction took, answered from
-    // the entry record: an instruction at region offset `o` moved past every marker at or
-    // before it.
-    let unit_pc = |offset: usize| offset + inserted.iter().filter(|(at, _)| *at <= offset).count();
-    let entry_fields: BTreeMap<usize, u32> = region.field_reads().iter()
-        .filter(|(_, index)| !region.is_dynamic_field(**index))
-        .filter_map(|(offset, index)| Some((unit_pc(*offset as usize),
-            u32::try_from(osr_loop::field_word(region, *index)).ok()?)))
-        .collect();
+    let entry_fields = inlined_entry_fields(region, program, &inserted);
     Some((lane_unit::Unit {
         instructions, origins, frames, markers,
         caller_registers: inlining.caller_registers, registers,
@@ -161,12 +189,21 @@ fn inlining_unit(region: &LoopRegion) -> Option<(lane_unit::Unit, BTreeMap<usize
     }, entry_fields))
 }
 
+/// Whether the read of `region`'s field `index` answers from the entry record: a static read
+/// of a field, not a register's `length`, which native code reads from the array's length
+/// word at the read (`Lowering::array_length`) as the loop's stores may change it.
+fn entry_read(region: &LoopRegion, index: usize, program: &ResidualProgram) -> bool {
+    let field = &region.fields[index];
+    !region.is_dynamic_field(index)
+        && !(matches!(field.receiver, FieldReceiver::Register(_)) && names_length(program, field.atom))
+}
+
 /// A plain loop unit's static field reads, by the unit PC each instruction keeps, answered
 /// from the entry record.
-fn plain_entry_fields(region: &LoopRegion) -> BTreeMap<usize, u32> {
+fn plain_entry_fields(region: &LoopRegion, program: &ResidualProgram) -> BTreeMap<usize, u32> {
     let header = region.header as usize;
     region.field_reads().iter()
-        .filter(|(_, index)| !region.is_dynamic_field(**index))
+        .filter(|(_, index)| entry_read(region, **index, program))
         .filter_map(|(offset, index)| Some((header + *offset as usize,
             u32::try_from(osr_loop::field_word(region, *index)).ok()?)))
         .collect()
@@ -187,6 +224,81 @@ fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
     fields
 }
 
+impl OsrFacts {
+    /// The facts the observation's field descriptors embed in code compiled from it.
+    fn observed(observation: &Observation<'_>) -> Self {
+        let loads = || observation.native_field_loads.iter().flatten();
+        let mut shape_dependencies: Vec<_> = loads().flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
+        shape_dependencies.sort_unstable();
+        shape_dependencies.dedup();
+        let mut departure_shapes: Vec<_> = loads().filter_map(|field| field.holder).collect();
+        departure_shapes.sort_unstable();
+        departure_shapes.dedup();
+        let mut slot_dependencies: Vec<_> = loads().filter_map(|field| field.slot_dependency()).collect();
+        slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
+        slot_dependencies.dedup();
+        Self { shape_dependencies, departure_shapes, slot_dependencies }
+    }
+}
+
+/// The element reads through an array observed to hold int32s or Numbers, where no earlier body
+/// left (`generic`): typed, each leaving at an element that is not one.
+fn observed_reads(unit: &lane_unit::Unit, observation: &Observation<'_>, generic: &[usize]) -> Vec<super::facts::ObservedRead> {
+    unit.instructions.iter().enumerate()
+        .filter(|(pc, instruction)| instruction.op().is_get_index() && !observation.abandoned.contains(pc))
+        .filter_map(|(pc, instruction)| {
+            let register = instruction.operand_b().register_index()?;
+            let ty = observation.number_arrays.iter().find(|(array, _)| *array == register)?.1;
+            // An inlined callee's reads are Numbers whatever the entry showed: its registers
+            // hold nothing at entry that the sample could have seen. So is a read that left
+            // once: an int32 observation it outgrew widens to Numbers before it is dropped.
+            let ty = if unit.frames.is_empty() && !generic.contains(&pc) { ty } else { crate::typed_ir::Type::NUMBER };
+            Some(super::facts::ObservedRead { pc, ty })
+        }).collect()
+}
+
+/// What lowers a loop's unit: the region specializer, the same plan a lane body and a static
+/// typed region use. A region it declines stays in the interpreter; there is no second
+/// lowering with its own facts, widenings and entry record.
+struct LoopPlanner<'a> {
+    observation: &'a Observation<'a>,
+    fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
+    isa: &'a dyn cranelift_codegen::isa::TargetIsa,
+    program: &'a ResidualProgram,
+    function_id: u32,
+    helpers: LaneHelpers,
+    views: super::ElementViews,
+}
+
+impl LoopPlanner<'_> {
+    /// The function's own unit run over the loop is the general plan: a call inside it leaves
+    /// at the call's exact PC, with no callee inlined. The inlined unit is an optimization over
+    /// that plan, used only where the general plan declines; an inlined callee the region
+    /// cannot prove exactly then costs the region nothing but the inlining.
+    fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
+        unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, (header, backedge): (usize, usize),
+        generic: &[usize]) -> Option<super::lane_region::LoweredRegion> {
+        let number_reads = observed_reads(unit, self.observation, generic);
+        super::lane_region::RegionSpecializer {
+            number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
+            function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
+            global_reads: &global_reads(unit), facts: VmFacts::STATIC, generic,
+            direct: &BTreeMap::new(), frame_captures: &[], isa: self.isa,
+            entry_fields,
+            plan: super::lane_region::RegionPlan {
+                coverage: super::lane_region::Coverage::Loop { header, backedge, poll: false },
+                completion: super::lane_region::Completion::StatusAndPc, views: self.views,
+            },
+        }.specialize(self.program).ok().filter(|lowered| self.views == super::ElementViews::Dense || lowered.hoists_arrays)
+    }
+}
+
+/// A lane region carries each inlined callee's full body and its guards, so a loop
+/// that inlines two calls may legitimately exceed one function's code budget. The code
+/// is published once per hot loop and retires with its site, so the larger per-site
+/// bound stays bounded by the lane plan's own admission.
+const REGION_CODE_BUDGET: usize = 2 * osr_loop::MAX_CODE_BYTES;
+
 /// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
 /// `None` where it lowers no code (a typed plan hoisting no view would leave at an access).
 pub(in crate::vm) fn start_osr_region(
@@ -196,62 +308,33 @@ pub(in crate::vm) fn start_osr_region(
     program: &ResidualProgram,
     function_id: u32,
     helpers: LaneHelpers,
+    global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
     widened: &[usize],
-    global_reads: &crate::vm::global_facts::GlobalReads,
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
-    let fields = loop_fields(region, observation);
-    // The function's own unit run over the loop is the general plan: a call inside it leaves
-    // at the call's exact PC, with no callee inlined. The inlined unit is an optimization over
-    // that plan, used only where the general plan declines; an inlined callee the region
-    // cannot prove exactly then costs the region nothing but the inlining.
-    let plan = |unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, header: usize, backedge: usize, generic: &[usize]| {
-        super::lane_region::RegionSpecializer {
-            function_id, unit, helpers, fields: &fields,
-            global_reads, facts: VmFacts::STATIC, generic,
-            direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-            entry_fields,
-            plan: super::lane_region::RegionPlan {
-                coverage: super::lane_region::Coverage::Loop { header, backedge, poll: false },
-                completion: super::lane_region::Completion::StatusAndPc, views,
-            },
-        }.specialize(program).ok().filter(|lowered| views == super::ElementViews::Dense || lowered.hoists_arrays)
-    };
-    let inlined = region.inlining.is_some().then(|| inlining_unit(region)).flatten();
+    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views };
+    let mut plan = |unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, header: usize, backedge: usize, generic: &[usize]|
+        planner.plan(&mut *global_reads, unit, entry_fields, (header, backedge), generic);
+    let inlined = region.inlining.is_some().then(|| inlining_unit(region, program)).flatten();
     let lane = inlined
         .as_ref()
         .and_then(|(unit, fields)| plan(unit, fields, 0, unit.instructions.len().saturating_sub(1), &[]))
         .or_else(|| {
             let plain = loop_unit(program.function(function_id as usize));
             // The plain unit's PCs are the function's, which the site's leaves name.
-            plan(&plain, &plain_entry_fields(region), region.header as usize, region.backedge as usize, widened)
+            plan(&plain, &plain_entry_fields(region, program), region.header as usize, region.backedge as usize, widened)
         });
     // One plan lowers a loop: the region specializer, the same plan a lane body and a static
     // typed region use. A region it declines stays in the interpreter; there is no second
     // lowering with its own facts, widenings and entry record.
     let function = lane?.function;
     let clif = native_dump_directory().map(|_| function.display().to_string());
-    let loads = || observation.native_field_loads.iter().flatten();
-    let mut shape_dependencies: Vec<_> = loads().flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
-    shape_dependencies.sort_unstable();
-    shape_dependencies.dedup();
-    let mut departure_shapes: Vec<_> = loads().filter_map(|field| field.holder).collect();
-    departure_shapes.sort_unstable();
-    departure_shapes.dedup();
-    let mut slot_dependencies: Vec<_> = loads().filter_map(|field| field.slot_dependency()).collect();
-    slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
-    slot_dependencies.dedup();
-    // A lane region carries each inlined callee's full body and its guards, so a loop
-    // that inlines two calls may legitimately exceed one function's code budget. The code
-    // is published once per hot loop and retires with its site, so the larger per-site
-    // bound stays bounded by the lane plan's own admission.
-    let code_budget = 2 * osr_loop::MAX_CODE_BYTES;
+    let facts = OsrFacts::observed(observation);
     let code = super::super::jit_backend::run_in_background(move || {
-        compile_native_function(function, &*isa, code_budget, |code| Some(code.to_vec()))
+        compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    Some(PendingOsrRegion { code, watch, header: region.header, clif,
-        facts: OsrFacts { shape_dependencies, departure_shapes, slot_dependencies } })
+    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts })
 }
 
 impl PendingOsrRegion {
@@ -286,295 +369,5 @@ impl PendingOsrRegion {
 
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A simple numeric loop plans through `RegionSpecializer` with `Coverage::Loop`, not
-    /// through the loop tier's private lowering.
-    #[test]
-    fn a_simple_loop_is_planned_by_the_region_specializer() {
-        let program = crate::Engine::specialize(
-            "function f(n){let s=0;for(let i=0;i<n;i++){s=s+i;}return s;} f(4);",
-            "loop-plan.js").unwrap();
-        let id = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "f")).unwrap() as u32;
-        let function = program.function(id as usize);
-        let decoded: Vec<_> = function.instructions().collect();
-        let (header, backedge) = decoded.iter().enumerate().find_map(|(pc, instruction)| {
-            (instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
-                && (instruction.jump_target() as usize) <= pc)
-                .then(|| (instruction.jump_target(), pc as u32))
-        }).expect("the function has a loop");
-        let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
-            .expect("the loop is admitted");
-        let observation = Observation { native_field_loads: &[] };
-        let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
-            crate::MemoryPolicy::Throughput, &program, id,
-            super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &[],
-            &Default::default())
-            .expect("the loop plans");
-        assert_eq!(pending.header, region.header, "the loop goes through RegionSpecializer");
-    }
-
-    /// The lane-ABI code the region specializer planned executes the loop correctly.
-    #[test]
-    fn a_loop_compiled_by_the_region_specializer_runs() {
-        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
-        let program = crate::Engine::specialize(
-            "function run(){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){s=s+i;} } return s; } throw run();",
-            "lane-osr.js").unwrap();
-        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
-        vm.programs.enable_js_lane_methods();
-        vm.programs.disable_js_entry_specializations();
-        let error = vm.execute(&program).unwrap_err();
-        assert_eq!(error.thrown_value(), Some(crate::Value::integer(9_900_000)));
-        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
-            "the lane OSR path ran");
-    }
-
-    /// A loop taking a Number remainder runs through the lane unit's shared remainder, keeping
-    /// signed zeros and leaving a coercing operand to the general path.
-    #[test]
-    fn a_remainder_loop_runs_through_the_lane_unit() {
-        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
-        let program = crate::Engine::specialize(
-            "function remainderLoop(left, right) { let result = 0; for (let i = 0; i < 64; i++) result = left % right; return result; }
-             for (let i = 0; i < 100; i++) remainderLoop(7, 3);
-             const pairs = [[-4, 2], [-0, 3], [4, -2], [1, 0], [1, -0], [Infinity, 2], [-Infinity, 2], [2, Infinity], [-2, -Infinity], [NaN, 2], [2, NaN], [-2147483648, -1], [0.5, 0.2], [5.5, 2]];
-             const results = [];
-             for (const pair of pairs) { const value = remainderLoop(pair[0], pair[1]); results.push(Object.is(value, -0) ? '-0' : String(value)); }
-             print(results.join(','));
-             let calls = 0; print(remainderLoop({valueOf() {calls++; return 7;}}, 3)); print(calls);",
-            "lane-osr-remainder.js").unwrap();
-        let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::writing_to(output.clone()));
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
-        vm.programs.enable_js_lane_methods();
-        vm.programs.disable_js_entry_specializations();
-        vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), [
-            "-0,-0,0,NaN,NaN,NaN,NaN,2,-2,NaN,NaN,-0,0.09999999999999998,1.5", "1", "64",
-        ]);
-        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
-            "the lane OSR path ran");
-    }
-
-    /// A `Return` inside the loop completes the activation through the lane unit, not an
-    /// exit: the loop's native run count stays above its exits and the result matches.
-    #[test]
-    fn a_return_inside_a_loop_completes_through_the_lane_unit() {
-        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
-        let program = crate::Engine::specialize(
-            "function cmp(a, b) { var i = a.length; while (--i >= 0) { var r = a[i] - b[i]; if (r != 0) return r; } return 0; }
-             var a = [], b = [];
-             for (var i = 0; i < 200; i++) { a.push(i * 3 & 255); b.push(i * 3 & 255); }
-             var s = 0;
-             for (var k = 0; k < 3000; k++) {
-               b[k % 200] = (k & 1) ? a[k % 200] + 1 : a[k % 200];
-               s = (s + cmp(a, b) * (k % 7)) | 0;
-               b[k % 200] = a[k % 200];
-             }
-             print(s);",
-            "lane-osr-return.js").unwrap();
-        let expected = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        crate::vm::Vm::new(crate::test_host::TestHost::writing_to(expected.clone()))
-            .execute(&program).unwrap();
-        let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::writing_to(output.clone()));
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
-        vm.programs.enable_js_lane_methods();
-        vm.programs.disable_js_entry_specializations();
-        vm.execute(&program).unwrap();
-        assert_eq!(*output.borrow(), *expected.borrow());
-        let function_id = program.functions.iter().position(|function|
-            function.header().name.is_some_and(|name| &program.atoms[name as usize] == "cmp")).unwrap();
-        let views = vm.programs.lane_views(super::super::program_store::ProgramId::MAIN).unwrap();
-        let osr = views.get(function_id).and_then(super::super::program_store::derived_lane_view)
-            .unwrap().osr_diagnostics();
-        assert!(osr.native_region_runs > 0, "the return loop ran natively: {osr:?}");
-        assert_eq!(osr.exits, 0, "a return inside the loop is a completion, not an exit: {osr:?}");
-    }
-
-    /// A loop appending to a fresh array runs natively through the lane unit: the append
-    /// helper grows the backing and the loop's normal continuation is a resume, not an exit.
-    #[test]
-    fn an_append_growth_loop_runs_through_the_lane_unit() {
-        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
-        let program = crate::Engine::specialize(
-            "function fill(n) { var a = []; for (var i = 0; i < n; i++) a[i] = (i * 7 + 3) & 255; return a; }
-             var sum = 0;
-             for (var k = 0; k < 3000; k++) { var a = fill(40 + (k & 7)); sum = (sum * 31 + a[a.length - 1] + a.length) | 0; }
-             print(sum);",
-            "lane-osr-append.js").unwrap();
-        let expected = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        crate::vm::Vm::new(crate::test_host::TestHost::writing_to(expected.clone()))
-            .execute(&program).unwrap();
-        let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::writing_to(output.clone()));
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
-        vm.programs.enable_js_lane_methods();
-        vm.programs.disable_js_entry_specializations();
-        vm.execute(&program).unwrap();
-        assert_eq!(*output.borrow(), *expected.borrow());
-        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
-            "the lane OSR path ran");
-    }
-
-    /// A loop negating a Number runs through the lane unit's shared Number unary denotation,
-    /// keeping `-0` and widening an overflowing int32 negation.
-    #[test]
-    fn a_float_unary_loop_runs_through_the_lane_unit() {
-        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
-        let program = crate::Engine::compile(crate::ExecutionRequest::script(
-            "function negate(value){ let index=0; while(index<9999){ value=-value; index++; } return value; }
-             for(let call=0;call<100;call++) negate(0.5);
-             if(negate(0.5)!==-0.5) throw Error('float negation');
-             if(!Object.is(negate(0),-0)) throw Error('negative zero');
-             if(negate(-2147483648)!==2147483648) throw Error('int32 minimum');
-             print('ok');", "lane-osr-unary.js")).unwrap();
-        let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::writing_to(output.clone()));
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
-        vm.programs.enable_js_lane_methods();
-        vm.programs.disable_js_entry_specializations();
-        vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), ["ok"]);
-        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
-            "the lane OSR path ran");
-    }
-
-    /// A loop reading a static own field lowers through the lane unit's field sites.
-    #[test]
-    fn a_field_loop_compiled_by_the_region_specializer_runs() {
-        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
-        let program = crate::Engine::specialize(
-            "function helper(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+i+o.x)|0; } } return s; } throw helper({x:1});",
-            "lane-osr-field.js").unwrap();
-        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
-        vm.programs.enable_js_lane_methods();
-        vm.programs.disable_js_entry_specializations();
-        let error = vm.execute(&program).unwrap_err();
-        assert_eq!(error.thrown_value(), Some(crate::Value::integer(10_100_000)));
-        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
-            "the lane OSR path ran");
-    }
-    /// A loop indexing a dense record array lowers through the lane unit's array views.
-    #[test]
-    fn an_array_loop_compiled_by_the_region_specializer_runs() {
-        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
-        let program = crate::Engine::specialize(
-            "function helper(arr){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+i+arr[i&3])|0; } } return s; } throw helper([1,2,3,4]);",
-            "lane-osr-array.js").unwrap();
-        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
-        vm.programs.enable_js_lane_methods();
-        vm.programs.disable_js_entry_specializations();
-        let error = vm.execute(&program).unwrap_err();
-        assert_eq!(error.thrown_value(), Some(crate::Value::integer(10_400_000)));
-        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
-            "the lane OSR path ran");
-    }
-    /// A loop reading a captured binding carries the loop entry's capture view.
-    #[test]
-    fn a_capture_loop_keeps_its_capture_value() {
-        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
-        let program = crate::Engine::specialize(
-            "function helper(){ let add=1; let f=()=>add; let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=s+i+add; } } return s; } function main(){ return helper(); } throw main();",
-            "lane-osr-capture.js").unwrap();
-        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
-        vm.programs.enable_js_lane_methods();
-        vm.programs.disable_js_entry_specializations();
-        let error = vm.execute(&program).unwrap_err();
-        assert_eq!(error.thrown_value(), Some(crate::Value::integer(10_100_000)));
-    }
-    /// A loop that stores a field either lowers through the lane specializer or stays in
-    /// the interpreter; it never takes the private lowering.
-    #[test]
-    fn a_field_store_loop_keeps_its_result() {
-        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
-        let program = crate::Engine::specialize(
-            "function helper(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ o.x=(o.x+i)|0; s=(s+o.x)|0; } } return s; } throw helper({x:1});",
-            "lane-osr-field-store.js").unwrap();
-        let run = |mode| {
-            let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(mode);
-            vm.programs.enable_js_jit_diagnostics();
-            vm.programs.enable_js_lane_methods();
-            vm.programs.disable_js_entry_specializations();
-            vm.execute(&program).unwrap_err().thrown_value()
-        };
-        let interpreted = run(crate::ExecutionMode::Interpreted);
-        let compiled = run(crate::ExecutionMode::Compiled);
-        assert_eq!(interpreted, compiled);
-    }
-    /// An inlining loop region maps onto a lane unit with one frame, inlined origins and a
-    /// call marker, before it is offered to `RegionSpecializer`.
-    #[test]
-    fn an_inlining_region_maps_onto_a_lane_unit() {
-        let program = crate::Engine::specialize(
-            "function callee(o){ return o.x; } function caller(o){ let s=0; for(let i=0;i<10;i++){ s += o.callee(o); } return s; } caller({callee: callee, x: 1});",
-            "inlining-unit.js").unwrap();
-        let caller_id = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "caller")).unwrap() as u32;
-        let callee_id = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "callee")).unwrap() as u32;
-        let function = program.function(caller_id as usize);
-        let decoded: Vec<_> = function.instructions().collect();
-        let constants: Vec<crate::Value> = program.constants.iter()
-            .map(|constant| super::super::facts::immediate(constant).unwrap_or(crate::Value::UNDEFINED))
-            .collect();
-        let live = program.register_root_masks(caller_id).unwrap();
-        let callee = program.function(callee_id as usize);
-        let mut resolve = |_chain: &[super::super::FieldUse], _capture: Option<u16>| {
-            Some(super::super::osr_loop::InlineCallee {
-                callee: crate::Value::UNDEFINED,
-                function: callee_id,
-                params: callee.params,
-                registers: callee.registers,
-                instructions: callee.instructions().collect(),
-                live: program.register_root_masks(callee_id).unwrap(),
-            })
-        };
-        let (header, backedge) = decoded.iter().enumerate().find_map(|(pc, instruction)| {
-            (instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
-                && (instruction.jump_target() as usize) <= pc)
-                .then(|| (instruction.jump_target(), pc as u32))
-        }).expect("the caller has a loop");
-        let region = super::super::osr_loop::inline_region(function, &decoded, &constants,
-            &program.field_sites, live, header, backedge, &mut resolve)
-            .expect("the loop inlines");
-        let (unit, _) = inlining_unit(&region).expect("the region maps onto a lane unit");
-        assert_eq!(unit.frames.len(), 1, "one inlined frame");
-        assert!(unit.origins.iter().any(|origin|
-            matches!(origin, lane_unit::Origin::Inlined { .. })), "inlined origins");
-        assert!(!unit.markers.is_empty(), "the call marker");
-    }
-    /// An inlined callee's loop executes through the lane unit when it lowers.
-    #[test]
-    fn an_inlined_call_loop_runs_through_the_lane_unit() {
-        super::super::LANE_OSR_RUNS.with(|count| count.set(0));
-        let program = crate::Engine::specialize(
-            "function callee(o){ return o.x; } function caller(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+callee(o))|0; } } return s; } throw caller({x:1});",
-            "lane-osr-inline.js").unwrap();
-        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
-        vm.programs.enable_js_lane_methods();
-        vm.programs.disable_js_entry_specializations();
-        let error = vm.execute(&program).unwrap_err();
-        assert_eq!(error.thrown_value(), Some(crate::Value::integer(200_000)));
-        assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
-            "the inlining lane OSR path ran");
-    }
-}
+#[path = "osr_compile/tests.rs"]
+mod tests;

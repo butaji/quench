@@ -161,6 +161,8 @@ impl OwnedRootFilter {
 }
 const OWNED_ROOTS_INLINE: usize = 2;
 
+mod shape_append;
+
 struct ParallelShapeTrace<'a> {
     shapes: *const Shape,
     shape_count: usize,
@@ -196,22 +198,6 @@ impl ParallelShapeTrace<'_> {
             }
         }
         shapes
-    }
-
-    // Called once per marked object, so its frame setup would rival its body.
-    #[inline(always)]
-    fn append(&self, trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>) {
-        // The constructor bit follows the shape bit for every shape: set, a non-prototype
-        // holder has nothing to add, so a shape already seen costs one load.
-        let (word, mask) = (shape as usize / u64::BITS as usize, 1_u64 << (shape % u64::BITS));
-        if prototype || trace_kind == GcTraceKind::VerifyFull || self.marked_constructor_shapes[word].load(Ordering::Relaxed) & mask == 0 {
-            self.append_shape_edges(trace_kind, shape, prototype, roots);
-        }
-        if self.owned_root_filter.may_hold(owner)
-            && let Some(edges) = self.owned_roots.get(&owner)
-        {
-            roots.extend(edges.iter().copied());
-        }
     }
 
     /// Whether this call first sets `mask` in `bits[word]`; always when verifying.

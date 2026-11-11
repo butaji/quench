@@ -36,7 +36,7 @@ pub(super) fn lower_rest(
     if lower_iterator_cleanup(builder, instruction, next, payload, exact) {
         return PcLowering::Native;
     }
-    if let Some(next) = next && instruction.op() == crate::bytecode::Op::Binary
+    if let Some(next) = next && instruction.op().is_binary()
         && lower_binary(builder, program, (instruction, next), register_offset, (arguments, payload), exact) {
         return PcLowering::Native;
     }

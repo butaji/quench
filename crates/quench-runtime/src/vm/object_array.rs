@@ -6,7 +6,7 @@ use super::*;
 /// one descriptor-table entry.
 const INDEX_PROBE_COST_RATIO: usize = 8;
 
-const ARRAY_LENGTH_MODULUS: f64 = u32::MAX as f64 + 1.0;
+const ARRAY_LENGTH_MODULUS: f64 = crate::units::MAX_ARRAY_LENGTH as f64 + 1.0;
 pub(super) const ARRAY_LENGTH_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     enumerable: false,
     configurable: false,

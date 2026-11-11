@@ -569,8 +569,7 @@ mod tests {
             assert!(malformed.verified().is_none(), "{malformed:?}");
         }
         let union = Type::NUMBER.join(Type::language(ValueType::BigInt));
-        let fact = Fact { ty: union, binding: BindingTime::Dynamic,
-            proof: Proof::Definition, ..canonical };
+        let fact = Fact { ty: union, binding: BindingTime::Dynamic, proof: Proof::Definition, ..canonical };
         assert_eq!(fact.verified().unwrap().ty, union);
         assert!(Fact { representation: Representation::Float64, ..fact }.verified().is_none());
         assert_eq!(canonical.verified().unwrap().ty, Type::ANY);
