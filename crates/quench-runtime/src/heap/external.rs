@@ -31,7 +31,7 @@ impl Heap {
     #[allow(dead_code)]
     pub fn stats(&self) -> (u64, u64, usize, usize, usize, usize) {
         (
-            self.total_allocations,
+            self.allocated as u64,
             self.collections,
             self.peak_live.max(self.live_slots()),
             self.peak_survivors,

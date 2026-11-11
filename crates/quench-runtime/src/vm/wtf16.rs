@@ -8,6 +8,9 @@ use std::rc::Rc;
 mod append_buffer;
 mod short_ascii;
 mod concat_all;
+mod parts;
+mod payload;
+pub(crate) use parts::{Part, Parts, MAX_PARTS};
 mod search;
 pub(super) use concat_all::JsStringBuilder;
 pub(crate) mod split;
@@ -86,13 +89,11 @@ pub(crate) fn take_materialized_text() -> MaterializedText {
 /// Heap-owned JavaScript string. Its code units are authoritative: one byte each when every
 /// unit is ASCII, UTF-16 otherwise. `host` is the explicit lossy Rust-text view used at
 /// host/API boundaries; an ASCII string is its own host text.
-#[derive(Clone)]
 pub(crate) struct JsString {
     repr: Repr,
 }
 
 /// Where a string's units live.
-#[derive(Clone)]
 enum Repr {
     /// Flat ASCII text (`FlatUnits::Short` or `FlatUnits::Ascii`, never `Wide`) held by the
     /// string value itself: short text inline, longer text in one shared allocation of its
@@ -129,6 +130,8 @@ pub(crate) enum FlatUnits {
     /// The first `length` units of a UTF-16 append buffer. As with `WideSlice`, its units
     /// may all be ASCII (a wide slice's text appended to), so it is never taken to be ASCII.
     WidePrefix(Rc<AppendBuffer<u16>>, u32),
+    /// Parts not yet written out (`parts`); held by a string record only (`Heap::written_out_string`).
+    Parts(Parts),
 }
 
 /// The units `range` of shared `Wide` storage; never a slice of a slice.
@@ -206,6 +209,7 @@ impl FlatUnits {
             Self::Wide(units) => units.len(),
             Self::WideSlice(slice) => slice.range.len(),
             Self::AsciiPrefix(_, length) | Self::WidePrefix(_, length) => *length as usize,
+            Self::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -222,6 +226,7 @@ impl FlatUnits {
                 .then(|| slice.units[slice.range.start + index]),
             Self::AsciiPrefix(buffer, length) => buffer.prefix(*length).get(index).map(|byte| u16::from(*byte)),
             Self::WidePrefix(buffer, length) => buffer.prefix(*length).get(index).copied(),
+            Self::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -236,6 +241,7 @@ impl FlatUnits {
             Self::WideSlice(slice) => Units::Wide(&slice.units[slice.range.clone()]),
             Self::AsciiPrefix(buffer, length) => Units::Ascii(buffer.prefix(*length)),
             Self::WidePrefix(buffer, length) => Units::Wide(buffer.prefix(*length)),
+            Self::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -249,7 +255,7 @@ impl FlatUnits {
         match self {
             Self::Wide(units) => Some((units, 0..units.len())),
             Self::WideSlice(slice) => Some((&slice.units, slice.range.clone())),
-            Self::Short(_) | Self::Ascii(_) | Self::AsciiSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) => None,
+            Self::Short(_) | Self::Ascii(_) | Self::AsciiSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) | Self::Parts(_) => None,
         }
     }
 
@@ -258,7 +264,7 @@ impl FlatUnits {
         match self {
             Self::Ascii(text) => Some((text, 0..text.len())),
             Self::AsciiSlice(slice) => Some((&slice.text, slice.range.clone())),
-            Self::Short(_) | Self::Wide(_) | Self::WideSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) => None,
+            Self::Short(_) | Self::Wide(_) | Self::WideSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) | Self::Parts(_) => None,
         }
     }
 
@@ -726,6 +732,7 @@ impl JsString {
             FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) => {
                 Repr::Shared(Rc::new(JsStringInner::flat(units)))
             }
+            FlatUnits::Parts(_) => parts::not_written_out(),
         };
         Self { repr }
     }
@@ -969,6 +976,7 @@ impl JsString {
             FlatUnits::AsciiSlice(slice) => &slice.text[slice.range.clone()],
             // SAFETY: an ASCII buffer holds only ASCII bytes, which are UTF-8.
             FlatUnits::AsciiPrefix(buffer, length) => unsafe { std::str::from_utf8_unchecked(buffer.prefix(*length)) },
+            FlatUnits::Parts(_) => parts::not_written_out(),
             wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..)) => match &self.repr {
                 Repr::Shared(inner) => inner.host(|| {
                     let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
@@ -976,27 +984,6 @@ impl JsString {
                 }),
                 Repr::Flat(_) => unreachable!("a flat string held by value is ASCII"),
             },
-        }
-    }
-
-    /// Bytes of flat units this string holds; a rope owns only its node until it flattens.
-    #[inline]
-    pub(crate) fn flat_unit_bytes(&self) -> usize {
-        let flat = match &self.repr {
-            Repr::Flat(units) => Some(units),
-            Repr::Shared(inner) => inner.flat.get(),
-        };
-        match flat {
-            // A slice holds its record; its root was charged for the units it shares.
-            Some(FlatUnits::AsciiSlice(_)) => std::mem::size_of::<AsciiSlice>(),
-            Some(FlatUnits::WideSlice(_)) => std::mem::size_of::<WideSlice>(),
-            Some(FlatUnits::AsciiPrefix(buffer, length)) => buffer.charge(*length),
-            Some(FlatUnits::WidePrefix(buffer, length)) => buffer.charge(*length),
-            Some(units) => match units.view() {
-                Units::Ascii(bytes) => bytes.len(),
-                Units::Wide(units) => std::mem::size_of_val(units),
-            },
-            None => 0,
         }
     }
 
@@ -1039,6 +1026,7 @@ impl JsString {
             FlatUnits::WidePrefix(buffer, length) => {
                 buffer.charge(*length) + self.existing_host().map_or(0, |host| host.len())
             }
+            FlatUnits::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -1083,13 +1071,9 @@ impl JsString {
             ),
             FlatUnits::AsciiPrefix(buffer, _) => buffer.storage(),
             FlatUnits::WidePrefix(buffer, _) => buffer.storage(),
+            FlatUnits::Parts(_) => parts::not_written_out(),
         };
-        let host_storage = self.existing_host().map(|host| {
-            (
-                Rc::as_ptr(host) as *const u8 as usize,
-                RC_HEADER_BYTES + host.len(),
-            )
-        });
+        let host_storage = self.existing_host().map(|host| (Rc::as_ptr(host) as *const u8 as usize, RC_HEADER_BYTES + host.len()));
         (unit_storage, host_storage)
     }
 

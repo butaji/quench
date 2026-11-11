@@ -28,7 +28,7 @@ fn function_bodies_compiled_more_than_once_compile_from_their_source() {
     assert_eq!(compiled("inner"), compiled("worker"), "{listing}");
 }
 
-fn output(source: &str) -> Vec<String> {
+pub(crate) fn output(source: &str) -> Vec<String> {
     crate::test_host::on_worker_stack(|| {
         let (host, program) = (TestHost::default(), Engine::specialize(source, "test.js").unwrap());
         Runtime::new(host.clone()).execute(&program).unwrap();

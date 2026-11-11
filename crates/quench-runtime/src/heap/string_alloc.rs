@@ -59,7 +59,6 @@ impl Heap {
         let weight = 1 + payload / payload_unit();
         self.payload_bytes = self.payload_bytes.saturating_add(payload);
         self.allocated += weight;
-        self.total_allocations += 1;
         match self.string_records.try_insert(string) {
             Ok(record_id) => Value::direct_string(record_id),
             Err(_) => panic!("string record space exhausted"),
