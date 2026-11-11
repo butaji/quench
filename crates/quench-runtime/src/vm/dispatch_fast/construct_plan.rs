@@ -41,10 +41,38 @@ pub(super) struct ConstructPlan {
     /// (`lane_forwarded_construction`), which the plan's own proof keeps. Its fields, if any, are
     /// those its forwarded initializer stores (`lane_record_forwarded_fields`).
     pub(super) forwarded: Option<ForwardedResolution>,
+    /// The field a nested construction gives a fresh object each time (`NestedField`).
+    pub(super) nested: Option<NestedField>,
     /// For a class whose constructor only constructs its parent (`lane_super_construction`),
     /// the parent whose stores the plan holds; `undefined` for any other plan. The plan holds
     /// while the class's [[Prototype]] is still that parent, which `super(...)` constructs.
     pub(super) super_parent: Value,
+}
+
+/// A field of a plan that takes a fresh object of `constructor`, constructed from the
+/// constants `arguments` by its own plan (`InitializerValue::Construct`). The plan's
+/// dependency covers the objects the constructor was read through (`lane_nested_construct`),
+/// so the constructor holds while the plan does.
+#[derive(Clone, Copy)]
+pub(super) struct NestedField {
+    pub(super) field: u8,
+    pub(super) constructor: Value,
+    pub(super) arguments: [Value; crate::bytecode::NESTED_ARGUMENTS],
+    /// Where its chain starts: the capture (a `LoadCapture` immediate) of the initializer's
+    /// closure environment `env`, holding `root` (`nested_root_holds`).
+    pub(super) env: Value,
+    pub(super) capture: u32,
+    pub(super) root: Value,
+}
+
+/// Whether the capture a nested construction's chain starts from still holds the object the
+/// plan read the constructor through: a binding any assignment can change, so each use reads it.
+#[inline(always)]
+pub(super) fn nested_root_holds<H: Host>(vm: &mut Vm<H>, nested: &NestedField) -> bool {
+    use crate::bytecode::ImmediateLayout;
+    let Some((slots, root)) = vm.walked_capture_slots(nested.env, false, ImmediateLayout::capture_depth(nested.capture)) else { return false };
+    // SAFETY: as `Vm::walked_capture_slots`; nothing below collects.
+    vm.plain_capture(unsafe { &*slots }, root, ImmediateLayout::capture_slot(nested.capture)).0 == Some(nested.root)
 }
 
 /// Which constructions allocate from a `ConstructPlan`, and how they compute its fields.
@@ -157,6 +185,15 @@ impl ConstructPlan {
         heap.alloc_planned_object(self.header, self.prototype, values, usize::from(self.fields))
     }
 
+    /// This plan extended by a field `nested` gives a fresh object, `None` once it names all
+    /// it can or already has such a field.
+    pub(super) fn with_nested(mut self, nested: NestedField) -> Option<Self> {
+        (self.nested.is_none() && usize::from(self.fields) < CONSTRUCT_PLAN_FIELDS).then_some(())?;
+        self.nested = Some(NestedField { field: self.fields, ..nested });
+        self.fields += 1;
+        Some(self)
+    }
+
     /// This plan extended by the field `store` adds, `None` once it names all it can.
     pub(super) fn with_field(mut self, store: &crate::bytecode::InitializerStore, value: Value) -> Option<Self> {
         let field = usize::from(self.fields);
@@ -204,6 +241,7 @@ pub(super) const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     operators: [0; CONSTRUCT_PLAN_FIELDS],
     fallbacks: [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS],
     forwarded: None,
+    nested: None,
     super_parent: Value::UNDEFINED,
 };
 
@@ -255,12 +293,13 @@ pub(super) fn lane_add_initializer_fields<H: Host>(
     this: Value,
     function: u32,
     argument: impl Fn(u16) -> Value,
+    nested: impl FnMut(&mut Vm<H>, &crate::bytecode::NestedConstruct) -> Option<Value>,
     each: impl FnMut(&crate::bytecode::InitializerStore, Value),
 ) -> bool {
     let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
         return false;
     };
-    lane_add_stores(vm, code, this, stores, argument, each)
+    lane_add_stores(vm, code, this, stores, argument, nested, each)
 }
 
 /// `lane_add_initializer_fields` of `stores`, a body's or a class chain's (`chain_stores`).
@@ -271,10 +310,15 @@ pub(super) fn lane_add_stores<H: Host>(
     this: Value,
     stores: &[crate::bytecode::InitializerStore],
     argument: impl Fn(u16) -> Value,
+    mut nested: impl FnMut(&mut Vm<H>, &crate::bytecode::NestedConstruct) -> Option<Value>,
     mut each: impl FnMut(&crate::bytecode::InitializerStore, Value),
 ) -> bool {
     for store in stores {
-        let Some(value) = initializer_store_value(vm, store, &argument) else {
+        let value = match &store.value {
+            crate::bytecode::InitializerValue::Construct(construct) => nested(vm, construct),
+            _ => initializer_store_value(vm, store, &argument),
+        };
+        let Some(value) = value else {
             return false;
         };
         if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
@@ -283,6 +327,44 @@ pub(super) fn lane_add_stores<H: Host>(
         each(store, value);
     }
     true
+}
+
+/// A fresh object of `constructor` as its own plans build it from `arguments`, which run no
+/// guest code: `None` where it has no holding plan.
+pub(super) fn nested_construction<H: Host>(vm: &mut Vm<H>, constructor: Value, arguments: &[Value; crate::bytecode::NESTED_ARGUMENTS]) -> Option<Value> {
+    let argument = |parameter: u16| arguments.get(usize::from(parameter)).copied().unwrap_or(Value::UNDEFINED);
+    planned_construction(vm, constructor, argument).or_else(|| super::lane_forwarded_fields(vm, constructor, argument))
+}
+
+/// The value `construct` gives its field, built from the constructor its capture and chain
+/// name, read through data properties: `stash` takes the plan's field for it, and `objects`
+/// the objects it was read through, which the plan then depends on. `env` is the
+/// initializer's closure environment.
+pub(super) fn lane_nested_construct<H: Host>(
+    vm: &mut Vm<H>,
+    env: Value,
+    construct: &crate::bytecode::NestedConstruct,
+    stash: &std::cell::Cell<Option<NestedField>>,
+    objects: &std::cell::RefCell<Vec<Value>>,
+) -> Option<Value> {
+    use crate::bytecode::ImmediateLayout;
+    let (slots, root) = vm.walked_capture_slots(env, false, ImmediateLayout::capture_depth(construct.capture))?;
+    // SAFETY: as `Vm::walked_capture_slots`; nothing below collects.
+    let start = vm.plain_capture(unsafe { &*slots }, root, ImmediateLayout::capture_slot(construct.capture)).0?;
+    let mut held = Vec::new();
+    let mut constructor = start;
+    for atom in &construct.chain[..usize::from(construct.depth)] {
+        held.push(constructor);
+        constructor = vm.plain_named_get(constructor, *atom)?;
+    }
+    let mut arguments = [Value::UNDEFINED; crate::bytecode::NESTED_ARGUMENTS];
+    for (argument, constant) in arguments.iter_mut().zip(&construct.arguments[..usize::from(construct.count)]) {
+        *argument = constant.value(|index| vm.active_constant(index))?;
+    }
+    let built = nested_construction(vm, constructor, &arguments)?;
+    stash.set(Some(NestedField { field: 0, constructor, arguments, env, capture: construct.capture, root: start }));
+    *objects.borrow_mut() = held;
+    Some(built)
 }
 
 /// `lane_initialize_fields` while `callee`'s plan holds: the finished receiver, its fields
@@ -475,7 +557,7 @@ pub(super) fn lane_initialize_stores<H: Host>(
         shape: source_shape,
         ..EMPTY_CONSTRUCT_PLAN
     });
-    let added = lane_add_stores(vm, code, this, stores, argument, |store, value| {
+    let added = lane_add_stores(vm, code, this, stores, argument, |_, _| None, |store, value| {
         planned = planned.and_then(|plan| plan.with_field(store, value));
     });
     if !added {

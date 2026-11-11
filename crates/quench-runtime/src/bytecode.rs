@@ -64,7 +64,7 @@ mod control_flow;
 pub(crate) mod initialization;
 mod initializer_stores;
 mod super_initializer;
-pub(crate) use initializer_stores::{InitializerConstant, InitializerStore, InitializerValue};
+pub(crate) use initializer_stores::{InitializerConstant, InitializerStore, InitializerValue, NestedConstruct, NESTED_ARGUMENTS};
 mod environment_clone;
 pub use environment_clone::{EnvironmentClone, EnvironmentClones};
 pub(crate) use environment_clone::Resets;
