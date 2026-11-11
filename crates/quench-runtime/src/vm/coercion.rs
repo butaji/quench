@@ -16,7 +16,7 @@ const VOID: u32 = UnaryOperator::Void as u32;
 
 /// The unary operators that convert their operand to a numeric value; on a Number they
 /// run no guest code.
-pub(super) fn numeric_unary(op: u32) -> bool {
+#[inline] pub(super) fn numeric_unary(op: u32) -> bool {
     matches!(op, UNARY_PLUS | UNARY_NEGATION | BITWISE_NOT)
 }
 
@@ -253,7 +253,7 @@ impl<H: Host> Vm<H> {
 
     /// ToNumber of `value` where it runs no guest code and raises nothing: an immediate
     /// primitive or a string. `None` for any other value.
-    pub(super) fn primitive_to_number(&self, value: Value) -> Option<f64> {
+    #[inline] pub(super) fn primitive_to_number(&self, value: Value) -> Option<f64> {
         value
             .immediate_number()
             .or_else(|| self.heap.string(value).map(|text| super::number::parse_number_string(text.host_string())))
@@ -453,7 +453,7 @@ const TYPEOF_KINDS: [crate::ValueType; 8] = {
 
 /// The index in `bytecode::TYPEOF_NAMES` of the name `typeof` yields for a value of `kind`;
 /// `TYPEOF_KINDS` lists the kinds in that order.
-fn typeof_name_index(kind: crate::ValueType) -> usize {
+#[inline] fn typeof_name_index(kind: crate::ValueType) -> usize {
     use crate::ValueType as T;
     match kind {
         T::Undefined => 0,

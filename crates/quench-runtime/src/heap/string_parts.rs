@@ -60,6 +60,17 @@ impl Heap {
         unsafe { self.write_out_string(record_id) }
     }
 
+    /// `alloc_string` of the string of `parts`: its record, which carries no payload and nothing
+    /// a one-unit string's cache or the materialized-text ledger would add.
+    #[inline(always)]
+    pub(crate) fn alloc_parts_string(&mut self, parts: Parts) -> Value {
+        self.allocated += 1;
+        match self.string_records.try_insert(JsString::from_parts(parts)) {
+            Ok(record_id) => Value::direct_string(record_id),
+            Err(_) => panic!("string record space exhausted"),
+        }
+    }
+
     /// The text of `parts`, each part written out first.
     fn parts_text(&self, parts: &Parts) -> JsString {
         let mut numbers = smallvec::SmallVec::<[crate::number_to_string::Short; 1]>::new();

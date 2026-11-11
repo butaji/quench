@@ -53,7 +53,7 @@ impl FreeSlotBitmap {
         Some(offset as u16)
     }
 
-    pub(super) const fn len(&self) -> usize {
+    #[inline] pub(super) const fn len(&self) -> usize {
         self.free_count as usize
     }
 

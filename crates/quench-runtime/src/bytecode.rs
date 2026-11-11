@@ -682,7 +682,7 @@ impl ImmediateLayout {
         (imm & Self::ARGUMENT_COUNT_MASK) as u16
     }
 
-    pub(crate) const fn capture_depth(imm: u32) -> u16 {
+    #[inline] pub(crate) const fn capture_depth(imm: u32) -> u16 {
         (imm >> Self::PAIR_SECOND_SHIFT) as u16
     }
 

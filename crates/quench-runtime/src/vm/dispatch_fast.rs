@@ -574,7 +574,7 @@ const WINDOW_STORAGE: u16 = 3;
 pub(super) const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
 
 impl EnvironmentWindow {
-    fn captured(self, slot: usize) -> bool {
+    #[inline] fn captured(self, slot: usize) -> bool {
         self.captured & 1 << slot != 0
     }
 }
@@ -1266,7 +1266,7 @@ enum ActivationKind {
 
 impl Activation {
     /// The frame state of a JavaScript activation; `None` for Wasm.
-    fn script(&self) -> Option<&ScriptActivation> {
+    #[inline] fn script(&self) -> Option<&ScriptActivation> {
         match &self.kind {
             ActivationKind::Script(script) => Some(script),
             ActivationKind::Wasm { .. } => None,
@@ -7267,11 +7267,14 @@ script_handler! {
 }
 
 script_handler! {
-    /// An own-field store at a site past one shape that adds nothing (`lane_set_field_miss`):
+    /// An own-field store at a site past one shape (`lane_set_field_miss`):
     /// the slot its megamorphic entries record for the receiver's shape
     /// (`Vm::polymorphic_own_field_store_hit`), as a parser's `this.pos =` reads a parser
-    /// whose shape grows while it runs. A miss takes the general cached write, and moves
-    /// there for good once the site adds properties.
+    /// whose shape grows while it runs. A miss takes the general cached write.
+    ///
+    /// A site that also adds (splay's `Node.prototype.left = null` gives `.left =` four receiver
+    /// shapes, one of them without the property): a miss takes the proved add
+    /// (`Vm::proved_field_add_hit`, one of the site's add entries) before the general write.
     #[inline(never)]
     fn lane_set_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -7287,9 +7290,11 @@ script_handler! {
                 })
         });
         if !stored {
-            let general: Handler = if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> };
-            if unsafe { vm(cx) }.field_site_adds(i.c) {
-                requicken::<H>(ip, general);
+            let vm = unsafe { vm(cx) };
+            if object.is_some_and(|object| vm.proved_field_add_hit(object, i.imm(), r.get(i.a), i.c)) {
+                // Adding a property can allocate.
+                note_allocation(vm);
+                next!(cx, r, following(ip), Carried::script(cx))
             }
             if THIS {
                 sibling!(lane_set_this_field::<H>, r, ip, Carried::script(cx))
@@ -7318,7 +7323,7 @@ script_handler! {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
-        } else if polymorphic && !adds && !cell_receiver {
+        } else if polymorphic && !cell_receiver {
             Some(lane_set_field_polymorphic::<H, THIS>)
         } else if adds || polymorphic {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
