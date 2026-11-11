@@ -59,6 +59,10 @@ impl Stage for Emit<'_, '_> {
     fn store_u64(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
         self.builder.ins().store(MemFlagsData::trusted(), value, base, offset);
     }
+    fn store_gate(&mut self, record_id: ir::Value, _value: ir::Value) -> ir::Value {
+        // Native code keeps the helper for stores: an id is never below itself.
+        self.ult(record_id, record_id)
+    }
     fn ult(&mut self, a: ir::Value, b: ir::Value) -> ir::Value {
         self.builder.ins().icmp(IntCC::UnsignedLessThan, a, b)
     }

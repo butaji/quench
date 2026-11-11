@@ -2,12 +2,12 @@ use std::fmt;
 
 const TAG_MASK: u64 = 0xffff_0000_0000_0000;
 const PAYLOAD_MASK: u64 = 0x0000_ffff_ffff_ffff;
-const TAG_UNDEFINED: u64 = 0x7ff9_0000_0000_0000;
-const TAG_NULL: u64 = 0x7ffa_0000_0000_0000;
-const TAG_BOOL: u64 = 0x7ffb_0000_0000_0000;
+pub(crate) const TAG_UNDEFINED: u64 = 0x7ff9_0000_0000_0000;
+pub(crate) const TAG_NULL: u64 = 0x7ffa_0000_0000_0000;
+pub(crate) const TAG_BOOL: u64 = 0x7ffb_0000_0000_0000;
 const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
 const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
-const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
+pub(crate) const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
 
 #[cfg(all(test, feature = "bench-primitives"))]
@@ -59,7 +59,7 @@ const DIRECT_ITERATOR_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJE
 const DIRECT_STRING_HANDLE_BITS: u64 =
     DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
 /// The payload bits that code the reference families a narrow value packs.
-const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDLE_BIT;
+pub(crate) const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDLE_BIT;
 /// The Wasm vector record family's code: a bit below `HEAP_FAMILY_BITS`, every combination
 /// of which another family names. Record and legacy slot indices stay below it
 /// (`RECORD_SPACE_CAPACITY`, `MAX_HEAP_CELLS`). No narrow upper word sets it, so a vector is
@@ -101,7 +101,7 @@ const NARROW_UPPER_WORDS: [u64; NARROW_LOOKUP_CODES] = {
     words[NARROW_HEAP_FAMILIES + 3] = TAG_DELETED;
     words
 };
-const HEAP_FAMILY_SHIFT: u32 = HEAP_FAMILY_BITS.trailing_zeros();
+pub(crate) const HEAP_FAMILY_SHIFT: u32 = HEAP_FAMILY_BITS.trailing_zeros();
 /// `NARROW_UPPER_WORDS` at a fixed address, which compiled code indexes by code.
 static NARROW_UPPER_WORD_TABLE: [u64; NARROW_LOOKUP_CODES] = NARROW_UPPER_WORDS;
 
@@ -149,7 +149,7 @@ const NARROW_TAG_CODES: [usize; ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as usize +
 /// Codes `to_narrow` can compute: a constant's base plus stray family bits. Codes past the
 /// packed field name no upper word any value has.
 const NARROW_LOOKUP_CODES: usize = 2 * (1 << NARROW_CODE_BITS);
-const NARROW_HEAP_FAMILIES: usize = 1 << HEAP_FAMILY_BITS.count_ones();
+pub(crate) const NARROW_HEAP_FAMILIES: usize = 1 << HEAP_FAMILY_BITS.count_ones();
 const _: () = assert!(HEAP_FAMILY_BITS >> HEAP_FAMILY_SHIFT == NARROW_HEAP_FAMILIES as u64 - 1);
 const _: () = assert!(NARROW_HEAP_FAMILIES + 4 <= 1 << NARROW_CODE_BITS);
 const _: () = assert!(NARROW_HEAP_FAMILIES + 3 + NARROW_HEAP_FAMILIES <= NARROW_LOOKUP_CODES);

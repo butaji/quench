@@ -26,6 +26,7 @@ pub(crate) mod elements;
 pub(crate) mod environment;
 pub(crate) mod ic;
 pub(crate) mod object;
+pub(crate) mod store;
 pub(crate) mod value;
 mod steps;
 pub(crate) use steps::step;
@@ -85,6 +86,11 @@ pub(crate) trait Stage {
     /// Stores the low 32 bits of `value`.
     fn store_u32(&mut self, base: Self::Word, offset: i32, value: Self::Word);
     fn store_u64(&mut self, base: Self::Word, offset: i32, value: Self::Word);
+    /// Whether a store of `value` into object record `record_id` may proceed unobserved and
+    /// without a barrier log: no slot representation observes the write, and the record is not
+    /// one the barrier logs for this value. The one place the store barrier's layout is read;
+    /// a stage without that layout answers no, and the store leaves at its miss.
+    fn store_gate(&mut self, record_id: Self::Word, value: Self::Word) -> Self::Cond;
     fn not(&mut self, cond: Self::Cond) -> Self::Cond;
     /// Whether either condition holds.
     fn any(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;

@@ -1769,16 +1769,16 @@ impl<H: Host> Vm<H> {
         let Some(record_id) = object.direct_object_index() else {
             return false;
         };
-        if hint.receiver != self.heap.object_record_by_id(record_id).exact_shape() || hint.holder != NO_FIELD_HOLDER {
+        if hint.holder != NO_FIELD_HOLDER {
             return false;
         }
-        let slot = usize::from(hint.slot);
-        // SAFETY: this exact own-data shape proves the slot outside dictionary storage.
+        // SAFETY: a direct object Value names a live record; the hint's slot is one its shape covers.
         let stored = unsafe {
             if TRACKED {
-                self.heap.record_property_set_flat::<false>(record_id, slot, value, crate::heap::PropertyStoreLayout::Preserve)
+                hint.receiver == self.heap.object_record_by_id(record_id).exact_shape()
+                    && self.heap.record_property_set_flat::<false>(record_id, usize::from(hint.slot), value, crate::heap::PropertyStoreLayout::Preserve)
             } else {
-                self.heap.record_property_set_unobserved(record_id, slot, value)
+                crate::staged::store::concrete_own_store(&mut self.heap, record_id, hint.receiver, hint.slot, value)
             }
         };
         if !stored {

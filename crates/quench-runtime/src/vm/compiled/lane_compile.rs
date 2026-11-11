@@ -272,12 +272,13 @@ impl<H: Host> Vm<H> {
             return Err(Unstarted::Declined);
         }
         let census = self.programs.js_jit_diagnostics_enabled()
-            .then(|| (function, entry.is_some(), plan.unit.instructions.len(), native.dfg.num_insts(), key.3));
+            .then(|| (function, entry.is_some(), plan.unit.instructions.len(), native.dfg.num_insts(), key.3, generic.len(), plan.direct.len(), budget, observed));
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
             let code = lane_code(native, super::jit_backend::CompileLevel::run_default());
-            if let Some((function, osr, unit, ir, key)) = census {
-                eprintln!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"key\":\"{key:016x}\",\"us\":{},\"bytes\":{}}}",
+            if let Some((function, osr, unit, ir, key, generic, direct, budget, observed)) = census {
+                eprintln!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"observed\":{},\"key\":\"{key:016x}\",\"us\":{},\"bytes\":{}}}",
+                    observed.map_or(-1, i64::from),
                     started.elapsed().as_micros(), code.as_ref().map_or(0, |code| code.len()));
             }
             code
@@ -496,6 +497,4 @@ impl LaneDependencies {
     }
 }
 
-#[cfg(test)]
-#[path = "lane_compile/tests.rs"]
-mod tests;
+#[cfg(test)] #[path = "lane_compile/tests.rs"] mod tests;

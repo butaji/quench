@@ -676,7 +676,6 @@ complexity crates/quench-runtime/src/vm/compiled/lane_region/packed_ranges.rs::a
 complexity crates/quench-runtime/src/vm/compiled/lane_region/packed_ranges.rs::relation_ranges 12
 complexity crates/quench-runtime/src/vm/compiled/lane_region/packed_ranges.rs::result 12
 complexity crates/quench-runtime/src/vm/compiled/lane_region/packed_ranges.rs::tests::relation_edges_overapproximate_all_signed_integer_outcomes 15
-complexity crates/quench-runtime/src/vm/compiled/lane_unit.rs::Emitter::emit 18
 complexity crates/quench-runtime/src/vm/compiled/lane_unit.rs::Planner<'_,'_>::inline_target 16
 complexity crates/quench-runtime/src/vm/compiled/lane_unit.rs::Unit::register_masks 15
 complexity crates/quench-runtime/src/vm/compiled/lane_unit.rs::inlinable 16
@@ -2925,7 +2924,7 @@ function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::tests::rela
 function-lines crates/quench-runtime/src/vm/compiled/lane_region/packed_ranges.rs::analyze 44
 function-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs::Emitter::emit 121
 function-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs::Unit::register_masks 75
-function-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs::tests::method_hints_follow_definition_records_and_bound_conflicting_bodies 57
+function-lines crates/quench-runtime/src/vm/compiled/lane_unit/tests.rs::method_hints_follow_definition_records_and_bound_conflicting_bodies 57
 function-lines crates/quench-runtime/src/vm/compiled/object_slots.rs::tests::checked_table_admits_once_without_admitting_receiver_handles 49
 function-lines crates/quench-runtime/src/vm/compiled/object_slots.rs::tests::direct_family_admission_tests_the_family_alone 55
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::arithmetic 50
@@ -5048,7 +5047,7 @@ magic crates/quench-runtime/src/vm/compiled/lane_compile.rs::Vm<H>::compile_lane
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::binary 1
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::TypedLoad::width 3
 magic crates/quench-runtime/src/vm/compiled/lane_region.rs::lower 2
-magic crates/quench-runtime/src/vm/compiled/lane_unit.rs::Emitter::emit 1
+magic crates/quench-runtime/src/vm/compiled/lane_unit.rs::Emitter::emit_returning 1
 magic crates/quench-runtime/src/vm/compiled/lane_unit.rs::completion_length 2
 magic crates/quench-runtime/src/vm/compiled/osr_loop.rs::LoopEntry::refresh_array_backing 1
 magic crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::enter 1

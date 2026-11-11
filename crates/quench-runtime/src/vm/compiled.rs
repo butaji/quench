@@ -7168,6 +7168,19 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The innermost native frame of the running body (`ShadowFrame`), whose window and callee
+    /// are the registers and function a helper called from that body (`dispatch_fast::lane_body_record`)
+    /// reads; `None` in the activation's own.
+    pub(super) fn innermost_shadow_frame() -> Option<ShadowFrame> {
+        let frame = lane_frame();
+        // SAFETY: as `lane_shadow_active`.
+        unsafe {
+            let base = (*frame).shadow.as_mut_ptr();
+            let top = (*frame).dispatch.shadow_top as *const ShadowFrame;
+            (!top.is_null() && top != base.cast_const()).then(|| *top.sub(1))
+        }
+    }
+
     /// Whether a running body has native frames below the innermost: a helper's activation
     /// would sit under them, so a call from one takes the body's exit instead
     /// (`dispatch_fast::lane_body_call`).

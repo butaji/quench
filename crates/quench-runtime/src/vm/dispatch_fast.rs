@@ -15271,22 +15271,40 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
     u64::from(stored)
 }
 
+/// The registers and call record a lane helper's `call_pc` names: the running activation's, or,
+/// where the body runs as a native callee, its window and its function's own record.
+///
+/// # Safety
+/// As `lane_body_call`; `call_pc` is a record of the running body's function.
+unsafe fn lane_body_record<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> (Registers, Ip) {
+    match Vm::<H>::innermost_shadow_frame() {
+        None => unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) },
+        Some(frame) => {
+            // SAFETY: a pushed frame names the caller-owned callee, whose view outlives the run.
+            let view = unsafe { &*(*frame.callee).target.view };
+            (Registers(frame.window as *mut Value), unsafe { view.records().add(call_pc as usize) })
+        }
+    }
+}
+
 pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // Static regions recover ordinary calls through their linked semantic operation.
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
-    let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
+    let (r, ip) = unsafe { lane_body_record(cx, call_pc) };
     let i = unsafe { &*ip };
     let callee = r.get(i.b);
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-    if Vm::<H>::lane_shadow_active() { return lane_body_stats::miss(lane_body_stats::Miss::CallShadowActive); }
+    let shadowed = Vm::<H>::lane_shadow_active();
     if !unsafe { (*cx).script_calls } { return lane_body_stats::miss(lane_body_stats::Miss::CallNoScriptCalls); }
     if lane_constructing(vm, callee) { return lane_body_stats::miss(lane_body_stats::Miss::CallConstructing); }
     if vm.with_scope_entered { return lane_body_stats::miss(lane_body_stats::Miss::CallWithScope); }
     if returns && !lane_returning_call_admitted(cx) { return lane_body_stats::miss(lane_body_stats::Miss::CallReturningNotAdmitted); }
     let Some(target) = lane_body_call_target(cx, vm, callee, &i.call_link) else {
+        // A native may run guest code above the native windows below: the body leaves instead.
+        if shadowed { return lane_body_stats::miss(lane_body_stats::Miss::CallShadowActive); }
         return native_calls::lane_body_native_call(cx, r, i, callee);
     };
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
@@ -15294,7 +15312,9 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let argc = ImmediateLayout::argument_count(i.imm());
     let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else { return lane_body_stats::miss(lane_body_stats::Miss::CallReceiver) };
     // SAFETY: as `lane_call_read`.
-    if target.entry.answered_by_read() { return unsafe { lane_body_read_call(cx, ip, target, argc, this) }; }
+    if target.entry.answered_by_read() { return unsafe { lane_body_read_call(cx, r, ip, target, argc, this) }; }
+    // An activation above native windows would need shadow frames beneath it on a leave.
+    if shadowed { return lane_body_stats::miss(lane_body_stats::Miss::CallShadowActive); }
     let Some(how) = lane_call_activation(target, argc, ImmediateLayout::call_window_base(i.imm())) else {
         return lane_body_stats::miss(lane_body_stats::Miss::CallEntryNotActivation);
     };
@@ -15311,8 +15331,8 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
 /// # Safety
 /// As `lane_call_read`; `ip` is the call record.
 #[inline(always)]
-unsafe fn lane_body_read_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target: &ScriptCallTarget, argc: u16, this: Value) -> u64 {
-    let (r, i) = unsafe { ((*cx).registers, &*ip) };
+unsafe fn lane_body_read_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, target: &ScriptCallTarget, argc: u16, this: Value) -> u64 {
+    let i = unsafe { &*ip };
     let passed = ReadArguments { registers: r, base: ImmediateLayout::call_window_base(i.imm()), passed: argc };
     // SAFETY: the caller's contract.
     let Some(value) = (unsafe { lane_answered_call(cx, ip, target, passed, this) }) else { return lane_body_stats::miss(lane_body_stats::Miss::CallReadAnswer) };
@@ -15330,10 +15350,9 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     use super::compiled::LANE_CALL_COMPLETED;
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
-    let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
+    let (r, ip) = unsafe { lane_body_record(cx, call_pc) };
     let i = unsafe { &*ip };
     let callee = r.get(i.b);
-    if Vm::<H>::lane_shadow_active() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructShadowActive); }
     if !unsafe { (*cx).script_calls && (*cx).script_constructs } { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoScriptConstructs); }
     if vm.construct_target.is_some() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructConstructTarget); }
     if vm.with_scope_entered { return lane_body_stats::miss(lane_body_stats::Miss::ConstructWithScope); }
@@ -15358,6 +15377,8 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return lane_body_stats::miss(lane_body_stats::Miss::ConstructReturning);
     }
+    // The rest activates the constructor, which native windows below would need shadow frames for.
+    if Vm::<H>::lane_shadow_active() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructShadowActive); }
     // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
     let Some(target) = vm.script_call_entry(callee).map(|entry| unsafe { *entry }) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
     if !target.constructs { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructor); }
