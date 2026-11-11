@@ -292,6 +292,10 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn allocate_array(&mut self, _stage: &mut S, _destination: Register, _length: S::Word, _elements: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
 
+    /// The array literal `destination` of the `count` program constants from `constant`.
+    #[inline(always)]
+    fn allocate_const_array(&mut self, _stage: &mut S, _destination: Register, _constant: S::Word, _count: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
     /// The two-property object literal `destination` of literal `site`'s shape.
     #[inline(always)]
     fn allocate_object_pair(&mut self, _stage: &mut S, _destination: Register, _site: u32, _first: S::Word, _second: S::Word,
@@ -398,6 +402,8 @@ pub(crate) enum Operation<W, P> {
     MakeObject { destination: Register, proof: P },
     /// The array literal `destination`: `length` holes, or `elements` values.
     MakeArray { destination: Register, length: W, elements: W, proof: P },
+    /// The array literal `destination` of the `count` program constants from `constant`.
+    MakeConstArray { destination: Register, constant: W, count: W, proof: P },
     /// The two-property object literal `destination` of literal `site`'s shape, holding
     /// `first` and `second`; a due collection leaves at the frame's miss edge.
     MakeObjectPair { destination: Register, site: u32, first: W, second: W, proof: P },
