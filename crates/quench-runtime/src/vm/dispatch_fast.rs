@@ -1768,17 +1768,14 @@ const FUNCTION_TARGETS: usize = 64;
 const _: () = assert!(FUNCTION_TARGETS.is_power_of_two());
 
 /// Where a forwarding constructor's reads of `this.<method>` and its `apply` resolved under
-/// a construct plan (`ConstructPlan::forwarded`). While the plan holds, the prototype layout
-/// epoch is unchanged, so the plan's prototype keeps the method's data slot and the method's
-/// prototype keeps `apply`'s, and the receiver template lacks the method. The values are
-/// read again on every construction, and a method whose own shape or prototype differs
-/// from the one recorded, which could shadow `apply`, resolves afresh.
+/// a construct plan (`ConstructPlan::forwarded`). The plan's dependency covers the plan's
+/// prototype (the method's slot value), the method (its shape and prototype, which could
+/// shadow `apply`) and the holder of `apply`, so while the plan holds `method` is what the
+/// forwarding reads and `apply` is the intrinsic: a use reads them from here.
 #[derive(Clone, Copy)]
 struct ForwardedResolution {
-    method_slot: u16,
-    method_shape: u32,
+    method: Value,
     apply_holder: Value,
-    apply_slot: u16,
     /// The forwarded method's function whose initializer stores the plan's fields record
     /// (`lane_record_forwarded_fields`), when it has fields: the method this resolution
     /// reads must still be of it.
@@ -14075,12 +14072,7 @@ fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl 
     let index = holding_construct_plan_index(vm, callee)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];
-    let (program, function) = plan.forwarded?.initializer?;
-    let method = resolved_forwarded_method(vm, callee, plan)?;
-    if !matches!(vm.heap.function(method), Some(FunctionRecord { kind: FunctionKind::User(p, f), .. }) if *p == program && *f == function)
-    {
-        return None;
-    }
+    plan.forwarded?.initializer?;
     let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
     plan.fill_values(vm, &mut values, argument)?;
     Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
@@ -14217,16 +14209,14 @@ fn forwarded_resolution<H: Host>(
     if found != function || vm.shape_slot(object.shape(), method.apply.0).is_some() {
         return None;
     }
-    let (method_shape, apply_holder) = (object.shape(), object.proto());
+    let apply_holder = object.proto();
     let (apply_slot, found) = data_slot(vm.heap.object(apply_holder)?, method.apply.0)?;
     (found == apply
         && data(plan.prototype, method.method.0, usize::from(method_slot))
         && data(apply_holder, method.apply.0, usize::from(apply_slot)))
     .then_some(ForwardedResolution {
-        method_slot,
-        method_shape,
+        method: function,
         apply_holder,
-        apply_slot,
         initializer: None,
     })
 }
@@ -14240,34 +14230,16 @@ fn lane_resolved_forwarding<H: Host>(
     callee: Value,
     plan: Option<&ConstructPlan>,
 ) -> Option<ScriptCallTarget> {
-    let function = resolved_forwarded_method(unsafe { vm(cx) }, callee, plan?)?;
+    let function = resolved_forwarded_method(callee, plan?)?;
     lane_script_target(cx, function)
 }
 
-/// The method `callee`'s forwarding reads under `plan`, its holding plan, from the plan's
-/// recorded resolution (`ConstructPlan::forwarded`): the value in the recorded slot, still of
-/// the recorded shape and prototype, whose `apply` is still the intrinsic, and not `callee`.
+/// The method `callee`'s forwarding reads under `plan`, its holding plan: the recorded
+/// resolution's (`ConstructPlan::forwarded`), which the plan's dependency keeps (see
+/// `ForwardedResolution`), unless it is `callee`.
 #[inline(always)]
-fn resolved_forwarded_method<H: Host>(vm: &Vm<H>, callee: Value, plan: &ConstructPlan) -> Option<Value> {
-    let resolution = plan.forwarded?;
-    let prototype = vm.heap.object_record(plan.prototype)?;
-    // SAFETY: the plan's proof keeps the prototype's shape, which holds the slot.
-    let function = unsafe { vm.heap.property_get_shaped(prototype, usize::from(resolution.method_slot)) }?;
-    let FunctionRecord { object, .. } = vm.heap.function(function)?;
-    if object.shape() != resolution.method_shape || object.proto() != resolution.apply_holder {
-        return None;
-    }
-    let holder = vm.heap.object(resolution.apply_holder)?;
-    // SAFETY: the epoch the plan holds under keeps the holder's shape, which holds the slot.
-    let apply = unsafe { vm.heap.property_get_shaped(holder, usize::from(resolution.apply_slot)) }?;
-    (matches!(
-        vm.heap.function(apply),
-        Some(FunctionRecord {
-            kind: FunctionKind::Native(Native::FunctionApply),
-            ..
-        })
-    ) && function != callee)
-        .then_some(function)
+fn resolved_forwarded_method(callee: Value, plan: &ConstructPlan) -> Option<Value> {
+    plan.forwarded.map(|resolution| resolution.method).filter(|&method| method != callee)
 }
 
 script_handler! {
