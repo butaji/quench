@@ -807,6 +807,7 @@ impl ActivationShape {
 
 /// Storage and guest-call allowance proved before an inlined body runs.
 #[derive(Clone, Copy, Default)]
+#[repr(C)]
 pub(super) struct LaneRecoverySpace {
     pub(super) values: usize,
     pub(super) activations: usize,
