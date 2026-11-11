@@ -1,6 +1,5 @@
 mod native_operands;
-mod shape_lookup;
-mod string_wrapper;
+mod shape_lookup; mod string_wrapper;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
 #[cfg(feature = "aot")]

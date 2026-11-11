@@ -150,3 +150,9 @@ impl Function {
         }
     }
 }
+
+/// Whether a load or store by name reads a hidden or unknown binding (a global store is the lane's).
+pub(super) fn reads_hidden_name(instruction: super::WideInstruction, tables: &impl super::FactTables) -> bool {
+    (instruction.op().loads_name() || instruction.op().stores_name()) && usize::try_from(instruction.atom_index())
+        .is_ok_and(|atom| tables.atom_name(atom).is_none_or(|name| name.starts_with('\0') && !super::is_intrinsic_name(name)))
+}
