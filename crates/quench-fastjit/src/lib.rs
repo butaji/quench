@@ -24,6 +24,8 @@ const HOLE_CODE: u32 = 2;
 /// Successor hole indexes.
 pub const NEXT: u32 = 0;
 pub const TAKEN: u32 = 1;
+/// Exit hole indexes start here: exit `kind` is hole `EXIT + kind`, so each guard kind reaches
+/// its own exit stub (an `ExitSite` id), not one shared hole.
 pub const EXIT: u32 = 2;
 
 /// An operand of a row: a patched hole in a stencil, a constant in UltraJIT.
@@ -45,8 +47,18 @@ pub trait Flow {
     fn exit(&mut self, b: &mut FunctionBuilder, frame: ir::Value, context: ir::Value, condition: ir::Value, kind: u32);
 }
 
+/// A successor hole: a colocated function whose call is a relocated `jmp rel32`.
+fn successor(b: &mut FunctionBuilder, index: u32) -> ir::FuncRef {
+    let name = b.func.declare_imported_user_function(UserExternalName::new(HOLE_CODE, index));
+    let signature = b.import_signature(stencil_signature());
+    b.import_function(ExtFuncData { name: ExternalName::User(name), signature, colocated: true, patchable: false })
+}
+
 /// The ISA stencils compile for: no PIC, frame pointers (x64 `return_call` requires them).
 pub fn stencil_isa() -> Result<OwnedTargetIsa, String> {
+    if !cfg!(target_arch = "x86_64") {
+        return Err("stencil strip knows the x86-64 frame shapes only; aarch64 shapes are pending".into());
+    }
     let mut flags = settings::builder();
     for (name, value) in [
         ("opt_level", "speed"),
@@ -70,7 +82,7 @@ fn stencil_signature() -> Signature {
 struct StencilFlow {
     next: ir::FuncRef,
     taken: ir::FuncRef,
-    exit: ir::FuncRef,
+    exits: Vec<Option<ir::FuncRef>>,
 }
 
 impl Flow for StencilFlow {
@@ -101,12 +113,16 @@ impl Flow for StencilFlow {
         b.switch_to_block(rest);
         b.seal_block(rest);
     }
-    fn exit(&mut self, b: &mut FunctionBuilder, frame: ir::Value, context: ir::Value, condition: ir::Value, _kind: u32) {
+    fn exit(&mut self, b: &mut FunctionBuilder, frame: ir::Value, context: ir::Value, condition: ir::Value, kind: u32) {
+        if self.exits.len() <= kind as usize {
+            self.exits.resize(kind as usize + 1, None);
+        }
+        let target = *self.exits[kind as usize].get_or_insert_with(|| successor(b, EXIT + kind));
         let (leave, rest) = (b.create_block(), b.create_block());
         b.set_cold_block(leave);
         b.ins().brif(condition, leave, &[], rest, &[]);
         b.switch_to_block(leave);
-        b.ins().return_call(self.exit, &[frame, context]);
+        b.ins().return_call(target, &[frame, context]);
         b.seal_block(leave);
         b.switch_to_block(rest);
         b.seal_block(rest);
@@ -152,12 +168,7 @@ fn lower(
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 0), stencil_signature());
     let mut builder_context = FunctionBuilderContext::new();
     let mut b = FunctionBuilder::new(&mut func, &mut builder_context);
-    let successor = |b: &mut FunctionBuilder, index: u32| {
-        let name = b.func.declare_imported_user_function(UserExternalName::new(HOLE_CODE, index));
-        let signature = b.import_signature(stencil_signature());
-        b.import_function(ExtFuncData { name: ExternalName::User(name), signature, colocated: true, patchable: false })
-    };
-    let mut flow = StencilFlow { next: successor(&mut b, NEXT), taken: successor(&mut b, TAKEN), exit: successor(&mut b, EXIT) };
+    let mut flow = StencilFlow { next: successor(&mut b, NEXT), taken: successor(&mut b, TAKEN), exits: Default::default() };
     let entry = b.create_block();
     b.append_block_params_for_function_params(entry);
     b.switch_to_block(entry);
@@ -272,11 +283,11 @@ fn layout(rows: &[Row]) -> (Vec<usize>, Vec<usize>, usize) {
 }
 
 /// Copy `rows` into `out` back to back and patch their holes; `exit` gives each row's exit
-/// stub address. Returns the code length and each row's start offset.
+/// stub address for an exit kind. Returns the code length and each row's start offset.
 ///
 /// # Safety
 /// `out` must be writable for the whole code.
-pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize) -> usize) -> (usize, Vec<usize>) {
+pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -> usize) -> (usize, Vec<usize>) {
     let (starts, sizes, len) = layout(rows);
     for (k, row) in rows.iter().enumerate() {
         // SAFETY: the caller guarantees `out` holds the layout computed above.
@@ -292,7 +303,7 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize) -> usi
                 let target = match r.index {
                     NEXT => out as usize + starts[k + 1],
                     TAKEN => out as usize + starts[row.taken.expect("a branch row names its target")],
-                    _ => exit(k),
+                    index => exit(k, index - EXIT),
                 };
                 std::ptr::write_unaligned(place.cast::<i32>(), (target as i64 + r.addend - place as i64) as i32);
             }
@@ -337,13 +348,13 @@ mod tests {
             std::ptr::copy_nonoverlapping([0xb8u8, 0xff, 0xff, 0xff, 0x7f, 0xc3].as_ptr(), stub, 6); // mov eax, 0x7fffffff; ret
             let row = |stencil, hole| Row { stencil, hole, taken: None };
             let rows = [row(&add, one), row(&add, one), row(&ret, none)];
-            let (len, _) = copy_patch(&rows, memory, |_| stub as usize);
+            let (len, _) = copy_patch(&rows, memory, |_, _| stub as usize);
             assert!(len < 2048);
             let run: extern "C" fn(*mut i64, *mut u8) -> i64 = std::mem::transmute(memory);
             let mut frame = [1i64];
             assert_eq!(run(frame.as_mut_ptr(), std::ptr::null_mut()), 11, "two additions of 5");
             let rows = [row(&add, two), row(&add, two), row(&ret, none)];
-            copy_patch(&rows, memory, |_| stub as usize);
+            copy_patch(&rows, memory, |_, _| stub as usize);
             let mut frame = [1i64];
             assert_eq!(run(frame.as_mut_ptr(), std::ptr::null_mut()), 0x7fff_ffff, "overflow leaves through the exit stub");
             libc::munmap(memory.cast(), 4096);
