@@ -68,8 +68,22 @@ pub(in crate::vm) enum LaneBodyOutcome {
 /// A replanned body inlines with this fraction of the budget whose compile failed.
 const REPLAN_BUDGET_DIVISOR: usize = 2;
 
+/// The IR size above which a lane body's registers are allocated in one pass. The backtracking
+/// allocator's scratch memory grows with the function, and a body this large (JetStream-scale
+/// units of 23k-28k IR instructions) set the process's peak resident size while its code
+/// compiled: V8-v7 raytrace peaked at 40.0 MB with it and 33.0 MB without, richards and
+/// deltablue, whose largest bodies are 17k, keep it and the speed it buys (2026-11-11, lane
+/// mode, 5 interleaved runs). Smaller bodies keep backtracking: single-pass for all lost 20-30%
+/// on richards and deltablue.
+const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
+
 /// The code of one lane body, compiled on the calling thread.
 fn lane_code(function: ir::Function, level: super::jit_backend::CompileLevel) -> LaneCode {
+    let level = match level {
+        super::jit_backend::CompileLevel::Optimized if function.dfg.num_insts() > LANE_BACKTRACKING_MAX_INSTS =>
+            super::jit_backend::CompileLevel::Large,
+        level => level,
+    };
     let isa = super::jit_backend::target_isa_level(level)
         .ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
     compile_native_function(function, &*isa, lane_region::LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
