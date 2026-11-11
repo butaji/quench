@@ -1453,7 +1453,7 @@ pub(super) struct ScriptCallTarget {
     program: ProgramId,
     pub(super) function: u32,
     env: Value,
-    view: *const LaneView,
+    pub(super) view: *const LaneView,
     registers: u16,
     /// The lane-stack room its plain activation reserves (`fill_room::<SCRIPT_FILL_BLOCK>` of
     /// `registers`), derived once.

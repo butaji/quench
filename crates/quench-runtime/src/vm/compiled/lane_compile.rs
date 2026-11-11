@@ -52,7 +52,7 @@ enum LaneCompile {
 pub(in crate::vm) enum LaneBodyWork<'a> {
     /// Plan a body from a predecessor's leaves (`generic`) and start compiling its code, its
     /// inlining budget halved `shrinks` times (`PendingLaneMethod::shrinks`).
-    Start { generic: &'a [LaneExit], shrinks: u8, observed: Option<u32>, called: bool },
+    Start { generic: &'a [LaneExit], shrinks: u8, observed: Option<u32>, called: bool, may_wait: bool },
     /// Look for the code of the body compiling.
     Poll(Box<PendingLaneMethod>),
 }
@@ -65,6 +65,8 @@ enum Unstarted {
     Unpaid,
     /// Too short for its entries to amortize (`amortizes_entry`), and no body calls it.
     Short,
+    /// Callees the plan keeps calling warm again; its compile waits for them.
+    Awaiting,
     Declined,
 }
 
@@ -77,6 +79,8 @@ pub(in crate::vm) enum LaneBodyOutcome {
     /// Its function has not run long enough to pay for the compile, or callees it would call
     /// directly still warm toward their bodies: it counts on.
     Deferred,
+    /// The plan keeps calls of callees whose declined bodies warm again for it.
+    Awaiting,
     /// Its function's entries have not yet paid for the compile (`pays_compile`).
     Unpaid,
     /// Its unit is too short to amortize an entry and no body calls it: declined until a caller's
@@ -259,7 +263,7 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>, called: bool) -> Result<PendingLaneMethod, Unstarted> {
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>, called: bool, may_wait: bool) -> Result<PendingLaneMethod, Unstarted> {
         if let Ok(only) = std::env::var("QUENCH_ONLY") { if !only.split(',').any(|f| f.parse() == Ok(function)) { return Err(Unstarted::Declined); } }
         if let Ok(skip) = std::env::var("QUENCH_SKIP") { if skip.split(',').any(|f| f.parse() == Ok(function)) { return Err(Unstarted::Declined); } }
         let (plan, native) = self.plan_lane_method_sized(program, function, targets, captures, direct, generic, budget, entry)
@@ -268,6 +272,9 @@ impl<H: Host> Vm<H> {
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
         if entry.is_none() && !called && !amortizes_entry(&plan.unit) { return Err(Unstarted::Short); }
+        if may_wait && plan.direct.iter().fold(false, |warming, callee|
+            // SAFETY: a resolved target's view outlives its program.
+            unsafe { callee.target.view.as_ref() }.is_some_and(|view| view.demand_body()) | warming) { return Err(Unstarted::Awaiting); }
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
         if let Some(entries) = observed && !pays_compile(program, function, entries, native.dfg.num_insts()) { return Err(Unstarted::Unpaid); }
@@ -310,9 +317,9 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn lane_body_work(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
-        let (mut observed, mut called) = (None, false);
+        let (mut observed, mut called, mut may_wait) = (None, false, false);
         let mut pending = match work {
-            LaneBodyWork::Start { generic, shrinks, observed: seen, called: by_bodies } => { (observed, called) = (seen, by_bodies); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
+            LaneBodyWork::Start { generic, shrinks, observed: seen, called: by_bodies, may_wait: waits } => { (observed, called, may_wait) = (seen, by_bodies, waits); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
             LaneBodyWork::Poll(pending) => match self.lane_body_poll(pending) {
                 Ok(outcome) => return outcome,
                 Err(replan) => replan,
@@ -324,11 +331,12 @@ impl<H: Host> Vm<H> {
         loop {
             let (generic, budget) = pending;
             let direct = direct(self);
-            let started = match self.start_lane_method(program, function, targets, captures, &direct, &generic, budget, entry, observed, called) {
+            let started = match self.start_lane_method(program, function, targets, captures, &direct, &generic, budget, entry, observed, called, may_wait) {
                 Ok(started) => started,
                 Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
                 Err(Unstarted::Unpaid) => return LaneBodyOutcome::Unpaid,
                 Err(Unstarted::Short) => return LaneBodyOutcome::Short,
+                Err(Unstarted::Awaiting) => return LaneBodyOutcome::Awaiting,
                 Err(Unstarted::Declined) => return LaneBodyOutcome::Declined,
             };
             // The plan's IR and lowering state, tens of megabytes for the largest bodies, are
