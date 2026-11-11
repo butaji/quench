@@ -245,16 +245,6 @@ impl LaneView {
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
     }
 
-    /// `--f-jit` compiles no function body: the view's body is declined, once.
-    fn declined_by_mode(&self) -> bool {
-        let declined = !crate::jit_mode::function_tiers();
-        if declined {
-            // SAFETY: as `lane_body`.
-            unsafe { *self.tier_lane.get() = LaneBody::Declined };
-        }
-        declined
-    }
-
     /// Whether its body's code is compiling (`LaneBody::Compiling`).
     pub(super) fn compiling(&self) -> bool {
         // SAFETY: as `lane_body`.
@@ -266,9 +256,6 @@ impl LaneView {
     /// a fact of the view from then on: its prologue record enters it with `entry`, which
     /// tests nothing the specialization proved (`lane_body_entry`).
     pub(super) fn specialize_lane_body(&self, entry: Handler, work: impl FnOnce(super::super::compiled::LaneBodyWork) -> super::super::compiled::LaneBodyOutcome) -> bool {
-        if self.declined_by_mode() {
-            return false;
-        }
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is taken out
         // of the view while the VM works on it.
@@ -282,7 +269,6 @@ impl LaneView {
                     *body = LaneBody::Unspecialized { entries, recompiles, stuck };
                     return false;
                 }
-                super::super::compiled::fast_region::count(super::super::compiled::fast_region::Event::BodyCompile);
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
                 (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| u32::from(entries) + 1), called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
