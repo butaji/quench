@@ -44,6 +44,29 @@ pub(super) struct Planned {
     pub(super) target: Option<u32>,
     /// The PC a guard of the row exits at.
     pub(super) exit_pc: Option<u32>,
+    /// Rows that run before and after this one at the same PC (a heap row reads and writes tagged
+    /// frame slots only; these move its operands and result between the slot and a pinned register).
+    pub(super) pre: Vec<Planned>,
+    pub(super) post: Vec<Planned>,
+}
+
+impl Planned {
+    fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
+        Self { stencil, holes, target, exit_pc, pre: Vec::new(), post: Vec::new() }
+    }
+}
+
+/// A move between `place` and the frame slot at `hole`, as its own row: the speculating form
+/// reads an int32 or a Number, the general one writes a tagged word.
+fn slot_move(dst: Place, a: Place, hole: u64, pc: u32, speculate: bool) -> Result<Planned, String> {
+    let stencil = numeric::stencil(numeric::Row { kind: Kind::Move, dst, a, b: Place::Mem, speculate })?;
+    Ok(Planned::single(stencil, [hole, hole, 0], None, Some(pc)))
+}
+
+/// Whether a heap row reads `place` through a tagged slot: a pinned register or double has its
+/// own, otherwise unused, slot to carry it.
+fn pinned(place: Place) -> bool {
+    matches!(place, Place::Pin(_) | Place::PinF(_))
 }
 
 /// The plan of a heap row, given its (place, hole) of destination, first and second operand.
@@ -54,7 +77,24 @@ fn heap_plan(decoded: &Decoded, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hol
         Heap::Field => [dst_hole, decoded.hole, 0],
         _ => [dst_hole, a_hole, b_hole],
     };
-    Ok(Planned { stencil: fast_rows::stencil(HeapRow { heap, dst, a, b })?, holes, target: None, exit_pc: Some(pc) })
+    let (mut pre, mut post) = (Vec::new(), Vec::new());
+    let (reads_a, reads_b) = (heap == Heap::Store, matches!(heap, Heap::Store | Heap::Index));
+    let (mut a, mut b, mut dst) = (a, b, dst);
+    if reads_a && pinned(a) {
+        pre.push(slot_move(Place::Mem, a, a_hole, pc, false)?);
+        a = Place::Mem;
+    }
+    if reads_b && pinned(b) {
+        pre.push(slot_move(Place::Mem, b, b_hole, pc, false)?);
+        b = Place::Mem;
+    }
+    if pinned(dst) && heap != Heap::Store {
+        post.push(slot_move(dst, Place::Mem, dst_hole, pc, true)?);
+        dst = Place::Mem;
+    }
+    let mut row = Planned::single(fast_rows::stencil(HeapRow { heap, dst, a, b })?, holes, None, Some(pc));
+    (row.pre, row.post) = (pre, post);
+    Ok(row)
 }
 
 pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Planned, String> {
@@ -73,12 +113,7 @@ pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> 
     let stencil = numeric::stencil(numeric::Row { kind, dst, a, b, speculate: !general })?;
     let interrupt = std::mem::offset_of!(super::super::CallContext, interrupt) as u64;
     let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || matches!(dst, Place::Pin(_) | Place::PinF(_) | Place::MemInt);
-    Ok(Planned {
-        stencil,
-        holes: [if polls { interrupt } else { dst_hole }, a_hole, b_hole],
-        target: decoded.target,
-        exit_pc: exits.then_some(pc),
-    })
+    Ok(Planned::single(stencil, [if polls { interrupt } else { dst_hole }, a_hole, b_hole], decoded.target, exits.then_some(pc)))
 }
 
 /// A leave row: the stub that tags the pinned registers back and returns `word`.

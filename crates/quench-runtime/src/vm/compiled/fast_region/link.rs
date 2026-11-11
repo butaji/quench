@@ -162,7 +162,7 @@ pub(super) fn entry_rows(layout: &Layout) -> Result<Vec<(&'static Stencil, [u64;
 
 /// One routine per set of live pinned registers; each exiting row's stub names its PC. The
 /// exits are (row index, pc, routine index) with rows counted from the entry rows' `first`.
-fn exit_routines(layout: &Layout, body: &[Planned], first: usize) -> Result<(Vec<(usize, u32, usize)>, Vec<Vec<u8>>), String> {
+fn exit_routines(layout: &Layout, body: &[&Planned], first: usize) -> Result<(Vec<(usize, u32, usize)>, Vec<Vec<u8>>), String> {
     let mut routines: Vec<(Vec<Pin>, Vec<Pin>, Vec<u8>)> = Vec::new();
     let mut exits: Vec<(usize, u32, usize)> = Vec::new();
     for (k, row) in body.iter().enumerate() {
@@ -182,8 +182,18 @@ fn exit_routines(layout: &Layout, body: &[Planned], first: usize) -> Result<(Vec
 }
 
 /// Lays the entry rows, rows and leave stubs out as one code buffer behind the entry thunk.
-pub(super) fn link(layout: &Layout, body: &[Planned]) -> Result<Vec<u8>, String> {
+pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<Vec<u8>, String> {
     let (header, backedge) = (layout.header, layout.backedge);
+    // A row's own rows run before and after it at its PC: a branch to the PC lands on the first.
+    let body: Vec<&Planned> = planned.iter().flat_map(|row| row.pre.iter().chain(std::iter::once(row)).chain(&row.post)).collect();
+    let starts: Vec<usize> = planned
+        .iter()
+        .scan(0, |at, row| {
+            let start = *at;
+            *at += row.pre.len() + 1 + row.post.len();
+            Some(start)
+        })
+        .collect();
     let entry = entry_rows(layout)?;
     // Leave stubs: the fall-through past the backedge, the failed entry (nothing to write
     // back), then each branch target outside the region.
@@ -193,9 +203,9 @@ pub(super) fn link(layout: &Layout, body: &[Planned]) -> Result<Vec<u8>, String>
     ];
     let (g, n) = (entry.len(), body.len());
     let mut targets: Vec<Option<usize>> = Vec::with_capacity(n);
-    for row in body {
+    for row in &body {
         targets.push(match row.target {
-            Some(pc) if (header..=backedge).contains(&pc) => Some(g + (pc - header) as usize),
+            Some(pc) if (header..=backedge).contains(&pc) => Some(g + starts[(pc - header) as usize]),
             Some(pc) => Some(g + n + leaf_index(layout, &mut leaves, pc)?),
             None => None,
         });
@@ -210,7 +220,7 @@ pub(super) fn link(layout: &Layout, body: &[Planned]) -> Result<Vec<u8>, String>
     rows.extend(entry.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil, hole: &*hole_fns[k], taken: Some(g + n + 1) }));
     rows.extend(body.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &*hole_fns[g + k], taken: targets[k] }));
     rows.extend(leave_stencils.iter().enumerate().map(|(k, stencil)| Placed { stencil, hole: &*hole_fns[g + n + k], taken: None }));
-    let (exits, routines) = exit_routines(layout, body, g)?;
+    let (exits, routines) = exit_routines(layout, &body, g)?;
     place_rows(&rows, &exits, &routines)
 }
 

@@ -107,7 +107,8 @@ pub(super) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
     let started = std::time::Instant::now();
     let made = numeric::isa().and_then(|isa| generate(isa, |b| emit(b, row)));
     numeric::add_generation_ns(started.elapsed().as_nanos() as u64);
-    let stencil: &'static Stencil = Box::leak(Box::new(made?));
+    let made = made?;
+    let stencil: &'static Stencil = Box::leak(Box::new(made));
     table.insert(row, stencil);
     Ok(stencil)
 }

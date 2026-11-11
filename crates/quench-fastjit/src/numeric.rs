@@ -178,7 +178,8 @@ pub fn stencil(row: Row) -> Result<&'static Stencil, String> {
     let started = std::time::Instant::now();
     let made = isa().and_then(|isa| generate(isa, |b| emit(b, row)));
     GENERATION_NS.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-    let stencil: &'static Stencil = Box::leak(Box::new(made?));
+    let made = made?;
+    let stencil: &'static Stencil = Box::leak(Box::new(made));
     table.insert(row, stencil);
     Ok(stencil)
 }
