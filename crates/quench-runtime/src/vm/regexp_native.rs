@@ -407,3 +407,6 @@ impl<'a, 'f> Emit<'a, 'f> {
         self.fail();
     }
 }
+
+#[cfg(test)]
+mod tests;
