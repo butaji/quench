@@ -1,6 +1,9 @@
 #!/bin/bash
 # Fixed-work instruction counts for one V8-v7 benchmark body under callgrind.
 # usage: tools/bench/fixed-work.sh BIN BENCH RUNS [VAR=value ...]
+# BIN is a prebuilt quench-node (no build happens here); build it with the incremental profile
+# (CARGO_INCREMENTAL=1 CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256) so
+# every column compared comes from the same profile.
 # Prints the callgrind "Collected" line (instructions) for RUNS runs of the benchmark body.
 set -e
 BIN=$1; B=$2; N=$3; shift 3

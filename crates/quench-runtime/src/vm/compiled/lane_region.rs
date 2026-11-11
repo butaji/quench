@@ -223,6 +223,11 @@ impl State {
 #[derive(Clone, Copy)]
 enum FieldOwner { This, Register(Register), Temporary }
 
+/// Which guard of a field read a leave took, in a diagnostics report (`L<kind>` in a leave's
+/// label): the read's shape test or object proof, or the VM's cached read that missed.
+#[derive(Clone, Copy)]
+enum FieldMiss { Shape = 9001, Probe }
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReceiverRecovery { Object, ObjectOrNullish }
 
@@ -765,6 +770,21 @@ impl<'a, 'f> Lowering<'a, 'f> {
         let block = self.builder.create_block();
         self.builder.set_cold_block(block);
         self.pending.push((block, state.values.clone(), pc, std::panic::Location::caller().line()));
+        block
+    }
+
+    /// `exit`, reached through a block that names `kind` as the guard that failed, which a
+    /// diagnostics build records in the leave's label; `exit` itself otherwise.
+    fn tagged_exit(&mut self, exit: ir::Block, kind: FieldMiss) -> ir::Block {
+        if !self.vm.diagnostics { return exit; }
+        let block = self.builder.create_block();
+        self.builder.set_cold_block(block);
+        let current = self.builder.current_block();
+        self.builder.switch_to_block(block);
+        let tag = self.ins().iconst(types::I64, kind as i64);
+        self.builder.ins().store(MemFlagsData::trusted(), tag, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
+        self.ins().jump(exit, &[]);
+        if let Some(current) = current { self.builder.switch_to_block(current); }
         block
     }
 
@@ -1723,8 +1743,12 @@ pub(super) fn lower(
         lowering.switch_to(block, true);
         let mut leaving = State { values, proofs: LocalProofs::default() };
         if lowering.vm.diagnostics {
+            // A tagged exit (`Lowering::tagged_exit`) wrote the guard kind first; it names the leave.
+            let offset = std::mem::offset_of!(JsStepDispatch, exit_line) as i32;
             let line = lowering.builder.ins().iconst(types::I64, i64::from(line));
-            lowering.builder.ins().store(MemFlagsData::trusted(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
+            let tagged = lowering.builder.ins().load(types::I64, MemFlagsData::trusted(), lowering.payload, offset);
+            let line = lowering.builder.ins().select(tagged, tagged, line);
+            lowering.builder.ins().store(MemFlagsData::trusted(), line, lowering.payload, offset);
         }
         lowering.exit(&mut leaving, pc);
     }
@@ -4251,7 +4275,8 @@ impl Lowering<'_, '_> {
         object_bits: ir::Value, read: (Atom, u16), exit: ir::Block,
         fast: impl FnOnce(&mut Self, &mut State, ir::Block) -> Option<ir::Value>) -> ir::Value {
         if !probed {
-            return match fast(self, state, exit) {
+            let shape_miss = self.tagged_exit(exit, FieldMiss::Shape);
+            return match fast(self, state, shape_miss) {
                 Some(read) => read,
                 None => self.field_probe(state, probe_owner, object_bits, read, exit),
             };
@@ -4550,7 +4575,8 @@ impl Lowering<'_, '_> {
         let packed = self.ins().iconst(types::I64, (u64::from(atom) << u16::BITS | u64::from(site)) as i64);
         let value = self.helper_call(LaneHelper::FieldGet, &[object, packed]);
         let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-        emit_js_guard(&mut self.builder, hit, exit);
+        let missed = self.tagged_exit(exit, FieldMiss::Probe);
+        emit_js_guard(&mut self.builder, hit, missed);
         value
     }
 
