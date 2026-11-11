@@ -18,7 +18,7 @@ fn a_simple_loop_is_planned_by_the_region_specializer() {
     }).expect("the function has a loop");
     let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
         .expect("the loop is admitted");
-    let observation = Observation { native_field_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], int_registers: &[], double_registers: &[] };
+    let observation = Observation { native_field_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[] };
     let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
         crate::MemoryPolicy::Throughput, &program, id,
         super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &mut |_| Default::default(), &[])

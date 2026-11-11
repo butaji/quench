@@ -31,9 +31,6 @@ const POLL: u16 = 16;
 impl LoopBody {
     pub(super) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
 
-    /// A new loop site's body: none is planned where the process runs no Cranelift function tiers (`--f-jit`).
-    pub(super) fn initial() -> Self { if crate::jit_mode::function_tiers() { Self::IDLE } else { Self::Declined } }
-
     /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
     /// next body's feedback (a failed entry contract drops the contract), until the bodies
     /// run out.
