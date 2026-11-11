@@ -13195,6 +13195,7 @@ impl<H: Host> Vm<H> {
     /// a new cell or a raised error: a dense `push` or `pop`, `charCodeAt`, an ASCII `charAt`,
     /// a collection lookup, `Array.isArray`. `None` leaves the call to the native itself, whose
     /// own steps begin with the same cases.
+    #[inline(always)]
     fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let first = args.first().copied();
         match native {
