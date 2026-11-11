@@ -2,7 +2,7 @@
 //! generator's thread compiles, and the next look publishes the code.
 
 use super::{
-    compile_native_function, dump_native_code, names_length, native_dump_directory, lane_unit, osr_loop,
+    compile_native_function, dump_native_bytes, dump_native_code, names_length, native_dump_directory, lane_unit, osr_loop,
     publish_entry, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
@@ -311,6 +311,25 @@ pub(in crate::vm) fn start_osr_region(
     widened: &[usize],
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
+    if crate::jit_mode::fast_only() && region.inlining.is_some() {
+        return None;
+    }
+    if crate::jit_mode::fast_regions() && region.inlining.is_none() {
+        // Number loops whose every instruction has a stencil row skip Cranelift.
+        if let Ok(code) = super::fast_region::build(region, views == super::ElementViews::Dense, widened, [observation.int_registers, observation.double_registers]) {
+            if let Some(directory) = native_dump_directory() {
+                dump_native_bytes(directory, region.header, &code, None, "");
+            }
+            let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
+            let code = super::super::jit_backend::run_in_background(move || Ok(code));
+            return Some(PendingOsrRegion { code, watch, header: region.header, clif: None,
+                facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new() } });
+        }
+        // `--f-jit` has no Cranelift tier: a region with no stencil rows stays interpreted.
+        if crate::jit_mode::fast_only() {
+            return None;
+        }
+    }
     let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views };
     let mut plan = |unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, header: usize, backedge: usize, generic: &[usize]|
         planner.plan(&mut *global_reads, unit, entry_fields, (header, backedge), generic);

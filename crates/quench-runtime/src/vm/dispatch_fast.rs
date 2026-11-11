@@ -7949,7 +7949,8 @@ script_handler! {
         let region = match site.region.get() {
             Some(region) => region,
             // The calls do not run inlined: the loop leaves at them, as at any other call.
-            None => match lane_inlining_region(cx, r, site).or_else(|| {
+            // `--f-jit` runs no inlining regions, so it does not analyze them.
+            None => match lane_inlining_region(cx, r, site).filter(|_| !crate::jit_mode::fast_only()).or_else(|| {
                 let _ = site.inline_region.set(None);
                 loop_tier::lane_method_call_region(cx, site)
             }) {
@@ -7961,7 +7962,7 @@ script_handler! {
                 }
             },
         };
-        let region = if !site.call_boundary_pcs.is_empty() && region.inlining.is_none() {
+        let region = if !site.call_boundary_pcs.is_empty() && region.inlining.is_none() && !crate::jit_mode::fast_only() {
             site.inline_region.get_or_init(|| lane_inlining_region(cx, r, site).map(Box::new)).as_deref().unwrap_or(region)
         } else { region };
         match lane_loop_native::<H>(cx, r, ip, header, site, region) {
@@ -8037,7 +8038,7 @@ fn lane_loop_native<H: Host>(
     match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => LoopAttempt::Declined,
         LoopContinuation::Resume(pc) => LoopAttempt::At(at(pc)),
-        LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc); LoopAttempt::Leave(exit(at(pc))) }
+        LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc, region.header..=region.backedge); LoopAttempt::Leave(exit(at(pc))) }
         LoopContinuation::Inlined { frame, pc } => { let frame = region.inlining.as_ref().expect("an inlining region").frames[frame];
             LoopAttempt::Leave(exit(lane_inlined_activation(cx, r, region, &entry, frame, at(frame.call), pc))) }
         LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
@@ -8054,7 +8055,8 @@ fn lane_loop_native<H: Host>(
 /// element store, whose append helper it can compile, or a capture read, whose root-held binding
 /// it can read by helper; a leave at any other guard (a shape, say) widens nothing.
 #[cold]
-fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
+fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32, region: std::ops::RangeInclusive<u32>) {
+    if !region.contains(&pc) { return; }
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     let machine = unsafe { vm(cx) };
     let arithmetic = machine.programs.get(machine.active_program).as_deref().is_some_and(|program| {
@@ -8063,6 +8065,8 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
             let op = decoded_instruction(body, *packed).op();
             op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
                 || matches!(op.class(), Class::LoadCapture)
+                // A FastJIT region also holds a loaded field as an int32 until it leaves there.
+                || (crate::jit_mode::fast_regions() && matches!(op.class(), Class::GetField))
         })
     });
     if arithmetic { site.tier.borrow_mut().left_at(pc); }
@@ -8242,7 +8246,7 @@ fn lane_loop_run<H: Host>(
         let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
         let int_entries = loop_tier::int_entries(r, region);
         let typed_captures = loop_tier::typed_capture_slots(cx);
-        lane_loop_compile(cx, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures);
+        lane_loop_compile(cx, r, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }
