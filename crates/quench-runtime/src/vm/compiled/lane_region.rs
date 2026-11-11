@@ -3676,7 +3676,9 @@ impl Lowering<'_, '_> {
         boundaries: &CompoundBitSet, loops: &[(usize, usize)],
         own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) {
         let mut candidates = Vec::new();
-        for &(header, back) in loops.iter().filter(|(header, _)| *header != self.coverage.entry()) {
+        // The entry loop's header is the region's entry: its edge is the entry record, which
+        // proves the same contracts once (`entry_conform`) as any other edge conforms.
+        for &(header, back) in loops.iter() {
             let Some(types) = self.facts.at(header) else { continue };
             let mut defined: CompoundBitSet = CompoundBitSet::with_capacity(types.len());
             for instruction in &instructions[header..=back] {
