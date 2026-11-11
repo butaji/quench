@@ -143,6 +143,8 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
     drop(method);
     Some(match resumed {
         LaneBodyLeft::Terminated => LoopAttempt::Leave(super::exit(ip)),
+        // A callee's run that left the lane for the general path leaves it at its record.
+        LaneBodyLeft::Resume(_, next, _) if body_calls::left_lane(next) => LoopAttempt::Leave(next),
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
         LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(lane_return_value_general::<H>(cx, record, value)),
     })
