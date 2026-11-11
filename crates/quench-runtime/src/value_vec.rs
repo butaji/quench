@@ -132,7 +132,7 @@ impl ValueVec {
         Self { start, auxiliary }
     }
 
-    pub(crate) const fn new() -> Self {
+    #[inline] pub(crate) const fn new() -> Self {
         Self {
             start: EMPTY_START,
             auxiliary: 0,

@@ -1723,7 +1723,7 @@ impl ProgramStore {
     }
 
     /// Borrows the residual without the reference-count traffic of `get`.
-    pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
+    #[inline] pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
         self.entry(id).map(|entry| &**entry.residual)
     }
 

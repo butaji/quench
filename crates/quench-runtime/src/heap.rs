@@ -41,6 +41,7 @@ mod slots;
 mod snapshot;
 mod string_alloc;
 mod string_atoms;
+mod native_layout;
 mod string_parts;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
@@ -905,7 +906,7 @@ impl Heap {
         self.set_young_budget(self.pacing().minimum_young);
         self.external_collection_budget = self.pacing().minimum_external_budget;
     }
-    pub(crate) fn memory_policy(&self) -> MemoryPolicy {
+    #[inline] pub(crate) fn memory_policy(&self) -> MemoryPolicy {
         self.memory_policy
     }
     fn pacing(&self) -> pacing::GenerationalPacing {
@@ -2036,8 +2037,7 @@ impl Heap {
         self.allocated += text.beside / payload_unit();
     }
 
-    #[inline]
-    pub fn should_collect(&self) -> bool {
+    #[inline] pub fn should_collect(&self) -> bool {
         self.allocated >= self.collect_at
     }
     /// The weight charged since the last collection.

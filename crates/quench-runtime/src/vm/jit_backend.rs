@@ -66,6 +66,9 @@ impl CodePublication {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(super) enum CompileLevel {
     Quick,
+    /// A body too large for the backtracking allocator's scratch memory: `Optimized` with
+    /// one-pass register allocation.
+    Large,
     #[default]
     Optimized,
 }
@@ -82,6 +85,7 @@ impl CompileLevel {
     fn settings(self) -> &'static [(&'static str, &'static str)] {
         match self {
             Self::Quick => &[("opt_level", "none"), ("regalloc_algorithm", "single_pass")],
+            Self::Large => &[("regalloc_algorithm", "single_pass")],
             Self::Optimized => &[],
         }
     }

@@ -33,58 +33,70 @@ pub(crate) struct Parts {
     /// The part count in the low two bits, the Number's position in the next two (`NO_NUMBER`
     /// for none).
     shape: u8,
-    /// The string parts' record ids, in order, little-endian.
+    /// The string parts' record ids by part position, little-endian; the Number's slot is unused.
     ids: [u8; ID_BYTES * MAX_PARTS],
     number: [u8; NUMBER_BYTES],
 }
 
 impl Parts {
-    /// The parts `parts` names; `None` for fewer than two, more than `MAX_PARTS`, or a second
-    /// Number.
-    pub(crate) fn new(parts: &[Part]) -> Option<Self> {
-        if parts.len() < MIN_PARTS || parts.len() > MAX_PARTS {
-            return None;
+    /// No parts yet, nor a Number: the start of a `push_text` / `push_number` sequence.
+    pub(crate) const EMPTY: Self = Self { shape: NO_NUMBER << NUMBER_SHIFT, ids: [0; ID_BYTES * MAX_PARTS], number: [0; NUMBER_BYTES] };
+
+    #[inline(always)]
+    fn count(&self) -> usize {
+        usize::from(self.shape & COUNT_MASK)
+    }
+
+    #[inline(always)]
+    fn has_number(&self) -> bool {
+        self.shape >> NUMBER_SHIFT != NO_NUMBER
+    }
+
+    /// Appends the string part `id`; `false` past `MAX_PARTS`.
+    #[inline(always)]
+    pub(crate) fn push_text(&mut self, id: u32) -> bool {
+        let count = self.count();
+        if count == MAX_PARTS {
+            return false;
         }
-        let (mut ids, mut texts, mut number, mut at) = ([0; ID_BYTES * MAX_PARTS], 0, [0; NUMBER_BYTES], NO_NUMBER);
-        for (position, part) in parts.iter().enumerate() {
-            match *part {
-                Part::Text(id) => {
-                    ids[ID_BYTES * texts..ID_BYTES * (texts + 1)].copy_from_slice(&id.to_le_bytes());
-                    texts += 1;
-                }
-                Part::Number(value) if at == NO_NUMBER => {
-                    number = value.to_bits().to_le_bytes();
-                    at = position as u8;
-                }
-                Part::Number(_) => return None,
-            }
+        let at = ID_BYTES * count;
+        self.ids[at..at + ID_BYTES].copy_from_slice(&id.to_le_bytes());
+        self.shape += 1;
+        true
+    }
+
+    /// Appends the Number `value`; `false` past `MAX_PARTS` or for a second Number.
+    #[inline(always)]
+    pub(crate) fn push_number(&mut self, value: f64) -> bool {
+        let count = self.count();
+        if count == MAX_PARTS || self.has_number() {
+            return false;
         }
-        Some(Self { shape: parts.len() as u8 | at << NUMBER_SHIFT, ids, number })
+        self.number = value.to_bits().to_le_bytes();
+        self.shape = (count as u8 + 1) | (count as u8) << NUMBER_SHIFT;
+        true
+    }
+
+    /// Whether the parts pushed make a string of parts: at least `MIN_PARTS`.
+    #[inline(always)]
+    pub(crate) fn is_complete(&self) -> bool {
+        self.count() >= MIN_PARTS
     }
 
     /// The string parts' record ids, in order: what a collector traces.
     #[inline]
     pub(crate) fn for_each_text(&self, mut visit: impl FnMut(u32)) {
-        let (count, at) = (usize::from(self.shape & COUNT_MASK), usize::from(self.shape >> NUMBER_SHIFT));
-        let mut ids = self.ids.chunks_exact(ID_BYTES);
-        for position in 0..count {
-            if position != at {
-                let id = ids.next().expect("an id per string part");
-                visit(u32::from_le_bytes(id.try_into().expect("an id is four bytes")));
-            }
-        }
+        self.each().for_each(|part| if let Part::Text(id) = part { visit(id) });
     }
 
     /// The parts, in order.
     pub(crate) fn each(&self) -> impl Iterator<Item = Part> + '_ {
         let (count, at) = (usize::from(self.shape & COUNT_MASK), self.shape >> NUMBER_SHIFT);
-        let mut texts = 0;
         (0..count).map(move |position| {
             if position == usize::from(at) {
                 Part::Number(f64::from_bits(u64::from_le_bytes(self.number)))
             } else {
-                texts += 1;
-                Part::Text(u32::from_le_bytes(self.ids[ID_BYTES * (texts - 1)..ID_BYTES * texts].try_into().expect("four bytes")))
+                Part::Text(u32::from_le_bytes(self.ids[ID_BYTES * position..ID_BYTES * (position + 1)].try_into().expect("four bytes")))
             }
         })
     }
@@ -92,7 +104,7 @@ impl Parts {
 
 impl JsString {
     /// A string that is these parts' text, not yet written out.
-    pub(crate) fn from_parts(parts: Parts) -> Self {
+    #[inline] pub(crate) fn from_parts(parts: Parts) -> Self {
         Self { repr: Repr::Flat(FlatUnits::Parts(parts)) }
     }
 

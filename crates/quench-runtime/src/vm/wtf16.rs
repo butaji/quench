@@ -230,8 +230,7 @@ impl FlatUnits {
         }
     }
 
-    #[inline]
-    pub(crate) fn view(&self) -> Units<'_> {
+    #[inline(always)] pub(crate) fn view(&self) -> Units<'_> {
         match self {
             Self::Short(text) => Units::Ascii(text.as_str().as_bytes()),
             Self::Ascii(_) | Self::AsciiSlice(_) => {
@@ -243,6 +242,19 @@ impl FlatUnits {
             Self::AsciiPrefix(buffer, length) => Units::Ascii(buffer.prefix(*length)),
             Self::WidePrefix(buffer, length) => Units::Wide(buffer.prefix(*length)),
             Self::Parts(_) => parts::not_written_out(),
+        }
+    }
+
+    /// The number of units of ASCII text read in place, `None` for wide or unwritten text:
+    /// one match where `is_ascii` and `len` are two.
+    #[inline(always)]
+    pub(crate) fn ascii_len(&self) -> Option<usize> {
+        match self {
+            Self::Short(text) => Some(usize::from(text.length)),
+            Self::Ascii(text) => Some(text.len()),
+            Self::AsciiSlice(slice) => Some(slice.range.len()),
+            Self::AsciiPrefix(_, length) => Some(*length as usize),
+            Self::Wide(_) | Self::WideSlice(_) | Self::WidePrefix(..) | Self::Parts(_) => None,
         }
     }
 

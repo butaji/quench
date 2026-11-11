@@ -22,12 +22,12 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let (slot, last_index, prefilter) = self.regexp_steady_state(receiver, subject)?;
-        if native == Native::RegExpTest && !self.regexp_exec_is_builtin(receiver) {
+        let exec = native == Native::RegExpExec;
+        if !exec && !self.regexp_exec_is_builtin(receiver) {
             return None;
         }
-        let exec = native == Native::RegExpExec;
-        Some(self.steady_regexp_search(p, receiver, subject, exec, (slot, last_index, prefilter), result_used))
+        let read = self.regexp_steady_state(receiver, subject, result_used && exec)?;
+        Some(self.steady_regexp_search(p, receiver, subject, exec, read, result_used))
     }
 
     /// `steady_regexp_call`'s search once its state is read: a search the prefilter excludes
@@ -40,17 +40,18 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         subject: Value,
         exec: bool,
-        (slot, last_index, prefilter): (usize, Value, Prefilter),
+        read: SteadyRead,
         result_used: bool,
     ) -> Result<Value, JsError> {
+        let (slot, last_index, prefilter) = match read {
+            SteadyRead::Ascii { slot, stateful, matched } => return self.steady_ascii_outcome(receiver, subject, (exec, stateful, slot), matched, result_used),
+            SteadyRead::Prefiltered(slot, last_index, prefilter) => (slot, last_index, prefilter),
+        };
         if let Prefilter::Excludes { stateful } = prefilter {
             if stateful {
                 self.heap.property_set(receiver, slot, Value::number(0.0));
             }
             return Ok(if exec { Value::NULL } else { Value::FALSE });
-        }
-        if let Some(result) = self.steady_exec_ascii(receiver, subject, exec, (slot, last_index), result_used) {
-            return result;
         }
         let steady = SteadyMatch { slot, prefiltered: prefilter == Prefilter::Admits, captures: result_used && exec };
         let result = self.regexp_steady_exec(p, receiver, subject, last_index, steady);
@@ -260,7 +261,7 @@ impl<H: Host> Vm<H> {
             return Some(Ok(if result_used { this } else { Value::UNDEFINED }));
         };
         let input = self.heap.string(this)?.clone();
-        if let Err(error) = self.record_regexp_legacy_pending(receiver, input, matcher, last.start) {
+        if let Err(error) = self.record_regexp_legacy_pending(receiver, input, Rc::clone(matcher), last.start) {
             return Some(Err(error));
         }
         Some(match output {
@@ -270,45 +271,27 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// `regexp_steady_exec` of a flat ASCII subject, matched in place from its bytes: no
-    /// string coercion, no `lastIndex` conversion (it is the Number `regexp_steady_state`
-    /// read) and no second look at the regexp. A failed match is `null` (`false` for `test`)
-    /// with a stateful regexp's `lastIndex` reset through its slot; a match stores the new
-    /// one and builds the result as `regexp_steady_exec` does. `None` leaves the call to
-    /// `regexp_steady_exec`: another subject, or a pattern with no matcher over bytes.
-    fn steady_exec_ascii(
+    /// The outcome of a flat ASCII subject's search made in place (`SteadyRead::Ascii`): a failed
+    /// match is `null` (`false` for `test`) with a stateful regexp's `lastIndex` reset through
+    /// its slot; a match stores the new one and builds the result as `regexp_steady_exec` does.
+    fn steady_ascii_outcome(
         &mut self,
         receiver: Value,
         subject: Value,
-        exec: bool,
-        (slot, last_index): (usize, Value),
+        (exec, stateful, slot): (bool, bool, usize),
+        matched: Option<(Rc<quench_regexp::Regex>, JsString, quench_regexp::Match)>,
         result_used: bool,
-    ) -> Option<Result<Value, JsError>> {
-        let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
-            return None;
-        };
-        let (regex, flags) = (meta.matcher.0.get()?, meta.flags);
-        let input = self.heap.string(subject)?;
-        let Some(crate::vm::wtf16::Units::Ascii(bytes)) = input.existing_flat().map(|flat| flat.view()) else {
-            return None;
-        };
-        let stateful = flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
-        let start = if stateful { regexp_to_length(last_index.as_number()?) } else { 0 };
-        let captures = result_used && exec;
-        let found = regex.find_ascii(bytes, start, flags.contains(RegExpFlags::STICKY), captures)?;
-        let Some(matched) = found else {
+    ) -> Result<Value, JsError> {
+        let Some((regex, input, matched)) = matched else {
             if stateful {
                 self.heap.property_set(receiver, slot, Value::number(0.0));
             }
-            return Some(Ok(if exec { Value::NULL } else { Value::FALSE }));
+            return Ok(if exec { Value::NULL } else { Value::FALSE });
         };
-        // The match outlives the borrows of the regexp and the subject, which a result or the
-        // legacy statics keep: only a match clones them.
-        let (regex, input) = (Rc::clone(regex), input.clone());
-        Some(self.steady_ascii_match(receiver, subject, input, &regex, matched, (exec, stateful, slot), captures))
+        self.steady_ascii_match(receiver, subject, input, regex, matched, (exec, stateful, slot), result_used && exec)
     }
 
-    /// The outcome of `steady_exec_ascii`'s match `matched`, with `lastIndex` stored through
+    /// The outcome of a match `matched` found in place, with `lastIndex` stored through
     /// its slot where the regexp is stateful.
     #[allow(clippy::too_many_arguments)]
     fn steady_ascii_match(
@@ -316,7 +299,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         subject: Value,
         input: JsString,
-        regex: &Rc<quench_regexp::Regex>,
+        regex: Rc<quench_regexp::Regex>,
         matched: quench_regexp::Match,
         (exec, stateful, slot): (bool, bool, usize),
         captures: bool,
@@ -358,7 +341,7 @@ impl<H: Host> Vm<H> {
                 unreachable!("a steady call's receiver is a RegExp");
             };
             let matcher = Self::regexp_matcher(meta)?;
-            self.record_regexp_legacy_pending(receiver, input, &matcher, matched.range.start)?;
+            self.record_regexp_legacy_pending(receiver, input, matcher, matched.range.start)?;
             return Ok(Value::UNDEFINED);
         }
         self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))
@@ -385,9 +368,21 @@ impl<H: Host> Vm<H> {
                 None => return false,
             },
         };
-        self.object_data(intrinsics.prototype)
-            .and_then(|data| self.heap.property_get(data, proof.exec_slot))
-            .is_some_and(|exec| self.is_native_function(exec, Native::RegExpExec))
+        let Some(data) = self.object_data(intrinsics.prototype) else {
+            return false;
+        };
+        let exec = if proof.exec_slot < crate::value_vec::INLINE_PROPERTY_COUNT { data.inline_property(proof.exec_slot) } else { None };
+        let Some(exec) = exec.or_else(|| self.heap.property_get(data, proof.exec_slot)) else {
+            return false;
+        };
+        if intrinsics.builtin_exec.get() == Some(exec) {
+            return true;
+        }
+        let builtin = self.is_native_function(exec, Native::RegExpExec);
+        if builtin {
+            intrinsics.builtin_exec.set(Some(exec));
+        }
+        builtin
     }
 
     /// What a steady call (`steady_regexp_call`) of the RegExp `receiver` over the string
@@ -396,7 +391,7 @@ impl<H: Host> Vm<H> {
     /// prefilter says of `regexp_match_from`'s search (`Prefilter`). A `None` result leaves
     /// the call to the general path.
     #[inline(always)]
-    fn regexp_steady_state(&mut self, receiver: Value, subject: Value) -> Option<(usize, Value, Prefilter)> {
+    fn regexp_steady_state(&mut self, receiver: Value, subject: Value, captures: bool) -> Option<SteadyRead> {
         let Some(Cell::RegExp { object, .. }) = self.heap.get(receiver) else {
             return None;
         };
@@ -409,7 +404,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         // A RegExp's `lastIndex`, made first, usually lies in its inline storage.
-        let inline = (slot < crate::value_vec::INLINE_PROPERTY_COUNT).then(|| object.inline_property(slot)).flatten();
+        let inline = if slot < crate::value_vec::INLINE_PROPERTY_COUNT { object.inline_property(slot) } else { None };
         let last_index = match inline {
             Some(value) => value,
             None => self.heap.property_get(object, slot)?,
@@ -417,19 +412,44 @@ impl<H: Host> Vm<H> {
         // A deleted slot is no Number either.
         let index = last_index.as_number()?;
         let input = self.heap.string(subject)?;
-        let (Some(regex), Some(units)) = (meta.matcher.0.get(), input.existing_flat()) else {
-            return Some((slot, last_index, Prefilter::Undecided));
-        };
-        // A flat ASCII subject's search makes the prefilter's tests itself (`Regex::find_ascii`).
-        if matches!(units.view(), crate::vm::wtf16::Units::Ascii(_)) {
-            return Some((slot, last_index, Prefilter::Undecided));
-        }
-        let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
-        let start = if stateful { regexp_to_length(index) } else { 0 };
-        let length = input.len();
-        let rejected = (stateful && start > length) || regex.excludes_search(length, start, meta.flags.contains(RegExpFlags::STICKY), || units.unit(start));
-        Some((slot, last_index, if rejected { Prefilter::Excludes { stateful } } else { Prefilter::Admits }))
+        Some(steady_search(meta, input, slot, last_index, index, captures))
     }
+}
+
+/// `regexp_steady_state`'s search of the flat `input` from the regexp's `lastIndex` number `index`.
+#[inline(always)]
+fn steady_search(meta: &crate::heap::RegExpMeta, input: &JsString, slot: usize, last_index: Value, index: f64, captures: bool) -> SteadyRead {
+    let (Some(regex), Some(units)) = (meta.matcher.0.get(), input.existing_flat()) else {
+        return SteadyRead::Prefiltered(slot, last_index, Prefilter::Undecided);
+    };
+    let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
+    let start = if stateful { regexp_to_length(index) } else { 0 };
+    let sticky = meta.flags.contains(RegExpFlags::STICKY);
+    if let crate::vm::wtf16::Units::Ascii(bytes) = units.view() {
+        // A flat ASCII subject is searched in place, which makes the prefilter's tests
+        // itself (`Regex::find_ascii`): the match outlives the borrows of the regexp and the
+        // subject, which a result or the legacy statics keep, so only a match clones them.
+        if let Some(found) = regex.find_ascii(bytes, start, sticky, captures) {
+            let matched = match found {
+                Some(found) => Some((Rc::clone(regex), input.clone(), found)),
+                None => None,
+            };
+            return SteadyRead::Ascii { slot, stateful, matched };
+        }
+        return SteadyRead::Prefiltered(slot, last_index, Prefilter::Undecided);
+    }
+    let length = input.len();
+    let rejected = (stateful && start > length) || regex.excludes_search(length, start, sticky, || units.unit(start));
+    SteadyRead::Prefiltered(slot, last_index, if rejected { Prefilter::Excludes { stateful } } else { Prefilter::Admits })
+}
+
+/// What `regexp_steady_state` read of a steady call.
+enum SteadyRead {
+    /// A flat ASCII subject searched in place: the regexp's `lastIndex` slot, whether it is
+    /// global or sticky, and the match with the regexp and subject it keeps.
+    Ascii { slot: usize, stateful: bool, matched: Option<(Rc<quench_regexp::Regex>, JsString, quench_regexp::Match)> },
+    /// The slot and value of `lastIndex`, and what the prefilter says of the search.
+    Prefiltered(usize, Value, Prefilter),
 }
 
 /// What a steady call's prefilter (`Regex::excludes_search`) says of its search, decided
