@@ -70,7 +70,14 @@ impl LoopTier {
 
     /// Whether this entry passes to the interpreter's jump while the code compiles: entries
     /// between looks count down, and a look publishes code that is ready.
+    #[inline(always)]
     pub(super) fn awaits_code(&mut self, heap: &mut crate::heap::Heap, site: &LoopSite) -> bool {
+        // A site with published code, or none under way, has nothing to wait for.
+        self.pending.is_some() && self.poll_pending(heap, site)
+    }
+
+    #[cold]
+    fn poll_pending(&mut self, heap: &mut crate::heap::Heap, site: &LoopSite) -> bool {
         let Some(pending) = self.pending.take() else { return false };
         if self.wait > 0 {
             self.wait -= 1;
