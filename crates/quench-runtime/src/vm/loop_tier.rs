@@ -125,6 +125,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     tier: &mut LoopTier,
     number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
     int_entries: &[crate::bytecode::Register],
+    typed_captures: &[u16],
 ) {
     tier.compilations += 1;
     if site.diagnostics {
@@ -137,7 +138,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
     let native_field_loads = native_field_loads(machine, region);
-    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, int_entries };
+    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, int_entries, typed_captures };
     let policy = machine.heap.memory_policy();
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, policy, program, function, helpers,
@@ -235,6 +236,22 @@ pub(super) fn lane_method_call_region<H: Host>(cx: *mut LaneContext<H>, site: &L
     super::super::compiled::analyze_osr_region_detailed(function, &decoded, &constants, &code.field_sites,
         code.shared_register_root_masks(function_index), site.header, site.backedge,
         super::super::compiled::MethodCalls::Exit).ok()
+}
+
+/// The depth-zero capture slots the running function reads that hold typed arrays now (an observation
+/// the compiled loop's entry checks): a loop indexing such a capture views it as a typed array.
+pub(super) fn typed_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let Some((_, function, _, _)) = loop_tier::lane_loop_function(cx, code) else { return Vec::new() };
+    let mut slots: Vec<u16> = function.instructions()
+        .filter(|instruction| instruction.op().is_load_capture() && instruction.capture_depth() == 0)
+        .map(|instruction| crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())).collect();
+    slots.sort_unstable();
+    slots.dedup();
+    slots.retain(|slot| super::lane_read_capture_value::<H, true>(cx, 0, *slot).0
+        .is_some_and(|value| unsafe { vm(cx) }.lane_typed_array_elements(value, false).is_some()));
+    slots
 }
 
 /// How many elements of an entry array are sampled for Numbers.
