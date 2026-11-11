@@ -8,6 +8,8 @@
 
 use super::promise::PromiseState;
 use super::*;
+
+mod export_entry;
 use crate::heap::{WasmHostTarget, WasmObjectSlot};
 use crate::{WasmType, WasmValue};
 use wasmparser::ExternalKind;
@@ -1213,6 +1215,9 @@ impl<H: Host> Vm<H> {
             .defined_signature(index)
             .ok_or_else(|| JsError::validation("missing Wasm function signature".into()))?;
         let declarations = Some(&signatures.declarations);
+        if let Some(result) = self.call_compiled_wasm_export(p, program, environment, index, signature, declarations, args) {
+            return result;
+        }
         let mut encoded: smallvec::SmallVec<[Value; WASM_INLINE_ARGUMENTS]> =
             smallvec::SmallVec::with_capacity(signature.params.len());
         if signature.params.iter().any(|ty| encoding_allocates(*ty)) {
@@ -1235,27 +1240,7 @@ impl<H: Host> Vm<H> {
         let previous = self.replace_active_program(program);
         let result = match self.run_compiled(program, environment, index, &encoded) {
             Some(result) => result,
-            None => match self.programs.get(program) {
-                Some(residual) => {
-                    // The interpreted call pushes a frame, which observes the frame stack: a
-                    // lane's deferred activations become frames first, from their caller's
-                    // program, as a call of guest code makes them (`runs_beside_activations`).
-                    if self.lane_deferred.is_some() {
-                        self.set_active_program(previous);
-                        self.materialize_deferred_lane();
-                        self.replace_active_program(program);
-                    }
-                    self.call_user(
-                        &residual,
-                        index,
-                        environment,
-                        Value::UNDEFINED,
-                        &encoded,
-                        CallContext::Internal,
-                    )
-                }
-                None => Err(JsError::validation("missing Wasm program".into())),
-            },
+            None => self.call_wasm_export_interpreted(previous, program, environment, index, &encoded),
         };
         self.set_active_program(previous);
         let result = result.map_err(|error| self.trap_raised_in_javascript(p, error))?;
