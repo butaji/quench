@@ -12562,7 +12562,7 @@ impl<H: Host> Vm<H> {
     /// interpreted work exactly.
     pub(super) fn js_tier_runs(&self) -> bool {
         !cfg!(quench_profiled)
-            && self.execution_mode == ExecutionMode::Compiled
+            && self.execution_mode == ExecutionMode::Compiled && crate::jit_mode::function_tiers()
             && js_function_tiers_compile(self.memory_policy())
     }
 

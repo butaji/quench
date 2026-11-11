@@ -101,6 +101,8 @@ impl LoopTier {
         self.wait = 0;
         if self.pending.is_none() {
             self.compilations = TIERS.loops.max_compilations;
+            // A declined or failed region retires the site now: later entries build no entry record.
+            site.declines.set(TIERS.loops.max_declines);
         }
         self.awaits_code(heap, site);
     }

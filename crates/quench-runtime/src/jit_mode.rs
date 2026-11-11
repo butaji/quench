@@ -62,6 +62,17 @@ impl JitMode {
     }
 }
 
+/// Whether the Cranelift function tiers (lane bodies, their background compiles and entry-cell
+/// publication, the JavaScript function tiers) run: the one `tiers_enabled` fact of the process's mode,
+/// UltraJIT's half. `--f-jit` is the interpreter plus stencil regions.
+pub fn function_tiers() -> bool {
+    let mode = [JitMode::Interp, JitMode::FastOnly, JitMode::UltraOnly, JitMode::Full]
+        .into_iter()
+        .find(|mode| *mode as u8 == PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed))
+        .unwrap_or_default();
+    mode.tiers_enabled().1
+}
+
 static PROCESS_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(JitMode::Full as u8);
 
 /// Whether the process runs `--f-jit`: loop regions that FastJIT declines are not compiled by

@@ -62,9 +62,11 @@ pub(in crate::vm) enum Event {
     Declined,
     /// A compilation of a loop region started (`lane_loop_compile`).
     Compiled,
+    /// A lane body compile started (a Cranelift function tier; none under `--f-jit`).
+    BodyCompile,
 }
 
-static EVENTS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
+static EVENTS: [std::sync::atomic::AtomicU64; 5] = [const { std::sync::atomic::AtomicU64::new(0) }; 5];
 
 /// Counts `event` where the trace channel is on.
 pub(in crate::vm) fn count(event: Event) {
@@ -86,8 +88,8 @@ extern "C" fn report() {
         totals.regions, totals.rejected, totals.ops, totals.bytes, totals.bytes as f64 / ops as f64, totals.nanos,
         totals.nanos as f64 / ops as f64, numeric::generation_ns()
     );
-    let [entered, left, declined, compiled] = std::array::from_fn(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
-    eprintln!("QUENCH_FASTJIT_LOOPS entered={entered} left={left} declined={declined} compiles={compiled}");
+    let [entered, left, declined, compiled, bodies] = std::array::from_fn(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
+    eprintln!("QUENCH_FASTJIT_LOOPS entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies}");
     let mut ranked: Vec<_> = rejects.iter().collect();
     ranked.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
     for (name, count) in ranked {
