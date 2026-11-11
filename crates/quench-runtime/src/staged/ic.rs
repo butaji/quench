@@ -184,4 +184,24 @@ mod tests {
             }
         }
     }
+
+    /// A row calls `site` in an order its operand values never change: the same ops over two
+    /// sites give one trace and differ only in what the holes took.
+    #[test]
+    fn site_values_change_holes_not_the_trace() {
+        let read = |shapes: &[u32], shape: u32, slot: u16| {
+            let mut trace = super::super::trace::Trace::default();
+            let at = Reached { record: 0, shape: None, inline: None };
+            let record = trace.constant(0);
+            let at = Reached { record, ..at };
+            let ops = [IcOp::GuardShapes(shapes), IcOp::GuardShape(shape),
+                IcOp::LoadSlot { slot, form: Form::Either, storage_len: usize::from(slot) + 1 }];
+            run(&mut trace, &ops, at, None, ()).expect("a load ends the read");
+            trace
+        };
+        let (first, second) = (read(&[3, 9], 5, 1), read(&[40, 70], 6, 7));
+        assert_eq!(first.ops, second.ops, "the trace never depends on a site value");
+        assert_eq!(first.holes, [3, 9, 5, 32, 8]);
+        assert_eq!(second.holes, [40, 70, 6, 224, 56]);
+    }
 }

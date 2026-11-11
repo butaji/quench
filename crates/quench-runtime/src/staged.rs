@@ -30,6 +30,8 @@ pub(crate) mod value;
 mod steps;
 pub(crate) use steps::step;
 pub(crate) mod effects;
+#[cfg(test)]
+mod trace;
 #[allow(unused_imports)] // the Stage v2 vocabulary: stencil and UltraJIT stages use the rest
 pub(crate) use effects::{CallTarget, Effects, Region, RegionSet};
 pub(crate) use ic::concrete_own_field_hit;
@@ -92,8 +94,8 @@ pub(crate) trait Stage {
     fn number_truthy(&mut self, bits: Self::Word) -> Self::Cond;
     /// Whether the shape word `shape` is one of `shapes`, sorted.
     fn shape_in(&mut self, shape: Self::Word, shapes: &[u32]) -> Self::Cond;
-    /// `shape_in` of a site's shapes, each a per-site operand: a stage with holes compares
-    /// against each; Concrete and Emit take `shape_in`.
+    /// `shape_in` of a site's shapes, each a per-site operand: a stage with holes takes one hole
+    /// per entry, in entry order whatever the shapes are; Concrete and Emit take `shape_in`.
     fn shape_in_site(&mut self, shape: Self::Word, shapes: &[u32]) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
