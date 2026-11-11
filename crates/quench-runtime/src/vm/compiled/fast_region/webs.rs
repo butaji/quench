@@ -204,6 +204,24 @@ impl Webs {
         state.map_or_else(Vec::new, |state| state.iter().filter(|(register, _)| region.is_live(pc, **register)).map(|(_, web)| *web).collect())
     }
 
+    /// For each web, the webs that may not share its pin: those live where it is live, or where
+    /// it is defined.
+    pub(super) fn clashes(&self, region: &LoopRegion, decoded: &[Decoded]) -> Vec<Vec<usize>> {
+        let mut clash: Vec<Vec<usize>> = vec![Vec::new(); self.orig.len()];
+        for (k, row) in decoded.iter().enumerate() {
+            let mut held = self.live_at(region, region.header + k as Pc);
+            held.extend(row.dst.map(usize::from));
+            for &web in &held {
+                clash[web].extend(held.iter().copied().filter(|other| *other != web));
+            }
+        }
+        for list in &mut clash {
+            list.sort_unstable();
+            list.dedup();
+        }
+        clash
+    }
+
     /// The webs the region is entered with: those live at the header that reach its first row.
     pub(super) fn entry_live(&self, region: &LoopRegion) -> Vec<usize> {
         self.live_at(region, region.header)

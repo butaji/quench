@@ -110,7 +110,7 @@ fn assemble(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEEN]) -
     let (reprs, homes, webs, decoded) = loop {
         let (webs, renamed) = Webs::split(region, &decoded, &merged);
         let reprs = representations(region, &renamed, widened, seen, &webs);
-        let homes = Homes::of(ranked(&renamed, &reprs, Repr::Int), ranked(&renamed, &reprs, Repr::Double), webs.orig.clone());
+        let homes = Homes::of(&ranked(&renamed, &reprs, Repr::Int), &ranked(&renamed, &reprs, Repr::Double), webs.orig.clone(), &webs.clashes(region, &renamed));
         let split: Vec<Register> = homes.slots.iter().map(|web| webs.orig[usize::from(*web)]).filter(|register| webs.count(*register) > 1).collect();
         if split.is_empty() {
             break (reprs, homes, webs, renamed);

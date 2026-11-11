@@ -45,6 +45,23 @@ pub(super) fn compare_row(b: &mut StencilBuilder, row: Row) {
     jump_if(b, fails);
 }
 
+/// Counts a taken backward edge in the run's counter, word 0 of the loop entry record (holes 1
+/// and 2 are the offsets of the context's payload pointer and of the entry pointer in the
+/// payload): the tier prices a run by the iterations it completes.
+fn count_backedge(b: &mut StencilBuilder) {
+    const ONE: i64 = 1;
+    const AT: i32 = 0;
+    let payload_at = b.operand(Operand::Hole(1), Ty::I64);
+    let entry_at = b.operand(Operand::Hole(SECOND), Ty::I64);
+    let payload_address = b.b.ins().iadd(b.context, payload_at);
+    let payload = b.b.ins().load(types::I64, ir::MemFlagsData::trusted().with_readonly().with_can_move(), payload_address, AT);
+    let entry_address = b.b.ins().iadd(payload, entry_at);
+    let entry = b.b.ins().load(types::I64, ir::MemFlagsData::trusted(), entry_address, AT);
+    let count = b.b.ins().load(types::I64, ir::MemFlagsData::trusted(), entry, AT);
+    let more = b.b.ins().iadd_imm_s(count, ONE);
+    b.b.ins().store(ir::MemFlagsData::trusted(), more, entry, AT);
+}
+
 pub(super) fn jump_row(b: &mut StencilBuilder, poll: bool) {
     if poll {
         // The interrupt flag: the context's pointer to a byte, nonzero once requested.
@@ -54,6 +71,7 @@ pub(super) fn jump_row(b: &mut StencilBuilder, poll: bool) {
         let byte = b.b.ins().uload8(types::I64, ir::MemFlagsData::trusted(), flag, 0);
         let clear = b.b.ins().icmp_imm_u(IntCC::Equal, byte, 0);
         b.guard(clear, 0);
+        count_backedge(b);
     }
     let always = b.b.ins().iconst(types::I8, 1);
     b.branch(always);

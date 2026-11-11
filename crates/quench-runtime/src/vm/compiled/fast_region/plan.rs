@@ -12,9 +12,13 @@ pub(super) struct Homes {
 }
 
 impl Homes {
-    pub(super) fn of(ints: Vec<Register>, doubles: Vec<Register>, orig: Vec<Register>) -> Self {
-        let pinned = |registers: &[Register], count| registers.iter().take(count).copied().enumerate().collect();
-        Self { pins: pinned(&ints, PINNED), floats: pinned(&doubles, PINNED_F), slots: ints.into_iter().skip(PINNED).collect(), orig }
+    /// The homes of the ranked int and double webs: a pin of each kind goes to the most named
+    /// webs that do not clash with another web holding it, so webs with disjoint lifetimes share
+    /// a pin; an int web with no pin takes an int slot.
+    pub(super) fn of(ints: &[Register], doubles: &[Register], orig: Vec<Register>, clash: &[Vec<usize>]) -> Self {
+        let (pins, slots) = colored(ints, PINNED, clash);
+        let (floats, _) = colored(doubles, PINNED_F, clash);
+        Self { pins, floats, slots, orig }
     }
 
     pub(super) fn place(&self, register: Register) -> Place {
@@ -27,6 +31,20 @@ impl Homes {
         }
         if self.slots.contains(&register) { Place::MemInt } else { Place::Mem }
     }
+}
+
+/// Gives each web of `ranked`, most named first, the lowest of `limit` pins no clashing web
+/// holds; the webs left without one are returned.
+fn colored(ranked: &[Register], limit: usize, clash: &[Vec<usize>]) -> (Vec<Pin>, Vec<Register>) {
+    let (mut taken, mut left): (Vec<Pin>, Vec<Register>) = (Vec::new(), Vec::new());
+    for &web in ranked {
+        let used: Vec<usize> = taken.iter().filter(|(_, other)| clash[usize::from(web)].contains(&usize::from(*other))).map(|(pin, _)| *pin).collect();
+        match (0..limit).find(|pin| !used.contains(pin)) {
+            Some(pin) => taken.push((pin, web)),
+            None => left.push(web),
+        }
+    }
+    (taken, left)
 }
 
 /// The place and hole of an operand: an int32 constant is an immediate.
@@ -58,19 +76,6 @@ impl Planned {
     }
 }
 
-/// A move between `place` and the frame slot at `hole`, as its own row: the speculating form
-/// reads an int32 or a Number, the general one writes a tagged word.
-fn slot_move(dst: Place, a: Place, hole: u64, pc: u32, speculate: bool) -> Result<Planned, String> {
-    let stencil = numeric::stencil(numeric::Row { kind: Kind::Move, dst, a, b: Place::Mem, speculate })?;
-    Ok(Planned::single(stencil, [hole, hole, 0], None, Some(pc)))
-}
-
-/// Whether a heap row reads `place` through a tagged slot: a pinned register or double has its
-/// own, otherwise unused, slot to carry it.
-fn pinned(place: Place) -> bool {
-    matches!(place, Place::Pin(_) | Place::PinF(_))
-}
-
 /// The plan of a heap row, given its (place, hole) of destination, first and second operand.
 fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
     let base = decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT);
@@ -79,24 +84,8 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
         Heap::Field => [dst_hole, decoded.hole, 0],
         _ => [dst_hole, a_hole, b_hole],
     };
-    let (mut pre, mut post) = (Vec::new(), Vec::new());
-    let (reads_a, reads_b) = (heap == Heap::Store, matches!(heap, Heap::Store | Heap::Index));
-    let (mut a, mut b, mut dst) = (a, b, dst);
-    if reads_a && pinned(a) {
-        pre.push(slot_move(Place::Mem, a, a_hole, pc, false)?);
-        a = Place::Mem;
-    }
-    if reads_b && pinned(b) {
-        pre.push(slot_move(Place::Mem, b, b_hole, pc, false)?);
-        b = Place::Mem;
-    }
-    if pinned(dst) && heap != Heap::Store {
-        post.push(slot_move(dst, Place::Mem, dst_hole, pc, true)?);
-        dst = Place::Mem;
-    }
-    let mut row = Planned::single(fast_rows::stencil(HeapRow { heap, dst, a, b })?, holes, None, Some(pc));
-    (row.pre, row.post) = (pre, post);
-    Ok(row)
+    // The row's stencil reads pinned operands and delivers a pinned result itself.
+    Ok(Planned::single(fast_rows::stencil(HeapRow { heap, dst, a, b })?, holes, None, Some(pc)))
 }
 
 pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Planned, String> {
@@ -115,7 +104,10 @@ pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> 
     let stencil = numeric::stencil(numeric::Row { kind, dst, a, b, speculate: !general })?;
     let interrupt = std::mem::offset_of!(super::super::CallContext, interrupt) as u64;
     let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || matches!(dst, Place::Pin(_) | Place::PinF(_) | Place::MemInt);
-    Ok(Planned::single(stencil, [if polls { interrupt } else { dst_hole }, a_hole, b_hole], decoded.target, exits.then_some(pc)))
+    // A poll row also names where the run's backward-edge counter lives (`jump_row`).
+    let counter = [std::mem::offset_of!(super::super::CallContext, adapter_payload) as u64, std::mem::offset_of!(super::super::JsStepDispatch, loop_entry) as u64];
+    let holes = if polls { [interrupt, counter[0], counter[1]] } else { [dst_hole, a_hole, b_hole] };
+    Ok(Planned::single(stencil, holes, decoded.target, exits.then_some(pc)))
 }
 
 /// A leave row: the stub that tags the pinned registers back and returns `word`.
