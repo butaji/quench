@@ -21,6 +21,12 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_value_step<H: Host>(_vm: u64, _
     // SAFETY: the context's program outlives the lane run.
     let body = unsafe { &*(*cx).code }.function(function as usize);
     let instruction = decoded_instruction(body, body.code[call_pc as usize]);
+    // A RegExp literal reads no register: the lane handler's own step (`lane_regexp_literal`).
+    if instruction.op() == Op::CreateRegExpLiteral {
+        let Some(value) = lane_regexp_literal_value(cx, instruction.regexp_literal_site_index()) else { return LANE_CALL_MISSED };
+        r.set(instruction.result_register(), value);
+        return LANE_CALL_COMPLETED;
+    }
     let [a, b] = super::super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
     let Some(value) = lane_in_place(cx, ip, |vm, code| vm.value_step(code, instruction, a, b)) else { return LANE_CALL_MISSED };
     // Guest code the step ran may have made the activations frames, whose registers these are.

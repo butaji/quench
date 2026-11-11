@@ -76,6 +76,34 @@ impl<H: Host> Vm<H> {
         Some(self.with_call_roots([this, search], |vm| vm.regexp_symbol_match_builtin(p, search, this, input, &matcher, flags)))
     }
 
+    /// `String.prototype.split(regexp, limit)` when the call runs no guest code, so it observes
+    /// no frame (`lane_regexp_call`): a string receiver, a limit whose conversion runs none, a
+    /// RegExp whose `@@split` is this realm's builtin (`regexp_proven_symbol_method`) and whose
+    /// splitter is unobservable (`regexp_unobservable_splitter`). The native's steps are then
+    /// the builtin `@@split`'s in-place split; `None` leaves any other call to the general path.
+    pub(in crate::vm) fn steady_string_split(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        arguments: &[Value],
+    ) -> Option<Result<Value, JsError>> {
+        let search = *arguments.first()?;
+        let limit = arguments.get(1).copied();
+        if !self.is_string(this) || limit.is_some_and(|limit| self.is_object_like(limit)) {
+            return None;
+        }
+        let symbol = self.well_known_symbols.get(WellKnownSymbol::Split)?;
+        let method = self.regexp_proven_symbol_method(search, symbol)?;
+        match self.heap.function(method) {
+            Some(FunctionRecord { kind: FunctionKind::Native(Native::RegExpSymbolSplit), realm, .. })
+                if *realm == self.realm.globals => {}
+            _ => return None,
+        }
+        let input = self.heap.string(this)?.clone();
+        let (matcher, flags) = self.regexp_unobservable_splitter(search, &input)?;
+        Some(self.with_call_roots([this, search], |vm| vm.regexp_split_unobservable(p, search, &input, limit, &matcher, flags)))
+    }
+
     /// The matcher and flags of the RegExp `search` when a string method of the string
     /// `this` would call `search[symbol]`, this realm's builtin `native`, and that builtin's
     /// exec, flags and lastIndex reads are the builtins' (`regexp_builtin_receiver_matcher`).

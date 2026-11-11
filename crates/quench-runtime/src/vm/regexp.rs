@@ -1429,6 +1429,27 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    /// The split of `input` by `receiver` as `regexp_unobservable_splitter` admits it (`matcher`
+    /// and `flags` are its answer): the limit converted, then the builtin split in place.
+    fn regexp_split_unobservable(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        input: &JsString,
+        limit_arg: Option<Value>,
+        matcher: &Rc<quench_regexp::Regex>,
+        flags: RegExpFlags,
+    ) -> Result<Value, JsError> {
+        let limit = self.regexp_split_limit(p, limit_arg)?;
+        let array = self.new_array(Vec::new());
+        if limit == 0 {
+            return Ok(array);
+        }
+        self.with_call_roots([array], |vm| {
+            vm.regexp_split_builtin(receiver, matcher, input, array, limit, flags.unicode_mode())
+        })
+    }
+
     pub(super) fn regexp_symbol_split(
         &mut self,
         p: &ResidualProgram,
@@ -1454,14 +1475,7 @@ impl<H: Host> Vm<H> {
                     .then(|| vm.regexp_unobservable_splitter(receiver, &input))
                     .flatten()
                 {
-                    let limit = vm.regexp_split_limit(p, limit_arg)?;
-                    let array = vm.new_array(Vec::new());
-                    if limit == 0 {
-                        return Ok(array);
-                    }
-                    return vm.with_call_roots([array], |vm| {
-                        vm.regexp_split_builtin(receiver, &matcher, &input, array, limit, flags.unicode_mode())
-                    });
+                    return vm.regexp_split_unobservable(p, receiver, &input, limit_arg, &matcher, flags);
                 }
                 let constructor = vm.regexp_species_constructor(p, receiver)?;
                 let (unicode, splitter) = vm.with_call_roots([constructor], |vm| {

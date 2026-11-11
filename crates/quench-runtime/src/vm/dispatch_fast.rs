@@ -5284,7 +5284,7 @@ fn lane_body_callee_env<H: Host>() -> Option<Value> {
 script_handler! {
     /// `CreateRegExpLiteral` (`Vm::regexp_literal`), which allocates and runs no guest code.
     fn lane_regexp_literal<>(cx, r, ip, i, view) {
-        let Some(value) = lane_regexp_literal_value(cx, i) else {
+        let Some(value) = lane_regexp_literal_value(cx, i.imm() as usize) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -5344,12 +5344,12 @@ fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Va
 #[inline(never)]
 fn lane_regexp_literal_value<H: Host>(
     cx: *mut LaneContext<H>,
-    i: &LaneInstruction,
+    site: usize,
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
-    let result = vm.regexp_literal_of(code, program, i.imm() as usize);
+    let result = vm.regexp_literal_of(code, program, site);
     note_allocation(vm);
     match result {
         Ok(value) => Some(value),
@@ -13435,6 +13435,7 @@ fn steady_regexp_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, i: &Lane
     let steady = match (native, args) {
         (Native::StringReplace, _) => vm.steady_string_replace(code, native, receiver, args, result_used),
         (Native::StringMatch, [search, ..]) => vm.steady_string_match(code, receiver, *search, result_used),
+        (Native::StringSplit, [_, ..]) => vm.steady_string_split(code, receiver, args),
         (Native::RegExpExec | Native::RegExpTest, [subject, ..]) => vm.steady_regexp_call(code, native, receiver, *subject, result_used),
         _ => None,
     };

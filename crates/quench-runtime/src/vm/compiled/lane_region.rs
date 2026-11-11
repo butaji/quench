@@ -2890,7 +2890,8 @@ impl Lowering<'_, '_> {
     /// Whether `instruction` is a plain value step the lane's helper makes (`Lowering::value_step`).
     fn is_value_step(&self, instruction: WideInstruction) -> bool {
         instruction.result_flags() == 0 && self.completion == Completion::StatusAndPc
-            && instruction.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP)
+            && (instruction.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP)
+                || instruction.op() == crate::bytecode::Op::CreateRegExpLiteral)
     }
 
     /// An opcode whose step the interpreter defines (`Vm::value_step`), by the lane's helper
