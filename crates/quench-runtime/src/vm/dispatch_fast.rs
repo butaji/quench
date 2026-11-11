@@ -15347,8 +15347,8 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     if vm.with_scope_entered { return lane_body_stats::miss(lane_body_stats::Miss::CallWithScope); }
     if returns && !lane_returning_call_admitted(cx) { return lane_body_stats::miss(lane_body_stats::Miss::CallReturningNotAdmitted); }
     let Some(target) = lane_body_call_target(cx, vm, callee, &i.call_link) else {
-        // A native may run guest code above the native windows below: the body leaves instead.
-        if shadowed { return lane_body_stats::miss(lane_body_stats::Miss::CallShadowActive); }
+        // Only a native that completes in place (no guest code, no frame observed) is made here,
+        // so a shadow frame beneath the body does not matter: any other native leaves.
         return native_calls::lane_body_native_call(cx, r, i, callee);
     };
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
