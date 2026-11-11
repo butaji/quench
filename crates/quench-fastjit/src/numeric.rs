@@ -11,10 +11,11 @@
 //! Holes: 0 is the destination offset, 1 and 2 the operands; a jump polls the interrupt flag
 //! pointer at the context offset in hole 0.
 use crate::row::{Operand, RowBuilder, Source, Ty};
-use crate::{PINNED, Stencil, StencilBuilder, generate, stencil_isa};
+use crate::{Pins, Stencil, StencilBuilder, generate, stencil_isa};
 use cranelift_codegen::ir::{self, InstBuilder, condcodes::{CondCode, FloatCC, IntCC}, types};
 use cranelift_codegen::isa::OwnedTargetIsa;
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 const TAG_INT: i64 = 0x7ffd_0000_0000_0000;
 const FIRST_TAG: i64 = 0x7ff9_0000_0000_0000;
@@ -28,12 +29,15 @@ const INT_HIGH: i64 = TAG_INT >> WORD_SHIFT;
 const I64_LIMIT: f64 = 9.0e18;
 
 /// Where a row's operand lives.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Place {
     /// A frame slot: the hole is its byte offset.
     Mem,
     /// A pinned register holding a raw int32.
     Pin(u8),
+    /// A pinned xmm register holding a Number as `f64` (an int is converted, a result is not
+    /// canonicalized until it is written to a frame slot).
+    PinF(u8),
     /// A constant tagged `Value` word: the hole.
     Const,
     /// An int32 constant: the hole holds its low 32 bits.
@@ -44,7 +48,7 @@ pub enum Place {
 }
 
 /// The operation of a row.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum Kind {
     Move,
@@ -74,15 +78,13 @@ pub enum Kind {
     Guard,
     /// Set the high half of the int slot named by hole 0 to the int tag.
     TagInit,
+    /// Write a pinned double (operand `a`) to the frame slot at hole 0 as a canonical Number word.
+    Spill,
 }
-
-const KINDS: usize = Kind::TagInit as usize + 1;
-const OPERAND_PLACES: usize = PINNED + 4;
-const DESTINATIONS: usize = PINNED + 2;
 
 /// One row: operation and operand places; `speculate` rows take int32 operands only and leave
 /// through exit 0 otherwise, general rows also handle doubles.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Row {
     pub kind: Kind,
     pub dst: Place,
@@ -91,27 +93,10 @@ pub struct Row {
     pub speculate: bool,
 }
 
-fn operand_index(place: Place) -> usize {
-    match place {
-        Place::Mem => 0,
-        Place::Pin(i) => 1 + usize::from(i),
-        Place::Const => OPERAND_PLACES - 3,
-        Place::Imm => OPERAND_PLACES - 2,
-        Place::MemInt => OPERAND_PLACES - 1,
-    }
-}
-
 impl Row {
-    /// The row's dense index in the stencil table.
-    fn slot(self) -> usize {
-        let destination = match self.dst {
-            Place::Pin(i) => 1 + usize::from(i),
-            Place::MemInt => DESTINATIONS - 1,
-            _ => 0,
-        };
-        let operands = operand_index(self.a) * OPERAND_PLACES + operand_index(self.b);
-        ((self.kind as usize * DESTINATIONS + destination) * OPERAND_PLACES * OPERAND_PLACES + operands) * 2
-            + usize::from(self.speculate)
+    /// Whether a double register is read or written: the row computes in `f64`.
+    fn floats(self) -> bool {
+        [self.dst, self.a, self.b].iter().any(|place| matches!(place, Place::PinF(_)))
     }
 }
 
@@ -191,14 +176,19 @@ fn to_i32(b: &mut StencilBuilder, x: ir::Value) -> ir::Value {
         |b, x| b.b.ins().ireduce(types::I32, x),
         |b, x| {
             let f = b.b.ins().bitcast(types::F64, ir::MemFlagsData::new(), x);
-            let magnitude = b.b.ins().fabs(f);
-            let limit = b.b.ins().f64const(I64_LIMIT);
-            let inside = b.b.ins().fcmp(FloatCC::LessThan, magnitude, limit);
-            b.guard(inside, 0);
-            let wide = b.b.ins().fcvt_to_sint_sat(types::I64, f);
-            b.b.ins().ireduce(types::I32, wide)
+            f64_to_i32(b, f)
         },
     )
+}
+
+/// `ToInt32` of a double within the exact range of an i64; leaves through exit 0 otherwise.
+fn f64_to_i32(b: &mut StencilBuilder, f: ir::Value) -> ir::Value {
+    let magnitude = b.b.ins().fabs(f);
+    let limit = b.b.ins().f64const(I64_LIMIT);
+    let inside = b.b.ins().fcmp(FloatCC::LessThan, magnitude, limit);
+    b.guard(inside, 0);
+    let wide = b.b.ins().fcvt_to_sint_sat(types::I64, f);
+    b.b.ins().ireduce(types::I32, wide)
 }
 
 /// A uint32 as a Number word: an int word below 2^31, else a double.
@@ -216,13 +206,14 @@ fn word_of(b: &mut StencilBuilder, place: Place, hole: u32) -> ir::Value {
         Place::Mem | Place::MemInt => b.read(Source::Frame(Operand::Hole(hole)), Ty::Word),
         Place::Const => b.operand(Operand::Hole(hole), Ty::Word),
         Place::Pin(i) => {
-            let low = b.b.ins().ireduce(types::I32, b.values[usize::from(i)]);
+            let low = b.b.ins().ireduce(types::I32, b.pins.ints[usize::from(i)]);
             int_word(b, low)
         }
         Place::Imm => {
             let low = immediate(b, hole);
             int_word(b, low)
         }
+        Place::PinF(i) => canonical(b, b.pins.floats[usize::from(i)]),
     }
 }
 
@@ -235,9 +226,10 @@ fn immediate(b: &mut StencilBuilder, hole: u32) -> ir::Value {
 /// is no int word.
 fn int_of(b: &mut StencilBuilder, place: Place, hole: u32) -> ir::Value {
     match place {
-        Place::Pin(i) => b.b.ins().ireduce(types::I32, b.values[usize::from(i)]),
+        Place::Pin(i) => b.b.ins().ireduce(types::I32, b.pins.ints[usize::from(i)]),
         Place::Imm => immediate(b, hole),
         Place::MemInt => b.read(Source::Frame(Operand::Hole(hole)), Ty::I32),
+        Place::PinF(i) => f64_to_i32(b, b.pins.floats[usize::from(i)]),
         Place::Mem | Place::Const => {
             let word = word_of(b, place, hole);
             let high = b.b.ins().ushr_imm_u(word, WORD_SHIFT);
@@ -250,9 +242,9 @@ fn int_of(b: &mut StencilBuilder, place: Place, hole: u32) -> ir::Value {
 
 /// Continues at the next row once the destination holds the int32 `value`; the other paths of
 /// the row start from the same pinned values (`start`).
-fn finish_int(b: &mut StencilBuilder, row: Row, value: ir::Value, start: [ir::Value; PINNED]) {
+fn finish_int(b: &mut StencilBuilder, row: Row, value: ir::Value, start: Pins) {
     match row.dst {
-        Place::Pin(i) => b.values[usize::from(i)] = b.b.ins().uextend(types::I64, value),
+        Place::Pin(i) => b.pins.ints[usize::from(i)] = b.b.ins().uextend(types::I64, value),
         Place::MemInt => b.write(Source::Frame(Operand::Hole(0)), value),
         _ => {
             let word = int_word(b, value);
@@ -260,14 +252,14 @@ fn finish_int(b: &mut StencilBuilder, row: Row, value: ir::Value, start: [ir::Va
         }
     }
     b.next();
-    b.values = start;
+    b.pins = start;
 }
 
 /// As `finish_int` for a tagged word, which only a frame slot holds.
-fn finish_word(b: &mut StencilBuilder, word: ir::Value, start: [ir::Value; PINNED]) {
+fn finish_word(b: &mut StencilBuilder, word: ir::Value, start: Pins) {
     b.write(Source::Frame(Operand::Hole(0)), word);
     b.next();
-    b.values = start;
+    b.pins = start;
 }
 
 /// The int32 result of an add, subtract or multiply of int32s, leaving through exit 0 on an
@@ -316,7 +308,7 @@ fn float_arithmetic(b: &mut StencilBuilder, kind: Kind, x: ir::Value, y: ir::Val
 }
 
 /// The general path of an arithmetic row: both operands as doubles.
-fn double_path(b: &mut StencilBuilder, row: Row, x: ir::Value, y: ir::Value, start: [ir::Value; PINNED]) {
+fn double_path(b: &mut StencilBuilder, row: Row, x: ir::Value, y: ir::Value, start: Pins) {
     let (fx, fy) = (to_f64(b, x), to_f64(b, y));
     let value = float_arithmetic(b, row.kind, fx, fy);
     let word = canonical(b, value);
@@ -333,7 +325,7 @@ fn both_int(b: &mut StencilBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
 }
 
 fn arith_row(b: &mut StencilBuilder, row: Row) {
-    let start = b.values;
+    let start = b.pins;
     if row.speculate {
         let (x, y) = (int_of(b, row.a, 1), int_of(b, row.b, 2));
         let value = int_arithmetic(b, row.kind, x, y);
@@ -370,7 +362,7 @@ fn int_bitwise(b: &mut StencilBuilder, kind: Kind, x: ir::Value, y: ir::Value) -
 }
 
 fn bitwise_row(b: &mut StencilBuilder, row: Row) {
-    let start = b.values;
+    let start = b.pins;
     if row.speculate {
         let (x, y) = (int_of(b, row.a, 1), int_of(b, row.b, 2));
         let value = int_bitwise(b, row.kind, x, y);
@@ -470,11 +462,20 @@ fn guard_row(b: &mut StencilBuilder, row: Row) {
         let high = b.b.ins().ushr_imm_u(word, WORD_SHIFT);
         let ok = b.b.ins().icmp_imm_u(IntCC::Equal, high, INT_HIGH);
         let low = b.b.ins().ireduce(types::I32, word);
-        b.values[usize::from(pin)] = b.b.ins().uextend(types::I64, low);
+        b.pins.ints[usize::from(pin)] = b.b.ins().uextend(types::I64, low);
         let fails = b.b.ins().bxor_imm_u(ok, 1);
         return jump_if(b, fails);
     }
     let (int, double) = (is_int(b, word), is_double(b, word));
+    if let Place::PinF(pin) = row.dst {
+        // Loads a pinned double: an int word converts, a double word is its bits, else the entry fails.
+        let narrow = b.b.ins().ireduce(types::I32, word);
+        let (from_int, bits) = (b.b.ins().fcvt_from_sint(types::F64, narrow), b.b.ins().bitcast(types::F64, ir::MemFlagsData::new(), word));
+        b.pins.floats[usize::from(pin)] = b.b.ins().select(int, from_int, bits);
+        let number = b.b.ins().bor(int, double);
+        let fails = b.b.ins().bxor_imm_u(number, 1);
+        return jump_if(b, fails);
+    }
     let number = b.b.ins().bor(int, double);
     let fails = b.b.ins().bxor_imm_u(number, 1);
     jump_if(b, fails);
@@ -482,7 +483,7 @@ fn guard_row(b: &mut StencilBuilder, row: Row) {
 
 /// A move or constant load: into a pinned register an int32, else a tagged word.
 fn copy_row(b: &mut StencilBuilder, row: Row) {
-    let start = b.values;
+    let start = b.pins;
     if matches!(row.dst, Place::Pin(_) | Place::MemInt) {
         let value = int_of(b, row.a, 1);
         return finish_int(b, row, value, start);
@@ -491,7 +492,67 @@ fn copy_row(b: &mut StencilBuilder, row: Row) {
     finish_word(b, word, start);
 }
 
+/// An operand as `f64`; a frame slot that is no Number leaves through exit 0.
+fn f64_of(b: &mut StencilBuilder, place: Place, hole: u32) -> ir::Value {
+    let flags = ir::MemFlagsData::new();
+    match place {
+        Place::PinF(i) => b.pins.floats[usize::from(i)],
+        Place::Pin(_) | Place::Imm | Place::MemInt => {
+            let narrow = int_of(b, place, hole);
+            b.b.ins().fcvt_from_sint(types::F64, narrow)
+        }
+        Place::Const => {
+            let word = word_of(b, place, hole);
+            b.b.ins().bitcast(types::F64, flags, word)
+        }
+        Place::Mem => {
+            let word = word_of(b, place, hole);
+            to_f64(b, word)
+        }
+    }
+}
+
+/// A row with a double register: the arithmetic and relations compute in `f64` with no
+/// exit except a frame operand that is no Number; a result lands in an xmm register or, as a
+/// canonical word, in a frame slot.
+fn float_row(b: &mut StencilBuilder, row: Row) {
+    let start = b.pins;
+    let x = f64_of(b, row.a, 1);
+    if matches!(row.kind, Kind::Move | Kind::Const) {
+        return finish_float(b, row, x, start);
+    }
+    let y = f64_of(b, row.b, 2);
+    if row.kind >= Kind::Lt {
+        let (_, _, float_cc) = RELATIONS.iter().copied().find(|r| r.0 == row.kind).unwrap_or(RELATIONS[0]);
+        let fails = b.b.ins().fcmp(float_cc.complement(), x, y);
+        return jump_if(b, fails);
+    }
+    let value = float_arithmetic(b, row.kind, x, y);
+    finish_float(b, row, value, start);
+}
+
+fn finish_float(b: &mut StencilBuilder, row: Row, value: ir::Value, start: Pins) {
+    match row.dst {
+        Place::PinF(i) => b.pins.floats[usize::from(i)] = value,
+        _ => {
+            let word = canonical(b, value);
+            b.write(Source::Frame(Operand::Hole(0)), word);
+        }
+    }
+    b.next();
+    b.pins = start;
+}
+
+fn spill_row(b: &mut StencilBuilder, row: Row) {
+    let word = word_of(b, row.a, 1);
+    b.write(Source::Frame(Operand::Hole(0)), word);
+    b.next();
+}
+
 fn emit(b: &mut StencilBuilder, row: Row) {
+    if row.floats() && matches!(row.kind, Kind::Move | Kind::Const | Kind::Add | Kind::Sub | Kind::Mul | Kind::Div | Kind::Lt | Kind::Le | Kind::Gt | Kind::Ge | Kind::Eq | Kind::Ne) {
+        return float_row(b, row);
+    }
     match row.kind {
         Kind::Move | Kind::Const => copy_row(b, row),
         Kind::Add | Kind::Sub | Kind::Mul | Kind::Div => arith_row(b, row),
@@ -501,6 +562,7 @@ fn emit(b: &mut StencilBuilder, row: Row) {
         Kind::JumpPoll => jump_row(b, true),
         Kind::Guard => guard_row(b, row),
         Kind::TagInit => tag_init_row(b),
+        Kind::Spill => spill_row(b, row),
     }
 }
 
@@ -516,20 +578,20 @@ pub fn generation_ns() -> u64 {
     GENERATION_NS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-const SLOTS: usize = KINDS * DESTINATIONS * OPERAND_PLACES * OPERAND_PLACES * 2;
-
-/// The stencil of `row`: generated on first use into its slot of the table.
+/// The stencil of `row`: generated on first use, then shared for the life of the process.
 pub fn stencil(row: Row) -> Result<&'static Stencil, String> {
-    static TABLE: [OnceLock<Result<Stencil, String>>; SLOTS] = [const { OnceLock::new() }; SLOTS];
-    TABLE[row.slot()]
-        .get_or_init(|| {
-            let started = std::time::Instant::now();
-            let made = isa().and_then(|isa| generate(isa, |b| emit(b, row)));
-            GENERATION_NS.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-            made
-        })
-        .as_ref()
-        .map_err(Clone::clone)
+    static TABLE: Mutex<Option<HashMap<Row, &'static Stencil>>> = Mutex::new(None);
+    let mut table = TABLE.lock().map_err(|e| e.to_string())?;
+    let table = table.get_or_insert_with(HashMap::new);
+    if let Some(found) = table.get(&row) {
+        return Ok(found);
+    }
+    let started = std::time::Instant::now();
+    let made = isa().and_then(|isa| generate(isa, |b| emit(b, row)));
+    GENERATION_NS.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+    let stencil: &'static Stencil = Box::leak(Box::new(made?));
+    table.insert(row, stencil);
+    Ok(stencil)
 }
 
 #[cfg(test)]
@@ -543,15 +605,15 @@ mod tests {
         let kinds = [
             Kind::Move, Kind::Const, Kind::Add, Kind::Sub, Kind::Mul, Kind::Div, Kind::And, Kind::Or, Kind::Xor,
             Kind::Shl, Kind::Shr, Kind::UShr, Kind::Lt, Kind::Le, Kind::Gt, Kind::Ge, Kind::Eq, Kind::Ne, Kind::Jump,
-            Kind::JumpPoll, Kind::Guard, Kind::TagInit,
+            Kind::JumpPoll, Kind::Guard, Kind::TagInit, Kind::Spill,
         ];
         for kind in kinds {
-            for (dst, a, b) in [(Place::Mem, Place::Mem, Place::Const), (Place::Pin(0), Place::Pin(1), Place::Pin(2)), (Place::Pin(2), Place::Pin(2), Place::Mem)] {
+            for (dst, a, b) in [(Place::Mem, Place::Mem, Place::Const), (Place::Pin(0), Place::Pin(1), Place::Pin(2)), (Place::Pin(2), Place::Pin(2), Place::Mem), (Place::PinF(0), Place::PinF(1), Place::Const), (Place::Mem, Place::PinF(3), Place::Pin(0)), (Place::PinF(2), Place::Mem, Place::Imm)] {
                 for speculate in [true, false] {
                     let row = Row { kind, dst, a, b, speculate };
                     let stencil = stencil(row).unwrap();
                     if let Ok(dir) = std::env::var("STENCIL_DUMP") {
-                        let name = format!("{kind:?}-{}-{speculate}", row.slot());
+                        let name = format!("{kind:?}-{:?}-{:?}-{:?}-{speculate}", row.dst, row.a, row.b);
                         std::fs::write(format!("{dir}/{name}.bin"), &stencil.code).unwrap();
                     }
                 }

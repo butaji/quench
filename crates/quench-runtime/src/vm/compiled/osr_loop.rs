@@ -2475,6 +2475,8 @@ pub(crate) struct Observation<'a> {
     pub(crate) native_field_loads: &'a [Vec<NativeFieldLoad>],
     /// The registers of the region that held an int32 where the compile began.
     pub(crate) int_registers: &'a [Register],
+    /// The registers that held a Number that is no int32.
+    pub(crate) double_registers: &'a [Register],
 }
 
 

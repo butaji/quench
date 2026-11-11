@@ -11,12 +11,12 @@
 pub mod numeric;
 pub mod row;
 mod stencil_builder;
-pub use stencil_builder::StencilBuilder;
+pub use stencil_builder::{Pins, StencilBuilder};
 
 use cranelift_codegen::control::ControlPlane;
 use cranelift_codegen::ir::{
     self, AbiParam, ExtFuncData, ExternalName, Signature, UserExternalName,
-    UserFuncName, types::I64,
+    UserFuncName, types::{F64, I64},
 };
 use cranelift_codegen::isa::{CallConv, OwnedTargetIsa};
 use cranelift_codegen::settings::{self, Configurable};
@@ -26,6 +26,8 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 /// Value registers a stencil takes after (frame, context): the tail convention passes them in
 /// rdx, rcx, r8 and r9, so a chain of stencils keeps hot values out of memory.
 pub const PINNED: usize = 4;
+/// Double registers a stencil takes after the value registers: xmm0 to xmm3.
+pub const PINNED_F: usize = 4;
 
 /// Namespace of value holes (`symbol_value` → 64-bit immediate) and of successor holes.
 const HOLE_VALUE: u32 = 1;
@@ -65,6 +67,7 @@ pub fn stencil_isa() -> Result<OwnedTargetIsa, String> {
 fn stencil_signature() -> Signature {
     let mut signature = Signature::new(CallConv::Tail);
     signature.params.extend((0..PINNED + 2).map(|_| AbiParam::new(I64)));
+    signature.params.extend((0..PINNED_F).map(|_| AbiParam::new(F64)));
     signature.returns.push(AbiParam::new(I64));
     signature
 }
@@ -122,8 +125,8 @@ fn lower(isa: &OwnedTargetIsa, emit: impl FnOnce(&mut StencilBuilder)) -> ir::Fu
     b.switch_to_block(entry);
     b.seal_block(entry);
     let params = b.block_params(entry).to_vec();
-    let values = [params[2], params[3], params[4], params[5]];
-    emit(&mut StencilBuilder { b: &mut b, frame: params[0], context: params[1], values, next, taken, exits: Vec::new() });
+    let pins = Pins { ints: [params[2], params[3], params[4], params[5]], floats: [params[6], params[7], params[8], params[9]] };
+    emit(&mut StencilBuilder { b: &mut b, frame: params[0], context: params[1], pins, next, taken, exits: Vec::new() });
     b.finalize(isa.frontend_config());
     func
 }

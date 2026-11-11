@@ -201,7 +201,7 @@ pub(in crate::vm) fn start_osr_region(
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
     if crate::trace::Dev::FastJit.on() && region.inlining.is_none() {
         // Number loops whose every instruction has a stencil row skip Cranelift.
-        if let Ok(code) = super::fast_region::build(region, widened, observation.int_registers) {
+        if let Ok(code) = super::fast_region::build(region, widened, [observation.int_registers, observation.double_registers]) {
             if let Some(directory) = native_dump_directory() {
                 dump_native_bytes(directory, region.header, &code, None, "");
             }
@@ -318,7 +318,7 @@ mod tests {
         }).expect("the function has a loop");
         let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
             .expect("the loop is admitted");
-        let observation = Observation { native_field_loads: &[], int_registers: &[] };
+        let observation = Observation { native_field_loads: &[], int_registers: &[], double_registers: &[] };
         let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
             crate::MemoryPolicy::Throughput, &program, id,
             super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &[])

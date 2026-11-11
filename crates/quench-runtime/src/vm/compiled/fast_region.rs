@@ -15,7 +15,7 @@ use crate::bytecode::{Class, OperandKind, Register, WideInstruction};
 use crate::value::Value;
 use oxc_ast::ast::BinaryOperator;
 use quench_fastjit::numeric::{self, Kind, Place};
-use quench_fastjit::{PINNED, Row as Placed, Stencil};
+use quench_fastjit::{PINNED, PINNED_F, Row as Placed, Stencil};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -251,27 +251,90 @@ fn decode(region: &LoopRegion, instruction: WideInstruction) -> Result<Decoded, 
 /// The high 32 bits of an int word.
 const INT_HIGH: u64 = INT_TAG >> 32;
 
-/// Whether the row's result may be a double or tagged word, which no pinned int32 holds: a
-/// division, a row whose int32 speculation failed (`widened`), a constant that is no int32.
-fn is_general(row: &Decoded, pc: u32, widened: &[usize]) -> bool {
-    let wide_constant = matches!((row.kind, row.a), (Kind::Move, Some(Source::Constant(word))) if word >> 32 != INT_HIGH);
-    row.kind == Kind::Div || wide_constant || widened.contains(&(pc as usize))
+/// How the values of a register are held, from the narrowest to the widest: a raw int32, a
+/// Number as `f64`, a tagged word. A register takes the widest of what its writers produce.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Repr {
+    Unseen,
+    Int,
+    Double,
+    Tagged,
 }
 
-/// The registers whose every write is an int32 row and that held an int32 where the compile
-/// began (`holds_int`), the most named first: the first `PINNED` are pinned, the rest are int
-/// slots, read and written as their low half.
-fn int_registers(decoded: &[Decoded], general: &[bool], holds_int: impl Fn(Register) -> bool) -> Vec<Register> {
+type Reprs = BTreeMap<Register, Repr>;
+
+fn operand_repr(reprs: &Reprs, source: Option<Source>) -> Repr {
+    match source {
+        Some(Source::Register(register)) => reprs.get(&register).copied().unwrap_or(Repr::Tagged),
+        Some(Source::Constant(word)) if word >> 32 == INT_HIGH => Repr::Int,
+        Some(Source::Constant(_)) => Repr::Double,
+        None => Repr::Unseen,
+    }
+}
+
+/// The representation a row's result needs: a division, a double operand or a `widened` row
+/// (its int32 speculation failed) gives a double; a bitwise row an int32 unless widened.
+fn result_repr(row: &Decoded, reprs: &Reprs, widened: bool) -> Repr {
+    let operands = operand_repr(reprs, row.a).max(operand_repr(reprs, row.b));
+    match row.kind {
+        _ if operands == Repr::Tagged => Repr::Tagged,
+        Kind::Move | Kind::Const => operands,
+        Kind::Div => Repr::Double,
+        Kind::Add | Kind::Sub | Kind::Mul => if widened || operands == Repr::Double { Repr::Double } else { Repr::Int },
+        _ if widened => Repr::Tagged,
+        _ => Repr::Int,
+    }
+}
+
+/// The representation of every register the region names, to a fixed point: where the
+/// compile began (`ints`, `doubles`; dead at the header: none yet), then each writer's result.
+fn representations(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; 2]) -> Reprs {
+    let header = region.header;
+    let mut reprs = Reprs::new();
+    for row in decoded {
+        for register in [row.dst, row.a.and_then(register_of), row.b.and_then(register_of)].into_iter().flatten() {
+            let start = match (region.is_live(header, register), seen[0].contains(&register), seen[1].contains(&register)) {
+                (false, ..) => Repr::Unseen,
+                (_, true, _) => Repr::Int,
+                (_, _, true) => Repr::Double,
+                _ => Repr::Tagged,
+            };
+            reprs.insert(register, start);
+        }
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (k, row) in decoded.iter().enumerate() {
+            let Some(dst) = row.dst else { continue };
+            let result = result_repr(row, &reprs, widened.contains(&(header as usize + k)));
+            if reprs[&dst] < result {
+                reprs.insert(dst, result);
+                changed = true;
+            }
+        }
+    }
+    reprs
+}
+
+/// Whether the row takes general (tagged word) semantics: its result or an operand of a
+/// relation is no int32.
+fn is_general(row: &Decoded, reprs: &Reprs) -> bool {
+    match row.dst {
+        Some(dst) => reprs[&dst] != Repr::Int,
+        None => operand_repr(reprs, row.a).max(operand_repr(reprs, row.b)) >= Repr::Double,
+    }
+}
+
+/// The registers of `repr`, the most named first.
+fn ranked(decoded: &[Decoded], reprs: &Reprs, repr: Repr) -> Vec<Register> {
     let mut uses: BTreeMap<Register, usize> = BTreeMap::new();
-    let mut barred: Vec<Register> = Vec::new();
-    for (row, general) in decoded.iter().zip(general) {
-        let named = [row.dst, row.a.and_then(register_of), row.b.and_then(register_of)];
-        for register in named.into_iter().flatten() {
+    for row in decoded {
+        for register in [row.dst, row.a.and_then(register_of), row.b.and_then(register_of)].into_iter().flatten() {
             *uses.entry(register).or_default() += 1;
         }
-        barred.extend(row.dst.filter(|_| *general));
     }
-    let mut ranked: Vec<_> = uses.into_iter().filter(|(register, _)| !barred.contains(register) && holds_int(*register)).collect();
+    let mut ranked: Vec<_> = uses.into_iter().filter(|(register, _)| reprs[register] == repr).collect();
     ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     ranked.into_iter().map(|(register, _)| register).collect()
 }
@@ -283,21 +346,27 @@ fn register_of(source: Source) -> Option<Register> {
     }
 }
 
-/// Where the registers of the region live: pinned, int slots, or tagged frame slots.
+/// Where the registers of the region live: pinned (int32 or double), int slots, or tagged
+/// frame slots.
 struct Homes {
     pins: Vec<Pin>,
+    floats: Vec<Pin>,
     slots: Vec<Register>,
 }
 
 impl Homes {
-    fn of(eligible: Vec<Register>) -> Self {
-        let pins = eligible.iter().take(PINNED).copied().enumerate().collect();
-        Self { pins, slots: eligible.into_iter().skip(PINNED).collect() }
+    fn of(ints: Vec<Register>, doubles: Vec<Register>) -> Self {
+        let pinned = |registers: &[Register], count| registers.iter().take(count).copied().enumerate().collect();
+        Self { pins: pinned(&ints, PINNED), floats: pinned(&doubles, PINNED_F), slots: ints.into_iter().skip(PINNED).collect() }
     }
 
     fn place(&self, register: Register) -> Place {
-        if let Some((pin, _)) = self.pins.iter().find(|(_, pinned)| *pinned == register) {
-            return Place::Pin(*pin as u8);
+        let find = |pins: &[Pin]| pins.iter().find(|(_, pinned)| *pinned == register).map(|(pin, _)| *pin as u8);
+        if let Some(pin) = find(&self.pins) {
+            return Place::Pin(pin);
+        }
+        if let Some(pin) = find(&self.floats) {
+            return Place::PinF(pin);
         }
         if self.slots.contains(&register) { Place::MemInt } else { Place::Mem }
     }
@@ -330,7 +399,7 @@ fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Plan
     let kind = if polls { Kind::JumpPoll } else { decoded.kind };
     let stencil = numeric::stencil(numeric::Row { kind, dst, a, b, speculate: !general })?;
     let interrupt = std::mem::offset_of!(super::CallContext, interrupt) as u64;
-    let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || matches!(dst, Place::Pin(_) | Place::MemInt);
+    let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || matches!(dst, Place::Pin(_) | Place::PinF(_) | Place::MemInt);
     Ok(Planned {
         stencil,
         holes: [if polls { interrupt } else { dst_hole }, a_hole, b_hole],
@@ -346,9 +415,9 @@ fn leave_row(code: Vec<u8>) -> Stencil {
 
 /// The machine code of `region`, entered at the shared native entry ABI, or the instruction that
 /// has no row. `ints` are the registers that held an int32 as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows.
-pub(super) fn build(region: &LoopRegion, widened: &[usize], ints: &[Register]) -> Result<Vec<u8>, String> {
+pub(super) fn build(region: &LoopRegion, widened: &[usize], seen: [&[Register]; 2]) -> Result<Vec<u8>, String> {
     let started = std::time::Instant::now();
-    let built = assemble(region, widened, ints);
+    let built = assemble(region, widened, seen);
     let nanos = started.elapsed().as_nanos() as u64;
     note(|totals, rejects| match &built {
         Ok(code) => {
@@ -379,19 +448,45 @@ impl Layout<'_> {
     fn live_pins(&self, pc: u32) -> Vec<Pin> {
         self.homes.pins.iter().copied().filter(|(_, register)| self.region.is_live(pc, *register)).collect()
     }
+
+    /// The code that leaves with `word`: spills the live pinned doubles (canonical words), tags
+    /// the live pinned int32s back, and returns.
+    fn exit_code(&self, pc: u32, word: u64) -> Result<Vec<u8>, String> {
+        let tail = leave_row(stub(&self.live_pins(pc), word));
+        let spills = self.homes.floats.iter().filter(|(_, register)| self.region.is_live(pc, *register));
+        let mut chain = Vec::new();
+        for (pin, register) in spills {
+            let row = numeric::Row { kind: Kind::Spill, dst: Place::Mem, a: Place::PinF(*pin as u8), b: Place::Mem, speculate: false };
+            chain.push((numeric::stencil(row)?, [u64::from(*register) * SLOT, 0, 0]));
+        }
+        let holes: Vec<_> = chain.iter().map(|(_, holes)| *holes).chain([[0; 3]]).collect();
+        let hole_fns: Vec<Box<dyn Fn(u32) -> u64 + '_>> = holes.iter().map(|h| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
+        let rows: Vec<Placed> = chain
+            .iter()
+            .map(|(stencil, _)| *stencil)
+            .chain([&tail])
+            .enumerate()
+            .map(|(k, stencil)| Placed { stencil, hole: &*hole_fns[k], taken: None })
+            .collect();
+        let mut code = vec![0u8; rows.iter().map(|row| row.stencil.code.len()).sum()];
+        // SAFETY: `code` has room for every stencil's full length, which bounds the chain.
+        let (len, _) = unsafe { quench_fastjit::copy_patch(&rows, code.as_mut_ptr(), |_, _| 0) };
+        code.truncate(len);
+        Ok(code)
+    }
 }
 
-fn assemble(region: &LoopRegion, widened: &[usize], ints: &[Register]) -> Result<Vec<u8>, String> {
+fn assemble(region: &LoopRegion, widened: &[usize], seen: [&[Register]; 2]) -> Result<Vec<u8>, String> {
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
     let decoded = instructions.iter().map(|instruction| decode(region, *instruction)).collect::<Result<Vec<_>, _>>()?;
-    let general: Vec<bool> = decoded.iter().enumerate().map(|(k, row)| is_general(row, header + k as u32, widened)).collect();
-    let holds_int = |register: Register| !region.is_live(header, register) || ints.contains(&register);
-    let layout = Layout { header, backedge, homes: Homes::of(int_registers(&decoded, &general, holds_int)), region };
+    let reprs = representations(region, &decoded, widened, seen);
+    let homes = Homes::of(ranked(&decoded, &reprs, Repr::Int), ranked(&decoded, &reprs, Repr::Double));
+    let layout = Layout { header, backedge, homes, region };
     let mut body = Vec::with_capacity(count);
     for (k, row) in decoded.iter().enumerate() {
-        body.push(plan(row, &layout.homes, header + k as u32, general[k])?);
+        body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs))?);
     }
     link(&layout, &body)
 }
@@ -409,6 +504,9 @@ fn entry_rows(layout: &Layout) -> Result<Vec<(&'static Stencil, [u64; 3])>, Stri
     let mut rows = Vec::new();
     for (pin, register) in layout.homes.pins.iter().filter(|(_, register)| region.is_live(header, *register)) {
         rows.push(guard(Kind::Guard, Place::Pin(*pin as u8), u64::from(*register) * SLOT)?);
+    }
+    for (pin, register) in layout.homes.floats.iter().filter(|(_, register)| region.is_live(header, *register)) {
+        rows.push(guard(Kind::Guard, Place::PinF(*pin as u8), u64::from(*register) * SLOT)?);
     }
     for register in &layout.homes.slots {
         let offset = u64::from(*register) * SLOT;
@@ -429,16 +527,17 @@ fn link(layout: &Layout, body: &[Planned]) -> Result<Vec<u8>, String> {
     // Leave stubs: the fall-through past the backedge, the failed entry (nothing to write
     // back), then each branch target outside the region.
     let mut leaves: Vec<(u64, Vec<u8>)> = vec![
-        (u64::from(backedge) + 1, stub(&layout.live_pins(backedge + 1), u64::from(backedge) + 1)),
+        (u64::from(backedge) + 1, layout.exit_code(backedge + 1, u64::from(backedge) + 1)?),
         (super::LaneExit::Entry.word(), stub(&[], super::LaneExit::Entry.word())),
     ];
     let (g, n) = (entry.len(), body.len());
     let mut targets: Vec<Option<usize>> = Vec::with_capacity(n);
     for row in body {
-        targets.push(row.target.map(|pc| match (header..=backedge).contains(&pc) {
-            true => g + (pc - header) as usize,
-            false => g + n + leaf_index(layout, &mut leaves, pc),
-        }));
+        targets.push(match row.target {
+            Some(pc) if (header..=backedge).contains(&pc) => Some(g + (pc - header) as usize),
+            Some(pc) => Some(g + n + leaf_index(layout, &mut leaves, pc)?),
+            None => None,
+        });
     }
     let leave_stencils: Vec<Stencil> = leaves.into_iter().map(|(_, code)| leave_row(code)).collect();
     let mut holes: Vec<[u64; 3]> = entry.iter().map(|(_, holes)| *holes).collect();
@@ -450,20 +549,22 @@ fn link(layout: &Layout, body: &[Planned]) -> Result<Vec<u8>, String> {
     rows.extend(entry.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil, hole: &*hole_fns[k], taken: Some(g + n + 1) }));
     rows.extend(body.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &*hole_fns[g + k], taken: targets[k] }));
     rows.extend(leave_stencils.iter().enumerate().map(|(k, stencil)| Placed { stencil, hole: &*hole_fns[g + n + k], taken: None }));
-    let exits: Vec<(usize, Vec<u8>)> = body
-        .iter()
-        .enumerate()
-        .filter_map(|(k, row)| row.exit_pc.map(|pc| (g + k, stub(&layout.live_pins(pc), u64::from(pc)))))
-        .collect();
+    let mut exits: Vec<(usize, Vec<u8>)> = Vec::new();
+    for (k, row) in body.iter().enumerate() {
+        if let Some(pc) = row.exit_pc {
+            exits.push((g + k, layout.exit_code(pc, u64::from(pc))?));
+        }
+    }
     place_rows(&rows, &exits)
 }
 
-fn leaf_index(layout: &Layout, leaves: &mut Vec<(u64, Vec<u8>)>, pc: u32) -> usize {
+fn leaf_index(layout: &Layout, leaves: &mut Vec<(u64, Vec<u8>)>, pc: u32) -> Result<usize, String> {
     let word = u64::from(pc);
-    leaves.iter().position(|(candidate, _)| *candidate == word).unwrap_or_else(|| {
-        leaves.push((word, stub(&layout.live_pins(pc), word)));
-        leaves.len() - 1
-    })
+    if let Some(found) = leaves.iter().position(|(candidate, _)| *candidate == word) {
+        return Ok(found);
+    }
+    leaves.push((word, layout.exit_code(pc, word)?));
+    Ok(leaves.len() - 1)
 }
 
 /// Copies the rows behind the thunk and the exit stubs after them, patching each row's exit to

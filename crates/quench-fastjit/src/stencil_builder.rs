@@ -5,12 +5,20 @@ use super::{HOLE_VALUE, NEXT, TAKEN, EXIT, successor};
 use cranelift_codegen::ir::{self, ExternalName, GlobalValueData, InstBuilder, MemFlagsData, UserExternalName, condcodes::IntCC, types};
 use cranelift_frontend::FunctionBuilder;
 
+/// The values a stencil passes on in registers: raw int32s in the value registers, doubles in
+/// the xmm registers.
+#[derive(Clone, Copy)]
+pub struct Pins {
+    pub ints: [ir::Value; super::PINNED],
+    pub floats: [ir::Value; super::PINNED_F],
+}
+
 pub struct StencilBuilder<'a, 'f> {
     pub(crate) b: &'a mut FunctionBuilder<'f>,
     pub(crate) frame: ir::Value,
     pub(crate) context: ir::Value,
-    /// The pinned value registers, passed to every successor.
-    pub(crate) values: [ir::Value; super::PINNED],
+    /// The pinned registers, passed to every successor.
+    pub(crate) pins: Pins,
     pub(crate) next: ir::FuncRef,
     pub(crate) taken: ir::FuncRef,
     pub(crate) exits: Vec<Option<ir::FuncRef>>,
@@ -26,9 +34,8 @@ fn clif(ty: Ty) -> ir::Type {
 
 impl StencilBuilder<'_, '_> {
     /// The arguments of every successor: frame, context and the pinned values.
-    pub(crate) fn args(&self) -> [ir::Value; super::PINNED + 2] {
-        let [a, b, c, d] = self.values;
-        [self.frame, self.context, a, b, c, d]
+    pub(crate) fn args(&self) -> Vec<ir::Value> {
+        [self.frame, self.context].into_iter().chain(self.pins.ints).chain(self.pins.floats).collect()
     }
 
     fn immediate(&mut self, operand: Operand) -> ir::Value {
