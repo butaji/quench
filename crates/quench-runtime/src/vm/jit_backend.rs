@@ -255,6 +255,9 @@ pub(super) fn compile_function<T>(
 }
 
 #[cfg(all(test, feature = "jit"))]
+mod vendor_patch_tests;
+
+#[cfg(all(test, feature = "jit"))]
 mod tests {
     use super::*;
     use cranelift_codegen::ir::{self, AbiParam, InstBuilder, types};
@@ -297,16 +300,16 @@ mod tests {
         compile_function(function(&*isa, true), &*isa, None, |compiled, function| {
             assert!(!compiled.buffer.relocs().is_empty());
             assert!(compiled.buffer.relocs().iter().any(|relocation| {
-                let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
+                let cranelift_codegen::RelocTarget::ExternalName(ir::ExternalName::User(
                     name,
-                )) = relocation.target
+                )) = &relocation.target
                 else {
                     return false;
                 };
                 function
                     .params
                     .user_named_funcs()
-                    .get(name)
+                    .get(*name)
                     .is_some_and(|name| name.namespace == 0 && name.index == 1)
             }));
             Ok(())
