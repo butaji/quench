@@ -450,8 +450,10 @@ const BY_POLICY: [PolicyTiers; crate::MemoryPolicy::ALL.len()] = [
     PolicyTiers { loop_tier: false, js_function_tiers: false },
 ];
 
-/// What `policy` lets the tiers compile.
-pub(in crate::vm) const fn by_policy(policy: crate::MemoryPolicy) -> &'static PolicyTiers {
+/// What `policy` lets the tiers compile: the one function every tier switch reads (with
+/// `Switches::read`, the one place the development experiments are read). It is the single
+/// seam where the JIT mode (interpreter only, fast only, fast and ultra) becomes the input.
+pub(in crate::vm) const fn tiers_enabled(policy: crate::MemoryPolicy) -> &'static PolicyTiers {
     &BY_POLICY[policy as usize]
 }
 
@@ -473,7 +475,7 @@ mod tests {
         let (saved, of) = TIERS.js_function.general_saved_share;
         assert!(saved > 0 && saved < of);
         for policy in crate::MemoryPolicy::ALL {
-            let row = by_policy(policy);
+            let row = tiers_enabled(policy);
             // The loop tier's site analysis belongs to the function tiers.
             assert!(!row.loop_tier || row.js_function_tiers, "{policy:?}");
         }

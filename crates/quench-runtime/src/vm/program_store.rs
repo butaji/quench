@@ -1990,7 +1990,7 @@ impl ProgramStore {
         policy: crate::MemoryPolicy,
     ) -> bool {
         self.switches.general_dispatch
-            && super::compiled::tier_policy::by_policy(policy).js_function_tiers
+            && super::compiled::tier_policy::tiers_enabled(policy).js_function_tiers
             && (!acyclic || self.general_baseline_may_pay(instructions))
     }
 
@@ -2013,7 +2013,7 @@ impl ProgramStore {
         policy: crate::MemoryPolicy,
     ) -> bool {
         // Admission: the tier's switch, and the memory policy's (`PolicyTiers::js_function_tiers`).
-        if !self.switches.general_dispatch || !super::compiled::tier_policy::by_policy(policy).js_function_tiers {
+        if !self.switches.general_dispatch || !super::compiled::tier_policy::tiers_enabled(policy).js_function_tiers {
             return false;
         }
         let priced = self.switches.general_priced;

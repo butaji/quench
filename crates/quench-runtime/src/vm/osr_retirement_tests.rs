@@ -154,7 +154,7 @@ fn shared_osr_appends_match_the_interpreter_across_growth_doubles_and_prototype_
     for policy in crate::MemoryPolicy::ALL {
         let (printed, vm) = printed_run(&program, crate::ExecutionMode::Compiled, policy);
         assert_eq!(printed, expected, "{policy:?}");
-        if crate::vm::compiled::tier_policy::by_policy(policy).loop_tier {
+        if crate::vm::compiled::tier_policy::tiers_enabled(policy).loop_tier {
             let site = osr_site(&vm, function_named(&program, "fill"));
             assert!(site.native_region_runs > 0, "the append loop runs natively under {policy:?}: {site:?}");
         }
@@ -208,7 +208,7 @@ fn shared_osr_remainder_matches_the_interpreter_across_int32_edges_and_doubles()
     for policy in crate::MemoryPolicy::ALL {
         let (printed, vm) = printed_run(&program, crate::ExecutionMode::Compiled, policy);
         assert_eq!(printed, expected, "{policy:?}");
-        if crate::vm::compiled::tier_policy::by_policy(policy).loop_tier {
+        if crate::vm::compiled::tier_policy::tiers_enabled(policy).loop_tier {
             let site = osr_site(&vm, function_named(&program, "rems"));
             assert!(site.native_region_runs > 0, "the remainder loop runs natively under {policy:?}: {site:?}");
         }
@@ -237,7 +237,7 @@ fn assert_typed_osr(source: &str, native: &[&str]) -> Vm<TestHost> {
     for policy in crate::MemoryPolicy::ALL {
         let (printed, vm) = printed_run(&program, crate::ExecutionMode::Compiled, policy);
         assert_eq!(printed, expected, "{policy:?}");
-        for name in native.iter().filter(|_| crate::vm::compiled::tier_policy::by_policy(policy).loop_tier) {
+        for name in native.iter().filter(|_| crate::vm::compiled::tier_policy::tiers_enabled(policy).loop_tier) {
             let site = osr_site(&vm, function_named(&program, name));
             assert!(site.native_region_runs > 0, "{name}'s loop runs natively under {policy:?}: {site:?}");
         }

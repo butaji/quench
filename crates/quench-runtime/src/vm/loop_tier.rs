@@ -140,7 +140,7 @@ impl RegionTier {
     /// its backward jump in the interpreter without reading an entry: reading one at every
     /// iteration had cost V8-v7 Crypto `--jit` a third of its instructions under memory-first.
     pub(super) fn may_run(&self, policy: crate::MemoryPolicy) -> bool {
-        self.is_published() || (!self.is_interpreted() && super::compiled::tier_policy::by_policy(policy).loop_tier)
+        self.is_published() || (!self.is_interpreted() && super::compiled::tier_policy::tiers_enabled(policy).loop_tier)
     }
 
     /// Makes the compile under way stale where its code names shape ids, which a shape

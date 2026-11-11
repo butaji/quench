@@ -208,7 +208,7 @@ pub(in crate::vm) fn start_osr_region(
     global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
     widened: &[usize],
 ) -> Option<PendingOsrRegion> {
-    let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
+    let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::tiers_enabled(policy).loop_tier)?;
     let fields = loop_fields(region, observation);
     // The function's own unit run over the loop is the general plan: a call inside it leaves
     // at the call's exact PC, with no callee inlined. The inlined unit is an optimization over

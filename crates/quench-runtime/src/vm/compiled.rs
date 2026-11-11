@@ -12508,7 +12508,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn js_tier_runs(&self) -> bool {
         !cfg!(quench_profiled)
             && self.execution_mode == ExecutionMode::Compiled
-            && tier_policy::by_policy(self.memory_policy()).js_function_tiers
+            && tier_policy::tiers_enabled(self.memory_policy()).js_function_tiers
     }
 
     /// Keep usable legacy specialized candidates first. If that tier rejects a
