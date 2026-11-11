@@ -6172,7 +6172,7 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
 }
 
 /// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
-pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
+#[inline] pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
     tier_policy::by_policy(policy).js_function_tiers
 }
 

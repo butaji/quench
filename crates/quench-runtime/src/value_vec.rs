@@ -132,7 +132,7 @@ impl ValueVec {
         Self { start, auxiliary }
     }
 
-    pub(crate) const fn new() -> Self {
+    #[inline] pub(crate) const fn new() -> Self {
         Self {
             start: EMPTY_START,
             auxiliary: 0,
@@ -146,7 +146,7 @@ impl ValueVec {
         }
     }
 
-    pub(crate) const fn auxiliary(self) -> u32 {
+    #[inline] pub(crate) const fn auxiliary(self) -> u32 {
         self.auxiliary & SHAPE_MASK
     }
 

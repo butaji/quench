@@ -905,7 +905,7 @@ impl Heap {
         self.set_young_budget(self.pacing().minimum_young);
         self.external_collection_budget = self.pacing().minimum_external_budget;
     }
-    pub(crate) fn memory_policy(&self) -> MemoryPolicy {
+    #[inline] pub(crate) fn memory_policy(&self) -> MemoryPolicy {
         self.memory_policy
     }
     fn pacing(&self) -> pacing::GenerationalPacing {
@@ -1113,7 +1113,7 @@ impl Heap {
         })
     }
 
-    pub(crate) fn mark_prototype(&mut self, prototype: Value) {
+    #[inline] pub(crate) fn mark_prototype(&mut self, prototype: Value) {
         if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
         }
