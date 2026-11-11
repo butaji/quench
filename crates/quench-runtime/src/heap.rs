@@ -4261,6 +4261,8 @@ impl Heap {
             trace_kind,
             last_proto,
         );
+        // The count of non-int32 values is kept per backing: none means no element to scan.
+        if array.elements().holds_only_int32() { return; }
         work.extend(
             array
                 .elements()
