@@ -86,6 +86,7 @@ impl<H: Host> Runtime<H> {
     /// Choose how JavaScript and Wasm functions execute; see [`ExecutionMode`].
     pub fn set_execution_mode(&mut self, mode: crate::ExecutionMode) {
         self.vm.set_execution_mode(mode);
+        if mode == crate::ExecutionMode::Compiled { self.vm.enable_lane_methods(); }
     }
 
     /// Compile each Wasm module whole at its first call under [`crate::ExecutionMode::Compiled`],

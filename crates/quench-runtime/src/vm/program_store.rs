@@ -967,7 +967,7 @@ impl Default for ProgramStore {
             general_baseline_priced: !(STRESS || crate::trace::Dev::JsUnpricedGeneralDispatch.on()),
             js_jit_diagnostics: crate::trace::Channel::JsJit.on().then(FxHashMap::default),
             js_jit_general_dispatch_enabled: STRESS || crate::trace::Dev::JsGeneralDispatch.on(),
-            js_jit_lane_methods_enabled: true,
+            js_jit_lane_methods_enabled: STRESS,
             #[cfg(test)]
             js_entry_specializations_enabled: true,
             js_general_dispatch_work: None,
@@ -2027,7 +2027,6 @@ impl ProgramStore {
         self.entry(id)?.jit_tiers.js(function)
     }
 
-    #[cfg(test)]
     pub(super) fn enable_js_lane_methods(&mut self) {
         self.js_jit_lane_methods_enabled = true;
     }
