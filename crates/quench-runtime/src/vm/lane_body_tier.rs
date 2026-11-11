@@ -15,6 +15,8 @@ pub(super) struct LaneBodyHistory {
     pub(super) lifetimes: u8,
     /// The inlining budget halvings its last plan needed to fit (`PendingLaneMethod::shrinks`).
     shrinks: u8,
+    /// The warm-ups its compile waited for its callees' bodies (`LaneView::waits_for_callees`).
+    callee_waits: u8,
     /// The bodies it specialized past because a callee published one (`respecialize_callers`).
     callee_recompiles: u8,
     /// Whether a compile of its body waited for its entries to pay for it (`LaneBodyOutcome::Unpaid`).
@@ -120,6 +122,17 @@ impl LaneView {
     pub(super) fn affords_compile(&self) -> bool {
         let history = self.history.get();
         history.lifetimes <= TIERS.lane_body.max_lifetimes
+    }
+
+    /// Whether its compile waits one more warm-up for callees still warming, whose bodies it
+    /// then calls by their entries (`compiled::DirectCallee`).
+    pub(super) fn waits_for_callees(&self) -> bool {
+        let history = self.history.get();
+        let waits = history.callee_waits < TIERS.lane_body.max_callee_waits;
+        if waits {
+            self.history.set(LaneBodyHistory { callee_waits: history.callee_waits + 1, ..history });
+        }
+        waits
     }
 
     /// Whether a body compiled a call of this function (`note_caller`): native callers want its
@@ -349,7 +362,7 @@ pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, bod
                 target.program == vm.active_program && !target.view.is_null() && !std::ptr::eq(target.view, view) && pending(unsafe { &*target.view })
             })
     });
-    calls(LaneView::compiling).then_some(LaneBodyOutcome::Deferred)
+    (calls(LaneView::compiling) || (calls(LaneView::demand_body) && view.waits_for_callees())).then_some(LaneBodyOutcome::Deferred)
 }
 
 /// Whether a compiling `body` lets this entry pass without looking for its code, counting it

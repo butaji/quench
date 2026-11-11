@@ -110,7 +110,7 @@ fn lane_code(function: ir::Function, level: super::jit_backend::CompileLevel) ->
 }
 
 use super::super::dispatch_fast::lane_body_stats::{miss as plan_miss, Miss};
-use lane_facts::{pays_compile, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
+use lane_facts::{unit_closed, bind_callees, Census, pays_compile, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
 
 /// The unit PCs a previous body left at, and whether it left at its entry. A leave at the first
 /// instruction is a wrong entry speculation: the next body drops its entry contract
@@ -120,19 +120,6 @@ fn left_places(unit: &lane_unit::Unit, generic: &[LaneExit], first: usize) -> (V
     let entry_left = left_at.contains(&first) || generic.contains(&LaneExit::Entry);
     left_at.retain(|pc| *pc != first);
     (left_at, entry_left)
-}
-
-/// Whether every call of a unit that has run is direct (`LaneMethod::closed`). A call that
-/// recorded no callee has not run; where it first does it leaves, as any helper call does
-/// under a direct caller's frames.
-fn unit_closed(unit: &lane_unit::Unit, function: u32, direct: &BTreeMap<usize, *const DirectCallee>,
-    targets: &dyn Fn(u32, u32) -> Vec<CallTarget>) -> bool {
-    unit.instructions.iter().enumerate().all(|(pc, instruction)| !instruction.op().is_call()
-        || direct.contains_key(&pc)
-        || match unit.origins[pc] {
-            lane_unit::Origin::Caller(origin) => targets(function, origin),
-            lane_unit::Origin::Inlined { frame, pc } => targets(unit.frames[frame].target.function, pc),
-        }.is_empty())
 }
 
 impl<H: Host> Vm<H> {
@@ -190,7 +177,7 @@ impl<H: Host> Vm<H> {
         if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| fields.get(&site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at); }
         let global_reads = self.lane_global_reads(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
-        let closed = unit_closed(&unit, function, &direct_sites, targets);
+        let closed = unit_closed(&unit, function, |pc| direct_sites.contains_key(&pc), targets);
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
         let helpers = LaneHelper::addresses::<H>();
@@ -266,13 +253,7 @@ impl<H: Host> Vm<H> {
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
         if entry.is_none() && !called && !amortizes_entry(&plan.unit, function, &plan.direct) { return Err(Unstarted::Short); }
-        // The calls the plan keeps are the callers' facts and the demand for their callees'
-        // bodies: they warm again while this body publishes at once, calling them through
-        // their entry cells. A callee this body inlines has no call of it to bind.
-        for callee in &plan.direct {
-            // SAFETY: a resolved target's view outlives its program.
-            if let Some(view) = unsafe { callee.target.view.as_ref() } { view.note_caller(caller); view.demand_body(); }
-        }
+        bind_callees(&plan.direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
         if let Some(entries) = observed && !pays_compile(program, function, entries, native.dfg.num_insts()) { return Err(Unstarted::Unpaid); }
@@ -283,16 +264,13 @@ impl<H: Host> Vm<H> {
             &watcher, &mut self.heap, self.method_cache_atoms.readers()) {
             return Err(Unstarted::Declined);
         }
-        let census = self.programs.js_jit_diagnostics_enabled()
-            .then(|| (function, entry.is_some(), plan.unit.instructions.len(), native.dfg.num_insts(), key.3, generic.len(), plan.direct.len(), budget, observed, plan.closed));
+        let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
+            function, osr: entry.is_some(), unit: plan.unit.instructions.len(), ir: native.dfg.num_insts(), key: key.3,
+            generic: generic.len(), direct: plan.direct.len(), budget, observed, closed: plan.closed });
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
             let code = lane_code(native, super::jit_backend::CompileLevel::run_default());
-            if let Some((function, osr, unit, ir, key, generic, direct, budget, observed, closed)) = census {
-                eprintln!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"observed\":{},\"key\":\"{key:016x}\",\"us\":{},\"closed\":{closed},\"bytes\":{}}}",
-                    observed.map_or(-1, i64::from),
-                    started.elapsed().as_micros(), code.as_ref().map_or(0, |code| code.len()));
-            }
+            if let Some(census) = census { eprintln!("{}", census.report(started.elapsed(), code.as_ref().map_or(0, |code| code.len()))); }
             code
         });
         self.programs.note_pending_native_calls(&watch, plan.callees());

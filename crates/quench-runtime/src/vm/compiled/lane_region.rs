@@ -2267,13 +2267,9 @@ impl Lowering<'_, '_> {
             let mut aliases = roots.clone();
             let mut admitted = smallvec::SmallVec::<[(Register, super::lane_unit::CallTarget); 2]>::new();
             let mut receivers = smallvec::SmallVec::<[(Register, ReceiverRecovery); 2]>::new();
-            // Admitted once at entry, an inlined call's receiver and callee guard every run,
-            // also the ones that skip the call (`packet != null`). A body that left at its
-            // entry once admits them at their markers instead (`Lowering::inline_call`).
-            let at_entry = !self.generic.contains(&entry_leave(self.unit));
             for (pc, instruction) in instructions.iter().copied().enumerate() {
                 if self.blocks[pc].is_some() { aliases.copy_from_slice(&roots); }
-                if !at_entry || !self.facts.reached(pc) { continue; }
+                if !self.admits_at_entry(pc) { continue; }
                 if let Some(frame) = self.unit.markers.iter().position(|marker| *marker == pc) {
                     let call = self.unit.frames[frame];
                     let body = self.program.function(call.target.function as usize);
@@ -2397,6 +2393,13 @@ impl Lowering<'_, '_> {
             self.builder.switch_to_block(admitted);
         }
         Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, this, fields, calls, call_receivers }
+    }
+
+    /// Whether the entry edge admits the inlined call at `pc`, a call a run may skip
+    /// (`packet != null`) and so not one every run may be refused for: a body that left at
+    /// its entry once admits them at their markers instead (`Lowering::inline_call`).
+    fn admits_at_entry(&self, pc: usize) -> bool {
+        self.facts.reached(pc) && !self.generic.contains(&entry_leave(self.unit))
     }
 
     /// `invariant_field_records`, unless the body left at its entry: it binds no receiver record
