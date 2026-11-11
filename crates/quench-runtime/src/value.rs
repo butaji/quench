@@ -118,6 +118,12 @@ impl NarrowLayout {
     pub(crate) const INDEX_SHIFT: u32 = NARROW_INDEX_SHIFT;
     pub(crate) const INDEX_BITS: u32 = NARROW_INDEX_BITS;
     pub(crate) const DIRECT_OBJECT_UPPER: u64 = DIRECT_OBJECT_UPPER;
+    /// The payload bits that code a narrow reference's family, and where they sit.
+    pub(crate) const FAMILY_BITS: u64 = HEAP_FAMILY_BITS;
+    pub(crate) const FAMILY_SHIFT: u32 = HEAP_FAMILY_SHIFT;
+    /// The upper words of the narrow constants, their codes following the families' codes.
+    pub(crate) const CONSTANT_UPPER_WORDS: [u64; 4] = [TAG_UNDEFINED, TAG_NULL, TAG_BOOL, TAG_DELETED];
+    pub(crate) const FIRST_CONSTANT_CODE: u64 = NARROW_HEAP_FAMILIES as u64;
     pub(crate) const DIRECT_OBJECT_CODE: u32 = DIRECT_OBJECT_NARROW_CODE;
 
     /// Only codes selected by the decoder belong in a native image.
