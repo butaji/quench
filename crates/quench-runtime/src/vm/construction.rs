@@ -1014,22 +1014,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `constructor`'s own data `prototype` while its own shape is still the one `layout`
-    /// names (`function_prototype_layout`), which fixes the property and its slot.
-    #[inline(always)]
-    pub(super) fn function_prototype_in_layout(
-        &self,
-        constructor: Value,
-        (shape, slot): (u32, usize),
-    ) -> Option<Value> {
-        let FunctionRecord { object, .. } = self.heap.function(constructor)?;
-        if object.shape() != shape {
-            return None;
-        }
-        // SAFETY: the matching non-dictionary shape (`function_prototype_layout`) holds `slot`.
-        unsafe { self.heap.property_get_shaped(object, slot) }.filter(|value| !value.is_deleted())
-    }
-
     fn prototype_from_constructor(
         &mut self,
         p: &ResidualProgram,

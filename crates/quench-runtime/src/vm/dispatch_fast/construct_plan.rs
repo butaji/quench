@@ -11,7 +11,6 @@ use super::*;
 #[derive(Clone, Copy)]
 pub(super) struct ConstructPlan {
     pub(super) callee: Value,
-    pub(super) epoch: u64,
     /// The callee's own layout that fixes where its `prototype` lives
     /// (`Vm::function_prototype_layout`), which a construct reads it through.
     pub(super) callee_layout: (u32, usize),
@@ -62,10 +61,7 @@ impl ConstructPlan {
     /// This plan, holding from the current prototype layout epoch, with its receiver
     /// header derived from its prototype and shape.
     pub(super) fn finish(self) -> Self {
-        Self {
-            epoch: crate::heap::prototype_layout_epoch(),
-            ..self.derive_header()
-        }
+        self.derive_header()
     }
 
     /// This plan with the header its receiver starts with, of its prototype and shape: inline
@@ -152,7 +148,6 @@ impl ConstructPlan {
 
 pub(super) const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     callee: Value::UNDEFINED,
-    epoch: NO_CONSTRUCT_PLAN_EPOCH,
     callee_layout: (0, 0),
     prototype: Value::UNDEFINED,
     shape: 0,
@@ -305,6 +300,24 @@ pub(in crate::vm) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code
     Some(this)
 }
 
+/// The receiver of a construction through forwarding constructor `callee` whose forwarded
+/// initializer the body calls by its entry (`DirectCallee::forwarder`): allocated finished
+/// from the plan while it holds, whose forwarding has no fields of its own. `None` leaves
+/// the body to its helper path before any effect.
+pub(in crate::vm) fn lane_body_receiver<H: Host>(vm: &mut Vm<H>, callee: Value) -> Option<Value> {
+    if vm.construct_target.is_some() || vm.heap.should_collect() || vm.with_scope_entered {
+        return None;
+    }
+    let index = holding_construct_plan_index(vm, callee)?;
+    let plan = &vm.lane_stack.construct_plans[index];
+    if plan.kind != ConstructPlanKind::Forwarding || plan.fields != 0 || plan.forwarded.is_none() {
+        return None;
+    }
+    let this = plan.allocate(&mut vm.heap, |_| Value::UNDEFINED);
+    note_allocation(vm);
+    Some(this)
+}
+
 /// The receiver `callee`'s cached adds finish where its body only stores its parameters and
 /// primitive constants into `this` (`Function::initializer_stores`) and an in-place
 /// construction admits it (`Vm::inline_constructible`): the static facts of
@@ -362,13 +375,40 @@ pub(super) fn holding_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Opti
 #[inline(always)]
 pub(super) fn holding_construct_plan_index<H: Host>(vm: &Vm<H>, callee: Value) -> Option<usize> {
     let index = construct_plan_index(callee)?;
-    let plan = &vm.lane_stack.construct_plans[index];
-    (plan.callee == callee
-        && plan.epoch == crate::heap::prototype_layout_epoch()
-        && vm.function_prototype_in_layout(callee, plan.callee_layout) == Some(plan.prototype)
-        && (plan.super_parent.is_undefined()
-            || vm.object_data(callee).is_some_and(|class| class.proto() == plan.super_parent)))
+    (vm.lane_stack.construct_plans[index].callee == callee
+        && vm.lane_stack.construct_watches[index].as_ref().is_some_and(|watch| watch.is_published()))
     .then_some(index)
+}
+
+/// Records `resolution`, where `callee`'s forwarding read `function`, in plan `index`, which
+/// then also holds only while `function` and the holder of its `apply` keep their layouts.
+pub(super) fn record_forwarded_resolution<H: Host>(vm: &mut Vm<H>, index: usize, function: Value, resolution: ForwardedResolution) {
+    vm.lane_stack.construct_plans[index].forwarded = Some(resolution);
+    watch_construct_plan(vm, index, false, &[function, resolution.apply_holder]);
+}
+
+/// Makes plan `index` hold only while `objects`, which its proof read besides the callee
+/// (the callee's own layout, so its `prototype` and [[Prototype]] among them), keep their
+/// values and layouts: `renew` starts the plan's dependency, else it adds to it. A write to
+/// a slot of any of them, or a layout change anywhere, retires it (`watch_prototype_values`),
+/// so a use compares no epoch, layout or shape. The plan never holds where the reader
+/// table is full.
+pub(super) fn watch_construct_plan<H: Host>(vm: &mut Vm<H>, index: usize, renew: bool, objects: &[Value]) {
+    use std::rc::Rc;
+    use crate::code_dependencies::DependentCode;
+    if renew {
+        vm.lane_stack.construct_watches[index] = Some(crate::code_dependencies::new_dependency());
+    }
+    let Some(watch) = vm.lane_stack.construct_watches[index].clone() else { return };
+    let code: Rc<dyn DependentCode> = watch.clone();
+    for &object in objects {
+        vm.heap.mark_prototype(object);
+        let shape = vm.heap.function(object).map(|function| function.object.exact_shape())
+            .or_else(|| vm.heap.object(object).map(|data| data.exact_shape()));
+        if !shape.is_some_and(|shape| crate::heap::subscribe_prototype_values(shape, &code)) {
+            watch.retire();
+        }
+    }
 }
 
 /// `lane_initialize_fields` of `stores`: the receiver, and whether every store was a cached add.
@@ -386,8 +426,7 @@ pub(super) fn lane_initialize_stores<H: Host>(
     let this = vm.heap.alloc_object(template);
     let mut planned = Some(ConstructPlan {
         callee,
-        epoch: NO_CONSTRUCT_PLAN_EPOCH,
-        callee_layout: (0, 0),
+            callee_layout: (0, 0),
         prototype,
         shape: source_shape,
         ..EMPTY_CONSTRUCT_PLAN
@@ -405,6 +444,7 @@ pub(super) fn lane_initialize_stores<H: Host>(
         plan.callee_layout = layout;
         plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
         vm.lane_stack.construct_plans[index] = plan.finish();
+        watch_construct_plan(vm, index, true, &[callee, plan.prototype]);
     }
     Some((this, true))
 }

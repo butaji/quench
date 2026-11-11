@@ -13,13 +13,39 @@ impl Lowering<'_, '_> {
     /// leave stops the caller too, its frames kept; any other callee, receiver, or a full
     /// stack takes `helper`. The caller wrote back its registers.
     pub(super) fn direct_call(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
-        let (base, payload, result) = (self.registers_base, self.payload, self.result);
         let (mut admitted, this) = self.direct_receiver(instruction, callee);
         let cell = self.word_const(callee.cell as i64);
         let (top, next, shadow, [fits, room]) = self.direct_room(callee, cell);
         admitted.extend([fits, room]);
         self.direct_admit(&admitted, helper);
         let status = self.direct_enter(instruction, callee, cell, (this, top, next, shadow));
+        self.direct_finish(instruction, status, shadow, helper, completed, None);
+    }
+
+    /// The construction through forwarding constructor `callee.callee` whose forwarded
+    /// initializer is `callee.target`: the constructor guarded, the receiver its plan
+    /// allocates (`LaneHelper::ConstructReceiver`) passed as the initializer's `this`, which
+    /// runs through its cell; the construction yields the receiver whatever it returns, as
+    /// the constructor's forwarding body does. Any other constructor, a plan that does not
+    /// hold, or no room takes `helper`.
+    pub(super) fn direct_construct(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
+        let (base, payload) = (self.registers_base, self.payload);
+        let constructor = self.word_load(base, register_offset(instruction.register_b()));
+        let same = self.word_cmp_imm(IntCC::Equal, constructor, callee.callee.to_bits() as i64);
+        self.direct_admit(&[same], helper);
+        let receiver = self.helper_call(LaneHelper::ConstructReceiver, &[payload, constructor]);
+        let built = self.word_cmp_imm(IntCC::NotEqual, receiver, Value::DELETED.to_bits() as i64);
+        let cell = self.word_const(callee.cell as i64);
+        let (top, next, shadow, [fits, room]) = self.direct_room(callee, cell);
+        self.direct_admit(&[built, fits, room], helper);
+        let status = self.direct_enter(instruction, callee, cell, (receiver, top, next, shadow));
+        self.direct_finish(instruction, status, shadow, helper, completed, Some(receiver));
+    }
+
+    /// Where each status of a native call goes: a completion stores its value, or the
+    /// construction's `receiver`, to the call's register and continues at `completed`.
+    fn direct_finish(&mut self, instruction: WideInstruction, status: ir::Value, shadow: ir::Value, helper: ir::Block, completed: ir::Block, receiver: Option<ir::Value>) {
+        let (base, payload, result) = (self.registers_base, self.payload, self.result);
         let returned = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_RETURNED));
         let (back, check, left, missed) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(left);
@@ -39,7 +65,7 @@ impl Lowering<'_, '_> {
         self.word_jump(leave, &[status.into()]);
         self.builder.switch_to_block(back);
         self.word_store(shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
-        let value = self.word_load(result, 0);
+        let value = match receiver { Some(receiver) => receiver, None => self.word_load(result, 0) };
         self.word_store(value, base, register_offset(instruction.result_register()));
         self.word_jump(completed, &[]);
     }
@@ -49,8 +75,10 @@ impl Lowering<'_, '_> {
     pub(super) fn direct_window(&mut self, instruction: WideInstruction, callee: &DirectCallee, top: ir::Value) {
         let base = self.registers_base;
         let undefined = self.word_const(Value::UNDEFINED.to_bits() as i64);
-        let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
-        let argc = crate::bytecode::ImmediateLayout::argument_count(instruction.imm());
+        let (window, argc) = match instruction.construct_arguments() {
+            crate::bytecode::ConstructArguments::Registers(window) if instruction.op().class().eq(Class::Construct) => (window.base, window.count),
+            _ => (crate::bytecode::ImmediateLayout::call_window_base(instruction.imm()), crate::bytecode::ImmediateLayout::argument_count(instruction.imm())),
+        };
         for register in 0..callee.registers {
             let value = if register < argc {
                 self.word_load(base, register_offset(window + register))

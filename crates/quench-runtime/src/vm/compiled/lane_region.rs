@@ -3393,10 +3393,11 @@ impl Lowering<'_, '_> {
         self.spill_written(pc);
         let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
         self.reentries.push(completed);
-        match self.direct.get(&pc).copied().filter(|_| instruction.op().class().eq(Class::Call)) {
+        match self.direct.get(&pc).copied() {
             // SAFETY: the body owns the callee for as long as its code runs.
-            Some(callee) => self.direct_call(instruction, unsafe { &*callee }, generic, completed),
-            None => { self.ins().jump(generic, &[]); }
+            Some(callee) if instruction.op().class().eq(Class::Call) => self.direct_call(instruction, unsafe { &*callee }, generic, completed),
+            Some(callee) if instruction.op().class().eq(Class::Construct) => self.direct_construct(instruction, unsafe { &*callee }, generic, completed),
+            _ => { self.ins().jump(generic, &[]); }
         }
         self.builder.switch_to_block(generic);
         let status = self.record_helper(helper, call_pc);

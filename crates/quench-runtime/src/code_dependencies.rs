@@ -25,6 +25,10 @@ impl Invalidation {
     fn set(&self) { self.0.set(1); }
 }
 
+/// A dependency with no code behind it: published until something it was subscribed to
+/// retires it (`PublishedCode::retire`), for proofs held as data rather than as code.
+pub(crate) fn new_dependency() -> Rc<PublishedCode<()>> { Rc::new(PublishedCode::new(())) }
+
 /// Publication owns future entry; execution and recovery own independent leases.
 /// No borrow of the publication survives acquiring a lease or retiring it.
 pub(crate) struct PublishedCode<T> {
