@@ -14,14 +14,15 @@ pub struct Pins {
 }
 
 pub struct StencilBuilder<'a, 'f> {
-    pub(crate) b: &'a mut FunctionBuilder<'f>,
-    pub(crate) frame: ir::Value,
-    pub(crate) context: ir::Value,
+    pub b: &'a mut FunctionBuilder<'f>,
+    pub frame: ir::Value,
+    pub context: ir::Value,
     /// The pinned registers, passed to every successor.
-    pub(crate) pins: Pins,
+    pub pins: Pins,
     pub(crate) next: ir::FuncRef,
     pub(crate) taken: ir::FuncRef,
     pub(crate) exits: Vec<Option<ir::FuncRef>>,
+    pub(crate) pending: Vec<(ir::Block, ir::FuncRef, Vec<ir::Value>)>,
 }
 
 fn clif(ty: Ty) -> ir::Type {
@@ -82,6 +83,26 @@ impl StencilBuilder<'_, '_> {
             Op::And => self.b.ins().band(x, y),
             Op::Or => self.b.ins().bor(x, y),
             _ => self.b.ins().bxor(x, y),
+        }
+    }
+
+    /// A cold block that leaves through exit hole `exit` with the pinned values as they are now,
+    /// for a helper that takes a failure block. It is filled and sealed once the row is emitted
+    /// (`finish`).
+    pub fn exit_block(&mut self, exit: u32) -> ir::Block {
+        let target = *self.exits.resize_and_get(exit as usize).get_or_insert_with(|| successor(self.b, EXIT + exit));
+        let side = self.b.create_block();
+        self.b.set_cold_block(side);
+        self.pending.push((side, target, self.args()));
+        side
+    }
+
+    /// Fills the blocks `exit_block` made; the row's own code is complete.
+    pub(crate) fn finish(&mut self) {
+        for (side, target, args) in std::mem::take(&mut self.pending) {
+            self.b.switch_to_block(side);
+            self.b.ins().return_call(target, &args);
+            self.b.seal_block(side);
         }
     }
 

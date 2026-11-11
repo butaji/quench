@@ -14,6 +14,7 @@ use super::osr_loop::LoopRegion;
 use crate::bytecode::{Class, OperandKind, Register, WideInstruction};
 use crate::value::Value;
 use oxc_ast::ast::BinaryOperator;
+use super::fast_rows::{self, Heap, HeapRow};
 use quench_fastjit::numeric::{self, Kind, Place};
 use quench_fastjit::{PINNED, PINNED_F, Row as Placed, Stencil};
 use std::collections::BTreeMap;
@@ -168,6 +169,26 @@ struct Decoded {
     a: Option<Source>,
     b: Option<Source>,
     target: Option<u32>,
+    /// A heap row (`fast_rows`) in place of the numeric `kind`, with the array register a store
+    /// writes through and the entry-record byte offset a field read loads.
+    heap: Option<Heap>,
+    base: Option<Register>,
+    hole: u64,
+}
+
+impl Decoded {
+    fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0 }
+    }
+
+    fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
+        Self { heap: Some(heap), ..Self::number(Kind::Move, dst, a, b, None) }
+    }
+
+    /// The registers the row names.
+    fn registers(&self) -> impl Iterator<Item = Register> {
+        [self.dst, self.a.and_then(register_of), self.b.and_then(register_of), self.base].into_iter().flatten()
+    }
 }
 
 fn source(region: &LoopRegion, operand: crate::bytecode::Operand) -> Result<Source, String> {
@@ -184,63 +205,89 @@ fn source(region: &LoopRegion, operand: crate::bytecode::Operand) -> Result<Sour
 fn binary(region: &LoopRegion, instruction: WideInstruction) -> Result<Decoded, String> {
     let operator = instruction.binary_operator();
     let kind = kind_of(operator, false).ok_or_else(|| format!("{:?}:{operator}", instruction.op()))?;
-    Ok(Decoded {
+    Ok(Decoded::number(
         kind,
-        dst: Some(instruction.result_register()),
-        a: Some(source(region, instruction.operand_b())?),
-        b: Some(source(region, instruction.operand_c())?),
-        target: None,
-    })
+        Some(instruction.result_register()),
+        Some(source(region, instruction.operand_b())?),
+        Some(source(region, instruction.operand_c())?),
+        None,
+    ))
 }
 
 fn jump_binary(region: &LoopRegion, instruction: WideInstruction) -> Result<Decoded, String> {
     let operator = instruction.binary_operator_field();
     let kind = kind_of(operator, true).ok_or_else(|| format!("{:?}:{operator}", instruction.op()))?;
-    Ok(Decoded {
+    Ok(Decoded::number(
         kind,
-        dst: None,
-        a: Some(source(region, instruction.operand_b())?),
-        b: Some(source(region, instruction.operand_c())?),
-        target: Some(instruction.jump_target()),
-    })
+        None,
+        Some(source(region, instruction.operand_b())?),
+        Some(source(region, instruction.operand_c())?),
+        Some(instruction.jump_target()),
+    ))
 }
 
 fn load_const(region: &LoopRegion, instruction: WideInstruction) -> Result<Decoded, String> {
     let number = region.number_constant(instruction.constant_index()).ok_or_else(|| "LoadConst: not a Number".to_string())?;
     let word = Source::Constant(Value::number(number).to_bits());
-    Ok(Decoded { kind: Kind::Move, dst: Some(instruction.result_register()), a: Some(word), b: None, target: None })
+    Ok(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(word), None, None))
 }
 
 fn inc_dec(instruction: WideInstruction) -> Result<Decoded, String> {
     let decrement = instruction.boolean_flag().ok_or("IncDec")?;
-    Ok(Decoded {
-        kind: if decrement { Kind::Sub } else { Kind::Add },
-        dst: Some(instruction.result_register()),
-        a: Some(Source::Register(instruction.register_b())),
-        b: Some(Source::Constant(Value::integer(1).to_bits())),
-        target: None,
-    })
+    Ok(Decoded::number(
+        if decrement { Kind::Sub } else { Kind::Add },
+        Some(instruction.result_register()),
+        Some(Source::Register(instruction.register_b())),
+        Some(Source::Constant(Value::integer(1).to_bits())),
+        None,
+    ))
 }
 
-fn decode(region: &LoopRegion, instruction: WideInstruction) -> Result<Decoded, String> {
+/// The heap instructions: a capture, a dense element read or store, a recorded field, the proof
+/// that a base is an array.
+fn heap_row(region: &LoopRegion, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    let register = |register| Some(Source::Register(register));
+    match instruction.op().class() {
+        Class::LoadCapture if instruction.capture_depth() == 0 => {
+            Some(Decoded::heap(Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None, None))
+        }
+        Class::GetIndex if !instruction.returns_from_frame() => {
+            let base = instruction.operand_b().register_index()?;
+            let index = source(region, instruction.operand_c()).ok()?;
+            Some(Decoded::heap(Heap::Index, Some(instruction.result_register()), register(base), Some(index)))
+        }
+        Class::SetIndex => {
+            let value = register(instruction.register_a());
+            let row = Decoded::heap(Heap::Store, None, value, register(instruction.register_c()));
+            Some(Decoded { base: Some(instruction.register_b()), ..row })
+        }
+        Class::RequireObjectCoercible => Some(Decoded::heap(Heap::Array, None, register(instruction.register_b()), None)),
+        Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => {
+            let index = *region.field_reads().get(&(pc - region.header))?;
+            let word = super::osr_loop::field_word(region, index);
+            let row = Decoded::heap(Heap::Field, Some(instruction.result_register()), None, None);
+            (!region.is_dynamic_field(index)).then_some(Decoded { hole: word as u64 * SLOT, ..row })
+        }
+        _ => None,
+    }
+}
+
+fn decode(region: &LoopRegion, pc: u32, instruction: WideInstruction) -> Result<Decoded, String> {
     let plain = |decoded: Decoded| (instruction.result_flags() == 0).then_some(decoded);
     let op = instruction.op();
     let decoded = match op.class() {
-        Class::Move => plain(Decoded {
-            kind: Kind::Move,
-            dst: Some(instruction.result_register()),
-            a: Some(Source::Register(instruction.register_b())),
-            b: None,
-            target: None,
-        }),
+        Class::Move => plain(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Register(instruction.register_b())), None, None)),
+        // A Number operand (the entry guards and the region's own rows prove it) is its own numeric value.
+        Class::ToNumeric => plain(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Register(instruction.register_b())), None, None)),
         Class::LoadConst => load_const(region, instruction).ok().and_then(plain),
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(region, instruction).ok().and_then(plain),
         Class::IncDec => inc_dec(instruction).ok().and_then(plain),
         Class::JumpBinaryFalse => jump_binary(region, instruction).ok(),
-        Class::Jump => Some(Decoded { kind: Kind::Jump, dst: None, a: None, b: None, target: Some(instruction.jump_target()) }),
-        _ => None,
+        Class::Jump => Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target()))),
+        _ => heap_row(region, pc, instruction).and_then(plain),
     };
     decoded.ok_or_else(|| match op.class() {
+        Class::GetField => "GetField: dynamic or unrecorded".to_string(),
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(region, instruction).err().unwrap_or_else(|| format!("{op:?}")),
         Class::JumpBinaryFalse => jump_binary(region, instruction).err().unwrap_or_else(|| format!("{op:?}")),
         Class::LoadConst => load_const(region, instruction).err().unwrap_or_else(|| format!("{op:?}")),
@@ -274,7 +321,14 @@ fn operand_repr(reprs: &Reprs, source: Option<Source>) -> Repr {
 
 /// The representation a row's result needs: a division, a double operand or a `widened` row
 /// (its int32 speculation failed) gives a double; a bitwise row an int32 unless widened.
-fn result_repr(row: &Decoded, reprs: &Reprs, widened: bool) -> Repr {
+fn result_repr(row: &Decoded, reprs: &Reprs, widened: bool, numbers: bool) -> Repr {
+    if row.heap.is_some() {
+        return match (numbers, widened) {
+            (false, _) => Repr::Tagged,
+            (true, false) => Repr::Int,
+            (true, true) => Repr::Double,
+        };
+    }
     let operands = operand_repr(reprs, row.a).max(operand_repr(reprs, row.b));
     match row.kind {
         _ if operands == Repr::Tagged => Repr::Tagged,
@@ -292,7 +346,7 @@ fn representations(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], 
     let header = region.header;
     let mut reprs = Reprs::new();
     for row in decoded {
-        for register in [row.dst, row.a.and_then(register_of), row.b.and_then(register_of)].into_iter().flatten() {
+        for register in row.registers() {
             let start = match (region.is_live(header, register), seen[0].contains(&register), seen[1].contains(&register)) {
                 (false, ..) => Repr::Unseen,
                 (_, true, _) => Repr::Int,
@@ -307,7 +361,7 @@ fn representations(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], 
         changed = false;
         for (k, row) in decoded.iter().enumerate() {
             let Some(dst) = row.dst else { continue };
-            let result = result_repr(row, &reprs, widened.contains(&(header as usize + k)));
+            let result = result_repr(row, &reprs, widened.contains(&(header as usize + k)), region.number_registers().contains(&dst));
             if reprs[&dst] < result {
                 reprs.insert(dst, result);
                 changed = true;
@@ -330,7 +384,7 @@ fn is_general(row: &Decoded, reprs: &Reprs) -> bool {
 fn ranked(decoded: &[Decoded], reprs: &Reprs, repr: Repr) -> Vec<Register> {
     let mut uses: BTreeMap<Register, usize> = BTreeMap::new();
     for row in decoded {
-        for register in [row.dst, row.a.and_then(register_of), row.b.and_then(register_of)].into_iter().flatten() {
+        for register in row.registers() {
             *uses.entry(register).or_default() += 1;
         }
     }
@@ -395,6 +449,15 @@ fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Plan
     let (a, a_hole) = operand(homes, decoded.a);
     let (b, b_hole) = operand(homes, decoded.b);
     let (dst, dst_hole) = operand(homes, decoded.dst.map(Source::Register));
+    if let Some(heap) = decoded.heap {
+        let base = decoded.base.map_or(0, |register| u64::from(register) * SLOT);
+        let holes = match heap {
+            Heap::Store => [base, a_hole, b_hole],
+            Heap::Field => [dst_hole, decoded.hole, 0],
+            _ => [dst_hole, a_hole, b_hole],
+        };
+        return Ok(Planned { stencil: fast_rows::stencil(HeapRow { heap, dst, a, b })?, holes, target: None, exit_pc: Some(pc) });
+    }
     let polls = decoded.target.is_some_and(|target| target <= pc) && decoded.kind == Kind::Jump;
     let kind = if polls { Kind::JumpPoll } else { decoded.kind };
     let stencil = numeric::stencil(numeric::Row { kind, dst, a, b, speculate: !general })?;
@@ -480,7 +543,7 @@ fn assemble(region: &LoopRegion, widened: &[usize], seen: [&[Register]; 2]) -> R
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
-    let decoded = instructions.iter().map(|instruction| decode(region, *instruction)).collect::<Result<Vec<_>, _>>()?;
+    let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, header + k as u32, *instruction)).collect::<Result<Vec<_>, _>>()?;
     let reprs = representations(region, &decoded, widened, seen);
     let homes = Homes::of(ranked(&decoded, &reprs, Repr::Int), ranked(&decoded, &reprs, Repr::Double));
     let layout = Layout { header, backedge, homes, region };

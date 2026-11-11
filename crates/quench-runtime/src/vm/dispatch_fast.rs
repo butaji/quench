@@ -8032,8 +8032,12 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
     let machine = unsafe { vm(cx) };
     let arithmetic = machine.programs.get(machine.active_program).as_deref().is_some_and(|program| {
         let body = program.function(site.function() as usize);
-        body.code.get(pc as usize).is_some_and(|packed|
-            decoded_instruction(body, *packed).op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary)
+        body.code.get(pc as usize).is_some_and(|packed| {
+            let op = decoded_instruction(body, *packed).op();
+            // A FastJIT region also holds a loaded value (a capture, an element, a field) as an int32 until it leaves there.
+            op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+                || (crate::trace::Dev::FastJit.on() && matches!(op.class(), Class::LoadCapture | Class::GetIndex | Class::GetField))
+        })
     });
     if arithmetic { site.tier.borrow_mut().left_at(pc); }
 }

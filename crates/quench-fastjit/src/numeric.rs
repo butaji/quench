@@ -100,24 +100,24 @@ impl Row {
     }
 }
 
-fn is_int(b: &mut StencilBuilder, x: ir::Value) -> ir::Value {
+pub fn is_int(b: &mut StencilBuilder, x: ir::Value) -> ir::Value {
     let tag = b.b.ins().ushr_imm_u(x, TAG_SHIFT);
     b.b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_INT >> TAG_SHIFT)
 }
 
-fn is_double(b: &mut StencilBuilder, x: ir::Value) -> ir::Value {
+pub fn is_double(b: &mut StencilBuilder, x: ir::Value) -> ir::Value {
     let field = b.b.ins().iadd_imm_s(x, -FIRST_TAG);
     b.b.ins().icmp_imm_s(IntCC::UnsignedGreaterThanOrEqual, field, TAG_SPAN)
 }
 
-fn int_word(b: &mut StencilBuilder, v: ir::Value) -> ir::Value {
+pub fn int_word(b: &mut StencilBuilder, v: ir::Value) -> ir::Value {
     let wide = b.b.ins().uextend(types::I64, v);
     b.b.ins().bor_imm_u(wide, TAG_INT)
 }
 
 /// `Value::number(f)`: an integral double within `i32` (not -0) becomes an int word, a NaN is
 /// canonical, anything else its bits.
-fn canonical(b: &mut StencilBuilder, f: ir::Value) -> ir::Value {
+pub fn canonical(b: &mut StencilBuilder, f: ir::Value) -> ir::Value {
     let flags = ir::MemFlagsData::new();
     let i = b.b.ins().fcvt_to_sint_sat(types::I32, f);
     let back = b.b.ins().fcvt_from_sint(types::F64, i);
@@ -153,7 +153,7 @@ fn convert(b: &mut StencilBuilder, x: ir::Value, ty: ir::Type, int: impl FnOnce(
 }
 
 /// A Number operand as `f64`; leaves through exit 0 when it is not a Number.
-fn to_f64(b: &mut StencilBuilder, x: ir::Value) -> ir::Value {
+pub fn to_f64(b: &mut StencilBuilder, x: ir::Value) -> ir::Value {
     convert(
         b,
         x,
@@ -182,7 +182,7 @@ fn to_i32(b: &mut StencilBuilder, x: ir::Value) -> ir::Value {
 }
 
 /// `ToInt32` of a double within the exact range of an i64; leaves through exit 0 otherwise.
-fn f64_to_i32(b: &mut StencilBuilder, f: ir::Value) -> ir::Value {
+pub fn f64_to_i32(b: &mut StencilBuilder, f: ir::Value) -> ir::Value {
     let magnitude = b.b.ins().fabs(f);
     let limit = b.b.ins().f64const(I64_LIMIT);
     let inside = b.b.ins().fcmp(FloatCC::LessThan, magnitude, limit);
@@ -201,7 +201,7 @@ fn unsigned_word(b: &mut StencilBuilder, value: ir::Value) -> ir::Value {
 }
 
 /// The tagged word of an operand: a pinned int is tagged on use.
-fn word_of(b: &mut StencilBuilder, place: Place, hole: u32) -> ir::Value {
+pub fn word_of(b: &mut StencilBuilder, place: Place, hole: u32) -> ir::Value {
     match place {
         Place::Mem | Place::MemInt => b.read(Source::Frame(Operand::Hole(hole)), Ty::Word),
         Place::Const => b.operand(Operand::Hole(hole), Ty::Word),
@@ -224,7 +224,7 @@ fn immediate(b: &mut StencilBuilder, hole: u32) -> ir::Value {
 
 /// The int32 of an operand, guarded: leaves through exit 0 where a frame slot or constant word
 /// is no int word.
-fn int_of(b: &mut StencilBuilder, place: Place, hole: u32) -> ir::Value {
+pub fn int_of(b: &mut StencilBuilder, place: Place, hole: u32) -> ir::Value {
     match place {
         Place::Pin(i) => b.b.ins().ireduce(types::I32, b.pins.ints[usize::from(i)]),
         Place::Imm => immediate(b, hole),
@@ -396,7 +396,7 @@ const RELATIONS: [(Kind, IntCC, FloatCC); 6] = [
 ];
 
 /// Branch to `taken` on `fails`, else continue at the next row.
-fn jump_if(b: &mut StencilBuilder, fails: ir::Value) {
+pub fn jump_if(b: &mut StencilBuilder, fails: ir::Value) {
     b.branch(fails);
     b.next();
 }
@@ -493,7 +493,7 @@ fn copy_row(b: &mut StencilBuilder, row: Row) {
 }
 
 /// An operand as `f64`; a frame slot that is no Number leaves through exit 0.
-fn f64_of(b: &mut StencilBuilder, place: Place, hole: u32) -> ir::Value {
+pub fn f64_of(b: &mut StencilBuilder, place: Place, hole: u32) -> ir::Value {
     let flags = ir::MemFlagsData::new();
     match place {
         Place::PinF(i) => b.pins.floats[usize::from(i)],
@@ -549,6 +549,61 @@ fn spill_row(b: &mut StencilBuilder, row: Row) {
     b.next();
 }
 
+/// The int32 an array index operand holds: a double must be integral, else exit 0.
+pub fn index_of(b: &mut StencilBuilder, place: Place, hole: u32) -> ir::Value {
+    let Place::PinF(i) = place else { return int_of(b, place, hole) };
+    let f = b.pins.floats[usize::from(i)];
+    let narrow = b.b.ins().fcvt_to_sint_sat(types::I32, f);
+    let back = b.b.ins().fcvt_from_sint(types::F64, narrow);
+    let same = b.b.ins().fcmp(FloatCC::Equal, back, f);
+    b.guard(same, 0);
+    narrow
+}
+
+/// The tagged word of a Number operand a store writes: a frame slot that is no Number leaves
+/// through exit 0.
+pub fn number_word(b: &mut StencilBuilder, place: Place, hole: u32) -> ir::Value {
+    let word = word_of(b, place, hole);
+    if place == Place::Mem {
+        let (int, double) = (is_int(b, word), is_double(b, word));
+        let number = b.b.ins().bor(int, double);
+        b.guard(number, 0);
+    }
+    word
+}
+
+/// Continues at the next row once `dst` holds the tagged `word` a row read: into a pinned
+/// register or int slot an int word, into a pinned double a Number, else any word; a word the
+/// place cannot hold leaves through exit 0 before anything is written.
+pub fn deliver(b: &mut StencilBuilder, dst: Place, word: ir::Value) {
+    let start = b.pins;
+    match dst {
+        Place::PinF(i) => {
+            let (int, double) = (is_int(b, word), is_double(b, word));
+            let number = b.b.ins().bor(int, double);
+            b.guard(number, 0);
+            let narrow = b.b.ins().ireduce(types::I32, word);
+            let (from_int, bits) = (b.b.ins().fcvt_from_sint(types::F64, narrow), b.b.ins().bitcast(types::F64, ir::MemFlagsData::new(), word));
+            b.pins.floats[usize::from(i)] = b.b.ins().select(int, from_int, bits);
+        }
+        Place::Pin(i) => {
+            let ok = is_int(b, word);
+            b.guard(ok, 0);
+            let low = b.b.ins().ireduce(types::I32, word);
+            b.pins.ints[usize::from(i)] = b.b.ins().uextend(types::I64, low);
+        }
+        Place::MemInt => {
+            let ok = is_int(b, word);
+            b.guard(ok, 0);
+            let low = b.b.ins().ireduce(types::I32, word);
+            b.write(Source::Frame(Operand::Hole(0)), low);
+        }
+        _ => b.write(Source::Frame(Operand::Hole(0)), word),
+    }
+    b.next();
+    b.pins = start;
+}
+
 fn emit(b: &mut StencilBuilder, row: Row) {
     if row.floats() && matches!(row.kind, Kind::Move | Kind::Const | Kind::Add | Kind::Sub | Kind::Mul | Kind::Div | Kind::Lt | Kind::Le | Kind::Gt | Kind::Ge | Kind::Eq | Kind::Ne) {
         return float_row(b, row);
@@ -566,7 +621,7 @@ fn emit(b: &mut StencilBuilder, row: Row) {
     }
 }
 
-fn isa() -> Result<&'static OwnedTargetIsa, String> {
+pub fn isa() -> Result<&'static OwnedTargetIsa, String> {
     static ISA: OnceLock<Result<OwnedTargetIsa, String>> = OnceLock::new();
     ISA.get_or_init(stencil_isa).as_ref().map_err(Clone::clone)
 }
@@ -576,6 +631,11 @@ static GENERATION_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 /// Nanoseconds spent generating stencils so far.
 pub fn generation_ns() -> u64 {
     GENERATION_NS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Counts `nanos` of stencil generation done outside this module.
+pub fn add_generation_ns(nanos: u64) {
+    GENERATION_NS.fetch_add(nanos, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// The stencil of `row`: generated on first use, then shared for the life of the process.

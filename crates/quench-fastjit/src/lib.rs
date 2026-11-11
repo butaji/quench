@@ -55,7 +55,7 @@ pub fn stencil_isa() -> Result<OwnedTargetIsa, String> {
     for (name, value) in [
         ("opt_level", "speed"),
         ("is_pic", "false"),
-        ("enable_verifier", "false"),
+        ("enable_verifier", if std::env::var_os("STENCIL_VERIFY").is_some() { "true" } else { "false" }),
         ("preserve_frame_pointers", "true"),
         ("enable_probestack", "false"),
     ] {
@@ -126,7 +126,9 @@ fn lower(isa: &OwnedTargetIsa, emit: impl FnOnce(&mut StencilBuilder)) -> ir::Fu
     b.seal_block(entry);
     let params = b.block_params(entry).to_vec();
     let pins = Pins { ints: [params[2], params[3], params[4], params[5]], floats: [params[6], params[7], params[8], params[9]] };
-    emit(&mut StencilBuilder { b: &mut b, frame: params[0], context: params[1], pins, next, taken, exits: Vec::new() });
+    let mut stencil = StencilBuilder { b: &mut b, frame: params[0], context: params[1], pins, next, taken, exits: Vec::new(), pending: Vec::new() };
+    emit(&mut stencil);
+    stencil.finish();
     b.finalize(isa.frontend_config());
     func
 }
