@@ -1,6 +1,8 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
 use super::*;
 #[path = "frame_calls.rs"] pub(super) mod calls;
+#[path = "frame_truthiness.rs"] mod truthiness;
+use truthiness::register_truthiness;
 
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
 #[derive(Clone, Copy)]
@@ -205,7 +207,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
         let (Edges::Branch { miss, .. } | Edges::ValueGuarded { miss }) = self.edges else { unreachable!("truthiness needs a miss edge") };
-        Some(register_truthiness(stage.builder, self.registers, self.state, register, miss))
+        Some(register_truthiness(stage.builder, self.registers, self.state, register, (self.payload, self.helpers), miss))
     }
 
     #[inline(always)]
@@ -252,32 +254,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 }
 
-
-/// ToBoolean of `register` as an i8, from its proved representation; a tagged value whose
-/// truthiness needs its cell (`emit_js_tagged_truthiness`) leaves at `miss`.
-#[inline(always)]
-pub(super) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &mut State, register: Register, miss: ir::Block) -> ir::Value {
-    let fact = state.values[usize::from(register)].value;
-    match fact.representation {
-        Representation::Int32 => {
-            let int = { let variable = register_int(builder, registers, usize::from(register)); builder.use_var(variable) };
-            builder.ins().icmp_imm_u(IntCC::NotEqual, int, 0)
-        }
-        Representation::Float64 => {
-            let number = { let variable = register_float(builder, registers, usize::from(register)); builder.use_var(variable) };
-            emit_number_truthiness(builder, number)
-        }
-        Representation::Tagged => {
-            let bits = register_tagged(builder, registers, state, register);
-            if fact.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
-                builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64)
-            } else {
-                emit_js_tagged_truthiness(builder, bits, miss)
-            }
-        }
-    }
-}
 
 /// `register`'s int32 view (`Registers::int`).
 #[inline(always)]
