@@ -41,6 +41,7 @@ mod slots;
 mod snapshot;
 mod string_alloc;
 mod string_atoms;
+mod native_layout;
 mod string_parts;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
