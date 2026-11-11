@@ -33,7 +33,7 @@ pub(crate) struct Parts {
     /// The part count in the low two bits, the Number's position in the next two (`NO_NUMBER`
     /// for none).
     shape: u8,
-    /// The string parts' record ids, in order, little-endian.
+    /// The string parts' record ids by part position, little-endian; the Number's slot is unused.
     ids: [u8; ID_BYTES * MAX_PARTS],
     number: [u8; NUMBER_BYTES],
 }
@@ -59,7 +59,7 @@ impl Parts {
         if count == MAX_PARTS {
             return false;
         }
-        let at = ID_BYTES * (count - usize::from(self.has_number()));
+        let at = ID_BYTES * count;
         self.ids[at..at + ID_BYTES].copy_from_slice(&id.to_le_bytes());
         self.shape += 1;
         true
@@ -86,26 +86,17 @@ impl Parts {
     /// The string parts' record ids, in order: what a collector traces.
     #[inline]
     pub(crate) fn for_each_text(&self, mut visit: impl FnMut(u32)) {
-        let (count, at) = (usize::from(self.shape & COUNT_MASK), usize::from(self.shape >> NUMBER_SHIFT));
-        let mut ids = self.ids.chunks_exact(ID_BYTES);
-        for position in 0..count {
-            if position != at {
-                let id = ids.next().expect("an id per string part");
-                visit(u32::from_le_bytes(id.try_into().expect("an id is four bytes")));
-            }
-        }
+        self.each().for_each(|part| if let Part::Text(id) = part { visit(id) });
     }
 
     /// The parts, in order.
     pub(crate) fn each(&self) -> impl Iterator<Item = Part> + '_ {
         let (count, at) = (usize::from(self.shape & COUNT_MASK), self.shape >> NUMBER_SHIFT);
-        let mut texts = 0;
         (0..count).map(move |position| {
             if position == usize::from(at) {
                 Part::Number(f64::from_bits(u64::from_le_bytes(self.number)))
             } else {
-                texts += 1;
-                Part::Text(u32::from_le_bytes(self.ids[ID_BYTES * (texts - 1)..ID_BYTES * texts].try_into().expect("four bytes")))
+                Part::Text(u32::from_le_bytes(self.ids[ID_BYTES * position..ID_BYTES * (position + 1)].try_into().expect("four bytes")))
             }
         })
     }
