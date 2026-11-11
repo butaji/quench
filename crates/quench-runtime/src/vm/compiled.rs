@@ -104,6 +104,16 @@ pub(in crate::vm) mod forced_miss {
         })
     }
 }
+/// The successor a guard-shaped branch takes when its condition holds: the forced-deopt switch
+/// makes a test-armed guard take `fail` instead. Sites call it in place of `ok`.
+#[inline(always)]
+fn forced_or(ok: ir::Block, fail: ir::Block) -> ir::Block {
+    #[cfg(test)]
+    if forced_miss::next() { return fail; }
+    #[cfg(not(test))]
+    let _ = fail;
+    ok
+}
 mod object_slots;
 mod frame_ssa;
 pub(super) use object_slots::{InheritedConstant, NativeFieldLoad};
