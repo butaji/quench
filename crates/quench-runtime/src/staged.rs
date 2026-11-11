@@ -29,6 +29,9 @@ pub(crate) mod object;
 pub(crate) mod value;
 mod steps;
 pub(crate) use steps::step;
+pub(crate) mod effects;
+#[allow(unused_imports)] // the Stage v2 vocabulary: stencil and UltraJIT stages use the rest
+pub(crate) use effects::{CallTarget, Effects, Region, RegionSet};
 pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
     own_layout, read_slot};
 
@@ -42,24 +45,33 @@ pub(crate) trait Stage {
     /// Where a failed guard leaves: nowhere for the interpreter, which knows the value; a
     /// native exit for a specializer.
     type Miss: Copy;
+    /// A value that comes from the bytecode operand or the IC site record (a slot, a shape id,
+    /// a field offset, a jump delta): known to Concrete and Emit, a patchable hole to a stencil.
+    /// A fixed constant (a tag mask, a header offset) stays a plain Rust value.
+    type Imm: Copy + From<u64> + From<u32>;
+    /// A per-site operand `v` as this stage's `Imm`: every operand of the bytecode or of an IC
+    /// site reaches the stage through here.
+    fn site(&mut self, v: u64) -> Self::Imm;
     fn constant(&mut self, bits: u64) -> Self::Word;
     fn load_u32(&mut self, base: Self::Word, offset: i32) -> Self::Word;
     fn load_u64(&mut self, base: Self::Word, offset: i32) -> Self::Word;
+    /// A 64-bit load at the per-site offset `offset` (`site`).
+    fn load_site(&mut self, base: Self::Word, offset: Self::Imm) -> Self::Word;
     /// A load from a table that never changes while the process runs.
     fn load_table(&mut self, address: Self::Word) -> Self::Word;
     fn add(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     fn or(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
-    fn add_imm(&mut self, a: Self::Word, imm: u64) -> Self::Word;
-    fn mul_imm(&mut self, a: Self::Word, imm: u64) -> Self::Word;
-    fn and_imm(&mut self, a: Self::Word, imm: u64) -> Self::Word;
-    fn or_imm(&mut self, a: Self::Word, imm: u64) -> Self::Word;
-    fn shr_imm(&mut self, a: Self::Word, shift: u32) -> Self::Word;
+    fn add_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
+    fn mul_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
+    fn and_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
+    fn or_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
+    fn shr_imm(&mut self, a: Self::Word, shift: impl Into<Self::Imm>) -> Self::Word;
     /// The low 32 bits shifted right arithmetically, zero-extended to the word.
     fn sar32_imm(&mut self, a: Self::Word, shift: u32) -> Self::Word;
-    fn eq_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
-    fn ne_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
+    fn eq_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond;
+    fn ne_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond;
     /// Whether `a` exceeds `imm`, both unsigned.
-    fn ugt_imm(&mut self, a: Self::Word, imm: u64) -> Self::Cond;
+    fn ugt_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond;
     /// Whether `a` is below `b`, both unsigned and of one width.
     fn ult(&mut self, a: Self::Word, b: Self::Word) -> Self::Cond;
     /// A 32-bit word zero-extended to the full word (the full word unchanged).
@@ -79,6 +91,9 @@ pub(crate) trait Stage {
     fn number_truthy(&mut self, bits: Self::Word) -> Self::Cond;
     /// Whether the shape word `shape` is one of `shapes`, sorted.
     fn shape_in(&mut self, shape: Self::Word, shapes: &[u32]) -> Self::Cond;
+    /// `shape_in` of a site's shapes, each a per-site operand: a stage with holes compares
+    /// against each; Concrete and Emit take `shape_in`.
+    fn shape_in_site(&mut self, shape: Self::Word, shapes: &[u32]) -> Self::Cond;
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
         otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
@@ -89,6 +104,48 @@ pub(crate) trait Stage {
     fn known(&self, cond: Self::Cond) -> Option<bool>;
     /// The base of `table`.
     fn table(&mut self, table: Table) -> Self::Word;
+
+    // Stage v2: additions with defaults, so a stage written before them is unchanged.
+
+    /// `load_u64` from `region`, which a specializer tags on the access so a load survives
+    /// a store to another region. A stage with no alias information ignores it.
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn load_in(&mut self, _region: Region, base: Self::Word, offset: i32) -> Self::Word {
+        self.load_u64(base, offset)
+    }
+
+    /// `store_u64` to `region`.
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn store_in(&mut self, _region: Region, base: Self::Word, offset: i32, value: Self::Word) {
+        self.store_u64(base, offset, value)
+    }
+
+    /// The fact this stage keeps of `word`; the interpreter keeps none.
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn ty(&self, _word: Self::Word) -> Type {
+        Type::ANY
+    }
+
+    /// `word` with `ty` proved of it, after a guard that tested it: a later operation on the
+    /// word sees the fact. A stage without facts returns the word unchanged.
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn refine(&mut self, word: Self::Word, _ty: Type) -> Self::Word {
+        word
+    }
+
+    /// Runs `cold` on the path where `cond` holds and nothing is produced (a counter bump, a
+    /// poll): out of line for a specializer, run only when the interpreter's `cond` holds.
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn cold_when(&mut self, cond: Self::Cond, cold: impl FnOnce(&mut Self)) {
+        if self.known(cond) == Some(true) {
+            cold(self);
+        }
+    }
 }
 
 /// The process tables an operation addresses from a base.
@@ -219,6 +276,18 @@ pub(crate) trait Frame<S: Stage> {
     /// The VM's field-store hit (`LaneHelper::FieldSet`).
     #[inline(always)]
     fn field_store_miss(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
+    /// A call of `target` with `args` and effect row `effects`; a non-returning status leaves
+    /// at `leave`. `None` where the frame has no call protocol (Stage v2).
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn call(&mut self, _stage: &mut S, _target: CallTarget<S::Word>, _args: &[S::Word], _effects: Effects,
+        _leave: S::Miss) -> Option<S::Word> { None }
+
+    /// Leave the function with `value` (Stage v2); `None` where the frame cannot.
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn ret(&mut self, _stage: &mut S, _value: S::Word) -> Option<Self::Control> { None }
 
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.

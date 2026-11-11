@@ -70,7 +70,7 @@ pub(crate) struct Layout<W, C> {
 pub(crate) fn inline_storage<S: Stage>(stage: &mut S, record: S::Word) -> S::Cond {
     let meta = stage.load_u32(record, OBJECT.meta_offset as i32);
     let inline = stage.and_imm(meta, u64::from(OBJECT.inline_storage_mask));
-    stage.ne_imm(inline, 0)
+    stage.ne_imm(inline, 0u32)
 }
 
 /// Whether an object's payload word points at its extras (`Object::payload`).
@@ -228,7 +228,7 @@ pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word
 #[inline(always)]
 pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, upper_words: S::Word) -> S::Word {
     let flag = stage.and_imm(narrow, u64::from(NarrowLayout::INTEGER_FLAG));
-    let integer = stage.ne_imm(flag, 0);
+    let integer = stage.ne_imm(flag, 0u32);
     stage.choose(integer, |stage| {
         let shifted = stage.sar32_imm(narrow, NarrowLayout::CODE_SHIFT);
         stage.or_imm(shifted, ValueLayout::INT_TAG)
