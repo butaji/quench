@@ -6068,7 +6068,7 @@ script_handler! {
             sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
         }
         let vm = unsafe { vm(cx) };
-        if vm.is_private_name(i.imm()) && i.b != crate::bytecode::FieldBase::NESTED {
+        if vm.private_special(i.imm()) && i.b != crate::bytecode::FieldBase::NESTED {
             requicken::<H>(ip, lane_get_private_field::<H>);
             sibling!(lane_get_private_field::<H>, r, ip, Carried::script(cx))
         }
@@ -6473,7 +6473,7 @@ script_handler! {
 #[inline(never)]
 fn lane_field_read_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    if vm.lane_stack.activations.is_empty() || i.b == crate::bytecode::FieldBase::NESTED || vm.is_private_name(i.imm()) {
+    if vm.lane_stack.activations.is_empty() || i.b == crate::bytecode::FieldBase::NESTED || vm.private_special(i.imm()) {
         return None;
     }
     let base = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }?;
@@ -6721,6 +6721,7 @@ fn lane_cached_field_miss<H: Host>(
     // general loop's `GetField` does. Its home follows the running function and the
     // environment its frame would capture from: the lane's frame, or a frameless activation's
     // function and environment, whose frame would hold that environment as its closure's.
+    if vm.private_homes.fields.single(atom) { return vm.private_field_read(code, object, atom, Some(site)); }
     if vm.is_private_name(atom) {
         return match vm.lane_stack.activations.last() {
             None => vm.private_field_value(code, object, atom),
@@ -6845,7 +6846,7 @@ fn lane_set_field<H: Host>(
     // A private field's store writes the object's private element, as the general loop's
     // `SetField` does, before any cache; the general loop's cached write otherwise: the store
     // inline, the add out of line.
-    let private = vm.is_private_name(i.imm());
+    let private = vm.private_special(i.imm());
     let stored = if private {
         lane_private_field_store(cx, ip, code, object, i.imm(), r.get(i.a), i.c)
     } else {
@@ -7304,7 +7305,7 @@ script_handler! {
         // a polymorphic site of one takes the general cached write from now on.
         let cell_receiver = !THIS && r.get(i.b).direct_object_index().is_none() && vm.is_object_like(r.get(i.b));
         // A private field's store takes the private element path (`lane_set_field`).
-        let handler: Option<Handler> = if vm.is_private_name(i.imm()) {
+        let handler: Option<Handler> = if vm.private_special(i.imm()) {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
