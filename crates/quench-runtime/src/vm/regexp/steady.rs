@@ -261,7 +261,7 @@ impl<H: Host> Vm<H> {
             return Some(Ok(if result_used { this } else { Value::UNDEFINED }));
         };
         let input = self.heap.string(this)?.clone();
-        if let Err(error) = self.record_regexp_legacy_pending(receiver, input, matcher, last.start) {
+        if let Err(error) = self.record_regexp_legacy_pending(receiver, input, Rc::clone(matcher), last.start) {
             return Some(Err(error));
         }
         Some(match output {
@@ -288,7 +288,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(if exec { Value::NULL } else { Value::FALSE });
         };
-        self.steady_ascii_match(receiver, subject, input, &regex, matched, (exec, stateful, slot), result_used && exec)
+        self.steady_ascii_match(receiver, subject, input, regex, matched, (exec, stateful, slot), result_used && exec)
     }
 
     /// The outcome of a match `matched` found in place, with `lastIndex` stored through
@@ -299,7 +299,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         subject: Value,
         input: JsString,
-        regex: &Rc<quench_regexp::Regex>,
+        regex: Rc<quench_regexp::Regex>,
         matched: quench_regexp::Match,
         (exec, stateful, slot): (bool, bool, usize),
         captures: bool,
@@ -341,7 +341,7 @@ impl<H: Host> Vm<H> {
                 unreachable!("a steady call's receiver is a RegExp");
             };
             let matcher = Self::regexp_matcher(meta)?;
-            self.record_regexp_legacy_pending(receiver, input, &matcher, matched.range.start)?;
+            self.record_regexp_legacy_pending(receiver, input, matcher, matched.range.start)?;
             return Ok(Value::UNDEFINED);
         }
         self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))
