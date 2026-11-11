@@ -85,17 +85,19 @@ lto = false
 codegen-units = 256
 incremental = true
 
-# Optimized A/B loop for JIT and runtime experiments: full optimization without
-# LTO, incremental, and line tables so callgrind/perf can name the cost. JIT-emitted
-# code is independent of host LTO; relative deltas measured here pick candidates,
-# and only a final candidate is rebuilt and measured under `release`.
+# THE dev-loop profile: always build and measure here (`cargo build --profile experiment -p
+# quench-node`, persistent target dir, never `cargo clean`). Release code generation without
+# LTO and with 256 incremental codegen units, so a one-line edit in any crate rebuilds
+# quench-node in ~13 s (cgu 16 took ~137 s: each edit recompiled 1/16 of the crate in one
+# LLVM unit). Judge deltas under ~10% by callgrind fixed-work instruction counts, since
+# layout alone swings scores; `release` stays the final shipping artifact.
 [profile.experiment]
 inherits = "release"
 opt-level = 3
 lto = false
-codegen-units = 16
+codegen-units = 256
 incremental = true
-debug = "line-tables-only"
+debug = 0
 strip = "none"
 
 # Native SDK consumers link optimized machine-code archive members directly.
