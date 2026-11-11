@@ -260,8 +260,7 @@ impl<H: Host> Vm<H> {
         let Some(last) = ranges.last() else {
             return Some(Ok(if result_used { this } else { Value::UNDEFINED }));
         };
-        let input = self.heap.string(this)?.clone();
-        if let Err(error) = self.record_regexp_legacy_pending(receiver, input, Rc::clone(matcher), last.start) {
+        if let Err(error) = self.record_regexp_legacy_values(receiver, this, last.start) {
             return Some(Err(error));
         }
         Some(match output {
@@ -279,16 +278,16 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         subject: Value,
         (exec, stateful, slot): (bool, bool, usize),
-        matched: Option<(Rc<quench_regexp::Regex>, JsString, quench_regexp::Match)>,
+        matched: Option<(JsString, quench_regexp::Match)>,
         result_used: bool,
     ) -> Result<Value, JsError> {
-        let Some((regex, input, matched)) = matched else {
+        let Some((input, matched)) = matched else {
             if stateful {
                 self.heap.property_set(receiver, slot, Value::number(0.0));
             }
             return Ok(if exec { Value::NULL } else { Value::FALSE });
         };
-        self.steady_ascii_match(receiver, subject, input, regex, matched, (exec, stateful, slot), result_used && exec)
+        self.steady_ascii_match(receiver, subject, input, matched, (exec, stateful, slot), result_used && exec)
     }
 
     /// The outcome of a match `matched` found in place, with `lastIndex` stored through
@@ -299,7 +298,6 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         subject: Value,
         input: JsString,
-        regex: Rc<quench_regexp::Regex>,
         matched: quench_regexp::Match,
         (exec, stateful, slot): (bool, bool, usize),
         captures: bool,
@@ -312,7 +310,7 @@ impl<H: Host> Vm<H> {
         }
         // Nothing reads the result: only the legacy statics remain, found again from the
         // match's start if read.
-        self.record_regexp_legacy_pending(receiver, input, regex, matched.range.start)?;
+        self.record_regexp_legacy_values(receiver, subject, matched.range.start)?;
         Ok(if exec { Value::UNDEFINED } else { Value::TRUE })
     }
 
@@ -337,11 +335,7 @@ impl<H: Host> Vm<H> {
         // the match's own effect, the legacy statics, remains, and they find its captures
         // again from its start only if read.
         if !steady.captures {
-            let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
-                unreachable!("a steady call's receiver is a RegExp");
-            };
-            let matcher = Self::regexp_matcher(meta)?;
-            self.record_regexp_legacy_pending(receiver, input, matcher, matched.range.start)?;
+            self.record_regexp_legacy_values(receiver, subject, matched.range.start)?;
             return Ok(Value::UNDEFINED);
         }
         self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))
@@ -431,7 +425,7 @@ fn steady_search(meta: &crate::heap::RegExpMeta, input: &JsString, slot: usize, 
         // subject, which a result or the legacy statics keep, so only a match clones them.
         if let Some(found) = regex.find_ascii(bytes, start, sticky, captures) {
             let matched = match found {
-                Some(found) => Some((Rc::clone(regex), input.clone(), found)),
+                Some(found) => Some((input.clone(), found)),
                 None => None,
             };
             return SteadyRead::Ascii { slot, stateful, matched };
@@ -447,7 +441,7 @@ fn steady_search(meta: &crate::heap::RegExpMeta, input: &JsString, slot: usize, 
 enum SteadyRead {
     /// A flat ASCII subject searched in place: the regexp's `lastIndex` slot, whether it is
     /// global or sticky, and the match with the regexp and subject it keeps.
-    Ascii { slot: usize, stateful: bool, matched: Option<(Rc<quench_regexp::Regex>, JsString, quench_regexp::Match)> },
+    Ascii { slot: usize, stateful: bool, matched: Option<(JsString, quench_regexp::Match)> },
     /// The slot and value of `lastIndex`, and what the prefilter says of the search.
     Prefiltered(usize, Value, Prefilter),
 }
