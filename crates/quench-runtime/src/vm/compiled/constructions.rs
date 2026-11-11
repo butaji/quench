@@ -79,6 +79,33 @@ pub(super) unsafe extern "C" fn general_array_construct<H: Host>(vm: u64, _resid
 ///
 /// # Safety
 /// As `general_user_call`.
+/// `IteratorCleanupPush`: the running frame's iterator to close if the loop exits abruptly,
+/// by the registers it holds (`ActiveIterator`); one where the frame took it, zero where the
+/// step must.
+///
+/// # Safety
+/// As `general_user_call`.
+pub(super) unsafe extern "C" fn general_iterator_push<H: Host>(vm: u64, _residual: u64, payload: u64,
+    iterator: u64, done: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(payload as *const JsStepDispatch)) };
+    let Some(frame) = vm.frames.get_mut(dispatch.frame) else { return 0 };
+    frame.active_iterators.push(crate::vm::ActiveIterator { iterator: iterator as u16, done: done as u16 });
+    1
+}
+
+/// `IteratorCleanupPop`: drops the running frame's innermost iterator; zero where the stack
+/// is empty, which the step reports as underflow.
+///
+/// # Safety
+/// As `general_user_call`.
+pub(super) unsafe extern "C" fn general_iterator_pop<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(payload as *const JsStepDispatch)) };
+    let Some(frame) = vm.frames.get_mut(dispatch.frame) else { return 0 };
+    u64::from(frame.active_iterators.pop().is_some())
+}
+
 /// `MakeArray`'s fresh array of `length` holes (`Vm::hole_array`), or `Value::DELETED` where
 /// a collection is due or the record space must grow, leaving the step to allocate.
 ///

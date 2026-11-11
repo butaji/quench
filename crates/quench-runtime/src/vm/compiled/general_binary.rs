@@ -33,6 +33,9 @@ pub(super) fn lower_rest(
     if lower_array_literal(builder, instruction, next, register_offset, arguments, payload, exact) {
         return PcLowering::Native;
     }
+    if lower_iterator_cleanup(builder, instruction, next, payload, exact) {
+        return PcLowering::Native;
+    }
     if let Some(next) = next && instruction.op() == crate::bytecode::Op::Binary
         && lower_binary(builder, program, (instruction, next), register_offset, (arguments, payload), exact) {
         return PcLowering::Native;
@@ -58,6 +61,32 @@ fn lower_require_iterator_result(builder: &mut FunctionBuilder<'_>, instruction:
     let object = builder.ins().icmp_imm_u(IntCC::NotEqual, passed, 0);
     let fallback = builder.create_block();
     builder.ins().brif(object, next, &[], fallback, &[]);
+    builder.switch_to_block(fallback);
+    exact.emit(builder, fallback);
+    true
+}
+
+/// Lowers the iterator-cleanup stack ops natively: `IteratorCleanupPush` records the running
+/// frame's iterator registers and `IteratorCleanupPop` drops the innermost; neither runs guest
+/// code. A failed pop (an empty stack) takes the exact step, which reports the underflow.
+fn lower_iterator_cleanup(builder: &mut FunctionBuilder<'_>, instruction: WideInstruction,
+    next: Option<ir::Block>, payload: ir::Value, exact: &JsExactFallback) -> bool {
+    let Some(next) = next else { return false };
+    let class = instruction.op().class();
+    let (helper, arguments): (usize, Vec<ir::Value>) = if class.eq(Class::IteratorCleanupPush) {
+        let iterator = builder.ins().iconst(types::I64, i64::from(instruction.register_a()));
+        let done = builder.ins().iconst(types::I64, i64::from(instruction.register_b()));
+        (std::mem::offset_of!(JsStepDispatch, iterator_push), vec![payload, iterator, done])
+    } else if class.eq(Class::IteratorCleanupPop) {
+        (std::mem::offset_of!(JsStepDispatch, iterator_pop), vec![payload])
+    } else {
+        return false;
+    };
+    let helper = emit_js_payload_word(builder, payload, helper);
+    let pushed = emit_lane_helper_call(builder, payload, helper, &arguments);
+    let done = builder.ins().icmp_imm_u(IntCC::NotEqual, pushed, 0);
+    let fallback = builder.create_block();
+    builder.ins().brif(done, next, &[], fallback, &[]);
     builder.switch_to_block(fallback);
     exact.emit(builder, fallback);
     true
