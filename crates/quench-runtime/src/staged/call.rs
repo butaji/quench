@@ -46,10 +46,19 @@ pub(crate) fn site_function<S: Stage>(stage: &mut S, site: S::Word) -> S::Word {
     stage.shr_imm(site, u32::BITS)
 }
 
-/// The caller's pc of a record's site word.
+/// The pc bit that marks a wider record (a cold-path activation); a plain record has it clear.
+pub(crate) const WIDE: u32 = 1 << 31;
+
+/// The caller's pc of a record's site word (the wide flag excluded).
 #[inline(always)]
 pub(crate) fn site_pc<S: Stage>(stage: &mut S, site: S::Word) -> S::Word {
-    stage.and_imm(site, u64::from(u32::MAX))
+    stage.and_imm(site, u64::from(u32::MAX & !WIDE))
+}
+
+/// Nonzero where the record is the wider kind.
+#[inline(always)]
+pub(crate) fn site_wide<S: Stage>(stage: &mut S, site: S::Word) -> S::Word {
+    stage.and_imm(site, u64::from(WIDE))
 }
 
 /// Saves a call at `top`, the first free word of the record stack: the site (a per-site operand),
