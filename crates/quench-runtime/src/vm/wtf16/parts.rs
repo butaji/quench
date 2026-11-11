@@ -39,27 +39,48 @@ pub(crate) struct Parts {
 }
 
 impl Parts {
-    /// The parts `parts` names; `None` for fewer than two, more than `MAX_PARTS`, or a second
-    /// Number.
-    pub(crate) fn new(parts: &[Part]) -> Option<Self> {
-        if parts.len() < MIN_PARTS || parts.len() > MAX_PARTS {
-            return None;
+    /// No parts yet, nor a Number: the start of a `push_text` / `push_number` sequence.
+    pub(crate) const EMPTY: Self = Self { shape: NO_NUMBER << NUMBER_SHIFT, ids: [0; ID_BYTES * MAX_PARTS], number: [0; NUMBER_BYTES] };
+
+    #[inline(always)]
+    fn count(&self) -> usize {
+        usize::from(self.shape & COUNT_MASK)
+    }
+
+    #[inline(always)]
+    fn has_number(&self) -> bool {
+        self.shape >> NUMBER_SHIFT != NO_NUMBER
+    }
+
+    /// Appends the string part `id`; `false` past `MAX_PARTS`.
+    #[inline(always)]
+    pub(crate) fn push_text(&mut self, id: u32) -> bool {
+        let count = self.count();
+        if count == MAX_PARTS {
+            return false;
         }
-        let (mut ids, mut texts, mut number, mut at) = ([0; ID_BYTES * MAX_PARTS], 0, [0; NUMBER_BYTES], NO_NUMBER);
-        for (position, part) in parts.iter().enumerate() {
-            match *part {
-                Part::Text(id) => {
-                    ids[ID_BYTES * texts..ID_BYTES * (texts + 1)].copy_from_slice(&id.to_le_bytes());
-                    texts += 1;
-                }
-                Part::Number(value) if at == NO_NUMBER => {
-                    number = value.to_bits().to_le_bytes();
-                    at = position as u8;
-                }
-                Part::Number(_) => return None,
-            }
+        let at = ID_BYTES * (count - usize::from(self.has_number()));
+        self.ids[at..at + ID_BYTES].copy_from_slice(&id.to_le_bytes());
+        self.shape += 1;
+        true
+    }
+
+    /// Appends the Number `value`; `false` past `MAX_PARTS` or for a second Number.
+    #[inline(always)]
+    pub(crate) fn push_number(&mut self, value: f64) -> bool {
+        let count = self.count();
+        if count == MAX_PARTS || self.has_number() {
+            return false;
         }
-        Some(Self { shape: parts.len() as u8 | at << NUMBER_SHIFT, ids, number })
+        self.number = value.to_bits().to_le_bytes();
+        self.shape = (count as u8 + 1) | (count as u8) << NUMBER_SHIFT;
+        true
+    }
+
+    /// Whether the parts pushed make a string of parts: at least `MIN_PARTS`.
+    #[inline(always)]
+    pub(crate) fn is_complete(&self) -> bool {
+        self.count() >= MIN_PARTS
     }
 
     /// The string parts' record ids, in order: what a collector traces.
