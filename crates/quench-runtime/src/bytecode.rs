@@ -674,11 +674,11 @@ impl ImmediateLayout {
         imm & Self::PARAMETER_EVAL_FLAG != 0
     }
 
-    pub(crate) const fn call_window_base(imm: u32) -> Register {
+    #[inline] pub(crate) const fn call_window_base(imm: u32) -> Register {
         ((imm & Self::CALL_BASE_MASK) >> Self::CALL_BASE_SHIFT) as Register
     }
 
-    pub(crate) const fn argument_count(imm: u32) -> u16 {
+    #[inline] pub(crate) const fn argument_count(imm: u32) -> u16 {
         (imm & Self::ARGUMENT_COUNT_MASK) as u16
     }
 
@@ -686,7 +686,7 @@ impl ImmediateLayout {
         (imm >> Self::PAIR_SECOND_SHIFT) as u16
     }
 
-    pub(crate) const fn capture_slot(imm: u32) -> u16 {
+    #[inline] pub(crate) const fn capture_slot(imm: u32) -> u16 {
         (imm & Self::PAIR_FIELD_MASK) as u16
     }
 

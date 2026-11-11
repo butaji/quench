@@ -1606,6 +1606,7 @@ impl ArrayObject {
         Self { object, elements }
     }
 
+    #[inline]
     pub(crate) fn elements(&self) -> &super::ArrayElements {
         &self.elements
     }
@@ -2071,6 +2072,7 @@ impl Object {
         EXTRAS_TAG | address
     }
 
+    #[inline]
     fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
         let word = self.payload;
         (word & EXTRAS_TAG_MASK == EXTRAS_TAG)
@@ -2094,6 +2096,7 @@ impl Object {
         true
     }
 
+    #[inline]
     fn extras(&self) -> Option<&ObjectExtras> {
         // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime.
         self.extras_pointer().map(|extras| unsafe { &*extras })
@@ -2243,6 +2246,7 @@ impl Object {
 
     /// An object of a run header (`InlineObjectHeader::of_run`) whose values start at arena
     /// position `start`: what `with_property_storage` makes of that run, which has no extras.
+    #[inline]
     pub(crate) fn from_run_header(header: InlineObjectHeader, start: u32) -> Self {
         Self {
             meta: header.meta,
@@ -2492,6 +2496,7 @@ impl Object {
         }
     }
 
+    #[inline]
     pub(crate) fn was_used_as_prototype(&self) -> bool {
         self.extras()
             .is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
@@ -2516,6 +2521,7 @@ impl Object {
         }
     }
 
+    #[inline]
     pub(crate) fn shape(&self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
@@ -2539,6 +2545,7 @@ impl Object {
         self.note_prototype_layout_change();
         self.renumber_shape(shape);
     }
+    #[inline]
     pub(crate) fn is_extensible(&self) -> bool {
         self.properties().is_extensible()
     }
@@ -2613,6 +2620,7 @@ impl Object {
             && !self.has_exotic_access()
             && !self.element_facts().has(ElementFacts::NOT_ORDINARY)
     }
+    #[inline]
     pub(crate) fn is_arguments_object(&self) -> bool {
         self.brand() == ObjectBrand::Arguments
     }

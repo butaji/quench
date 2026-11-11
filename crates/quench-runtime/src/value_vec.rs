@@ -124,7 +124,7 @@ pub(crate) const VALUE_VEC_FROZEN: u32 = FROZEN;
 
 impl ValueVec {
     /// The two words, for an owner that stores them apart.
-    pub(crate) const fn into_parts(self) -> (u32, u32) {
+    #[inline] pub(crate) const fn into_parts(self) -> (u32, u32) {
         (self.start, self.auxiliary)
     }
 
@@ -139,7 +139,7 @@ impl ValueVec {
         }
     }
 
-    pub(crate) const fn inline_property_storage(shape: u32) -> Self {
+    #[inline] pub(crate) const fn inline_property_storage(shape: u32) -> Self {
         Self {
             start: INLINE_PROPERTY_START,
             auxiliary: shape,
@@ -157,7 +157,7 @@ impl ValueVec {
         self.auxiliary
     }
 
-    pub(crate) fn has_inline_property_storage(self) -> bool {
+    #[inline] pub(crate) fn has_inline_property_storage(self) -> bool {
         self.start() as u32 == INLINE_PROPERTY_START
     }
 
@@ -174,7 +174,7 @@ impl ValueVec {
         self.auxiliary = (self.auxiliary & !SHAPE_MASK) | value;
     }
 
-    pub(crate) fn is_dictionary(self) -> bool {
+    #[inline] pub(crate) fn is_dictionary(self) -> bool {
         self.auxiliary & DICTIONARY_STORAGE != 0
     }
 
@@ -218,7 +218,7 @@ impl ValueVec {
             | (previous.start & (NON_EXTENSIBLE | FROZEN));
     }
 
-    fn start(self) -> usize {
+    #[inline] fn start(self) -> usize {
         (self.start & START_MASK) as usize
     }
 
@@ -455,7 +455,7 @@ impl ValueArena {
     }
 
     /// Whether writes join their values' classes.
-    pub(crate) fn tracks(&self) -> bool {
+    #[inline] pub(crate) fn tracks(&self) -> bool {
         self.tracking
     }
 

@@ -2041,6 +2041,7 @@ impl Heap {
         self.allocated += text.beside / payload_unit();
     }
 
+    #[inline]
     pub fn should_collect(&self) -> bool {
         self.allocated >= self.collect_at
     }

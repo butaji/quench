@@ -365,7 +365,7 @@ impl Value {
     /// A Number: integral values in `i32` range other than -0 are stored as integers, NaN
     /// canonically. A value is integral exactly when its truncation converts back to the
     /// same bits, which also excludes -0 (+0's bits differ) and NaN.
-    pub fn number(value: f64) -> Self {
+    #[inline] pub fn number(value: f64) -> Self {
         let integer = truncate_to_i32(value);
         if f64::from(integer).to_bits() == value.to_bits() {
             return Self::integer(integer);
@@ -592,11 +592,11 @@ impl Value {
             || self.direct_iterator_index().is_some()
     }
 
-    pub fn is_undefined(self) -> bool {
+    #[inline] pub fn is_undefined(self) -> bool {
         self.0 == TAG_UNDEFINED
     }
 
-    pub fn is_null(self) -> bool {
+    #[inline] pub fn is_null(self) -> bool {
         self.0 == TAG_NULL
     }
 
@@ -663,7 +663,7 @@ impl Value {
         unsafe { out.set_len(start + kept) };
     }
 
-    pub(crate) fn is_deleted(self) -> bool {
+    #[inline] pub(crate) fn is_deleted(self) -> bool {
         self.0 == TAG_DELETED
     }
 
@@ -704,8 +704,7 @@ impl Value {
 pub(crate) const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
 
 /// ToUint32 (ToInt32 is its bits reinterpreted as `i32`).
-#[inline]
-pub fn number_to_u32(value: f64) -> u32 {
+#[inline] pub fn number_to_u32(value: f64) -> u32 {
     if value.abs() < EXACT_I64_TRUNCATION_LIMIT {
         // NaN fails the comparison; -0 and small fractions truncate to 0.
         return value as i64 as u32;
