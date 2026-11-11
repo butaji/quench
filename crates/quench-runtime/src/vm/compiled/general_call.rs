@@ -128,7 +128,7 @@ fn emit_builtin_shortcut(builder: &mut FunctionBuilder<'_>, (arguments, payload)
     let value = emit_builtin_call(builder, (arguments, payload), builtin);
     let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
     let (done, user) = (builder.create_block(), builder.create_block());
-    builder.ins().brif(hit, done, &[], user, &[]);
+    builder.ins().brif(hit, super::forced_or(done, user), &[], user, &[]);
     builder.switch_to_block(done);
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
     builder.ins().jump(next, &[]);
@@ -163,7 +163,7 @@ fn lower_construct(
     let array = emit_lane_helper_call(builder, payload, helper, &[payload, callee, values, count]);
     let built = builder.ins().icmp_imm_u(IntCC::NotEqual, array, Value::DELETED.to_bits() as i64);
     let (store, user, fallback) = (builder.create_block(), builder.create_block(), builder.create_block());
-    builder.ins().brif(built, store, &[], user, &[]);
+    builder.ins().brif(built, super::forced_or(store, user), &[], user, &[]);
     builder.switch_to_block(store);
     builder.ins().store(MemFlagsData::trusted(), array, arguments, destination);
     builder.ins().jump(next, &[]);
@@ -203,7 +203,7 @@ fn lower_literal(
     };
     let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, answer, refused as i64);
     let (done, fallback) = (builder.create_block(), builder.create_block());
-    builder.ins().brif(hit, done, &[], fallback, &[]);
+    builder.ins().brif(hit, super::forced_or(done, fallback), &[], fallback, &[]);
     builder.switch_to_block(done);
     if let Some(destination) = destination {
         builder.ins().store(MemFlagsData::trusted(), answer, arguments, destination);

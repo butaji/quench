@@ -104,6 +104,16 @@ pub(in crate::vm) mod forced_miss {
         })
     }
 }
+/// The successor a guard-shaped branch takes when its condition holds: the forced-deopt switch
+/// makes a test-armed guard take `fail` instead. Sites call it in place of `ok`.
+#[inline(always)]
+fn forced_or(ok: ir::Block, fail: ir::Block) -> ir::Block {
+    #[cfg(test)]
+    if forced_miss::next() { return fail; }
+    #[cfg(not(test))]
+    let _ = fail;
+    ok
+}
 mod object_slots;
 mod frame_ssa;
 pub(super) use object_slots::{InheritedConstant, NativeFieldLoad};
@@ -12553,7 +12563,8 @@ impl<H: Host> Vm<H> {
         // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim
         // costs a short call-free one its leaf calls. A function the numeric tier cannot take
         // is still theirs to claim.
-        let lane_claims = self.programs.js_jit_lane_methods_enabled();
+        let lane_claims = self.programs.js_jit_lane_methods_enabled()
+            && program.function_get(function as usize).is_some_and(lane_body_may_amortize);
         if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
             return lane_claims || self.programs.js_jit_diagnostics_enabled();
         }
@@ -14289,6 +14300,14 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
 /// `isLineBreak`), so a body shorter than this cannot recoup its entries.
 const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
+/// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
+/// loop, a call (which a plan inlines or binds), or length. A short call-free function never
+/// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
+pub(super) fn lane_body_may_amortize(body: &crate::bytecode::Function) -> bool {
+    body.loops() || body.code.len() >= TIERS.lane_body.min_instructions
+        || body.code.iter().any(|packed| super::dispatch_fast::decoded_instruction(body, *packed).op().is_call())
+}
+
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
 /// overhead (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper in the interpreter at each entry.
 pub(super) fn pays_native_entry(body: &crate::bytecode::Function) -> bool {

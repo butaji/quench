@@ -406,7 +406,7 @@ impl LanePlan {
         let (dependencies, recovery_space) = (self.dependencies(), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
         let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
         let names_shapes = self.names_shapes();
-        let memory = CodeMemory::new(code)?;
+        let memory = super::code_heap::publishing("u-jit-lane", self.function as usize, || CodeMemory::new(code))?;
         if let (Some(directory), Some(clif)) = (native_dump_directory(), self.lowered.clif.as_deref()) {
             dump_native_code(directory, self.function, &memory, clif);
         }
