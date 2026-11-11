@@ -462,6 +462,7 @@ fn tagged_registers_with_failure(
     held: &std::collections::BTreeSet<Register>,
     dynamic_arrays: &std::collections::BTreeSet<Register>,
     header: u32,
+    inlined_method_calls: bool,
 ) -> Result<std::collections::BTreeSet<Register>, usize> {
     let numeric_uses: std::collections::BTreeSet<Register> = instructions
         .iter()
@@ -490,10 +491,10 @@ fn tagged_registers_with_failure(
             if !instruction.op().is_ordinary_call() {
                 return Vec::new();
             }
-            // Keep field-resolved calls under the existing inliner's representation and
-            // ownership rules. Dynamic/direct calls leave at this exact PC, so their input
-            // window must remain boxed through preceding Moves.
-            if instructions[..offset]
+            // Field-resolved calls the inliner owns (`MethodCalls::inlined`) keep its
+            // representation and ownership rules. Every other call leaves at this exact PC,
+            // so its callee and input window must remain boxed through preceding Moves.
+            if inlined_method_calls && instructions[..offset]
                 .iter()
                 .rev()
                 .find(|candidate| candidate.defined_register() == Some(instruction.register_b()))
@@ -1944,6 +1945,7 @@ fn admit_register_roles(
         &objects.iter().chain(paths.keys()).copied().collect(),
         &dynamic_arrays,
         header,
+        method_calls.inlined(objects),
     ) {
         Ok(tagged) => tagged,
         Err(failure_offset) => {
