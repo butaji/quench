@@ -6482,7 +6482,7 @@ script_handler! {
                         requicken::<H>(ip, lane_load_root_lexical::<H>);
                     }
                 }
-                None => {}
+                None => capture_binding::requicken_root_binding::<H>(ip, slot),
             }
         }
         #[cfg(feature = "profile-lane-exits")]
@@ -15852,6 +15852,7 @@ mod wasm_calls;
 mod i64_operators;
 use i64_operators::i64_operator_handler;
 mod capture_update_calls;
+mod capture_binding;
 use capture_update_calls::capture_update_call_handler;
 use wasm_calls::{known_call_handler, reference_call_handler};
 use denoted::{denoted_handler, lane_unary, unary_handler};
