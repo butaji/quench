@@ -1057,6 +1057,9 @@ impl LaneView {
 
     /// Starts activations at the tier prologue again, which `claim_for_tier` wrote.
     fn reclaim_for_tier(&self) {
+        // A function no call claimed (`LaneView::claim_for_tier`) has no prologue to start at.
+        // SAFETY: as `claim_for_tier`.
+        if unsafe { (*self.prologue.get()).handler }.is_null() { return; }
         self.start.set(self.prologue.get().cast_const());
     }
 
