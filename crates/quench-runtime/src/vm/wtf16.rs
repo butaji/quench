@@ -102,8 +102,6 @@ enum Repr {
     Flat(FlatUnits),
     /// A rope, or wide units, whose host text is made on demand.
     Shared(Rc<JsStringInner>),
-    /// Parts not yet written out (`parts`).
-    Parts(Parts),
 }
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(size_of::<JsString>() == size_of::<FlatUnits>());
@@ -132,6 +130,8 @@ pub(crate) enum FlatUnits {
     /// The first `length` units of a UTF-16 append buffer. As with `WideSlice`, its units
     /// may all be ASCII (a wide slice's text appended to), so it is never taken to be ASCII.
     WidePrefix(Rc<AppendBuffer<u16>>, u32),
+    /// Parts not yet written out (`parts`); held by a string record only (`Heap::written_out_string`).
+    Parts(Parts),
 }
 
 /// The units `range` of shared `Wide` storage; never a slice of a slice.
@@ -209,6 +209,7 @@ impl FlatUnits {
             Self::Wide(units) => units.len(),
             Self::WideSlice(slice) => slice.range.len(),
             Self::AsciiPrefix(_, length) | Self::WidePrefix(_, length) => *length as usize,
+            Self::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -225,6 +226,7 @@ impl FlatUnits {
                 .then(|| slice.units[slice.range.start + index]),
             Self::AsciiPrefix(buffer, length) => buffer.prefix(*length).get(index).map(|byte| u16::from(*byte)),
             Self::WidePrefix(buffer, length) => buffer.prefix(*length).get(index).copied(),
+            Self::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -240,6 +242,7 @@ impl FlatUnits {
             Self::WideSlice(slice) => Units::Wide(&slice.units[slice.range.clone()]),
             Self::AsciiPrefix(buffer, length) => Units::Ascii(buffer.prefix(*length)),
             Self::WidePrefix(buffer, length) => Units::Wide(buffer.prefix(*length)),
+            Self::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -253,7 +256,7 @@ impl FlatUnits {
         match self {
             Self::Wide(units) => Some((units, 0..units.len())),
             Self::WideSlice(slice) => Some((&slice.units, slice.range.clone())),
-            Self::Short(_) | Self::Ascii(_) | Self::AsciiSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) => None,
+            Self::Short(_) | Self::Ascii(_) | Self::AsciiSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) | Self::Parts(_) => None,
         }
     }
 
@@ -262,7 +265,7 @@ impl FlatUnits {
         match self {
             Self::Ascii(text) => Some((text, 0..text.len())),
             Self::AsciiSlice(slice) => Some((&slice.text, slice.range.clone())),
-            Self::Short(_) | Self::Wide(_) | Self::WideSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) => None,
+            Self::Short(_) | Self::Wide(_) | Self::WideSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) | Self::Parts(_) => None,
         }
     }
 
@@ -718,7 +721,7 @@ impl JsString {
         match &self.repr {
             Repr::Flat(_) => 0,
             Repr::Shared(inner) if inner.flat.get().is_some() => 1,
-            Repr::Shared(_) | Repr::Parts(_) => 2,
+            Repr::Shared(_) => 2,
         }
     }
 
@@ -730,6 +733,7 @@ impl JsString {
             FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) => {
                 Repr::Shared(Rc::new(JsStringInner::flat(units)))
             }
+            FlatUnits::Parts(_) => parts::not_written_out(),
         };
         Self { repr }
     }
@@ -749,7 +753,7 @@ impl JsString {
     /// The halves of a string that is still a rope.
     fn rope_halves(&self) -> Option<(Self, Self)> {
         match &self.repr {
-            Repr::Flat(_) | Repr::Parts(_) => None,
+            Repr::Flat(_) => None,
             Repr::Shared(inner) => inner
                 .halves()
                 .map(|(left, right)| (Self::from_node(left), Self::from_node(right))),
@@ -761,7 +765,6 @@ impl JsString {
         match &self.repr {
             Repr::Flat(_) => true,
             Repr::Shared(inner) => inner.flat.get().is_some(),
-            Repr::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -770,7 +773,6 @@ impl JsString {
         match &self.repr {
             Repr::Flat(units) => Rc::new(JsStringInner::flat(units.clone())),
             Repr::Shared(inner) => inner.clone(),
-            Repr::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -828,7 +830,7 @@ impl JsString {
     /// reader that can take UTF-8 reads it without making them.
     pub(crate) fn unflattened_host(&self) -> Option<&str> {
         match &self.repr {
-            Repr::Flat(_) | Repr::Parts(_) => None,
+            Repr::Flat(_) => None,
             Repr::Shared(inner) => inner.unflattened_host(),
         }
     }
@@ -854,7 +856,6 @@ impl JsString {
         match &self.repr {
             Repr::Flat(units) => Some(units),
             Repr::Shared(inner) => inner.flat.get(),
-            Repr::Parts(_) => None,
         }
     }
 
@@ -864,7 +865,6 @@ impl JsString {
         let inner = match &self.repr {
             Repr::Flat(units) => return units,
             Repr::Shared(inner) => inner,
-            Repr::Parts(_) => parts::not_written_out(),
         };
         match inner.flat.get() {
             Some(units) => units,
@@ -893,7 +893,6 @@ impl JsString {
     /// flattens V8-v7 RegExp's input variants this way (306 ropes, 995K units).
     pub(crate) fn flat_unkept(&self) -> std::borrow::Cow<'_, FlatUnits> {
         match &self.repr {
-            Repr::Parts(_) => parts::not_written_out(),
             Repr::Flat(units) => std::borrow::Cow::Borrowed(units),
             Repr::Shared(inner) => match inner.flat.get() {
                 Some(units) => std::borrow::Cow::Borrowed(units),
@@ -912,7 +911,7 @@ impl JsString {
     pub(crate) fn unkept_flat(&self) -> JsString {
         match &self.repr {
             Repr::Flat(_) => self.clone(),
-            Repr::Shared(_) | Repr::Parts(_) => Self::from_flat(self.flat_unkept().into_owned()),
+            Repr::Shared(_) => Self::from_flat(self.flat_unkept().into_owned()),
         }
     }
 
@@ -941,7 +940,7 @@ impl JsString {
     /// The host text a `Wide` string made, if any.
     fn existing_host(&self) -> Option<&Rc<str>> {
         match &self.repr {
-            Repr::Flat(_) | Repr::Parts(_) => None,
+            Repr::Flat(_) => None,
             Repr::Shared(inner) => inner.existing_host(),
         }
     }
@@ -978,12 +977,13 @@ impl JsString {
             FlatUnits::AsciiSlice(slice) => &slice.text[slice.range.clone()],
             // SAFETY: an ASCII buffer holds only ASCII bytes, which are UTF-8.
             FlatUnits::AsciiPrefix(buffer, length) => unsafe { std::str::from_utf8_unchecked(buffer.prefix(*length)) },
+            FlatUnits::Parts(_) => parts::not_written_out(),
             wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..)) => match &self.repr {
                 Repr::Shared(inner) => inner.host(|| {
                     let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
                     Rc::<str>::from(String::from_utf16_lossy(units))
                 }),
-                Repr::Flat(_) | Repr::Parts(_) => unreachable!("a flat string held by value is ASCII"),
+                Repr::Flat(_) => unreachable!("a flat string held by value is ASCII"),
             },
         }
     }
@@ -1003,7 +1003,6 @@ impl JsString {
         match &self.repr {
             Repr::Flat(units) => units.len(),
             Repr::Shared(inner) => inner.length as usize,
-            Repr::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -1028,6 +1027,7 @@ impl JsString {
             FlatUnits::WidePrefix(buffer, length) => {
                 buffer.charge(*length) + self.existing_host().map_or(0, |host| host.len())
             }
+            FlatUnits::Parts(_) => parts::not_written_out(),
         }
     }
 
@@ -1072,13 +1072,9 @@ impl JsString {
             ),
             FlatUnits::AsciiPrefix(buffer, _) => buffer.storage(),
             FlatUnits::WidePrefix(buffer, _) => buffer.storage(),
+            FlatUnits::Parts(_) => parts::not_written_out(),
         };
-        let host_storage = self.existing_host().map(|host| {
-            (
-                Rc::as_ptr(host) as *const u8 as usize,
-                RC_HEADER_BYTES + host.len(),
-            )
-        });
+        let host_storage = self.existing_host().map(|host| (Rc::as_ptr(host) as *const u8 as usize, RC_HEADER_BYTES + host.len()));
         (unit_storage, host_storage)
     }
 

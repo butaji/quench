@@ -28,11 +28,11 @@ impl JsString {
             Some(FlatUnits::WideSlice(_)) => std::mem::size_of::<WideSlice>(),
             Some(FlatUnits::AsciiPrefix(buffer, length)) => buffer.charge(*length),
             Some(FlatUnits::WidePrefix(buffer, length)) => buffer.charge(*length),
+            Some(FlatUnits::Parts(_)) | None => 0,
             Some(units) => match units.view() {
                 Units::Ascii(bytes) => bytes.len(),
                 Units::Wide(units) => std::mem::size_of_val(units),
             },
-            None => 0,
         }
     }
 }
@@ -52,7 +52,6 @@ impl Clone for Repr {
         match self {
             Self::Flat(units) => Self::Flat(units.clone()),
             Self::Shared(inner) => Self::Shared(Rc::clone(inner)),
-            Self::Parts(parts) => Self::Parts(*parts),
         }
     }
 }
