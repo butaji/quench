@@ -89,13 +89,12 @@ impl ConstructPlan {
     /// `values` of a plan with no constant or computed field: each field the argument its
     /// parameter names, or its fallback where the store defaults a falsy one.
     #[inline(always)]
-    fn passed_values<H: Host>(&self, vm: &Vm<H>, mut values: [Value; CONSTRUCT_PLAN_FIELDS], argument: impl Fn(u16) -> Value) -> [Value; CONSTRUCT_PLAN_FIELDS] {
+    fn passed_values<H: Host>(&self, vm: &Vm<H>, values: &mut [Value; CONSTRUCT_PLAN_FIELDS], argument: impl Fn(u16) -> Value) {
         let fields = usize::from(self.fields).min(CONSTRUCT_PLAN_FIELDS);
         for field in 0..fields {
             let passed = argument(self.parameters[field]);
             values[field] = if self.defaulted >> field & 1 != 0 && !vm.truthy(passed) { self.fallbacks[field] } else { passed };
         }
-        values
     }
 
     /// This plan's field values in order, `undefined` past them: the argument each field's
@@ -104,8 +103,17 @@ impl ConstructPlan {
     /// computes it. `None` when a computed field's argument is no Number.
     pub(super) fn values<H: Host>(&self, vm: &Vm<H>, argument: impl Fn(u16) -> Value) -> Option<[Value; CONSTRUCT_PLAN_FIELDS]> {
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+        self.fill_values(vm, &mut values, argument)?;
+        Some(values)
+    }
+
+    /// `values` written into `values`, which holds `undefined` throughout; `None` where a
+    /// computed field's argument is no Number.
+    #[inline(always)]
+    pub(super) fn fill_values<H: Host>(&self, vm: &Vm<H>, values: &mut [Value; CONSTRUCT_PLAN_FIELDS], argument: impl Fn(u16) -> Value) -> Option<()> {
         if self.constant | self.computed == 0 {
-            return Some(self.passed_values(vm, values, argument));
+            self.passed_values(vm, values, argument);
+            return Some(());
         }
         for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
             if self.constant & (1 << field) != 0 {
@@ -119,7 +127,7 @@ impl ConstructPlan {
             let fallback = (self.defaulted & (1 << field) != 0).then_some(self.fallbacks[field]);
             *value = initializer_value(vm, argument(self.parameters[field]), fallback);
         }
-        Some(values)
+        Some(())
     }
 
     /// The receiver this plan allocates with its fields `field(k)` in order and `undefined`
@@ -133,6 +141,13 @@ impl ConstructPlan {
             *value = field(index);
         }
         heap.alloc_planned_object(self.header, self.prototype, &values, fields)
+    }
+
+    /// The receiver this plan allocates with `values`, as `values` computed them: no second
+    /// array gathered from them.
+    #[inline(always)]
+    pub(super) fn allocate_values(&self, heap: &mut crate::heap::Heap, values: &[Value; CONSTRUCT_PLAN_FIELDS]) -> Value {
+        heap.alloc_planned_object(self.header, self.prototype, values, usize::from(self.fields))
     }
 
     /// This plan extended by the field `store` adds, `None` once it names all it can.
@@ -349,7 +364,7 @@ fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: 
         return None;
     }
     let values = plan.values(vm, argument)?;
-    Some(plan.allocate(&mut vm.heap, |field| values[field]))
+    Some(plan.allocate_values(&mut vm.heap, &values))
 }
 
 /// A construction's parameter `k` as a plain activation sees it: argument `k`, or undefined
