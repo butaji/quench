@@ -223,7 +223,7 @@ mod promise_jobs;
 mod promise_state;
 mod proxy;
 mod reflect;
-mod regexp; mod regexp_native;
+mod regexp; mod regexp_native; mod realm_table;
 mod shadow_realm;
 mod sort;
 mod string;
@@ -718,7 +718,7 @@ struct RealmIntrinsics {
     function_constructors: FxHashMap<(Value, Native), Value>,
     promise_constructors: FxHashMap<Value, Value>,
     error_intrinsics: FxHashMap<Value, ErrorRealmIntrinsics>,
-    regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,
+    regexp_intrinsics: realm_table::RealmTable<regexp::RegExpIntrinsics>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
     intl_number_format_prototypes: FxHashMap<Value, Value>,
     intl_number_format_fallback_symbols: FxHashMap<Value, Value>,
