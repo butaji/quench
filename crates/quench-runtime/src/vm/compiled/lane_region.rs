@@ -51,6 +51,9 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/field_reads.rs"] mod field_reads;
 #[path = "lane_region/number_domains.rs"] mod number_domains;
 #[path = "lane_region/loop_arrays.rs"] mod loop_arrays;
+#[path = "lane_region/direct_calls.rs"] mod direct_calls;
+#[path = "lane_region/direct_admission.rs"] mod direct_admission;
+#[path = "lane_region/direct_enter.rs"] mod direct_enter;
 use loop_arrays::LoopArray;
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
@@ -682,6 +685,27 @@ pub(super) fn writes(instruction: WideInstruction) -> Vec<Register> {
 impl<'a, 'f> Lowering<'a, 'f> {
     fn ins(&mut self) -> cranelift_frontend::FuncInstBuilder<'_, 'f> {
         self.builder.ins()
+    }
+
+    // The word vocabulary of the native-call lowerings (`lane_region/direct_*.rs`).
+    fn word_load(&mut self, base: ir::Value, offset: i32) -> ir::Value { self.ins().load(types::I64, MemFlagsData::trusted(), base, offset) }
+    fn word_store(&mut self, value: ir::Value, base: ir::Value, offset: i32) { self.ins().store(MemFlagsData::trusted(), value, base, offset); }
+    fn word_const(&mut self, bits: i64) -> ir::Value { self.ins().iconst(types::I64, bits) }
+    fn word_add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().iadd(a, b) }
+    fn word_add_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().iadd_imm_u(a, imm) }
+    fn word_mul_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().imul_imm_u(a, imm) }
+    fn word_and(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().band(a, b) }
+    fn word_or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().bor(a, b) }
+    fn word_select(&mut self, test: ir::Value, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().select(test, a, b) }
+    fn word_cmp(&mut self, cc: IntCC, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().icmp(cc, a, b) }
+    fn word_cmp_imm(&mut self, cc: IntCC, a: ir::Value, imm: i64) -> ir::Value { self.ins().icmp_imm_u(cc, a, imm) }
+    fn word_brif(&mut self, test: ir::Value, then: ir::Block, then_args: &[ir::BlockArg], otherwise: ir::Block, otherwise_args: &[ir::BlockArg]) {
+        self.ins().brif(test, then, then_args, otherwise, otherwise_args);
+    }
+    fn word_jump(&mut self, block: ir::Block, args: &[ir::BlockArg]) { self.ins().jump(block, args); }
+    fn word_call(&mut self, signature: ir::SigRef, entry: ir::Value, args: &[ir::Value]) -> ir::Value {
+        let call = self.ins().call_indirect(signature, entry, args);
+        self.builder.inst_results(call)[0]
     }
 
     fn tagged(&mut self, state: &mut State, register: Register) -> ir::Value {
@@ -3315,107 +3339,6 @@ impl Lowering<'_, '_> {
         self.reload_property_arena();
         self.reload_result(state, instruction.result_register());
         true
-    }
-
-    /// The call of `callee` by its compiled entry: the callee's registers in the lane stack's
-    /// free values, a native frame the lane makes an activation of only should the callee
-    /// leave (`compiled::ShadowFrame`), and the per-entry words the callee runs with. A
-    /// completion stores its value to the call's register and continues at `completed`; a
-    /// leave stops the caller too, its frames kept; any other callee, receiver, or a full
-    /// stack takes `helper`. The caller wrote back its registers.
-    fn direct_call(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
-        let word = std::mem::size_of::<Value>() as i64;
-        let frame_size = std::mem::size_of::<ShadowFrame>() as i64;
-        let offset = |field: usize| i32::try_from(field).expect("dispatch offset fits i32");
-        let (base, payload, result) = (self.registers_base, self.payload, self.result);
-        let callee_bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(instruction.register_b()));
-        let same = self.ins().icmp_imm_u(IntCC::Equal, callee_bits, callee.callee.to_bits() as i64);
-        let this = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(instruction.register_c()));
-        // A sloppy callee binds an object receiver itself and an `undefined` or `null` one
-        // to the global object (`lane_receiver_this`); any other receiver takes the helper.
-        let (admitted, this) = match callee.sloppy {
-            Some(global) => {
-                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), this);
-                let undefined = self.ins().icmp_imm_u(IntCC::Equal, this, Value::UNDEFINED.to_bits() as i64);
-                let null = self.ins().icmp_imm_u(IntCC::Equal, this, Value::NULL.to_bits() as i64);
-                let nullish = self.ins().bor(undefined, null);
-                let bound = self.ins().bor(object, nullish);
-                let global = self.ins().iconst(types::I64, global.to_bits() as i64);
-                (self.ins().band(same, bound), self.ins().select(object, this, global))
-            }
-            None => (same, this),
-        };
-        let top = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, native_top)));
-        let end = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, native_end)));
-        let next = self.ins().iadd_imm_u(top, i64::from(callee.registers) * word);
-        let reserved = self.ins().iadd_imm_u(next, callee.reserve.values as i64 * word);
-        let fits = self.ins().icmp(IntCC::UnsignedLessThanOrEqual, reserved, end);
-        let shadow = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
-        let shadow_end = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_end)));
-        let recovered = self.ins().iadd_imm_u(shadow, callee.reserve.activations.max(1) as i64 * frame_size);
-        let room = self.ins().icmp(IntCC::UnsignedLessThanOrEqual, recovered, shadow_end);
-        let admitted = self.ins().band(admitted, fits);
-        let admitted = self.ins().band(admitted, room);
-        let enter = self.builder.create_block();
-        self.ins().brif(admitted, enter, &[], helper, &[]);
-        self.builder.switch_to_block(enter);
-        // Parameter `k` lives in register `k` of a plain activation; the rest start undefined.
-        let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
-        let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
-        let argc = crate::bytecode::ImmediateLayout::argument_count(instruction.imm());
-        for register in 0..callee.registers {
-            let value = if register < argc {
-                self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(window + register))
-            } else { undefined };
-            self.ins().store(MemFlagsData::trusted(), value, top, register_offset(register));
-        }
-        let descriptor = self.ins().iconst(types::I64, callee as *const DirectCallee as i64);
-        for (field, value) in [(std::mem::offset_of!(ShadowFrame, callee), descriptor), (std::mem::offset_of!(ShadowFrame, this), this)] {
-            self.ins().store(MemFlagsData::trusted(), value, shadow, offset(field));
-        }
-        let pushed = self.ins().iadd_imm_u(shadow, frame_size);
-        let words = [
-            std::mem::offset_of!(JsStepDispatch, receiver),
-            std::mem::offset_of!(JsStepDispatch, capture_values),
-            std::mem::offset_of!(JsStepDispatch, capture_len),
-        ];
-        let saved: Vec<ir::Value> = words.iter()
-            .map(|field| self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(*field)))
-            .collect();
-        let capture_values = self.ins().iconst(types::I64, callee.capture_values as i64);
-        let capture_len = self.ins().iconst(types::I64, callee.capture_len as i64);
-        for (field, value) in words.iter().zip([this, capture_values, capture_len]) {
-            self.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
-        }
-        self.ins().store(MemFlagsData::trusted(), pushed, payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
-        self.ins().store(MemFlagsData::trusted(), next, payload, offset(std::mem::offset_of!(JsStepDispatch, native_top)));
-        let signature = native_entry_signature(types::I64, self.builder.func.signature.call_conv);
-        let signature = self.builder.import_signature(signature);
-        // The caller owns the exact callee body whose entry it embeds.
-        let entry = self.ins().iconst(types::I64, callee.body.entry_address() as i64);
-        let zero = self.ins().iconst(types::I64, 0);
-        let context = self.context;
-        let status = self.ins().call_indirect(signature, entry, &[context, zero, zero, top, result]);
-        let status = self.builder.inst_results(status)[0];
-        for (field, value) in words.iter().zip(saved) {
-            self.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
-        }
-        self.ins().store(MemFlagsData::trusted(), top, payload, offset(std::mem::offset_of!(JsStepDispatch, native_top)));
-        let returned = self.ins().icmp_imm_u(IntCC::Equal, status, i64::from(LANE_BODY_RETURNED));
-        let back = self.builder.create_block();
-        let left = self.builder.create_block();
-        self.builder.set_cold_block(left);
-        self.ins().brif(returned, back, &[], left, &[]);
-        // A leave inside the callee stops the caller with it: the lane makes the frames'
-        // activations and continues in the innermost (`dispatch_fast::lane_body_left`).
-        self.builder.switch_to_block(left);
-        let leave = self.leave;
-        self.ins().jump(leave, &[status.into()]);
-        self.builder.switch_to_block(back);
-        self.ins().store(MemFlagsData::trusted(), shadow, payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
-        let value = self.ins().load(types::I64, MemFlagsData::trusted(), result, 0);
-        self.ins().store(MemFlagsData::trusted(), value, base, register_offset(instruction.result_register()));
-        self.ins().jump(completed, &[]);
     }
 
     /// The activation completes with `register`, which the record at `pc` names

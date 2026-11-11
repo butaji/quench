@@ -71,6 +71,7 @@ mod lane_sites;
 use lane_allocations::{lane_binary, lane_new_array, lane_new_object, lane_new_object_pair};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
+#[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
 #[path = "compiled/lane_facts.rs"]
 mod lane_facts;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
@@ -7237,16 +7238,15 @@ pub(super) struct DirectCallee {
     /// The callee's published body (`LaneBody::Specialized`): the caller's code calls its entry,
     /// so the caller retires with it, at a shape compaction (`LaneMethod::names_shapes`) or at
     /// a lifecycle edge (`ProgramStore::retire_dead_native_calls`).
-    pub(super) method: Rc<PublishedLaneMethod>,
+    /// `None` where the call runs what the callee's `cell` holds then, as a call of the function itself.
+    pub(super) method: Option<Rc<PublishedLaneMethod>>,
     /// Pins the exact entry embedded by the caller, including recovery after retirement.
-    pub(super) body: Rc<LaneMethod>,
+    pub(super) body: Option<Rc<LaneMethod>>,
     /// The caller's call record, which the callee's activation returns to.
     pub(super) call: usize,
+    pub(super) cell: usize,
     pub(super) callee: Value,
     pub(super) registers: u16,
-    /// The values past its registers a leave inside a call it inlines takes
-    /// and the activations that recovery needs, proved free with its own.
-    pub(super) reserve: super::dispatch_fast::LaneRecoverySpace,
     /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which
     /// binds a direct object itself (`lane_receiver_this`); `None` for a strict callee, which
     /// takes any receiver as it is.
@@ -7264,11 +7264,11 @@ pub(super) struct DirectCallee {
 #[repr(C)]
 pub(super) struct ShadowFrame {
     pub(super) callee: *const DirectCallee,
-    pub(super) this: u64,
+    pub(super) this: u64, pub(super) pin: usize,
 }
 
 impl ShadowFrame {
-    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0 };
+    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, pin: 0 };
 }
 
 /// Direct calls a run nests natively: past them, a call takes the lane's helper path. The
