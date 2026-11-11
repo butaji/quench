@@ -358,14 +358,15 @@ pub(super) fn site_targets<'a, H: super::Host>(vm: &'a super::Vm<H>, view: &Lane
 
 
 /// What a first compile of `view` comes to before any planning. Entry warm-up leaves closed
-/// loops to their admitted regions while those still enter native code (a region that leaves
+/// loops to their admitted regions while those still enter native code and their runs are long (a region that leaves
 /// for calls still lets a lane body inline those callees into its typed unit). A function
 /// whose callees still compile waits for their bodies, which it then calls by their entries
 /// (`compiled::DirectCallee`).
 pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, body: Option<&crate::bytecode::Function>) -> Option<super::super::compiled::LaneBodyOutcome> {
     use super::super::compiled::LaneBodyOutcome;
-    if view.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters()) {
-        return Some(LaneBodyOutcome::Declined);
+    let mut closed = view.loops.iter().filter(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters());
+    if let Some(outcome) = closed.find_map(|site| site.region_verdict()) {
+        return Some(outcome);
     }
     let body = body?;
     let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {

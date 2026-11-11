@@ -17,6 +17,9 @@ pub(super) struct LoopTier {
     pending: Option<Box<super::super::compiled::PendingOsrRegion>>,
     wait: u16,
     pub(super) compilations: u32,
+    /// Native runs of the code and the iterations they took (`verdict`).
+    runs: u32,
+    iterations: u64,
     /// Each operation the code left at, with its leaves so far; and those whose int32
     /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
     leaves: Vec<(u32, u16)>,
@@ -26,6 +29,22 @@ pub(super) struct LoopTier {
 }
 
 impl LoopTier {
+    pub(super) fn weigh_run(&mut self, backedges: u64) {
+        self.runs = self.runs.saturating_add(1);
+        self.iterations = self.iterations.saturating_add(backedges);
+    }
+
+    /// What the runs leave a function holding the region: nothing yet while they are too few to
+    /// weigh (`Deferred`, the entry asks again), the region's own loop (`Declined`) while they take
+    /// at least `TIERS.loops.long_run_iterations` iterations on average, and no verdict where they
+    /// are shorter, which the function's own body serves without an entry per call.
+    pub(super) fn verdict(&self) -> Option<super::super::compiled::LaneBodyOutcome> {
+        use super::super::compiled::LaneBodyOutcome;
+        let loops = &TIERS.loops;
+        if self.runs < loops.sample_runs { return Some(LaneBodyOutcome::Deferred); }
+        (self.iterations >= u64::from(self.runs) * loops.long_run_iterations).then_some(LaneBodyOutcome::Declined)
+    }
+
     pub(super) fn is_published(&self) -> bool {
         self.code.as_ref().is_some_and(|code| code.is_published())
     }

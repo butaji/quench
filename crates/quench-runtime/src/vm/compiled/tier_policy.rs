@@ -34,6 +34,12 @@ pub(in crate::vm) struct Loops {
     /// Compilations a site may make: each after the first widens a value the last one held as
     /// an `i32`, and a region has few such values.
     pub(in crate::vm) max_compilations: u32,
+    /// Native runs a site is weighed over before its mean run length decides (`LoopSite::runs_long`).
+    pub(in crate::vm) sample_runs: u32,
+    /// Iterations a run takes on average from which the region serves its function: a longer
+    /// run repays its entry, a shorter one (V8-v7 Crypto's `am3`, 6 to 19 a call) pays the
+    /// entry at every call, which the function's own body does not make.
+    pub(in crate::vm) long_run_iterations: u64,
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
@@ -175,7 +181,7 @@ const FLOOR: Tiers = Tiers {
 pub(in crate::vm) const PERCENT: u64 = 100;
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8 },
+    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8, sample_runs: 16, long_run_iterations: 64 },
     lane_body: LaneBody {
         warmup_entries: 400,
         reoptimize_share: 1,
