@@ -35,17 +35,26 @@ pub(crate) fn compile_eager_native<H: Host>(
     let (entries, mut owners, mut counts) = super::specialize::CallThreaded::frozen(extension).specialize(&program)?;
     counts.frozen_globals = globals.len();
     counts.frozen_fields = frozen_field_facts.len();
-    let frozen = crate::vm::native_program::FrozenAssumptions {
+    let frozen = frozen_assumptions(&mut owners, &globals, &frozen_field_facts, constant_block, invalidation, last_tier);
+    // SAFETY: every entry was lowered from its exact function for host H.
+    unsafe { crate::NativeJsProgram::from_entries_with_counts(program, entries, Rc::new(owners), counts, Some(frozen)) }
+}
+
+/// The whole-program assumptions an eager image carries: its invalidation word, the atoms,
+/// globals and fields it folded, its constants and the tier word it publishes.
+#[cfg(feature = "aot")]
+fn frozen_assumptions(owners: &mut EagerOwners, globals: &std::collections::BTreeMap<Atom, Value>, fields: &std::collections::BTreeMap<Atom, Value>,
+    constants: Rc<std::cell::RefCell<Box<[Value]>>>, invalidation: crate::code_dependencies::Invalidation,
+    last_tier: Rc<std::cell::Cell<u64>>) -> crate::vm::native_program::FrozenAssumptions {
+    crate::vm::native_program::FrozenAssumptions {
         invalidation: owners.invalidation.clone(),
         atoms: std::mem::take(&mut owners.frozen_atoms).into_iter().collect(),
         globals: globals.keys().copied().collect(),
-        fields: frozen_field_facts.keys().copied().collect(),
-        constants: constant_block,
+        fields: fields.keys().copied().collect(),
+        constants,
         watch: Rc::new(crate::code_dependencies::PublishedCode::with_invalidation((), invalidation)),
         last_tier,
-    };
-    // SAFETY: every entry was lowered from its exact function for host H.
-    unsafe { crate::NativeJsProgram::from_entries_with_counts(program, entries, Rc::new(owners), counts, Some(frozen)) }
+    }
 }
 
 /// Everything the eager entries address: code, operand arrays and the per-PC

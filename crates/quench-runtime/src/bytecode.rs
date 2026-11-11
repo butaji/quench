@@ -73,9 +73,7 @@ pub(crate) use field_store::{FieldStore, StoreReceiver, field_store_op};
 mod instruction;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
-mod numeric_ops;
-mod op_classes;
-mod unary_operators;
+mod numeric_ops; mod op_classes; mod unary_operators;
 pub(crate) use unary_operators::*;
 mod source_positions;
 pub(crate) use source_positions::SourcePositions;
@@ -1853,12 +1851,6 @@ pub(crate) enum PlainLocalSlotIneligibility {
     Captured,
 }
 
-/// Whether a load or store by name reads a hidden or unknown binding (a global store is the lane's).
-fn reads_hidden_name(instruction: WideInstruction, tables: &impl FactTables) -> bool {
-    (instruction.op().loads_name() || instruction.op().stores_name()) && usize::try_from(instruction.atom_index())
-        .is_ok_and(|atom| tables.atom_name(atom).is_none_or(|name| name.starts_with('\0') && !is_intrinsic_name(name)))
-}
-
 impl Function {
     /// Releases the spare capacity of the tables a compilation grew, once it is finished.
     pub(crate) fn shrink_to_fit(&mut self) {
@@ -2129,7 +2121,7 @@ impl Function {
             || self.inherited_with_scope
             || !self.binding_sites.is_empty()
             || self.instructions().any(|instruction| {
-                reads_hidden_name(instruction, tables)
+                name_bindings::reads_hidden_name(instruction, tables)
                     || matches!(
                         instruction.op(),
                         Op::ResolveName
