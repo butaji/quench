@@ -8044,7 +8044,12 @@ fn lane_loop_native<H: Host>(
         return LoopAttempt::Declined;
     }
     let mut entry = super::compiled::LoopEntry::new();
-    let Some(views) = lane_loop_entry(cx, r, region, &mut entry) else {
+    let started = crate::trace::Dev::FastJit.on().then(std::time::Instant::now);
+    let views = lane_loop_entry(cx, r, region, &mut entry);
+    if let Some(started) = started {
+        super::compiled::count_fast_run(site.function, site.header, started.elapsed().as_nanos() as u64, None);
+    }
+    let Some(views) = views else {
         site.declines.set(site.declines.get() + 1);
         return LoopAttempt::Declined;
     };
@@ -8280,9 +8285,14 @@ fn lane_loop_run<H: Host>(
     };
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
+    let started = crate::trace::Dev::FastJit.on().then(std::time::Instant::now);
     let outcome = unsafe {
         code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame, interrupt, cx as usize)
     };
+    if let Some(started) = started {
+        let exited = matches!(outcome, LoopOutcome::Exit(_));
+        super::compiled::count_fast_run(site.function, site.header, started.elapsed().as_nanos() as u64, Some(exited));
+    }
     if site.diagnostics {
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));

@@ -46,9 +46,29 @@ struct Totals {
 
 static TOTALS: Mutex<Totals> = Mutex::new(Totals { regions: 0, ops: 0, bytes: 0, nanos: 0, rejected: 0 });
 static REJECTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+/// Per region (function, header): entry setups, their ns, native runs, their ns, and runs that left on a guard.
+static RUNS: Mutex<BTreeMap<(u32, u32), [u64; 5]>> = Mutex::new(BTreeMap::new());
 static REPORT: std::sync::Once = std::sync::Once::new();
 
+/// Counts one entry setup (`entry`) or one native run of a region, for the report.
+pub(crate) fn count_run(function: u32, header: u32, nanos: u64, run: Option<bool>) {
+    let Ok(mut runs) = RUNS.lock() else { return };
+    let row = runs.entry((function, header)).or_default();
+    match run {
+        None => { row[0] += 1; row[1] += nanos; }
+        Some(exited) => { row[2] += 1; row[3] += nanos; row[4] += u64::from(exited); }
+    }
+}
+
 extern "C" fn report() {
+    if let Ok(runs) = RUNS.lock() {
+        for ((function, header), [entries, entry_ns, runs, run_ns, exits]) in runs.iter() {
+            eprintln!(
+                "QUENCH_FASTJIT_RUN function={function} header={header} entries={entries} entry_ns_each={} runs={runs} run_ns_each={} exits={exits}",
+                entry_ns / entries.max(&1), run_ns / runs.max(&1)
+            );
+        }
+    }
     let (Ok(totals), Ok(rejects)) = (TOTALS.lock(), REJECTS.lock()) else { return };
     let ops = totals.ops.max(1);
     eprintln!(

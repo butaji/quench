@@ -53,6 +53,7 @@ use std::rc::{Rc, Weak};
 mod osr_loop;
 mod osr_compile;
 mod fast_region;
+pub(crate) use fast_region::count_run as count_fast_run;
 mod fast_rows;
 pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
 pub(super) use lane_region::ElementViews;
