@@ -8067,6 +8067,7 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
         let body = program.function(site.function() as usize);
         body.code.get(pc as usize).is_some_and(|packed| {
             let op = decoded_instruction(body, *packed).op();
+            super::compiled::fast_region::leave(site.function(), pc, op);
             op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
                 || matches!(op.class(), Class::LoadCapture)
                 // A FastJIT region also holds a loaded field as an int32 until it leaves there.
@@ -19875,7 +19876,7 @@ fn install_loop_sites<'live, H: Host>(
                     widenings: std::cell::Cell::new(0),
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
-                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::IDLE),
+                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial()),
                 },
             )
         })

@@ -48,6 +48,7 @@ struct Totals {
 
 static TOTALS: Mutex<Totals> = Mutex::new(Totals { regions: 0, ops: 0, bytes: 0, nanos: 0, rejected: 0 });
 static REJECTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+static LEAVES: Mutex<BTreeMap<(u32, u32), (crate::bytecode::Op, u64)>> = Mutex::new(BTreeMap::new());
 static REPORT: std::sync::Once = std::sync::Once::new();
 
 /// What a loop site did in the lane, counted under `QUENCH_TRACE=js-jit` (printed with the totals): the
@@ -67,6 +68,23 @@ pub(in crate::vm) enum Event {
 }
 
 static EVENTS: [std::sync::atomic::AtomicU64; 5] = [const { std::sync::atomic::AtomicU64::new(0) }; 5];
+
+/// The most frequent leave sites a run reports.
+const TOP_LEAVES: usize = 40;
+
+/// Counts a region run leaving at `pc` of `function` (an instruction of operation `op`), where the trace channel is on.
+pub(in crate::vm) fn leave(function: u32, pc: u32, op: crate::bytecode::Op) {
+    if !crate::trace::Channel::JsJit.on() {
+        return;
+    }
+    REPORT.call_once(|| {
+        // SAFETY: `report` is an `extern "C" fn()` that touches only statics.
+        unsafe { libc::atexit(report) };
+    });
+    if let Ok(mut leaves) = LEAVES.lock() {
+        leaves.entry((function, pc)).or_insert((op, 0)).1 += 1;
+    }
+}
 
 /// Counts `event` where the trace channel is on.
 pub(in crate::vm) fn count(event: Event) {
@@ -90,6 +108,13 @@ extern "C" fn report() {
     );
     let [entered, left, declined, compiled, bodies] = std::array::from_fn(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
     eprintln!("QUENCH_FASTJIT_LOOPS entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies}");
+    if let Ok(leaves) = LEAVES.lock() {
+        let mut ranked: Vec<_> = leaves.iter().collect();
+        ranked.sort_by(|a, b| (b.1).1.cmp(&(a.1).1).then(a.0.cmp(b.0)));
+        for ((function, pc), (op, count)) in ranked.into_iter().take(TOP_LEAVES) {
+            eprintln!("QUENCH_FASTJIT_LEAVE {function}:{pc} {op:?} {count}");
+        }
+    }
     let mut ranked: Vec<_> = rejects.iter().collect();
     ranked.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
     for (name, count) in ranked {
@@ -155,4 +180,12 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
         body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs))?);
     }
     link(&layout, &body)
+}
+
+impl<H: crate::Host> crate::vm::Vm<H> {
+    /// Whether the JavaScript function tiers compile function bodies: they run (`js_tier_runs`) and the process runs
+    /// Cranelift function tiers at all (not `--f-jit`, whose loop sites are still admitted by `js_tier_runs`).
+    pub(in crate::vm) fn js_function_compiles(&self) -> bool {
+        self.js_tier_runs() && crate::jit_mode::function_tiers()
+    }
 }

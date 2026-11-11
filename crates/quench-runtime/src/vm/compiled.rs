@@ -12867,7 +12867,7 @@ impl<H: Host> Vm<H> {
         allow_inline_calls: bool,
         promote: bool,
     ) -> Option<JsNativeDispatchResult> {
-        if !self.js_tier_runs()
+        if !self.js_function_compiles()
             || !self.programs.js_jit_general_dispatch_enabled()
             || program.kind == crate::bytecode::ProgramKind::Wasm
             || start_pc >= program.function_get(self.frames.get(frame)?.function as usize)?.code.len()
@@ -12983,7 +12983,7 @@ impl<H: Host> Vm<H> {
         entry: &TierEntry,
         specialized_guard_miss: &mut bool,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
-        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm {
+        if !self.js_function_compiles() || program.kind == crate::bytecode::ProgramKind::Wasm {
             return None;
         }
         let (program_id, function_id) = (entry.program, entry.function);

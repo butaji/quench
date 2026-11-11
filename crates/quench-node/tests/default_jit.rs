@@ -74,3 +74,28 @@ fn f_jit_exits_leave_the_interpreters_state() {
         }
     }
 }
+
+/// The function-level compile attempts (before each function's `osr` section) and the loop-region runs of a run's statistics.
+fn function_attempts_and_region_runs(flag: &str) -> (u64, u64) {
+    let output = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+        .args([flag, "-e", HOT_LOOP])
+        .env("QUENCH_TRACE", "js-jit")
+        .env_remove("NODE_OPTIONS")
+        .output()
+        .expect("run quench-node");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let (mut attempts, mut runs) = (0, 0);
+    for json in String::from_utf8_lossy(&output.stderr).lines().filter_map(|line| line.strip_prefix("QUENCH_JS_JIT_STATS ")) {
+        let (function, osr) = json.split_once("\"osr\"").unwrap_or((json, ""));
+        attempts += count_after(function, "\"compile_attempts\":") + count_after(function, "\"general_dispatch_compile_attempts\":");
+        runs += count_after(osr, "\"native_region_runs\":");
+    }
+    (attempts, runs)
+}
+
+#[test]
+fn f_jit_compiles_no_function_and_runs_stencil_regions() {
+    let (attempts, runs) = function_attempts_and_region_runs("--f-jit");
+    assert_eq!(attempts, 0, "--f-jit: no Cranelift function compile is attempted");
+    assert!(runs > 0, "--f-jit: the hot loop runs its stencil region");
+}
