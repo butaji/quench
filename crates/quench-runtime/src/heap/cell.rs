@@ -1347,7 +1347,7 @@ pub(crate) struct InlineObjectHeader {
 
 impl InlineObjectHeader {
     /// The inline shape this header stores.
-    pub(crate) fn shape(self) -> u32 {
+    #[inline] pub(crate) fn shape(self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
 
@@ -1636,7 +1636,7 @@ impl ArrayObject {
         Self { object, elements }
     }
 
-    pub(crate) fn elements(&self) -> &super::ArrayElements {
+    #[inline] pub(crate) fn elements(&self) -> &super::ArrayElements {
         &self.elements
     }
 
@@ -1652,7 +1652,7 @@ impl ArrayObject {
 
     /// Whether a dead array owns anything its drop frees: extras, or an element allocation
     /// it counts among its backing's owners. Young runs and the empty header need none.
-    pub(crate) fn needs_drop(&self) -> bool {
+    #[inline] pub(crate) fn needs_drop(&self) -> bool {
         self.object.extras_pointer().is_some() || self.elements.owner_count() != 0
     }
 
@@ -2101,7 +2101,7 @@ impl Object {
         EXTRAS_TAG | address
     }
 
-    fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
+    #[inline] fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
         let word = self.payload;
         (word & EXTRAS_TAG_MASK == EXTRAS_TAG)
             .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)
@@ -2124,7 +2124,7 @@ impl Object {
         true
     }
 
-    fn extras(&self) -> Option<&ObjectExtras> {
+    #[inline] fn extras(&self) -> Option<&ObjectExtras> {
         // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime.
         self.extras_pointer().map(|extras| unsafe { &*extras })
     }
@@ -2152,7 +2152,7 @@ impl Object {
         unsafe { &mut *extras }
     }
 
-    fn extras_mut_existing(&mut self) -> Option<&mut ObjectExtras> {
+    #[inline] fn extras_mut_existing(&mut self) -> Option<&mut ObjectExtras> {
         // SAFETY: as in `extras`, with `&mut self` making the borrow unique.
         self.extras_pointer().map(|extras| unsafe { &mut *extras })
     }
@@ -2519,7 +2519,7 @@ impl Object {
         }
     }
 
-    pub(crate) fn was_used_as_prototype(&self) -> bool {
+    #[inline] pub(crate) fn was_used_as_prototype(&self) -> bool {
         self.extras()
             .is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
     }
@@ -2543,7 +2543,7 @@ impl Object {
         }
     }
 
-    pub(crate) fn shape(&self) -> u32 {
+    #[inline] pub(crate) fn shape(&self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
     /// The shape with its dictionary and exotic bits (`ValueVec::exact_auxiliary`): a cache
@@ -2566,7 +2566,7 @@ impl Object {
         self.note_prototype_layout_change();
         self.renumber_shape(shape);
     }
-    pub(crate) fn is_extensible(&self) -> bool {
+    #[inline] pub(crate) fn is_extensible(&self) -> bool {
         self.properties().is_extensible()
     }
     /// Whether a cached add transition (`FieldAddCache`) applies to this object as to the

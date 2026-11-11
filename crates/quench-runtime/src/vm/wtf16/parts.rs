@@ -113,7 +113,7 @@ impl Parts {
 
 impl JsString {
     /// A string that is these parts' text, not yet written out.
-    pub(crate) fn from_parts(parts: Parts) -> Self {
+    #[inline] pub(crate) fn from_parts(parts: Parts) -> Self {
         Self { repr: Repr::Flat(FlatUnits::Parts(parts)) }
     }
 

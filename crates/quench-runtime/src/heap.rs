@@ -2036,7 +2036,7 @@ impl Heap {
         self.allocated += text.beside / payload_unit();
     }
 
-    pub fn should_collect(&self) -> bool {
+    #[inline] pub fn should_collect(&self) -> bool {
         self.allocated >= self.collect_at
     }
     /// The weight charged since the last collection.
