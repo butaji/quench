@@ -24,6 +24,7 @@ pub(super) fn lane_completes_return<H: Host>(cx: *mut LaneContext<H>, call: &Pen
     let vm = unsafe { vm(cx) };
     call.caller + 1 == frame
         && frame + 1 == vm.frames.len()
+        && vm.lane_stack.body_boundary != Some(frame)
         && !call.completion.completes_on_general_path()
         && (retired || !caller_runs_general(cx, call))
 }
