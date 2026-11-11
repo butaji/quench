@@ -72,9 +72,6 @@ pub(in crate::vm) enum LaneBodyOutcome {
     Declined,
 }
 
-/// A replanned body inlines with this fraction of the budget whose compile failed.
-const REPLAN_BUDGET_DIVISOR: usize = 2;
-
 /// The code of one lane body, compiled on the calling thread.
 /// The helpers a body of this process calls by address.
 fn process_helpers<H: Host>() -> LaneHelpers {
@@ -214,7 +211,7 @@ impl<H: Host> Vm<H> {
             let (plan, native) = planned?;
             let oversized = native.dfg.num_insts() * lane_region::LANE_BODY_CODE_BYTES_PER_IR > lane_region::LANE_BODY_MAX_CODE_BYTES;
             if !oversized || plan.unit.frames.is_empty() || budget == 0 { return Some((plan, native)); }
-            budget /= REPLAN_BUDGET_DIVISOR;
+            budget /= TIERS.limits.inlining.replan_divisor;
         }
     }
 
@@ -314,7 +311,7 @@ impl<H: Host> Vm<H> {
         }
         Ok(match pending.poll() {
             Err(pending) => LaneBodyOutcome::Compiling(pending),
-            Ok(LaneCompile::Replan(generic, budget)) => return Err((generic, budget / REPLAN_BUDGET_DIVISOR)),
+            Ok(LaneCompile::Replan(generic, budget)) => return Err((generic, budget / TIERS.limits.inlining.replan_divisor)),
             Ok(LaneCompile::Done(method)) => method
                 .and_then(|method| self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()))
                 .map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published),

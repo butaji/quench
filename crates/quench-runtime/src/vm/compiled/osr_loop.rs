@@ -670,11 +670,8 @@ pub(crate) struct InlineFrame {
     pub(crate) base: Register,
     pub(crate) registers: u16,
     /// The callee's parameters bound to caller registers, which hold its values for them.
-    pub(crate) bound: [Option<Register>; MAX_INLINE_PARAMS],
+    pub(crate) bound: [Option<Register>; TIERS.limits.inlining.params],
 }
-
-/// The parameters an inlined callee may have, each bound or numeric (`InlineFrame::bound`).
-pub(crate) const MAX_INLINE_PARAMS: usize = 8;
 
 /// Where an inlining region's PC comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1012,7 +1009,7 @@ pub(super) fn inline_region<'a>(
         let mut chain = Vec::new();
         if let Some(path) = &callee_path { intern_field(&mut chain, path, true); }
         let callee = resolve(&chain, capture)?;
-        (callee.params == argc && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
+        (callee.params == argc && usize::from(argc) <= TIERS.limits.inlining.params).then_some(())?;
         let reached = crate::bytecode::reachable_from(&callee.instructions, [0]);
         let body = || callee.instructions.iter().copied().enumerate().filter(|(pc, _)| reached.contains(*pc)).map(|(_, instruction)| instruction);
         body().all(|instruction| inlinable(instruction.op()) && (instruction.result_flags() == 0 || inlined_returning(instruction) || inlined_set_this(instruction, sites).is_some())).then_some(())?;
@@ -1025,7 +1022,7 @@ pub(super) fn inline_region<'a>(
         // A parameter read as an object is bound to the caller register its argument was
         // moved from in the setup, which the region never writes; any other is a Number it
         // copies.
-        let mut bound = [None; MAX_INLINE_PARAMS];
+        let mut bound = [None; TIERS.limits.inlining.params];
         for parameter in 0..argc {
             if !body().any(|instruction| object_reads(instruction) == Some(parameter)) {
                 continue;
