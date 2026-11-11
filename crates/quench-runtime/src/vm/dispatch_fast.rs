@@ -556,7 +556,7 @@ const WINDOW_STORAGE: u16 = 3;
 pub(super) const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
 
 impl EnvironmentWindow {
-    fn captured(self, slot: usize) -> bool {
+    #[inline] fn captured(self, slot: usize) -> bool {
         self.captured & 1 << slot != 0
     }
 }
@@ -1260,7 +1260,7 @@ enum ActivationKind {
 
 impl Activation {
     /// The frame state of a JavaScript activation; `None` for Wasm.
-    fn script(&self) -> Option<&ScriptActivation> {
+    #[inline] fn script(&self) -> Option<&ScriptActivation> {
         match &self.kind {
             ActivationKind::Script(script) => Some(script),
             ActivationKind::Wasm { .. } => None,

@@ -95,23 +95,23 @@ impl WideInstruction {
         Self { op, a, b, c, imm }
     }
 
-    pub(crate) const fn op(self) -> Op {
+    #[inline] pub(crate) const fn op(self) -> Op {
         self.op
     }
 
-    pub(crate) const fn a(self) -> u16 {
+    #[inline] pub(crate) const fn a(self) -> u16 {
         self.a
     }
 
-    pub(crate) const fn b(self) -> u16 {
+    #[inline] pub(crate) const fn b(self) -> u16 {
         self.b
     }
 
-    pub(crate) const fn c(self) -> u16 {
+    #[inline] pub(crate) const fn c(self) -> u16 {
         self.c
     }
 
-    pub(crate) const fn imm(self) -> u32 {
+    #[inline] pub(crate) const fn imm(self) -> u32 {
         self.imm
     }
 
@@ -888,34 +888,34 @@ impl Instr {
         WideInstruction::new(self.op(), self.a(), self.b(), self.c(), self.imm())
     }
 
-    pub(crate) const fn op(self) -> Op {
+    #[inline] pub(crate) const fn op(self) -> Op {
         // SAFETY: construction and residual decoding reject IDs outside the
         // contiguous macro-generated opcode range.
         unsafe { std::mem::transmute::<u16, Op>((self.0 & ((1 << Self::OP_BITS) - 1)) as u16) }
     }
 
-    pub(crate) const fn a(self) -> u16 {
+    #[inline] pub(crate) const fn a(self) -> u16 {
         if self.is_wide() {
             return ((self.0 >> Self::A_SHIFT) & Self::FIELD_MASK) as u16;
         }
         Self::unpack_field(self.op(), 0, (self.0 >> Self::A_SHIFT) as u16)
     }
 
-    pub(crate) const fn b(self) -> u16 {
+    #[inline] pub(crate) const fn b(self) -> u16 {
         if self.is_wide() {
             return ((self.0 >> Self::B_SHIFT) & Self::FIELD_MASK) as u16;
         }
         Self::unpack_field(self.op(), 1, (self.0 >> Self::B_SHIFT) as u16)
     }
 
-    pub(crate) const fn c(self) -> u16 {
+    #[inline] pub(crate) const fn c(self) -> u16 {
         if self.is_wide() {
             return ((self.0 >> Self::C_SHIFT) & Self::FIELD_MASK) as u16;
         }
         Self::unpack_field(self.op(), 2, (self.0 >> Self::C_SHIFT) as u16)
     }
 
-    pub(crate) const fn imm(self) -> u32 {
+    #[inline] pub(crate) const fn imm(self) -> u32 {
         if self.is_wide() {
             return (self.0 >> Self::IMM_SHIFT) as u32;
         }

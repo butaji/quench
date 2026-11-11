@@ -54,7 +54,7 @@ impl RegisterMasks {
 
     /// Whether `register` is live at `pc`, for a windowed mask at its own window; `None` when
     /// the mask has no per-pc entry there (a collection then scans it conservatively).
-    pub(crate) fn live_at(&self, pc: usize, register: usize) -> Option<bool> {
+    #[inline] pub(crate) fn live_at(&self, pc: usize, register: usize) -> Option<bool> {
         match self {
             Self::Narrow(masks) => masks.get(pc).map(|&mask| register < u64::BITS as usize && mask & (1 << register) != 0),
             Self::Half(masks) => masks.get(pc).map(|&mask| register < u128::BITS as usize && mask & (1 << register) != 0),

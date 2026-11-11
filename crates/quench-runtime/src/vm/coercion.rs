@@ -453,7 +453,7 @@ const TYPEOF_KINDS: [crate::ValueType; 8] = {
 
 /// The index in `bytecode::TYPEOF_NAMES` of the name `typeof` yields for a value of `kind`;
 /// `TYPEOF_KINDS` lists the kinds in that order.
-fn typeof_name_index(kind: crate::ValueType) -> usize {
+#[inline] fn typeof_name_index(kind: crate::ValueType) -> usize {
     use crate::ValueType as T;
     match kind {
         T::Undefined => 0,
