@@ -21,6 +21,8 @@ pub(super) struct LoopTier {
     /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
     leaves: Vec<(u32, u16)>,
     widened: Vec<usize>,
+    /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
+    abandoned: Vec<usize>,
 }
 
 impl LoopTier {
@@ -37,14 +39,16 @@ impl LoopTier {
     /// Counts a run of the code that left at `pc`. An operation or element read left `widen_after_leaves`
     /// times joins the widened ones and the code goes, where a compilation remains: the next
     /// entry compiles the loop holding that operation's result as a double.
-    pub(super) fn left_at(&mut self, pc: u32) {
-        if self.widened.binary_search(&(pc as usize)).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
+    pub(super) fn left_at(&mut self, pc: u32, read: bool) {
+        let widened = self.widened.binary_search(&(pc as usize)).is_ok();
+        if !(read || !widened) || self.abandoned.binary_search(&(pc as usize)).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
         let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
         self.leaves[at].1 += 1;
         if self.leaves[at].1 < TIERS.loops.widen_after_leaves { return; }
         self.leaves.swap_remove(at);
-        self.widened.push(pc as usize);
-        self.widened.sort_unstable();
+        let list = if widened { &mut self.abandoned } else { &mut self.widened };
+        list.push(pc as usize);
+        list.sort_unstable();
         if let Some(code) = self.code.take() { code.retire(); }
     }
 
@@ -138,7 +142,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
     let native_field_loads = native_field_loads(machine, region);
-    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, int_entries, typed_captures };
+    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures };
     let policy = machine.heap.memory_policy();
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, policy, program, function, helpers,
