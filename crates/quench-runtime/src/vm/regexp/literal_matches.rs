@@ -18,7 +18,7 @@ impl<H: Host> Vm<H> {
         let Some(last) = last else {
             return Ok(Value::NULL);
         };
-        self.record_regexp_legacy_pending(receiver, input.clone(), matcher, last)?;
+        self.record_regexp_legacy_pending(receiver, input.clone(), Rc::clone(matcher), last)?;
         let matched = self.heap.alloc_unit_run(input.units().slice(last..last + length));
         Ok(self.new_array(vec![matched; count]))
     }
