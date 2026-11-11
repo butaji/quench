@@ -12585,7 +12585,7 @@ impl<H: Host> Vm<H> {
         // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim
         // costs a short call-free one its leaf calls. A function the numeric tier cannot take
         // is still theirs to claim.
-        let lane_claims = self.lane_body_claims(program, function, &facts);
+        let lane_claims = self.programs.js_jit_lane_methods_enabled();
         if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
             return lane_claims || self.programs.js_jit_diagnostics_enabled();
         }
@@ -12596,12 +12596,6 @@ impl<H: Host> Vm<H> {
         // Inlining may erase a short body's calls; a call-free candidate still has
         // to pay for native entry under the same cost policy.
         candidate || self.js_general_tier_takes(program, function, &facts) || lane_claims
-    }
-
-    /// Whether lane bodies may claim `function`: it has calls, loops, or enough instructions.
-    fn lane_body_claims(&self, program: &ResidualProgram, function: u32, facts: &super::js_compiled::JsEntryFacts) -> bool {
-        self.programs.js_jit_lane_methods_enabled()
-            && (facts.has_calls || program.function_get(function as usize).is_some_and(|body| body.loops() || body.code.len() >= TIERS.lane_body.min_instructions))
     }
 
     /// Notes an entry of `function` with the general tier where the tier observes it: a

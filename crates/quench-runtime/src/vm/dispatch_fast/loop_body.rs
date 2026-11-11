@@ -73,7 +73,7 @@ impl LoopBody {
             LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: POLL, stuck, attempts },
             LaneBodyOutcome::Published(method) => Self::Ready { method, runs: 0, exits: 0, leaves: LaneLeaves::NONE, stuck, attempts },
             LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred | LaneBodyOutcome::Unpaid => Self::Idle { stuck, attempts },
-            LaneBodyOutcome::Declined => Self::Declined,
+            LaneBodyOutcome::Declined | LaneBodyOutcome::Short => Self::Declined,
         }
     }
 }
@@ -104,7 +104,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, site: &LoopS
     let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending),
-        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None },
+        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, called: false },
     };
     let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc),
         &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header));

@@ -186,7 +186,7 @@ const MEASURED: Tiers = Tiers {
         max_lifetimes: 8,
         max_callee_waits: 2,
         max_callee_recompiles: 3,
-        min_instructions: 0,
+        min_instructions: 40,
         compile_poll_interval: 64,
         compile_cost_per_ir: 5,
         saved_share: (1, 2),
@@ -270,4 +270,9 @@ mod tests {
             assert!(!row.loop_tier || row.js_function_tiers, "{policy:?}");
         }
     }
+}
+
+pub(in crate::vm) fn exp_min_amortize() -> usize {
+    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("QUENCH_MINAM").ok().and_then(|v| v.parse().ok()).unwrap_or(TIERS.lane_body.min_instructions))
 }

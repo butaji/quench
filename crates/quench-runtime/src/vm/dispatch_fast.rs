@@ -1059,6 +1059,11 @@ impl LaneView {
         self.warming() && self.start.get() != self.prologue.get().cast_const()
     }
 
+    /// Starts activations at the tier prologue again, which `claim_for_tier` wrote.
+    fn reclaim_for_tier(&self) {
+        self.start.set(self.prologue.get().cast_const());
+    }
+
     /// Starts activations at the first record again, once the tier declines the function.
     fn release_from_tier(&self) {
         self.start.set(self.records());

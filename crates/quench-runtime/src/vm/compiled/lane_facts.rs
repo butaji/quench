@@ -72,7 +72,7 @@ pub(super) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
 pub(super) fn amortizes_entry(unit: &lane_unit::Unit) -> bool {
     let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
         instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || !unit.frames.is_empty() || unit.instructions.len() >= TIERS.lane_body.min_instructions
+    loops || !unit.frames.is_empty() || unit.instructions.len() >= super::tier_policy::exp_min_amortize()
 }
 
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
