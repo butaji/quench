@@ -6203,7 +6203,7 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
 }
 
 /// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
-pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
+#[inline] pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
     tier_policy::by_policy(policy).js_function_tiers
 }
 
@@ -12525,7 +12525,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.execution_mode = mode;
+        self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
     }
 
     /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).

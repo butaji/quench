@@ -4,6 +4,7 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 mod steady;
+mod ascii;
 mod subject_cache; pub(super) use subject_cache::SubjectCache;
 mod literal_matches;
 
@@ -218,7 +219,6 @@ pub(super) struct RegExpBuiltinLayout {
 /// A RegExp receiver shape and `RegExp.prototype` shape that together prove `symbol` absent
 /// from the receiver and an own data property of the prototype at `slot`. Shapes hold
 /// attributes, so the proof holds while both match; the slot's value is reread.
-#[derive(Clone, Copy)]
 pub(super) struct RegExpSymbolLayout {
     /// The realm whose `RegExp.prototype` (`prototype_object`) the proof was made for.
     realm: Value,
@@ -227,6 +227,8 @@ pub(super) struct RegExpSymbolLayout {
     receiver: u32,
     prototype: u32,
     slot: u32,
+    /// Published while the method and `exec` read at these shapes are the builtins' (`steady_layouts_proven`).
+    steady: Option<crate::heap::PrototypeValueWatch>,
 }
 
 /// The receiver shapes a program's RegExps commonly share, each proven once: a literal's,
@@ -788,7 +790,7 @@ impl<H: Host> Vm<H> {
                 symbol,
                 receiver: receiver_shape,
                 prototype: prototype_shape,
-                slot: slot as u32,
+                slot: slot as u32, steady: None,
             },
         );
         self.heap.property_get(self.object_data(prototype)?, slot)
@@ -1586,27 +1588,11 @@ impl<H: Host> Vm<H> {
     /// cannot change. A proof for the RegExp's shape under the current
     /// `prototype_layout_epoch` names the slot to read (`RegExpExecProof`).
     fn regexp_builtin_exec_matcher(&self, regexp: Value) -> Option<Rc<quench_regexp::Regex>> {
-        let Some(Cell::RegExp { object, meta }) = self.heap.get(regexp) else {
+        let Some(Cell::RegExp { meta, .. }) = self.heap.get(regexp) else {
             return None;
         };
         let matcher = Self::regexp_matcher(meta).ok()?;
-        let intrinsics = self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get(&self.realm.globals)?;
-        if object.proto() != intrinsics.prototype {
-            return None;
-        }
-        let (shape, epoch) = (object.shape(), crate::heap::prototype_layout_epoch());
-        let proof = match intrinsics.exec_proof.get() {
-            Some(proof) if proof.shape == shape && proof.epoch == epoch => proof,
-            _ => self.prove_regexp_exec(intrinsics, shape, epoch)?,
-        };
-        self.object_data(intrinsics.prototype)
-            .and_then(|data| self.heap.property_get(data, proof.exec_slot))
-            .is_some_and(|exec| self.is_native_function(exec, Native::RegExpExec))
-            .then_some(matcher)
+        self.regexp_exec_is_builtin(regexp).then_some(matcher)
     }
 
     /// `regexp_builtin_exec_matcher`'s lookups past its proof, recording where they found
@@ -1648,12 +1634,12 @@ impl<H: Host> Vm<H> {
         unicode: bool,
     ) -> Result<Value, JsError> {
         let size = input.units().len();
-        let subject = self.regexp_subject(input, matcher);
+        let mut subject = None;
         let mut last_match = None;
         let mut p_index = 0usize;
         let mut q = 0usize;
         while q < size {
-            let Some(matched) = matcher.find_in_subject(&subject, q).next() else {
+            let Some(matched) = self.regexp_split_find(matcher, input, &mut subject, q) else {
                 break;
             };
             // The spec's loop only tries sticky execs below `size`.
@@ -2344,18 +2330,15 @@ impl<H: Host> Vm<H> {
         program: ProgramId,
         site_index: usize,
     ) -> Result<Value, JsError> {
-        let site = p
-            .regexp_literal_sites
-            .get(site_index)
+        if let Some(object) = self.regexp_from_cached_site(program, site_index) {
+            return Ok(object);
+        }
+        let site = p.regexp_literal_sites.get(site_index)
             .ok_or_else(|| JsError::validation("RegExp literal site is outside program".into()))?;
-        let source = self
-            .programs
-            .constant(program, site.pattern_constant as usize)
+        let source = self.programs.constant(program, site.pattern_constant as usize)
             .and_then(|value| self.heap.string(value).cloned())
             .ok_or_else(|| JsError::validation("RegExp literal pattern is not a string".into()))?;
-        let flags_text = self
-            .programs
-            .constant(program, site.flags_constant as usize)
+        let flags_text = self.programs.constant(program, site.flags_constant as usize)
             .filter(|value| self.heap.string(*value).is_some())
             .ok_or_else(|| JsError::validation("RegExp literal flags are not a string".into()))?;
         let (prototype, constructor) = self
@@ -2412,7 +2395,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// A new RegExp object of `prototype` with the record `meta`.
-    fn regexp_from_meta(
+    pub(super) fn regexp_from_meta(
         &mut self,
         prototype: Value,
         meta: Rc<crate::heap::RegExpMeta>,
@@ -2646,6 +2629,9 @@ impl<H: Host> Vm<H> {
                 || regex.excludes_search(units.len(), start, sticky, || (start < units.len()).then(|| units.at(start))))
         {
             return None;
+        }
+        if let Some(found) = Self::regexp_search_ascii(regex, input, start, sticky, steady) {
+            return found;
         }
         let subject = self.regexp_subject(input, regex);
         if steady.is_some_and(|steady| !steady.captures) {
