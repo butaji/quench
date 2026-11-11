@@ -98,7 +98,7 @@ fn lane_code(function: ir::Function) -> LaneCode {
 }
 
 use super::super::dispatch_fast::lane_body_stats::{miss as plan_miss, Miss};
-use lane_facts::{amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
+use lane_facts::{pays_compile, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
 
 /// The unit PCs a previous body left at, and whether it left at its entry. A leave at the first
 /// instruction is a wrong entry speculation: the next body drops its entry contract
@@ -252,9 +252,9 @@ impl<H: Host> Vm<H> {
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
         if entry.is_none() && !amortizes_entry(&plan.unit) { return Err(Unstarted::Declined); }
-        let key: LaneKey = (self.active_program.raw(), function, entry, plan.key(generic, entry, budget));
+        let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
-        if let Some(entries) = observed && !self.pays_compile(program, function, entries, native.dfg.num_insts()) { return Err(Unstarted::Unpaid); }
+        if let Some(entries) = observed && !pays_compile(program, function, entries, native.dfg.num_insts()) { return Err(Unstarted::Unpaid); }
         if !self.programs.admit_lane_compile(&key, TIERS.lane_body.max_compiles) { plan_miss(Miss::PlanCompileBound); return Err(Unstarted::Declined); }
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
@@ -275,15 +275,6 @@ impl<H: Host> Vm<H> {
         });
         self.programs.note_pending_native_calls(&watch, plan.callees());
         Ok(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code, key })
-    }
-
-    /// Whether `function`'s `entries` so far did interpreted work enough that the compiled share
-    /// of it repays the compile of `ir` instructions at the tier's margin (`TIERS.lane_body`).
-    fn pays_compile(&self, program: &ResidualProgram, function: u32, entries: u32, ir: usize) -> bool {
-        let lane = &TIERS.lane_body;
-        let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-        let (saved, of) = lane.saved_share;
-        u64::from(entries) * length * saved >= lane.benefit_over_cost * lane.compile_cost_per_ir * ir as u64 * of
     }
 
     /// The unit PCs of stores whose sites added their property to some receiver (they hold
@@ -384,15 +375,6 @@ impl PendingLaneMethod {
 }
 
 impl LanePlan {
-    /// What a compile of this plan comes to, as one number: its unit, the leaves and entry it
-    /// was planned from, its field proofs and direct callees. Equal keys make equal code.
-    fn key(&self, generic: &[LaneExit], entry: Option<u32>, budget: usize) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        format!("{:?}{:?}{:?}{:?}{:?}{:?}{}", self.unit.instructions, self.unit.frames, self.fields, generic, entry, budget, self.direct.len()).hash(&mut hasher);
-        hasher.finish()
-    }
-
     /// Whether its code names shape ids: its field sites', or its direct callees' bodies'.
     fn names_shapes(&self) -> bool {
         !self.fields.is_empty() || !self.direct.is_empty()

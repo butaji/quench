@@ -2,6 +2,7 @@
 //! that starts at the loop's header, inlining the loop's calls as any body does, and the loop's
 //! backward jump enters it on the activation's registers.
 use super::*;
+use super::super::compiled::tier_policy::PERCENT;
 use super::super::compiled::{LaneBodyOutcome, LaneBodyWork, LaneExit, PendingLaneMethod, PublishedLaneMethod};
 
 /// What a loop site has of its body.
@@ -24,7 +25,6 @@ const ATTEMPTS: u8 = 4;
 const REOPTIMIZE: u16 = 16;
 /// The share of a loop body's runs, in percent, that may leave inside the loop for it to stay.
 const KEEP_SHARE: u64 = 10;
-const PERCENT: u64 = 100;
 /// The backedges between looks for a loop body's compiling code.
 const POLL: u16 = 16;
 

@@ -2,6 +2,7 @@
 //! and its predecessors' did.
 
 use super::{Handler, LaneBody, LaneLeaves, LaneView, TIERS};
+use super::compiled::tier_policy::PERCENT;
 use super::super::compiled::LaneExit;
 
 /// A view's lane-body record over the run, which a lifecycle edge keeps: the bodies such
@@ -21,9 +22,6 @@ pub(super) struct LaneBodyHistory {
     /// Whether a compile of its body waited for its entries to pay for it (`LaneBodyOutcome::Unpaid`).
     unpaid: bool,
 }
-
-/// The base `TIERS.lane_body.reoptimize_share` is a share of.
-const PERCENT: u64 = 100;
 
 /// The entries and the milliseconds of warming past which a function specializes by its
 /// recurrence alone (`LaneView::recurrent`).

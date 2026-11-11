@@ -166,6 +166,9 @@ const FLOOR: Tiers = Tiers {
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
 };
 
+/// The base a share in percent is a share of.
+pub(in crate::vm) const PERCENT: u64 = 100;
+
 const MEASURED: Tiers = Tiers {
     loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8 },
     lane_body: LaneBody {

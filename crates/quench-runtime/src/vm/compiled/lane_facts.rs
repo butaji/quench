@@ -68,3 +68,22 @@ pub(super) fn amortizes_entry(unit: &lane_unit::Unit) -> bool {
         instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
     loops || !unit.frames.is_empty() || unit.instructions.len() >= TIERS.lane_body.min_instructions
 }
+
+/// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
+/// planned from, its field proofs and its direct callees. Equal keys make equal code.
+pub(super) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
+    direct: usize, generic: &[LaneExit], entry: Option<u32>, budget: usize) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    format!("{:?}{:?}{fields:?}{generic:?}{entry:?}{budget}{direct}", unit.instructions, unit.frames)
+        .bytes().fold(FNV_OFFSET, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME))
+}
+
+/// Whether `function`'s `entries` so far did interpreted work enough that the compiled share
+/// of it repays the compile of `ir` instructions at the tier's margin (`TIERS.lane_body`).
+pub(super) fn pays_compile(program: &ResidualProgram, function: u32, entries: u32, ir: usize) -> bool {
+    let lane = &TIERS.lane_body;
+    let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
+    let (saved, of) = lane.saved_share;
+    u64::from(entries) * length * saved >= lane.benefit_over_cost * lane.compile_cost_per_ir * ir as u64 * of
+}
