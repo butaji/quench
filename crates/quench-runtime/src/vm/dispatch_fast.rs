@@ -3246,9 +3246,16 @@ script_handler! {
     #[inline(never)]
     fn lane_make_const_array<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        // SAFETY: the context's program outlives the lane run.
-        let program = unsafe { (*cx).program };
-        let Some(value) = vm.const_array_value(program, i.imm() as usize, usize::from(i.b)) else {
+        let function = match vm.lane_stack.activations.last() {
+            Some(activation) => activation.function,
+            None => vm.frames[unsafe { (*cx).frame }].function,
+        };
+        // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+        // running function's view.
+        let (code, pc, program) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize, (*cx).program) };
+        let body = code.function(function as usize);
+        let wide = decoded_instruction(body, body.code[pc]);
+        let Some(value) = vm.const_array_value(program, wide.constant_index(), usize::from(wide.element_count())) else {
             return exit(ip);
         };
         note_allocation(vm);
