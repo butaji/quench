@@ -4263,6 +4263,8 @@ impl Heap {
             trace_kind,
             last_proto,
         );
+        // The count of non-int32 values is kept per backing: none means no element to scan.
+        if array.elements().holds_only_int32() { return; }
         work.extend(
             array
                 .elements()
@@ -4608,7 +4610,8 @@ unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize)
 #[inline(always)]
 fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
     // The caller matched the exact shape, which holds the slot outside dictionary storage.
-    let widened = properties.note_slot_value(data.shape(), slot, value);
+    // SAFETY: the caller matched the exact shape, which holds the slot.
+    let widened = unsafe { properties.note_exact_slot_value(data.shape(), slot, value) };
     if widened && layout == PropertyStoreLayout::PreserveNative { return false; }
     match data.exact_storage() {
         // SAFETY: as above.

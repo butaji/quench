@@ -171,7 +171,7 @@ impl<H: Host> Vm<H> {
                 unreachable!("a steady call's receiver is a RegExp");
             };
             let matcher = Self::regexp_matcher(meta)?;
-            self.record_regexp_legacy_pending(receiver, input, &matcher, matched.range.start)?;
+            self.record_regexp_legacy_pending(receiver, input, matcher, matched.range.start)?;
             return Ok(Value::UNDEFINED);
         }
         self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))

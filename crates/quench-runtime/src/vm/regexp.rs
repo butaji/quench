@@ -1271,7 +1271,7 @@ impl<H: Host> Vm<H> {
         };
         match last {
             Ok(found) => self.record_regexp_legacy_match(receiver, input.clone(), found)?,
-            Err(start) => self.record_regexp_legacy_pending(receiver, input.clone(), matcher, start)?,
+            Err(start) => self.record_regexp_legacy_pending(receiver, input.clone(), Rc::clone(matcher), start)?,
         }
         // Only a length is observable: a replacement nothing reads, or its `.length`.
         if build != literal::ReplaceResult::Value
@@ -1987,7 +1987,7 @@ impl<H: Host> Vm<H> {
         let Some(last) = ranges.last() else {
             return Ok(Value::NULL);
         };
-        self.record_regexp_legacy_pending(receiver, input.clone(), matcher, last.start)?;
+        self.record_regexp_legacy_pending(receiver, input.clone(), Rc::clone(matcher), last.start)?;
         let matched = ranges
             .into_iter()
             .map(|range| self.heap.alloc_string(input.substring(range)))
@@ -2849,10 +2849,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         this: Value,
         input: JsString,
-        matcher: &Rc<quench_regexp::Regex>,
+        matcher: Rc<quench_regexp::Regex>,
         start: usize,
     ) -> Result<(), JsError> {
-        let matcher = Rc::clone(matcher);
         self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Pending { input, matcher, start })
     }
 
