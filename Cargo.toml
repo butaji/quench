@@ -1,3 +1,5 @@
+cargo-features = ["profile-rustflags"]
+
 [workspace]
 resolver = "2"
 # The vendored oxc crates are patches ([patch.crates-io]), not members: as members their
@@ -94,11 +96,20 @@ incremental = true
 [profile.experiment]
 inherits = "release"
 opt-level = 3
+# `false` is thin-local LTO over the 256 units: measurement-grade code (cross-unit inlining) but
+# every unit of quench-node is re-optimized after a runtime edit (90-120 s).
 lto = false
 codegen-units = 256
 incremental = true
 debug = 0
 strip = "none"
+# Static code model removes the GOT indirection of every cross-codegen-unit call (329k -> 6k
+# indirect calls); the shipping release profile is untouched. Host units (proc-macros, build
+# scripts) are built by build-override and keep the plain flags.
+rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6", "-Z", "merge-functions=disabled", "-Z", "plt=yes", "-C", "relocation-model=static", "-C", "link-arg=-Wl,-z,norelro"]
+
+[profile.experiment.build-override]
+rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6", "-Z", "merge-functions=disabled"]
 
 # Native SDK consumers link optimized machine-code archive members directly.
 # This keeps whole-image LLVM optimization out of repeated SDK consumer links.
