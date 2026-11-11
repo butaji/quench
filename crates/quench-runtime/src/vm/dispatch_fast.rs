@@ -1873,6 +1873,9 @@ pub(super) struct LaneStack {
     /// which `lane_call_native` does before any guest code runs), or none while a collection
     /// is due (`note_allocation`). One comparison stands for the three.
     activation_limit: std::cell::Cell<usize>,
+    /// The most room any body a lane body's call found short asked for (`lane_body_activate`):
+    /// a call cannot grow the stacks its caller's registers live in, so the next body entry does.
+    recovery_demand: std::cell::Cell<LaneRecoverySpace>,
     /// Names the collection epoch and realm of the running lane, which no lane instruction
     /// changes: a target resolved under another generation is stale. Lane runs move between
     /// programs far more often than either changes, so each target names its program instead.
@@ -1911,6 +1914,7 @@ impl Default for LaneStack {
             iterators: Vec::new(),
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
+            recovery_demand: std::cell::Cell::new(LaneRecoverySpace::default()),
             generation: NO_SCRIPT_GENERATION,
             generation_key: (0, Value::UNDEFINED),
             native_boundary: None,
@@ -14763,7 +14767,7 @@ script_handler! {
             own.settle_retired_body();
             next!(cx, r, base, Carried::script(cx))
         };
-        if !lane_body_admits(cx, &method) {
+        if !lane_body_admits(cx, &method) || !lane_demand_met(vm) {
             if lane_body_prepare_recovery(cx, &method) { return exit(base); }
             drop(method);
             if vm.programs.js_jit_diagnostics_enabled() {
@@ -15183,13 +15187,21 @@ fn lane_body_admits<H: Host>(cx: *mut LaneContext<H>, method: &super::compiled::
             && !vm.with_scope_entered)
 }
 
+/// Whether the stacks hold the room bodies called from bodies found short (`recovery_demand`).
+fn lane_demand_met<H: Host>(vm: &Vm<H>) -> bool {
+    let demand = vm.lane_stack.recovery_demand.get();
+    vm.lane_stack.activations.capacity() - vm.lane_stack.activations.len() >= demand.activations
+        && vm.lane_stack.values.capacity() - vm.lane_stack.values.len() >= demand.values
+}
+
 /// A compiled region's recovery demand may exceed the calls the lane has observed.
 /// Materialize before growing either Vec: live lane windows borrow their storage.
 /// The caller must exit immediately and resume from its original semantic record.
 #[cold]
 #[inline(never)]
 fn lane_body_prepare_recovery<H: Host>(cx: *mut LaneContext<H>, method: &super::compiled::LaneMethod) -> bool {
-    let room = method.recovery_space();
+    let (room, demand) = (method.recovery_space(), unsafe { vm(cx) }.lane_stack.recovery_demand.get());
+    let room = LaneRecoverySpace { values: room.values.max(demand.values), activations: room.activations.max(demand.activations) };
     let vm = unsafe { vm(cx) };
     if !unsafe { (*cx).script_calls } || vm.with_scope_entered { return false; }
     let values = vm.lane_stack.values.capacity() - vm.lane_stack.values.len() < room.values;
@@ -15584,6 +15596,11 @@ fn lane_body_activate<H: Host>(
         lane_specialize(cx, own, target.function, false);
     }
     let Some(method) = own.lane_body().filter(|method| lane_body_admits(cx, method)) else {
+        if let Some(method) = own.lane_body() {
+            if vm.programs.js_jit_diagnostics_enabled() { own.body_stats.refused.set(own.body_stats.refused.get() + 1); }
+            let (asked, held) = (method.recovery_space(), vm.lane_stack.recovery_demand.get());
+            vm.lane_stack.recovery_demand.set(LaneRecoverySpace { values: asked.values.max(held.values), activations: asked.activations.max(held.activations) });
+        }
         unsafe { (*cx).callee_warming = own.warming() };
         return leave(start, Value::UNDEFINED);
     };
