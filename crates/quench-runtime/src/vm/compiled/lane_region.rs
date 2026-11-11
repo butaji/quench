@@ -761,8 +761,19 @@ impl<'a, 'f> Lowering<'a, 'f> {
         }
     }
 
-    /// Leave at `pc` with the interpreter's state: every written register back in the file.
+    /// `leave` naming the lowering line that decided the leave, which a diagnostics run reports
+    /// (`JsStepDispatch::exit_line`).
+    #[track_caller]
     fn exit(&mut self, state: &mut State, pc: u32) {
+        if self.vm.diagnostics && self.completion != Completion::Number {
+            let line = self.builder.ins().iconst(types::I64, i64::from(std::panic::Location::caller().line()));
+            self.builder.ins().store(MemFlagsData::trusted(), line, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
+        }
+        self.leave(state, pc);
+    }
+
+    /// Leave at `pc` with the interpreter's state: every written register back in the file.
+    fn leave(&mut self, state: &mut State, pc: u32) {
         if self.completion == Completion::Number {
             self.return_at(0);
             return;
@@ -1794,7 +1805,7 @@ pub(super) fn lower(
             let line = lowering.builder.ins().iconst(types::I64, i64::from(line));
             lowering.builder.ins().store(MemFlagsData::trusted(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
         }
-        lowering.exit(&mut leaving, pc);
+        lowering.leave(&mut leaving, pc);
     }
     // The exit blocks: write back every caller register the unit writes, and an inlined
     // callee's registers to the window its recovery makes the activation from, then leave
@@ -2258,7 +2269,7 @@ impl Lowering<'_, '_> {
             let mut receivers = smallvec::SmallVec::<[(Register, ReceiverRecovery); 2]>::new();
             for (pc, instruction) in instructions.iter().copied().enumerate() {
                 if self.blocks[pc].is_some() { aliases.copy_from_slice(&roots); }
-                if !self.facts.reached(pc) { continue; }
+                if !self.admits_at_entry(pc) { continue; }
                 if let Some(frame) = self.unit.markers.iter().position(|marker| *marker == pc) {
                     let call = self.unit.frames[frame];
                     let body = self.program.function(call.target.function as usize);
@@ -2382,6 +2393,13 @@ impl Lowering<'_, '_> {
             self.builder.switch_to_block(admitted);
         }
         Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, this, fields, calls, call_receivers }
+    }
+
+    /// Whether the entry edge admits the inlined call at `pc`, a call a run may skip
+    /// (`packet != null`) and so not one every run may be refused for: a body that left at
+    /// its entry once admits them at their markers instead (`Lowering::inline_call`).
+    fn admits_at_entry(&self, pc: usize) -> bool {
+        self.facts.reached(pc) && !self.generic.contains(&entry_leave(self.unit))
     }
 
     /// `invariant_field_records`, unless the body left at its entry: it binds no receiver record
