@@ -457,6 +457,13 @@ fn field_reads_alone_define(instructions: &[WideInstruction], register: Register
     definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())
 }
 
+/// Traces a tagged-register rejection at `offset` (`QUENCH_TRACE=osr-reject`).
+fn trace_tagged_reject(header: u32, offset: usize, result: Register, reason: &str) {
+    if crate::trace::Channel::OsrReject.on() {
+        eprintln!("QUENCH_JS_JIT_OSR_TAGGED_REJECT header={header} offset={offset} reason={reason} result={result}");
+    }
+}
+
 /// Registers whose bytecode definitions must stay tagged because a nullish comparison
 /// branch observes them. Propagate that fact along moves and through constants; other
 /// definitions need a general value denotation before they can be admitted.
@@ -608,11 +615,7 @@ fn tagged_registers_with_failure(
             match instruction.op().class() {
                 Class::LoadConst => {
                     if constants.get(instruction.constant_index()).is_none() {
-                        if crate::trace::Channel::OsrReject.on() {
-                            eprintln!(
-                                "QUENCH_JS_JIT_OSR_TAGGED_REJECT header={header} offset={offset} reason=missing_constant result={result}"
-                            );
-                        }
+                        trace_tagged_reject(header, offset, result, "missing_constant");
                         return Err(offset);
                     }
                 }
@@ -627,12 +630,7 @@ fn tagged_registers_with_failure(
                     tagged.insert(instruction.register_b());
                 }
                 _ => {
-                    if crate::trace::Channel::OsrReject.on() {
-                        eprintln!(
-                            "QUENCH_JS_JIT_OSR_TAGGED_REJECT header={header} offset={offset} reason=unsupported_tagged_definition op={:?} result={result}",
-                            instruction.op()
-                        );
-                    }
+                    trace_tagged_reject(header, offset, result, &format!("unsupported_tagged_definition op={:?}", instruction.op()));
                     return Err(offset);
                 }
             }
@@ -1893,6 +1891,68 @@ fn admit_lifetime_roles(
     Some(region)
 }
 
+/// The region offsets a jump lands on.
+fn block_starts(instructions: &[WideInstruction], header: u32) -> std::collections::BTreeSet<usize> {
+    instructions.iter()
+        .filter(|instruction| instruction.op().control_flow_layout().jumps())
+        .map(|instruction| (instruction.jump_target() as usize).wrapping_sub(header as usize)).collect()
+}
+
+/// Whether an access of `register` is reached by a definition that makes it no array: `None`
+/// where the region defines it nowhere, else the offset of such a definition, if any. Only the
+/// definitions that reach an access matter: a register a later statement reuses for a number is
+/// no array there. An access reached by a definition earlier in its own straight-line code is
+/// reached by that one alone; any other access by every definition.
+fn redefinition(instructions: &[WideInstruction], register: Register,
+    block_starts: &std::collections::BTreeSet<usize>) -> Option<Option<usize>> {
+    let definitions: Vec<usize> = instructions.iter().enumerate()
+        .filter(|(_, instruction)| native_definition(**instruction) == Some(register)).map(|(offset, _)| offset).collect();
+    if definitions.is_empty() { return None; }
+    let accesses = instructions.iter().enumerate()
+        .filter(|(_, instruction)| instruction.op().is_indexed_access() && object_reads(**instruction) == Some(register))
+        .map(|(offset, _)| offset);
+    let mut reaching = std::collections::BTreeSet::new();
+    for access in accesses {
+        let local = (0..access).rev().find(|at| definitions.contains(at) || block_starts.contains(at))
+            .filter(|at| definitions.contains(at));
+        match local {
+            Some(at) => { reaching.insert(at); }
+            None => reaching.extend(definitions.iter().copied()),
+        }
+    }
+    Some(reaching.into_iter().find(|offset| {
+        let instruction = instructions[*offset];
+        !allocates(instruction.op()) && !matches!(instruction.op().class(),
+            Class::GetIndex | Class::GetField | Class::Move | Class::LoadCapture | Class::LoadEnvLocal | Class::LoadName)
+    }))
+}
+
+/// The registers the region indexes that it defines (other than one holding a field's value at
+/// every read, `paths`): they hold no entry array, each access reading the array it holds then
+/// (`LoopRegion::dynamic_arrays`). Every definition reaching an access reads an element, field,
+/// capture or environment local, or moves one, whose value stays tagged; any other but an exit's
+/// is refused.
+fn dynamic_arrays(instructions: &[WideInstruction], paths: &std::collections::BTreeMap<Register, FieldPath>,
+    header: u32) -> Result<std::collections::BTreeSet<Register>, RegionAnalysisFailure> {
+    let mut dynamic_arrays = std::collections::BTreeSet::new();
+    let block_starts = block_starts(instructions, header);
+    for register in instructions
+        .iter()
+        .filter(|instruction| instruction.op().is_indexed_access())
+        .filter_map(|instruction| object_reads(*instruction))
+        .filter(|register| !paths.contains_key(register))
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        match redefinition(instructions, register, &block_starts) {
+            None => continue,
+            Some(Some(offset)) => return Err(RegionAnalysisFailure::at(RegionRejection::ArrayRedefined, header, offset)),
+            Some(None) => {}
+        }
+        dynamic_arrays.insert(register);
+    }
+    Ok(dynamic_arrays)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn admit_register_roles(
     instructions: Vec<WideInstruction>,
@@ -1918,50 +1978,7 @@ fn admit_register_roles(
         .filter(|(_, path)| path.steps.iter().all(|(atom, _)| !stored_names.contains(atom)))
         .collect();
     let paths: std::collections::BTreeMap<Register, FieldPath> = rooted.iter().filter(|(_, path)| !path.steps.is_empty()).map(|(register, path)| (*register, path.clone())).collect();
-    // An indexed register the region defines, other than one holding a field's value at
-    // every read (`paths`), holds no entry array: each access reads the array it holds then
-    // (`LoopRegion::dynamic_arrays`). Its every definition reads an element, field, capture or
-    // environment local, or moves one, whose value stays tagged; any other but an exit's is refused.
-    let mut dynamic_arrays = std::collections::BTreeSet::new();
-    let block_starts: std::collections::BTreeSet<usize> = instructions.iter()
-        .filter(|instruction| instruction.op().control_flow_layout().jumps())
-        .map(|instruction| (instruction.jump_target() as usize).wrapping_sub(header as usize)).collect();
-    for register in instructions
-        .iter()
-        .filter(|instruction| instruction.op().is_indexed_access())
-        .filter_map(|instruction| object_reads(*instruction))
-        .filter(|register| !paths.contains_key(register))
-        .collect::<std::collections::BTreeSet<_>>()
-    {
-        let definitions: Vec<usize> = instructions.iter().enumerate()
-            .filter(|(_, instruction)| native_definition(**instruction) == Some(register)).map(|(offset, _)| offset).collect();
-        if definitions.is_empty() {
-            continue;
-        }
-        // Only the definitions that reach an access matter: a register a later statement reuses
-        // for a number is no array there. An access reached by a definition earlier in its own
-        // straight-line code is reached by that one alone; any other access by every definition.
-        let accesses = instructions.iter().enumerate()
-            .filter(|(_, instruction)| instruction.op().is_indexed_access() && object_reads(**instruction) == Some(register))
-            .map(|(offset, _)| offset);
-        let mut reaching = std::collections::BTreeSet::new();
-        for access in accesses {
-            let local = (0..access).rev().find(|at| definitions.contains(at) || block_starts.contains(at))
-                .filter(|at| definitions.contains(at));
-            match local {
-                Some(at) => { reaching.insert(at); }
-                None => reaching.extend(definitions.iter().copied()),
-            }
-        }
-        if let Some(offset) = reaching.into_iter().find(|offset| {
-            let instruction = instructions[*offset];
-            !allocates(instruction.op()) && !matches!(instruction.op().class(),
-                Class::GetIndex | Class::GetField | Class::Move | Class::LoadCapture | Class::LoadEnvLocal | Class::LoadName)
-        }) {
-            return Err(RegionAnalysisFailure::at(RegionRejection::ArrayRedefined, header, offset));
-        }
-        dynamic_arrays.insert(register);
-    }
+    let dynamic_arrays = dynamic_arrays(&instructions, &paths, header)?;
     let mut tagged = match tagged_registers_with_failure(
         &instructions,
         constants,
@@ -2289,6 +2306,21 @@ fn admit_register_roles(
     })
 }
 
+/// A loaded value's role: boxed where its register is tagged, else the number it defines.
+fn admit_loaded(admission: &mut Admission<'_>, instruction: WideInstruction,
+    tagged: &std::collections::BTreeSet<Register>) -> Option<()> {
+    if tagged.contains(&instruction.result_register()) { admission.tagged(instruction.result_register()) }
+    else { admission.result(instruction).map(drop) }
+}
+
+/// A stored value's role: boxed where its register is tagged or holds an unchanged entry value
+/// (any tagged value), else a number.
+fn admit_stored(admission: &mut Admission<'_>, register: Register, tagged: &std::collections::BTreeSet<Register>,
+    defined_registers: &std::collections::BTreeSet<Register>) -> Option<()> {
+    if tagged.contains(&register) || !defined_registers.contains(&register) { admission.tagged(register) }
+    else { admission.number(register) }
+}
+
 fn admit(
     admission: &mut Admission<'_>,
     instruction: WideInstruction,
@@ -2319,11 +2351,7 @@ fn admit(
         }
         Class::LoadCapture => {
             (instruction.capture_depth() == 0 && instruction.result_flags() == 0).then_some(())?;
-            if tagged.contains(&instruction.result_register()) {
-                admission.tagged(instruction.result_register())?;
-            } else {
-                admission.result(instruction)?;
-            }
+            admit_loaded(admission, instruction, tagged)?;
             let slot = instruction.capture_slot();
             if !admission.captures.contains(&slot) {
                 admission.captures.push(slot);
@@ -2367,11 +2395,7 @@ fn admit(
             }
         }
         Class::GetIndex => {
-            if tagged.contains(&instruction.result_register()) {
-                admission.tagged(instruction.result_register())?;
-            } else {
-                admission.result(instruction)?;
-            }
+            admit_loaded(admission, instruction, tagged)?;
             let base = instruction.operand_b().register_index()?;
             // A dynamic array takes no register role (`LoopRegion::dynamic_arrays`).
             if !dynamic_arrays.contains(&base) {
@@ -2381,11 +2405,7 @@ fn admit(
         }
         // Its field is the region's (`LoopRegion::field_reads`).
         Class::GetField => {
-            if tagged.contains(&instruction.result_register()) {
-                admission.tagged(instruction.result_register())?;
-            } else {
-                admission.result(instruction)?;
-            }
+            admit_loaded(admission, instruction, tagged)?;
         }
         // A tagged value is stored as the lane's element store takes it.
         Class::SetIndex => {
@@ -2403,11 +2423,7 @@ fn admit(
             let value_register = instruction.register_a();
             // An unchanged entry value can be any tagged value. The VM logs a register
             // receiver in the generational barrier before native writes begin.
-            if tagged.contains(&value_register) || !defined_registers.contains(&value_register) {
-                admission.tagged(value_register)?;
-            } else {
-                admission.number(value_register)?;
-            }
+            admit_stored(admission, value_register, tagged, defined_registers)?;
             if let Some(receiver) = instruction.field_store_register() {
                 admission.tagged(receiver)?;
             }
@@ -2416,20 +2432,12 @@ fn admit(
         // leaves; the entry snapshot holds no slot the region stores (`stored_captures`).
         Class::StoreCapture => {
             let value = instruction.register_a();
-            if tagged.contains(&value) || !defined_registers.contains(&value) {
-                admission.tagged(value)?;
-            } else {
-                admission.number(value)?;
-            }
+            admit_stored(admission, value, tagged, defined_registers)?;
         }
         // A global binding's read (`Vm::lane_global_reads`), a Number where arithmetic reads it.
         Class::LoadName => {
             (instruction.result_flags() == 0).then_some(())?;
-            if tagged.contains(&instruction.result_register()) {
-                admission.tagged(instruction.result_register())?;
-            } else {
-                admission.result(instruction)?;
-            }
+            admit_loaded(admission, instruction, tagged)?;
         }
         // A literal or construction allocates without collecting, a due collection leaving
         // first; its arguments and elements pass boxed.
@@ -2446,11 +2454,7 @@ fn admit(
             {
                 return None;
             }
-            if tagged.contains(&instruction.result_register()) {
-                admission.tagged(instruction.result_register())?;
-            } else {
-                admission.result(instruction)?;
-            }
+            admit_loaded(admission, instruction, tagged)?;
         }
         // The interpreter runs every other instruction at its exact PC, with the whole state
         // written back (binding lookup, calls, allocation, GC, throws).

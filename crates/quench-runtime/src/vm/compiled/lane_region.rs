@@ -873,46 +873,56 @@ impl<'a, 'f> Lowering<'a, 'f> {
             if !self.is_live(target, register) { continue; }
             // A parameter's entry fact varies per call: a mismatched value declines the
             // region (the lane runs the header) instead of exiting native code.
-            let entry_param = target == self.coverage.entry() && index < self.params;
             let saved = self.proving_entry;
-            if entry_param { self.proving_entry = true; }
-            if ty == Type::INT32 && state.values[index].value.representation != Representation::Int32 {
-                let exit = self.guard_exit(state, target as u32);
-                self.int(state, register, exit);
-            } else if ty == Type::NUMBER && state.values[index].value.representation != Representation::Float64 {
-                let exit = self.guard_exit(state, target as u32);
-                let number = self.number(state, register, exit);
-                { let variable = self.float_var(index); self.builder.def_var(variable, number); }
-            } else if ty != Type::INT32 && ty != Type::NUMBER {
-                self.tagged(state, register);
-            }
-            if ty == Type::DIRECT_OBJECT_FAMILY && !state.values[index].value.ty.is_direct_object_family() {
-                let exit = self.guard_exit(state, target as u32);
-                let bits = self.tagged(state, register);
-                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), bits);
-                emit_js_guard(&mut self.builder, object, exit);
-                self.refine_object_family(state, bits);
-            }
-            // An exact shape the target's other edges proved is guarded on this one, the
-            // owner's header read once, so the edge keeps native code.
-            if let Some(shape) = ty.object_shape() && !state.values[index].value.ty.is_subtype(ty) {
-                let exit = self.guard_exit(state, target as u32);
-                let header = self.object_header(state, Some(register), false, exit);
-                self.prove_shape(state, Some(Some(register)), header.shape, shape, exit);
-                state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-                    ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
-            }
-            // A fact this edge does not prove and cannot guard leaves at the target, exactly:
-            // the edge loses native code, never the body (AGENTS.md, check once).
-            if !self.proves(state, register, ty, target) {
-                let exit = self.guard_exit(state, target as u32);
-                self.builder.ins().jump(exit, &[]);
-                let unreached = self.builder.create_block();
-                self.builder.switch_to_block(unreached);
-                self.proving_entry = saved;
-                return;
-            }
+            if target == self.coverage.entry() && index < self.params { self.proving_entry = true; }
+            let proved = self.conform_register(state, target, register, ty);
             self.proving_entry = saved;
+            if !proved { return; }
+        }
+    }
+
+    /// One live register conformed to `target`'s fact `ty`; whether the edge still reaches it.
+    fn conform_register(&mut self, state: &mut State, target: usize, register: Register, ty: Type) -> bool {
+        let index = usize::from(register);
+        if ty == Type::INT32 && state.values[index].value.representation != Representation::Int32 {
+            let exit = self.guard_exit(state, target as u32);
+            self.int(state, register, exit);
+        } else if ty == Type::NUMBER && state.values[index].value.representation != Representation::Float64 {
+            let exit = self.guard_exit(state, target as u32);
+            let number = self.number(state, register, exit);
+            { let variable = self.float_var(index); self.builder.def_var(variable, number); }
+        } else if ty != Type::INT32 && ty != Type::NUMBER {
+            self.tagged(state, register);
+        }
+        self.conform_object(state, target, register, ty);
+        // A fact this edge does not prove and cannot guard leaves at the target, exactly:
+        // the edge loses native code, never the body (AGENTS.md, check once).
+        if self.proves(state, register, ty, target) { return true; }
+        let exit = self.guard_exit(state, target as u32);
+        self.builder.ins().jump(exit, &[]);
+        let unreached = self.builder.create_block();
+        self.builder.switch_to_block(unreached);
+        false
+    }
+
+    /// An object fact of the target the edge has not proved: the direct-object family by one
+    /// guard, an exact shape guarded on this edge with the owner's header read once, so the
+    /// edge keeps native code.
+    fn conform_object(&mut self, state: &mut State, target: usize, register: Register, ty: Type) {
+        let index = usize::from(register);
+        if ty == Type::DIRECT_OBJECT_FAMILY && !state.values[index].value.ty.is_direct_object_family() {
+            let exit = self.guard_exit(state, target as u32);
+            let bits = self.tagged(state, register);
+            let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), bits);
+            emit_js_guard(&mut self.builder, object, exit);
+            self.refine_object_family(state, bits);
+        }
+        if let Some(shape) = ty.object_shape() && !state.values[index].value.ty.is_subtype(ty) {
+            let exit = self.guard_exit(state, target as u32);
+            let header = self.object_header(state, Some(register), false, exit);
+            self.prove_shape(state, Some(Some(register)), header.shape, shape, exit);
+            state.values[index] = RegisterFact { tagged: state.values[index].tagged,
+                ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
         }
     }
 
@@ -1039,14 +1049,12 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         _ if instruction.op().traits().has(Traits::FRAME_ONLY) => true,
         Class::LoadConst => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
         Class::IncDec => instruction.numeric_local_target().is_none(),
-        // ToNumeric of a Number is the Number; any other operand leaves (`Lowering::instruction`).
-        Class::ToNumeric => !instruction.returns_from_frame(),
         Class::LoadCapture => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
         Class::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
-        // A dense element, read natively; any other element leaves (`emit_dense_element_read`).
-        Class::GetIndex => !instruction.returns_from_frame(),
-        // A null or undefined operand leaves before any effect (`staged::require_object_coercible`).
-        Class::RequireObjectCoercible => !instruction.returns_from_frame(),
+        // ToNumeric of a Number is the Number; any other operand leaves (`Lowering::instruction`). A
+        // dense element is read natively, any other leaving (`emit_dense_element_read`); a null or
+        // undefined operand leaves before any effect (`staged::require_object_coercible`).
+        Class::ToNumeric | Class::GetIndex | Class::RequireObjectCoercible => !instruction.returns_from_frame(),
         _ => instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     }
 }
@@ -3219,6 +3227,25 @@ impl Lowering<'_, '_> {
             destination, source)
     }
 
+    /// The inlined call's receiver admitted where no dominating proof covers it: the body's own
+    /// receiver recovery, a guard leaving at `exit`, but for a restartable numeric callee.
+    fn guard_inlined_receiver(&mut self, state: &mut State, frame: usize, exit: ir::Block) {
+        let inlined = self.unit.frames[frame];
+        let receiver = self.tagged(state, inlined.receiver);
+        let entry = self.entry.as_ref().expect("entry facts");
+        let admitted = entry.call_receivers.contains(frame)
+            || state.proofs.headers[usize::from(inlined.receiver)].is_some()
+            || entry.records[usize::from(inlined.receiver)].is_some()
+            || (state.proofs.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some());
+        let callee = self.program.function(inlined.target.function as usize);
+        let numeric = inlined.recovery == super::lane_unit::CallRecovery::RestartCall
+            && restartable_numeric_function(self.program, callee, &callee.instructions().collect::<Vec<_>>());
+        if !admitted && !numeric {
+            let admitted = self.receiver_recovery(receiver, ReceiverRecovery::for_body(callee));
+            emit_js_guard(&mut self.builder, admitted, exit);
+        }
+    }
+
     /// The call marker of inlined `frame` (`lane_unit::unit`): its callee is the function
     /// the call's site linked (an identity, compared) or a closure of the statically bound
     /// function (admitted by the VM's binding rule), and its receiver a direct object, which
@@ -3232,13 +3259,7 @@ impl Lowering<'_, '_> {
         // An OSR region's callee comes from the entry snapshot: the caller's read is
         // resolved at compile time and dropped, and its register is reused by the loop.
         let callee = match inlined.callee_entry_word {
-            Some(word) => {
-                let entry = emit_js_payload_word(&mut self.builder, self.payload,
-                    std::mem::offset_of!(super::JsStepDispatch, loop_entry));
-                let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
-                    * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
-                self.ins().load(types::I64, MemFlagsData::trusted(), entry, offset)
-            }
+            Some(word) => self.loop_entry_word(word),
             None => self.tagged(state, inlined.callee_register),
         };
         let callee_index = usize::from(inlined.callee_register);
@@ -3283,19 +3304,8 @@ impl Lowering<'_, '_> {
             let seen = self.ins().icmp_imm_u(IntCC::Equal, native, through.to_bits() as i64);
             emit_js_guard(&mut self.builder, seen, exit);
         }
-        let receiver = self.tagged(state, inlined.receiver);
-        let entry = self.entry.as_ref().expect("entry facts");
-        let admitted = entry.call_receivers.contains(frame)
-            || state.proofs.headers[usize::from(inlined.receiver)].is_some()
-            || entry.records[usize::from(inlined.receiver)].is_some()
-            || (state.proofs.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some());
         let callee = self.program.function(inlined.target.function as usize);
-        let numeric = inlined.recovery == super::lane_unit::CallRecovery::RestartCall
-            && restartable_numeric_function(self.program, callee, &callee.instructions().collect::<Vec<_>>());
-        if !admitted && !numeric {
-            let admitted = self.receiver_recovery(receiver, ReceiverRecovery::for_body(callee));
-            emit_js_guard(&mut self.builder, admitted, exit);
-        }
+        self.guard_inlined_receiver(state, frame, exit);
         for register in 0..inlined.registers {
             let destination = inlined.base + register;
             let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
@@ -3698,6 +3708,21 @@ impl Lowering<'_, '_> {
         owner.is_none() && self.unit.instructions[pc].op().class().eq(Class::LoadCapture) && self.hoisted.contains_key(&pc)
     }
 
+    /// The hoisted read of the callee an inlined capture read belongs to, where it is the callee
+    /// the frame's call binds: `Ok(None)` for a caller's own read, `Err` where the read is not
+    /// admitted (its loop then reads it where it runs).
+    fn admitted_callee_read(&mut self, pc: usize, reads: &[InvariantRead], boundaries: &CompoundBitSet) -> Result<Option<ir::Value>, ()> {
+        let super::lane_unit::Origin::Inlined { frame, .. } = self.unit.origins[pc] else { return Ok(None) };
+        let read = invariant_callee_read(self.unit, reads.iter().map(|read| read.pc), frame, boundaries)
+            .and_then(|read| self.hoisted.get(&read).copied()).ok_or(())?;
+        let target = self.unit.frames[frame].target;
+        let admitted = match target.callee {
+            CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => read.ty.function_identity() == Some(identity),
+            CalleeBinding::Function => read.ty.body_index() == Some(target.function),
+        };
+        if admitted { Ok(Some(self.builder.use_var(read.value))) } else { Err(()) }
+    }
+
     /// The loop's invariant captures and fields, read once on its entry edge.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
         let Some(reads) = self.hoists.get(&header).cloned() else { return };
@@ -3708,17 +3733,7 @@ impl Lowering<'_, '_> {
             let field = self.loop_fields.iter().position(|field| field.reads[0] == pc);
             let exit = self.guard_exit(state, header as u32);
             let (value, int32) = if instruction.op().class().eq(Class::LoadCapture) {
-                let admitted_callee = if let super::lane_unit::Origin::Inlined { frame, .. } = self.unit.origins[pc] {
-                    let Some(read) = invariant_callee_read(self.unit, reads.iter().map(|read| read.pc), frame, &boundaries)
-                        .and_then(|read| self.hoisted.get(&read).copied()) else { continue };
-                    let target = self.unit.frames[frame].target;
-                    let admitted = match target.callee {
-                        CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => read.ty.function_identity() == Some(identity),
-                        CalleeBinding::Function => read.ty.body_index() == Some(target.function),
-                    };
-                    if !admitted { continue; }
-                    Some(self.builder.use_var(read.value))
-                } else { None };
+                let Ok(admitted_callee) = self.admitted_callee_read(pc, &reads, &boundaries) else { continue };
                 let value = self.load_capture(state, pc, instruction, exit, admitted_callee, if rooted { RootedRead::OnEntry } else { RootedRead::No });
                 let value = self.frozen_capture(pc, value, exit);
                 let int32 = self.capture_int32_use(pc, &boundaries);
@@ -4104,6 +4119,44 @@ impl Lowering<'_, '_> {
         debug_assert!(matches!(step, crate::staged::Step::Value(_)));
     }
 
+    /// The reads of `instruction`'s lookup, one per site, and the sink a nested read of the
+    /// current `this` also stores to.
+    fn field_chain(&self, instruction: WideInstruction) -> Option<(Vec<(Atom, u16)>, Option<(Atom, u16)>)> {
+        Some(match instruction.field_lookup()? {
+            FieldLookup::Atom { atom, cache_site, .. } => (vec![(atom, cache_site)], None),
+            FieldLookup::Site(index) => {
+                let site = *self.program.field_sites.get(index)?;
+                let reads = [Some(site.first), site.second].into_iter().flatten().collect();
+                (reads, instruction.writes_current_this().then_some(site.sink).flatten())
+            }
+        })
+    }
+
+    /// The value word `word` of the loop's entry record, defining `destination`.
+    fn entry_field_read(&mut self, state: &mut State, destination: Register, word: u32) {
+        let bits = self.loop_entry_word(word);
+        self.set_tagged(state, destination, bits);
+    }
+
+    /// Word `word` of the loop's entry record.
+    fn loop_entry_word(&mut self, word: u32) -> ir::Value {
+        let entry = emit_js_payload_word(&mut self.builder, self.payload,
+            std::mem::offset_of!(super::JsStepDispatch, loop_entry));
+        let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
+            * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
+        self.ins().load(types::I64, MemFlagsData::trusted(), entry, offset)
+    }
+
+    /// The owner and name of a plain read of `instruction`'s lookup (no sink, no completion):
+    /// `None` where the lookup names a site the program does not have.
+    fn plain_field(&self, instruction: WideInstruction, owner: Option<Register>, plain: bool) -> Option<Option<(Option<Register>, Atom)>> {
+        Some(match instruction.field_lookup() {
+            Some(FieldLookup::Atom { atom, .. }) if plain => Some((owner, atom)),
+            Some(FieldLookup::Site(index)) if plain => Some((owner, self.program.field_sites.get(index)?.first.0)),
+            _ => None,
+        })
+    }
+
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         // A returning read completes the activation with its value, at a caller record; an
         // inlined callee's is the unit's read, move and jump (`lane_unit`).
@@ -4123,14 +4176,7 @@ impl Lowering<'_, '_> {
             _ => None,
         };
         let base = self.field_base(pc, instruction)?;
-        let (parts, sink): (Vec<(Atom, u16)>, _) = match instruction.field_lookup()? {
-            FieldLookup::Atom { atom, cache_site, .. } => (vec![(atom, cache_site)], None),
-            FieldLookup::Site(index) => {
-                let site = *self.program.field_sites.get(index)?;
-                let reads = [Some(site.first), site.second].into_iter().flatten().collect();
-                (reads, instruction.writes_current_this().then_some(site.sink).flatten())
-            }
-        };
+        let (parts, sink) = self.field_chain(instruction)?;
         let sink_owner = frame.map(|frame| frame.receiver);
         if instruction.writes_current_this() && sink.is_none() {
             return None;
@@ -4147,12 +4193,7 @@ impl Lowering<'_, '_> {
         if sink.is_none() && completes.is_none() && !instruction.writes_current_this()
             && let Some(&word) = self.entry_fields.get(&pc)
         {
-            let entry = emit_js_payload_word(&mut self.builder, self.payload,
-                std::mem::offset_of!(super::JsStepDispatch, loop_entry));
-            let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
-                * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
-            let bits = self.ins().load(types::I64, MemFlagsData::trusted(), entry, offset);
-            self.set_tagged(state, destination, bits);
+            self.entry_field_read(state, destination, word);
             return Some(true);
         }
         let exit = self.guard_exit(state, pc as u32);
@@ -4168,15 +4209,7 @@ impl Lowering<'_, '_> {
             self.set_int(state, destination, length);
             return Some(true);
         }
-        let field = match instruction.field_lookup() {
-            Some(FieldLookup::Atom { atom, .. }) if sink.is_none() && completes.is_none() => {
-                Some((register, atom))
-            }
-            Some(FieldLookup::Site(index)) if sink.is_none() && completes.is_none() => {
-                Some((register, self.program.field_sites.get(index)?.first.0))
-            }
-            _ => None,
-        };
+        let field = self.plain_field(instruction, register, sink.is_none() && completes.is_none())?;
         // A whole-program prototype value: read the field once here as data, require the
         // value the closed program gives it, then fold it. A changed prototype fails the
         // guard and leaves to the shared body.
