@@ -1539,6 +1539,14 @@ impl<H: Host> Vm<H> {
         Some(FieldCache::own(shape, u16::try_from(slot).ok()?))
     }
 
+    /// Whether an own entry of `shape` is what a string primitive's read records
+    /// (`get_string_field_miss`): the shape of `String.prototype`, whose slot the primitive
+    /// reads without being an object of that shape, so native code must not take it as the
+    /// receiver's own slot (a read of `String.prototype` itself takes the VM's cache).
+    fn names_string_primitive_read(&self, shape: u32) -> bool {
+        self.heap.object_record(self.string_proto).is_some_and(|prototype| prototype.exact_shape() == shape)
+    }
+
     /// The field cache entry of the active program's `site`.
     #[inline(always)]
     pub(super) fn field_cache_entry(&self, site: u16) -> FieldCache {
@@ -1554,7 +1562,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn native_field_load_descriptor(&self, site: u16, receiver: Option<Value>) -> Option<super::compiled::NativeFieldLoad> {
         let cache = self.field_cache_entry(site);
-        if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
+        if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER || self.names_string_primitive_read(cache.receiver) { return None; }
         let storage_len = self.shapes.get(cache.receiver as usize)?.storage_len();
         if usize::from(cache.slot) >= storage_len { return None; }
         let storage = receiver.and_then(|receiver| self.heap.object_record(receiver))
@@ -1669,7 +1677,7 @@ impl<H: Host> Vm<H> {
     /// The descriptor of one cache entry: its receiver's shape, its holder's where it names
     /// one, and the slot, which the shape that holds it must cover.
     fn native_field_entry(&self, entry: FieldCache) -> Option<super::compiled::NativeFieldLoad> {
-        if entry.receiver == NO_FIELD_RECEIVER { return None; }
+        if entry.receiver == NO_FIELD_RECEIVER || (entry.holder == NO_FIELD_HOLDER && self.names_string_primitive_read(entry.receiver)) { return None; }
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
         let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
         (usize::from(entry.slot) < storage_len).then(|| super::compiled::NativeFieldLoad {

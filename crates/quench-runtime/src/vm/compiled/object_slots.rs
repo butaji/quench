@@ -309,7 +309,7 @@ impl NativeFieldLoad {
     /// site's inherited constant proves its value exactly; its miss leaves.
     pub(super) fn probes_misses(loads: &[Self]) -> bool {
         match loads {
-            [load] => load.holder.is_some() && load.inherited.is_none(),
+            [load] => load.holder.is_some(),
             loads => loads.iter().any(|load| load.holder.is_some()),
         }
     }
