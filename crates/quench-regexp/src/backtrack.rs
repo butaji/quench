@@ -17,7 +17,7 @@ mod dispatch;
 mod scan;
 mod workspace;
 use dispatch::Dispatch;
-use workspace::{ClassRun, class_run_of};
+use workspace::{AnchoredRun, ClassRun, anchored_run_of, class_run_of};
 
 use super::{
     canonical, canonical_preimages_of, class_is_single_unit, class_item_matches, class_matches, equal, escape_matches, is_line_terminator, is_word_mode, merge_flags,
@@ -592,6 +592,8 @@ pub(crate) struct Program {
     literal_length: Option<usize>,
     /// The unit test a pattern of one unbounded greedy `+` repeat is (`class_run_of`).
     class_run: Option<Box<ClassRun>>,
+    /// The whole-subject test a pattern of one unit repeat between anchors is (`anchored_run_of`).
+    anchored_run: Option<AnchoredRun>,
 }
 
 /// The compiled form of a construct this matcher does not run.
@@ -1336,6 +1338,7 @@ impl Program {
         });
         Some(Self {
             class_run: class_run_of(&compiler.instructions, &compiler.sets, capture_count),
+            anchored_run: anchored_run_of(&compiler.instructions, capture_count),
             instructions: compiler.instructions.into_boxed_slice(),
             sets: compiler.sets.into_boxed_slice(),
             lists: compiler.lists.into_boxed_slice(),
@@ -1471,7 +1474,7 @@ impl Program {
                 captures: Vec::new(),
             });
         }
-        if let Some(found) = self.class_run_found(text, first, sticky) {
+        if let Some(found) = self.class_run_found(text, first, sticky).or_else(|| self.anchored_run_found(text, first)) {
             return found;
         }
         let (start, search) = self.run_start(text, first, sticky)?;

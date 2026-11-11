@@ -1,5 +1,6 @@
 //! The registers and stack a search runs in, shared by every program on a thread.
-use super::{ascii_table, StartRanges, AsciiTable, Frame, Found, Inst, MatchSet, ASCII_UNITS, Program, Search, Text, UnitTest, UNBOUNDED, UNSET};
+use super::{ascii_table, AssertionTest, StartRanges, AsciiTable, Frame, Found, Inst, MatchSet, ASCII_UNITS, Program, Search, Text, UnitTest, UNBOUNDED, UNSET};
+use crate::Assertion;
 use std::cell::Cell;
 use std::ops::Range;
 
@@ -131,6 +132,25 @@ pub(super) struct ClassRun {
 /// scan's set-up costs more than the table test of this many units.
 const SHORT_RUN_SUBJECT: usize = 64;
 
+/// A program that is one greedy or lazy repeat of a unit, at least `min` times with no maximum,
+/// between a start and an end assertion that no line terminator moves (`^\\d+$`), and nothing
+/// else: over an ASCII subject it matches the whole subject or nothing
+/// (`Program::anchored_run_found`).
+pub(super) struct AnchoredRun {
+    test: UnitTest,
+    min: u32,
+}
+
+pub(super) fn anchored_run_of(instructions: &[Inst], capture_count: usize) -> Option<AnchoredRun> {
+    let [Inst::Assert(start), Inst::UnitRepeat { test, min, max: UNBOUNDED, .. }, Inst::Assert(end), Inst::Match] = instructions else {
+        return None;
+    };
+    let fixed = |test: &AssertionTest| !test.multiline || matches!(test.assertion, Assertion::StartBuffer | Assertion::EndBuffer);
+    let anchors = matches!(start.assertion, Assertion::Start | Assertion::StartBuffer)
+        && matches!(end.assertion, Assertion::End | Assertion::EndBuffer);
+    (capture_count == 0 && anchors && fixed(start) && fixed(end)).then_some(AnchoredRun { test: *test, min: *min })
+}
+
 pub(super) fn class_run_of(instructions: &[Inst], sets: &[MatchSet], capture_count: usize) -> Option<Box<ClassRun>> {
     let [Inst::UnitRepeat { test, min: 1, max: UNBOUNDED, greedy: true }, Inst::Match] = instructions else {
         return None;
@@ -147,6 +167,19 @@ pub(super) fn class_run_of(instructions: &[Inst], sets: &[MatchSet], capture_cou
 }
 
 impl Program {
+    /// The match of an `anchored_run` pattern over an ASCII subject: the whole subject where
+    /// every unit passes and there are at least `min`, from the start only, else none.
+    /// `None` where the pattern or subject is another kind.
+    #[inline(always)]
+    pub(super) fn anchored_run_found<T: Text + ?Sized>(&self, text: &T, first: usize) -> Option<Option<Found>> {
+        let (run, Some(_)) = (self.anchored_run.as_ref()?, text.bytes()) else {
+            return None;
+        };
+        let length = text.len();
+        let whole = first == 0 && length >= run.min as usize && self.run_end(run.test, text, 0, length) == length;
+        Some(whole.then(|| Found { start: 0, end: length, captures: Vec::new() }))
+    }
+
     /// The match of a `class_run` pattern over an ASCII subject: `Some(None)` where no
     /// unit can start one, `Some(Some(found))` for the run of units from the first start, and
     /// `None` where the pattern or subject is another kind, or the start scan was wrong.
