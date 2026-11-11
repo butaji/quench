@@ -94,7 +94,9 @@ incremental = true
 [profile.experiment]
 inherits = "release"
 opt-level = 3
-lto = false
+# "off" is no LTO at all: `false` runs thin-local LTO over the 256 units, which re-optimizes
+# every unit of quench-node after any runtime edit (measured: 120 s -> 55 s per body edit).
+lto = "off"
 codegen-units = 256
 incremental = true
 debug = 0
