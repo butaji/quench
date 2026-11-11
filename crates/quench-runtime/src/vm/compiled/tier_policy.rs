@@ -11,6 +11,33 @@ pub(in crate::vm) struct Tiers {
     pub(in crate::vm) lane_body: LaneBody,
     pub(in crate::vm) js_function: JsFunction,
     pub(in crate::vm) wasm: Wasm,
+    pub(in crate::vm) limits: Limits,
+}
+
+/// The sizes of what the compilers accept: a body past one stays with the interpreter.
+pub(in crate::vm) struct Limits {
+    /// The numeric function tier: native regions stay short so an interpreter interrupt cannot
+    /// be delayed by a large body.
+    pub(in crate::vm) js_function: JsFunctionLimits,
+    /// The most bytecode instructions the general baseline compiles for one function: every
+    /// instruction is a block, and the baseline's return statuses encode a block's PC
+    /// (`JS_GENERAL_RETURN_STATUS_BASE`).
+    pub(in crate::vm) general_blocks: usize,
+    /// The most instructions a lane unit (a lane body with its inlined callees) lowers to a
+    /// native region.
+    pub(in crate::vm) lane_region_blocks: usize,
+}
+
+/// What the numeric function tier admits and emits.
+pub(in crate::vm) struct JsFunctionLimits {
+    /// The most bytecode instructions of a candidate function.
+    pub(in crate::vm) instructions: usize,
+    /// The most registers of a candidate function.
+    pub(in crate::vm) registers: usize,
+    /// The most parameters of a candidate function.
+    pub(in crate::vm) parameters: usize,
+    /// The most bytes of native code one function (and, doubled, one loop region) emits.
+    pub(in crate::vm) code_bytes: usize,
 }
 
 /// The loop tier (OSR regions at backward jumps).
@@ -133,6 +160,8 @@ pub(in crate::vm) struct Wasm {
     /// often enough that the bound lands within a few interpreted calls, rarely enough that
     /// the clock stays off an interpreted call's path.
     pub(in crate::vm) module_clock_interval: u32,
+    /// The most bytecodes of a Wasm function a hot-root tier promotion compiles.
+    pub(in crate::vm) tier_function_bytecodes: usize,
 }
 
 /// The distinct cases (shapes, callees, targets) a site's feedback keeps before it widens to
@@ -160,6 +189,7 @@ const FLOOR: Tiers = Tiers {
     lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX, ..MEASURED.wasm },
+    limits: MEASURED.limits,
 };
 
 const MEASURED: Tiers = Tiers {
@@ -190,6 +220,12 @@ const MEASURED: Tiers = Tiers {
         module_work: 4096,
         module_after_millis: 20,
         module_clock_interval: 16,
+        tier_function_bytecodes: 2048,
+    },
+    limits: Limits {
+        js_function: JsFunctionLimits { instructions: 256, registers: 256, parameters: 8, code_bytes: 64 * 1024 },
+        general_blocks: 2048,
+        lane_region_blocks: 2048,
     },
 };
 

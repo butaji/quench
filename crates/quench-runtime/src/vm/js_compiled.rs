@@ -8,6 +8,7 @@
 //! change reaches both.
 
 use crate::bytecode::{Function, ProgramKind, ResidualProgram, Traits};
+use super::compiled::tier_policy::TIERS;
 
 /// Native code and its result interpretation for a JavaScript function.
 pub(super) struct JsJitArtifact {
@@ -27,12 +28,6 @@ pub(super) enum JsJitResultKind {
     /// helper and branch directly to the next validated bytecode PC.
     GeneralDispatch,
 }
-
-// Keep native regions short so an interpreter interrupt cannot be delayed by a large body.
-const MAX_INSTRUCTIONS: usize = 256;
-const MAX_REGISTERS: usize = 256;
-pub(crate) const MAX_CODE_BYTES: usize = 64 * 1024;
-const MAX_PARAMETERS: usize = 8;
 
 /// Compile `function_id` as a numeric function through the shared semantic SSA specializer;
 /// any function it does not cover stays with the interpreter and the general tier.
@@ -54,13 +49,13 @@ pub(super) fn candidate_rejection_reason(program: &ResidualProgram, function_id:
     if function.code.is_empty() {
         return "empty-function";
     }
-    if function.code.len() > MAX_INSTRUCTIONS {
+    if function.code.len() > TIERS.limits.js_function.instructions {
         return "bytecode-limit";
     }
-    if usize::from(function.registers) > MAX_REGISTERS {
+    if usize::from(function.registers) > TIERS.limits.js_function.registers {
         return "register-limit";
     }
-    if usize::from(function.params) > MAX_PARAMETERS {
+    if usize::from(function.params) > TIERS.limits.js_function.parameters {
         return "parameter-limit";
     }
     if !eligible(function, program) {
@@ -75,10 +70,10 @@ pub(super) fn function_candidate(function: &Function, program: &ResidualProgram)
 
 fn scanned_function_candidate(function: &Function, program: &ResidualProgram) -> bool {
     !function.code.is_empty()
-        && function.code.len() <= MAX_INSTRUCTIONS
+        && function.code.len() <= TIERS.limits.js_function.instructions
         && function.wide.is_empty()
-        && usize::from(function.registers) <= MAX_REGISTERS
-        && usize::from(function.params) <= MAX_PARAMETERS
+        && usize::from(function.registers) <= TIERS.limits.js_function.registers
+        && usize::from(function.params) <= TIERS.limits.js_function.parameters
         && eligible(function, program)
 }
 

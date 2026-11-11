@@ -1392,7 +1392,7 @@ pub(super) fn lower(
     if fields.values().flatten().any(|field| !field.valid())
         || (completion == Completion::SourcePc && unit.frames.iter().any(|frame|
             frame.target.callee != CalleeBinding::Function)) { return None; }
-    if unit.instructions.is_empty() || unit.instructions.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
+    if unit.instructions.is_empty() || unit.instructions.len() > super::tier_policy::TIERS.limits.lane_region_blocks {
         return None;
     }
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());

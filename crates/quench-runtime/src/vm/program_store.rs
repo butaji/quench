@@ -1766,7 +1766,7 @@ impl ProgramStore {
             .residual
             .function_get(function as usize)
             .is_some_and(|function| {
-                function.code.len() <= super::compiled::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
+                function.code.len() <= TIERS.wasm.tier_function_bytecodes
             })
         {
             return false;

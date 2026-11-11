@@ -435,7 +435,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
             completion: lane_region::Completion::Number, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok()?;
     let dump = native_dump_directory().map(|_| region.function.to_string());
-    let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
+    let code = compile_native_function(region.function, &*isa, tier_policy::TIERS.limits.js_function.code_bytes,
         |code| Some(code.to_vec())).ok()?;
     if let (Some(directory), Some(clif)) = (native_dump_directory(), dump) {
         dump_native_bytes(directory, function_id, &code, None, &clif);
@@ -447,11 +447,10 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     })
 }
 
-const MAX_JS_GENERAL_DISPATCH_BLOCKS: usize = 2048;
 /// General-dispatch return statuses encode the terminal bytecode PC without
 /// colliding with the shared entry's small stop, resume, or trap statuses.
 const JS_GENERAL_RETURN_STATUS_BASE: u32 =
-    u32::MAX - MAX_JS_GENERAL_DISPATCH_BLOCKS as u32;
+    u32::MAX - tier_policy::TIERS.limits.general_blocks as u32;
 
 const _: () = assert!(JS_GENERAL_RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 
@@ -474,7 +473,7 @@ pub(super) fn js_general_dispatch_acyclic_candidate(
 /// targets) and, if so, whether it is acyclic (every jump goes forward): one pass over
 /// the bytecode for both facts.
 pub(super) fn js_general_dispatch_shape(function: &Function) -> Option<bool> {
-    if function.code.is_empty() || function.code.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
+    if function.code.is_empty() || function.code.len() > tier_policy::TIERS.limits.general_blocks {
         return None;
     }
     let mut acyclic = true;
@@ -2374,7 +2373,7 @@ pub(super) fn compile_js_general_dispatch(
     let code = compile_native_function(
         native,
         &*isa,
-        super::js_compiled::MAX_CODE_BYTES,
+        tier_policy::TIERS.limits.js_function.code_bytes,
         |code| Some(code.to_vec()),
     )
     .map_err(NativeCompileRejection::reason)?;
@@ -4098,7 +4097,6 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 /// indirect-call executions. Keep the profile-guided closure bounded so one
 /// polymorphic module cannot turn a tier promotion into eager compilation.
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
-pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
     #[cfg(test)]
@@ -13898,7 +13896,7 @@ impl<H: Host> Vm<H> {
             && self.programs.residual(program).is_some_and(|code| {
                 code.kind == crate::bytecode::ProgramKind::Wasm
                     && code.function_get(id as usize).is_some_and(|function| {
-                        function.code.len() <= MAX_JIT_TIER_BYTECODES_PER_FUNCTION
+                        function.code.len() <= tier_policy::TIERS.wasm.tier_function_bytecodes
                     })
             })
             && self.programs.wasm_tier_has_room()

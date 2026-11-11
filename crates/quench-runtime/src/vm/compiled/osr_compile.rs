@@ -261,7 +261,7 @@ pub(in crate::vm) fn start_osr_region(
     // that inlines two calls may legitimately exceed one function's code budget. The code
     // is published once per hot loop and retires with its site, so the larger per-site
     // bound stays bounded by the lane plan's own admission.
-    let code_budget = 2 * osr_loop::MAX_CODE_BYTES;
+    let code_budget = 2 * tier_policy::TIERS.limits.js_function.code_bytes;
     let code = super::super::jit_backend::run_in_background(move || {
         compile_native_function(function, &*isa, code_budget, |code| Some(code.to_vec()))
     });
