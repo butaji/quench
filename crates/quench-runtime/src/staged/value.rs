@@ -3,26 +3,34 @@
 use super::Stage;
 use crate::value::ValueLayout;
 
+/// The family field is the word's top bits, so a family test is one shift and a compare with
+/// a small immediate, with no 64-bit mask or tag to load.
+const FAMILY_SHIFT: u32 = ValueLayout::HEAP_FAMILY_MASK.trailing_zeros();
+const _: () = assert!(ValueLayout::HEAP_FAMILY_MASK == u64::MAX << FAMILY_SHIFT);
+
+#[inline(always)]
+fn family_is<S: Stage>(stage: &mut S, bits: S::Word, tag: u64) -> S::Cond {
+    let family = stage.shr_imm(bits, u64::from(FAMILY_SHIFT));
+    stage.eq_imm(family, tag >> FAMILY_SHIFT)
+}
+
 /// Whether `bits` is a direct object reference, whose low half names its record
 /// (`Value::as_direct_object`).
 #[inline(always)]
 pub(crate) fn is_direct_object<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
-    let family = stage.and_imm(bits, ValueLayout::HEAP_FAMILY_MASK);
-    stage.eq_imm(family, ValueLayout::DIRECT_OBJECT_TAG)
+    family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG)
 }
 
 /// Whether `bits` is a direct array reference (`Value::as_direct_array`).
 #[inline(always)]
 pub(crate) fn is_direct_array<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
-    let family = stage.and_imm(bits, ValueLayout::HEAP_FAMILY_MASK);
-    stage.eq_imm(family, ValueLayout::DIRECT_ARRAY_TAG)
+    family_is(stage, bits, ValueLayout::DIRECT_ARRAY_TAG)
 }
 
 /// Whether `bits` is a direct function reference (`Value::as_direct_function`).
 #[inline(always)]
 pub(crate) fn is_direct_function<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
-    let family = stage.and_imm(bits, ValueLayout::HEAP_FAMILY_MASK);
-    stage.eq_imm(family, ValueLayout::DIRECT_FUNCTION_TAG)
+    family_is(stage, bits, ValueLayout::DIRECT_FUNCTION_TAG)
 }
 
 /// ToBoolean of `bits` as far as its own word decides it (`Value::truthiness`):
