@@ -773,18 +773,13 @@ impl<'a, 'f> Lowering<'a, 'f> {
         block
     }
 
-    /// `exit`, reached through a block that names `kind` as the guard that failed, which a
-    /// diagnostics build records in the leave's label; `exit` itself otherwise.
+    /// A second failure block for the guard `exit` made, leaving at the same place from the same
+    /// state but labelled `kind` in a diagnostics report; `exit` itself otherwise.
     fn tagged_exit(&mut self, exit: ir::Block, kind: FieldMiss) -> ir::Block {
-        if !self.vm.diagnostics { return exit; }
+        let Some((_, values, pc, _)) = self.pending.iter().find(|(block, ..)| *block == exit).cloned().filter(|_| self.vm.diagnostics) else { return exit };
         let block = self.builder.create_block();
         self.builder.set_cold_block(block);
-        let current = self.builder.current_block();
-        self.builder.switch_to_block(block);
-        let tag = self.ins().iconst(types::I64, kind as i64);
-        self.builder.ins().store(MemFlagsData::trusted(), tag, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
-        self.ins().jump(exit, &[]);
-        if let Some(current) = current { self.builder.switch_to_block(current); }
+        self.pending.push((block, values, pc, kind as u32));
         block
     }
 
@@ -1743,12 +1738,8 @@ pub(super) fn lower(
         lowering.switch_to(block, true);
         let mut leaving = State { values, proofs: LocalProofs::default() };
         if lowering.vm.diagnostics {
-            // A tagged exit (`Lowering::tagged_exit`) wrote the guard kind first; it names the leave.
-            let offset = std::mem::offset_of!(JsStepDispatch, exit_line) as i32;
             let line = lowering.builder.ins().iconst(types::I64, i64::from(line));
-            let tagged = lowering.builder.ins().load(types::I64, MemFlagsData::trusted(), lowering.payload, offset);
-            let line = lowering.builder.ins().select(tagged, tagged, line);
-            lowering.builder.ins().store(MemFlagsData::trusted(), line, lowering.payload, offset);
+            lowering.builder.ins().store(MemFlagsData::trusted(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
         }
         lowering.exit(&mut leaving, pc);
     }
