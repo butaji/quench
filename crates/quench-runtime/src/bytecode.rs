@@ -64,7 +64,7 @@ mod control_flow;
 pub(crate) mod initialization;
 mod initializer_stores;
 mod super_initializer;
-pub(crate) use initializer_stores::{InitializerConstant, InitializerStore, InitializerValue, NestedConstruct, NESTED_ARGUMENTS};
+pub(crate) use initializer_stores::{InitializerConstant, InitializerStore, InitializerValue, NestedConstruct, NESTED_ARGUMENTS, NESTED_CHAIN};
 mod environment_clone;
 pub use environment_clone::{EnvironmentClone, EnvironmentClones};
 pub(crate) use environment_clone::Resets;
@@ -2517,12 +2517,7 @@ impl Function {
                     stores.push(InitializerStore { atom: set.imm(), site: set.c(), value });
                     pc += 1;
                 }
-                written if temporaries.write(written, self.params, &fallbacks, constants) => pc += 1,
-                nested if nested.op() == Op::LoadCapture
-                    && let Some((store, length)) = initializer_stores::nested_store(&instructions, pc, self.params, constants) => {
-                    stores.push(store);
-                    pc += length;
-                }
+                _ if let Some(length) = temporaries.consume(&instructions, pc, (self.params, &fallbacks, constants), &mut stores) => pc += length,
                 _ => break,
             }
         }
