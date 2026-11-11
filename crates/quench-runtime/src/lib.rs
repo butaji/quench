@@ -54,6 +54,8 @@ mod heap;
     allow(dead_code)
 )]
 mod jit_coverage;
+mod jit_mode;
+pub use jit_mode::JitMode;
 mod host;
 mod integer_conversion;
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]

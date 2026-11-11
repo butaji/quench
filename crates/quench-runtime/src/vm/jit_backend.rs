@@ -58,6 +58,35 @@ impl CodePublication {
     }
 }
 
+/// How much effort one compile spends. `Optimized` is the shipping configuration; `Quick`
+/// compiles a body at a fraction of the cost (no mid-end optimization, one-pass register
+/// allocation) for code that has not proven itself hot. A caller chooses per compile; every
+/// compile uses `Optimized` until a tier policy asks otherwise.
+#[cfg(any(feature = "jit", feature = "aot"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(super) enum CompileLevel {
+    Quick,
+    #[default]
+    Optimized,
+}
+
+#[cfg(any(feature = "jit", feature = "aot"))]
+impl CompileLevel {
+    /// The level a compile uses unless its caller chooses: `Optimized`, or `Quick` while the
+    /// `quick-compile` experiment measures that level.
+    pub(super) fn run_default() -> Self {
+        if crate::trace::Dev::QuickCompile.on() { Self::Quick } else { Self::Optimized }
+    }
+
+    /// The Cranelift settings a level fixes, applied after the publication's.
+    fn settings(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Quick => &[("opt_level", "none"), ("regalloc_algorithm", "single_pass")],
+            Self::Optimized => &[],
+        }
+    }
+}
+
 /// The Cranelift opt level of JavaScript JIT code. Measured on JetStream 3 `--jit` (2 interleaved
 /// rounds, TOD-1467, 2026-11-07): while lane bodies compiled on the main thread, `none` won
 /// +4.5% over the JavaScript tests; once they compiled on the code-generator thread, `none` for
@@ -71,7 +100,10 @@ const JS_JIT_OPT_LEVEL: &str = "speed";
 
 /// The executable-memory ISA of every JavaScript JIT tier.
 pub(super) fn target_isa() -> Option<Arc<TargetIsa>> {
-    target_isa_at(JS_JIT_OPT_LEVEL)
+    #[cfg(feature = "jit")]
+    { target_isa_level(CompileLevel::run_default()) }
+    #[cfg(not(feature = "jit"))]
+    { None }
 }
 
 /// The executable-memory ISA at `opt_level`: the Wasm tier's, which picks its own level.
@@ -87,10 +119,25 @@ pub(super) fn target_isa_for(
     opt_level: &str,
     publication: CodePublication,
 ) -> Option<Arc<TargetIsa>> {
-    type IsaCache = HashMap<(String, CodePublication), Arc<TargetIsa>>;
+    target_isa_with(opt_level, publication, CompileLevel::Optimized)
+}
+
+/// The executable-memory ISA of JavaScript JIT code compiled at `level`.
+#[cfg(feature = "jit")]
+pub(super) fn target_isa_level(level: CompileLevel) -> Option<Arc<TargetIsa>> {
+    target_isa_with(JS_JIT_OPT_LEVEL, CodePublication::ExecutableMemory, level)
+}
+
+#[cfg(any(feature = "jit", feature = "aot"))]
+fn target_isa_with(
+    opt_level: &str,
+    publication: CodePublication,
+    level: CompileLevel,
+) -> Option<Arc<TargetIsa>> {
+    type IsaCache = HashMap<(String, CodePublication, CompileLevel), Arc<TargetIsa>>;
     static CACHE: OnceLock<Mutex<IsaCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = (opt_level.to_owned(), publication);
+    let key = (opt_level.to_owned(), publication, level);
     let mut entries = cache.lock().ok()?;
     if let Some(isa) = entries.get(&key) {
         return Some(Arc::clone(isa));
@@ -98,7 +145,7 @@ pub(super) fn target_isa_for(
 
     let mut flags = settings::builder();
     flags.set("opt_level", opt_level).ok()?;
-    for (name, value) in publication.settings() {
+    for (name, value) in publication.settings().iter().chain(level.settings()) {
         flags.set(name, value).ok()?;
     }
     for check in ["enable_verifier", "regalloc_checker"] {

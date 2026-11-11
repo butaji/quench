@@ -31,3 +31,25 @@ fn a_hot_loop_compiles_by_default_and_not_under_no_jit() {
     assert!(compiles(&[]) > 0, "no flag: the hot loop must run compiled code");
     assert_eq!(compiles(&["--no-jit"]), 0, "--no-jit: nothing compiles");
 }
+
+/// Run `quench-node` with the flags and a trivial program; the exit status and stderr.
+fn run_flags(arguments: &[&str]) -> (bool, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+        .args(arguments)
+        .args(["-e", "1"])
+        .env_remove("NODE_OPTIONS")
+        .output()
+        .expect("run quench-node");
+    (output.status.success(), String::from_utf8_lossy(&output.stderr).into_owned())
+}
+
+#[test]
+fn the_jit_mode_flags_select_one_mode_and_the_old_flag_is_gone() {
+    for flag in ["--no-jit", "--f-jit", "--u-jit"] {
+        assert!(run_flags(&[flag]).0, "{flag} runs");
+    }
+    assert!(!run_flags(&["--no-jit", "--f-jit"]).0, "two modes are an error");
+    assert!(!run_flags(&["--f-jit", "--u-jit"]).0, "two modes are an error");
+    assert_eq!(compiles(&["--f-jit"]), 0, "--f-jit has no tier of its own yet, so it compiles nothing");
+    assert!(compiles(&["--u-jit"]) > 0, "--u-jit: the hot loop runs compiled code");
+}

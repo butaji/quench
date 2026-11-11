@@ -655,7 +655,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         Some("--help") | Some("-h") => {
             print_cli_help();
             // Quench's own options follow Node's.
-            println!("quench-node [--no-jit] [{}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG);
+            println!("quench-node [--no-jit|--f-jit|--u-jit] [{}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG);
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
@@ -676,12 +676,13 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut input = None;
     let mut eval_source = None;
     let mut print = false;
-    let mut mode = DEFAULT_MODE;
+    let mut jit_mode: Option<quench_runtime::JitMode> = None;
     let mut guest_arguments = Vec::new();
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--no-jit" => mode = quench_runtime::ExecutionMode::Interpreted,
+            "--no-jit" | "--f-jit" | "--u-jit" if jit_mode.is_some() => { return Ok(cli_usage_error("only one of --no-jit, --f-jit and --u-jit can be used")); }
+            flag @ ("--no-jit" | "--f-jit" | "--u-jit") => jit_mode = quench_runtime::JitMode::from_flag(flag),
             "--env-file" | "--env-file-if-exists" => {
                 let Some(path) = args.get(index + 1) else {
                     return Ok(cli_usage_error(&format!(
@@ -930,7 +931,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     execute_shared_with_teardown(
         input,
         argv,
-        mode,
+        jit_mode.unwrap_or_default().execution_mode(),
         Teardown::ProcessExit,
     )
     .map(SharedCompletion::exit_code)
