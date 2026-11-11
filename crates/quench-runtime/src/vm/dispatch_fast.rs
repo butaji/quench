@@ -15162,11 +15162,11 @@ fn lane_body_prepare_recovery<H: Host>(cx: *mut LaneContext<H>, method: &super::
     let room = method.recovery_space();
     let vm = unsafe { vm(cx) };
     if !unsafe { (*cx).script_calls } || vm.with_scope_entered { return false; }
-    let values = vm.lane_stack.values.capacity() - vm.lane_stack.values.len() < room.values;
+    let values = vm.lane_stack.values.capacity() - vm.lane_stack.values.len() < room.values * super::compiled::tier_policy::RECOVERY_HEADROOM;
     let activations = vm.lane_stack.activations.capacity() - vm.lane_stack.activations.len() < room.activations;
     if !values && !activations { return false; }
     vm.materialize_lane_activations(cx);
-    if values { vm.lane_stack.values.reserve(room.values); }
+    if values { vm.lane_stack.values.reserve(room.values * super::compiled::tier_policy::RECOVERY_HEADROOM); }
     if activations { vm.lane_stack.activations.reserve(room.activations); }
     vm.lane_stack.refresh_activation_limit();
     true
