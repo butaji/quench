@@ -1,5 +1,7 @@
 mod analysis;
 mod contention;
+mod option_values;
+use option_values::{rounds, timeout_ms, wasm_root};
 mod jetstream;
 
 use serde::{Deserialize, Serialize};
@@ -1139,9 +1141,6 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
     if let Some(error) = aot_mode_error(&options) {
         usage(error);
     }
-    if options.quench_peer.is_some() && !options.fixed_work {
-        usage("--quench-peer requires --fixed-work");
-    }
     if options.fixed_work
         && (options.preflight_only || options.checkpoint.is_some() || options.resume.is_some())
     {
@@ -1164,7 +1163,7 @@ fn required_path(args: &mut impl Iterator<Item = String>, option: &str) -> PathB
         .unwrap_or_else(|| usage(&format!("missing value for {option}")))
 }
 
-fn required_number(args: &mut impl Iterator<Item = String>, option: &str) -> u64 {
+pub(crate) fn required_number(args: &mut impl Iterator<Item = String>, option: &str) -> u64 {
     args.next()
         .and_then(|value| value.parse().ok())
         .unwrap_or_else(|| usage(&format!("invalid value for {option}")))
@@ -1234,7 +1233,7 @@ fn prepare_engines(options: &Options) -> (Vec<EngineSpec>, Option<jetstream::Bui
             })
             .collect()
     };
-    let engines = engines
+    let engines = with_peer_arm(engines, options)
         .into_iter()
         .map(|mut engine| {
             engine.webassembly = probe_webassembly(&engine);
@@ -1281,31 +1280,6 @@ fn aot_mode_error(options: &Options) -> Option<&'static str> {
     }
 }
 
-/// `--timeout-ms`' positive timeout.
-fn timeout_ms(args: &mut impl Iterator<Item = String>) -> u64 {
-    let timeout_ms = required_number(args, "--timeout-ms");
-    if timeout_ms == 0 {
-        usage("--timeout-ms must be positive");
-    }
-    timeout_ms
-}
-
-/// `--runs`' positive round count.
-fn rounds(args: &mut impl Iterator<Item = String>) -> usize {
-    let rounds = usize::try_from(required_number(args, "--runs"))
-        .unwrap_or_else(|_| usage("--runs is too large"));
-    if rounds == 0 {
-        usage("--runs must be positive");
-    }
-    rounds
-}
-
-/// `--jit-wasm-root`'s root id.
-fn wasm_root(args: &mut impl Iterator<Item = String>) -> u32 {
-    u32::try_from(required_number(args, "--jit-wasm-root"))
-        .unwrap_or_else(|_| usage("--jit-wasm-root is too large"))
-}
-
 /// Compiles the suite prelude to a native binary and describes it as the measured Quench
 /// engine: the binary embeds the prelude, whose arguments are then the corpus root and the
 /// driver flags alone.
@@ -1326,6 +1300,25 @@ fn aot_quench_engine(options: &Options) -> (EngineSpec, jetstream::BuiltBinary) 
     engine.jit_proof =
         "the measured Quench process is an AOT-compiled binary of the suite prelude with dynamic-source support".into();
     (engine, jetstream::BuiltBinary(output))
+}
+
+/// `engines` with the `--quench-peer` arm after Quench: the same suite, driver and rounds,
+/// so the two binaries are measured in one rotated order.
+fn with_peer_arm(engines: Vec<EngineSpec>, options: &Options) -> Vec<EngineSpec> {
+    let Some(peer) = options.quench_peer.as_deref() else {
+        return engines;
+    };
+    let executable = resolve_executable(peer).unwrap_or_else(|error| fail(&error));
+    let sha = sha256(&executable)
+        .unwrap_or_else(|| fail(&format!("cannot hash {}", executable.display())));
+    let mut arm = quench_engine(options);
+    arm.name = "quench-peer";
+    arm.executable = executable;
+    arm.executable_sha256 = sha;
+    arm.jit_proof = format!("the second arm of a same-round A/B; {}", arm.jit_proof);
+    let mut engines = engines;
+    engines.insert(1, arm);
+    engines
 }
 
 fn quench_selective_ab_pair(options: &Options) -> [EngineSpec; 2] {
@@ -2983,7 +2976,7 @@ pub(crate) fn now_ns() -> u128 {
         .map_or(0, |duration| duration.as_nanos())
 }
 
-fn usage(message: &str) -> ! {
+pub(crate) fn usage(message: &str) -> ! {
     eprintln!(
         "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
