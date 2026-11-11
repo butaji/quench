@@ -35,6 +35,35 @@ pub(crate) unsafe fn concrete_dense_capture(values: *const crate::Value, len: us
     dense_capture(&mut stage, values as u64, len as u64, slot, ()).map(crate::Value::from_bits)
 }
 
+/// Value `slot` of the dense environment storage whose word `storage` holds: the header
+/// pointer, a header whose sparse mark is clear, `slot` below its length, an ordinary value.
+/// Any other storage or slot leaves at `miss` for the general read
+/// (`EnvironmentSlots::dense` then `dense_plain`; `heap.environment_slot`).
+#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
+#[inline(always)]
+pub(crate) fn environment_slot<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let layout = crate::heap::NATIVE_ENVIRONMENT_LAYOUT;
+    let header_pointer = stage.load_u64(storage, layout.header_pointer_offset);
+    let header = stage.load_u64(header_pointer, 0);
+    let marks = stage.and_imm(header, layout.sparse_mark);
+    let dense = stage.eq_imm(marks, 0u64);
+    stage.guard(dense, miss)?;
+    let len = stage.and_imm(header, !layout.sparse_mark);
+    let values = stage.add_imm(header_pointer, layout.slots_offset);
+    dense_capture(stage, values, len, slot, miss)
+}
+
+/// The interpreter's `environment_slot` over the storage at `storage`.
+///
+/// # Safety
+/// `storage` addresses a live `EnvironmentSlots`.
+#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
+#[inline(always)]
+pub(crate) unsafe fn concrete_environment_slot(storage: *const crate::heap::EnvironmentSlots, slot: u16) -> Option<crate::Value> {
+    let mut stage = Concrete::new(std::ptr::null());
+    environment_slot(&mut stage, storage as u64, slot, ()).map(crate::Value::from_bits)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,5 +92,18 @@ mod tests {
         let (first, second) = (trace(2), trace(9));
         assert_eq!(first.ops, second.ops);
         assert_eq!((first.holes, second.holes), (vec![2, 16], vec![9, 72]));
+    }
+
+    /// The layout constants and the row read what `EnvironmentSlots::dense_plain` reads.
+    #[test]
+    fn an_environment_slot_reads_as_the_dense_storage_does() {
+        use crate::heap::EnvironmentSlots;
+        let slots = EnvironmentSlots::from_values([Value::number(7.0), Value::DELETED, Value::UNDEFINED].into_iter());
+        let dense = slots.dense().expect("a new storage is dense");
+        for slot in 0..4u16 {
+            // SAFETY: `slots` is live.
+            let read = unsafe { concrete_environment_slot(&slots, slot) };
+            assert_eq!(read.map(Value::to_bits), dense.dense_plain(usize::from(slot)).map(Value::to_bits), "slot {slot}");
+        }
     }
 }

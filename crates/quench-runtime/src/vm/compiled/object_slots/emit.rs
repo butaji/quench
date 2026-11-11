@@ -154,7 +154,12 @@ impl NumericStage for Emit<'_, '_> {
     fn cond_word(&mut self, cond: ir::Value) -> ir::Value { cond }
     fn guard_false(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
         let passed = self.builder.create_block();
-        self.builder.ins().brif(cond, miss, &[], passed, &[]);
+        // The forced-deopt switch counts this guard too: both successors leave.
+        #[cfg(test)]
+        let passed_or_miss = if crate::vm::compiled::forced_miss::next() { miss } else { passed };
+        #[cfg(not(test))]
+        let passed_or_miss = passed;
+        self.builder.ins().brif(cond, miss, &[], passed_or_miss, &[]);
         self.builder.switch_to_block(passed);
         Some(())
     }

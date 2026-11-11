@@ -39,7 +39,7 @@ pub(super) fn lower_capture(
     let tag = builder.ins().band_imm_u(old, ValueLayout::TAG_MASK as i64);
     let initialized = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INTERNAL_TAG as i64);
     let done = builder.create_block();
-    builder.ins().brif(initialized, done, &[], fallback, &[]);
+    builder.ins().brif(initialized, super::forced_or(done, fallback), &[], fallback, &[]);
     builder.switch_to_block(done);
     if store {
         let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, register);
@@ -205,7 +205,7 @@ pub(super) fn lower_env_local(
     let refused = if site.store { ENV_STORE_REFUSED } else { Value::DELETED.to_bits() };
     let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, answer, refused as i64);
     let (done, fallback) = (builder.create_block(), builder.create_block());
-    builder.ins().brif(hit, done, &[], fallback, &[]);
+    builder.ins().brif(hit, super::forced_or(done, fallback), &[], fallback, &[]);
     builder.switch_to_block(done);
     emit_completed(builder, &site, arguments, if site.store { value } else { answer }, next);
     exact.emit(builder, fallback);
@@ -249,7 +249,7 @@ fn emit_direct(builder: &mut FunctionBuilder<'_>, site: &EnvLocalSite, (owned, s
     builder.switch_to_block(local);
     let held = builder.create_block();
     let within = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, local_count, site.slot as i64);
-    builder.ins().brif(within, held, &[], asked, &[]);
+    builder.ins().brif(within, super::forced_or(held, asked), &[], asked, &[]);
     builder.switch_to_block(held);
     emit_slot(builder, site, (arguments, locals), (next, asked));
 }
@@ -264,7 +264,7 @@ fn emit_slot(builder: &mut FunctionBuilder<'_>, site: &EnvLocalSite, (arguments,
         let tag = builder.ins().band_imm_u(old, ValueLayout::TAG_MASK as i64);
         let initialized = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INTERNAL_TAG as i64);
         let done = builder.create_block();
-        builder.ins().brif(initialized, done, &[], asked, &[]);
+        builder.ins().brif(initialized, super::forced_or(done, asked), &[], asked, &[]);
         builder.switch_to_block(done);
     }
     let value = if site.store {
@@ -341,7 +341,7 @@ pub(super) fn lower_closure(
     let closure = emit_lane_helper_call(builder, payload, helper, &[payload, id]);
     let made = builder.ins().icmp_imm_u(IntCC::NotEqual, closure, Value::DELETED.to_bits() as i64);
     let (done, fallback) = (builder.create_block(), builder.create_block());
-    builder.ins().brif(made, done, &[], fallback, &[]);
+    builder.ins().brif(made, super::forced_or(done, fallback), &[], fallback, &[]);
     builder.switch_to_block(done);
     builder.ins().store(MemFlagsData::trusted(), closure, arguments, destination);
     builder.ins().jump(next, &[]);

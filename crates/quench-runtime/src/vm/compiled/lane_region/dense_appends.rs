@@ -26,13 +26,13 @@ impl Lowering<'_, '_> {
         let at_end = self.ins().icmp(IntCC::Equal, index, length);
         let aliased = self.aliased_view(array, pc as usize);
         let reserves = self.ins().band_not(at_end, aliased);
-        self.ins().brif(reserves, attempt, &[], general, &[]);
+        self.ins().brif(reserves, super::super::forced_or(attempt, general), &[], general, &[]);
         self.builder.switch_to_block(attempt);
         self.builder.seal_block(attempt);
         let room = self.helper_call(LaneHelper::AppendRoom, &[base]);
         let granted = self.ins().icmp_imm_u(IntCC::NotEqual, room, 0);
         let reserved = self.builder.create_block();
-        self.ins().brif(granted, reserved, &[], general, &[]);
+        self.ins().brif(granted, super::super::forced_or(reserved, general), &[], general, &[]);
         self.builder.switch_to_block(reserved);
         self.builder.seal_block(reserved);
         self.reload_dense_arrays(pc as usize);

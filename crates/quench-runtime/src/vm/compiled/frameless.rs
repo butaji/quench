@@ -215,7 +215,7 @@ fn emit_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (callee,
     let receiver = emit_lane_helper_call(builder, payload, helper, &[callee]);
     let allocated = builder.ins().icmp_imm_u(IntCC::NotEqual, receiver, Value::DELETED.to_bits() as i64);
     let bound = builder.create_block();
-    builder.ins().brif(allocated, bound, &[], framed, &[]);
+    builder.ins().brif(allocated, super::forced_or(bound, framed), &[], framed, &[]);
     builder.switch_to_block(bound);
     builder.ins().store(MemFlagsData::trusted(), receiver, record, std::mem::offset_of!(ShadowRecord, this) as i32);
     (builder.ins().iadd_imm_u(record, std::mem::offset_of!(ShadowRecord, this) as i64), Some(receiver))
@@ -235,7 +235,7 @@ pub(super) fn emit_admitted_captures(builder: &mut FunctionBuilder<'_>, payload:
     declined: ir::Block) -> (ir::Value, ir::Value) {
     let cache = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, call_cache));
     let bound = builder.create_block();
-    builder.ins().brif(cache, bound, &[], declined, &[]);
+    builder.ins().brif(cache, super::forced_or(bound, declined), &[], declined, &[]);
     builder.switch_to_block(bound);
     let entry = emit_entry(builder, payload, callee, declined);
     let word = |field: usize| i32::try_from(field).expect("entry field offset fits i32");
@@ -289,7 +289,7 @@ fn emit_room(builder: &mut FunctionBuilder<'_>, payload: ir::Value, context: ir:
     let room = builder.ins().band(room, records);
     let room = builder.ins().band(room, native);
     let enter = builder.create_block();
-    builder.ins().brif(room, enter, &[], framed, &[]);
+    builder.ins().brif(room, super::forced_or(enter, framed), &[], framed, &[]);
     builder.switch_to_block(enter);
     (top, next, record)
 }
