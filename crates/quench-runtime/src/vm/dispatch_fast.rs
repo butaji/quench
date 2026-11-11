@@ -607,7 +607,7 @@ mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_initialize_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
@@ -14042,11 +14042,8 @@ fn lane_construct_keeping_activation<H: Host>(
             // SAFETY: the context's program outlives the lane run, and the forwarded target is
             // one of its functions (`lane_script_target`).
             let code = unsafe { &*(*cx).code };
-            let mut fields = Some(EMPTY_CONSTRUCT_PLAN);
             let argument = lane_construct_argument(r, i);
-            if lane_add_initializer_fields(vm, code, this, forwarded.function, argument, |store, value| {
-                fields = fields.and_then(|fields| fields.with_field(store, value));
-            }) {
+            if let Some(fields) = construct_plan::lane_finish_forwarded(vm, code, forwarded.env, this, forwarded.function, argument) {
                 if let Some(fields) = fields {
                     lane_record_forwarded_fields(vm, callee, (forwarded.program, forwarded.function), this, &fields);
                 }
@@ -14082,6 +14079,11 @@ fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl 
     plan.forwarded?.initializer?;
     let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
     plan.fill_values(vm, &mut values, argument)?;
+    // A nested construction's field is a fresh object of its own plan; allocation never collects.
+    if let Some(nested) = vm.lane_stack.construct_plans[index].nested {
+        if !construct_plan::nested_root_holds(vm, &nested) { return None; }
+        values[usize::from(nested.field)] = construct_plan::nested_construction(vm, nested.constructor, &nested.arguments)?;
+    }
     Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
 }
 
@@ -14108,22 +14110,10 @@ fn lane_record_forwarded_fields<H: Host>(
     let Some(resolution) = plan.forwarded.filter(|_| plan.fields == 0) else {
         return;
     };
-    *plan = ConstructPlan {
-        shape,
-        fields: fields.fields,
-        parameters: fields.parameters,
-        defaulted: fields.defaulted,
-        constant: fields.constant,
-        computed: fields.computed,
-        operators: fields.operators,
-        fallbacks: fields.fallbacks,
-        forwarded: Some(ForwardedResolution {
-            initializer: Some(initializer),
-            ..resolution
-        }),
-        ..*plan
+    *plan = plan.with_recorded(fields, shape, ForwardedResolution { initializer: Some(initializer), ..resolution });
+    if let Some(nested) = fields.nested {
+        watch_construct_plan(vm, index, false, nested.held());
     }
-    .derive_header();
 }
 
 /// The method a forwarding constructor's body (`ScriptCallTarget::forwarded_method`) would
