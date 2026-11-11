@@ -89,13 +89,11 @@ pub(crate) fn take_materialized_text() -> MaterializedText {
 /// Heap-owned JavaScript string. Its code units are authoritative: one byte each when every
 /// unit is ASCII, UTF-16 otherwise. `host` is the explicit lossy Rust-text view used at
 /// host/API boundaries; an ASCII string is its own host text.
-#[derive(Clone)]
 pub(crate) struct JsString {
     repr: Repr,
 }
 
 /// Where a string's units live.
-#[derive(Clone)]
 enum Repr {
     /// Flat ASCII text (`FlatUnits::Short` or `FlatUnits::Ascii`, never `Wide`) held by the
     /// string value itself: short text inline, longer text in one shared allocation of its

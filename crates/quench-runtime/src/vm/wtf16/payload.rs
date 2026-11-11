@@ -36,3 +36,23 @@ impl JsString {
         }
     }
 }
+
+impl Clone for JsString {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        Self { repr: self.repr.clone() }
+    }
+}
+
+impl Clone for Repr {
+    /// Inlined at every string copy: the derived match grew past the inliner's budget with
+    /// the parts arm, and regexp's string copies paid a call each.
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        match self {
+            Self::Flat(units) => Self::Flat(units.clone()),
+            Self::Shared(inner) => Self::Shared(Rc::clone(inner)),
+            Self::Parts(parts) => Self::Parts(*parts),
+        }
+    }
+}

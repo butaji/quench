@@ -9,7 +9,7 @@ use std::mem::MaybeUninit;
 #[inline(always)]
 pub(super) fn next_free_record<T>(base: *const MaybeUninit<T>, free_word_base: RecordId, free_word: u64) {
     let bit = (OCCUPANCY_WORD_BITS - 1).wrapping_sub(free_word.leading_zeros() as usize);
-    let record = base.wrapping_add(free_word_base as usize + bit);
+    let record = base.wrapping_add((free_word_base as usize).wrapping_add(bit));
     #[cfg(target_arch = "x86_64")]
     // SAFETY: a prefetch hint reads nothing and never faults.
     unsafe {
