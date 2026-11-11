@@ -363,6 +363,8 @@ struct Planner<'t, 'f> {
     program: &'t crate::ResidualProgram,
     targets: &'t dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &'t dyn Fn(u32) -> Option<&'f Function>,
+    /// The function the unit is of: a call of it stays a call (a self-recursive direct call).
+    root: u32,
     registers: u32,
     budget: usize,
 }
@@ -438,6 +440,7 @@ impl Planner<'_, '_> {
     }
 
     fn inline_target(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
+        (target.function != self.root).then_some(())?;
         let callee = (self.body)(target.function)?;
         let code = decoded(callee);
         if code.len() > MAX_INLINED_INSTRUCTIONS
@@ -623,7 +626,7 @@ pub(crate) fn with_budget<'f>(
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget };
+    let mut planner = Planner { program, targets, body, root: function_id, registers: u32::from(caller_registers), budget };
     let plan = planner.plan(function_id, decoded(function), function.strict, 0);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {

@@ -66,7 +66,7 @@ impl ProgramStore {
                 // not a particular closure locator. Realm/reset retirement
                 // still uses this inventory for both binding kinds.
                 let dead = method.inlined.iter().any(|call| call.target.identity().is_some_and(|callee| !live(callee)))
-                    || method.direct.iter().any(|callee| !live(callee.callee) || !callee.method.is_published());
+                    || method.direct.iter().any(|callee| !live(callee.callee) || callee.method.as_ref().is_some_and(|method| !method.is_published()));
                 if dead {
                     code.retire();
                 }

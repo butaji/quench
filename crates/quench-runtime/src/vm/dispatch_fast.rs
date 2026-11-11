@@ -8111,7 +8111,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         {
             return super::compiled::LaneBodyOutcome::Declined;
         }
-        let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
+        let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
         let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), &direct, work, None);
         if diagnostics && let super::compiled::LaneBodyOutcome::Published(method) = &outcome {
             if let Some(method) = method.lease() { own.body_stats.compiled(function, &method.inlined); }
@@ -14902,7 +14902,7 @@ impl<H: Host> Vm<H> {
 /// specialized and the lane would activate it in place, with an ordinary `this`, from a
 /// plain call of at most its parameters: what a lane body calls by its compiled entry
 /// (`compiled::DirectCallee`).
-fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytecode::Function) -> Vec<Option<super::compiled::DirectCallee>> {
+fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body: &crate::bytecode::Function) -> Vec<Option<super::compiled::DirectCallee>> {
     let tail_calls = vm.host.proper_tail_calls() && body.strict;
     body.code
         .iter()
@@ -14925,13 +14925,18 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
                 && !target.view.is_null()
                 && ImmediateLayout::argument_count(instruction.imm()) <= target.params)
                 .then_some(())?;
+            // A call of the body being specialized calls its own entry, published or not.
+            let own_call = target.function == function;
             // SAFETY: a resolved target's view outlives its program.
-            let method = unsafe { &*target.view }.published_lane_body()?;
-            let body = method.lease().filter(|body| body.calls_only_natively())?;
+            let (method, body) = if own_call { (None, None) } else {
+                let method = unsafe { &*target.view }.published_lane_body()?;
+                let body = method.lease().filter(|body| body.calls_only_natively())?;
+                (Some(method), Some(body))
+            };
             // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
             let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
                 .unwrap_or((std::ptr::null(), 0));
-            let reserve = body.recovery_space();
+            let reserve = body.as_ref().map_or_else(LaneRecoverySpace::default, |body| body.recovery_space());
             Some(super::compiled::DirectCallee {
                 target,
                 method,
@@ -15029,7 +15034,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
         .unwrap_or((std::ptr::null(), 0));
     direct[pc] = Some(super::compiled::DirectCallee {
-        target, method: leaf_publication.clone(), body: leaf_body.clone(),
+        target, method: Some(leaf_publication.clone()), body: Some(leaf_body.clone()),
         call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(),
         callee: leaf, registers: target.registers, reserve: leaf_body.recovery_space(),
         sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals),
@@ -15062,8 +15067,11 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
 fn lane_materialize_frames<H: Host>(
     cx: *mut LaneContext<H>,
     frames: &[super::compiled::ShadowFrame],
+    root: &super::compiled::LaneMethod,
 ) -> Option<(&'static LaneView, &'static super::compiled::LaneMethod)> {
     let mut innermost = None;
+    // The body whose code made the next frame's call: a self-recursive call enters it again.
+    let mut running = std::ptr::from_ref(root);
     for frame in frames {
         // SAFETY: the caller's body owns the callee it named, and the callee's view and body
         // outlive the run; the frame's window starts at the stack's values' end.
@@ -15076,10 +15084,12 @@ fn lane_materialize_frames<H: Host>(
         let argc = ImmediateLayout::argument_count(unsafe { (*call).imm() });
         let caller = unsafe { (*cx).registers };
         lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), window, argc, Value::from_bits(frame.this), false);
-        let method = callee.body.as_ref();
+        let method = callee.body.as_ref().map_or(running, |body| std::ptr::from_ref(&**body));
+        running = method;
         // SAFETY: the active caller's code lease pins this exact callee body through
-        // recovery, even if its publication has already been retired.
-        innermost = Some(unsafe { (&*callee.target.view, &*std::ptr::from_ref(method)) });
+        // recovery, even if its publication has already been retired; a self call's body is
+        // the running one, which the run's own lease pins.
+        innermost = Some(unsafe { (&*callee.target.view, &*method) });
     }
     innermost
 }
@@ -15528,7 +15538,7 @@ fn lane_body_left<H: Host>(
         return (LaneBodyLeft::Terminated, exit);
     }
     let (feedback, frames) = (method.feedback(exit, unsafe { &*(*cx).code }), Vm::<H>::take_shadow_frames());
-    let (r, own, method) = match lane_materialize_frames(cx, frames) {
+    let (r, own, method) = match lane_materialize_frames(cx, frames, method) {
         // SAFETY: the materialization made the innermost frame the running activation.
         Some((own, method)) => (unsafe { (*cx).registers }, own, method),
         None => (r, own, method),

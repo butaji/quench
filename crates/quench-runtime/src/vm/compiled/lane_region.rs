@@ -3347,25 +3347,34 @@ impl Lowering<'_, '_> {
             self.ins().store(MemFlagsData::trusted(), value, shadow, offset(field));
         }
         let pushed = self.ins().iadd_imm_u(shadow, frame_size);
-        let words = [
+        let mut words = vec![
             std::mem::offset_of!(JsStepDispatch, receiver),
             std::mem::offset_of!(JsStepDispatch, capture_values),
             std::mem::offset_of!(JsStepDispatch, capture_len),
         ];
+        let capture_values = self.ins().iconst(types::I64, callee.capture_values as i64);
+        let capture_len = self.ins().iconst(types::I64, callee.capture_len as i64);
+        let mut entered = vec![this, capture_values, capture_len];
+        // The body running calls its own entry again; any other callee runs with its own.
+        let entry = match &callee.body {
+            Some(body) => {
+                let entry = self.ins().iconst(types::I64, body.entry_address() as i64);
+                words.push(std::mem::offset_of!(JsStepDispatch, self_entry));
+                entered.push(entry);
+                entry
+            }
+            None => self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, self_entry))),
+        };
         let saved: Vec<ir::Value> = words.iter()
             .map(|field| self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(*field)))
             .collect();
-        let capture_values = self.ins().iconst(types::I64, callee.capture_values as i64);
-        let capture_len = self.ins().iconst(types::I64, callee.capture_len as i64);
-        for (field, value) in words.iter().zip([this, capture_values, capture_len]) {
+        for (field, value) in words.iter().zip(entered) {
             self.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
         }
         self.ins().store(MemFlagsData::trusted(), pushed, payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
         self.ins().store(MemFlagsData::trusted(), next, payload, offset(std::mem::offset_of!(JsStepDispatch, native_top)));
         let signature = native_entry_signature(types::I64, self.builder.func.signature.call_conv);
         let signature = self.builder.import_signature(signature);
-        // The caller owns the exact callee body whose entry it embeds.
-        let entry = self.ins().iconst(types::I64, callee.body.entry_address() as i64);
         let zero = self.ins().iconst(types::I64, 0);
         let context = self.context;
         let status = self.ins().call_indirect(signature, entry, &[context, zero, zero, top, result]);

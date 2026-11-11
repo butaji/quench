@@ -88,7 +88,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, site: &LoopS
         *body = LoopBody::Declined;
         return;
     }
-    let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
+    let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending),
         None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0 },

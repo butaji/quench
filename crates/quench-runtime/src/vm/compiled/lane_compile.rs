@@ -279,7 +279,7 @@ impl<H: Host> Vm<H> {
     /// What a pending body's compile came to, or the feedback and budget to plan it again with
     /// where its code needed more memory than a body may take: half the inlining.
     fn lane_body_poll(&mut self, pending: Box<PendingLaneMethod>) -> Result<LaneBodyOutcome, (Vec<LaneExit>, usize)> {
-        if !pending.watch.is_published() || pending.plan.direct.iter().any(|callee| !callee.method.is_published()) {
+        if !pending.watch.is_published() || pending.plan.direct.iter().any(|callee| callee.method.as_ref().is_some_and(|method| !method.is_published())) {
             return Ok(LaneBodyOutcome::Stale);
         }
         Ok(match pending.poll() {
@@ -370,7 +370,7 @@ impl LanePlan {
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         Some(LaneMethod {
             dependencies, stable, invalidation: self.invalidation, _code: memory, entry, recovery_space,
-            fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.fault_poll),
+            fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, inlined: self.unit.frames,
             scratch_width, caller_registers,
@@ -418,11 +418,11 @@ pub(in crate::vm) struct LaneDependencies {
 impl LaneDependencies {
     fn of(loads: impl Iterator<Item = NativeFieldLoad> + Clone, direct: &[DirectCallee]) -> Self {
         let mut slots: Vec<_> = loads.clone().filter_map(NativeFieldLoad::slot_dependency)
-            .chain(direct.iter().flat_map(|callee| callee.body.dependencies.slots.iter().copied())).collect();
+            .chain(direct.iter().filter_map(|callee| callee.body.as_ref()).flat_map(|body| body.dependencies.slots.iter().copied())).collect();
         slots.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
         slots.dedup();
         let mut departure_shapes: Vec<_> = loads.filter_map(|load| load.holder)
-            .chain(direct.iter().flat_map(|callee| callee.body.dependencies.departure_shapes.iter().copied())).collect();
+            .chain(direct.iter().filter_map(|callee| callee.body.as_ref()).flat_map(|body| body.dependencies.departure_shapes.iter().copied())).collect();
         departure_shapes.sort_unstable();
         departure_shapes.dedup();
         Self { slots, departure_shapes }
