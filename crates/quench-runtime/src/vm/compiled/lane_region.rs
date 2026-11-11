@@ -759,8 +759,19 @@ impl<'a, 'f> Lowering<'a, 'f> {
         }
     }
 
-    /// Leave at `pc` with the interpreter's state: every written register back in the file.
+    /// `leave` naming the lowering line that decided the leave, which a diagnostics run reports
+    /// (`JsStepDispatch::exit_line`).
+    #[track_caller]
     fn exit(&mut self, state: &mut State, pc: u32) {
+        if self.vm.diagnostics && self.completion != Completion::Number {
+            let line = self.builder.ins().iconst(types::I64, i64::from(std::panic::Location::caller().line()));
+            self.builder.ins().store(MemFlagsData::trusted(), line, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
+        }
+        self.leave(state, pc);
+    }
+
+    /// Leave at `pc` with the interpreter's state: every written register back in the file.
+    fn leave(&mut self, state: &mut State, pc: u32) {
         if self.completion == Completion::Number {
             self.return_at(0);
             return;
@@ -1791,7 +1802,7 @@ pub(super) fn lower(
             let line = lowering.builder.ins().iconst(types::I64, i64::from(line));
             lowering.builder.ins().store(MemFlagsData::trusted(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
         }
-        lowering.exit(&mut leaving, pc);
+        lowering.leave(&mut leaving, pc);
     }
     // The exit blocks: write back every caller register the unit writes, and an inlined
     // callee's registers to the window its recovery makes the activation from, then leave

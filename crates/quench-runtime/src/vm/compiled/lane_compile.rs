@@ -52,7 +52,7 @@ enum LaneCompile {
 pub(in crate::vm) enum LaneBodyWork<'a> {
     /// Plan a body from a predecessor's leaves (`generic`) and start compiling its code, its
     /// inlining budget halved `shrinks` times (`PendingLaneMethod::shrinks`).
-    Start { generic: &'a [LaneExit], shrinks: u8, observed: Option<u32>, called: bool },
+    Start { generic: &'a [LaneExit], shrinks: u8, observed: Option<u32>, called: bool, caller: &'a super::super::dispatch_fast::LaneView },
     /// Look for the code of the body compiling.
     Poll(Box<PendingLaneMethod>),
 }
@@ -259,18 +259,19 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>, called: bool) -> Result<PendingLaneMethod, Unstarted> {
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>, called: bool, caller: &super::super::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
         let (plan, native) = self.plan_lane_method_sized(program, function, targets, captures, direct, generic, budget, entry)
             .ok_or(Unstarted::Declined)?;
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
         if entry.is_none() && !called && !amortizes_entry(&plan.unit, function, &plan.direct) { return Err(Unstarted::Short); }
-        // The calls the plan keeps are the demand for their callees' bodies: they warm again
-        // while this body publishes at once, calling them through their entry cells.
+        // The calls the plan keeps are the callers' facts and the demand for their callees'
+        // bodies: they warm again while this body publishes at once, calling them through
+        // their entry cells. A callee this body inlines has no call of it to bind.
         for callee in &plan.direct {
             // SAFETY: a resolved target's view outlives its program.
-            if let Some(view) = unsafe { callee.target.view.as_ref() } { view.demand_body(); }
+            if let Some(view) = unsafe { callee.target.view.as_ref() } { view.note_caller(caller); view.demand_body(); }
         }
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
@@ -283,12 +284,12 @@ impl<H: Host> Vm<H> {
             return Err(Unstarted::Declined);
         }
         let census = self.programs.js_jit_diagnostics_enabled()
-            .then(|| (function, entry.is_some(), plan.unit.instructions.len(), native.dfg.num_insts(), key.3, generic.len(), plan.direct.len(), budget, observed));
+            .then(|| (function, entry.is_some(), plan.unit.instructions.len(), native.dfg.num_insts(), key.3, generic.len(), plan.direct.len(), budget, observed, plan.closed));
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
             let code = lane_code(native, super::jit_backend::CompileLevel::run_default());
-            if let Some((function, osr, unit, ir, key, generic, direct, budget, observed)) = census {
-                eprintln!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"observed\":{},\"key\":\"{key:016x}\",\"us\":{},\"bytes\":{}}}",
+            if let Some((function, osr, unit, ir, key, generic, direct, budget, observed, closed)) = census {
+                eprintln!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"observed\":{},\"key\":\"{key:016x}\",\"us\":{},\"closed\":{closed},\"bytes\":{}}}",
                     observed.map_or(-1, i64::from),
                     started.elapsed().as_micros(), code.as_ref().map_or(0, |code| code.len()));
             }
@@ -314,9 +315,9 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn lane_body_work(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
-        let (mut observed, mut called) = (None, false);
+        let (mut observed, mut called, mut caller) = (None, false, None);
         let mut pending = match work {
-            LaneBodyWork::Start { generic, shrinks, observed: seen, called: by_bodies } => { (observed, called) = (seen, by_bodies); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
+            LaneBodyWork::Start { generic, shrinks, observed: seen, called: by_bodies, caller: view } => { (observed, called, caller) = (seen, by_bodies, Some(view)); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
             LaneBodyWork::Poll(pending) => match self.lane_body_poll(pending) {
                 Ok(outcome) => return outcome,
                 Err(replan) => replan,
@@ -328,7 +329,7 @@ impl<H: Host> Vm<H> {
         loop {
             let (generic, budget) = pending;
             let direct = direct(self);
-            let started = match self.start_lane_method(program, function, targets, captures, &direct, &generic, budget, entry, observed, called) {
+            let started = match self.start_lane_method(program, function, targets, captures, &direct, &generic, budget, entry, observed, called, caller.expect("a started body names its view")) {
                 Ok(started) => started,
                 Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
                 Err(Unstarted::Unpaid) => return LaneBodyOutcome::Unpaid,

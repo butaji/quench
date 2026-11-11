@@ -14952,7 +14952,7 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body
         let direct = instruction.op().is_call() && !instruction.direct_eval() && !instruction.parameter_eval()
             && !(tail_calls && instruction.returns_from_frame());
         let mut callees = super::compiled::DirectCandidates::new();
-        callees.extend(lane_body_tier::compiled_site_targets(vm, view, pc).filter(|_| direct)
+        callees.extend(lane_body_tier::site_targets(vm, view, pc).filter(|_| direct)
             .filter_map(|target| lane_direct_callee(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm()), target)));
         callees
     }).collect()
