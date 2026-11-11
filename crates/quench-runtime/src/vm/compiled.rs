@@ -86,6 +86,24 @@ mod wasm_callable;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
 pub(super) use lane_unit::static_call_targets;
+/// The forced-deopt switch (R26): a test arms the Nth guard `emit_js_guard` emits on this
+/// thread, which then always leaves through its exit; tests compile on the running thread.
+#[cfg(test)]
+pub(in crate::vm) mod forced_miss {
+    use std::cell::Cell;
+    thread_local! { static STATE: Cell<(Option<usize>, usize)> = const { Cell::new((None, 0)) }; }
+    /// Counts guards from zero; `Some(n)` forces the nth, `None` only counts.
+    pub(in crate::vm) fn arm(forced: Option<usize>) { STATE.with(|state| state.set((forced, 0))); }
+    /// Guards emitted since `arm`.
+    pub(in crate::vm) fn emitted() -> usize { STATE.with(|state| state.get().1) }
+    pub(super) fn next() -> bool {
+        STATE.with(|state| {
+            let (forced, count) = state.get();
+            state.set((forced, count + 1));
+            forced == Some(count)
+        })
+    }
+}
 mod object_slots;
 mod frame_ssa;
 pub(super) use object_slots::{InheritedConstant, NativeFieldLoad};
@@ -793,7 +811,12 @@ fn emit_js_guard(
     fallback: ir::Block,
 ) {
     let passed = builder.create_block();
-    builder.ins().brif(condition, passed, &[], fallback, &[]);
+    // A test arms one guard of a compile to fail every time: both successors leave.
+    #[cfg(test)]
+    let taken = if forced_miss::next() { fallback } else { passed };
+    #[cfg(not(test))]
+    let taken = passed;
+    builder.ins().brif(condition, taken, &[], fallback, &[]);
     builder.switch_to_block(passed);
     builder.seal_block(passed);
 }

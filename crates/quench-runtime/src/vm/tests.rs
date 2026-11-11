@@ -9,6 +9,7 @@ use crate::test_host::TestHost;
 use std::cell::RefCell;
 use std::rc::Rc;
 #[path = "osr_retirement_tests.rs"] mod osr_retirement_tests;
+#[path = "forced_deopt_tests.rs"] mod forced_deopt_tests;
 #[test]
 fn deferred_math_joins_startup_intrinsics_before_guest_mutation() {
     let program = Engine::specialize(r#"
