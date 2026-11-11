@@ -73,7 +73,7 @@ pub(super) fn emit_store(builder: &mut FunctionBuilder<'_>, (arguments, payload)
     receiver: ir::Value, atom: Atom, site: u16, value: ir::Value, done: ir::Block, helper: ir::Block) {
     let admitted = emit_store_admitted(builder, payload, atom);
     let probe = builder.create_block();
-    builder.ins().brif(admitted, probe, &[], helper, &[]);
+    builder.ins().brif(admitted, super::forced_or(probe, helper), &[], helper, &[]);
     builder.switch_to_block(probe);
     let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
     let entry = usize::from(site) * CACHE.entry_size + CACHE.slot_offset;

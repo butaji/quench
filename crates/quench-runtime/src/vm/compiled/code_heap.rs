@@ -9,6 +9,7 @@
 
 mod views;
 
+use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use views::Views;
 
@@ -282,6 +283,36 @@ impl CodeHeap {
     }
 }
 
+thread_local! {
+    /// The tier and function of the body this thread publishes next, for the perf map.
+    static PUBLICATION: Cell<(&'static str, usize)> = const { Cell::new(("", usize::MAX)) };
+}
+
+/// Names the body this thread publishes inside `publish` (tier, function index) in the perf map.
+pub(in crate::vm) fn publishing<R>(tier: &'static str, function: usize, publish: impl FnOnce() -> R) -> R {
+    let before = PUBLICATION.with(|label| label.replace((tier, function)));
+    let result = publish();
+    PUBLICATION.with(|label| label.set(before));
+    result
+}
+
+/// With `QUENCH_TRACE=perf-map`, appends the published body to `/tmp/perf-PID.map` (the format
+/// `perf` reads: start, size, name) as `tier-fFUNCTION@file:line`, the line being the publishing
+/// call. The one place every tier's code enters the zone, so every body is named.
+fn record_publication(pointer: *mut u8, length: usize, site: &std::panic::Location<'_>) {
+    if !crate::trace::Channel::PerfMap.on() {
+        return;
+    }
+    use std::io::Write;
+    let (tier, function) = PUBLICATION.with(Cell::get);
+    let tier = if tier.is_empty() { "jit" } else { tier };
+    let function = if function == usize::MAX { String::new() } else { format!("-f{function}") };
+    let file = site.file().rsplit('/').next().unwrap_or("");
+    if let Ok(mut map) = std::fs::OpenOptions::new().create(true).append(true).open(format!("/tmp/perf-{}.map", std::process::id())) {
+        let _ = writeln!(map, "{:x} {length:x} {tier}{function}@{file}:{}", pointer as usize, site.line());
+    }
+}
+
 /// A compiled body's executable memory in the code zone.
 pub(in crate::vm) struct CodeMemory {
     pointer: *mut u8,
@@ -300,6 +331,7 @@ impl CodeMemory {
         self.length
     }
 
+    #[track_caller]
     pub(in crate::vm) fn new(bytes: &[u8]) -> Option<Self> {
         Self::assemble(bytes.len(), |_, code| {
             code.copy_from_slice(bytes);
@@ -311,6 +343,7 @@ impl CodeMemory {
     /// Places `length` bytes of code, lets `fill` write them knowing their final executable
     /// address, and publishes them. Copy-and-patch publication needs the address to resolve
     /// PC-relative continuations.
+    #[track_caller]
     pub(in crate::vm) fn assemble(
         length: usize,
         fill: impl FnOnce(*mut u8, &mut [u8]) -> Result<(), String>,
@@ -335,6 +368,7 @@ impl CodeMemory {
         Views::writing(|| fill(memory.pointer, code))?;
         views.retire_writer(offset, length);
         views::flush_icache(memory.pointer, length);
+        record_publication(memory.pointer, length, std::panic::Location::caller());
         Ok(memory)
     }
 }
