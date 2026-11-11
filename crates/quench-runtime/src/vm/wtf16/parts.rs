@@ -62,6 +62,19 @@ impl Parts {
         Some(Self { shape: parts.len() as u8 | at << NUMBER_SHIFT, ids, number })
     }
 
+    /// The string parts' record ids, in order: what a collector traces.
+    #[inline]
+    pub(crate) fn for_each_text(&self, mut visit: impl FnMut(u32)) {
+        let (count, at) = (usize::from(self.shape & COUNT_MASK), usize::from(self.shape >> NUMBER_SHIFT));
+        let mut ids = self.ids.chunks_exact(ID_BYTES);
+        for position in 0..count {
+            if position != at {
+                let id = ids.next().expect("an id per string part");
+                visit(u32::from_le_bytes(id.try_into().expect("an id is four bytes")));
+            }
+        }
+    }
+
     /// The parts, in order.
     pub(crate) fn each(&self) -> impl Iterator<Item = Part> + '_ {
         let (count, at) = (usize::from(self.shape & COUNT_MASK), self.shape >> NUMBER_SHIFT);
