@@ -181,7 +181,7 @@ const FLOOR: Tiers = Tiers {
 pub(in crate::vm) const PERCENT: u64 = 100;
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8, sample_runs: 16, long_run_iterations: 64 },
+    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8, sample_runs: 16, long_run_iterations: 96 },
     lane_body: LaneBody {
         warmup_entries: 400,
         reoptimize_share: 1,
