@@ -23,7 +23,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let (slot, last_index, prefilter) = self.regexp_steady_state(receiver, subject)?;
-        if native == Native::RegExpTest && self.regexp_builtin_exec_matcher(receiver).is_none() {
+        if native == Native::RegExpTest && !self.regexp_exec_is_builtin(receiver) {
             return None;
         }
         let exec = native == Native::RegExpExec;
@@ -364,6 +364,32 @@ impl<H: Host> Vm<H> {
         self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))
     }
 
+    /// The proof of `regexp_builtin_exec_matcher` that `regexp`'s exec is the builtin, without
+    /// the matcher: a caller that reads the matcher itself clones nothing for it.
+    #[inline(always)]
+    pub(in crate::vm) fn regexp_exec_is_builtin(&self, regexp: Value) -> bool {
+        let Some(Cell::RegExp { object, .. }) = self.heap.get(regexp) else {
+            return false;
+        };
+        let Some(intrinsics) = self.realm.intrinsics.regexp_intrinsics.get(&self.realm.globals) else {
+            return false;
+        };
+        if object.proto() != intrinsics.prototype {
+            return false;
+        }
+        let (shape, epoch) = (object.shape(), crate::heap::prototype_layout_epoch());
+        let proof = match intrinsics.exec_proof.get() {
+            Some(proof) if proof.shape == shape && proof.epoch == epoch => proof,
+            _ => match self.prove_regexp_exec(intrinsics, shape, epoch) {
+                Some(proof) => proof,
+                None => return false,
+            },
+        };
+        self.object_data(intrinsics.prototype)
+            .and_then(|data| self.heap.property_get(data, proof.exec_slot))
+            .is_some_and(|exec| self.is_native_function(exec, Native::RegExpExec))
+    }
+
     /// What a steady call (`steady_regexp_call`) of the RegExp `receiver` over the string
     /// `subject` reads, in one look at the regexp: the slot and Number value of its own
     /// writable data `lastIndex` (`regexp_last_index_slot`), and what its compiled regexp's
@@ -394,6 +420,10 @@ impl<H: Host> Vm<H> {
         let (Some(regex), Some(units)) = (meta.matcher.0.get(), input.existing_flat()) else {
             return Some((slot, last_index, Prefilter::Undecided));
         };
+        // A flat ASCII subject's search makes the prefilter's tests itself (`Regex::find_ascii`).
+        if matches!(units.view(), crate::vm::wtf16::Units::Ascii(_)) {
+            return Some((slot, last_index, Prefilter::Undecided));
+        }
         let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
         let start = if stateful { regexp_to_length(index) } else { 0 };
         let length = input.len();
@@ -406,7 +436,8 @@ impl<H: Host> Vm<H> {
 /// where neither conversion has an effect, over a flat subject.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Prefilter {
-    /// No compiled matcher or no flat subject: the search decides.
+    /// No compiled matcher, no flat subject, or an ASCII one whose search makes the prefilter's
+    /// tests itself: the search decides.
     Undecided,
     /// The search may match, and needs no second look.
     Admits,
