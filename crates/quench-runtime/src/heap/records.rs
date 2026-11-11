@@ -373,14 +373,12 @@ impl RecordBlock {
 }
 
 impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
-    /// Allocates a dense identity in this record space. The family's Value
-    /// tag carries this ID directly, independent of legacy Cell slot allocation.
+    /// A dense identity claimed with no value written (the Value tag carries it): its record is
+    /// uninitialized, to be written before the next safepoint (`try_insert` writes it at once).
     #[inline(always)]
-    pub(super) fn try_insert(&mut self, value: T) -> Result<RecordId, T> {
-        // The common allocation, inline: an id from the loaded free word, else the next fresh
-        // id in a block that exists. Reservation, new blocks and loading the next free word
-        // take `claim_slow`, which names no value: an allocation inlined into a lane handler
-        // then passes it no address of the handler's stack.
+    pub(super) fn claim_uninit(&mut self) -> Option<RecordId> {
+        // The common allocation, inline: an id from the loaded free word, else the next fresh id
+        // in a block that exists; `claim_slow` names no value (no address of the caller's stack).
         let id = if self.free_word != 0 {
             self.take_free_word_id()
         } else if self.free_cursor == 0
@@ -391,16 +389,23 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             let id = self.next_id;
             let (block_index, record_index) = Self::split_id(id);
             if !self.blocks[block_index].claim(record_index) {
-                return Err(value);
+                return None;
             }
             self.next_id += 1;
             id
         } else {
-            let Some(id) = self.claim_slow() else {
-                return Err(value);
-            };
-            id
+            self.claim_slow()?
         };
+        self.live += 1;
+        Some(id)
+    }
+
+    #[inline(always)]
+    pub(super) fn record_ptr(&mut self, id: RecordId) -> *mut T { unsafe { self.base.as_ptr().add(id as usize).cast::<T>() } }
+
+    #[inline(always)]
+    pub(super) fn try_insert(&mut self, value: T) -> Result<RecordId, T> {
+        let Some(id) = self.claim_uninit() else { return Err(value) };
         // SAFETY: the occupancy bit claims this previously uninitialized id, in the reserved
         // range (a free word and a block exist only after reservation).
         unsafe {
@@ -409,7 +414,6 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
                 .add(id as usize)
                 .write(MaybeUninit::new(value));
         };
-        self.live += 1;
         Ok(id)
     }
 
