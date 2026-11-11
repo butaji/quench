@@ -16,7 +16,7 @@ use array_proofs::retire_array_storage_proofs;
 mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
-    INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache,
+    Dependencies, INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache,
     ProofKind,
 };
 mod cell_access;
@@ -905,7 +905,7 @@ impl Heap {
         self.set_young_budget(self.pacing().minimum_young);
         self.external_collection_budget = self.pacing().minimum_external_budget;
     }
-    pub(crate) fn memory_policy(&self) -> MemoryPolicy {
+    #[inline] pub(crate) fn memory_policy(&self) -> MemoryPolicy {
         self.memory_policy
     }
     fn pacing(&self) -> pacing::GenerationalPacing {
@@ -1113,7 +1113,7 @@ impl Heap {
         })
     }
 
-    pub(crate) fn mark_prototype(&mut self, prototype: Value) {
+    #[inline] pub(crate) fn mark_prototype(&mut self, prototype: Value) {
         if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
         }
@@ -2036,7 +2036,7 @@ impl Heap {
         self.allocated += text.beside / payload_unit();
     }
 
-    pub fn should_collect(&self) -> bool {
+    #[inline] pub fn should_collect(&self) -> bool {
         self.allocated >= self.collect_at
     }
     /// The weight charged since the last collection.

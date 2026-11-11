@@ -230,8 +230,7 @@ impl FlatUnits {
         }
     }
 
-    #[inline]
-    pub(crate) fn view(&self) -> Units<'_> {
+    #[inline(always)] pub(crate) fn view(&self) -> Units<'_> {
         match self {
             Self::Short(text) => Units::Ascii(text.as_str().as_bytes()),
             Self::Ascii(_) | Self::AsciiSlice(_) => {
@@ -247,7 +246,7 @@ impl FlatUnits {
     }
 
     /// Whether the units are known to be ASCII; a wide slice may be, but is not known to be.
-    pub(crate) fn is_ascii(&self) -> bool {
+    #[inline] pub(crate) fn is_ascii(&self) -> bool {
         !matches!(self, Self::Wide(_) | Self::WideSlice(_) | Self::WidePrefix(..))
     }
 
