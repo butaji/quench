@@ -1,10 +1,50 @@
 //! Regexp searches of flat ASCII subjects made in place, from their bytes.
 use super::*;
 
+/// The result of a replace of a flat ASCII subject by a flat ASCII template with no `$`, made
+/// from both borrowed out of the heap, and whether it is too long to be a string.
+pub(super) struct AsciiReplace {
+    /// The result where it is used and something matched.
+    pub(super) output: Option<JsString>,
+    pub(super) too_long: bool,
+}
+
+impl AsciiReplace {
+    /// The result of `this.replace(regexp, replacement)`, with the match ranges it read left in
+    /// `ranges`; `None` where the subject or template is not flat ASCII, the template reads
+    /// `$`, the regexp is sticky, or the pattern has no compiled matcher over bytes.
+    pub(super) fn plan(
+        heap: &crate::heap::Heap,
+        (this, replacement): (Value, Value),
+        matcher: &quench_regexp::Regex,
+        flags: RegExpFlags,
+        result_used: bool,
+        ranges: &mut smallvec::SmallVec<[Range<usize>; 8]>,
+    ) -> Option<Self> {
+        use crate::vm::wtf16::Units::Ascii;
+        let (Some(Ascii(bytes)), Some(Ascii(literal))) = (
+            heap.string(this)?.existing_flat().map(|flat| flat.view()),
+            heap.string(replacement)?.existing_flat().map(|flat| flat.view()),
+        ) else {
+            return None;
+        };
+        if flags.contains(RegExpFlags::STICKY) || literal.contains(&b'$') {
+            return None;
+        }
+        ascii_match_ranges(matcher, bytes, flags.contains(RegExpFlags::GLOBAL), ranges)?;
+        let length = ranges
+            .iter()
+            .try_fold(bytes.len(), |length, range| (length - range.len()).checked_add(literal.len()))
+            .filter(|length| *length <= super::wtf16::MAX_STRING_UNITS);
+        let output = length.filter(|_| result_used && !ranges.is_empty()).map(|length| ascii_replaced(bytes, literal, ranges, length));
+        Some(Self { output, too_long: length.is_none() })
+    }
+}
+
 /// The ranges of the matches of `bytes` a replace reads: the first, or each of a global
 /// search (an empty match advances it by one unit, a whole code point in ASCII). `None`
 /// where the pattern has no compiled matcher over bytes.
-pub(super) fn ascii_match_ranges(
+fn ascii_match_ranges(
     matcher: &quench_regexp::Regex,
     bytes: &[u8],
     global: bool,
