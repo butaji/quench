@@ -67,12 +67,12 @@ pub(super) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
 }
 
 /// Whether a body has work that amortizes an entry, which costs a few hundred instructions
-/// the lane's own run of a short leaf never pays: a loop, an inlined call, or length
-/// (`TIERS.lane_body.min_instructions`).
-pub(super) fn amortizes_entry(unit: &lane_unit::Unit) -> bool {
+/// the lane's own run of a short leaf never pays: a loop, an inlined call, a call of itself
+/// (its recursion runs natively inside the entry), or length (`TIERS.lane_body.min_instructions`).
+pub(super) fn amortizes_entry(unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
     let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
         instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || !unit.frames.is_empty() || unit.instructions.len() >= super::tier_policy::exp_min_amortize()
+    loops || !unit.frames.is_empty() || direct.iter().any(|callee| callee.target.function == function) || unit.instructions.len() >= super::tier_policy::exp_min_amortize()
 }
 
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was

@@ -64,7 +64,6 @@ pub(in crate::vm) struct LaneBody {
     pub(in crate::vm) max_lifetimes: u8,
     /// The warm-ups a function's first compile waits for callees still warming toward the
     /// bodies it would call directly; a callee that never gets one stops holding it back.
-    pub(in crate::vm) max_callee_waits: u8,
     /// The times a function specializes again because a callee published its body
     /// (`LaneView::respecialize_callers`): each makes more of its calls direct, and the bound
     /// ends the exchange between functions that call each other.
@@ -165,7 +164,7 @@ pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
     loops: Loops { threshold: 2, ..MEASURED.loops },
-    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
+    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
 };
@@ -184,7 +183,6 @@ const MEASURED: Tiers = Tiers {
         max_recompiles: 1,
         max_compiles: 3,
         max_lifetimes: 8,
-        max_callee_waits: 2,
         max_callee_recompiles: 3,
         min_instructions: 40,
         compile_poll_interval: 64,

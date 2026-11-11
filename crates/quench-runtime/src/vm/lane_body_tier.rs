@@ -15,8 +15,6 @@ pub(super) struct LaneBodyHistory {
     pub(super) lifetimes: u8,
     /// The inlining budget halvings its last plan needed to fit (`PendingLaneMethod::shrinks`).
     shrinks: u8,
-    /// The warm-ups its compile waited for its callees' bodies (`LaneView::waits_for_callees`).
-    callee_waits: u8,
     /// The bodies it specialized past because a callee published one (`respecialize_callers`).
     callee_recompiles: u8,
     /// Whether a compile of its body waited for its entries to pay for it (`LaneBodyOutcome::Unpaid`).
@@ -123,20 +121,6 @@ impl LaneView {
         let history = self.history.get();
         history.lifetimes <= TIERS.lane_body.max_lifetimes
     }
-
-    /// Whether its compile waits one more warm-up for callees still warming, whose bodies it
-    /// then calls by their entries (`compiled::DirectCallee`).
-    pub(super) fn waits_for_callees(&self) -> bool {
-        let history = self.history.get();
-        let waits = self.may_wait_for_callees();
-        if waits {
-            self.history.set(LaneBodyHistory { callee_waits: history.callee_waits + 1, ..history });
-        }
-        waits
-    }
-
-    /// Whether its compile may still wait a warm-up for callees (`waits_for_callees`).
-    fn may_wait_for_callees(&self) -> bool { self.history.get().callee_waits < TIERS.lane_body.max_callee_waits }
 
     /// Whether a body compiled a call of this function (`note_caller`): native callers want its
     /// body whatever its length, which only the lane's own entries ask to amortize.
@@ -259,7 +243,7 @@ impl LaneView {
                 }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| u32::from(entries) + 1), called: self.called_by_bodies(), may_wait: self.may_wait_for_callees() }), entries, recompiles, stuck, 0)
+                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| u32::from(entries) + 1), called: self.called_by_bodies() }), entries, recompiles, stuck, 0)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
                 let ticks = warm_ticks();
@@ -294,11 +278,6 @@ impl LaneView {
                 LaneBody::Unspecialized { entries: 0, recompiles, stuck }
             }
             super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
-            // The plan keeps calls of callees whose bodies were declined short and warm again.
-            super::super::compiled::LaneBodyOutcome::Awaiting => {
-                self.waits_for_callees();
-                LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck }
-            }
             // Its entries decide when it looks again (`attempts_at`), no hot loop's skip.
             super::super::compiled::LaneBodyOutcome::Unpaid => {
                 self.history.set(LaneBodyHistory { unpaid: true, ..self.history.get() });
@@ -362,7 +341,7 @@ pub(super) fn compiled_site_targets<'a, H: super::Host>(vm: &'a super::Vm<H>, vi
 /// loops to their admitted regions while those still enter native code (a region that leaves
 /// for calls still lets a lane body inline those callees into its typed unit). A function
 /// whose callees still compile waits for their bodies, which it then calls by their entries
-/// (`compiled::DirectCallee`), and `waits_for_callees` for those still counting entries.
+/// (`compiled::DirectCallee`).
 pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, body: Option<&crate::bytecode::Function>) -> Option<super::super::compiled::LaneBodyOutcome> {
     use super::super::compiled::LaneBodyOutcome;
     if view.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters()) {
