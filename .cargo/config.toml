@@ -16,6 +16,13 @@ rustflags = ["-D", "warnings", "-Z", "merge-functions=disabled"]
 # fault-around), crypto used or not, while archive members cost nothing until
 # called. openssl-sys reads these target-prefixed names only for this target, and
 # a variable set in the environment takes precedence.
+# The feedback loop builds Quench incrementally: the `experiment` profile is opt-level 3
+# without LTO, so a runtime edit rebuilds in about a minute. Every measurement, A/B and test
+# run uses this binary (`quench-bench` defaults to it); `release` stays for the qualification
+# screens of a settled tree.
+[alias]
+quench = "build --profile experiment -p quench-node --bin quench-node"
+
 [env]
 # quench-runtime's lane handlers use the `rust-preserve-none` calling convention
 # (`#![feature(rust_preserve_none_cc)]`), which the pinned toolchain gates as unstable.

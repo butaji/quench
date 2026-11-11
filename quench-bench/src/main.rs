@@ -1009,7 +1009,7 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
         node: "node".into(),
         bun: "bun".into(),
         qjs: "qjs".into(),
-        quench: "target/release/quench-node".into(),
+        quench: "target/experiment/quench-node".into(),
         quench_peer: None,
         rounds: MIN_QUALIFYING_ROUNDS,
         fixed_work: false,
