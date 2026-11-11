@@ -42,7 +42,7 @@ fn rebased(value: InitializerValue, passed: Passed<'_>) -> Option<InitializerVal
         _ => None,
     };
     Some(match value {
-        InitializerValue::Constant(_) => value,
+        InitializerValue::Constant(_) | InitializerValue::Construct(_) => value,
         InitializerValue::Parameter { parameter, fallback: None } => passed_value(passed, parameter),
         InitializerValue::Parameter { parameter, fallback } => InitializerValue::Parameter { parameter: source(parameter)?, fallback },
         InitializerValue::Numeric { parameter, operator, constant } => {
