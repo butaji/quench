@@ -50,6 +50,7 @@ fn the_jit_mode_flags_select_one_mode_and_the_old_flag_is_gone() {
     }
     assert!(!run_flags(&["--no-jit", "--f-jit"]).0, "two modes are an error");
     assert!(!run_flags(&["--f-jit", "--u-jit"]).0, "two modes are an error");
+    assert!(!run_flags(&["--jit"]).0, "--jit is removed");
     assert_eq!(compiles(&["--f-jit"]), 0, "--f-jit has no tier of its own yet, so it compiles nothing");
     assert!(compiles(&["--u-jit"]) > 0, "--u-jit: the hot loop runs compiled code");
 }

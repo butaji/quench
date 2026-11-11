@@ -681,8 +681,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--no-jit" | "--f-jit" | "--u-jit" if jit_mode.is_some() => { return Ok(cli_usage_error("only one of --no-jit, --f-jit and --u-jit can be used")); }
-            flag @ ("--no-jit" | "--f-jit" | "--u-jit") => jit_mode = quench_runtime::JitMode::from_flag(flag),
+            flag @ ("--no-jit" | "--f-jit" | "--u-jit" | "--jit") => if let Err(message) = quench_runtime::JitMode::select(&mut jit_mode, flag) { return Ok(cli_usage_error(message)); },
             "--env-file" | "--env-file-if-exists" => {
                 let Some(path) = args.get(index + 1) else {
                     return Ok(cli_usage_error(&format!(
