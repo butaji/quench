@@ -143,8 +143,11 @@ pub(in crate::vm) const POLYMORPHISM: usize = 4;
 pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
 
 /// The searches a regexp program runs interpreted before it is compiled to native code
-/// (`regexp_native`): compiling costs about what this many searches of a small program do.
-pub(in crate::vm) const REGEXP_NATIVE_RUNS: u32 = if STRESS { 1 } else { 2000 };
+/// (`regexp_native`). A compile costs about what a few thousand searches of a small program
+/// do, so a program searched a few thousand times would pay more than it saves: validatorjs
+/// (JIT, 5 interleaved rounds) 251 -> 190 searches/ms at 2000 and 264 at 50000, while the
+/// regexp row keeps 12014 -> 11851 of its 11999 at 2000 (11103 never compiled).
+pub(in crate::vm) const REGEXP_NATIVE_RUNS: u32 = if STRESS { 1 } else { 50_000 };
 
 /// The thresholds every tier controller compares against: the measured row, or under
 /// `STRESS` the floor row, which makes every eligible site compile on its first chance.
