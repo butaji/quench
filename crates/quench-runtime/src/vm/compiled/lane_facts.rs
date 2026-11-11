@@ -20,11 +20,7 @@ pub(super) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[Option<DirectC
     let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
         .filter(|(_, instruction)| instruction.op().is_call())
         .filter_map(|(pc, _)| match unit.origins[pc] {
-            lane_unit::Origin::Caller(origin) => direct.get(origin as usize)?.as_ref().cloned().map(|mut callee| {
-                // A self-recursive call's callee is this body: its recovery space is the unit's.
-                if callee.body.is_none() { callee.reserve = super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames); }
-                (pc, callee)
-            }),
+            lane_unit::Origin::Caller(origin) => direct.get(origin as usize)?.as_ref().cloned().map(|callee| (pc, callee)),
             lane_unit::Origin::Inlined { .. } => None,
         })
         .unzip();

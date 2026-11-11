@@ -71,6 +71,7 @@ mod lane_sites;
 use lane_allocations::{lane_binary, lane_new_array, lane_new_object, lane_new_object_pair};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
+#[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
 #[path = "compiled/lane_facts.rs"]
 mod lane_facts;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
@@ -6524,10 +6525,6 @@ struct JsStepDispatch {
     /// The next free and the end of the run's shadow frames (`LaneFrame::shadow`).
     shadow_top: usize,
     shadow_end: usize,
-    /// The entry of the lane body running, which a self-recursive direct call calls
-    /// (`DirectCallee::method` is `None`): each run and each direct call of another body
-    /// sets it for the body it enters.
-    self_entry: usize,
     /// The VM's cached read (`general_field_get`), which a read its site's primary row does
     /// not answer asks before the exact step, then its cached user getter (`general_getter`).
     field_get: usize, field_getter: usize,
@@ -7094,7 +7091,6 @@ impl<H: Host> Vm<H> {
                 capture_values,
                 capture_len,
                 residual: residual as *const ResidualProgram as usize,
-                self_entry: method.entry as usize,
             }
             .install(&mut *dispatch);
             (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
@@ -7233,18 +7229,15 @@ pub(super) struct DirectCallee {
     /// The callee's published body (`LaneBody::Specialized`): the caller's code calls its entry,
     /// so the caller retires with it, at a shape compaction (`LaneMethod::names_shapes`) or at
     /// a lifecycle edge (`ProgramStore::retire_dead_native_calls`).
-    /// `None` for a self-recursive call: the body owning this descriptor, which calls its own
-    /// entry (`JsStepDispatch::self_entry`) and neither pins nor retires with itself.
+    /// `None` where the call runs what the callee's `cell` holds then, as a call of the function itself.
     pub(super) method: Option<Rc<PublishedLaneMethod>>,
     /// Pins the exact entry embedded by the caller, including recovery after retirement.
     pub(super) body: Option<Rc<LaneMethod>>,
     /// The caller's call record, which the callee's activation returns to.
     pub(super) call: usize,
+    pub(super) cell: usize,
     pub(super) callee: Value,
     pub(super) registers: u16,
-    /// The values past its registers a leave inside a call it inlines takes
-    /// and the activations that recovery needs, proved free with its own.
-    pub(super) reserve: super::dispatch_fast::LaneRecoverySpace,
     /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which
     /// binds a direct object itself (`lane_receiver_this`); `None` for a strict callee, which
     /// takes any receiver as it is.
@@ -7262,11 +7255,11 @@ pub(super) struct DirectCallee {
 #[repr(C)]
 pub(super) struct ShadowFrame {
     pub(super) callee: *const DirectCallee,
-    pub(super) this: u64,
+    pub(super) this: u64, pub(super) pin: usize,
 }
 
 impl ShadowFrame {
-    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0 };
+    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, pin: 0 };
 }
 
 /// Direct calls a run nests natively: past them, a call takes the lane's helper path. The
@@ -7284,7 +7277,6 @@ struct LaneEntry {
     capture_values: *const Value,
     capture_len: usize,
     residual: usize,
-    self_entry: usize,
 }
 
 impl LaneEntry {
@@ -7298,7 +7290,6 @@ impl LaneEntry {
             capture_values: dispatch.capture_values,
             capture_len: dispatch.capture_len,
             residual: dispatch.residual,
-            self_entry: dispatch.self_entry,
         }
     }
 
@@ -7311,7 +7302,6 @@ impl LaneEntry {
         dispatch.capture_values = self.capture_values;
         dispatch.capture_len = self.capture_len;
         dispatch.residual = self.residual;
-        dispatch.self_entry = self.self_entry;
     }
 }
 
@@ -7377,7 +7367,6 @@ impl LaneFrame {
                 native_end: 0,
                 shadow_top: 0,
                 shadow_end: 0,
-                self_entry: 0,
                 #[cfg(test)]
                 island_steps: 0,
                 #[cfg(test)]
@@ -7525,7 +7514,6 @@ impl JsNativeActivation {
             native_end: 0,
             shadow_top: 0,
             shadow_end: 0,
-            self_entry: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]

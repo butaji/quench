@@ -349,6 +349,12 @@ pub(super) struct LaneView {
     /// The warming tick (`lane_body_tier::warm_ticks`) of the entry its body began warming at, which a function
     /// entered rarely but for long (`LaneView::recurrent`) specializes by.
     warm_since: std::cell::Cell<u32>,
+    /// What native callers read to enter its body (`compiled::EntryCell`); the one entry word
+    /// of the function, published and withdrawn with its body.
+    entry: super::compiled::entry_cell::EntryCell,
+    /// Every body it published, kept until the view drops: a native frame running a body that
+    /// retired recovers its leave through it (`LaneView::pinned_body`).
+    pinned: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     history: std::cell::Cell<LaneBodyHistory>,
     /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
@@ -874,6 +880,23 @@ impl LaneView {
             LaneBody::Specialized { method, .. } => method.lease(),
             LaneBody::Unspecialized { .. } | LaneBody::Compiling { .. } | LaneBody::Declined => None,
         }
+    }
+
+    /// The published closed body a direct caller pins (`compiled::DirectCallee::method`, `body`), which a
+    /// caller of the function itself, or of one with none, leaves to the entry cell it calls through
+    /// (the stub enters nothing).
+    fn pinned_callee(&self, own: bool) -> (Option<std::rc::Rc<super::compiled::PublishedLaneMethod>>, Option<std::rc::Rc<super::compiled::LaneMethod>>) {
+        let method = self.published_lane_body().filter(|_| !own);
+        let body = method.as_ref().and_then(|method| method.lease()).filter(|body| body.calls_only_natively());
+        if body.is_some() { (method, body) } else { (None, None) }
+    }
+
+    /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).
+    pub(super) fn entry_cell(&self) -> usize { std::ptr::from_ref(&self.entry).addr() }
+
+    /// The body of this function at pin `pin` (`EntryCell::pin`), published or retired.
+    fn pinned_body(&self, pin: usize) -> Option<*const super::compiled::LaneMethod> {
+        self.pinned.borrow().get(pin).map(|body| std::ptr::from_ref(&**body))
     }
 
     /// The publication of the specialized body, which a direct caller holds
@@ -14925,26 +14948,21 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body
                 && !target.view.is_null()
                 && ImmediateLayout::argument_count(instruction.imm()) <= target.params)
                 .then_some(())?;
-            // A call of the body being specialized calls its own entry, published or not.
-            let own_call = target.function == function;
             // SAFETY: a resolved target's view outlives its program.
-            let (method, body) = if own_call { (None, None) } else {
-                let method = unsafe { &*target.view }.published_lane_body()?;
-                let body = method.lease().filter(|body| body.calls_only_natively())?;
-                (Some(method), Some(body))
-            };
+            let view_of = unsafe { &*target.view };
+            let (method, body) = view_of.pinned_callee(target.function == function);
             // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
             let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
                 .unwrap_or((std::ptr::null(), 0));
-            let reserve = body.as_ref().map_or_else(LaneRecoverySpace::default, |body| body.recovery_space());
+            let cell = view_of.entry_cell();
             Some(super::compiled::DirectCallee {
                 target,
                 method,
                 body,
                 call: view.records().wrapping_add(pc).addr(),
+                cell,
                 callee: target.callee,
                 registers: target.registers,
-                reserve,
                 sloppy,
                 capture_values,
                 capture_len,
@@ -15035,8 +15053,8 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         .unwrap_or((std::ptr::null(), 0));
     direct[pc] = Some(super::compiled::DirectCallee {
         target, method: Some(leaf_publication.clone()), body: Some(leaf_body.clone()),
-        call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(),
-        callee: leaf, registers: target.registers, reserve: leaf_body.recovery_space(),
+        call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(), cell: unsafe { &*target.view }.entry_cell(),
+        callee: leaf, registers: target.registers,
         sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals),
         capture_values, capture_len,
     });
@@ -15067,11 +15085,9 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
 fn lane_materialize_frames<H: Host>(
     cx: *mut LaneContext<H>,
     frames: &[super::compiled::ShadowFrame],
-    root: &super::compiled::LaneMethod,
+    _root: &super::compiled::LaneMethod,
 ) -> Option<(&'static LaneView, &'static super::compiled::LaneMethod)> {
     let mut innermost = None;
-    // The body whose code made the next frame's call: a self-recursive call enters it again.
-    let mut running = std::ptr::from_ref(root);
     for frame in frames {
         // SAFETY: the caller's body owns the callee it named, and the callee's view and body
         // outlive the run; the frame's window starts at the stack's values' end.
@@ -15084,11 +15100,12 @@ fn lane_materialize_frames<H: Host>(
         let argc = ImmediateLayout::argument_count(unsafe { (*call).imm() });
         let caller = unsafe { (*cx).registers };
         lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), window, argc, Value::from_bits(frame.this), false);
-        let method = callee.body.as_ref().map_or(running, |body| std::ptr::from_ref(&**body));
-        running = method;
-        // SAFETY: the active caller's code lease pins this exact callee body through
-        // recovery, even if its publication has already been retired; a self call's body is
-        // the running one, which the run's own lease pins.
+        let method = match callee.body.as_ref() {
+            Some(body) => std::ptr::from_ref(&**body),
+            None => unsafe { &*callee.target.view }.pinned_body(frame.pin).expect("a call through the cell ran a body its view pinned"),
+        };
+        // SAFETY: the active caller's code lease pins a named callee body through recovery, and
+        // the view pins every body it published, even once its publication retired.
         innermost = Some(unsafe { (&*callee.target.view, &*method) });
     }
     innermost
@@ -19642,7 +19659,7 @@ fn derive_lane_view<'live, H: Host>(
         }),
         tier_direct: std::cell::Cell::new(None),
         tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }), history: Default::default(), warm_since: std::cell::Cell::new(0),
-        retired: std::cell::RefCell::default(),
+        retired: std::cell::RefCell::default(), entry: super::compiled::entry_cell::EntryCell::new(), pinned: std::cell::RefCell::default(),
         body_stats: LaneBodyStats::default(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
         plain_backward_jump_sites: decoded
