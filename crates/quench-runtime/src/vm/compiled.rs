@@ -1227,9 +1227,8 @@ fn emit_js_cached_field_slot(
         emit_js_guard(builder, own, fallback);
     }
 
-    let object_slots::ObjectHeader { record, shape, inline } = header
+    let object_slots::ObjectHeader { record, shape, inline, address: object } = header
         .unwrap_or_else(|| object_slots::ObjectHeader::prove(builder, base, records, None, fallback));
-    let object = record.address(builder);
     // The exact shape includes dictionary storage, which cannot match an own-data row.
     let same_shape = builder.ins().icmp(IntCC::Equal, shape, receiver_shape);
     emit_js_guard(builder, same_shape, fallback);
