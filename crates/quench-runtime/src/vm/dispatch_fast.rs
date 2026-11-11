@@ -8279,7 +8279,8 @@ fn lane_loop_run<H: Host>(
         }
         let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
         let int_entries = loop_tier::int_entries(r, region);
-        lane_loop_compile(cx, site, region, &mut tier, &number_arrays, &int_entries);
+        let typed_captures = loop_tier::typed_capture_slots(cx);
+        lane_loop_compile(cx, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }

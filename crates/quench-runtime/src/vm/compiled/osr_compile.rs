@@ -225,7 +225,7 @@ pub(in crate::vm) fn start_osr_region(
                 Some(super::facts::ObservedRead { pc, ty })
             }).collect();
         super::lane_region::RegionSpecializer {
-            number_reads: &number_reads, int_entries: observation.int_entries,
+            number_reads: &number_reads, int_entries: observation.int_entries, typed_captures: observation.typed_captures,
             function_id, unit, helpers, fields: &fields,
             global_reads: &global_reads(unit), facts: VmFacts::STATIC, generic,
             direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
@@ -326,7 +326,7 @@ mod tests {
         }).expect("the function has a loop");
         let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
             .expect("the loop is admitted");
-        let observation = Observation { native_field_loads: &[], number_arrays: &[], int_entries: &[] };
+        let observation = Observation { native_field_loads: &[], number_arrays: &[], int_entries: &[], typed_captures: &[] };
         let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
             crate::MemoryPolicy::Throughput, &program, id,
             super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &mut |_| Default::default(), &[])

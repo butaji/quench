@@ -278,7 +278,8 @@ fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Fl
         Class::Unary if instruction.result_flags() == 0 && !instruction.writes_current_this()
             && op.js_denotation() == crate::bytecode::JsDenotation::NumericUnary
             && super::super::operations::NumberUnary::from_js_instruction(op, instruction.unary_operator()).is_some() => {
-            prove_number(types, [instruction.operand_b(), instruction.operand_b()]);
+            let source = instruction.register_b();
+            if !types.get(usize::from(source)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)) { set(types, source, Type::NUMBER); }
             set(types, instruction.result_register(), Type::NUMBER);
             Some(Flow::Next)
         }

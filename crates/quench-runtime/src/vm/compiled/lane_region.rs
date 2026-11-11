@@ -41,6 +41,7 @@ mod polls;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
+use captures::RootedRead;
 #[path = "lane_region/constructions.rs"] mod constructions;
 #[path = "lane_region/dense_elements.rs"] mod dense_elements;
 #[path = "lane_region/dense_appends.rs"] mod dense_appends;
@@ -54,7 +55,7 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/direct_calls.rs"] mod direct_calls;
 #[path = "lane_region/direct_admission.rs"] mod direct_admission;
 #[path = "lane_region/direct_enter.rs"] mod direct_enter;
-use loop_arrays::LoopArray;
+use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
 use polls::specialize_closed_polls;
@@ -531,7 +532,7 @@ struct Lowering<'a, 'f> {
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
     /// Each hoisted base's tagged value and view, by register, across its loop's iterations.
-    array_vars: BTreeMap<Register, ArrayVariables>,
+    array_vars: BTreeMap<ArraySource, ArrayVariables>,
     views: ElementViews,
     /// Successful write-through stores defining a loop-header field's SSA variable.
     loop_fields: Vec<LoopField>,
@@ -817,7 +818,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             Some(block) => {
                 self.entered.insert(pc);
                 self.finishes |= pc <= self.at;
-                if self.at < pc { self.hoist_reads(state, pc); }
+                if self.at < pc { self.hoist_loop_entry(state, pc); }
                 self.conform(state, pc);
                 if self.at < pc { self.arrive(state, pc); }
                 self.ins().jump(block, &[]);
@@ -1331,6 +1332,8 @@ pub(super) struct RegionSpecializer<'p> {
     /// The registers whose values at entry were int32s: candidates for an int32 entry contract
     /// (`refine_inductive_inputs`), kept where every definition in the loop yields an int32.
     pub(super) int_entries: &'p [Register],
+    /// The capture slots that held typed arrays at compilation (`Observation::typed_captures`).
+    pub(super) typed_captures: &'p [u16],
     pub(super) plan: RegionPlan,
 }
 
@@ -1340,7 +1343,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.entry_fields, self.number_reads, self.int_entries, self.plan.coverage, self.plan.completion, self.plan.views)
+            self.isa, self.entry_fields, self.number_reads, self.int_entries, self.typed_captures, self.plan.coverage, self.plan.completion, self.plan.views)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1362,7 +1365,7 @@ pub(super) fn lower_body(
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
     let region = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
-        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
+        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[],
         plan: RegionPlan { coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::StatusAndPc, views: ElementViews::Dense } }
         .specialize(program).ok()?;
@@ -1394,6 +1397,7 @@ pub(super) fn lower(
     entry_fields: &BTreeMap<usize, u32>,
     number_reads: &[super::facts::ObservedRead],
     int_entries: &[Register],
+    typed_captures: &[u16],
     coverage: Coverage,
     completion: Completion,
     views: ElementViews,
@@ -1653,7 +1657,10 @@ pub(super) fn lower(
     for &pc in generic { lowering.facts.widen(pc); }
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, &loops, &leaders)); }
     lowering.hoists = invariant_reads(program, unit, &loops);
-    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders);
+    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
+        |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
+            read.pc == at && read.owner.is_none() && instructions[at].op().class().eq(Class::LoadCapture))),
+        lowering.views, typed_captures);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
         lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner), rooted: false });
@@ -1723,7 +1730,7 @@ pub(super) fn lower(
         // A bounded range reads its fields at their sites; hoisting them to a shared entry
         // guard would make every call leave at the entry.
         lowering.proving_entry = !matches!(coverage, Coverage::Range { .. });
-        lowering.hoist_reads(&mut state, pc);
+        lowering.hoist_loop_entry(&mut state, pc);
         lowering.proving_entry = false;
         lowering.builder.ins().jump(target, &[]);
     }
@@ -1733,7 +1740,7 @@ pub(super) fn lower(
         if !coverage.lowered(pc) { continue; }
         if let Some(block) = lowering.blocks[pc] {
             if reachable {
-                lowering.hoist_reads(&mut state, pc);
+                lowering.hoist_loop_entry(&mut state, pc);
                 lowering.conform(&mut state, pc);
                 lowering.arrive(&state, pc);
                 lowering.entered.insert(pc);
@@ -2553,7 +2560,7 @@ impl Lowering<'_, '_> {
             }
             Class::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
                 let exit = self.guard_exit(state, pc as u32);
-                let value = self.load_capture(state, pc, instruction, exit, None, true);
+                let value = self.load_capture(state, pc, instruction, exit, None, RootedRead::InBody);
                 let value = self.frozen_capture(pc, value, exit);
                 self.set_tagged(state, instruction.result_register(), value);
                 Some(true)
@@ -3651,8 +3658,15 @@ impl Lowering<'_, '_> {
 
     /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a
     /// guard that fails there leaves at the header, before the loop runs.
+    fn hoist_loop_entry(&mut self, state: &mut State, header: usize) {
+        self.hoist_arrays(state, header, false);
+        self.hoist_stable(state, header);
+        self.hoist_reads(state, header);
+        self.hoist_arrays(state, header, true);
+    }
+
+    /// The loop's invariant captures and fields, read once on its entry edge.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
-        self.hoist_arrays(state, header); self.hoist_stable(state, header);
         let Some(reads) = self.hoists.get(&header).cloned() else { return };
         let boundaries = leaders(&self.unit.instructions);
         for InvariantRead { pc, owner, rooted } in reads.iter().copied() {
@@ -3671,7 +3685,7 @@ impl Lowering<'_, '_> {
                     if !admitted { continue; }
                     Some(self.builder.use_var(read.value))
                 } else { None };
-                let value = self.load_capture(state, pc, instruction, exit, admitted_callee, rooted);
+                let value = self.load_capture(state, pc, instruction, exit, admitted_callee, if rooted { RootedRead::OnEntry } else { RootedRead::No });
                 let value = self.frozen_capture(pc, value, exit);
                 let int32 = self.capture_int32_use(pc, &boundaries);
                 (value, int32)
@@ -3812,15 +3826,16 @@ impl Lowering<'_, '_> {
 
     /// Prove the views of the arrays the loop at `header` indexes without redefining them, on
     /// its entering edge; a base that is no such array leaves at the header.
-    fn hoist_arrays(&mut self, state: &mut State, header: usize) {
-        let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied().filter(|array| array.header == header).collect();
+    fn hoist_arrays(&mut self, state: &mut State, header: usize, captured: bool) {
+        let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
+            .filter(|array| array.header == header && matches!(array.source, ArraySource::Capture(_)) == captured).collect();
         if arrays.is_empty() { return; }
         let exit = self.guard_exit(state, header as u32);
         for array in arrays {
-            let bits = self.tagged(state, array.register);
-            let variables = self.array_variables(array.register);
+            let Some(bits) = self.hoisted_array_bits(state, array) else { continue };
+            let variables = self.array_variables(array);
             self.builder.def_var(variables.bits, bits);
-            match self.views {
+            match array.views {
                 ElementViews::Dense => {
                     let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
                     // Stores through the hoisted view then write the element alone.
@@ -3830,30 +3845,45 @@ impl Lowering<'_, '_> {
                     let unproved = self.ins().iconst(types::I32, 0);
                     self.builder.def_var(variables.room, unproved);
                 }
-                ElementViews::Typed => {
-                    let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
-                        size_of::<super::LaneTypedArrayView>() as u32, align_of::<super::LaneTypedArrayView>().trailing_zeros() as u8));
-                    let out = self.ins().stack_addr(types::I64, slot, 0);
-                    let writable = self.ins().iconst(types::I64, i64::from(array.writable));
-                    let viewed = self.helper_call(LaneHelper::TypedArrayView, &[bits, writable, out]);
-                    let admitted = self.ins().icmp_imm_u(IntCC::NotEqual, viewed, 0);
-                    emit_js_guard(&mut self.builder, admitted, exit);
-                    let word = |field: usize| i32::try_from(field).expect("view field offset fits i32");
-                    let values = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, elements)));
-                    let length = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, length)));
-                    let kind = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, kind)));
-                    self.builder.def_var(variables.values, values);
-                    self.builder.def_var(variables.length, length);
-                    self.builder.def_var(variables.kind, kind);
-                }
+                ElementViews::Typed => self.hoist_typed_view(array, bits, variables, exit),
             }
         }
     }
 
-    fn array_variables(&mut self, register: Register) -> ArrayVariables {
+    /// The tagged value of `array`'s source on the loop's entry edge: its register's, or its
+    /// hoisted capture read's (none where that read was not hoisted tagged).
+    fn hoisted_array_bits(&mut self, state: &mut State, array: LoopArray) -> Option<ir::Value> {
+        match array.source {
+            ArraySource::Register(register) => Some(self.tagged(state, register)),
+            ArraySource::Capture(pc) => {
+                let read = self.hoisted.get(&pc).copied().filter(|read| read.representation == Representation::Tagged)?;
+                Some(self.builder.use_var(read.value))
+            }
+        }
+    }
+
+    /// The typed array `bits` holds, viewed in place by the helper; a miss exits at the loop's entry.
+    fn hoist_typed_view(&mut self, array: LoopArray, bits: ir::Value, variables: ArrayVariables, exit: ir::Block) {
+            let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
+                size_of::<super::LaneTypedArrayView>() as u32, align_of::<super::LaneTypedArrayView>().trailing_zeros() as u8));
+            let out = self.ins().stack_addr(types::I64, slot, 0);
+            let writable = self.ins().iconst(types::I64, i64::from(array.writable));
+            let viewed = self.helper_call(LaneHelper::TypedArrayView, &[bits, writable, out]);
+            let admitted = self.ins().icmp_imm_u(IntCC::NotEqual, viewed, 0);
+            emit_js_guard(&mut self.builder, admitted, exit);
+            let word = |field: usize| i32::try_from(field).expect("view field offset fits i32");
+            let values = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, elements)));
+            let length = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, length)));
+            let kind = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, kind)));
+            self.builder.def_var(variables.values, values);
+            self.builder.def_var(variables.length, length);
+            self.builder.def_var(variables.kind, kind);
+    }
+
+    fn array_variables(&mut self, array: LoopArray) -> ArrayVariables {
         let builder = &mut self.builder;
-        let length = if self.views == ElementViews::Dense { types::I32 } else { types::I64 };
-        *self.array_vars.entry(register).or_insert_with(|| ArrayVariables {
+        let length = if array.views == ElementViews::Dense { types::I32 } else { types::I64 };
+        *self.array_vars.entry(array.source).or_insert_with(|| ArrayVariables {
             bits: builder.declare_var(types::I64),
             values: builder.declare_var(types::I64),
             length: builder.declare_var(length),
@@ -3929,12 +3959,11 @@ impl Lowering<'_, '_> {
     /// again (`emit_dense_array_reload`), and its append room is proved again
     /// (`forget_append_rooms`). A typed region's views, which no such store moves, stay.
     fn reload_dense_arrays(&mut self, pc: usize) {
-        if self.views != ElementViews::Dense { return; }
         self.forget_append_rooms(pc);
         let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
-            .filter(|array| (array.header..=array.back).contains(&pc)).collect();
+            .filter(|array| array.views == ElementViews::Dense && (array.header..=array.back).contains(&pc)).collect();
         for array in arrays {
-            let variables = self.array_variables(array.register);
+            let variables = self.array_variables(array);
             let bits = self.builder.use_var(variables.bits);
             let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
             // A grown backing may count its values again; stores through the view keep none.
@@ -3948,13 +3977,13 @@ impl Lowering<'_, '_> {
 
     /// The hoisted view's elements' address and count.
     fn hoisted_view(&mut self, array: LoopArray) -> (ir::Value, ir::Value) {
-        let variables = self.array_variables(array.register);
+        let variables = self.array_variables(array);
         (self.builder.use_var(variables.values), self.builder.use_var(variables.length))
     }
 
     /// A typed region's hoisted array kind.
     fn hoisted_kind(&mut self, array: LoopArray) -> ir::Value {
-        let variables = self.array_variables(array.register);
+        let variables = self.array_variables(array);
         self.builder.use_var(variables.kind)
     }
 
@@ -3964,7 +3993,7 @@ impl Lowering<'_, '_> {
     fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, (pc, destination): (usize, Register), exit: ir::Block) {
         let (values, length) = self.hoisted_view(array);
         let number = self.observed.at(pc).is_some();
-        if self.views == ElementViews::Dense && number {
+        if array.views == ElementViews::Dense && number {
             // An element read as a Number (`number_reads`) needs no hole test of its own: a hole
             // is a NaN pattern, which the Number proof's one NaN test sends to the tag check
             // that leaves.
@@ -3976,7 +4005,7 @@ impl Lowering<'_, '_> {
             let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             return self.set_tagged(state, destination, value);
         }
-        if self.views == ElementViews::Dense {
+        if array.views == ElementViews::Dense {
             let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable };
             let value = super::emit_dense_element(&mut self.builder, view, index, exit).1;
             return self.set_tagged(state, destination, value);
@@ -4030,7 +4059,7 @@ impl Lowering<'_, '_> {
     fn loop_element_write(&mut self, state: &mut State, array: LoopArray, pc: u32, instruction: WideInstruction, exit: ir::Block) {
         let index = self.int(state, instruction.register_c(), exit);
         let (values, length) = self.hoisted_view(array);
-        if self.views == ElementViews::Dense {
+        if array.views == ElementViews::Dense {
             return self.dense_element_write(state, array, pc, instruction, index, exit);
         }
         let number = self.number(state, instruction.register_a(), exit);
@@ -5745,7 +5774,7 @@ mod tests {
             helpers: LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
             fields: &BTreeMap::new(), global_reads: &Default::default(), facts: VmFacts::STATIC,
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
+            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[],
             plan: RegionPlan { coverage: Coverage::Loop { header, backedge, poll: true },
                 completion: Completion::StatusAndPc, views: ElementViews::Dense } }
             .specialize(&program).expect("the loop lowers");
@@ -5774,7 +5803,7 @@ mod tests {
         let specialize = |plan| RegionSpecializer { function_id: id, unit: &unit, helpers,
             fields: &BTreeMap::new(), global_reads: &Default::default(), facts: VmFacts::STATIC,
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], plan }
+            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], plan }
             .specialize(&program).expect("the region lowers");
         let jit = specialize(RegionPlan { coverage: Coverage::Prefix,
             completion: Completion::StatusAndPc, views: ElementViews::Dense });

@@ -1923,24 +1923,41 @@ fn admit_register_roles(
     // (`LoopRegion::dynamic_arrays`). Its every definition reads an element, field, capture or
     // environment local, or moves one, whose value stays tagged; any other but an exit's is refused.
     let mut dynamic_arrays = std::collections::BTreeSet::new();
+    let block_starts: std::collections::BTreeSet<usize> = instructions.iter()
+        .filter(|instruction| instruction.op().control_flow_layout().jumps())
+        .map(|instruction| (instruction.jump_target() as usize).wrapping_sub(header as usize)).collect();
     for register in instructions
         .iter()
         .filter(|instruction| instruction.op().is_indexed_access())
         .filter_map(|instruction| object_reads(*instruction))
         .filter(|register| !paths.contains_key(register))
+        .collect::<std::collections::BTreeSet<_>>()
     {
-        let mut definitions = instructions
-            .iter()
-            .enumerate()
-            .filter(|(_, instruction)| native_definition(**instruction) == Some(register))
-            .peekable();
-        if definitions.peek().is_none() {
+        let definitions: Vec<usize> = instructions.iter().enumerate()
+            .filter(|(_, instruction)| native_definition(**instruction) == Some(register)).map(|(offset, _)| offset).collect();
+        if definitions.is_empty() {
             continue;
         }
-        if let Some((offset, _)) =
-            definitions.find(|(_, instruction)| !allocates(instruction.op()) && !matches!(instruction.op().class(),
-                Class::GetIndex | Class::GetField | Class::Move | Class::LoadCapture | Class::LoadEnvLocal | Class::LoadName))
-        {
+        // Only the definitions that reach an access matter: a register a later statement reuses
+        // for a number is no array there. An access reached by a definition earlier in its own
+        // straight-line code is reached by that one alone; any other access by every definition.
+        let accesses = instructions.iter().enumerate()
+            .filter(|(_, instruction)| instruction.op().is_indexed_access() && object_reads(**instruction) == Some(register))
+            .map(|(offset, _)| offset);
+        let mut reaching = std::collections::BTreeSet::new();
+        for access in accesses {
+            let local = (0..access).rev().find(|at| definitions.contains(at) || block_starts.contains(at))
+                .filter(|at| definitions.contains(at));
+            match local {
+                Some(at) => { reaching.insert(at); }
+                None => reaching.extend(definitions.iter().copied()),
+            }
+        }
+        if let Some(offset) = reaching.into_iter().find(|offset| {
+            let instruction = instructions[*offset];
+            !allocates(instruction.op()) && !matches!(instruction.op().class(),
+                Class::GetIndex | Class::GetField | Class::Move | Class::LoadCapture | Class::LoadEnvLocal | Class::LoadName)
+        }) {
             return Err(RegionAnalysisFailure::at(RegionRejection::ArrayRedefined, header, offset));
         }
         dynamic_arrays.insert(register);
@@ -2510,6 +2527,9 @@ pub(crate) struct Observation<'a> {
     /// The registers holding int32s at entry, whose loop may keep them as int32s where every
     /// definition in it yields one (`RegionSpecializer::int_entries`).
     pub(crate) int_entries: &'a [Register],
+    /// The depth-zero capture slots holding typed arrays when compiled: a loop's array read
+    /// through such a capture is viewed as a typed array (`LoopArray::views`).
+    pub(crate) typed_captures: &'a [u16],
 }
 
 
