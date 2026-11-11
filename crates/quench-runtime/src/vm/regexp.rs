@@ -65,6 +65,10 @@ pub(super) struct RegExpIntrinsics {
     /// Where `regexp_builtin_exec_matcher` last proved the builtin exec (`RegExpExecProof`);
     /// a memo, never snapshotted.
     exec_proof: std::cell::Cell<Option<RegExpExecProof>>,
+    /// A function value found to be this realm's builtin `exec`: a function's kind never
+    /// changes, so the prototype's `exec` slot holding this value needs no further look.
+    /// Rooted (`gc.rs`), so the handle names it for as long as the memo does.
+    pub(super) builtin_exec: std::cell::Cell<Option<Value>>,
 }
 
 /// Where RegExps of one shape, whose prototype is the realm's `%RegExp.prototype%`, find
@@ -158,6 +162,7 @@ impl RegExpIntrinsics {
             legacy: LegacyStatics::EMPTY,
             result_template: None,
             exec_proof: std::cell::Cell::new(None),
+            builtin_exec: std::cell::Cell::new(None),
         }
     }
 }
@@ -3343,7 +3348,7 @@ impl RegExpMatcherCache {
 
 impl crate::snapshot::Snap for RegExpIntrinsics {
     fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
-        let Self { constructor, prototype, legacy, result_template, exec_proof: _ } = self;
+        let Self { constructor, prototype, legacy, result_template, exec_proof: _, builtin_exec: _ } = self;
         writer.value(*constructor);
         writer.value(*prototype);
         let invalid = match legacy.last {
@@ -3391,6 +3396,7 @@ impl crate::snapshot::Snap for RegExpIntrinsics {
             legacy,
             result_template,
             exec_proof: std::cell::Cell::new(None),
+            builtin_exec: std::cell::Cell::new(None),
         })
     }
 }
