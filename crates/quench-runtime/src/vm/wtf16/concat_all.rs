@@ -125,7 +125,7 @@ impl JsString {
 
     /// ASCII `parts` in order as one string of their total `length`, written straight into
     /// its storage: inline when short, else one allocation.
-    pub(in crate::vm) fn from_ascii_parts<'a>(length: usize, parts: impl Iterator<Item = &'a [u8]>) -> Self {
+    pub(crate) fn from_ascii_parts<'a>(length: usize, parts: impl Iterator<Item = &'a [u8]>) -> Self {
         Self::from_flat(FlatUnits::ascii_with(length, |output| {
             let mut written = 0;
             for part in parts {

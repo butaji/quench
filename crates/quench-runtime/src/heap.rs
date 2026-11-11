@@ -32,7 +32,7 @@ pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
 mod pacing;
-mod parallel_mark;
+mod parallel_mark; mod planned;
 mod promise_record;
 pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
 mod records;
@@ -41,6 +41,7 @@ mod slots;
 mod snapshot;
 mod string_alloc;
 mod string_atoms;
+mod string_parts;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
@@ -245,12 +246,12 @@ const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
 /// MemoryFirst heap rarely reaches it.
 const PARALLEL_MARK_MINIMUM_CELLS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
-// Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
-// larger hosts start with four total markers, with an explicit env override.
-const PARALLEL_MARK_SMALL_HOST_MAX_CPUS: usize = 4;
-const PARALLEL_MARK_SMALL_HOST_DEFAULT_THREADS: usize = 1;
-const PARALLEL_MARK_LARGE_HOST_DEFAULT_THREADS: usize = PARALLEL_MARK_MAX_THREADS;
-const PARALLEL_MARK_SPLIT_THRESHOLD: usize = 256;
+/// The deepest a marker's stack grows before it offers half to an idle worker. A pointer-deep
+/// graph keeps its stack shallow (V8-v7 Splay's tree and payload trees), so at 256 helpers
+/// starved: Splay's full mark took 345 ms on one marker and 245 ms on four, 140 ms at 16
+/// (4-vCPU Linux x86_64, `profile-gc-time` experiment build, five runs each; 32 gave 147 ms,
+/// 8 gave 139-179 ms).
+const PARALLEL_MARK_SPLIT_THRESHOLD: usize = 16;
 const PARALLEL_MARK_STACK_SIZE_BYTES: usize = 256 * 1024;
 const PARALLEL_SWEEP_SLAB_BATCH_SIZE: usize = 8;
 const RC_DROP_LOCK_STRIPES: usize = 64;
@@ -640,7 +641,6 @@ pub(crate) struct Heap {
     /// The `allocated` weight at which the next collection is due: the last collection's
     /// mark plus the young budget pacing planned (`set_young_budget`).
     collect_at: usize,
-    total_allocations: u64,
     collections: u64,
     /// The prototypes `mark_prototype` marked last, most recent first, which keep their
     /// mark for life: an allocation with one of them needs no lookup. A collection may free
@@ -1238,7 +1238,6 @@ impl Heap {
         let weight = 1 + payload / payload_unit();
         self.payload_bytes = self.payload_bytes.saturating_add(payload);
         self.allocated += weight;
-        self.total_allocations += 1;
     }
 
     fn alloc_cell(&mut self, cell: Cell) -> Value {
@@ -1326,7 +1325,6 @@ impl Heap {
             return self.alloc(Cell::BigInt(value));
         }
         self.allocated += 1;
-        self.total_allocations += 1;
         // A BigInt holds no weak entries.
         self.alloc_in_slot_with(self.tracks_young_cells(), false, || Cell::BigInt(value))
     }
@@ -1346,7 +1344,6 @@ impl Heap {
             self.alloc(cell)
         } else {
             self.allocated += 1;
-            self.total_allocations += 1;
             self.alloc_in_slot(cell, self.tracks_young_cells())
         };
         let storage = match self.get(environment) {
@@ -1444,9 +1441,13 @@ impl Heap {
     /// An object record of `object`, else a slot: one allocation, with no external bytes.
     #[inline(always)]
     fn insert_object_record(&mut self, object: Object) -> Value {
-        self.allocated += 1;
-        self.total_allocations += 1;
         self.admit_object_contents(&object);
+        self.insert_admitted_object_record(object)
+    }
+    /// `insert_object_record` of an object whose initial values the caller already admitted.
+    #[inline(always)]
+    fn insert_admitted_object_record(&mut self, object: Object) -> Value {
+        self.allocated += 1;
         match self.object_records.try_insert(object) {
             Ok(record_id) => {
                 let value = Value::direct_object(record_id);
@@ -1501,7 +1502,6 @@ impl Heap {
     fn insert_function_record(&mut self, function: FunctionRecord) -> Value {
         self.admit_object_contents(&function.object);
         self.allocated += 1;
-        self.total_allocations += 1;
         match self.function_records.try_insert(function) {
             Ok(record_id) => {
                 let value = Value::direct_function(record_id);
@@ -1525,7 +1525,6 @@ impl Heap {
             return self.alloc(Cell::AwaitState(Box::new(state)));
         }
         self.allocated += 1;
-        self.total_allocations += 1;
         match self.await_records.try_insert(state) {
             Ok(record_id) => Value::direct_await(record_id),
             Err(state) => {
@@ -1542,7 +1541,6 @@ impl Heap {
             return self.alloc(Cell::WasmV128(bytes));
         }
         self.allocated += 1;
-        self.total_allocations += 1;
         match self.v128_records.try_insert(bytes) {
             Ok(record_id) => Value::direct_v128(record_id),
             Err(bytes) => self.alloc_in_slot(Cell::WasmV128(bytes), self.tracks_young_cells()),
@@ -1572,7 +1570,6 @@ impl Heap {
         self.mark_prototype(iterator.object.proto());
         // An iterator's weight is one allocation, and it holds no payload or external bytes.
         self.allocated += 1;
-        self.total_allocations += 1;
         match self.iterator_records.try_insert(iterator) {
             Ok(record_id) => {
                 let value = Value::direct_iterator(record_id);
@@ -1600,7 +1597,6 @@ impl Heap {
         self.mark_prototype(promise.object.proto());
         // A promise's weight is one allocation, and it holds no payload or external bytes.
         self.allocated += 1;
-        self.total_allocations += 1;
         match self.promise_records.try_insert(promise) {
             Ok(record_id) => {
                 let value = Value::direct_promise(record_id);
@@ -1975,7 +1971,6 @@ impl Heap {
         self.live_weight_after_previous = 0;
         self.live_weight_after_full = 0;
         self.old_live = 0;
-        self.total_allocations = 0;
         self.collections = 0;
         self.peak_live = 0;
         self.peak_survivors = 0;
@@ -2469,7 +2464,7 @@ impl Heap {
                 memory_profile.freed_record_cell(Value::direct_object(_record_id), properties.len(object.properties()));
                 object.release_storage(properties)
             };
-            let (object_live, object_freed) = self.object_records.sweep_disposing(full, age, true, dispose, |record| match record {
+            let (object_live, object_freed) = self.object_records.sweep_disposing(full, age, records::sweep_support::objects_visited(young_runs, compacts), dispose, |record| match record {
                 RecordSweep::Keep(record_id, object) => {
                     if compacts && object.properties().has_compact_range() {
                         direct_property_owners.push((
@@ -2544,6 +2539,7 @@ impl Heap {
                         memory_profile.freed_record_cell(Value::direct_iterator(_record_id), slots);
                     }
                 });
+            self.string_records.warm_before_drop(JsString::prefetch_allocation);
             let (string_live, string_freed) = self.string_records.sweep(full, age, full, |record| match record {
                 RecordSweep::Keep(_, string) => live_payload_bytes += if full { string.flat_unit_bytes() } else { 0 },
                 RecordSweep::Dead(record_id, string) => {
@@ -2568,6 +2564,7 @@ impl Heap {
                 }
                 array.needs_drop()
             };
+            self.array_records.warm_before_drop(records::sweep_support::warm_array_elements);
             let (array_live, array_freed) = self.array_records.sweep_disposing(full, age, true, dispose, |record| match record {
                 RecordSweep::Keep(record_id, array) => {
                     if full {
@@ -3257,9 +3254,7 @@ impl Heap {
                 value,
                 array,
                 &self.properties,
-                |string| {
-                    string_records.mark(string);
-                },
+                |string| string_parts::mark_flat(string_records, string),
                 work,
                 object_roots,
                 trace_kind,
@@ -3324,8 +3319,9 @@ impl Heap {
             let mark_bits = mark_bits!(self);
             ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
         } else if let Some(record_id) = value.direct_string_index() {
-            // A string holds no heap edges: marking it is the whole visit.
+            // A string holds no edges but its parts': marking it and tracing them is the visit.
             if self.string_records.mark(record_id) {
+                string_parts::trace_parts(&self.string_records, record_id, work);
                 #[cfg(feature = "profile-aggregate")]
                 {
                     self.gc_profile.marked += 1;
@@ -4249,7 +4245,7 @@ impl Heap {
         owner: Value,
         array: &ArrayObject,
         properties: &ValueArena,
-        mut mark_string: impl FnMut(RecordId),
+        mut mark_string: impl FnMut(RecordId) -> bool,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
@@ -4278,15 +4274,14 @@ impl Heap {
     /// (`mark_value`): an array of strings adds nothing to the mark stack, which had held a
     /// value per element at the heap's peak (V8-v7 RegExp: 141 KiB). Profiling builds leave
     /// every value to `mark_value`, which counts each visit.
-    fn mark_leaf(mark_string: &mut impl FnMut(RecordId), value: Value) -> bool {
+    fn mark_leaf(mark_string: &mut impl FnMut(RecordId) -> bool, value: Value) -> bool {
         if cfg!(feature = "profile-aggregate") {
             return false;
         }
         let Some(record_id) = value.direct_string_index() else {
             return false;
         };
-        mark_string(record_id);
-        true
+        mark_string(record_id)
     }
     /// An iterator's edges besides its object: its source, cached next method, helper
     /// state and suspended generator.

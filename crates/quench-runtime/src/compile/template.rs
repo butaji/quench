@@ -91,6 +91,45 @@ impl FunctionCompiler<'_, '_> {
         result
     }
 
+    /// `"text" + a + b ...`: every `+` has a string on its left, so the chain is one
+    /// concatenation. Each dynamic operand is converted (`ToPrimitive` default, then
+    /// `ToString`) right after it is evaluated, which is when the nested `+` would convert it,
+    /// and `StringConcat` joins the parts once instead of building every intermediate string.
+    pub(super) fn string_chain(&mut self, value: &BinaryExpression<'_>) -> Option<Register> {
+        let (leading, rights) = addition_chain(value)?;
+        let mut parts = vec![(None, Some(super::string::constant(leading)))];
+        for part in rights {
+            let text = self.static_value(part).filter(|constant| matches!(constant, Constant::String(_)));
+            parts.push((Some(part), text));
+        }
+        let dynamic = parts.iter().filter(|(_, text)| text.is_none()).count();
+        (parts.len() >= CHAIN_MIN_PARTS && dynamic > 0).then(|| self.concat_parts(parts))
+    }
+
+    /// Joins `(operand, constant)` parts into one window; an operand without a constant is
+    /// evaluated and converted as the right side of `+`.
+    fn concat_parts(&mut self, parts: Vec<(Option<&Expression<'_>>, Option<Constant>)>) -> Register {
+        let base = self.next_reg;
+        for _ in &parts {
+            self.reg();
+        }
+        for (slot, (operand, text)) in (base..).zip(parts.iter()) {
+            match (text, operand) {
+                (Some(constant), _) => {
+                    let constant = self.owner.constant(constant.clone());
+                    self.emit(Op::LoadConst, slot, 0, 0, constant);
+                }
+                (None, Some(operand)) => {
+                    let value = self.expression(operand);
+                    self.emit(Op::Unary, slot, value, 0, crate::bytecode::UNARY_ADD_OPERAND_STRING);
+                }
+                (None, None) => unreachable!("a part is a constant or an operand"),
+            }
+        }
+        self.emit(Op::StringConcat, base, base, parts.len() as Register, 0);
+        base
+    }
+
     fn set_template_descriptor_field(&mut self, descriptor: Register, name: &str, value: Register) {
         let atom = self.owner.atom(name);
         let cache = self.owner.cache_site();
@@ -172,5 +211,31 @@ impl FunctionCompiler<'_, '_> {
         debug_assert_eq!(usize::from(slot - base), parts);
         self.emit(Op::StringConcat, base, base, parts as Register, 0);
         base
+    }
+}
+
+/// The leading literal plus two operands: the fewest parts for which one join beats nested `+`.
+const CHAIN_MIN_PARTS: usize = 3;
+
+/// The leading string literal and the right operands, in order, of a left-nested `+` chain
+/// that starts with a string literal.
+fn addition_chain<'e, 'a>(
+    value: &'e BinaryExpression<'a>,
+) -> Option<(&'e oxc_ast::ast::StringLiteral<'a>, Vec<&'e Expression<'a>>)> {
+    let mut rights = Vec::new();
+    let mut head = value;
+    loop {
+        if head.operator != BinaryOperator::Addition {
+            return None;
+        }
+        rights.push(&head.right);
+        match &head.left {
+            Expression::BinaryExpression(inner) => head = inner,
+            Expression::StringLiteral(text) => {
+                rights.reverse();
+                return Some((text, rights));
+            }
+            _ => return None,
+        }
     }
 }

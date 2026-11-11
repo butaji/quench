@@ -201,38 +201,38 @@ impl ParallelShapeTrace<'_> {
     // Called once per marked object, so its frame setup would rival its body.
     #[inline(always)]
     fn append(&self, trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>) {
-        let shape_index = shape as usize;
-        debug_assert!(shape_index < self.shape_count);
-        // SAFETY: construction holds an immutable borrow of the shape table;
-        // collection cannot compact or append shapes until all workers join.
-        let shapes = unsafe { std::slice::from_raw_parts(self.shapes, self.shape_count) };
-        let word = shape_index / u64::BITS as usize;
-        let mask = 1_u64 << (shape_index % u64::BITS as usize);
-        if trace_kind == GcTraceKind::VerifyFull {
-            if shapes[shape_index].facts.may_have_gc_roots() {
-                append_shape_roots(shapes, self.accessors, shape, roots);
-            }
-        } else if self.marked_shapes[word].load(Ordering::Relaxed) & mask == 0
-            && self.marked_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0
-            && shapes[shape_index].facts.may_have_gc_roots()
-        {
-            append_shape_roots(shapes, self.accessors, shape, roots);
-        }
-        // A prototype no longer owns its original base constructor. Keep this
-        // trace bit separate: a prototype may be the first holder of a shape.
-        let constructor = self.constructors[shape_index];
-        // As for the shape bit: a plain load first, so a shape already counted costs no
-        // locked read-modify-write.
-        if !prototype && !constructor.is_undefined() &&
-            (trace_kind == GcTraceKind::VerifyFull
-                || (self.marked_constructor_shapes[word].load(Ordering::Relaxed) & mask == 0
-                    && self.marked_constructor_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0)) {
-            roots.push(constructor);
+        // The constructor bit follows the shape bit for every shape: set, a non-prototype
+        // holder has nothing to add, so a shape already seen costs one load.
+        let (word, mask) = (shape as usize / u64::BITS as usize, 1_u64 << (shape % u64::BITS));
+        if prototype || trace_kind == GcTraceKind::VerifyFull || self.marked_constructor_shapes[word].load(Ordering::Relaxed) & mask == 0 {
+            self.append_shape_edges(trace_kind, shape, prototype, roots);
         }
         if self.owned_root_filter.may_hold(owner)
             && let Some(edges) = self.owned_roots.get(&owner)
         {
             roots.extend(edges.iter().copied());
+        }
+    }
+
+    /// Whether this call first sets `mask` in `bits[word]`; always when verifying.
+    fn first_to_set(bits: &[AtomicU64], word: usize, mask: u64, verify: bool) -> bool {
+        verify || (bits[word].load(Ordering::Relaxed) & mask == 0 && bits[word].fetch_or(mask, Ordering::Relaxed) & mask == 0)
+    }
+
+    /// A shape's first-reached edges: symbol and accessor keys, and its base constructor.
+    #[inline(never)]
+    fn append_shape_edges(&self, trace_kind: GcTraceKind, shape: u32, prototype: bool, roots: &mut Vec<Value>) {
+        let (index, verify, mask) = (shape as usize, trace_kind == GcTraceKind::VerifyFull, 1_u64 << (shape % u64::BITS));
+        let word = index / u64::BITS as usize;
+        // SAFETY: the shape table is borrowed immutably until all workers join.
+        let shapes = unsafe { std::slice::from_raw_parts(self.shapes, self.shape_count) };
+        if Self::first_to_set(self.marked_shapes, word, mask, verify) && shapes[index].facts.may_have_gc_roots() {
+            append_shape_roots(shapes, self.accessors, shape, roots);
+        }
+        // A prototype no longer owns its base constructor; its trace bit stays separate.
+        let constructor = self.constructors[index];
+        if !prototype && Self::first_to_set(self.marked_constructor_shapes, word, mask, verify) && !constructor.is_undefined() {
+            roots.push(constructor);
         }
     }
 }

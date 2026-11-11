@@ -795,8 +795,8 @@ impl FunctionCompiler<'_, '_> {
         if let Some(constant) = self.static_binary(value) {
             return self.literal(constant);
         }
-        if let Some(test) = self.typeof_test(value) {
-            return test;
+        if let Some(done) = self.typeof_test(value).or_else(|| self.string_chain(value)) {
+            return done;
         }
         let (left, right) = self.binary_operands(value);
         self.emit_binary(value.operator as u32, left, right)
