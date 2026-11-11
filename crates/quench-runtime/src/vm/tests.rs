@@ -1022,6 +1022,33 @@ fn forwarded_construct_plans_retire_when_their_prototype_or_method_changes() {
 }
 
 #[test]
+fn hot_bodies_construct_through_forwarded_initializers_that_do_more_than_store() {
+    // A hot function builds objects through a forwarding constructor whose initializer calls
+    // a function and returns an object: the construction yields the receiver whatever the
+    // initializer returns, and a prototype change after the bodies are hot takes the next
+    // construction off the native path.
+    let source = r#"
+      var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+      var C = Class.create();
+      function scale(v) { return v * 3; }
+      C.prototype = { initialize: function (x, y) { this.x = scale(x); this.y = y + 1; return { x: -1 }; } };
+      function make(i) { return new C(i, 2); }
+      function run(n) { var s = 0; for (var i = 0; i < n; i++) { var c = make(i); s += c.x + c.y; } return s; }
+      var out = [];
+      for (var k = 0; k < 60; k++) { run(300); }
+      out.push(run(10));
+      C.prototype.initialize = function (x, y) { this.x = x; this.y = 0; };
+      out.push(run(10));
+      print(out.join());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "hot-forwarded-initializer.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["165,45"]);
+}
+
+#[test]
 fn lane_constructions_forward_plain_loaded_arguments() {
     // A loop the lane runs constructs through a forwarding constructor
     // (`this.initialize.apply(this, arguments)`): its frameless activation reads the

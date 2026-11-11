@@ -300,6 +300,24 @@ pub(in crate::vm) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code
     Some(this)
 }
 
+/// The receiver of a construction through forwarding constructor `callee` whose forwarded
+/// initializer the body calls by its entry (`DirectCallee::forwarder`): allocated finished
+/// from the plan while it holds, whose forwarding has no fields of its own. `None` leaves
+/// the body to its helper path before any effect.
+pub(in crate::vm) fn lane_body_receiver<H: Host>(vm: &mut Vm<H>, callee: Value) -> Option<Value> {
+    if vm.construct_target.is_some() || vm.heap.should_collect() || vm.with_scope_entered {
+        return None;
+    }
+    let index = holding_construct_plan_index(vm, callee)?;
+    let plan = &vm.lane_stack.construct_plans[index];
+    if plan.kind != ConstructPlanKind::Forwarding || plan.fields != 0 || plan.forwarded.is_none() {
+        return None;
+    }
+    let this = plan.allocate(&mut vm.heap, |_| Value::UNDEFINED);
+    note_allocation(vm);
+    Some(this)
+}
+
 /// The receiver `callee`'s cached adds finish where its body only stores its parameters and
 /// primitive constants into `this` (`Function::initializer_stores`) and an in-place
 /// construction admits it (`Vm::inline_constructible`): the static facts of

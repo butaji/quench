@@ -32,6 +32,17 @@ pub(super) unsafe extern "C" fn lane_construct<H: Host>(vm: u64, residual: u64, 
     built.unwrap_or(Value::DELETED).to_bits()
 }
 
+/// The receiver a body's construction through forwarding constructor `callee` passes its
+/// forwarded initializer (`dispatch_fast::lane_body_receiver`), or `Value::DELETED`, which
+/// takes the construction's helper path before any effect.
+pub(super) unsafe extern "C" fn lane_construct_receiver<H: Host>(vm: u64, _residual: u64, payload: u64, callee: u64) -> u64 {
+    // SAFETY: the body passes its own VM and dispatch; allocating runs no guest code.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    let built = super::dispatch_fast::lane_body_receiver(vm, Value::from_bits(callee));
+    dispatch.refresh_object_bases(vm);
+    built.unwrap_or(Value::DELETED).to_bits()
+}
+
 /// The receiver an in-place construction of `callee` allocates (`Vm::inline_construct_receiver`),
 /// in the callee's realm with no collection due; else `Value::DELETED` before any effect.
 ///
