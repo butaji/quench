@@ -3706,7 +3706,7 @@ pub(super) fn js_general_dispatch_cache_key(
             .code
             .len()
             .saturating_mul(24)
-            .min(super::program_store::JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES),
+            .min(tier_policy::TIERS.budgets.general_artifact_key_bytes),
     );
     writeln!(
         key,
@@ -3729,7 +3729,7 @@ pub(super) fn js_general_dispatch_cache_key(
             instruction.imm()
         )
         .ok()?;
-        if key.len() > super::program_store::JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES {
+        if key.len() > tier_policy::TIERS.budgets.general_artifact_key_bytes {
             return None;
         }
 
@@ -3739,7 +3739,7 @@ pub(super) fn js_general_dispatch_cache_key(
         if instruction.op().loads_name() {
             let name = program.atoms.get(instruction.atom_index() as usize)?;
             if name.len()
-                > super::program_store::JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES
+                > tier_policy::TIERS.budgets.general_artifact_key_bytes
                     .saturating_sub(key.len())
             {
                 return None;
@@ -3771,7 +3771,7 @@ pub(super) fn js_general_dispatch_cache_key(
                 append_js_general_constant_key(&mut key, program, usize::from(index))?;
             }
         }
-        if key.len() > super::program_store::JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES {
+        if key.len() > tier_policy::TIERS.budgets.general_artifact_key_bytes {
             return None;
         }
     }

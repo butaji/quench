@@ -88,9 +88,6 @@ struct CachedJsGeneralArtifact {
     last_used: u64,
 }
 
-const JS_GENERAL_ARTIFACT_CACHE_MAX_ENTRIES: usize = 32;
-pub(super) const JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES: usize = 512 * 1024;
-
 #[derive(Clone, Copy)]
 #[repr(usize)]
 pub(super) enum JsJitCallOutcome {
@@ -182,20 +179,8 @@ fn general_saved_per_entry(instructions: usize) -> Option<u64> {
         .filter(|saved| *saved > 0)
 }
 
-const JS_JIT_MAX_FUNCTIONS: usize = 64;
-// Tier observations include dynamically generated functions across all retained
-// programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
-// metadata bound large enough to observe that workload without changing the
-// independent compiled-artifact or executable-memory budgets.
-const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 2048;
 const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
-const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
 const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
-// Executable mappings were once page-rounded. A 64 KiB cap then admitted only
-// sixteen tiny JS artifacts on 4 KiB systems, starving later high-frequency
-// helpers; the function-count cap still bounds artifact proliferation.
-const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
-const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 /// When a Wasm module running under `--jit` compiles whole (`WasmModule`). It starts in
 /// the interpreter with its hot roots promoted, so a module used briefly pays only for them;
 /// one that runs long gets the code eager compilation would have made at its first entry.
@@ -231,20 +216,11 @@ impl WasmModuleCompile {
     }
 }
 
-const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
-/// The eager artifacts of Wasm modules together. A module's eager artifact is all of its code
-/// at once, compiled before its first call: held to the shared ceiling, a module larger than
-/// it compiled and was then discarded, leaving every function interpreted and promoting hot
-/// roots one by one into a tier budget that filled (sqlite3-wasm, a 5.2 MiB artifact: Score
-/// 0.61 against 12.29 kept, first iteration 17.3 s against 3.3 s; max RSS unchanged at 100
-/// MiB, JetStream 3 `--jit`, Linux x86_64, 2026-10-24). This bounds a VM's eager Wasm code
-/// to a few large modules.
-const WASM_JIT_MAX_BASELINE_MAPPED_BYTES: usize = 32 * 1024 * 1024;
 /// The least an artifact holds in the code zone.
 const JIT_MIN_ARTIFACT_BYTES: usize = super::compiled::CODE_GRANULE;
 /// One VM-local admission ceiling shared by JS and Wasm artifacts.
-const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
-const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
+const JIT_MAX_ARTIFACTS: usize = TIERS.budgets.js_functions + TIERS.budgets.wasm_tier_roots;
+const JIT_MAX_MAPPED_BYTES: usize = TIERS.budgets.wasm_tier_mapped_bytes;
 
 #[derive(Clone, Copy)]
 enum JitArtifactKind {
@@ -256,14 +232,14 @@ enum JitArtifactKind {
 /// One VM-local executable-code budget for the JavaScript, Wasm tier and eager
 /// compiled-program artifacts. Tier-kind limits and the JS and Wasm tiers' aggregate
 /// capacity are admitted and accounted together here; eager module artifacts have their own
-/// ceiling (`WASM_JIT_MAX_BASELINE_MAPPED_BYTES`).
+/// ceiling (`Budgets::wasm_baseline_mapped_bytes`).
 #[derive(Default)]
 struct JitCodeCacheBudget {
     /// The JavaScript and Wasm tier artifacts, which share `JIT_MAX_ARTIFACTS` and
     /// `JIT_MAX_MAPPED_BYTES`.
     artifacts: usize,
     mapped_bytes: usize,
-    /// Eager Wasm module artifacts, bounded apart (`WASM_JIT_MAX_BASELINE_MAPPED_BYTES`).
+    /// Eager Wasm module artifacts, bounded apart (`Budgets::wasm_baseline_mapped_bytes`).
     baseline_artifacts: usize,
     baseline_mapped_bytes: usize,
     js_functions: usize,
@@ -277,19 +253,19 @@ impl JitCodeCacheBudget {
         let (count, bytes, max_count, max_bytes) = match kind {
             JitArtifactKind::BaselineWasm => {
                 return self.baseline_mapped_bytes.saturating_add(mapped_bytes)
-                    <= WASM_JIT_MAX_BASELINE_MAPPED_BYTES;
+                    <= TIERS.budgets.wasm_baseline_mapped_bytes;
             }
             JitArtifactKind::JsFunction => (
                 self.js_functions,
                 self.js_mapped_bytes,
-                JS_JIT_MAX_FUNCTIONS,
-                JS_JIT_MAX_MAPPED_BYTES,
+                TIERS.budgets.js_functions,
+                TIERS.budgets.js_mapped_bytes,
             ),
             JitArtifactKind::WasmTierRoot => (
                 self.wasm_tier_roots,
                 self.wasm_tier_mapped_bytes,
-                WASM_JIT_MAX_TIER_ROOTS,
-                WASM_JIT_MAX_TIER_MAPPED_BYTES,
+                TIERS.budgets.wasm_tier_roots,
+                TIERS.budgets.wasm_tier_mapped_bytes,
             ),
         };
         count < max_count
@@ -415,7 +391,7 @@ impl JitTierManager {
         if self.is_wasm() {
             return JsEntryStep::Count;
         }
-        let full = compiled_functions >= JS_JIT_MAX_FUNCTIONS;
+        let full = compiled_functions >= TIERS.budgets.js_functions;
         if let Some(tier) = self.js_mut(function) {
             return tier.numeric_entry(numeric, first_entry_candidate, general_candidate, full);
         }
@@ -1963,7 +1939,7 @@ impl ProgramStore {
         general_candidate: bool,
     ) -> bool {
         let compiled_functions = self.jit_code_cache.js_functions;
-        let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
+        let can_track = self.js_jit_tracked_functions < TIERS.budgets.js_tracked_functions;
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
@@ -1998,7 +1974,7 @@ impl ProgramStore {
     /// Whether the code cache has room for one more JavaScript function's body. A full one does
     /// not end a function's tier: it waits for room (`Event::REFUSED` where it filled meanwhile).
     pub(super) fn js_cache_has_room(&self) -> bool {
-        self.jit_code_cache.js_functions < JS_JIT_MAX_FUNCTIONS
+        self.jit_code_cache.js_functions < TIERS.budgets.js_functions
             && self.jit_code_cache.can_retain(JitArtifactKind::JsFunction, 0)
     }
 
@@ -2042,7 +2018,7 @@ impl ProgramStore {
         }
         let priced = self.switches.general_priced;
         let open = self.js_cache_has_room();
-        let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
+        let can_track = self.js_jit_tracked_functions < TIERS.budgets.js_tracked_functions;
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
@@ -2086,7 +2062,7 @@ impl ProgramStore {
         }
         // A zero-byte admission probe checks count and aggregate artifact
         // ceilings before this accounting path can request compilation.
-        if self.jit_code_cache.js_functions >= JS_JIT_MAX_FUNCTIONS
+        if self.jit_code_cache.js_functions >= TIERS.budgets.js_functions
             || !self.jit_code_cache.can_retain(JitArtifactKind::JsFunction, 0)
         {
             return false;
@@ -2160,7 +2136,7 @@ impl ProgramStore {
         function: u32,
         reason: &'static str,
     ) -> Option<u64> {
-        let can_reject = self.js_jit_rejected_functions < JS_JIT_MAX_REJECTED_FUNCTIONS;
+        let can_reject = self.js_jit_rejected_functions < TIERS.budgets.js_rejected_functions;
         let entry = self.entry_mut(id)?;
         let mut inserted = false;
         let tier = match entry.jit_tiers.js_mut(function) {
@@ -2725,7 +2701,7 @@ impl ProgramStore {
                 .is_some_and(|compiled| compiled.is_general_dispatch())
             && general_cache_key
                 .as_ref()
-                .is_some_and(|key| key.len() <= JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES)
+                .is_some_and(|key| key.len() <= TIERS.budgets.general_artifact_key_bytes)
         {
             let mapped_bytes = compiled.as_ref().map_or(0, |compiled| compiled.mapped_bytes());
             while !self
@@ -2743,28 +2719,28 @@ impl ProgramStore {
         });
         if let (Some(key), Some(compiled)) = (general_cache_key, compiled.as_ref())
             && compiled.is_general_dispatch()
-            && key.len() <= JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES
+            && key.len() <= TIERS.budgets.general_artifact_key_bytes
         {
             if let Some(cached) = self.js_general_artifacts.get_mut(key.as_ref()) {
                 if Rc::ptr_eq(&cached.compiled, compiled) {
                     cached.tier_references = cached.tier_references.saturating_add(1);
                 }
             } else if !cache_hit {
-                while (self.js_general_artifacts.len() >= JS_GENERAL_ARTIFACT_CACHE_MAX_ENTRIES
+                while (self.js_general_artifacts.len() >= TIERS.budgets.general_artifacts
                     || self
                         .js_general_artifact_key_bytes
                         .saturating_add(key.len())
-                        > JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES)
+                        > TIERS.budgets.general_artifact_key_bytes)
                     && self.evict_idle_js_general_artifact()
                 {}
             }
             if !cache_hit
                 && !self.js_general_artifacts.contains_key(key.as_ref())
-                && self.js_general_artifacts.len() < JS_GENERAL_ARTIFACT_CACHE_MAX_ENTRIES
+                && self.js_general_artifacts.len() < TIERS.budgets.general_artifacts
                 && self
                     .js_general_artifact_key_bytes
                     .saturating_add(key.len())
-                    <= JS_GENERAL_ARTIFACT_CACHE_MAX_KEY_BYTES
+                    <= TIERS.budgets.general_artifact_key_bytes
             {
                 self.js_general_artifact_clock = self.js_general_artifact_clock.saturating_add(1);
                 self.js_general_artifact_key_bytes += key.len();
@@ -3424,7 +3400,7 @@ impl Drop for ProgramStore {
             stderr,
             "QUENCH_JS_JIT_TIER_TRACKING {{\"tracked_functions\":{},\"tracking_limit\":{},\"exhaustion_events\":{}}}",
             self.js_jit_tracked_functions,
-            JS_JIT_MAX_TRACKED_FUNCTIONS,
+            TIERS.budgets.js_tracked_functions,
             self.js_jit_tracking_exhaustions
         );
     }
@@ -3623,10 +3599,8 @@ mod lane_diagnostic_tests {
 #[cfg(test)]
 mod jit_code_cache_tests {
     use super::{
-        JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS, WASM_JIT_MAX_BASELINE_MAPPED_BYTES,
-        JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,
-        JsTier, Refusal,
-        WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS,
+        JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,
+        JsTier, Refusal, TIERS,
     };
     use crate::vm::tier_state::Event;
 
@@ -3725,28 +3699,28 @@ mod jit_code_cache_tests {
         assert!(cache.can_retain(JitArtifactKind::JsFunction, 128 * 1024));
         assert!(!cache.can_retain(
             JitArtifactKind::BaselineWasm,
-            WASM_JIT_MAX_BASELINE_MAPPED_BYTES - JIT_MAX_MAPPED_BYTES
+            TIERS.budgets.wasm_baseline_mapped_bytes - JIT_MAX_MAPPED_BYTES
         ));
         cache.release(JitArtifactKind::BaselineWasm, 1, JIT_MAX_MAPPED_BYTES + 1);
-        assert!(cache.can_retain(JitArtifactKind::BaselineWasm, WASM_JIT_MAX_BASELINE_MAPPED_BYTES));
+        assert!(cache.can_retain(JitArtifactKind::BaselineWasm, TIERS.budgets.wasm_baseline_mapped_bytes));
     }
 
     #[test]
     fn shared_jit_cache_enforces_each_tier_limit() {
         let mut cache = JitCodeCacheBudget::default();
-        for _ in 0..JS_JIT_MAX_FUNCTIONS {
+        for _ in 0..TIERS.budgets.js_functions {
             assert!(cache.retain(JitArtifactKind::JsFunction, 0));
         }
         assert!(!cache.can_retain(JitArtifactKind::JsFunction, 0));
-        assert!(!cache.can_retain(JitArtifactKind::JsFunction, JS_JIT_MAX_MAPPED_BYTES + 1));
+        assert!(!cache.can_retain(JitArtifactKind::JsFunction, TIERS.budgets.js_mapped_bytes + 1));
 
-        for _ in 0..WASM_JIT_MAX_TIER_ROOTS {
+        for _ in 0..TIERS.budgets.wasm_tier_roots {
             assert!(cache.retain(JitArtifactKind::WasmTierRoot, 0));
         }
         assert!(!cache.can_retain(JitArtifactKind::WasmTierRoot, 0));
         assert!(!cache.can_retain(
             JitArtifactKind::WasmTierRoot,
-            WASM_JIT_MAX_TIER_MAPPED_BYTES + 1
+            TIERS.budgets.wasm_tier_mapped_bytes + 1
         ));
         assert_eq!(cache.artifacts, JIT_MAX_ARTIFACTS);
         // Full tiers do not hold back an eager module artifact.

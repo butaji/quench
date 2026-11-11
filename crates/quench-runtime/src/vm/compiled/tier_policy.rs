@@ -13,6 +13,44 @@ pub(in crate::vm) struct Tiers {
     pub(in crate::vm) wasm: Wasm,
     pub(in crate::vm) limits: Limits,
     pub(in crate::vm) lane_view: LaneView,
+    pub(in crate::vm) budgets: Budgets,
+}
+
+/// What a VM keeps of its compiled code and of the tier records that lead to it
+/// (`ProgramStore`'s `JitCodeCacheBudget`).
+pub(in crate::vm) struct Budgets {
+    /// The JavaScript function artifacts a VM keeps at once; the count bounds artifact
+    /// proliferation.
+    pub(in crate::vm) js_functions: usize,
+    /// The functions whose tier records a VM keeps. Tier observations include dynamically
+    /// generated functions across all retained programs. Web-SSR exposes more than 1,300
+    /// functions in one VM; this fixed metadata bound is large enough to observe that workload
+    /// without changing the independent compiled-artifact or executable-memory budgets.
+    pub(in crate::vm) js_tracked_functions: usize,
+    /// The functions whose unsupported bytecode shape a VM remembers.
+    pub(in crate::vm) js_rejected_functions: usize,
+    /// The executable bytes of the JavaScript function artifacts. Executable mappings were once
+    /// page-rounded: a 64 KiB cap then admitted only sixteen tiny JS artifacts on 4 KiB systems,
+    /// starving later high-frequency helpers; the function count still bounds proliferation.
+    pub(in crate::vm) js_mapped_bytes: usize,
+    /// The Wasm hot-root tier artifacts a VM keeps at once.
+    pub(in crate::vm) wasm_tier_roots: usize,
+    /// The executable bytes of the JavaScript and Wasm tier artifacts together, the one
+    /// admission ceiling they share.
+    pub(in crate::vm) wasm_tier_mapped_bytes: usize,
+    /// The eager artifacts of Wasm modules together. A module's eager artifact is all of its
+    /// code at once, compiled before its first call: held to the shared ceiling, a module larger
+    /// than it compiled and was then discarded, leaving every function interpreted and promoting
+    /// hot roots one by one into a tier budget that filled (sqlite3-wasm, a 5.2 MiB artifact:
+    /// Score 0.61 against 12.29 kept, first iteration 17.3 s against 3.3 s; max RSS unchanged at
+    /// 100 MiB, JetStream 3 `--jit`, Linux x86_64, 2026-10-24). This bounds a VM's eager Wasm
+    /// code to a few large modules.
+    pub(in crate::vm) wasm_baseline_mapped_bytes: usize,
+    /// The general-dispatch artifacts a VM keeps for reuse by equivalent dynamic functions,
+    /// evicted least recently used; the key holds no program, function, heap or atom owners.
+    pub(in crate::vm) general_artifacts: usize,
+    /// The bytes of those artifacts' keys together, and the longest key one admits.
+    pub(in crate::vm) general_artifact_key_bytes: usize,
 }
 
 /// When the general loop derives a function's lane view and enters the lane.
@@ -283,6 +321,7 @@ const FLOOR: Tiers = Tiers {
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX, ..MEASURED.wasm },
     limits: MEASURED.limits,
     lane_view: MEASURED.lane_view,
+    budgets: MEASURED.budgets,
 };
 
 const MEASURED: Tiers = Tiers {
@@ -329,6 +368,17 @@ const MEASURED: Tiers = Tiers {
         inlining: InliningLimits { callee_instructions: 96, unit_instructions: 920, depth: 5 },
     },
     lane_view: LaneView { deferred_runs: 4, hot_back_edges: 16, loop_payback: 8, entry_min_run: 3, entry_min_call_run: 8 },
+    budgets: Budgets {
+        js_functions: 64,
+        js_tracked_functions: 2048,
+        js_rejected_functions: 4096,
+        js_mapped_bytes: 512 * 1024,
+        wasm_tier_roots: 32,
+        wasm_tier_mapped_bytes: 4 * 1024 * 1024,
+        wasm_baseline_mapped_bytes: 32 * 1024 * 1024,
+        general_artifacts: 32,
+        general_artifact_key_bytes: 512 * 1024,
+    },
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)
