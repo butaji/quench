@@ -2536,6 +2536,9 @@ pub(crate) struct Observation<'a> {
     /// The depth-zero capture slots holding typed arrays when compiled: a loop's array read
     /// through such a capture is viewed as a typed array (`LoopArray::views`).
     pub(crate) typed_captures: &'a [u16],
+    /// The depth-zero capture slots holding int32s when compiled: a read of such a capture
+    /// takes the checked integer view where its uses are integer arithmetic.
+    pub(crate) int_captures: &'a [u16],
 }
 
 
