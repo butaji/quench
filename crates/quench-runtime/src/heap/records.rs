@@ -237,6 +237,12 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     pub(super) fn native_mark_blocks(&self) -> (*const u8, usize) {
         (self.blocks.as_ptr().cast(), self.blocks.len())
     }
+
+    /// Blocks made so far: grows with every block `native_mark_blocks` may have moved.
+    #[expect(dead_code, reason = "see Heap::native_layout_epoch")]
+    pub(super) fn block_count(&self) -> usize {
+        self.blocks.len()
+    }
 }
 
 /// The parallel mark sets a record's bit in its block's `marked` word through an atomic view
