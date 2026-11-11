@@ -23,8 +23,7 @@ use super::records::{ParallelRecordMarks, RecordId};
 use super::{
     ArrayObject, AwaitState, Cell, CellKind, EnvironmentTrace, FunctionRecord, GcTraceKind, Heap,
     IteratorRecord, MarkBits, Object, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
-    PARALLEL_MARK_LARGE_HOST_DEFAULT_THREADS, PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SMALL_HOST_DEFAULT_THREADS,
-    PARALLEL_MARK_SMALL_HOST_MAX_CPUS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
+    PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
     mark_word_if_new, weak,
 };
 use crate::value::{HeapReference, Value};
@@ -135,15 +134,10 @@ pub(super) fn parallel_mark_pool() -> Option<&'static ThreadPool> {
     static POOL: OnceLock<Option<ThreadPool>> = OnceLock::new();
     POOL.get_or_init(|| {
         let available = std::thread::available_parallelism().map_or(1, |count| count.get());
-        let default_threads = if available <= PARALLEL_MARK_SMALL_HOST_MAX_CPUS {
-            PARALLEL_MARK_SMALL_HOST_DEFAULT_THREADS
-        } else {
-            PARALLEL_MARK_LARGE_HOST_DEFAULT_THREADS
-        };
         let total_threads = if cfg!(test) {
             PARALLEL_MARK_MAX_THREADS
         } else {
-            available.min(default_threads)
+            available.min(PARALLEL_MARK_MAX_THREADS)
         };
         let worker_threads = total_threads.saturating_sub(1);
         (worker_threads > 0).then(|| {
@@ -260,9 +254,7 @@ impl<'heap> ParallelMarkView<'heap> {
                     value,
                     array,
                     properties,
-                    |string| {
-                        strings.mark_if_new(string);
-                    },
+                    |string| super::string_parts::mark_flat_if_new(&strings, string),
                     work,
                     &mut object_roots,
                     trace_kind,
@@ -317,11 +309,12 @@ impl<'heap> ParallelMarkView<'heap> {
                 unsafe { self.awaits.get(id) }.extend_roots(work);
                 CellKind::AwaitState
             }
-            // Strings and vectors hold no heap edges: marking one is the whole visit.
+            // A vector holds no heap edges: marking one is the whole visit; a string's are its parts.
             HeapReference::StringRecord(id) => {
                 if !self.strings.mark_if_new(id) {
                     return;
                 }
+                super::string_parts::trace_parts_if_new(&self.strings, id, work);
                 CellKind::String
             }
             HeapReference::V128Record(id) => {

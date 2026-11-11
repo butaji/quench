@@ -2151,14 +2151,11 @@ impl Object {
         // becomes a `memcpy` call.
         let inline = std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
         let payload = Self::pack_inline(inline)?;
-        let mut object = Self {
-            meta: Self::encode_proto(proto),
-            auxiliary: 0,
-            payload,
-        };
-        // Inline storage leaves the payload word alone.
-        object.initialize_properties(ValueVec::inline_property_storage(shape));
-        Some(object)
+        // `initialize_properties` of inline storage on a fresh object, which leaves the payload
+        // word alone, written out: the object has no exotic access to keep.
+        let (start, auxiliary) = ValueVec::inline_property_storage(shape).into_parts();
+        let meta = Self::encode_proto(proto) | (start & VALUE_VEC_INTEGRITY_BITS) | OBJECT_INLINE_STORAGE;
+        Some(Self { meta, auxiliary, payload })
     }
 
     /// Whether inline `values` fit the payload word without moving into extras.
@@ -2465,10 +2462,10 @@ impl Object {
     }
 
     /// Visit internal primitive data, private-name homes and captured stack roots.
-    pub(crate) fn visit_extras_roots(&self, mut visit: impl FnMut(Value)) {
-        let Some(extras) = self.extras() else {
-            return;
-        };
+    #[inline(always)] pub(crate) fn visit_extras_roots(&self, visit: impl FnMut(Value)) { if self.extras_pointer().is_some() { self.visit_extras_values(visit) } }
+
+    #[inline(never)] fn visit_extras_values(&self, mut visit: impl FnMut(Value)) {
+        let Some(extras) = self.extras() else { return };
         if let Some(value) = extras.boxed_primitive {
             visit(value);
         }

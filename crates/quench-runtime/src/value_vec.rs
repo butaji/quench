@@ -2,7 +2,7 @@ use crate::Value;
 use crate::typed_ir::SlotType;
 use rustc_hash::FxHashMap;
 
-mod buffer;
+mod buffer; mod plan_values;
 mod subscribe;
 use buffer::PropertyBuffer;
 pub(crate) use buffer::NATIVE_PROPERTY_BUFFER_LAYOUT;
@@ -96,8 +96,8 @@ struct Nursery {
 /// The nursery's young range, `[floor, top)`, which a collection's releases leave as it is.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct YoungRuns {
-    floor: usize,
-    top: usize,
+    pub(crate) floor: usize,
+    pub(crate) top: usize,
 }
 
 impl YoungRuns {
