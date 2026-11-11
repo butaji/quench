@@ -287,8 +287,8 @@ impl<H: Host> Vm<H> {
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
             return None;
         };
-        let (regex, flags) = (Rc::clone(meta.matcher.0.get()?), meta.flags);
-        let input = self.heap.string(subject)?.clone();
+        let (regex, flags) = (meta.matcher.0.get()?, meta.flags);
+        let input = self.heap.string(subject)?;
         let Some(crate::vm::wtf16::Units::Ascii(bytes)) = input.existing_flat().map(|flat| flat.view()) else {
             return None;
         };
@@ -296,28 +296,31 @@ impl<H: Host> Vm<H> {
         let start = if stateful { regexp_to_length(last_index.as_number()?) } else { 0 };
         let captures = result_used && exec;
         let found = regex.find_ascii(bytes, start, flags.contains(RegExpFlags::STICKY), captures)?;
-        Some(self.steady_ascii_outcome(receiver, subject, input, &regex, found, (exec, stateful, slot), captures))
+        let Some(matched) = found else {
+            if stateful {
+                self.heap.property_set(receiver, slot, Value::number(0.0));
+            }
+            return Some(Ok(if exec { Value::NULL } else { Value::FALSE }));
+        };
+        // The match outlives the borrows of the regexp and the subject, which a result or the
+        // legacy statics keep: only a match clones them.
+        let (regex, input) = (Rc::clone(regex), input.clone());
+        Some(self.steady_ascii_match(receiver, subject, input, &regex, matched, (exec, stateful, slot), captures))
     }
 
-    /// The outcome of `steady_exec_ascii`'s match `found`, with `lastIndex` stored through
+    /// The outcome of `steady_exec_ascii`'s match `matched`, with `lastIndex` stored through
     /// its slot where the regexp is stateful.
     #[allow(clippy::too_many_arguments)]
-    fn steady_ascii_outcome(
+    fn steady_ascii_match(
         &mut self,
         receiver: Value,
         subject: Value,
         input: JsString,
         regex: &Rc<quench_regexp::Regex>,
-        found: Option<quench_regexp::Match>,
+        matched: quench_regexp::Match,
         (exec, stateful, slot): (bool, bool, usize),
         captures: bool,
     ) -> Result<Value, JsError> {
-        let Some(matched) = found else {
-            if stateful {
-                self.heap.property_set(receiver, slot, Value::number(0.0));
-            }
-            return Ok(if exec { Value::NULL } else { Value::FALSE });
-        };
         if stateful {
             self.heap.property_set(receiver, slot, Value::number(matched.range.end as f64));
         }
