@@ -65,6 +65,10 @@ impl Stage for Trace {
     fn ne_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("ne_imm w{a} {}", Self::operand(imm.into()))) }
     fn ugt_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("ugt_imm w{a} {}", Self::operand(imm.into()))) }
     fn store_gate(&mut self, record_id: u32, value: u32) -> u32 { self.word(format!("store_gate w{record_id} w{value}")) }
+    fn number_operator(&mut self, operator: Imm, passed: u32, constant: u32) -> (u32, u32) {
+        let value = self.word(format!("number_operator {} w{passed} w{constant}", Self::operand(operator)));
+        (value, value)
+    }
     fn assumption(&mut self, watch: Imm) -> u32 { self.word(format!("assumption {}", Self::operand(watch))) }
     fn ult(&mut self, a: u32, b: u32) -> u32 { self.word(format!("ult w{a} w{b}")) }
     fn uextend32(&mut self, a: u32) -> u32 { self.word(format!("uextend32 w{a}")) }

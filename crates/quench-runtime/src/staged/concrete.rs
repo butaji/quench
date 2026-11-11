@@ -122,6 +122,16 @@ impl Stage for Concrete {
         !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(record_id as u32, crate::Value::from_bits(value)) }
     }
     #[inline(always)]
+    fn number_operator(&mut self, operator: u64, passed: u64, constant: u64) -> (u64, bool) {
+        let operated = crate::Value::from_bits(passed).as_number().zip(crate::Value::from_bits(constant).as_number())
+            .and_then(|(passed, constant)| crate::vm::operations::static_number_binary(operator as u32, passed, constant))
+            .and_then(|constant| match constant {
+                crate::bytecode::Constant::Number(number) => Some(crate::Value::number(number).to_bits()),
+                _ => None,
+            });
+        (operated.unwrap_or(0), operated.is_some())
+    }
+    #[inline(always)]
     fn assumption(&mut self, watch: u64) -> bool {
         // SAFETY: the operand is the address of a live watch (`staged::holder::concrete_holder_read`).
         unsafe { (*(watch as *const crate::code_dependencies::PublishedCode<()>)).is_published() }

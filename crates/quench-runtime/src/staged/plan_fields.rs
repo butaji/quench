@@ -20,10 +20,10 @@ pub(crate) enum FieldClass {
     Computed,
 }
 
-/// The value of one field. `class` and `fallback` are per-site operands; `argument` fetches the
+/// The value of one field. `class`, `fallback` and `operator` are per-site operands; `argument` fetches the
 /// parameter's value only on the arms that read it.
 #[inline(always)]
-pub(crate) fn field_value<S: Stage>(stage: &mut S, class: FieldClass, fallback: u64, argument: impl FnOnce(&mut S) -> S::Word,
+pub(crate) fn field_value<S: Stage>(stage: &mut S, class: FieldClass, fallback: u64, operator: u64, argument: impl FnOnce(&mut S) -> S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let fallback_word = |stage: &mut S| {
         let zero = stage.constant(0);
@@ -41,7 +41,14 @@ pub(crate) fn field_value<S: Stage>(stage: &mut S, class: FieldClass, fallback: 
             let fallback = fallback_word(stage);
             Some(stage.select(truthy, passed, fallback))
         }
-        FieldClass::Computed => None,
+        FieldClass::Computed => {
+            let passed = argument(stage);
+            let constant = fallback_word(stage);
+            let operator = stage.site(operator);
+            let (value, computed) = stage.number_operator(operator, passed, constant);
+            stage.guard(computed, miss)?;
+            Some(value)
+        }
     }
 }
 
@@ -53,7 +60,7 @@ mod tests {
 
     fn run(class: FieldClass, passed: Value) -> Option<Value> {
         let mut stage = Concrete::new(std::ptr::null());
-        field_value(&mut stage, class, Value::number(2.5).to_bits(), |stage| stage.constant(passed.to_bits()), ()).map(Value::from_bits)
+        field_value(&mut stage, class, Value::number(2.5).to_bits(), 0, |stage| stage.constant(passed.to_bits()), ()).map(Value::from_bits)
     }
 
     #[test]
@@ -70,7 +77,7 @@ mod tests {
     #[test]
     fn a_constant_field_never_fetches_its_argument() {
         let mut trace = crate::staged::trace::Trace::default();
-        field_value(&mut trace, FieldClass::Constant, 7, |_| panic!("fetched"), ());
+        field_value(&mut trace, FieldClass::Constant, 7, 0, |_| panic!("fetched"), ());
         assert_eq!(trace.holes, [7]);
     }
 }

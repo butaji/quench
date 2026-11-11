@@ -1,5 +1,6 @@
 //! Construct plans: a constructor's receiver allocated finished, its initializer stores made at once.
 use super::*;
+use crate::staged::plan_fields::{field_value, FieldClass};
 
 /// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
@@ -31,6 +32,9 @@ pub(super) struct ConstructPlan {
     /// Fields whose store computes a Number from its parameter (`InitializerValue::Numeric`),
     /// one bit per field index, each with `operators` and the constant in `fallbacks` at it.
     pub(super) computed: u8,
+    /// Each field's class, derived from the masks with the header (`derive_header`), so a
+    /// construction walks one dense array.
+    pub(super) classes: [FieldClass; CONSTRUCT_PLAN_FIELDS],
     pub(super) operators: [u8; CONSTRUCT_PLAN_FIELDS],
     pub(super) fallbacks: [Value; CONSTRUCT_PLAN_FIELDS],
     /// For a forwarding constructor's plan, where its body's reads resolved
@@ -72,7 +76,13 @@ impl ConstructPlan {
         } else {
             InlineObjectHeader::of_run(self.prototype, self.shape)
         };
-        Self { header, ..self }
+        let mut classes = [FieldClass::Passed; CONSTRUCT_PLAN_FIELDS];
+        for (field, class) in classes.iter_mut().enumerate() {
+            *class = if self.constant & (1 << field) != 0 { FieldClass::Constant }
+                else if self.computed & (1 << field) != 0 { FieldClass::Computed }
+                else if self.defaulted & (1 << field) != 0 { FieldClass::Defaulted } else { FieldClass::Passed };
+        }
+        Self { header, classes, ..self }
     }
 
     /// The value of a field of a plan whose stores default nothing (`ConstructPlanKind::Passed`):
@@ -88,17 +98,18 @@ impl ConstructPlan {
     /// computes it. `None` when a computed field's argument is no Number.
     pub(super) fn values<H: Host>(&self, vm: &Vm<H>, argument: impl Fn(u16) -> Value) -> Option<[Value; CONSTRUCT_PLAN_FIELDS]> {
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+        let mut stage = crate::staged::Concrete::new(std::ptr::null());
         for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
-            if self.constant & (1 << field) != 0 {
-                *value = self.fallbacks[field];
-                continue;
-            }
-            if self.computed & (1 << field) != 0 {
-                *value = numeric_initializer(argument(self.parameters[field]), self.operators[field], self.fallbacks[field].as_number()?)?;
-                continue;
-            }
-            let fallback = (self.defaulted & (1 << field) != 0).then_some(self.fallbacks[field]);
-            *value = initializer_value(vm, argument(self.parameters[field]), fallback);
+            let class = self.classes[field];
+            let staged = field_value(&mut stage, class, self.fallbacks[field].to_bits(), u64::from(self.operators[field]),
+                |_| argument(self.parameters[field]).to_bits(), ());
+            *value = match (staged, class) {
+                (Some(bits), _) => Value::from_bits(bits),
+                // A falsy test the word cannot decide: the heap value's cell does.
+                (None, FieldClass::Defaulted) => initializer_value(vm, argument(self.parameters[field]), Some(self.fallbacks[field])),
+                // A computed field whose argument is no Number leaves the plan.
+                (None, _) => return None,
+            };
         }
         Some(values)
     }
@@ -158,6 +169,7 @@ pub(super) const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     defaulted: 0,
     constant: 0,
     computed: 0,
+    classes: [FieldClass::Passed; CONSTRUCT_PLAN_FIELDS],
     operators: [0; CONSTRUCT_PLAN_FIELDS],
     fallbacks: [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS],
     forwarded: None,
