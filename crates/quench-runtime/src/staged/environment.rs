@@ -12,10 +12,12 @@ use crate::value::ValueLayout;
 pub(crate) fn dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16,
     miss: S::Miss) -> Option<S::Word> {
     let slot = u64::from(slot);
-    let in_bounds = stage.ugt_imm(len, slot);
+    // The slot is a per-site operand: one hole for the bounds test, one for the address.
+    let bound = stage.site(slot);
+    let in_bounds = stage.ugt_imm(len, bound);
     stage.guard(in_bounds, miss)?;
-    // One unsigned widening of `slot` serves the bounds test and the address.
-    let address = stage.add_imm(values, slot * std::mem::size_of::<crate::Value>() as u64);
+    let offset = stage.site(slot * std::mem::size_of::<crate::Value>() as u64);
+    let address = stage.add_imm(values, offset);
     let value = stage.load_u64(address, 0);
     let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
     let ordinary = stage.ne_imm(tag, ValueLayout::INTERNAL_TAG);
@@ -47,5 +49,19 @@ mod tests {
         assert_eq!(read(1).map(Value::to_bits), None, "an internal marker leaves");
         assert_eq!(read(2).map(Value::to_bits), Some(Value::number(2.5).to_bits()));
         assert_eq!(read(3).map(Value::to_bits), None, "past the run leaves");
+    }
+
+    /// The capture row names its slot only through holes: two slots, one op trace.
+    #[test]
+    fn capture_slot_is_a_hole_not_part_of_the_trace() {
+        let trace = |slot: u16| {
+            let mut stage = crate::staged::trace::Trace::default();
+            let (values, len) = (stage.constant(0), stage.constant(0));
+            dense_capture(&mut stage, values, len, slot, ()).expect("a trace never misses");
+            stage
+        };
+        let (first, second) = (trace(2), trace(9));
+        assert_eq!(first.ops, second.ops);
+        assert_eq!((first.holes, second.holes), (vec![2, 16], vec![9, 72]));
     }
 }
