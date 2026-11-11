@@ -1850,6 +1850,11 @@ pub(super) fn value_step_operands(i: WideInstruction) -> [Option<crate::bytecode
     }
 }
 
+/// The register a value step writes its result to: every one but `AppendArray`, which has none.
+pub(super) fn value_step_result(i: WideInstruction) -> Option<crate::bytecode::Register> {
+    (i.op() != Op::AppendArray).then(|| i.result_register())
+}
+
 impl<H: Host> Vm<H> {
     /// `ToPropertyKey`, `GetIterator`, `ForInStart`, `IteratorClose` or `AppendArray` of its operand values
     /// (`value_step_operands`): the value it writes to its result register, if any. The

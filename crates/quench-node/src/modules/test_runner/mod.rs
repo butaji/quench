@@ -22,7 +22,7 @@ const ROOT: NodeId = 0;
 /// The internal slot naming the node a TestContext or SuiteContext belongs to.
 const NODE_SLOT: &str = "\0quench:test:node";
 /// Node's `TIMEOUT_MAX`, the largest timer delay.
-const TIMEOUT_MAX_MS: f64 = 2_147_483_647.0;
+const TIMEOUT_MAX_MS: f64 = crate::modules::timers_shared_vm::MAX_TIMER_DELAY_MS as f64;
 /// Node's message for `only` without `--test-only`.
 const ONLY_WARNING: &str = "'only' and 'runOnly' require the --test-only command-line option.";
 

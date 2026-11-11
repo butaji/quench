@@ -7,7 +7,7 @@ use super::jit_backend::{compile_function, target_isa, NativeCompileRejection};
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use quench_regexp::backtrack::native::{NativeCode, NativeCompiler, NativeFn, NativeGuard, NativeInst, NativePlan, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
+use quench_regexp::backtrack::native::{NativeCode, NativeCompiler, NativeFn, NativeOutcome, NativeGuard, NativeInst, NativePlan, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
 
 mod assertions;
 mod repeats;
@@ -41,16 +41,29 @@ pub(super) fn enable(enabled: bool) {
 
 /// The compiler `quench_regexp` asks for code.
 pub(super) fn compiler() -> NativeCompiler {
-    NativeCompiler { runs: super::compiled::tier_policy::REGEXP_NATIVE_RUNS, compile }
+    NativeCompiler { first_request: if super::compiled::tier_policy::STRESS { 1 } else { FIRST_REQUEST }, compile }
 }
 
-fn compile(plan: &NativePlan) -> Option<NativeCode> {
-    let isa = target_isa()?;
-    if isa.pointer_type() != types::I64 {
-        return None;
-    }
+/// The searches of a program before it first asks whether its native code repays.
+const FIRST_REQUEST: u32 = 64;
+
+/// The compile of `plan` once `searches` repay it (`repays_compile`).
+fn compile(plan: &NativePlan, searches: u32) -> NativeOutcome {
+    let Some(isa) = target_isa().filter(|isa| isa.pointer_type() == types::I64) else {
+        return NativeOutcome::Never;
+    };
     let function = emit(plan, &*isa);
-    let memory = compile_function(function, &*isa, Some(MAX_CODE_BYTES), |compiled, _| {
+    let ir = function.dfg.num_insts();
+    // A search runs at least each instruction of the program once, interpreted.
+    let work = u64::from(searches) * plan.insts.len() as u64;
+    if !super::compiled::lane_facts::repays_compile(work, ir) {
+        return NativeOutcome::Later;
+    }
+    compile_function_code(function, &*isa).map_or(NativeOutcome::Never, NativeOutcome::Code)
+}
+
+fn compile_function_code(function: ir::Function, isa: &dyn TargetIsa) -> Option<NativeCode> {
+    let memory = compile_function(function, isa, Some(MAX_CODE_BYTES), |compiled, _| {
         if !compiled.buffer.relocs().is_empty() {
             return Err(NativeCompileRejection::Relocations);
         }

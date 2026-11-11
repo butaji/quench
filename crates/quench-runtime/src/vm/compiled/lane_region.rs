@@ -51,6 +51,9 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/field_reads.rs"] mod field_reads;
 #[path = "lane_region/number_domains.rs"] mod number_domains;
 #[path = "lane_region/loop_arrays.rs"] mod loop_arrays;
+#[path = "lane_region/direct_calls.rs"] mod direct_calls;
+#[path = "lane_region/direct_admission.rs"] mod direct_admission;
+#[path = "lane_region/direct_enter.rs"] mod direct_enter;
 use loop_arrays::LoopArray;
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
@@ -79,6 +82,9 @@ const NUMBER_ENTRY_MISS: i64 = 1;
 /// guards and exits cost. A larger body is planned again with less inlined
 /// (`Vm::compile_lane_method`).
 const LANE_BODY_CODE_BYTES_PER_INSTRUCTION: usize = 128;
+/// The machine bytes an IR instruction of a lane body costs at most, measured over the V8-v7
+/// bodies (6.7 to 7.3), which a plan's size is judged by before it compiles.
+pub(super) const LANE_BODY_CODE_BYTES_PER_IR: usize = 8;
 pub(super) const LANE_BODY_MAX_CODE_BYTES: usize =
     super::lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS * LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
 
@@ -444,6 +450,10 @@ struct Lowering<'a, 'f> {
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
     /// An OSR region's field reads answered from the entry record, by unit PC.
     entry_fields: &'a BTreeMap<usize, u32>,
+    /// The element reads observed to hold Numbers (`RegionSpecializer::number_reads`).
+    number_reads: &'a [usize],
+    /// The registers observed to hold int32s at entry (`RegionSpecializer::int_entries`).
+    int_entries: &'a [Register],
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
     global_reads: &'a crate::vm::global_facts::GlobalReads,
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
@@ -515,6 +525,8 @@ struct Lowering<'a, 'f> {
     /// on the loop's one entry edge; each read's PC names the value it made there and
     /// whether its int tag was tested.
     hoists: BTreeMap<usize, Vec<InvariantRead>>,
+    /// The calls that run inline as Math operations (`native_calls::intrinsic_calls`).
+    intrinsics: native_calls::Intrinsics,
     hoisted: BTreeMap<usize, LoopRead>,
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
@@ -640,12 +652,11 @@ fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstructi
     instructions.iter().all(|instruction| {
         if instruction.writes_current_this()
             || (instruction.result_flags() != 0 && !instruction.returns_from_frame()) { return false; }
-        match instruction.op() {
-            Op::LoadConst => program.constants.get(instruction.constant_index())
+        match instruction.op().class() {
+            Class::LoadConst => program.constants.get(instruction.constant_index())
                 .and_then(super::facts::immediate).is_some(),
-            op if op.traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
-            op if op.traits().has(Traits::FRAME_ONLY) || op.is_inc_dec() || op.is_return() => true,
-            op => op.js_denotation() == JsDenotation::NumericBinary
+            _ if instruction.op().traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
+            _ => instruction.op().js_denotation() == JsDenotation::NumericBinary
                 && instruction.numeric_local_target().is_none(),
         }
     })
@@ -674,6 +685,27 @@ pub(super) fn writes(instruction: WideInstruction) -> Vec<Register> {
 impl<'a, 'f> Lowering<'a, 'f> {
     fn ins(&mut self) -> cranelift_frontend::FuncInstBuilder<'_, 'f> {
         self.builder.ins()
+    }
+
+    // The word vocabulary of the native-call lowerings (`lane_region/direct_*.rs`).
+    fn word_load(&mut self, base: ir::Value, offset: i32) -> ir::Value { self.ins().load(types::I64, MemFlagsData::trusted(), base, offset) }
+    fn word_store(&mut self, value: ir::Value, base: ir::Value, offset: i32) { self.ins().store(MemFlagsData::trusted(), value, base, offset); }
+    fn word_const(&mut self, bits: i64) -> ir::Value { self.ins().iconst(types::I64, bits) }
+    fn word_add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().iadd(a, b) }
+    fn word_add_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().iadd_imm_u(a, imm) }
+    fn word_mul_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().imul_imm_u(a, imm) }
+    fn word_and(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().band(a, b) }
+    fn word_or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().bor(a, b) }
+    fn word_select(&mut self, test: ir::Value, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().select(test, a, b) }
+    fn word_cmp(&mut self, cc: IntCC, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().icmp(cc, a, b) }
+    fn word_cmp_imm(&mut self, cc: IntCC, a: ir::Value, imm: i64) -> ir::Value { self.ins().icmp_imm_u(cc, a, imm) }
+    fn word_brif(&mut self, test: ir::Value, then: ir::Block, then_args: &[ir::BlockArg], otherwise: ir::Block, otherwise_args: &[ir::BlockArg]) {
+        self.ins().brif(test, then, then_args, otherwise, otherwise_args);
+    }
+    fn word_jump(&mut self, block: ir::Block, args: &[ir::BlockArg]) { self.ins().jump(block, args); }
+    fn word_call(&mut self, signature: ir::SigRef, entry: ir::Value, args: &[ir::Value]) -> ir::Value {
+        let call = self.ins().call_indirect(signature, entry, args);
+        self.builder.inst_results(call)[0]
     }
 
     fn tagged(&mut self, state: &mut State, register: Register) -> ir::Value {
@@ -860,6 +892,15 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 emit_js_guard(&mut self.builder, object, exit);
                 self.refine_object_family(state, bits);
             }
+            // An exact shape the target's other edges proved is guarded on this one, the
+            // owner's header read once, so the edge keeps native code.
+            if let Some(shape) = ty.object_shape() && !state.values[index].value.ty.is_subtype(ty) {
+                let exit = self.guard_exit(state, target as u32);
+                let header = self.object_header(state, Some(register), false, exit);
+                self.prove_shape(state, Some(Some(register)), header.shape, shape, exit);
+                state.values[index] = RegisterFact { tagged: state.values[index].tagged,
+                    ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
+            }
             // A fact this edge does not prove and cannot guard leaves at the target, exactly:
             // the edge loses native code, never the body (AGENTS.md, check once).
             if !self.proves(state, register, ty, target) {
@@ -997,10 +1038,14 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         _ if instruction.op().traits().has(Traits::FRAME_ONLY) => true,
         Class::LoadConst => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
         Class::IncDec => instruction.numeric_local_target().is_none(),
+        // ToNumeric of a Number is the Number; any other operand leaves (`Lowering::instruction`).
+        Class::ToNumeric => !instruction.returns_from_frame(),
         Class::LoadCapture => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
         Class::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
         // A dense element, read natively; any other element leaves (`emit_dense_element_read`).
         Class::GetIndex => !instruction.returns_from_frame(),
+        // A null or undefined operand leaves before any effect (`staged::require_object_coercible`).
+        Class::RequireObjectCoercible => !instruction.returns_from_frame(),
         _ => instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     }
 }
@@ -1029,11 +1074,17 @@ fn retains_array_views(constants: &[crate::bytecode::Constant], instruction: Wid
     }
 }
 
+/// Whether a loop may hold `instruction` natively: a read, an own-field or element store, or a
+/// call lowered as an intrinsic (`intrinsic`).
+fn stays_native(constants: &[Constant], instruction: WideInstruction, intrinsic: bool) -> bool {
+    intrinsic || reads_only(constants, instruction) || stores_own(instruction) || stores_element(instruction)
+}
+
 /// Loops with one external entry and no interior entry, whose native operations
 /// only read or replace existing own fields and array elements. Misses leave before guest effects.
 /// A sole native entry at the header can supply the same entry proofs.
-fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Constant], start: usize)
-    -> Vec<(usize, usize)> {
+fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Constant], start: usize,
+    intrinsics: &native_calls::Intrinsics) -> Vec<(usize, usize)> {
     let instructions = &unit.instructions;
     let target = |instruction: &WideInstruction| instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize);
     let falls = |instruction: &WideInstruction| instruction.op().control_flow_layout().falls_through();
@@ -1048,14 +1099,13 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
         if (entries != 1 && !entry_header) || side
             || (header + 1..=back).contains(&start)
-            || !body.iter().all(|candidate| reads_only(constants, *candidate) || stores_own(*candidate)
-                || stores_element(*candidate)) { continue }
+            || !body.iter().enumerate().all(|(offset, candidate)| stays_native(constants, *candidate, intrinsics[header + offset].is_some())) { continue }
         loops.push((header, back));
     }
     loops
 }
 
-fn invariant_reads(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> BTreeMap<usize, Vec<InvariantRead>> {
+fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> BTreeMap<usize, Vec<InvariantRead>> {
     let mut hoists = BTreeMap::new();
     let boundaries = leaders(&unit.instructions);
     for &(header, back) in loops {
@@ -1063,6 +1113,8 @@ fn invariant_reads(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> B
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
             .map(|candidate| candidate.atom_index()).collect();
+        // An element store may append, which changes its array's `length`.
+        let resizes = body.iter().any(|candidate| stores_element(*candidate));
         let mut reads: Vec<InvariantRead> = body.iter().enumerate().filter_map(|(offset, candidate)| {
             let pc = header + offset;
             if candidate.op().class().eq(Class::LoadCapture)
@@ -1071,7 +1123,7 @@ fn invariant_reads(unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> B
             }
             if !candidate.op().class().eq(Class::GetField) { return None; }
             match candidate.field_lookup() {
-            Some(FieldLookup::Atom { atom, base, .. }) if !stored.contains(&atom) => {
+            Some(FieldLookup::Atom { atom, base, .. }) if !stored.contains(&atom) && !(resizes && names_length(program, atom)) => {
                 let owner = invariant_field_owner(unit, header, pc, base.register_index()?, &written, &boundaries)?;
                 Some(InvariantRead { pc, owner: Some(owner), rooted: false })
             }
@@ -1273,6 +1325,12 @@ pub(super) struct RegionSpecializer<'p> {
     /// An OSR region's field reads answered from the entry record, by unit PC and entry
     /// word (`osr_loop::field_word`).
     pub(super) entry_fields: &'p BTreeMap<usize, u32>,
+    /// The unit PCs of element reads observed to hold Numbers (sorted): each leaves where its
+    /// element is not one, and its result is typed a Number.
+    pub(super) number_reads: &'p [usize],
+    /// The registers whose values at entry were int32s: candidates for an int32 entry contract
+    /// (`refine_inductive_inputs`), kept where every definition in the loop yields an int32.
+    pub(super) int_entries: &'p [Register],
     pub(super) plan: RegionPlan,
 }
 
@@ -1282,7 +1340,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.entry_fields, self.plan.coverage, self.plan.completion, self.plan.views)
+            self.isa, self.entry_fields, self.number_reads, self.int_entries, self.plan.coverage, self.plan.completion, self.plan.views)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1300,13 +1358,13 @@ pub(super) fn lower_body(
     vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
-    frame_captures: &[(usize, usize)],
+    frame_captures: &[(usize, usize)], entry: Option<usize>,
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
     let region = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
-        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS,
-        plan: RegionPlan { coverage: Coverage::Prefix, completion: Completion::StatusAndPc,
-            views: ElementViews::Dense } }
+        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
+        plan: RegionPlan { coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
+            completion: Completion::StatusAndPc, views: ElementViews::Dense } }
         .specialize(program).ok()?;
     let clif = native_dump_directory().map(|_| region.function.to_string());
     Some(LoweredLane { region, clif })
@@ -1334,6 +1392,8 @@ pub(super) fn lower(
     frame_captures: &[(usize, usize)],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     entry_fields: &BTreeMap<usize, u32>,
+    number_reads: &[usize],
+    int_entries: &[Register],
     coverage: Coverage,
     completion: Completion,
     views: ElementViews,
@@ -1435,6 +1495,8 @@ pub(super) fn lower(
         helpers,
         fields,
         entry_fields,
+        number_reads,
+        int_entries,
         interrupt,
         fault_poll,
         reentries: smallvec::SmallVec::new(),
@@ -1472,6 +1534,7 @@ pub(super) fn lower(
         completion,
         number_returns: smallvec::SmallVec::new(),
         hoists: BTreeMap::new(),
+        intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
         loop_arrays: Vec::new(),
         array_vars: BTreeMap::new(),
@@ -1537,8 +1600,9 @@ pub(super) fn lower(
         let [field] = fields.get(&cache_site)?.as_slice() else { return None };
         field.own_direct().then_some((base.register_index()?, field.shape))
     };
-    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[]);
-    let loops = local_loops(unit, &program.constants, entry_pc);
+    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], number_reads);
+    lowering.intrinsics = native_calls::intrinsic_calls(unit, global_reads, |pc| direct.contains_key(&pc));
+    let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics);
     // One entry query of the call depth replaces each binding's helper with its cached
     // target probe (`cached_call_target`). A completed call leaves the depth it found.
     if !numeric && unit.frames.iter().any(|frame| frame.target.callee == CalleeBinding::Function) {
@@ -1579,14 +1643,15 @@ pub(super) fn lower(
             }
         }
         if refined {
-            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[]);
+            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], number_reads);
         }
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
     lowering.refine_loop_inputs(entry_pc, &initial, &instructions, &leaders, &loops, &own_shape);
     lowering.require_object_latches(&instructions, &leaders, &loops);
+    for &pc in generic { lowering.facts.widen(pc); }
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, &loops, &leaders)); }
-    lowering.hoists = invariant_reads(unit, &loops);
+    lowering.hoists = invariant_reads(program, unit, &loops);
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
@@ -2425,10 +2490,11 @@ impl Lowering<'_, '_> {
             Class::Return if plain && self.completion == Completion::StatusAndPc && instruction.register_a() < self.unit.registers => {
                 Some(self.complete(state, pc, instruction.register_a()))
             }
+            _ if self.is_value_step(instruction) => Some(self.value_step(state, pc, instruction)),
             Class::Call if self.completion == Completion::StatusAndPc
                 && (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
-                && !instruction.parameter_eval() => Some(self.call(state, pc, instruction, LaneHelper::Call)),
+                && !instruction.parameter_eval() => Some(self.intrinsic_call(state, pc, instruction) || self.call(state, pc, instruction, LaneHelper::Call)),
             // ToNumeric of a Number is the Number: a typed operand is copied with its facts,
             // and an untyped one is taken for an int, tested once, which leaves where it is not.
             Class::ToNumeric if plain && instruction.register_b() < self.unit.registers => {
@@ -2516,7 +2582,7 @@ impl Lowering<'_, '_> {
                 Some(true)
             }
             _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
-            _ if instruction.op().is_get_index() && plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
+            _ if instruction.op().is_get_index() && plain && [instruction.operand_b(), instruction.operand_c()].into_iter().all(|operand| self.operand_supported(operand)) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
                 // of an int32 key, proved once.
                 let exit = self.guard_exit(state, pc32);
@@ -2524,13 +2590,15 @@ impl Lowering<'_, '_> {
                 let index = self.operand_int(state, instruction.operand_c(), exit);
                 base.zip(index).map(|(base, index)| {
                     match self.loop_array(pc, instruction.operand_b().register_index()) {
-                        Some(array) => self.loop_element_read(state, array, index, instruction.result_register(), exit),
+                        Some(array) => self.loop_element_read(state, array, index, (pc, instruction.result_register()), exit),
                         None => {
                             let view = self.array_view(state, base, false, exit);
                             let value = self.dense_element(state, base, view, index, exit);
                             self.set_tagged(state, instruction.result_register(), value);
                         }
                     }
+                    // The element an observation typed a Number (`number_reads`), proved here.
+                    if self.number_reads.binary_search(&pc).is_ok() { self.number(state, instruction.result_register(), exit); }
                     true
                 })
             }
@@ -2567,6 +2635,15 @@ impl Lowering<'_, '_> {
                     self.step(state, frame::Edges::ValueGuarded { miss: exit },
                         crate::staged::Operation::MakeArray { destination: instruction.result_register(), length, elements, proof });
                 }
+                self.allocated(state);
+                Some(true)
+            }
+            Class::MakeObject2 if plain && self.completion == Completion::StatusAndPc => {
+                let exit = self.guard_exit(state, pc32);
+                let (first, second) = (self.tagged(state, instruction.register_b()), self.tagged(state, instruction.register_c()));
+                self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::MakeObjectPair {
+                    destination: instruction.result_register(), site: instruction.imm(), first, second,
+                    proof: super::EmitProof::Allocation { miss: exit } });
                 self.allocated(state);
                 Some(true)
             }
@@ -2706,6 +2783,7 @@ impl Lowering<'_, '_> {
                 falls
             }
             None => {
+                super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
                 // A residual call in an admitted callee completes this native
                 // prefix through exact frame materialization. Its caller's
                 // effects and the callee's live argument homes cannot replay.
@@ -2721,6 +2799,86 @@ impl Lowering<'_, '_> {
                 self.exit(state, pc32);
                 false
             }
+        }
+    }
+
+    /// The continuation of a lane helper's `status`: its completion continues at `completed`, a
+    /// miss leaves at `missed`, and a leave in a callee, or a termination, stops the body.
+    fn helper_status(&mut self, status: ir::Value, completed: ir::Block, missed: ir::Block) {
+        let other = self.builder.create_block();
+        let left = self.builder.create_block();
+        self.builder.set_cold_block(left);
+        let done = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_COMPLETED as i64);
+        self.ins().brif(done, completed, &[], other, &[]);
+        self.builder.switch_to_block(other);
+        let miss = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_MISSED as i64);
+        self.ins().brif(miss, missed, &[], left, &[]);
+        self.builder.switch_to_block(left);
+        let terminated = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_TERMINATED as i64);
+        let stopped = self.builder.create_block();
+        let callee = self.builder.create_block();
+        self.ins().brif(terminated, stopped, &[], callee, &[]);
+        self.builder.switch_to_block(stopped);
+        let status = self.ins().iconst(types::I32, TERMINATED_STATUS);
+        let leave = self.leave;
+        self.ins().jump(leave, &[status.into()]);
+        self.builder.switch_to_block(callee);
+        let word = self.ins().iconst(types::I64, LaneExit::Callee.word() as i64);
+        let stop = self.stop;
+        self.ins().jump(stop, &[word.into()]);
+    }
+
+    /// Whether `instruction` is a plain value step the lane's helper makes (`Lowering::value_step`).
+    fn is_value_step(&self, instruction: WideInstruction) -> bool {
+        instruction.result_flags() == 0 && self.completion == Completion::StatusAndPc
+            && instruction.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP)
+    }
+
+    /// An opcode whose step the interpreter defines (`Vm::value_step`), by the lane's helper
+    /// of it (`dispatch_fast::lane_body_value_step`): the registers it reads are written to
+    /// the lane's, the helper runs, and its result is read back; a raised error leaves at `pc`.
+    fn value_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        let Some(super::lane_unit::Origin::Caller(call_pc)) = self.unit.origins.get(pc).copied() else {
+            self.exit(state, pc as u32);
+            return false;
+        };
+        let missed = self.guard_exit(state, pc as u32);
+        self.canonicalize(state, pc);
+        self.spill_written(pc);
+        let completed = self.builder.create_block();
+        let status = self.record_helper(LaneHelper::ValueStep, call_pc);
+        self.helper_status(status, completed, missed);
+        self.builder.switch_to_block(completed);
+        state.call_effect();
+        self.reload_property_arena();
+        if let Some(destination) = crate::vm::dispatch::value_step_result(instruction) { self.reload_result(state, destination); }
+        true
+    }
+
+    /// A lane helper of the record at `call_pc`, by the lane's context: its status word.
+    fn record_helper(&mut self, helper: LaneHelper, call_pc: u32) -> ir::Value {
+        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+        let call_word = self.ins().iconst(types::I64, i64::from(call_pc));
+        self.helper_call(helper, &[context, call_word])
+    }
+
+    /// A helper's result, read from the lane's register `destination` as the register's value.
+    fn reload_result(&mut self, state: &mut State, destination: Register) {
+        let base = self.registers_base;
+        let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));
+        self.set_tagged(state, destination, bits);
+    }
+
+    /// The live registers the body wrote, stored to the lane's registers for a helper to read.
+    fn spill_written(&mut self, pc: usize) {
+        let caller_registers = self.unit.caller_registers;
+        let written: Vec<Register> = self.written.iter().map(|register| register as Register)
+            .take_while(|register| *register < caller_registers).collect();
+        for register in written {
+            if !self.is_live(pc, register) { continue; }
+            let bits = self.builder.use_var(self.registers.tagged[usize::from(register)]);
+            let base = self.registers_base;
+            self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
         }
     }
 
@@ -2840,8 +2998,7 @@ impl Lowering<'_, '_> {
     /// no step is left unresolved.
     fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>)
         -> crate::staged::Step<ir::Value, ()> {
-        let locals = (self.completion != Completion::Number).then(|| emit_js_payload_word(
-            &mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, native_locals)));
+        let locals = self.completion != Completion::Number;
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
@@ -3156,47 +3313,17 @@ impl Lowering<'_, '_> {
         };
         let missed = self.guard_exit(state, pc as u32);
         self.canonicalize(state, pc);
-        let caller_registers = self.unit.caller_registers;
-        let written: Vec<Register> = self.written.iter().map(|register| register as Register)
-            .take_while(|register| *register < caller_registers).collect();
-        for register in written {
-            if !self.is_live(pc, register) { continue; }
-            let bits = self.builder.use_var(self.registers.tagged[usize::from(register)]);
-            let base = self.registers_base;
-            self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
-        }
+        self.spill_written(pc);
         let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
         self.reentries.push(completed);
         match self.direct.get(&pc).copied().filter(|_| instruction.op().class().eq(Class::Call)) {
             // SAFETY: the body owns the callee for as long as its code runs.
             Some(callee) => self.direct_call(instruction, unsafe { &*callee }, generic, completed),
-            None => self.native_call(pc, instruction, generic, completed),
+            None => { self.ins().jump(generic, &[]); }
         }
         self.builder.switch_to_block(generic);
-        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
-        let call_word = self.ins().iconst(types::I64, i64::from(call_pc));
-        let status = self.helper_call(helper, &[context, call_word]);
-        let other = self.builder.create_block();
-        let left = self.builder.create_block();
-        self.builder.set_cold_block(left);
-        let done = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_COMPLETED as i64);
-        self.ins().brif(done, completed, &[], other, &[]);
-        self.builder.switch_to_block(other);
-        let miss = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_MISSED as i64);
-        self.ins().brif(miss, missed, &[], left, &[]);
-        self.builder.switch_to_block(left);
-        let terminated = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_TERMINATED as i64);
-        let stopped = self.builder.create_block();
-        let callee = self.builder.create_block();
-        self.ins().brif(terminated, stopped, &[], callee, &[]);
-        self.builder.switch_to_block(stopped);
-        let status = self.ins().iconst(types::I32, TERMINATED_STATUS);
-        let leave = self.leave;
-        self.ins().jump(leave, &[status.into()]);
-        self.builder.switch_to_block(callee);
-        let word = self.ins().iconst(types::I64, LaneExit::Callee.word() as i64);
-        let stop = self.stop;
-        self.ins().jump(stop, &[word.into()]);
+        let status = self.record_helper(helper, call_pc);
+        self.helper_status(status, completed, missed);
         self.builder.switch_to_block(completed);
         // A returning call's completion is its activation's: the lane completes it with the
         // result, which the call left in its register (`LaneExit::Returned`).
@@ -3210,112 +3337,8 @@ impl Lowering<'_, '_> {
         // arena: proofs of their shapes and storage retire, and the arena's base reloads.
         state.call_effect();
         self.reload_property_arena();
-        let destination = instruction.result_register();
-        let base = self.registers_base;
-        let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));
-        self.set_tagged(state, destination, bits);
+        self.reload_result(state, instruction.result_register());
         true
-    }
-
-    /// The call of `callee` by its compiled entry: the callee's registers in the lane stack's
-    /// free values, a native frame the lane makes an activation of only should the callee
-    /// leave (`compiled::ShadowFrame`), and the per-entry words the callee runs with. A
-    /// completion stores its value to the call's register and continues at `completed`; a
-    /// leave stops the caller too, its frames kept; any other callee, receiver, or a full
-    /// stack takes `helper`. The caller wrote back its registers.
-    fn direct_call(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
-        let word = std::mem::size_of::<Value>() as i64;
-        let frame_size = std::mem::size_of::<ShadowFrame>() as i64;
-        let offset = |field: usize| i32::try_from(field).expect("dispatch offset fits i32");
-        let (base, payload, result) = (self.registers_base, self.payload, self.result);
-        let callee_bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(instruction.register_b()));
-        let same = self.ins().icmp_imm_u(IntCC::Equal, callee_bits, callee.callee.to_bits() as i64);
-        let this = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(instruction.register_c()));
-        // A sloppy callee binds an object receiver itself and an `undefined` or `null` one
-        // to the global object (`lane_receiver_this`); any other receiver takes the helper.
-        let (admitted, this) = match callee.sloppy {
-            Some(global) => {
-                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), this);
-                let undefined = self.ins().icmp_imm_u(IntCC::Equal, this, Value::UNDEFINED.to_bits() as i64);
-                let null = self.ins().icmp_imm_u(IntCC::Equal, this, Value::NULL.to_bits() as i64);
-                let nullish = self.ins().bor(undefined, null);
-                let bound = self.ins().bor(object, nullish);
-                let global = self.ins().iconst(types::I64, global.to_bits() as i64);
-                (self.ins().band(same, bound), self.ins().select(object, this, global))
-            }
-            None => (same, this),
-        };
-        let top = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, native_top)));
-        let end = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, native_end)));
-        let next = self.ins().iadd_imm_u(top, i64::from(callee.registers) * word);
-        let reserved = self.ins().iadd_imm_u(next, callee.reserve.values as i64 * word);
-        let fits = self.ins().icmp(IntCC::UnsignedLessThanOrEqual, reserved, end);
-        let shadow = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
-        let shadow_end = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_end)));
-        let recovered = self.ins().iadd_imm_u(shadow, callee.reserve.activations.max(1) as i64 * frame_size);
-        let room = self.ins().icmp(IntCC::UnsignedLessThanOrEqual, recovered, shadow_end);
-        let admitted = self.ins().band(admitted, fits);
-        let admitted = self.ins().band(admitted, room);
-        let enter = self.builder.create_block();
-        self.ins().brif(admitted, enter, &[], helper, &[]);
-        self.builder.switch_to_block(enter);
-        // Parameter `k` lives in register `k` of a plain activation; the rest start undefined.
-        let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
-        let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
-        let argc = crate::bytecode::ImmediateLayout::argument_count(instruction.imm());
-        for register in 0..callee.registers {
-            let value = if register < argc {
-                self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(window + register))
-            } else { undefined };
-            self.ins().store(MemFlagsData::trusted(), value, top, register_offset(register));
-        }
-        let descriptor = self.ins().iconst(types::I64, callee as *const DirectCallee as i64);
-        for (field, value) in [(std::mem::offset_of!(ShadowFrame, callee), descriptor), (std::mem::offset_of!(ShadowFrame, this), this)] {
-            self.ins().store(MemFlagsData::trusted(), value, shadow, offset(field));
-        }
-        let pushed = self.ins().iadd_imm_u(shadow, frame_size);
-        let words = [
-            std::mem::offset_of!(JsStepDispatch, receiver),
-            std::mem::offset_of!(JsStepDispatch, capture_values),
-            std::mem::offset_of!(JsStepDispatch, capture_len),
-        ];
-        let saved: Vec<ir::Value> = words.iter()
-            .map(|field| self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(*field)))
-            .collect();
-        let capture_values = self.ins().iconst(types::I64, callee.capture_values as i64);
-        let capture_len = self.ins().iconst(types::I64, callee.capture_len as i64);
-        for (field, value) in words.iter().zip([this, capture_values, capture_len]) {
-            self.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
-        }
-        self.ins().store(MemFlagsData::trusted(), pushed, payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
-        self.ins().store(MemFlagsData::trusted(), next, payload, offset(std::mem::offset_of!(JsStepDispatch, native_top)));
-        let signature = native_entry_signature(types::I64, self.builder.func.signature.call_conv);
-        let signature = self.builder.import_signature(signature);
-        // The caller owns the exact callee body whose entry it embeds.
-        let entry = self.ins().iconst(types::I64, callee.body.entry_address() as i64);
-        let zero = self.ins().iconst(types::I64, 0);
-        let context = self.context;
-        let status = self.ins().call_indirect(signature, entry, &[context, zero, zero, top, result]);
-        let status = self.builder.inst_results(status)[0];
-        for (field, value) in words.iter().zip(saved) {
-            self.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
-        }
-        self.ins().store(MemFlagsData::trusted(), top, payload, offset(std::mem::offset_of!(JsStepDispatch, native_top)));
-        let returned = self.ins().icmp_imm_u(IntCC::Equal, status, i64::from(LANE_BODY_RETURNED));
-        let back = self.builder.create_block();
-        let left = self.builder.create_block();
-        self.builder.set_cold_block(left);
-        self.ins().brif(returned, back, &[], left, &[]);
-        // A leave inside the callee stops the caller with it: the lane makes the frames'
-        // activations and continues in the innermost (`dispatch_fast::lane_body_left`).
-        self.builder.switch_to_block(left);
-        let leave = self.leave;
-        self.ins().jump(leave, &[status.into()]);
-        self.builder.switch_to_block(back);
-        self.ins().store(MemFlagsData::trusted(), shadow, payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
-        let value = self.ins().load(types::I64, MemFlagsData::trusted(), result, 0);
-        self.ins().store(MemFlagsData::trusted(), value, base, register_offset(instruction.result_register()));
-        self.ins().jump(completed, &[]);
     }
 
     /// The activation completes with `register`, which the record at `pc` names
@@ -3502,6 +3525,12 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// Whether a loop definition of `register` of type `ty` makes it a candidate for an int32
+    /// entry contract: the definition yields an int32, or the register held one at entry.
+    fn int32_candidate(&self, register: Register, ty: Type) -> bool {
+        ty == Type::INT32 || self.int_entries.contains(&register)
+    }
+
     /// An unchanged arm preserves a checked entry hypothesis. Every definition
     /// and backedge must preserve it too; failed hypotheses are removed before
     /// reanalysis so a dependent candidate cannot keep using their assumptions.
@@ -3521,12 +3550,12 @@ impl Lowering<'_, '_> {
                 let index = usize::from(register);
                 if (header..=back).contains(&pc) && register < self.unit.caller_registers
                     && self.is_live(header, register) && self.written.contains(index)
-                    && matches!(initial[index], Type::ANY | Type::NUMBER) && ty == Type::INT32 {
+                    && matches!(initial[index], Type::ANY | Type::NUMBER) && self.int32_candidate(register, ty) {
                     candidates.insert(index);
                 }
             });
         if let Some(facts) = super::facts::inductive_int32(initial, candidates, header..=back,
-            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls) {
+            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, self.number_reads) {
             self.facts = facts;
         }
     }
@@ -3552,7 +3581,7 @@ impl Lowering<'_, '_> {
             }
         }
         if let Some(facts) = super::facts::loop_int32(entry, initial, candidates, instructions, boundaries,
-            &self.program.constants, &writes, own_shape, self.native_calls) {
+            &self.program.constants, &writes, own_shape, self.native_calls, self.number_reads) {
             self.facts = facts;
         }
     }
@@ -3905,7 +3934,7 @@ impl Lowering<'_, '_> {
             let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
             // A grown backing may count its values again; stores through the view keep none.
             if array.writable {
-                super::emit_dense_array_uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true });
+                super::emit_dense_array_uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true, uncounted: false });
             }
             self.builder.def_var(variables.values, values);
             self.builder.def_var(variables.length, length);
@@ -3927,10 +3956,23 @@ impl Lowering<'_, '_> {
     /// Element `index` (an int32) of a hoisted array's view, into `destination`: a dense
     /// array's present element, tagged, or a typed array's element, a Number. Any other
     /// element exits.
-    fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, destination: Register, exit: ir::Block) {
+    fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, (pc, destination): (usize, Register), exit: ir::Block) {
         let (values, length) = self.hoisted_view(array);
+        let number = self.number_reads.binary_search(&pc).is_ok();
+        if self.views == ElementViews::Dense && number {
+            // An element read as a Number (`number_reads`) needs no hole test of its own: a hole
+            // is a NaN pattern, which the Number proof's one NaN test sends to the tag check
+            // that leaves.
+            let in_bounds = self.ins().icmp(IntCC::UnsignedLessThan, index, length);
+            emit_js_guard(&mut self.builder, in_bounds, exit);
+            let offset = self.ins().uextend(types::I64, index);
+            let offset = self.ins().imul_imm_s(offset, std::mem::size_of::<crate::Value>() as i64);
+            let address = self.ins().iadd(values, offset);
+            let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+            return self.set_tagged(state, destination, value);
+        }
         if self.views == ElementViews::Dense {
-            let view = super::DenseArrayView { values, length, writable: array.writable };
+            let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable };
             let value = super::emit_dense_element(&mut self.builder, view, index, exit).1;
             return self.set_tagged(state, destination, value);
         }
@@ -3944,6 +3986,38 @@ impl Lowering<'_, '_> {
         self.set_number(state, destination, number);
     }
 
+    /// A Number's store through a hoisted dense array view (`loop_element_write`).
+    fn dense_element_write(&mut self, state: &mut State, array: LoopArray, pc: u32, instruction: WideInstruction,
+        index: ir::Value, exit: ir::Block) {
+        let (values, length) = self.hoisted_view(array);
+        let value = self.tagged(state, instruction.register_a());
+        // A store the code has not left at replaces an element in place or leaves: the
+        // append helper is a call every live value is spilled around, which a loop that
+        // never appends should not pay (a site that left compiles it, `left_here`).
+        if !self.left_here {
+            let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
+            return self.index_write(state, index, value, view, exit);
+        }
+        let base = self.tagged(state, instruction.register_b());
+        let key = self.tagged(state, instruction.register_c());
+        let (slow, done) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.set_cold_block(slow);
+        let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
+        // The view's backing counts no values (`hoist_arrays`): the store writes the element.
+        self.index_write(state, index, value, view, slow);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(slow);
+        self.builder.seal_block(slow);
+        self.dense_append(array, pc, index, value, base, done);
+        let proof = super::EmitProof::IndexSetHelper { miss: exit };
+        self.step(state, frame::Edges::ValueGuarded { miss: exit },
+            crate::staged::Operation::IndexSetHelper { base, key, value, proof });
+        self.reload_dense_arrays(pc as usize);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(done);
+        self.builder.seal_block(done);
+    }
+
     /// A Number's store to a hoisted array's element `index` (an int32): a dense array's
     /// in-place replacement, or its helper on a miss (which may grow a backing, every dense
     /// view reading its own again after), or a typed array's element by its kind's
@@ -3952,26 +4026,7 @@ impl Lowering<'_, '_> {
         let index = self.int(state, instruction.register_c(), exit);
         let (values, length) = self.hoisted_view(array);
         if self.views == ElementViews::Dense {
-            let value = self.tagged(state, instruction.register_a());
-            let base = self.tagged(state, instruction.register_b());
-            let key = self.tagged(state, instruction.register_c());
-            let (slow, done) = (self.builder.create_block(), self.builder.create_block());
-            self.builder.set_cold_block(slow);
-            let view = super::DenseArrayView { values, length, writable: true };
-            // The view's backing counts no values (`hoist_arrays`): the store writes the element.
-            self.index_write(state, index, value, view, slow);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(slow);
-            self.builder.seal_block(slow);
-            self.dense_append(array, pc, index, value, base, done);
-            let proof = super::EmitProof::IndexSetHelper { miss: exit };
-            self.step(state, frame::Edges::ValueGuarded { miss: exit },
-                crate::staged::Operation::IndexSetHelper { base, key, value, proof });
-            self.reload_dense_arrays(pc as usize);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(done);
-            self.builder.seal_block(done);
-            return;
+            return self.dense_element_write(state, array, pc, instruction, index, exit);
         }
         let number = self.number(state, instruction.register_a(), exit);
         let kind = self.hoisted_kind(array);
@@ -5142,8 +5197,8 @@ mod tests {
             let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
                 instruction.op().control_flow_layout().jumps()
                     .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
-            let loops = local_loops(&unit, &program.constants, header);
-            let reads = invariant_reads(&unit, &loops);
+            let loops = local_loops(&unit, &program.constants, header, &vec![None; unit.instructions.len()]);
+            let reads = invariant_reads(&program, &unit, &loops);
             let captures: Vec<_> = reads.values().flatten().map(|read| read.pc).filter(|&pc|
                 unit.instructions[pc].op().is_load_capture()
                     && matches!(unit.origins[pc], super::super::lane_unit::Origin::Inlined { .. })).collect();
@@ -5152,7 +5207,7 @@ mod tests {
             let isa = super::super::super::jit_backend::target_isa().unwrap();
             let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
             let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-                &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
+                &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
             let function = region.function;
             let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
             let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
@@ -5339,9 +5394,9 @@ mod tests {
                     .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
                     .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "exercise an actual inline marker: {name}");
-            let loops = local_loops(&unit, &program.constants, 0);
+            let loops = local_loops(&unit, &program.constants, 0, &vec![None; unit.instructions.len()]);
             assert!(!loops.is_empty(), "exercise an eligible loop: {name}");
-            let reads = invariant_reads(&unit, &loops);
+            let reads = invariant_reads(&program, &unit, &loops);
             assert!(!reads.values().flatten().any(|read|
                 unit.instructions[read.pc].op().is_load_capture()
                     && matches!(unit.origins[read.pc], super::super::lane_unit::Origin::Inlined { .. })),
@@ -5411,7 +5466,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -5451,7 +5506,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
         assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
         for instruction in region.function.layout.blocks()
             .flat_map(|block| region.function.layout.block_insts(block)) {
@@ -5508,7 +5563,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         assert!(region.fault_poll);
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -5545,7 +5600,7 @@ mod tests {
         for ty in [Type::INT32, Type::ANY] {
             fields.values_mut().next().unwrap()[0].ty = ty;
             let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-                &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+                &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
             let native = region.function;
             let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
                 .any(|instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -5572,7 +5627,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -5602,7 +5657,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
@@ -5628,7 +5683,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
         assert!(region.native > 0);
         let native = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
@@ -5685,7 +5740,7 @@ mod tests {
             helpers: LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
             fields: &BTreeMap::new(), global_reads: &Default::default(), facts: VmFacts::STATIC,
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-            entry_fields: &NO_ENTRY_FIELDS,
+            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
             plan: RegionPlan { coverage: Coverage::Loop { header, backedge, poll: true },
                 completion: Completion::StatusAndPc, views: ElementViews::Dense } }
             .specialize(&program).expect("the loop lowers");
@@ -5714,7 +5769,7 @@ mod tests {
         let specialize = |plan| RegionSpecializer { function_id: id, unit: &unit, helpers,
             fields: &BTreeMap::new(), global_reads: &Default::default(), facts: VmFacts::STATIC,
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-            entry_fields: &NO_ENTRY_FIELDS, plan }
+            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], plan }
             .specialize(&program).expect("the region lowers");
         let jit = specialize(RegionPlan { coverage: Coverage::Prefix,
             completion: Completion::StatusAndPc, views: ElementViews::Dense });

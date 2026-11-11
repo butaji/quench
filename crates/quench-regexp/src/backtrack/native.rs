@@ -84,11 +84,21 @@ pub struct NativeCode {
     pub keep: Box<dyn std::any::Any>,
 }
 
-/// The embedder's compiler, and the searches a program runs before asking it for code.
+/// What the embedder's compiler answers a program's request for code.
+pub enum NativeOutcome {
+    Code(NativeCode),
+    /// The searches so far do not repay the compile; ask again after as many more.
+    Later,
+    /// The program has no native code.
+    Never,
+}
+
+/// The embedder's compiler, which decides from the searches a program has run (the first
+/// request comes after `first_request`, each next after twice the searches before it).
 #[derive(Clone, Copy)]
 pub struct NativeCompiler {
-    pub runs: u32,
-    pub compile: fn(&NativePlan) -> Option<NativeCode>,
+    pub first_request: u32,
+    pub compile: fn(&NativePlan, u32) -> NativeOutcome,
 }
 
 static COMPILER: OnceLock<NativeCompiler> = OnceLock::new();
@@ -113,12 +123,16 @@ pub fn set_native_compiler(compiler: NativeCompiler) {
 #[derive(Default)]
 pub(super) struct NativeSlot {
     runs: Cell<u32>,
+    /// The search count of the next request for code.
+    next_request: Cell<u32>,
     code: OnceCell<Option<NativeCode>>,
 }
 
 /// The frames a native search starts with room for, and the most a search may grow it to.
 const INITIAL_STACK_FRAMES: usize = 1024;
 const MAXIMUM_STACK_FRAMES: usize = 1 << 20;
+/// Each request for code waits for this many times the searches of the one before.
+const REQUEST_GROWTH: u32 = 2;
 /// A full stack grows by this factor.
 const STACK_GROWTH: usize = 4;
 /// The next start of a search lies a unit past the one that failed.
@@ -199,11 +213,21 @@ impl Program {
         let compiler = COMPILER.get().filter(|_| ENABLED.get())?;
         let runs = self.native.runs.get() + 1;
         self.native.runs.set(runs);
-        if runs < compiler.runs {
+        if self.native.next_request.get() == 0 {
+            self.native.next_request.set(compiler.first_request);
+        }
+        if runs < self.native.next_request.get() {
             return None;
         }
-        let code = self.native_plan().and_then(|plan| (compiler.compile)(&plan));
-        self.native.code.get_or_init(|| code).as_ref()
+        let outcome = self.native_plan().map_or(NativeOutcome::Never, |plan| (compiler.compile)(&plan, runs));
+        match outcome {
+            NativeOutcome::Code(code) => self.native.code.get_or_init(|| Some(code)).as_ref(),
+            NativeOutcome::Never => self.native.code.get_or_init(|| None).as_ref(),
+            NativeOutcome::Later => {
+                self.native.next_request.set(runs.saturating_mul(REQUEST_GROWTH));
+                None
+            }
+        }
     }
 
     /// `run`'s search of an ASCII subject from the search start `start` in native code: the

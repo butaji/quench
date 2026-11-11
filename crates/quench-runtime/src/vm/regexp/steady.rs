@@ -411,7 +411,7 @@ fn steady_search(meta: &crate::heap::RegExpMeta, input: &JsString, slot: usize, 
         return SteadyRead::Prefiltered(slot, last_index, Prefilter::Undecided);
     };
     let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
-    let start = if stateful { regexp_to_length(index) } else { 0 };
+    let start = if stateful { crate::units::to_length(index) } else { 0 };
     let sticky = meta.flags.contains(RegExpFlags::STICKY);
     if let crate::vm::wtf16::Units::Ascii(bytes) = units.view() {
         // A flat ASCII subject is searched in place, which makes the prefilter's tests

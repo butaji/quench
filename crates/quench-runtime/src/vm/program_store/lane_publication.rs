@@ -14,7 +14,31 @@ pub(in crate::vm) enum NativeCallBinding {
     Pending { watch: Weak<PublishedCode<()>>, callees: Box<[Value]> },
 }
 
+/// What a lane body compiles from: its program and function, the entry it starts at, and its
+/// plan (`LanePlan::key`). Equal keys make equal code, so a body published under one serves
+/// every later request of it while it holds.
+pub(in crate::vm) type LaneKey = (u32, u32, Option<u32>, u64);
+
 impl ProgramStore {
+    /// The published body of `key`, if one still holds.
+    pub(in crate::vm) fn installed_lane(&self, key: &LaneKey) -> Option<Rc<PublishedLaneMethod>> {
+        self.lane_installed.borrow().get(key).and_then(Weak::upgrade).filter(|published| published.is_published())
+    }
+
+    /// Counts a compile of `key`'s body or loop entry; whether the bound on them allows it.
+    pub(in crate::vm) fn admit_lane_compile(&self, key: &LaneKey, max: u8) -> bool {
+        let mut compiles = self.lane_compiles.borrow_mut();
+        let count = compiles.entry((key.0, key.1, key.2)).or_insert(0);
+        let admitted = *count < max;
+        *count = count.saturating_add(u8::from(admitted));
+        admitted
+    }
+
+    /// Records `published` as the body of `key`.
+    pub(in crate::vm) fn note_installed_lane(&self, key: LaneKey, published: &Rc<PublishedLaneMethod>) {
+        self.lane_installed.borrow_mut().insert(key, Rc::downgrade(published));
+    }
+
     /// Publishes a lane body under the dependencies its code took: its slots' types
     /// (`Heap::subscribe_slot`) and its Stable facts (prototype values by holder shape, unnamed
     /// method atoms in `method_atoms`). A change of any retires it and sets its invalidation word.
@@ -66,7 +90,7 @@ impl ProgramStore {
                 // not a particular closure locator. Realm/reset retirement
                 // still uses this inventory for both binding kinds.
                 let dead = method.inlined.iter().any(|call| call.target.identity().is_some_and(|callee| !live(callee)))
-                    || method.direct.iter().any(|callee| !live(callee.callee) || !callee.method.is_published());
+                    || method.direct.iter().any(|callee| !live(callee.callee) || callee.method.as_ref().is_some_and(|method| !method.is_published()));
                 if dead {
                     code.retire();
                 }

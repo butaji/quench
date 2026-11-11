@@ -705,7 +705,7 @@ pub(crate) const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
 
 /// ToUint32 (ToInt32 is its bits reinterpreted as `i32`).
 #[inline]
-pub(crate) fn number_to_u32(value: f64) -> u32 {
+pub fn number_to_u32(value: f64) -> u32 {
     if value.abs() < EXACT_I64_TRUNCATION_LIMIT {
         // NaN fails the comparison; -0 and small fractions truncate to 0.
         return value as i64 as u32;

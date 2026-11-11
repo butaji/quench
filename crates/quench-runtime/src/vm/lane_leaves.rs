@@ -28,14 +28,14 @@ impl LaneLeaves {
         other.exits().fold(self, Self::with)
     }
 
-    /// Whether every exit these name is one of `other`'s: nothing new where they are few.
-    pub(super) fn within(&self, other: &Self) -> bool {
-        matches!(self, Self::Few(_)) && self.exits().all(|exit| other.exits().any(|known| known == exit))
-    }
-
     /// The exits these name: none where scattered.
     pub(super) fn exits(&self) -> impl Iterator<Item = super::super::compiled::LaneExit> + '_ {
         let exits: &[_] = match self { Self::Few(exits) => exits, Self::Scattered => &[] };
         exits.iter().flatten().copied()
+    }
+
+    /// The exits these name, listed.
+    pub(super) fn listed(&self) -> Vec<super::super::compiled::LaneExit> {
+        self.exits().collect()
     }
 }

@@ -53,6 +53,7 @@ use std::rc::{Rc, Weak};
 mod osr_loop;
 mod osr_compile;
 pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
+pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
 #[path = "compiled/facts.rs"]
@@ -62,15 +63,20 @@ pub(super) mod tier_policy;
 mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
-pub(super) use lane_region::ElementViews;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
+#[cfg(all(test, feature = "aot"))]
+#[path = "compiled/lane_unit_polymorphic_tests.rs"]
+mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{lane_binary, lane_new_array, lane_new_object};
+use lane_allocations::{lane_binary, lane_new_array, lane_new_object, lane_new_object_pair};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
+#[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
+#[path = "compiled/lane_facts.rs"]
+pub(in crate::vm) mod lane_facts;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
 mod static_loops;
@@ -88,6 +94,8 @@ mod code_heap;
 pub(super) use code_heap::{CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
+#[path = "compiled/lane_storage.rs"]
+mod lane_storage;
 #[path = "compiled/general_call.rs"]
 mod general_call;
 #[path = "compiled/general_capture.rs"]
@@ -425,7 +433,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
         helpers: LaneHelpers::Numeric, fields: &std::collections::BTreeMap::new(),
         global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS,
+        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
         plan: lane_region::RegionPlan { coverage: lane_region::Coverage::Full,
             completion: lane_region::Completion::Number, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok()?;
@@ -888,6 +896,9 @@ pub(super) struct DenseArrayView {
     /// alone, is not frozen and has no extras (indexed descriptors, an arguments map or a
     /// prototype watch), as `Vm::try_replace_record_element` requires.
     pub(super) writable: bool,
+    /// Whether its backing counts no values (`emit_dense_array_uncounted` ran on the edge
+    /// that proved the view): a store through it then writes the element alone.
+    pub(super) uncounted: bool,
 }
 
 /// The emission proofs a staged value operation carries: a field projection or a dense
@@ -928,7 +939,7 @@ pub(super) fn emit_dense_array_view(
         emit_js_guard(builder, plain, fallback);
     }
     let values = builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64);
-    DenseArrayView { values, length, writable }
+    DenseArrayView { values, length, writable, uncounted: false }
 }
 
 /// The backing's first value and length of the array `base` (tagged) an earlier view
@@ -973,7 +984,11 @@ pub(super) fn emit_dense_element_replace(
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
     let mut stage = object_slots::Emit { builder, property_values: None };
-    crate::staged::elements::replace_element(&mut stage, view.values, address, old, value);
+    if view.uncounted {
+        crate::staged::elements::replace_uncounted_element(&mut stage, address, value);
+    } else {
+        crate::staged::elements::replace_element(&mut stage, view.values, address, old, value);
+    }
 }
 
 /// Mark a writable view's backing as holding uncounted other values (`OTHERS_UNKNOWN`), so
@@ -1791,11 +1806,15 @@ lane_helper_inventory! { H;
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
     NewArray => lane_new_array::<H>,
+    /// A two-property object literal's allocation (`lane_new_object_pair`).
+    NewObjectPair => lane_new_object_pair::<H>,
     Binary => lane_binary::<H>,
     /// A store that may add its property (`lane_field_add`).
     FieldAdd => lane_field_add::<H>,
     /// A loop's hoisted typed array view (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
+    /// A value step the interpreter defines (`dispatch_fast::lane_body_value_step`).
+    ValueStep => super::dispatch_fast::lane_body_value_step::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
 }
@@ -2230,7 +2249,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
             lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
                 fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
                 direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-                entry_fields: &lane_region::NO_ENTRY_FIELDS,
+                entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
                 plan: lane_region::RegionPlan { coverage, completion: lane_region::Completion::SourcePc, views } }
                 .specialize(program).ok().filter(|region| region.native != 0)
                 .map(|mut region| {
@@ -2286,7 +2305,7 @@ fn scalar_static_regions(program: &ResidualProgram, function_id: u32, unit: &lan
         let region = lane_region::RegionSpecializer { function_id, unit, helpers,
             fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
             direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-            entry_fields: &lane_region::NO_ENTRY_FIELDS,
+            entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
             plan: lane_region::RegionPlan {
                 coverage: lane_region::Coverage::Range { start: range.start, end: range.end },
                 completion: lane_region::Completion::SourcePc, views: lane_region::ElementViews::Dense } }
@@ -5213,7 +5232,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
 }
 
 /// Make imported call `function` for compiled code, as the interpreter's
-/// `Op::Call` does.
+/// `Call` does.
 unsafe extern "C" fn import_callout<H: Host>(
     context: *mut CallContext,
     function: u64,
@@ -6053,16 +6072,24 @@ impl CompiledOsrRegion {
             native.dispatch.loop_entry = entry.words_mut() as usize;
             // A leave inside an inlined callee writes the callee's live registers here.
             if region.inlining.is_some() { native.dispatch.inlined = entry.scratch_address(); }
-            // The loop entry's captures in the dense slot view the lane capture reads use.
-            let captures = if region.captures.is_empty() { Vec::new() } else {
-                let len = region.captures.iter().map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);
+            // A region that stores a capture reads the activation's own slots, as a lane body
+            // does; otherwise the loop entry's captures are the dense slot view the lane
+            // capture reads use, a stored slot holding `DELETED` so its reads take the lane's
+            // own lookup.
+            let live = (!region.stored_captures.is_empty())
+                .then(|| super::dispatch_fast::lane_context_captures::<H>(lane_context)).flatten();
+            let captures = if live.is_some() || (region.captures.is_empty() && region.stored_captures.is_empty()) { Vec::new() } else {
+                let len = region.captures.iter().chain(&region.stored_captures)
+                    .map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);
                 let mut captures = vec![crate::Value::DELETED; len];
                 for (slot, value) in region.captures.iter().zip(entry.captures(region.captures.len())) {
                     captures[usize::from(*slot)] = value;
                 }
                 captures
             };
-            if !captures.is_empty() {
+            if let Some((values, len)) = live {
+                (native.dispatch.capture_values, native.dispatch.capture_len) = (values, len);
+            } else if !captures.is_empty() {
                 native.dispatch.capture_values = captures.as_ptr();
                 native.dispatch.capture_len = captures.len();
             }
@@ -7082,8 +7109,7 @@ impl<H: Host> Vm<H> {
             (*dispatch).refresh_object_bases(self);
             (*dispatch).stores_specialized = usize::from(self.specialized && residual.specialized);
             let vm = self as *mut Self;
-            (*dispatch).vm = vm.addr();
-            (*dispatch).bind_native_storage(vm);
+            (*dispatch).bind_lane_storage(vm);
             // A run starts with no native frames; its direct calls place their callees past
             // the stack's values.
             let (top, end, activations) = self.lane_stack_spare();
@@ -7215,16 +7241,15 @@ pub(super) struct DirectCallee {
     /// The callee's published body (`LaneBody::Specialized`): the caller's code calls its entry,
     /// so the caller retires with it, at a shape compaction (`LaneMethod::names_shapes`) or at
     /// a lifecycle edge (`ProgramStore::retire_dead_native_calls`).
-    pub(super) method: Rc<PublishedLaneMethod>,
+    /// `None` where the call runs what the callee's `cell` holds then, as a call of the function itself.
+    pub(super) method: Option<Rc<PublishedLaneMethod>>,
     /// Pins the exact entry embedded by the caller, including recovery after retirement.
-    pub(super) body: Rc<LaneMethod>,
+    pub(super) body: Option<Rc<LaneMethod>>,
     /// The caller's call record, which the callee's activation returns to.
     pub(super) call: usize,
+    pub(super) cell: usize,
     pub(super) callee: Value,
     pub(super) registers: u16,
-    /// The values past its registers a leave inside a call it inlines takes
-    /// and the activations that recovery needs, proved free with its own.
-    pub(super) reserve: super::dispatch_fast::LaneRecoverySpace,
     /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which
     /// binds a direct object itself (`lane_receiver_this`); `None` for a strict callee, which
     /// takes any receiver as it is.
@@ -7234,6 +7259,9 @@ pub(super) struct DirectCallee {
     pub(super) capture_len: usize,
 }
 
+/// The callees a call site reached that a body may call by their entries, the latest first.
+pub(super) type DirectCandidates = smallvec::SmallVec<[DirectCallee; tier_policy::POLYMORPHISM]>;
+
 /// A native frame of a direct call (`DirectCallee`), which the lane materializes as an
 /// activation only if a run leaves inside it (`Vm::take_shadow_frames`): its callee, which
 /// names the call record it returns to, and its receiver. Its registers are the window past
@@ -7242,11 +7270,13 @@ pub(super) struct DirectCallee {
 #[repr(C)]
 pub(super) struct ShadowFrame {
     pub(super) callee: *const DirectCallee,
-    pub(super) this: u64,
+    pub(super) this: u64, pub(super) pin: usize,
+    /// The address of its window of registers.
+    pub(super) window: usize,
 }
 
 impl ShadowFrame {
-    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0 };
+    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, pin: 0, window: 0 };
 }
 
 /// Direct calls a run nests natively: past them, a call takes the lane's helper path. The
@@ -7530,9 +7560,7 @@ impl JsStepDispatch {
         self.frameless = frameless::general_frameless_admit::<H> as *const () as usize;
         // SAFETY: the VM outlives this entry; the eval flags hold through it (`lane_function_matches`).
         let vm_ref = unsafe { &*vm };
-        self.call_targets = if vm_ref.direct_eval || vm_ref.parameter_eval { NO_CALL_TARGETS.as_ptr() }
-            else { vm_ref.call_targets.as_ptr() } as usize;
-        self.proper_tail_calls = u64::from(vm_ref.host.proper_tail_calls());
+        self.bind_run_storage(vm_ref);
         (self.construct_receiver, self.construct_result, self.array_construct, self.object, self.define_field) = constructions::construct_helpers::<H>();
         self.binary = general_binary::general_binary::<H> as *const () as usize;
         (self.element_get, self.element_set) = (general_elements::general_element_get::<H> as *const () as usize,
@@ -8549,7 +8577,7 @@ impl<H: Host> Analysis<'_, H> {
         memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot)).then_some(())
     }
 
-    /// The byte offset a vector access adds to its address (`Op::WasmMemoryAddress`).
+    /// The byte offset a vector access adds to its address (`WasmMemoryAddress`).
     fn memory_offset(&self, index: usize) -> Option<u64> {
         let offset = self.vm.decode_bits64(self.constant(index)?)?;
         u32::try_from(offset).ok().map(u64::from)
@@ -12496,6 +12524,9 @@ impl<H: Host> Vm<H> {
         self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
     }
 
+    /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).
+    pub(crate) fn enable_lane_methods(&mut self) { self.programs.enable_js_lane_methods(); }
+
     /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`).
     pub(crate) fn compile_wasm_eagerly(&mut self) {
         self.programs.compile_wasm_modules_at_first_entry();
@@ -12543,13 +12574,14 @@ impl<H: Host> Vm<H> {
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
             return false;
         };
-        // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim costs a short call-free one its leaf calls.
-        // They specialize the whole function themselves, so a function the function tier
-        // declined is theirs to claim as well.
-        let lane_body = self.programs.js_jit_lane_methods_enabled() && (facts.has_calls
+        let state = self.programs.js_tier(id, function);
+        // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim
+        // costs a short call-free one its leaf calls. A function the numeric tier cannot take
+        // is still theirs to claim.
+        let lane_claims = self.programs.js_jit_lane_methods_enabled() && (facts.has_calls
             || program.function_get(function as usize).is_some_and(|body| body.loops() || body.code.len() >= TIERS.lane_body.min_instructions));
-        if matches!(self.programs.js_tier(id, function), Some(super::program_store::JsTierState::Unsupported)) {
-            return lane_body;
+        if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
+            return lane_claims || self.programs.js_jit_diagnostics_enabled();
         }
         let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
         // Keep bounded candidates on a frame entry until the shared tier has
@@ -12557,7 +12589,7 @@ impl<H: Host> Vm<H> {
         // across the later promotion and no longer consult tiering.
         // Inlining may erase a short body's calls; a call-free candidate still has
         // to pay for native entry under the same cost policy.
-        candidate || self.js_general_tier_takes(program, function, &facts) || lane_body
+        candidate || self.js_general_tier_takes(program, function, &facts) || lane_claims
     }
 
     /// Whether the general baseline may take `function`: a general candidate the tier admits

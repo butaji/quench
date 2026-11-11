@@ -8,7 +8,7 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 
 /// `kMaxLength`: v8::TypedArray::kMaxByteLength on 64-bit hosts, the largest integer
 /// a double represents exactly.
-const MAX_LENGTH: u64 = (1 << f64::MANTISSA_DIGITS) - 1;
+const MAX_LENGTH: u64 = quench_runtime::units::MAX_SAFE_INTEGER_U64;
 /// Bytes per UCS-2 code unit.
 const UCS2_WIDTH: usize = std::mem::size_of::<u16>();
 /// Bits per byte, for unpacking the little-endian WebSocket mask word.
