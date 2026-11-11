@@ -162,6 +162,14 @@ pub(crate) fn pop_record<S: Stage>(stage: &mut S, top: S::Word) -> (S::Word, Rec
 /// retired), compared once against the lane's expected word. `facts` packs registers, room,
 /// params and the entry kind, one load. An arrow's own `this` lives in `env` (found there when
 /// the cell was resolved).
+///
+/// Per-closure facts: `env`, `capture` and `view` belong to one callee closure (one function runs
+/// under many closures). The interpreter's cell is per callee closure (`ScriptCallTarget`), so it
+/// fills them; the native per-function cell leaves `env`/`capture` zero and a native call reads
+/// them from the callee closure, so only per-function constants (`view`, `facts`) are shared.
+/// Writers: `entry` and `body` by publish/withdraw (thread 13's one API), `epoch` bumped by
+/// publish/withdraw and by program replacement through that same API (tier machine, thread 2),
+/// `counters` relaxed by calls; nothing else writes a cell.
 #[repr(C, align(64))]
 pub(crate) struct EntryCellLayoutWords {
     pub(crate) entry: u64,
@@ -206,6 +214,25 @@ const ROOM_SHIFT: u32 = FACT_BITS;
 const PARAMS_SHIFT: u32 = 2 * FACT_BITS;
 const ENTRY_SHIFT: u32 = 3 * FACT_BITS;
 pub(crate) const ENTRY_ACTIVATES: u64 = 0;
+
+/// Admits a native call: leaving at `miss` unless the cell's validity word is `expected` (one
+/// compare) and `free` holds `room` words. Entry kind and argc are decided at site admission or
+/// publish, so only the interpreter's `admit_call` checks them per call.
+#[inline(always)]
+pub(crate) fn admit_native<S: Stage>(stage: &mut S, cell: S::Word, expected: S::Word, free: S::Word, miss: S::Miss)
+    -> Option<S::Word> {
+    let validity = stage.load_u64(cell, CELL.validity_offset);
+    let difference = stage.sub(validity, expected);
+    let valid = stage.eq_imm(difference, 0u32);
+    stage.guard(valid, miss)?;
+    let facts = stage.load_u64(cell, CELL.facts_offset);
+    let room = stage.shr_imm(facts, ROOM_SHIFT);
+    let room = stage.and_imm(room, u64::from(u16::MAX));
+    let short = stage.ult(free, room);
+    let roomy = stage.not(short);
+    stage.guard(roomy, miss)?;
+    Some(room)
+}
 
 /// What an admitted call reads from its cell: the facts word's fields.
 #[derive(Clone, Copy)]
@@ -326,5 +353,16 @@ mod tests {
         let words = [trace.constant(0), trace.constant(1), trace.constant(2), trace.constant(3)];
         admit_call(&mut trace, words[0], words[1], words[2], words[3], ());
         assert!(trace.holes.is_empty());
+    }
+
+    #[test]
+    fn a_native_admission_is_one_validity_compare_and_a_room_check() {
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut admit = |cell: EntryCellLayoutWords, expected: u64, free: u64| {
+            admit_native(&mut stage, std::ptr::addr_of!(cell) as u64, expected, free, ())
+        };
+        assert_eq!(admit(cell(7, 5, 8, 2, 1), 7, 100), Some(8), "kind and argc are not read");
+        assert_eq!(admit(cell(7, 5, 8, 2, 0), 6, 100), None);
+        assert_eq!(admit(cell(7, 5, 8, 2, 0), 7, 7), None);
     }
 }
