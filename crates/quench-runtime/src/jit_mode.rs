@@ -27,6 +27,16 @@ impl JitMode {
         }
     }
 
+    /// Record `flag` as the process's mode in `chosen`: an error message if a mode was already
+    /// chosen or the flag is the removed `--jit`.
+    pub fn select(chosen: &mut Option<Self>, flag: &str) -> Result<(), &'static str> {
+        match (chosen.is_some(), Self::from_flag(flag)) {
+            (true, _) => Err("only one of --no-jit, --f-jit and --u-jit can be used"),
+            (false, Some(mode)) => Ok(*chosen = Some(mode)),
+            (false, None) => Err("--jit was removed: JIT is the default, and --no-jit selects the interpreter"),
+        }
+    }
+
     /// Whether the (FastJIT, UltraJIT) tiers are enabled.
     pub fn tiers_enabled(self) -> (bool, bool) {
         match self {
