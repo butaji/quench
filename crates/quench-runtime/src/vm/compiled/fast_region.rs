@@ -74,7 +74,7 @@ const TOP_LEAVES: usize = 40;
 
 /// Counts a region run leaving at `pc` of `function` (an instruction of operation `op`), where the trace channel is on.
 pub(in crate::vm) fn leave(function: u32, pc: u32, op: crate::bytecode::Op) {
-    if !crate::trace::Channel::JsJit.on() {
+    if !crate::trace::Channel::FjitLeave.on() {
         return;
     }
     REPORT.call_once(|| {
@@ -102,23 +102,23 @@ extern "C" fn report() {
     let (Ok(totals), Ok(rejects)) = (TOTALS.lock(), REJECTS.lock()) else { return };
     let ops = totals.ops.max(1);
     eprintln!(
-        "QUENCH_FASTJIT regions={} rejected={} ops={} bytes={} bytes_per_op={:.1} build_ns={} build_ns_per_op={:.1} stencil_gen_ns={}",
+        "fjit regions={} rejected={} ops={} bytes={} bytes_per_op={:.1} build_ns={} build_ns_per_op={:.1} stencil_gen_ns={}",
         totals.regions, totals.rejected, totals.ops, totals.bytes, totals.bytes as f64 / ops as f64, totals.nanos,
         totals.nanos as f64 / ops as f64, numeric::generation_ns()
     );
     let [entered, left, declined, compiled, bodies] = std::array::from_fn(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
-    eprintln!("QUENCH_FASTJIT_LOOPS entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies}");
+    eprintln!("fjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies}");
     if let Ok(leaves) = LEAVES.lock() {
         let mut ranked: Vec<_> = leaves.iter().collect();
         ranked.sort_by(|a, b| (b.1).1.cmp(&(a.1).1).then(a.0.cmp(b.0)));
         for ((function, pc), (op, count)) in ranked.into_iter().take(TOP_LEAVES) {
-            eprintln!("QUENCH_FASTJIT_LEAVE {function}:{pc} {op:?} {count}");
+            eprintln!("fjit-leave {function}:{pc} {op:?} {count}");
         }
     }
     let mut ranked: Vec<_> = rejects.iter().collect();
     ranked.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
     for (name, count) in ranked {
-        eprintln!("QUENCH_FASTJIT_REJECT {name} {count}");
+        eprintln!("fjit-reject {name} {count}");
     }
 }
 

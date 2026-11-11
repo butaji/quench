@@ -78,6 +78,8 @@ setting! {
         Shapes = "shapes",
         Rewrite = "rewrite",
         JsJit = "js-jit",
+        /// FastJIT region exits by instruction, most frequent first (printed at exit).
+        FjitLeave = "fjit-leave",
         WasmJit = "wasm-jit",
         OsrReject = "osr-reject",
         JitPeak = "jit-peak",
