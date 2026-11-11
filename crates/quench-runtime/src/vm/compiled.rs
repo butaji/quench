@@ -1811,6 +1811,8 @@ lane_helper_inventory! { H;
     TypedArrayView => lane_typed_array_view::<H>,
     /// A value step the interpreter defines (`dispatch_fast::lane_body_value_step`).
     ValueStep => super::dispatch_fast::lane_body_value_step::<H>,
+    /// ToBoolean of a value its cell decides (`lane_truthy`).
+    Truthy => lane_truthy::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
@@ -6772,6 +6774,13 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
         super::object::FieldCacheProbe::OrdinaryMiss => vm.field_miss_data_value(receiver, atom, vm.field_cache_index(site)).unwrap_or(Value::DELETED).to_bits(),
         _ => Value::DELETED.to_bits(),
     }
+}
+
+/// ToBoolean of `bits`, a value whose cell decides it (`Vm::truthy`): a read, which neither
+/// allocates nor runs guest code.
+unsafe extern "C" fn lane_truthy<H: Host>(vm: u64, _residual: u64, bits: u64) -> u64 {
+    // SAFETY: the payload holds the running VM, live and unborrowed while the body runs.
+    u64::from(unsafe { &*(vm as *const Vm<H>) }.truthy(Value::from_bits(bits)))
 }
 
 /// Admit a bound slot's write domain before any guest effect or raw store.
