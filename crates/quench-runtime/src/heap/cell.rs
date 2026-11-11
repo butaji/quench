@@ -1636,7 +1636,7 @@ impl ArrayObject {
         Self { object, elements }
     }
 
-    pub(crate) fn elements(&self) -> &super::ArrayElements {
+    #[inline] pub(crate) fn elements(&self) -> &super::ArrayElements {
         &self.elements
     }
 
@@ -2101,7 +2101,7 @@ impl Object {
         EXTRAS_TAG | address
     }
 
-    fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
+    #[inline] fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
         let word = self.payload;
         (word & EXTRAS_TAG_MASK == EXTRAS_TAG)
             .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)
@@ -2124,7 +2124,7 @@ impl Object {
         true
     }
 
-    fn extras(&self) -> Option<&ObjectExtras> {
+    #[inline] fn extras(&self) -> Option<&ObjectExtras> {
         // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime.
         self.extras_pointer().map(|extras| unsafe { &*extras })
     }
@@ -2181,14 +2181,11 @@ impl Object {
         // becomes a `memcpy` call.
         let inline = std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
         let payload = Self::pack_inline(inline)?;
-        let mut object = Self {
-            meta: Self::encode_proto(proto),
-            auxiliary: 0,
-            payload,
-        };
-        // Inline storage leaves the payload word alone.
-        object.initialize_properties(ValueVec::inline_property_storage(shape));
-        Some(object)
+        // `initialize_properties` of inline storage on a fresh object, which leaves the payload
+        // word alone, written out: the object has no exotic access to keep.
+        let (start, auxiliary) = ValueVec::inline_property_storage(shape).into_parts();
+        let meta = Self::encode_proto(proto) | (start & VALUE_VEC_INTEGRITY_BITS) | OBJECT_INLINE_STORAGE;
+        Some(Self { meta, auxiliary, payload })
     }
 
     /// Whether inline `values` fit the payload word without moving into extras.
@@ -2273,7 +2270,7 @@ impl Object {
 
     /// An object of a run header (`InlineObjectHeader::of_run`) whose values start at arena
     /// position `start`: what `with_property_storage` makes of that run, which has no extras.
-    pub(crate) fn from_run_header(header: InlineObjectHeader, start: u32) -> Self {
+    #[inline] pub(crate) fn from_run_header(header: InlineObjectHeader, start: u32) -> Self {
         Self {
             meta: header.meta,
             auxiliary: header.auxiliary,
@@ -2495,10 +2492,10 @@ impl Object {
     }
 
     /// Visit internal primitive data, private-name homes and captured stack roots.
-    pub(crate) fn visit_extras_roots(&self, mut visit: impl FnMut(Value)) {
-        let Some(extras) = self.extras() else {
-            return;
-        };
+    #[inline(always)] pub(crate) fn visit_extras_roots(&self, visit: impl FnMut(Value)) { if self.extras_pointer().is_some() { self.visit_extras_values(visit) } }
+
+    #[inline(never)] fn visit_extras_values(&self, mut visit: impl FnMut(Value)) {
+        let Some(extras) = self.extras() else { return };
         if let Some(value) = extras.boxed_primitive {
             visit(value);
         }
@@ -2522,7 +2519,7 @@ impl Object {
         }
     }
 
-    pub(crate) fn was_used_as_prototype(&self) -> bool {
+    #[inline] pub(crate) fn was_used_as_prototype(&self) -> bool {
         self.extras()
             .is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
     }
@@ -2546,7 +2543,7 @@ impl Object {
         }
     }
 
-    pub(crate) fn shape(&self) -> u32 {
+    #[inline] pub(crate) fn shape(&self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
     /// The shape with its dictionary and exotic bits (`ValueVec::exact_auxiliary`): a cache
@@ -2569,7 +2566,7 @@ impl Object {
         self.note_prototype_layout_change();
         self.renumber_shape(shape);
     }
-    pub(crate) fn is_extensible(&self) -> bool {
+    #[inline] pub(crate) fn is_extensible(&self) -> bool {
         self.properties().is_extensible()
     }
     /// Whether a cached add transition (`FieldAddCache`) applies to this object as to the
@@ -2586,7 +2583,7 @@ impl Object {
     pub(crate) fn has_exotic_access(&self) -> bool {
         self.auxiliary & crate::value_vec::EXOTIC_ACCESS != 0
     }
-    fn brand(&self) -> ObjectBrand {
+    #[inline] fn brand(&self) -> ObjectBrand {
         self.extras().map_or(ObjectBrand::Ordinary, |extras| extras.brand)
     }
     #[inline(always)]
@@ -2643,7 +2640,7 @@ impl Object {
             && !self.has_exotic_access()
             && !self.element_facts().has(ElementFacts::NOT_ORDINARY)
     }
-    pub(crate) fn is_arguments_object(&self) -> bool {
+    #[inline] pub(crate) fn is_arguments_object(&self) -> bool {
         self.brand() == ObjectBrand::Arguments
     }
     pub(crate) fn has_indexed_descriptors(&self) -> bool {

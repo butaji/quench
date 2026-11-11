@@ -2,10 +2,10 @@
 # The v2-jit merge's raise of micros 032/037/069/071/074 is retired: `===` against an
 # immediate, `RequireIteratorResult`, array literals and iterator cleanup push/pop now
 # lower natively (032=8, 037=1, 069=9, 071=1, 074=1).
-2 quench-bench/jetstream/Octane/richards.js
+1 quench-bench/jetstream/Octane/richards.js
 2 quench-bench/jetstream/Octane/deltablue.js
 14 quench-bench/jetstream/Octane/navier-stokes.js
-57 quench-bench/jetstream/Octane/raytrace.js
+45 quench-bench/jetstream/Octane/raytrace.js
 2 quench-bench/jetstream/SeaMonster/gaussian-blur.js
 25 quench-bench/jetstream/simple/hash-map.js
 1 quench-bench/micros/001.js
@@ -64,7 +64,7 @@
 2 quench-bench/micros/054.js
 2 quench-bench/micros/055.js
 1 quench-bench/micros/056.js
-3 quench-bench/micros/057.js
+2 quench-bench/micros/057.js
 1 quench-bench/micros/058.js
 2 quench-bench/micros/059.js
 1 quench-bench/micros/060.js

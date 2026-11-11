@@ -23,8 +23,8 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let (base, count) = (usize::from(i.b), usize::from(i.c));
         let part = |_: &Vm<H>, part: usize| r.get((base + part) as Register);
-        let value = match vm.ascii_string_concat(count, part) {
-            Some(text) => vm.heap.alloc_string(text),
+        let value = match vm.string_of_parts(count, part).or_else(|| vm.ascii_string_concat(count, part).map(|text| vm.heap.alloc_string(text))) {
+            Some(value) => value,
             None => {
                 if !(0..count).all(|index| vm.converts_to_string_purely(part(vm, index))) {
                     return exit(ip);

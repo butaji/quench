@@ -43,6 +43,11 @@ pub(super) fn lower_rest(
     if lower_logical_not(builder, (instruction, next), register_offset, arguments, exact) {
         return PcLowering::Native;
     }
+    if let Some(next) = next
+        && lower_string_chain(builder, instruction, next, register_offset, (arguments, payload), exact)
+    {
+        return PcLowering::Native;
+    }
     super::emit_js_step_fallback(builder, exact.context, exact.callout, exact.callout_signature, exact.result_pointer,
         exact.stopped_block, exact.continue_block, exact.pc);
     PcLowering::Exact
@@ -313,6 +318,141 @@ fn emit_integer_remainder(builder: &mut FunctionBuilder<'_>, (left, right): (ir:
     let value = builder.ins().select(negative_zero, minus_zero, integer);
     builder.ins().jump(store, &[ir::BlockArg::Value(value)]);
     builder.switch_to_block(general);
+}
+
+
+/// Lowers a `+` chain's two instructions (`compile::template::string_chain`): a dynamic
+/// operand's conversion, and the join of the window's parts.
+fn lower_string_chain(
+    builder: &mut FunctionBuilder<'_>,
+    instruction: WideInstruction,
+    next: ir::Block,
+    register_offset: &dyn Fn(u16) -> Option<i32>,
+    (arguments, payload): (ir::Value, ir::Value),
+    exact: &JsExactFallback,
+) -> bool {
+    if instruction.op().js_denotation() == crate::bytecode::JsDenotation::StringConcatenation {
+        return lower_string_concat(builder, instruction, next, register_offset, (arguments, payload), exact);
+    }
+    lower_add_operand_string(builder, instruction, next, register_offset, (arguments, payload), exact)
+}
+
+/// Lowers a `+` chain's operand (`Unary` of `UNARY_ADD_OPERAND_STRING`, `string_chain`): a
+/// String, Number, Boolean, null or undefined converts with no guest code, so the operand is
+/// kept as it is for `StringConcat` to convert, as the lane handler keeps it; any other value
+/// takes the exact step, which runs its ToPrimitive.
+fn lower_add_operand_string(
+    builder: &mut FunctionBuilder<'_>,
+    instruction: WideInstruction,
+    next: ir::Block,
+    register_offset: &dyn Fn(u16) -> Option<i32>,
+    (arguments, payload): (ir::Value, ir::Value),
+    exact: &JsExactFallback,
+) -> bool {
+    if instruction.op().immediate_role() != crate::bytecode::ImmediateRole::UnaryOperator
+        || instruction.unary_operator() != crate::bytecode::UNARY_ADD_OPERAND_STRING
+        || instruction.result_flags() != 0
+        || instruction.returns_from_frame()
+        || instruction.writes_current_this()
+        || instruction.numeric_local_target().is_some()
+    {
+        return false;
+    }
+    let (Some(source), Some(destination)) = (register_offset(instruction.register_b()),
+        register_offset(instruction.result_register())) else { return false };
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
+    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, add_operand_string));
+    let result = emit_lane_helper_call(builder, payload, helper, &[payload, value]);
+    let pure = builder.ins().icmp_imm_u(IntCC::NotEqual, result, Value::DELETED.to_bits() as i64);
+    let (store, fallback) = (builder.create_block(), builder.create_block());
+    builder.ins().brif(pure, store, &[], fallback, &[]);
+    builder.switch_to_block(store);
+    builder.ins().store(MemFlagsData::trusted(), result, arguments, destination);
+    builder.ins().jump(next, &[]);
+    builder.switch_to_block(fallback);
+    exact.emit(builder, fallback);
+    true
+}
+
+/// Lowers `StringConcat` of a register window whose every part is a Number or a String:
+/// `string_concat` joins them as the lane handler joins them, and any other part (whose
+/// ToString may run guest code) takes the exact step. A result past the length limit leaves
+/// to the step through `Value::DELETED`.
+fn lower_string_concat(
+    builder: &mut FunctionBuilder<'_>,
+    instruction: WideInstruction,
+    next: ir::Block,
+    register_offset: &dyn Fn(u16) -> Option<i32>,
+    (arguments, payload): (ir::Value, ir::Value),
+    exact: &JsExactFallback,
+) -> bool {
+    if instruction.result_flags() != 0
+        || instruction.returns_from_frame()
+        || instruction.writes_current_this()
+        || instruction.numeric_local_target().is_some()
+    {
+        return false;
+    }
+    let window = instruction.register_window();
+    let (Some(base), Some(destination)) = (register_offset(window.base),
+        register_offset(instruction.result_register())) else { return false };
+    let base = builder.ins().iconst(types::I64, i64::from(base));
+    let count = builder.ins().iconst(types::I64, i64::from(window.count));
+    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, string_concat));
+    let result = emit_lane_helper_call(builder, payload, helper, &[payload, arguments, base, count]);
+    let joined = builder.ins().icmp_imm_u(IntCC::NotEqual, result, Value::DELETED.to_bits() as i64);
+    let (store, fallback) = (builder.create_block(), builder.create_block());
+    builder.ins().brif(joined, store, &[], fallback, &[]);
+    builder.switch_to_block(store);
+    builder.ins().store(MemFlagsData::trusted(), result, arguments, destination);
+    builder.ins().jump(next, &[]);
+    builder.switch_to_block(fallback);
+    exact.emit(builder, fallback);
+    true
+}
+
+/// `UNARY_ADD_OPERAND_STRING` of `value`: the value itself where ToString of it runs no guest
+/// code (`Vm::converts_to_string_purely`), else `Value::DELETED`, which takes the exact step to
+/// run the value's ToPrimitive.
+///
+/// # Safety
+/// As `general_user_call`.
+pub(super) unsafe extern "C" fn general_add_operand_string<H: Host>(vm: u64, _residual: u64, _payload: u64,
+    value: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    let value = Value::from_bits(value);
+    if vm.converts_to_string_purely(value) { value.to_bits() } else { Value::DELETED.to_bits() }
+}
+
+/// `StringConcat` of `count` parts of the register window at `base` when every part is a
+/// Number or a String: `string_concat` joins them as the interpreter joins them, in order.
+/// `Value::DELETED` for any other part (whose ToString may run guest code) or a result the
+/// step reports.
+///
+/// # Safety
+/// As `general_user_call`.
+pub(super) unsafe extern "C" fn general_string_concat<H: Host>(vm: u64, residual: u64, payload: u64,
+    arguments: u64, base: u64, count: u64) -> u64 {
+    // SAFETY: as the caller promises.
+    let (vm, residual, dispatch) = unsafe {
+        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
+    };
+    let registers = arguments as *const Value;
+    let start = base as usize;
+    let count = count as usize;
+    // SAFETY: the window lies inside the running frame's register file, which outlives the call.
+    let part = |_vm: &Vm<H>, index: usize| unsafe { *registers.add(start + index) };
+    if !(0..count).all(|index| {
+        let value = part(vm, index);
+        value.as_number().is_some() || vm.heap.is_string(value)
+    }) {
+        return Value::DELETED.to_bits();
+    }
+    let Ok(value) = vm.string_concat(residual, count, part) else { return Value::DELETED.to_bits() };
+    // A concatenation may grow the heap's records; it never collects.
+    dispatch.refresh_object_bases(vm);
+    value.to_bits()
 }
 
 /// The binary operation `word` names (its operator, then each operand's constant index plus

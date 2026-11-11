@@ -113,18 +113,11 @@ impl ConstructPlan {
     #[inline(always)]
     pub(super) fn allocate(&self, heap: &mut crate::heap::Heap, field: impl Fn(usize) -> Value) -> Value {
         let fields = usize::from(self.fields);
-        if fields <= INLINE_PROPERTY_COUNT {
-            let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
-            for (index, slot) in inline.iter_mut().enumerate().take(fields) {
-                *slot = field(index);
-            }
-            return heap.alloc_object_from_header(self.header, self.prototype, inline);
-        }
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
         for (index, value) in values.iter_mut().enumerate().take(fields) {
             *value = field(index);
         }
-        heap.alloc_object_from_run_header(self.header, self.prototype, &values, fields)
+        heap.alloc_planned_object(self.header, self.prototype, &values, fields)
     }
 
     /// This plan extended by the field `store` adds, `None` once it names all it can.
@@ -353,7 +346,7 @@ pub(super) fn lane_construct_argument(r: Registers, i: &LaneInstruction) -> impl
 }
 
 /// The construct plan cache entry `callee` owns, when it names a heap cell.
-pub(super) fn construct_plan_index(callee: Value) -> Option<usize> {
+#[inline] pub(super) fn construct_plan_index(callee: Value) -> Option<usize> {
     callee.heap_index().map(|index| index as usize & (CONSTRUCT_PLANS - 1))
 }
 

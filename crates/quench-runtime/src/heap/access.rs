@@ -324,7 +324,7 @@ impl Heap {
     /// `record_id` names a live string, retained by a reachable Value.
     #[inline(always)]
     pub(crate) unsafe fn string_record_by_id(&self, record_id: u32) -> &crate::vm::wtf16::JsString {
-        unsafe { self.string_records.get_live(record_id) }
+        unsafe { self.written_out_string(record_id) }
     }
 
     /// Whether `value` is a string.
@@ -705,7 +705,7 @@ impl Heap {
         }
     }
 
-    pub(crate) fn object_record(&self, value: Value) -> Option<&Object> {
+    #[inline] pub(crate) fn object_record(&self, value: Value) -> Option<&Object> {
         let record_id = value.direct_object_index()?;
         Some(self.object_record_by_id(record_id))
     }

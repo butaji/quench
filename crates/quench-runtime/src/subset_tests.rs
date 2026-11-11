@@ -28,7 +28,7 @@ fn function_bodies_compiled_more_than_once_compile_from_their_source() {
     assert_eq!(compiled("inner"), compiled("worker"), "{listing}");
 }
 
-fn output(source: &str) -> Vec<String> {
+pub(crate) fn output(source: &str) -> Vec<String> {
     crate::test_host::on_worker_stack(|| {
         let (host, program) = (TestHost::default(), Engine::specialize(source, "test.js").unwrap());
         Runtime::new(host.clone()).execute(&program).unwrap();
@@ -137,13 +137,13 @@ fn deterministic_hash_random_preserves_es5_bitwise_semantics() {
 #[test]
 fn returned_superinstruction_object_preserves_value() {
     let source = r#"
-      function build(key) { return { items: [1, 2], text: 'x' + key + 'y' }; }
+      function build(key) { return { items: [1, 2], text: key + 1 + 2 }; }
       var value = build(3);
       print(value.items[1]); print(value.text);
     "#;
     let program = Engine::specialize(source, "super-return.js").unwrap();
     assert!(program.disassemble().contains("SuperConstArrayObject2"));
-    assert_eq!(output(source), ["2", "x3y"]);
+    assert_eq!(output(source), ["2", "6"]);
 }
 
 #[test]
