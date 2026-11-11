@@ -44,12 +44,12 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
         match *op {
             IcOp::GuardShape(shape) => {
                 let exact = shape_word(stage, &at);
-                let same = stage.eq_imm(exact, u64::from(shape));
+                let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(exact, shape) };
                 stage.guard(same, miss)?;
             }
             IcOp::GuardShapes(shapes) => {
                 let exact = shape_word(stage, &at);
-                let member = stage.shape_in(exact, shapes);
+                let member = stage.shape_in_site(exact, shapes);
                 stage.guard(member, miss)?;
             }
             IcOp::Prototype => {
@@ -83,11 +83,11 @@ fn prototype_slot<S: Stage>(stage: &mut S, record: S::Word, slot: u16, miss: S::
     let extras = has_extras(stage, payload);
     stage.guard(extras, miss)?;
     let pointer = extras_pointer(stage, payload);
-    let present = stage.ne_imm(pointer, 0);
+    let present = stage.ne_imm(pointer, 0u32);
     stage.guard(present, miss)?;
     let start = stage.load_u32(pointer, OBJECT.extras_arena_start_offset as i32);
     let run = arena_run(stage, start);
-    Some(stage.load_u64(run, i32::from(slot) * OBJECT.property_value_size as i32))
+    { let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64); Some(stage.load_site(run, offset)) }
 }
 
 #[cfg(test)]

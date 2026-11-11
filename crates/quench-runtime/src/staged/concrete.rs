@@ -21,6 +21,17 @@ impl Stage for Concrete {
     type Proof = ();
     type Cond = bool;
     type Miss = ();
+    type Imm = u64;
+
+    #[inline(always)]
+    fn site(&mut self, v: u64) -> u64 { v }
+    #[inline(always)]
+    fn load_site(&mut self, base: u64, offset: u64) -> u64 {
+        // SAFETY: as `load_u64`; the offset is a layout offset the site proved.
+        unsafe { ((base as *const u8).offset(offset as isize) as *const u64).read() }
+    }
+    #[inline(always)]
+    fn shape_in_site(&mut self, shape: u64, shapes: &[u32]) -> bool { self.shape_in(shape, shapes) }
 
     #[inline(always)]
     fn constant(&mut self, bits: u64) -> u64 { bits }
@@ -41,23 +52,23 @@ impl Stage for Concrete {
     #[inline(always)]
     fn or(&mut self, a: u64, b: u64) -> u64 { a | b }
     #[inline(always)]
-    fn add_imm(&mut self, a: u64, imm: u64) -> u64 { a.wrapping_add(imm) }
+    fn add_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a.wrapping_add(imm) }
     #[inline(always)]
-    fn mul_imm(&mut self, a: u64, imm: u64) -> u64 { a.wrapping_mul(imm) }
+    fn mul_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a.wrapping_mul(imm) }
     #[inline(always)]
-    fn and_imm(&mut self, a: u64, imm: u64) -> u64 { a & imm }
+    fn and_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a & imm }
     #[inline(always)]
-    fn or_imm(&mut self, a: u64, imm: u64) -> u64 { a | imm }
+    fn or_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a | imm }
     #[inline(always)]
-    fn shr_imm(&mut self, a: u64, shift: u32) -> u64 { a >> shift }
+    fn shr_imm(&mut self, a: u64, shift: impl Into<u64>) -> u64 { a >> shift.into() }
     #[inline(always)]
     fn sar32_imm(&mut self, a: u64, shift: u32) -> u64 { u64::from(((a as u32 as i32) >> shift) as u32) }
     #[inline(always)]
-    fn eq_imm(&mut self, a: u64, imm: u64) -> bool { a == imm }
+    fn eq_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { let imm = imm.into(); a == imm }
     #[inline(always)]
-    fn ne_imm(&mut self, a: u64, imm: u64) -> bool { a != imm }
+    fn ne_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { let imm = imm.into(); a != imm }
     #[inline(always)]
-    fn ugt_imm(&mut self, a: u64, imm: u64) -> bool { a > imm }
+    fn ugt_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { let imm = imm.into(); a > imm }
     #[inline(always)]
     fn ult(&mut self, a: u64, b: u64) -> bool { a < b }
     #[inline(always)]
