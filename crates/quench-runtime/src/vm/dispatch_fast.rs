@@ -353,7 +353,7 @@ pub(super) struct LaneView {
     /// of the function, published and withdrawn with its body.
     entry: super::compiled::entry_cell::EntryCell,
     /// Every body it published, kept until the view drops: a native frame running a body that
-    /// retired recovers its leave through it (`LaneView::pinned_body`).
+    /// retired recovers its leave through `ShadowFrame::body`.
     pinned: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     history: std::cell::Cell<LaneBodyHistory>,
@@ -607,7 +607,7 @@ mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_initialize_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_initialize_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
@@ -901,11 +901,6 @@ impl LaneView {
 
     /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).
     pub(super) fn entry_cell(&self) -> usize { std::ptr::from_ref(&self.entry).addr() }
-
-    /// The body of this function at pin `pin` (`EntryCell::pin`), published or retired.
-    fn pinned_body(&self, pin: usize) -> Option<*const super::compiled::LaneMethod> {
-        self.pinned.borrow().get(pin).map(|body| std::ptr::from_ref(&**body))
-    }
 
     /// The publication of the specialized body, which a direct caller holds
     /// (`compiled::DirectCallee::method`).
@@ -1794,7 +1789,6 @@ const CONSTRUCT_PLANS: usize = 64;
 const _: () = assert!(CONSTRUCT_PLANS.is_power_of_two());
 
 /// A `ConstructPlan::epoch` no epoch reaches: the entry plans nothing.
-const NO_CONSTRUCT_PLAN_EPOCH: u64 = u64::MAX;
 
 /// Activations a lane runs without VM frames, innermost last, over the
 /// bottom VM frame of the lane run. They exist only while the lane runs:
@@ -1829,6 +1823,9 @@ pub(super) struct LaneStack {
     cross_function_targets: Box<[ScriptCallTarget; FUNCTION_TARGETS]>,
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
+    /// Per plan, the one dependency its proof is (`watch_construct_plan`): published while
+    /// every object the plan read keeps its values and layout.
+    construct_watches: [Option<crate::heap::PrototypeValueWatch>; CONSTRUCT_PLANS],
     /// The reads call sites answered (`ReadMemo`), each in the slot its record names
     /// (`CallOperand::memo`).
     read_memos: Vec<ReadMemo>,
@@ -1889,6 +1886,7 @@ impl Default for LaneStack {
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
+            construct_watches: [const { None }; CONSTRUCT_PLANS],
             read_memos: Vec::new(),
             forwarders: Vec::new(),
             settling: Vec::new(),
@@ -14167,7 +14165,7 @@ fn lane_forwarded_construction<H: Host>(
     let forwarded = lane_script_target(cx, function)?;
     if let Some(resolution) = forwarded_resolution(vm, constructor.callee, method, function, apply) {
         let index = construct_plan_index(constructor.callee)?;
-        vm.lane_stack.construct_plans[index].forwarded = Some(resolution);
+        record_forwarded_resolution(vm, index, function, resolution);
     }
     Some(forwarded)
 }
@@ -15111,7 +15109,7 @@ fn lane_materialize_frames<H: Host>(
         let caller = unsafe { (*cx).registers };
         lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), window, argc, Value::from_bits(frame.this), false);
         // The body the call ran is the cell's at that moment, not the descriptor's.
-        let method = unsafe { &*callee.target.view }.pinned_body(frame.pin).expect("a call through the cell ran a body its view pinned");
+        let method = frame.body as *const super::compiled::LaneMethod;
         // SAFETY: the active caller's code lease pins a named callee body through recovery, and
         // the view pins every body it published, even once its publication retired.
         innermost = Some(unsafe { (&*callee.target.view, &*method) });
@@ -16042,6 +16040,7 @@ fn lane_planned_receiver<H: Host>(
             ..EMPTY_CONSTRUCT_PLAN
         }
         .finish();
+        watch_construct_plan(vm, index, true, &[callee, prototype]);
     }
     Some(this)
 }
