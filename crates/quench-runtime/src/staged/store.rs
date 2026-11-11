@@ -7,33 +7,45 @@ use super::Stage;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::value::{NarrowLayout, ValueLayout};
 
+/// The payload bits that code a narrow reference's family, and where they sit.
+const FAMILY_BITS: u64 = crate::value::HEAP_FAMILY_BITS;
+const FAMILY_SHIFT: u32 = crate::value::HEAP_FAMILY_SHIFT;
+/// The upper words of the narrow constants, their codes following the families' codes.
+const CONSTANT_UPPER_WORDS: [u64; 4] = [crate::value::TAG_UNDEFINED, crate::value::TAG_NULL, crate::value::TAG_BOOL, crate::value::TAG_DELETED];
+const FIRST_CONSTANT_CODE: u64 = crate::value::NARROW_HEAP_FAMILIES as u64;
+/// A bit mask's complement in the low word: the upper word of a value.
+const UPPER_WORD: u64 = !(u32::MAX as u64);
+const LOWER_WORD: u64 = u32::MAX as u64;
+/// Bytes in one half of a packed payload word.
+const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
+
 /// The narrow form of `value` (`Value::to_narrow`) where it has one: an integer in range, a
 /// reference whose index fits, or a constant; its condition fails for any other value (a
 /// Number, a wide reference), which the store leaves to the general path.
 #[inline(always)]
 fn narrow_form<S: Stage>(stage: &mut S, value: S::Word) -> (S::Cond, S::Word) {
-    let upper = stage.and_imm(value, !u64::from(u32::MAX));
-    let lower = stage.and_imm(value, u64::from(u32::MAX));
+    let upper = stage.and_imm(value, UPPER_WORD);
+    let lower = stage.and_imm(value, LOWER_WORD);
     let is_int = stage.eq_imm(upper, ValueLayout::INT_TAG);
     // An integer fits where its biased low word is below twice the limit.
-    let limit = 1_u64 << (NarrowLayout::INTEGER_BITS - 1);
-    let biased = stage.add_imm(lower, limit);
-    let biased = stage.and_imm(biased, u64::from(u32::MAX));
-    let int_over = stage.ugt_imm(biased, 2 * limit - 1);
+    let span = 1_u64 << NarrowLayout::INTEGER_BITS;
+    let biased = stage.add_imm(lower, span >> 1);
+    let biased = stage.and_imm(biased, LOWER_WORD);
+    let int_over = stage.ugt_imm(biased, span - 1);
     let int_fits = stage.not(int_over);
     let integer = {
         let shifted = stage.mul_imm(lower, 1_u64 << NarrowLayout::CODE_SHIFT);
-        let shifted = stage.and_imm(shifted, u64::from(u32::MAX));
+        let shifted = stage.and_imm(shifted, LOWER_WORD);
         stage.or_imm(shifted, u64::from(NarrowLayout::INTEGER_FLAG))
     };
     // A reference's code is its family bits, a constant's follows them; the lower word is the index.
-    let family = stage.and_imm(upper, NarrowLayout::FAMILY_BITS);
-    let base = stage.and_imm(upper, !NarrowLayout::FAMILY_BITS);
+    let family = stage.and_imm(upper, FAMILY_BITS);
+    let base = stage.and_imm(upper, !FAMILY_BITS);
     let mut named = stage.eq_imm(base, ValueLayout::HEAP_TAG);
-    let mut code = stage.shr_imm(family, NarrowLayout::FAMILY_SHIFT);
-    for (offset, word) in NarrowLayout::CONSTANT_UPPER_WORDS.into_iter().enumerate() {
+    let mut code = stage.shr_imm(family, FAMILY_SHIFT);
+    for (offset, word) in CONSTANT_UPPER_WORDS.into_iter().enumerate() {
         let is_constant = stage.eq_imm(upper, word);
-        let constant_code = stage.constant(NarrowLayout::FIRST_CONSTANT_CODE + offset as u64);
+        let constant_code = stage.constant(FIRST_CONSTANT_CODE + offset as u64);
         code = stage.select(is_constant, constant_code, code);
         named = stage.any(named, is_constant);
     }
@@ -69,7 +81,7 @@ pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::
     let storable = stage.any(flat, packable);
     stage.guard(storable, miss)?;
     stage.choose(inline, |stage| {
-        let half = stage.site(OBJECT.payload_offset as u64 + u64::from(slot) * u64::from(u32::BITS / 8));
+        let half = stage.site(OBJECT.payload_offset as u64 + u64::from(slot) * HALF_BYTES);
         let address = stage.add_imm(record, half);
         stage.store_u32(address, 0, narrow);
         stage.constant(0)
