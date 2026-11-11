@@ -992,6 +992,87 @@ fn hot_bodies_construct_forwarding_classes_from_nested_calls() {
 }
 
 #[test]
+fn forwarded_construct_plans_retire_when_their_prototype_or_method_changes() {
+    // A plan made while hot holds under one dependency: a new method value, a new
+    // prototype object and a replaced method each take the next construction off it.
+    let source = r#"
+      var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+      var V = Class.create();
+      V.prototype = { initialize: function (x, y) { this.x = x; this.y = y; } };
+      function make(i) { return new V(i, 2); }
+      function run(n) { var s = 0; for (var i = 0; i < n; i++) { var v = make(i); s += v.x + v.y; } return s; }
+      function warm() { for (var k = 0; k < 40; k++) { run(300); } }
+      var out = [];
+      warm(); out.push(run(10));
+      V.prototype.initialize = function (x, y) { this.x = x * 10; this.y = y; };
+      out.push(run(10));
+      warm();
+      V.prototype = { initialize: function (x, y) { this.x = -x; this.y = y; } };
+      out.push(run(10));
+      warm();
+      V.prototype.initialize = function (x, y) { this.x = x; this.y = 100; };
+      out.push(run(10));
+      print(out.join());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "retiring-construct-plans.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["65,470,-25,1045"]);
+}
+
+#[test]
+fn hot_bodies_construct_through_forwarded_initializers_that_do_more_than_store() {
+    // A hot function builds objects through a forwarding constructor whose initializer calls
+    // a function and returns an object: the construction yields the receiver whatever the
+    // initializer returns, and a prototype change after the bodies are hot takes the next
+    // construction off the native path.
+    let source = r#"
+      var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+      var C = Class.create();
+      function scale(v) { return v * 3; }
+      C.prototype = { initialize: function (x, y) { this.x = scale(x); this.y = y + 1; return { x: -1 }; } };
+      function make(i) { return new C(i, 2); }
+      function run(n) { var s = 0; for (var i = 0; i < n; i++) { var c = make(i); s += c.x + c.y; } return s; }
+      var out = [];
+      for (var k = 0; k < 60; k++) { run(300); }
+      out.push(run(10));
+      C.prototype.initialize = function (x, y) { this.x = x; this.y = 0; };
+      out.push(run(10));
+      print(out.join());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "hot-forwarded-initializer.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["165,45"]);
+}
+
+#[test]
+fn lane_bodies_join_unboxed_parameters_that_a_field_read_proves_objects() {
+    // `x` is an int32 or float parameter on some entries and an object on others: the unit
+    // joins its unboxed view with the object proof of `x['a']` and must keep lowering
+    // without a tagged view for it (it once reached an unreachable arm).
+    let source = r#"
+      function f1(x, y, i) { let s = 0; let k = i & 7; for (let j = 0; j < 5; j++) s = (s + ((((x|0) != (x*y)) + (x)['a']) || ((y?(x*y):k) != (3 ^ (x%5))))); return s; }
+      function P(v) { this.v = v; }
+      const A = [-3, new P(3), 1.5, NaN, [1, 2, 3]], B = [1.5, -2147483648, { a: 1 }, 7, null];
+      let h = 0;
+      for (let i = 0; i < 3500; i++) { try { h = (h * 31 + String(f1(A[i % 5], B[(i >> 1) % 5], i)).length) | 0; } catch (e) { h = (h * 31 + 1) | 0; } }
+      print(h);
+    "#;
+    let run = |tiers: bool| {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if tiers { vm.programs.enable_js_lane_methods(); }
+        let program = Engine::specialize(source, "tagged-view-join.js").unwrap();
+        vm.execute(&program).unwrap();
+        output.borrow().clone()
+    };
+    assert_eq!(run(true), run(false));
+}
+
+#[test]
 fn lane_constructions_forward_plain_loaded_arguments() {
     // A loop the lane runs constructs through a forwarding constructor
     // (`this.initialize.apply(this, arguments)`): its frameless activation reads the

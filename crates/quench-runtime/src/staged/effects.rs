@@ -98,7 +98,7 @@ impl<W, P> Operation<W, P> {
             Self::WriteField { .. } => Effects::writes(Region::ObjectSlots),
             Self::IndexRead { .. } | Self::TypedIndexRead { .. } => Effects::reads(Region::Elements),
             Self::IndexWrite { .. } | Self::TypedIndexWrite { .. } => Effects::writes(Region::Elements),
-            Self::MakeObject { .. } | Self::MakeArray { .. } | Self::MakeObjectPair { .. } => Effects {
+            Self::MakeObject { .. } | Self::MakeArray { .. } | Self::MakeConstArray { .. } | Self::MakeObjectPair { .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots), may_alloc: true, ..Effects::NONE },
             _ => return None,
         })

@@ -43,6 +43,8 @@ pub(super) struct ObjectHeader {
     pub(super) record: ObjectRecord,
     pub(super) shape: ir::Value,
     pub(super) inline: ir::Value,
+    /// The record's address, computed once for the header loads and every later read.
+    pub(super) address: ir::Value,
 }
 
 /// A verified direct-object locator. Indexed records keep the admitted base and
@@ -100,7 +102,7 @@ impl ObjectRecord {
             Some(shape) => builder.ins().iconst(types::I32, i64::from(shape)),
             None => builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32),
         };
-        ObjectHeader { record: self, shape, inline: inline_storage(builder, address) }
+        ObjectHeader { record: self, shape, inline: inline_storage(builder, address), address }
     }
 }
 
@@ -140,7 +142,7 @@ impl ObjectHeader {
         builder.ins().jump(join, &[ir::BlockArg::Value(function_object)]);
         builder.switch_to_block(join);
         let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32);
-        Self { record: ObjectRecord::Address(record), shape, inline: inline_storage(builder, record) }
+        Self { record: ObjectRecord::Address(record), shape, inline: inline_storage(builder, record), address: record }
     }
 }
 

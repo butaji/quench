@@ -144,7 +144,8 @@ pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Co
     if stage.known(extras) == Some(true) {
         return Some(Layout { slots: extras_slots(stage, payload, inline), storage_len });
     }
-    let plain = plain_payload(stage, payload);
+    // The extras test already decided it: one compare of the masked tag, not a second one.
+    let plain = stage.not(extras);
     stage.guard(plain, miss)?;
     let packed = match access {
         PackedAccess::Snapshot => Packed::Snapshot(payload),

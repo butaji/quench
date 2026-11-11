@@ -761,8 +761,19 @@ impl<'a, 'f> Lowering<'a, 'f> {
         }
     }
 
-    /// Leave at `pc` with the interpreter's state: every written register back in the file.
+    /// `leave` naming the lowering line that decided the leave, which a diagnostics run reports
+    /// (`JsStepDispatch::exit_line`).
+    #[track_caller]
     fn exit(&mut self, state: &mut State, pc: u32) {
+        if self.vm.diagnostics && self.completion != Completion::Number {
+            let line = self.builder.ins().iconst(types::I64, i64::from(std::panic::Location::caller().line()));
+            self.builder.ins().store(MemFlagsData::trusted(), line, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
+        }
+        self.leave(state, pc);
+    }
+
+    /// Leave at `pc` with the interpreter's state: every written register back in the file.
+    fn leave(&mut self, state: &mut State, pc: u32) {
         if self.completion == Completion::Number {
             self.return_at(0);
             return;
@@ -1794,7 +1805,7 @@ pub(super) fn lower(
             let line = lowering.builder.ins().iconst(types::I64, i64::from(line));
             lowering.builder.ins().store(MemFlagsData::trusted(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
         }
-        lowering.exit(&mut leaving, pc);
+        lowering.leave(&mut leaving, pc);
     }
     // The exit blocks: write back every caller register the unit writes, and an inlined
     // callee's registers to the window its recovery makes the activation from, then leave
@@ -2258,7 +2269,7 @@ impl Lowering<'_, '_> {
             let mut receivers = smallvec::SmallVec::<[(Register, ReceiverRecovery); 2]>::new();
             for (pc, instruction) in instructions.iter().copied().enumerate() {
                 if self.blocks[pc].is_some() { aliases.copy_from_slice(&roots); }
-                if !self.facts.reached(pc) { continue; }
+                if !self.admits_at_entry(pc) { continue; }
                 if let Some(frame) = self.unit.markers.iter().position(|marker| *marker == pc) {
                     let call = self.unit.frames[frame];
                     let body = self.program.function(call.target.function as usize);
@@ -2382,6 +2393,13 @@ impl Lowering<'_, '_> {
             self.builder.switch_to_block(admitted);
         }
         Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, this, fields, calls, call_receivers }
+    }
+
+    /// Whether the entry edge admits the inlined call at `pc`, a call a run may skip
+    /// (`packet != null`) and so not one every run may be refused for: a body that left at
+    /// its entry once admits them at their markers instead (`Lowering::inline_call`).
+    fn admits_at_entry(&self, pc: usize) -> bool {
+        self.facts.reached(pc) && !self.generic.contains(&entry_leave(self.unit))
     }
 
     /// `invariant_field_records`, unless the body left at its entry: it binds no receiver record
@@ -2679,29 +2697,7 @@ impl Lowering<'_, '_> {
                 && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
             // A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
             // collection leaves first. The staged operation allocates and writes the result.
-            Class::MakeObject | Class::MakeArray if plain && self.completion == Completion::StatusAndPc => {
-                let exit = self.guard_exit(state, pc32);
-                let proof = super::EmitProof::Allocation { miss: exit };
-                if instruction.op().is_make_object() {
-                    self.step(state, frame::Edges::ValueGuarded { miss: exit },
-                        crate::staged::Operation::MakeObject { destination: instruction.result_register(), proof });
-                } else {
-                    let (length, elements) = (self.ins().iconst(types::I64, instruction.array_length() as i64), self.literal_elements(state, pc, instruction));
-                    self.step(state, frame::Edges::ValueGuarded { miss: exit },
-                        crate::staged::Operation::MakeArray { destination: instruction.result_register(), length, elements, proof });
-                }
-                self.allocated(state);
-                Some(true)
-            }
-            Class::MakeObject2 if plain && self.completion == Completion::StatusAndPc => {
-                let exit = self.guard_exit(state, pc32);
-                let (first, second) = (self.tagged(state, instruction.register_b()), self.tagged(state, instruction.register_c()));
-                self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::MakeObjectPair {
-                    destination: instruction.result_register(), site: instruction.imm(), first, second,
-                    proof: super::EmitProof::Allocation { miss: exit } });
-                self.allocated(state);
-                Some(true)
-            }
+            Class::MakeObject | Class::MakeArray | Class::MakeConstArray | Class::MakeObject2 if self.literal_completes(instruction, pc) => Some(self.literal(state, pc, instruction)),
             Class::Construct if self.completion != Completion::Number && !instruction.is_super_construct()
                 && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
             Class::IncDec if plain && instruction.numeric_local_target().is_none() => {
@@ -3063,6 +3059,48 @@ impl Lowering<'_, '_> {
         step
     }
 
+    /// A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
+    /// collection leaves first. The staged operation allocates and writes the result.
+    fn literal(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        use crate::staged::Operation;
+        let exit = self.guard_exit(state, pc as u32);
+        let proof = super::EmitProof::Allocation { miss: exit };
+        let destination = instruction.result_register();
+        let operation = match instruction.op().class() {
+            Class::MakeObject | Class::MakeArray if instruction.op().is_make_object() => Operation::MakeObject { destination, proof },
+            Class::MakeObject | Class::MakeArray => {
+                let (length, elements) = (self.ins().iconst(types::I64, instruction.array_length() as i64), self.literal_elements(state, pc, instruction));
+                Operation::MakeArray { destination, length, elements, proof }
+            }
+            Class::MakeConstArray => {
+                let (constant, count) = (self.ins().iconst(types::I64, instruction.constant_index() as i64), self.ins().iconst(types::I64, i64::from(instruction.element_count())));
+                Operation::MakeConstArray { destination, constant, count, proof }
+            }
+            _ => {
+                let (first, second) = (self.tagged(state, instruction.register_b()), self.tagged(state, instruction.register_c()));
+                Operation::MakeObjectPair { destination, site: instruction.imm(), first, second, proof }
+            }
+        };
+        self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
+        self.allocated(state);
+        self.literal_done(state, pc, instruction)
+    }
+
+    /// Whether a literal's allocation lowers here: plain, or the one that returns its value
+    /// from a caller record, which completes the activation (`literal_done`).
+    fn literal_completes(&self, instruction: WideInstruction, pc: usize) -> bool {
+        self.completion == Completion::StatusAndPc && (instruction.result_flags() == 0
+            || (instruction.returns_from_frame() && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))))
+    }
+
+    /// A literal's allocation ran: a returning one completes its activation with the result.
+    fn literal_done(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        let Some(super::lane_unit::Origin::Caller(record)) = self.unit.origins.get(pc).copied().filter(|_| instruction.returns_from_frame()) else { return true };
+        let value = self.tagged(state, instruction.result_register());
+        self.return_value(record, value);
+        false
+    }
+
     fn typeof_index(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         use crate::value::ValueLayout;
         let index = |kind: crate::ValueType| i64::try_from(crate::bytecode::typeof_name_index(
@@ -3373,10 +3411,11 @@ impl Lowering<'_, '_> {
         self.spill_written(pc);
         let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
         self.reentries.push(completed);
-        match self.direct.get(&pc).copied().filter(|_| instruction.op().class().eq(Class::Call)) {
+        match self.direct.get(&pc).copied() {
             // SAFETY: the body owns the callee for as long as its code runs.
-            Some(callee) => self.direct_call(instruction, unsafe { &*callee }, generic, completed),
-            None => { self.ins().jump(generic, &[]); }
+            Some(callee) if instruction.op().class().eq(Class::Call) => self.direct_call(instruction, unsafe { &*callee }, generic, completed),
+            Some(callee) if instruction.op().class().eq(Class::Construct) => self.direct_construct(instruction, unsafe { &*callee }, generic, completed),
+            _ => { self.ins().jump(generic, &[]); }
         }
         self.builder.switch_to_block(generic);
         let status = self.record_helper(helper, call_pc);
@@ -4319,7 +4358,7 @@ impl Lowering<'_, '_> {
                 // A single shape's read proves an object, as the facts the CFG carries say
                 // (`facts::analyze`); a shape switch's may read a function's own fields.
                 let header = lowering.object_header(state, register, shapes.len() > 1 || shapes[0].function_shape, generic);
-                (header.record.address(&mut lowering.builder), header.shape, header.inline)
+                (header.address, header.shape, header.inline)
             };
             let read = lowering.shape_switch_read(state, Some(owner), object, shape, inline, &shapes, generic)?;
             // A single own shape read proves the register's object has it, for the block, a
@@ -4357,7 +4396,7 @@ impl Lowering<'_, '_> {
             let records = lowering.object_table_base();
             let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
             let header = ObjectHeader::prove_readable(&mut lowering.builder, object_bits, records, functions, generic);
-            let record = header.record.address(&mut lowering.builder);
+            let record = header.address;
             lowering.shape_switch_read(state, None, record, header.shape, header.inline, &shapes, generic)
         }))
     }
@@ -4507,11 +4546,13 @@ impl Lowering<'_, '_> {
     fn prove_shape(&mut self, state: &mut State, owner: Option<Option<Register>>, shape: ir::Value, expected: u32, exit: ir::Block) {
         let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(expected));
         emit_js_guard(&mut self.builder, same, exit);
-        let constant = self.ins().iconst(types::I32, i64::from(expected));
         if let Some(owner) = owner {
             let index = state.header_index(owner);
-            if let Some(proof) = &mut state.proofs.headers[index] {
-                proof.shape = constant;
+            if state.proofs.headers[index].is_some() {
+                let constant = self.ins().iconst(types::I32, i64::from(expected));
+                if let Some(proof) = &mut state.proofs.headers[index] {
+                    proof.shape = constant;
+                }
             }
         }
     }
@@ -4600,7 +4641,9 @@ impl Lowering<'_, '_> {
 
     /// A register whose object an object proof names holds a direct object from then on.
     fn refine_owner(&mut self, state: &mut State, index: usize, fact: Option<VerifiedFact>) {
-        if let Some(fact) = fact {
+        // An unboxed register has no tagged view to keep: an object proof of it is a
+        // contradiction its reads leave at, so the register keeps its own fact.
+        if let Some(fact) = fact.filter(|_| state.values[index].tagged.current()) {
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,
                 ..RegisterFact::definition(
                     fact.ty.direct_object_part().unwrap_or(Type::DIRECT_OBJECT_FAMILY),
@@ -4799,7 +4842,7 @@ impl Lowering<'_, '_> {
             }
             _ => {
                 let header = self.object_header(state, register, false, exit);
-                let object = header.record.address(&mut self.builder);
+                let object = header.address;
                 let admitted = self.store_atom_admitted(atom);
                 let properties = { let entry = self.entry.as_ref().expect("entry facts"); self.builder.use_var(entry.receiver.properties) };
                 let (general, done) = (self.builder.create_block(), self.builder.create_block());
@@ -4820,7 +4863,7 @@ impl Lowering<'_, '_> {
         };
         let header = (!receiver).then(|| {
             let header = self.object_header(state, register, false, exit);
-            (header.record.address(&mut self.builder), header.shape, header.inline)
+            (header.address, header.shape, header.inline)
         });
         let admitted = self.store_atom_admitted(atom);
         let entry = self.entry.as_ref().expect("entry facts");

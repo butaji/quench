@@ -107,6 +107,12 @@ impl Stage for Emit<'_, '_> {
         // Native code keeps the helper for stores: an id is never below itself.
         self.ult(record_id, record_id)
     }
+    fn number_operator(&mut self, _operator: EmitImm, _passed: ir::Value, _constant: ir::Value) -> (ir::Value, ir::Value) {
+        // Native arithmetic for computed initializer fields is the construct lowering's (thread 13): until it lands the field leaves.
+        let zero = self.constant(0);
+        let never = self.ne_imm(zero, 0u32);
+        (zero, never)
+    }
     fn assumption(&mut self, _watch: EmitImm) -> ir::Value {
         // No assumption registry reaches emitted code yet: the read leaves at its miss.
         let zero = self.constant(0);
