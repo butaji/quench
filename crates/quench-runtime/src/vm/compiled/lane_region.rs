@@ -2901,12 +2901,11 @@ impl Lowering<'_, '_> {
     /// no step is left unresolved.
     fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>)
         -> crate::staged::Step<ir::Value, ()> {
-        let locals = (self.completion != Completion::Number).then(|| emit_js_payload_word(
-            &mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, native_locals)));
+        let has_locals = self.completion != Completion::Number;
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
-            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls };
+            payload: self.payload, helpers: self.helpers, has_locals, polls: &mut self.polls };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step

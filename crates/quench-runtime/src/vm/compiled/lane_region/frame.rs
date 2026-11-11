@@ -30,7 +30,7 @@ pub(super) struct EmitFrame<'a> {
     pub(super) this: Option<Variable>,
     /// The activation's local slots (`JsStepDispatch::native_locals`), where this region
     /// may read or write them; `None` for a numeric region, whose activation has none.
-    pub(super) locals: Option<ir::Value>,
+    pub(super) has_locals: bool,
     /// The running body's dispatch payload, which semantic helpers take.
     pub(super) payload: ir::Value,
     /// The helper table a callout addresses.
@@ -236,7 +236,8 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
         -> Option<(ir::Value, RegisterFact)> {
-        let locals = self.locals?;
+        if !self.has_locals { return None; }
+        let locals = emit_js_payload_word(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, native_locals));
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
         let value = stage.builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
@@ -246,7 +247,8 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn store_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, value: ir::Value,
         _miss: Option<ir::Block>) -> bool {
-        let Some(locals) = self.locals else { return false };
+        if !self.has_locals { return false; }
+        let locals = emit_js_payload_word(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, native_locals));
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
         stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
