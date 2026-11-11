@@ -19,8 +19,27 @@ impl Heap {
             self.properties.young_run_padded(values, len).map(|start| Object::from_run_header(header, start))
         };
         match object {
-            Some(object) => self.insert_admitted_object_record(object),
+            Some(object) => match self.claim_object_record() {
+                // SAFETY: the claimed record is uninitialized and written whole, before any safepoint.
+                Some((value, record)) => {
+                    unsafe { record.write(object) };
+                    value
+                }
+                None => self.insert_admitted_object_record(object),
+            },
             None => self.alloc_object_with_properties(prototype, header.shape(), &values[..len]),
         }
+    }
+
+    /// A fresh direct object record claimed with nothing written: its `Value` and the address
+    /// to write an `Object` at, `None` where the record space needs its slow path (the caller
+    /// then allocates as `alloc_planned_object` does). Allocation never collects, so the
+    /// address stays valid until the next safepoint; the caller must write the whole record,
+    /// and admit its values (`ValueArena::note_plan_values`), before then.
+    #[inline(always)]
+    pub(crate) fn claim_object_record(&mut self) -> Option<(Value, *mut Object)> {
+        let id = self.object_records.claim_uninit()?;
+        self.allocated += 1;
+        Some((Value::direct_object(id), self.object_records.record_ptr(id)))
     }
 }
