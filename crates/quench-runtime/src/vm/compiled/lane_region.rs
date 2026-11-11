@@ -4188,7 +4188,7 @@ impl Lowering<'_, '_> {
             return self.field_probe(state, probe_owner, object_bits, read, exit);
         }
         let owner = if receiver { None } else { register };
-        let probed = self.left_here || NativeFieldLoad::probes_misses(&shapes);
+        let probed = self.left_here || self.left_a_field_read() || NativeFieldLoad::probes_misses(&shapes);
         self.probed_read(state, owner, probe_owner, probed, object_bits, read, exit, |lowering, state, generic| {
             let (object, shape, inline) = if receiver {
                 let entry = lowering.entry.as_ref().expect("entry facts");
@@ -4214,6 +4214,13 @@ impl Lowering<'_, '_> {
         })
     }
 
+    /// Whether a previous body left at some field read of this unit: its shapes were not all
+    /// seen when it was planned, so every read now asks the VM's caches on a guard miss rather
+    /// than leave, as this unit's other reads would leave one recompile at a time.
+    fn left_a_field_read(&self) -> bool {
+        self.generic.iter().any(|pc| self.unit.instructions.get(*pc).is_some_and(|instruction| instruction.op().class().eq(Class::GetField)))
+    }
+
     /// The read through `site` of the object a previous read of a chain produced, whose
     /// record nothing else names, so it is proved for this read alone.
     fn object_field_read(&mut self, state: &mut State, object_bits: ir::Value, read: (Atom, u16), exit: ir::Block) -> Option<ir::Value> {
@@ -4222,7 +4229,7 @@ impl Lowering<'_, '_> {
         if shapes.is_empty() {
             return Some(self.field_probe(state, FieldOwner::Temporary, object_bits, read, exit));
         }
-        let probed = self.left_here || NativeFieldLoad::probes_misses(&shapes);
+        let probed = self.left_here || self.left_a_field_read() || NativeFieldLoad::probes_misses(&shapes);
         Some(self.probed_read(state, None, FieldOwner::Temporary, probed, object_bits, read, exit, |lowering, state, generic| {
             let records = lowering.object_table_base();
             let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
