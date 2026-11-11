@@ -505,7 +505,7 @@ impl Value {
         Some((left.as_number()?, right.as_number()?))
     }
 
-    pub fn as_bool(self) -> Option<bool> {
+    #[inline] pub fn as_bool(self) -> Option<bool> {
         ((self.0 & TAG_MASK) == TAG_BOOL).then_some(self.0 & 1 != 0)
     }
 

@@ -35,7 +35,7 @@ const BUCKETS: usize = 64;
 /// `MIN_CAPACITY`, or three-quarter step between two (6, 12, 24, ...), that holds them. The
 /// half steps leave a range at most a third unused where powers of two left it half unused
 /// (typescript-lib: 1.6M of 6.7M live slots idle).
-const fn capacity_class(len: usize) -> usize {
+#[inline] const fn capacity_class(len: usize) -> usize {
     if len <= MIN_CAPACITY {
         return MIN_CAPACITY;
     }
@@ -146,7 +146,7 @@ impl ValueVec {
         }
     }
 
-    pub(crate) const fn auxiliary(self) -> u32 {
+    #[inline] pub(crate) const fn auxiliary(self) -> u32 {
         self.auxiliary & SHAPE_MASK
     }
 
@@ -167,7 +167,7 @@ impl ValueVec {
             && self.start() != EMPTY_START as usize
     }
 
-    pub(crate) fn set_auxiliary(&mut self, value: u32) {
+    #[inline] pub(crate) fn set_auxiliary(&mut self, value: u32) {
         // The last shape stays unused, so a dictionary vector's exact auxiliary
         // (`exact_auxiliary`) never equals the all-ones sentinel caches record as "none".
         assert!(value < SHAPE_MASK, "object shape table exhausted");
@@ -189,7 +189,7 @@ impl ValueVec {
         self.auxiliary |= DICTIONARY_STORAGE;
     }
 
-    pub(crate) fn is_extensible(self) -> bool {
+    #[inline] pub(crate) fn is_extensible(self) -> bool {
         self.start & NON_EXTENSIBLE == 0
     }
 
@@ -213,7 +213,7 @@ impl ValueVec {
         }
     }
 
-    pub(crate) fn preserve_integrity_from(&mut self, previous: Self) {
+    #[inline] pub(crate) fn preserve_integrity_from(&mut self, previous: Self) {
         self.start = (self.start & !(NON_EXTENSIBLE | FROZEN))
             | (previous.start & (NON_EXTENSIBLE | FROZEN));
     }
@@ -1065,7 +1065,7 @@ impl ValueArena {
         self.shape_lengths[vector.auxiliary() as usize] as usize
     }
 
-    pub(crate) fn assert_shape_length(&self, shape: u32, length: usize) {
+    #[inline] pub(crate) fn assert_shape_length(&self, shape: u32, length: usize) {
         debug_assert_eq!(length, self.shape_lengths[shape as usize] as usize, "property values must match shape");
     }
 

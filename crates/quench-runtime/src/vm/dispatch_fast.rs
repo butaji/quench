@@ -1389,7 +1389,7 @@ impl Completion {
     /// The completion of an activation a `new` made or not, of the caller's program or not,
     /// of a target whose return settles its call's promise or not. Only a plain call of the
     /// caller's program settles one (`lane_script_call_settles`).
-    fn of(constructs: bool, cross: bool, settles: bool) -> Self {
+    #[inline] fn of(constructs: bool, cross: bool, settles: bool) -> Self {
         debug_assert!(!settles || !constructs && !cross, "only a plain call of its own program settles");
         match (constructs, cross, settles) {
             (false, false, true) => Self::SettlesPromise,
@@ -1402,12 +1402,12 @@ impl Completion {
 
     /// Whether a `new` made the activation, whose completion substitutes its receiver for a
     /// non-object result.
-    fn constructs(self) -> bool {
+    #[inline] fn constructs(self) -> bool {
         matches!(self, Self::Constructs | Self::CrossConstructs | Self::ConstructsToBody)
     }
 
     /// Whether the activation's return makes the caller's program the lane's again.
-    fn crosses(self) -> bool {
+    #[inline] fn crosses(self) -> bool {
         matches!(self, Self::Cross | Self::CrossConstructs)
     }
 }
@@ -1539,7 +1539,7 @@ impl CallEntry {
     }
 
     /// The leaf entry of a body whose records read the context as `form` says.
-    fn leaf(form: LeafForm) -> Self {
+    #[inline] fn leaf(form: LeafForm) -> Self {
         match form {
             CONTEXT_LEAF => Self::ContextLeaf,
             CAPTURE_LEAF => Self::CaptureLeaf,
