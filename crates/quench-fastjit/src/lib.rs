@@ -54,6 +54,12 @@ fn successor(b: &mut FunctionBuilder, index: u32) -> ir::FuncRef {
 
 /// The ISA stencils compile for: no PIC, frame pointers (x64 `return_call` requires them).
 pub fn stencil_isa() -> Result<OwnedTargetIsa, String> {
+    isa_with_unwind(false)
+}
+
+/// The stencil ISA; `unwind_info` true gives the stock tail convention, which saves the
+/// callee-saved registers it uses (the vendored x64 ABI change keys on this one setting, V6).
+fn isa_with_unwind(unwind_info: bool) -> Result<OwnedTargetIsa, String> {
     if !cfg!(target_arch = "x86_64") {
         return Err("stencil strip knows the x86-64 frame shapes only; aarch64 shapes are pending".into());
     }
@@ -63,7 +69,7 @@ pub fn stencil_isa() -> Result<OwnedTargetIsa, String> {
         ("is_pic", "false"),
         ("enable_verifier", if std::env::var_os("STENCIL_VERIFY").is_some() { "true" } else { "false" }),
         ("preserve_frame_pointers", "true"),
-        ("unwind_info", "false"),
+        ("unwind_info", if unwind_info { "true" } else { "false" }),
         ("enable_probestack", "false"),
     ] {
         flags.set(name, value).map_err(|e| e.to_string())?;
@@ -373,5 +379,57 @@ mod tests {
             assert_eq!(run(frame.as_mut_ptr(), std::ptr::null_mut()), 0x7fff_ffff, "overflow leaves through the exit stub");
             libc::munmap(memory.cast(), 4096);
         }
+    }
+
+    /// A row with more live values than caller-saved registers.
+    fn pressure_row(b: &mut StencilBuilder) {
+        let values: Vec<_> = (0..14).map(|k| b.b.ins().load(I64, cranelift_codegen::ir::MemFlagsData::new(), b.frame, k * 8)).collect();
+        let sum = values.iter().fold(values[0], |sum, value| b.b.ins().iadd(sum, *value));
+        b.b.ins().store(cranelift_codegen::ir::MemFlagsData::new(), sum, b.frame, 0);
+        // Every loaded value is live until here.
+        for (k, value) in values.iter().enumerate() {
+            let place = (k as i32 + 1) * 8;
+            b.b.ins().store(cranelift_codegen::ir::MemFlagsData::new(), *value, b.frame, place);
+        }
+        b.next();
+    }
+
+    /// V6: the vendored `CallConv::Tail if !unwind_info` change is what keeps stencils free of
+    /// callee-saved saves; a vendor update that drops it fails here.
+    #[test]
+    fn stencil_isa_saves_no_callee_saved_registers() {
+        // `mov [rsp+disp8], rbx`: how the prologue saves the first callee-saved register.
+        const SAVE_RBX: [u8; 4] = [0x48, 0x89, 0x5c, 0x24];
+        const PROLOGUE_SPAN: usize = 24;
+        let saves = |code: &[u8]| code[..PROLOGUE_SPAN].windows(SAVE_RBX.len()).any(|w| w == SAVE_RBX);
+        let (saving, saved) = (isa_with_unwind(true).unwrap(), stencil_isa().unwrap());
+        let raw = |isa: &OwnedTargetIsa| {
+            let (function, _) = lower(isa, &pressure_row, Mode::Sentinel(0));
+            let mut ctx = Context::for_function(function);
+            ctx.compile(&**isa, &mut ControlPlane::default()).unwrap();
+            ctx.compiled_code().unwrap().code_buffer().to_vec()
+        };
+        let (with, without) = (raw(&saving), raw(&saved));
+        assert!(saves(&with), "the stock tail convention saves rbx under pressure");
+        assert!(!saves(&without), "the stencil ISA saves nothing");
+        assert!(generate(&saved, pressure_row).is_ok());
+    }
+
+    /// A hole used as something other than `hole + constant` is not patched in place: the stencil
+    /// keeps a 64-bit hole, and the sentinel scan alone never accepts it silently.
+    #[test]
+    fn a_folded_hole_falls_back_to_a_wide_immediate() {
+        let isa = stencil_isa().unwrap();
+        let before = wide_stencils();
+        let stencil = generate(&isa, |b| {
+            let hole = b.operand(Operand::Hole(0), Ty::I64);
+            let scaled = b.b.ins().imul_imm_s(hole, 0x1_0001);
+            b.b.ins().store(cranelift_codegen::ir::MemFlagsData::new(), scaled, b.frame, 0);
+            b.next();
+        })
+        .unwrap();
+        assert!(stencil.imm32.is_empty(), "no field is patched");
+        assert!(stencil.relocs.iter().any(|r| !r.pc_relative && r.index == 0), "the hole is a 64-bit relocation");
+        assert!(wide_stencils() > before);
     }
 }
