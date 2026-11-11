@@ -14,13 +14,19 @@ pub(super) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<u
 }
 
 /// The calls a unit still makes (none it inlines) whose callees have bodies. Each candidate
-/// owns one contiguous stable slice, which the code names by address.
-pub(super) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[Option<DirectCallee>])
+/// owns one contiguous stable slice, which the code names by address. A site with several
+/// callees binds the first the unit does not inline: the calls its alternatives miss.
+pub(super) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[DirectCandidates])
     -> (Box<[DirectCallee]>, BTreeMap<usize, *const DirectCallee>) {
     let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
         .filter(|(_, instruction)| instruction.op().is_call())
         .filter_map(|(pc, _)| match unit.origins[pc] {
-            lane_unit::Origin::Caller(origin) => direct.get(origin as usize)?.as_ref().cloned().map(|callee| (pc, callee)),
+            lane_unit::Origin::Caller(origin) => {
+                let inlined = |callee: &DirectCallee| unit.frames.iter()
+                    .any(|frame| frame.parent.is_none() && frame.call == origin && frame.target.function == callee.target.function);
+                let candidates = direct.get(origin as usize)?;
+                candidates.iter().find(|callee| !inlined(callee)).or_else(|| candidates.first()).cloned().map(|callee| (pc, callee))
+            }
             lane_unit::Origin::Inlined { .. } => None,
         })
         .unzip();

@@ -349,6 +349,12 @@ pub(super) struct LaneView {
     /// The warming tick (`lane_body_tier::warm_ticks`) of the entry its body began warming at, which a function
     /// entered rarely but for long (`LaneView::recurrent`) specializes by.
     warm_since: std::cell::Cell<u32>,
+    /// What native callers read to enter its body (`compiled::EntryCell`); the one entry word
+    /// of the function, published and withdrawn with its body.
+    entry: super::compiled::entry_cell::EntryCell,
+    /// Every body it published, kept until the view drops: a native frame running a body that
+    /// retired recovers its leave through it (`LaneView::pinned_body`).
+    pinned: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     history: std::cell::Cell<LaneBodyHistory>,
     /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
@@ -880,6 +886,23 @@ impl LaneView {
             LaneBody::Specialized { method, .. } => method.lease(),
             LaneBody::Unspecialized { .. } | LaneBody::Compiling { .. } | LaneBody::Declined => None,
         }
+    }
+
+    /// The published closed body a direct caller pins (`compiled::DirectCallee::method`, `body`), which a
+    /// caller of the function itself, or of one with none, leaves to the entry cell it calls through
+    /// (the stub enters nothing).
+    fn pinned_callee(&self, own: bool) -> (Option<std::rc::Rc<super::compiled::PublishedLaneMethod>>, Option<std::rc::Rc<super::compiled::LaneMethod>>) {
+        let method = self.published_lane_body().filter(|_| !own);
+        let body = method.as_ref().and_then(|method| method.lease()).filter(|body| body.calls_only_natively());
+        if body.is_some() { (method, body) } else { (None, None) }
+    }
+
+    /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).
+    pub(super) fn entry_cell(&self) -> usize { std::ptr::from_ref(&self.entry).addr() }
+
+    /// The body of this function at pin `pin` (`EntryCell::pin`), published or retired.
+    fn pinned_body(&self, pin: usize) -> Option<*const super::compiled::LaneMethod> {
+        self.pinned.borrow().get(pin).map(|body| std::ptr::from_ref(&**body))
     }
 
     /// The publication of the specialized body, which a direct caller holds
@@ -1422,7 +1445,7 @@ pub(super) struct ScriptCallTarget {
     /// The `LaneStack::generation` it was resolved in.
     generation: ScriptGeneration,
     program: ProgramId,
-    function: u32,
+    pub(super) function: u32,
     env: Value,
     view: *const LaneView,
     registers: u16,
@@ -8145,7 +8168,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         {
             return outcome;
         }
-        let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
+        let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
         let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), &direct, work, None);
         if diagnostics && let super::compiled::LaneBodyOutcome::Published(method) = &outcome {
             if let Some(method) = method.lease() { own.body_stats.compiled(function, &method.inlined); }
@@ -14946,52 +14969,44 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// Per PC of `body`, the callee its call record links where the callee's own lane body
+/// Per PC of `body`, the callees its call site reached where the callee's own lane body
 /// specialized and the lane would activate it in place, with an ordinary `this`, from a
 /// plain call of at most its parameters: what a lane body calls by its compiled entry
-/// (`compiled::DirectCallee`).
-fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytecode::Function) -> Vec<Option<super::compiled::DirectCallee>> {
+/// (`compiled::DirectCallee`), the latest first.
+fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body: &crate::bytecode::Function) -> Vec<super::compiled::DirectCandidates> {
     let tail_calls = vm.host.proper_tail_calls() && body.strict;
-    body.code
-        .iter()
-        .enumerate()
-        .map(|(pc, packed)| {
-            let instruction = decoded_instruction(body, *packed);
-            (instruction.op().is_call() && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
-            (!(tail_calls && instruction.returns_from_frame())).then_some(())?;
-            let target = lane_body_tier::compiled_site_target(vm, view, pc)?;
-            let sloppy = match target.this_binding {
-                ThisBinding::Sloppy => Some(vm.realm.globals),
-                ThisBinding::Strict => None,
-                _ => return None,
-            };
-            (target.generation == vm.lane_stack.generation
-                && target.program == vm.active_program
-                && target.entry.activates()
-                && !target.view.is_null()
-                && ImmediateLayout::argument_count(instruction.imm()) <= target.params)
-                .then_some(())?;
-            // SAFETY: a resolved target's view outlives its program.
-            let method = unsafe { &*target.view }.published_lane_body()?;
-            let body = method.lease().filter(|body| body.calls_only_natively())?;
-            // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
-            let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
-                .unwrap_or((std::ptr::null(), 0));
-            let reserve = body.recovery_space();
-            Some(super::compiled::DirectCallee {
-                target,
-                method,
-                body,
-                call: view.records().wrapping_add(pc).addr(),
-                callee: target.callee,
-                registers: target.registers,
-                reserve,
-                sloppy,
-                capture_values,
-                capture_len,
-            })
-        })
-        .collect()
+    body.code.iter().enumerate().map(|(pc, packed)| {
+        let instruction = decoded_instruction(body, *packed);
+        let direct = instruction.op().is_call() && !instruction.direct_eval() && !instruction.parameter_eval()
+            && !(tail_calls && instruction.returns_from_frame());
+        let mut callees = super::compiled::DirectCandidates::new();
+        callees.extend(lane_body_tier::compiled_site_targets(vm, view, pc).filter(|_| direct)
+            .filter_map(|target| lane_direct_callee(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm()), target)));
+        callees
+    }).collect()
+}
+
+/// The `compiled::DirectCallee` of `target`, the callee the call at `pc` of `view` passes
+/// `argc` arguments, where the lane would activate it in place.
+fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: usize, argc: u16, target: ScriptCallTarget) -> Option<super::compiled::DirectCallee> {
+    let sloppy = match target.this_binding {
+        ThisBinding::Sloppy => Some(vm.realm.globals),
+        ThisBinding::Strict => None,
+        _ => return None,
+    };
+    (target.generation == vm.lane_stack.generation && target.program == vm.active_program
+        && target.entry.activates() && !target.view.is_null() && argc <= target.params)
+        .then_some(())?;
+    // SAFETY: a resolved target's view outlives its program.
+    let view_of = unsafe { &*target.view };
+    let (method, body) = view_of.pinned_callee(target.function == function);
+    // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
+    let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
+        .unwrap_or((std::ptr::null(), 0));
+    Some(super::compiled::DirectCallee {
+        target, method, body, call: view.records().wrapping_add(pc).addr(), cell: view_of.entry_cell(),
+        callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len,
+    })
 }
 
 /// Whether a lane body's run may call bodies by their compiled entries: the lane may make
@@ -15075,9 +15090,9 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
         .unwrap_or((std::ptr::null(), 0));
     direct[pc] = Some(super::compiled::DirectCallee {
-        target, method: leaf_publication.clone(), body: leaf_body.clone(),
-        call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(),
-        callee: leaf, registers: target.registers, reserve: leaf_body.recovery_space(),
+        target, method: Some(leaf_publication.clone()), body: Some(leaf_body.clone()),
+        call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(), cell: unsafe { &*target.view }.entry_cell(),
+        callee: leaf, registers: target.registers,
         sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals),
         capture_values, capture_len,
     });
@@ -15108,6 +15123,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
 fn lane_materialize_frames<H: Host>(
     cx: *mut LaneContext<H>,
     frames: &[super::compiled::ShadowFrame],
+    _root: &super::compiled::LaneMethod,
 ) -> Option<(&'static LaneView, &'static super::compiled::LaneMethod)> {
     let mut innermost = None;
     for frame in frames {
@@ -15115,17 +15131,18 @@ fn lane_materialize_frames<H: Host>(
         // outlive the run; the frame's window starts at the stack's values' end.
         let callee = unsafe { &*frame.callee };
         let vm = unsafe { vm(cx) };
-        let window = vm.lane_stack.values.len();
-        let registers = unsafe { vm.lane_stack.values.as_mut_ptr().add(window) };
+        let registers = frame.window as *mut Value;
+        let window = unsafe { registers.offset_from(vm.lane_stack.values.as_mut_ptr()) } as usize;
         unsafe { vm.lane_stack.values.set_len(window + usize::from(callee.registers)) };
         let call = callee.call as Ip;
         let argc = ImmediateLayout::argument_count(unsafe { (*call).imm() });
         let caller = unsafe { (*cx).registers };
         lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), window, argc, Value::from_bits(frame.this), false);
-        let method = callee.body.as_ref();
-        // SAFETY: the active caller's code lease pins this exact callee body through
-        // recovery, even if its publication has already been retired.
-        innermost = Some(unsafe { (&*callee.target.view, &*std::ptr::from_ref(method)) });
+        // The body the call ran is the cell's at that moment, not the descriptor's.
+        let method = unsafe { &*callee.target.view }.pinned_body(frame.pin).expect("a call through the cell ran a body its view pinned");
+        // SAFETY: the active caller's code lease pins a named callee body through recovery, and
+        // the view pins every body it published, even once its publication retired.
+        innermost = Some(unsafe { (&*callee.target.view, &*method) });
     }
     innermost
 }
@@ -15572,7 +15589,7 @@ fn lane_body_left<H: Host>(
         return (LaneBodyLeft::Terminated, exit);
     }
     let (feedback, frames) = (method.feedback(exit, unsafe { &*(*cx).code }), Vm::<H>::take_shadow_frames());
-    let (r, own, method) = match lane_materialize_frames(cx, frames) {
+    let (r, own, method) = match lane_materialize_frames(cx, frames, method) {
         // SAFETY: the materialization made the innermost frame the running activation.
         Some((own, method)) => (unsafe { (*cx).registers }, own, method),
         None => (r, own, method),
@@ -19675,7 +19692,7 @@ fn derive_lane_view<'live, H: Host>(
         }),
         tier_direct: std::cell::Cell::new(None),
         tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }), history: Default::default(), warm_since: std::cell::Cell::new(0),
-        retired: std::cell::RefCell::default(), callers: std::cell::RefCell::default(),
+        retired: std::cell::RefCell::default(), callers: std::cell::RefCell::default(), entry: super::compiled::entry_cell::EntryCell::new(), pinned: std::cell::RefCell::default(),
         body_stats: LaneBodyStats::default(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
         plain_backward_jump_sites: decoded

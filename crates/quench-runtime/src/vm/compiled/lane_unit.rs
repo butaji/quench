@@ -351,11 +351,17 @@ impl Plan {
 
     /// The unit PCs each instruction takes, in order.
     fn lengths(&self, root: bool) -> impl Iterator<Item = u32> + '_ {
-        self.code.iter().zip(&self.calls).map(move |(instruction, calls)| match calls.as_slice() {
+        self.code.iter().zip(&self.calls).enumerate().map(move |(pc, (instruction, calls))| match calls.as_slice() {
             [] if root => 1,
             [] => completion_length(*instruction),
-            alternatives => call_length(alternatives),
+            alternatives => call_length(alternatives) + u32::from(self.keeps_call(pc, root)),
         })
+    }
+
+    /// Whether the caller's call at `pc` keeps its own `Call` after its last alternative, which
+    /// a callee none of several alternatives matched takes, not a leave of the unit.
+    fn keeps_call(&self, pc: usize, root: bool) -> bool {
+        root && self.calls[pc].len() > 1 && self.through_call[pc].is_none()
     }
 }
 
@@ -431,9 +437,14 @@ impl Planner<'_, '_> {
             CalleeBinding::Forwarded { callee, .. } => forwarded.then_some(CallTarget { callee: CalleeBinding::Identity(callee), ..target }),
             _ => (!forwarded).then_some(target),
         }).collect();
-        let ran = !found.is_empty();
+        let (ran, targets, reserved) = (!found.is_empty(), found.len(), (self.registers, self.budget));
         // A target that does not inline gives back what it reserved (`inline_target`).
-        let alternatives = found.into_iter().filter_map(|target| self.inline_target(target, instruction, depth)).collect();
+        let alternatives: Vec<_> = found.into_iter().filter_map(|target| self.inline_target(target, instruction, depth)).collect();
+        // A site of a callee that misses a target would leave the unit there: its callee stays its own unit.
+        if depth > 0 && alternatives.len() < targets {
+            (self.registers, self.budget) = reserved;
+            return (Vec::new(), true);
+        }
         (alternatives, ran)
     }
 
@@ -519,12 +530,13 @@ impl Emitter {
                     }
                     (false, _) => (register(instruction.result_register()), flat[pc + 1]),
                 };
+                let keeps = plan.keeps_call(pc, root);
                 for (alternative, call) in calls.iter().enumerate() {
                     let index = self.unit.frames.len();
                     let marker = self.unit.instructions.len();
                     self.unit.markers.push(marker);
                     let callee_base = Register::try_from(call.base).ok()?;
-                    let next = (alternative + 1 < calls.len()).then(|| marker + 1 + call.plan.length(false) as usize);
+                    let next = (alternative + 1 < calls.len() + usize::from(keeps)).then(|| marker + 1 + call.plan.length(false) as usize);
                     let frame_record = Frame {
                         recovery: call.recovery,
                         parent: frame,
@@ -548,6 +560,8 @@ impl Emitter {
                     self.unit.origins.push(origin);
                     self.emit(&call.plan, Some(index), callee_base, frame_record.receiver, call_result, call_continuation)?;
                 }
+                self.unit.instructions.extend(keeps.then_some(instruction));
+                self.unit.origins.extend(keeps.then_some(origin));
                 continue;
             }
             if root {
@@ -623,7 +637,7 @@ pub(crate) fn with_budget<'f>(
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget };
+    let mut planner = Planner { program, targets: &|function, pc| targets(function, pc).into_iter().filter(|target| target.function != function_id).collect(), body, registers: u32::from(caller_registers), budget };
     let plan = planner.plan(function_id, decoded(function), function.strict, 0);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {

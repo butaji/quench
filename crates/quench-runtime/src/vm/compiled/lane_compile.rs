@@ -160,7 +160,7 @@ impl<H: Host> Vm<H> {
     /// natively.
     #[allow(clippy::too_many_arguments)]
     fn plan_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
-        captures: &dyn Fn(Value) -> (usize, usize), direct: &[Option<DirectCallee>],
+        captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates],
         generic: &[LaneExit], budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
         let unit = self.lane_plan_unit(program, function, targets, generic, budget)?;
         let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(Miss::PlanNoEntry); None })?;
@@ -201,7 +201,7 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::vm) fn compile_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: Vec<Option<DirectCallee>>, generic: &[LaneExit]) -> Option<LaneMethod> {
+        direct: Vec<DirectCandidates>, generic: &[LaneExit]) -> Option<LaneMethod> {
         self.host.before_native_compilation();
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let method = loop {
@@ -223,7 +223,7 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn plan_lane_method_sized(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[Option<DirectCallee>], generic: &[LaneExit], mut budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
+        direct: &[DirectCandidates], generic: &[LaneExit], mut budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
         loop {
             self.host.before_native_compilation();
             let planned = self.plan_lane_method(program, function, targets, captures, direct, generic, budget, entry);
@@ -240,7 +240,7 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[Option<DirectCallee>], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>) -> Result<PendingLaneMethod, Unstarted> {
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>) -> Result<PendingLaneMethod, Unstarted> {
         let (plan, native) = self.plan_lane_method_sized(program, function, targets, captures, direct, generic, budget, entry)
             .ok_or(Unstarted::Declined)?;
         // A body that cannot amortize a lane entry would serve native callers only
@@ -287,7 +287,7 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::vm) fn lane_body_work(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &dyn Fn(&Self) -> Vec<Option<DirectCallee>>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
+        direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         let mut observed = None;
         let mut pending = match work {
             LaneBodyWork::Start { generic, shrinks, observed: seen } => { observed = seen; (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
@@ -321,7 +321,7 @@ impl<H: Host> Vm<H> {
     /// What a pending body's compile came to, or the feedback and budget to plan it again with
     /// where its code needed more memory than a body may take: half the inlining.
     fn lane_body_poll(&mut self, pending: Box<PendingLaneMethod>) -> Result<LaneBodyOutcome, (Vec<LaneExit>, usize)> {
-        if !pending.watch.is_published() || pending.plan.direct.iter().any(|callee| !callee.method.is_published()) {
+        if !pending.watch.is_published() || pending.plan.direct.iter().any(|callee| callee.method.as_ref().is_some_and(|method| !method.is_published())) {
             return Ok(LaneBodyOutcome::Stale);
         }
         let key = pending.key;
@@ -412,7 +412,7 @@ impl LanePlan {
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         Some(LaneMethod {
             dependencies, stable, invalidation: self.invalidation, _code: memory, entry, recovery_space,
-            fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.fault_poll),
+            fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, inlined: self.unit.frames,
             scratch_width, caller_registers,
@@ -460,11 +460,11 @@ pub(in crate::vm) struct LaneDependencies {
 impl LaneDependencies {
     fn of(loads: impl Iterator<Item = NativeFieldLoad> + Clone, direct: &[DirectCallee]) -> Self {
         let mut slots: Vec<_> = loads.clone().filter_map(NativeFieldLoad::slot_dependency)
-            .chain(direct.iter().flat_map(|callee| callee.body.dependencies.slots.iter().copied())).collect();
+            .chain(direct.iter().filter_map(|callee| callee.body.as_ref()).flat_map(|body| body.dependencies.slots.iter().copied())).collect();
         slots.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
         slots.dedup();
         let mut departure_shapes: Vec<_> = loads.filter_map(|load| load.holder)
-            .chain(direct.iter().flat_map(|callee| callee.body.dependencies.departure_shapes.iter().copied())).collect();
+            .chain(direct.iter().filter_map(|callee| callee.body.as_ref()).flat_map(|body| body.dependencies.departure_shapes.iter().copied())).collect();
         departure_shapes.sort_unstable();
         departure_shapes.dedup();
         Self { slots, departure_shapes }

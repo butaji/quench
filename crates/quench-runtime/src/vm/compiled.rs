@@ -65,12 +65,16 @@ mod stable_fact_tests;
 mod lane_region;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
+#[cfg(all(test, feature = "aot"))]
+#[path = "compiled/lane_unit_polymorphic_tests.rs"]
+mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
 use lane_allocations::{lane_binary, lane_new_array, lane_new_object, lane_new_object_pair};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
+#[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
@@ -7237,16 +7241,15 @@ pub(super) struct DirectCallee {
     /// The callee's published body (`LaneBody::Specialized`): the caller's code calls its entry,
     /// so the caller retires with it, at a shape compaction (`LaneMethod::names_shapes`) or at
     /// a lifecycle edge (`ProgramStore::retire_dead_native_calls`).
-    pub(super) method: Rc<PublishedLaneMethod>,
+    /// `None` where the call runs what the callee's `cell` holds then, as a call of the function itself.
+    pub(super) method: Option<Rc<PublishedLaneMethod>>,
     /// Pins the exact entry embedded by the caller, including recovery after retirement.
-    pub(super) body: Rc<LaneMethod>,
+    pub(super) body: Option<Rc<LaneMethod>>,
     /// The caller's call record, which the callee's activation returns to.
     pub(super) call: usize,
+    pub(super) cell: usize,
     pub(super) callee: Value,
     pub(super) registers: u16,
-    /// The values past its registers a leave inside a call it inlines takes
-    /// and the activations that recovery needs, proved free with its own.
-    pub(super) reserve: super::dispatch_fast::LaneRecoverySpace,
     /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which
     /// binds a direct object itself (`lane_receiver_this`); `None` for a strict callee, which
     /// takes any receiver as it is.
@@ -7256,6 +7259,9 @@ pub(super) struct DirectCallee {
     pub(super) capture_len: usize,
 }
 
+/// The callees a call site reached that a body may call by their entries, the latest first.
+pub(super) type DirectCandidates = smallvec::SmallVec<[DirectCallee; tier_policy::POLYMORPHISM]>;
+
 /// A native frame of a direct call (`DirectCallee`), which the lane materializes as an
 /// activation only if a run leaves inside it (`Vm::take_shadow_frames`): its callee, which
 /// names the call record it returns to, and its receiver. Its registers are the window past
@@ -7264,11 +7270,13 @@ pub(super) struct DirectCallee {
 #[repr(C)]
 pub(super) struct ShadowFrame {
     pub(super) callee: *const DirectCallee,
-    pub(super) this: u64,
+    pub(super) this: u64, pub(super) pin: usize,
+    /// The address of its window of registers.
+    pub(super) window: usize,
 }
 
 impl ShadowFrame {
-    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0 };
+    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, pin: 0, window: 0 };
 }
 
 /// Direct calls a run nests natively: past them, a call takes the lane's helper path. The

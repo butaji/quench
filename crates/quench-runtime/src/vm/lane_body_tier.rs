@@ -77,6 +77,7 @@ impl LaneView {
                 // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
                 unsafe { (*self.prologue.get()).handler = *tier_prologue };
                 let LaneBody::Specialized { method, .. } = std::mem::replace(body, LaneBody::Declined) else { unreachable!() };
+                self.entry.withdraw();
                 self.retired.borrow_mut().push(method);
                 self.release_from_tier();
             }
@@ -86,6 +87,7 @@ impl LaneView {
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
+        self.entry.withdraw();
         self.retired.borrow_mut().push(method);
     }
 
@@ -154,6 +156,7 @@ impl LaneView {
             unsafe { (*caller.prologue.get()).handler = *tier_prologue };
             let next = LaneBody::Unspecialized { entries: TIERS.lane_body.warmup_entries - 1, recompiles: *recompiles, stuck: *stuck };
             let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
+            caller.entry.withdraw();
             caller.retired.borrow_mut().push(method);
         }
     }
@@ -177,6 +180,7 @@ impl LaneView {
             lifetimes: history.lifetimes.saturating_add(1),
             ..history
         });
+        self.entry.withdraw();
         *body = LaneBody::Unspecialized { entries: 0, recompiles, stuck };
     }
 
@@ -193,6 +197,13 @@ impl LaneView {
             unsafe { (*self.prologue.get()).handler }
         };
         use std::cell::Cell;
+        // Native callers enter a closed body through the view's cell, and leave inside it
+        // through the view's pin.
+        if let Some(body) = method.lease().filter(|body| body.calls_only_natively()) {
+            let pin = self.pinned.borrow().len();
+            self.pinned.borrow_mut().push(body);
+            self.entry.publish(&method, pin);
+        }
         LaneBody::Specialized { method, tier_prologue, completions: Cell::new(0), exits: Cell::new(0),
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
     }
@@ -292,18 +303,25 @@ impl LaneView {
 /// record (`lane_site_targets`): the entry its record links is another callee's once the
 /// target cache replaced it.
 pub(super) fn site_target<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, pc: usize) -> Option<super::ScriptCallTarget> {
-    let callee = super::lane_site_targets(vm, view, pc as u32).first().filter(|site| site.through().is_none())?.identity()?;
-    // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
-    vm.script_call_entry(callee).map(|target| unsafe { *target })
+    site_targets(vm, view, pc).next()
 }
 
-/// `site_target` for a compile of `view`'s body, which the callee's view records
+/// Every callee the call at `pc` of `view` reached (`lane_site_targets`), by its target, the
+/// latest first.
+fn site_targets<'a, H: super::Host>(vm: &'a super::Vm<H>, view: &LaneView, pc: usize) -> impl Iterator<Item = super::ScriptCallTarget> + 'a {
+    super::lane_site_targets(vm, view, pc as u32).into_iter().filter(|site| site.through().is_none()).filter_map(|site| {
+        // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
+        vm.script_call_entry(site.identity()?).map(|target| unsafe { *target })
+    })
+}
+
+/// `site_targets` for a compile of `view`'s body, which each callee's view records
 /// (`LaneView::note_caller`).
-pub(super) fn compiled_site_target<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, pc: usize) -> Option<super::ScriptCallTarget> {
-    let target = site_target(vm, view, pc)?;
-    // SAFETY: a resolved target's view outlives its program.
-    if let Some(callee) = unsafe { target.view.as_ref() } { callee.note_caller(view); }
-    Some(target)
+pub(super) fn compiled_site_targets<'a, H: super::Host>(vm: &'a super::Vm<H>, view: &'a LaneView, pc: usize) -> impl Iterator<Item = super::ScriptCallTarget> + 'a {
+    site_targets(vm, view, pc).inspect(|target| {
+        // SAFETY: a resolved target's view outlives its program.
+        if let Some(callee) = unsafe { target.view.as_ref() } { callee.note_caller(view); }
+    })
 }
 
 /// What a first compile of `view` comes to before any planning. Entry warm-up leaves closed
