@@ -3318,7 +3318,8 @@ impl Drop for ProgramStore {
                 if let Some(line) = view.body_stats.report(program, view.lane_body_state(), &op_at) {
                     eprintln!("{line}");
                 } else {
-                    eprintln!("QUENCH_LANE_STATE {{\"program\":{program},\"function\":{function},\"state\":\"{}\",\"declined\":\"{}\"}}", view.lane_body_detail(), view.body_stats.declined.get());
+                    let (state, entries, claimed, warming) = view.lane_body_detail();
+                    eprintln!("QUENCH_LANE_STATE {{\"program\":{program},\"function\":{function},\"state\":\"{state}\",\"entries\":{entries:?},\"claimed\":{claimed},\"warming\":{warming},\"declined\":\"{}\"}}", view.body_stats.declined.get());
                 }
             }
         }

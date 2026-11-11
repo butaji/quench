@@ -1421,6 +1421,7 @@ pub(super) fn lower(
             frames: unit.frames.clone(), markers: unit.markers.clone(), caller_registers: unit.caller_registers,
             registers: unit.registers, end: unit.end });
     let unit = residual.as_ref().unwrap_or(unit);
+    crate::vm::dispatch_fast::lane_body_stats::lowering_function(function_id);
     let function = program.function_get(function_id as usize)?;
     let numeric = completion == Completion::Number;
     if numeric && (!super::super::js_compiled::function_candidate(function, program)

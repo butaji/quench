@@ -149,6 +149,8 @@ miss_reasons! {
     PlanCompileBound => "plan:compile-bound",
     PlanNotLowered => "plan:not-lowered",
     PlanNothingNative => "plan:nothing-native",
+    PlanNotAmortized => "plan:not-amortized",
+    PlanDependencies => "plan:dependencies",
     NativeReturning => "native:returning",
     NativeNotNative => "native:not-native",
     NativeInPlaceDeclined => "native:in-place-declined",
@@ -159,6 +161,7 @@ static MISSES: [std::sync::atomic::AtomicU64; MISS_NAMES.len()] = [const { std::
 #[cold]
 pub(in crate::vm) fn miss(reason: Miss) -> u64 {
     MISSES[reason as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    decline(MISS_NAMES[reason as usize]);
     super::super::compiled::LANE_CALL_MISSED
 }
 

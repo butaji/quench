@@ -880,6 +880,18 @@ impl LaneView {
         }
     }
 
+    /// Its body's state, the entries it counted, and whether the tier claimed its prologue and
+    /// is still warming, for the diagnostics report of a view that never compiled
+    /// (`QUENCH_LANE_STATE`).
+    pub(super) fn lane_body_detail(&self) -> (&'static str, Option<u16>, bool, bool) {
+        // SAFETY: as `lane_body`.
+        let entries = match unsafe { &*self.tier_lane.get() } {
+            LaneBody::Unspecialized { entries, .. } => Some(*entries),
+            _ => None,
+        };
+        (self.lane_body_state(), entries, self.start.get() == self.prologue.get().cast_const(), self.warming())
+    }
+
     /// The specialized frameless body, if there is one.
     fn lane_body(&self) -> Option<std::rc::Rc<super::compiled::LaneMethod>> {
         // SAFETY: this view is read on its VM's thread. Clone the code owner before

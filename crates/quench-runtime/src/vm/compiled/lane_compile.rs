@@ -176,8 +176,8 @@ impl<H: Host> Vm<H> {
     fn plan_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates],
         generic: &[LaneExit], budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
-        let unit = self.lane_plan_unit(program, function, targets, generic, budget).or_else(|| { crate::vm::dispatch_fast::lane_body_stats::decline("unit refused (lane_plan_unit)"); None })?;
-        let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(Miss::PlanNoEntry); crate::vm::dispatch_fast::lane_body_stats::decline("no entry pc"); None })?;
+        let unit = self.lane_plan_unit(program, function, targets, generic, budget)?;
+        let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(Miss::PlanNoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
         let mut fields = self.lane_unit_fields(program, &unit, &left_at);
         // Admitting the stores' writes once, here, widens what they widen; the fields then
@@ -202,8 +202,8 @@ impl<H: Host> Vm<H> {
             invalidation: invalidation.address(), constants }), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
-            &leaves, &direct_sites, &frame_captures, entry).or_else(|| { plan_miss(Miss::PlanNotLowered); crate::vm::dispatch_fast::lane_body_stats::decline("lowering refused (lower_body)"); None })?;
-        if lowered.region.native == 0 { plan_miss(Miss::PlanNothingNative); crate::vm::dispatch_fast::lane_body_stats::decline("nothing native"); return None; }
+            &leaves, &direct_sites, &frame_captures, entry).or_else(|| { plan_miss(Miss::PlanNotLowered); None })?;
+        if lowered.region.native == 0 { plan_miss(Miss::PlanNothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation, budget }, native))
     }
@@ -260,17 +260,16 @@ impl<H: Host> Vm<H> {
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
-        if entry.is_none() && !amortizes_entry(&plan.unit) { crate::vm::dispatch_fast::lane_body_stats::decline("does not amortize an entry (short, no loop, nothing inlined)"); return Err(Unstarted::Declined); }
+        if entry.is_none() && !amortizes_entry(&plan.unit) { plan_miss(Miss::PlanNotAmortized); return Err(Unstarted::Declined); }
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
         if let Some(entries) = observed && !pays_compile(program, function, entries, native.dfg.num_insts()) { return Err(Unstarted::Unpaid); }
-        if !self.programs.admit_lane_compile(&key, TIERS.lane_body.max_compiles) { plan_miss(Miss::PlanCompileBound); crate::vm::dispatch_fast::lane_body_stats::decline("compile bound (max_compiles)"); return Err(Unstarted::Declined); }
+        if !self.programs.admit_lane_compile(&key, TIERS.lane_body.max_compiles) { plan_miss(Miss::PlanCompileBound); return Err(Unstarted::Declined); }
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
         if !plan.dependencies().subscribe(&plan.lowered.region.stable,
             &watcher, &mut self.heap, self.method_cache_atoms.readers()) {
-            crate::vm::dispatch_fast::lane_body_stats::decline("dependencies did not subscribe");
-            return Err(Unstarted::Declined);
+            plan_miss(Miss::PlanDependencies); return Err(Unstarted::Declined);
         }
         let census = self.programs.js_jit_diagnostics_enabled()
             .then(|| (function, entry.is_some(), plan.unit.instructions.len(), native.dfg.num_insts(), key.3, generic.len(), plan.direct.len(), budget, observed));
