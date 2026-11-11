@@ -13,7 +13,7 @@ impl ValueArena {
         for (slot, value) in values.iter().copied().enumerate() {
             let owner = unsafe { *self.chain_owners.get_unchecked(chain + slot) };
             let (held, class) = (unsafe { *self.owner_types.get_unchecked(owner as usize) }, SlotType::of(value));
-            if held != SlotType::Tagged && held != class {
+            if held.join(class) != held {
                 self.widen_owner_type(owner, class);
             }
         }

@@ -42,4 +42,62 @@ impl Heap {
         self.allocated += 1;
         Some((Value::direct_object(id), self.object_records.record_ptr(id)))
     }
+
+    /// `alloc_object` of an object with no properties, which admit no slot values.
+    #[inline(always)]
+    pub(crate) fn alloc_empty_object(&mut self, object: Object) -> Value {
+        debug_assert!(object.exact_shape() == object.shape() && self.properties.shape_length(object.exact_shape()) == 0);
+        self.mark_prototype(object.proto());
+        self.insert_admitted_object_record(object)
+    }
+
+    /// Where compiled code finds the fast claim of a direct object record, as byte offsets from
+    /// the `Heap`: with `free_word` nonzero, id = `free_word_base + 63 - lzcnt(free_word)`;
+    /// clear that bit of `free_word`, set it in the word `*free_word_occupied`, add 1 to
+    /// `live` and to `allocated`, and write the 16-byte record at `base + id * 16`. A zero
+    /// `free_word` leaves for `claim_object_record`, which handles every other case.
+    #[allow(dead_code)] // read by the u-jit emitter once it claims inline
+    pub(crate) const OBJECT_CLAIM: ObjectClaimLayout = {
+        use std::mem::offset_of as at;
+        let records = at!(Heap, object_records);
+        ObjectClaimLayout {
+            free_word: records + at!(ObjectRecordSpace, free_word),
+            free_word_base: records + at!(ObjectRecordSpace, free_word_base),
+            free_word_occupied: records + at!(ObjectRecordSpace, free_word_occupied),
+            base: records + at!(ObjectRecordSpace, base),
+            live: records + at!(ObjectRecordSpace, live),
+            allocated: at!(Heap, allocated),
+        }
+    };
+}
+
+/// The byte offsets of `Heap::OBJECT_CLAIM`.
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+pub(crate) struct ObjectClaimLayout {
+    pub(crate) free_word: usize,
+    pub(crate) free_word_base: usize,
+    pub(crate) free_word_occupied: usize,
+    pub(crate) base: usize,
+    pub(crate) live: usize,
+    pub(crate) allocated: usize,
+}
+
+#[cfg(test)]
+mod claim_layout_tests {
+    use super::*;
+
+    #[test]
+    fn the_inline_claim_sequence_matches_claim_object_record() {
+        let mut heap = Heap::new();
+        let first = heap.claim_object_record().expect("a fresh space claims");
+        // SAFETY: the claimed record is written before the next claim.
+        unsafe { first.1.write(Object::new(Value::NULL)) };
+        let layout = Heap::OBJECT_CLAIM;
+        let at = |offset: usize| (&heap as *const Heap).cast::<u8>().wrapping_add(offset);
+        let (free_word, base) = unsafe { (*at(layout.free_word).cast::<u64>(), *at(layout.free_word_base).cast::<u32>()) };
+        assert!(free_word == 0 || base as u64 + 63 >= u64::from(free_word.leading_zeros()));
+        assert_eq!(unsafe { *at(layout.live).cast::<usize>() }, 1);
+        assert_eq!(unsafe { *at(layout.allocated).cast::<usize>() }, 1);
+    }
 }

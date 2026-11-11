@@ -64,6 +64,10 @@ pub(super) struct RegExpIntrinsics {
     /// Where `regexp_builtin_exec_matcher` last proved the builtin exec (`RegExpExecProof`);
     /// a memo, never snapshotted.
     exec_proof: std::cell::Cell<Option<RegExpExecProof>>,
+    /// A function value found to be this realm's builtin `exec`: a function's kind never
+    /// changes, so the prototype's `exec` slot holding this value needs no further look.
+    /// Rooted (`gc.rs`), so the handle names it for as long as the memo does.
+    pub(super) builtin_exec: std::cell::Cell<Option<Value>>,
 }
 
 /// Where RegExps of one shape, whose prototype is the realm's `%RegExp.prototype%`, find
@@ -157,6 +161,7 @@ impl RegExpIntrinsics {
             legacy: LegacyStatics::EMPTY,
             result_template: None,
             exec_proof: std::cell::Cell::new(None),
+            builtin_exec: std::cell::Cell::new(None),
         }
     }
 }
@@ -1287,7 +1292,7 @@ impl<H: Host> Vm<H> {
         };
         match last {
             Ok(found) => self.record_regexp_legacy_match(receiver, input.clone(), found)?,
-            Err(start) => self.record_regexp_legacy_pending(receiver, input.clone(), matcher, start)?,
+            Err(start) => self.record_regexp_legacy_pending(receiver, input.clone(), Rc::clone(matcher), start)?,
         }
         // Nothing reads the result: building it runs no guest code, so only its one
         // observable outcome, a length past the limit raising, needs the length.
@@ -1987,7 +1992,7 @@ impl<H: Host> Vm<H> {
         let Some(last) = ranges.last() else {
             return Ok(Value::NULL);
         };
-        self.record_regexp_legacy_pending(receiver, input.clone(), matcher, last.start)?;
+        self.record_regexp_legacy_pending(receiver, input.clone(), Rc::clone(matcher), last.start)?;
         let units = input.units();
         let matched = ranges.into_iter().map(|range| self.heap.alloc_unit_run(units.slice(range))).collect();
         Ok(self.new_array(matched))
@@ -2848,10 +2853,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         this: Value,
         input: JsString,
-        matcher: &Rc<quench_regexp::Regex>,
+        matcher: Rc<quench_regexp::Regex>,
         start: usize,
     ) -> Result<(), JsError> {
-        let matcher = Rc::clone(matcher);
         self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Pending { input, matcher, start })
     }
 
@@ -3332,7 +3336,7 @@ impl RegExpMatcherCache {
 
 impl crate::snapshot::Snap for RegExpIntrinsics {
     fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
-        let Self { constructor, prototype, legacy, result_template, exec_proof: _ } = self;
+        let Self { constructor, prototype, legacy, result_template, exec_proof: _, builtin_exec: _ } = self;
         writer.value(*constructor);
         writer.value(*prototype);
         let invalid = match legacy.last {
@@ -3380,6 +3384,7 @@ impl crate::snapshot::Snap for RegExpIntrinsics {
             legacy,
             result_template,
             exec_proof: std::cell::Cell::new(None),
+            builtin_exec: std::cell::Cell::new(None),
         })
     }
 }
