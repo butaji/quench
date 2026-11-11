@@ -129,6 +129,14 @@ pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, r: Registe
     // SAFETY: the context's program outlives the lane run; the window is registers of the
     // running function, which the native reads before anything can move them.
     let (code, args) = unsafe { (&*(*cx).code, lane_call_window(r, i)) };
+    // A RegExp call in its steady case runs no guest code; an error it raises is stashed for the
+    // general path, which the miss leaves to (`lane_regexp_call`).
+    if let Some(steady) = super::steady_regexp_value(vm, code, i, native, r.get(i.c), args) {
+        return match steady {
+            Ok(value) => { r.set(i.a, value); LANE_CALL_COMPLETED }
+            Err(error) => { vm.lane_raised = Some(error); super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeInPlaceDeclined) }
+        };
+    }
     let Some(value) = vm.in_place_native_value(code, native, callee, r.get(i.c), args) else { return super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeInPlaceDeclined) };
     note_allocation(vm);
     r.set(i.a, value);

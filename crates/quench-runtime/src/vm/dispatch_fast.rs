@@ -13411,18 +13411,9 @@ fn lane_regexp_call<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let result_used = ImmediateLayout::lane_call_result_used(i.imm());
-    let steady = match (native, args) {
-        (Native::StringReplace, _) => vm.steady_string_replace(code, native, receiver, args, result_used),
-        (Native::StringMatch, [search, ..]) => vm.steady_string_match(code, receiver, *search, result_used),
-        (_, [subject, ..]) => vm.steady_regexp_call(code, native, receiver, *subject, result_used),
-        _ => None,
-    };
-    let Some(result) = steady else {
+    let Some(result) = steady_regexp_value(vm, code, i, native, receiver, args) else {
         return lane_string_or_native_call(cx, ip, native, callee, receiver, args);
     };
-    // The call's allocations may make a collection due, which the lane's safepoints take.
-    note_allocation(vm);
     match result {
         Ok(value) => Some(value),
         Err(error) => {
@@ -13430,6 +13421,23 @@ fn lane_regexp_call<H: Host>(
             None
         }
     }
+}
+
+/// The steady case of the RegExp or string-with-RegExp native `native` called with `receiver`
+/// and `args` at the call record `i` (`Vm::steady_regexp_call`, `steady_string_replace`,
+/// `steady_string_match`); `None` where the call is not steady. The call's allocations may make
+/// a collection due, which the lane's safepoints take.
+fn steady_regexp_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, i: &LaneInstruction, native: Native,
+    receiver: Value, args: &[Value]) -> Option<Result<Value, JsError>> {
+    let result_used = ImmediateLayout::lane_call_result_used(i.imm());
+    let steady = match (native, args) {
+        (Native::StringReplace, _) => vm.steady_string_replace(code, native, receiver, args, result_used),
+        (Native::StringMatch, [search, ..]) => vm.steady_string_match(code, receiver, *search, result_used),
+        (Native::RegExpExec | Native::RegExpTest, [subject, ..]) => vm.steady_regexp_call(code, native, receiver, *subject, result_used),
+        _ => None,
+    };
+    if steady.is_some() { note_allocation(vm); }
+    steady
 }
 
 /// A lane native call that `lane_native_call` does not make inline: a pure string method or
