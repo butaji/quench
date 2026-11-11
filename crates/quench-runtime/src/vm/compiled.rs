@@ -7403,21 +7403,6 @@ pub(super) fn take_lane_exit_line() -> u64 {
     unsafe { std::mem::take(&mut (*lane_frame()).dispatch.exit_line) }
 }
 
-/// Grows the scratch window to `width` registers for a body native code may call: an
-/// inlined leave inside it fills its window, which the run that entered the outermost
-/// body sized for that body alone.
-pub(super) fn reserve_lane_scratch(width: usize) {
-    let frame = lane_frame();
-    // SAFETY: as `lane_frame`; native code reads the window's address from the dispatch
-    // record at each use, so the record follows a resize.
-    unsafe {
-        if (*frame).scratch.len() < width {
-            (*frame).scratch.resize(width, Value::UNDEFINED);
-            (*frame).dispatch.inlined = (*frame).scratch.as_mut_ptr().addr();
-        }
-    }
-}
-
 fn lane_frame() -> *mut LaneFrame {
     let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
     // SAFETY: the frame is reached only through this pointer, on its thread, and no
