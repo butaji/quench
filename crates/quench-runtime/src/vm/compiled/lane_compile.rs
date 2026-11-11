@@ -500,6 +500,4 @@ impl LaneDependencies {
     }
 }
 
-#[cfg(test)]
-#[path = "lane_compile/tests.rs"]
-mod tests;
+#[cfg(test)] #[path = "lane_compile/tests.rs"] mod tests;
