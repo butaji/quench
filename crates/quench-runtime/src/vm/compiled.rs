@@ -12493,10 +12493,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.execution_mode = mode;
-        // Only a compiling mode runs hot regexps natively (`regexp_native`).
-        quench_regexp::backtrack::native::set_native_compiler(super::regexp_native::compiler());
-        quench_regexp::backtrack::native::enable_native_search(mode != ExecutionMode::Interpreted);
+        self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
     }
 
     /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`).

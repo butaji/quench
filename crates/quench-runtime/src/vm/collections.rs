@@ -1344,18 +1344,14 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn map_set(&mut self, map: Value, args: &[Value]) -> bool {
-        let Some(Cell::Map { entries, .. }) = self.heap.get(map) else {
-            return false;
-        };
+        let Some(Cell::Map { entries, .. }) = self.heap.get(map) else { return false };
         // Map.prototype.set stores -0 as +0 (`canonical_collection_key`).
         let key = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));
         let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let key_hash = self.same_value_zero_hash(key);
         if let Some(index) = self.collection_entry_index(entries, key, key_hash) {
             // An existing entry takes the value: the payload does not grow.
-            if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(map) {
-                entries.set_value(index, value);
-            }
+            if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(map) { entries.set_value(index, value); }
             return true;
         }
         self.heap.grow_cell_payload(map, |cell| {

@@ -33,6 +33,12 @@ const CAPTURE_REGISTERS: u32 = 2;
 const WORD_BITS: i64 = 64;
 const WORD_SHIFT_MASK: i64 = WORD_BITS - 1;
 
+/// Whether this thread's hot regexp programs run natively: only under a compiling mode.
+pub(super) fn enable(enabled: bool) {
+    quench_regexp::backtrack::native::set_native_compiler(compiler());
+    quench_regexp::backtrack::native::enable_native_search(enabled);
+}
+
 /// The compiler `quench_regexp` asks for code.
 pub(super) fn compiler() -> NativeCompiler {
     NativeCompiler { runs: super::compiled::tier_policy::REGEXP_NATIVE_RUNS, compile }

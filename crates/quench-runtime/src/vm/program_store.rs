@@ -2395,15 +2395,9 @@ impl ProgramStore {
     }
 
     #[inline(always)]
-    pub(super) fn record_js_jit_lane_entry(&mut self, id: ProgramId, function: u32) {
-        if self.js_jit_diagnostics.is_some() {
-            std::hint::cold_path();
-            self.record_diagnosed_lane_entry(id, function);
-        }
-    }
+    pub(super) fn record_js_jit_lane_entry(&mut self, id: ProgramId, function: u32) { if self.js_jit_diagnostics.is_some() { self.record_diagnosed_lane_entry(id, function); } }
 
-    #[inline(never)]
-    fn record_diagnosed_lane_entry(&mut self, id: ProgramId, function: u32) {
+    #[inline(never)] fn record_diagnosed_lane_entry(&mut self, id: ProgramId, function: u32) {
         let params = self.entry(id).and_then(|entry| entry.residual.function_get(function as usize)).map_or(0, |body| body.params);
         self.record_js_jit_counter_entry(id, function, None, params);
     }
