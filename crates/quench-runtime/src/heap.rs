@@ -185,6 +185,30 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     property_value_align: std::mem::align_of::<Value>(),
 };
 
+/// Layout facts for code generators reading a dense environment-slot storage
+/// (`EnvironmentSlots::dense`, `dense_plain`): the storage word holds a pointer to the slice
+/// header; the header's top bit marks a sparse storage and the rest is the length; the
+/// slots follow the header, one `Value` word each.
+#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeEnvironmentLayout {
+    /// Offset in the storage word of the header pointer.
+    pub(crate) header_pointer_offset: i32,
+    /// Header bit set on a sparse storage; the length is the other bits.
+    pub(crate) sparse_mark: u64,
+    /// Offset from the header to the first slot.
+    pub(crate) slots_offset: u64,
+    pub(crate) slot_size: u64,
+}
+
+#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
+pub(crate) const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironmentLayout {
+    header_pointer_offset: 0,
+    sparse_mark: thin_slice::NATIVE_MARK_BIT,
+    slots_offset: thin_slice::NATIVE_WORD_ELEMENTS_OFFSET as u64,
+    slot_size: std::mem::size_of::<Value>() as u64,
+};
+
 const _: () =
     assert!(NATIVE_OBJECT_LAYOUT.record_size.is_multiple_of(NATIVE_OBJECT_LAYOUT.record_align));
 const _: () =

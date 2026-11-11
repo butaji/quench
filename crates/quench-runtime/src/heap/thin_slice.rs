@@ -9,6 +9,12 @@ static EMPTY_HEADER: usize = 0;
 /// The header's top bit: a mark its owner may set on a non-empty slice (`ThinBoxSlice::mark`)
 /// to tell two layouts of its elements apart; the length is the rest of the header.
 const MARK_BIT: usize = 1 << (usize::BITS - 1);
+/// The mark bit and where a word-sized element run starts, for code that reads a slice header
+/// natively (`heap::NATIVE_ENVIRONMENT_LAYOUT`); `lay_out_in_place` asserts the offset.
+#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
+pub(crate) const NATIVE_MARK_BIT: u64 = MARK_BIT as u64;
+#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
+pub(crate) const NATIVE_WORD_ELEMENTS_OFFSET: usize = size_of::<usize>();
 
 #[repr(transparent)]
 pub(crate) struct ThinBoxSlice<T> {
