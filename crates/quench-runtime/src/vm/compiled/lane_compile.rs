@@ -258,7 +258,7 @@ impl<H: Host> Vm<H> {
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
-        if entry.is_none() && !called && !amortizes_entry(&plan.unit, function, &plan.direct) { return Err(Unstarted::Short); }
+        if entry.is_none() && !called && !amortizes_entry(&plan.unit, function, &plan.direct) { plan_miss(Miss::PlanNotAmortized); return Err(Unstarted::Short); }
         bind_callees(&plan.direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
@@ -268,7 +268,7 @@ impl<H: Host> Vm<H> {
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
         if !plan.dependencies().subscribe(&plan.lowered.region.stable,
             &watcher, &mut self.heap, self.method_cache_atoms.readers()) {
-            return Err(Unstarted::Declined);
+            plan_miss(Miss::PlanDependencies); return Err(Unstarted::Declined);
         }
         let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
             function, osr: entry.is_some(), unit: plan.unit.instructions.len(), ir: native.dfg.num_insts(), key: key.3,
