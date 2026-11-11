@@ -1348,7 +1348,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn object_data_mut(&mut self, value: Value) -> Option<&mut Object> {
         self.heap.object_mut(value)
     }
-    pub(super) fn is_object_like(&self, value: Value) -> bool {
+    #[inline] pub(super) fn is_object_like(&self, value: Value) -> bool {
         self.heap.object(value).is_some()
             || matches!(self.heap.get(value), Some(Cell::Error(_)))
             || self.is_wasm_gc_object(value)
@@ -1514,12 +1514,10 @@ impl<H: Host> Vm<H> {
     /// `None` where its shape differs.
     #[inline(always)]
     pub(super) fn own_field_entry_hit(&self, cache: FieldCache, receiver: &Object) -> Option<Value> {
-        // The exact shape matches only outside dictionary storage (`Object::exact_shape`).
-        if cache.receiver != receiver.exact_shape() {
-            return None;
-        }
+        // The exact shape matches only outside dictionary storage (`Object::exact_shape`); the
+        // read is the staged `[GuardShape, LoadSlot]`, which the native tiers run from the same rows.
         // SAFETY: as for `cached_field_hit`; the exact match rules out a dictionary.
-        Some(unsafe { self.heap.property_get_flat(receiver, cache.slot as usize) })
+        unsafe { self.heap.own_field_hit(receiver, cache.receiver, cache.slot) }
     }
 
     /// The own-field hint (`FieldCache::own`) of `object`'s own data property `atom`: its exact

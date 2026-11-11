@@ -574,7 +574,7 @@ const WINDOW_STORAGE: u16 = 3;
 pub(super) const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
 
 impl EnvironmentWindow {
-    fn captured(self, slot: usize) -> bool {
+    #[inline] fn captured(self, slot: usize) -> bool {
         self.captured & 1 << slot != 0
     }
 }
@@ -1019,6 +1019,7 @@ impl LaneView {
         (start, start + self.records.len() * std::mem::size_of::<LaneInstruction>())
     }
 
+    #[inline]
     pub(super) fn records(&self) -> Ip {
         std::cell::UnsafeCell::raw_get(self.records.as_ptr()).cast_const()
     }
@@ -1265,7 +1266,7 @@ enum ActivationKind {
 
 impl Activation {
     /// The frame state of a JavaScript activation; `None` for Wasm.
-    fn script(&self) -> Option<&ScriptActivation> {
+    #[inline] fn script(&self) -> Option<&ScriptActivation> {
         match &self.kind {
             ActivationKind::Script(script) => Some(script),
             ActivationKind::Wasm { .. } => None,
@@ -1281,6 +1282,7 @@ impl Activation {
         }
     }
 
+    #[inline]
     fn frame_storage_bytes(&self) -> usize {
         match self.kind {
             ActivationKind::Script(_) => 0,
@@ -1392,7 +1394,7 @@ impl Completion {
     /// The completion of an activation a `new` made or not, of the caller's program or not,
     /// of a target whose return settles its call's promise or not. Only a plain call of the
     /// caller's program settles one (`lane_script_call_settles`).
-    fn of(constructs: bool, cross: bool, settles: bool) -> Self {
+    #[inline] fn of(constructs: bool, cross: bool, settles: bool) -> Self {
         debug_assert!(!settles || !constructs && !cross, "only a plain call of its own program settles");
         match (constructs, cross, settles) {
             (false, false, true) => Self::SettlesPromise,
@@ -1405,12 +1407,12 @@ impl Completion {
 
     /// Whether a `new` made the activation, whose completion substitutes its receiver for a
     /// non-object result.
-    fn constructs(self) -> bool {
+    #[inline] fn constructs(self) -> bool {
         matches!(self, Self::Constructs | Self::CrossConstructs | Self::ConstructsToBody)
     }
 
     /// Whether the activation's return makes the caller's program the lane's again.
-    fn crosses(self) -> bool {
+    #[inline] fn crosses(self) -> bool {
         matches!(self, Self::Cross | Self::CrossConstructs)
     }
 }
@@ -1542,7 +1544,7 @@ impl CallEntry {
     }
 
     /// The leaf entry of a body whose records read the context as `form` says.
-    fn leaf(form: LeafForm) -> Self {
+    #[inline] fn leaf(form: LeafForm) -> Self {
         match form {
             CONTEXT_LEAF => Self::ContextLeaf,
             CAPTURE_LEAF => Self::CaptureLeaf,
@@ -7265,11 +7267,14 @@ script_handler! {
 }
 
 script_handler! {
-    /// An own-field store at a site past one shape that adds nothing (`lane_set_field_miss`):
+    /// An own-field store at a site past one shape (`lane_set_field_miss`):
     /// the slot its megamorphic entries record for the receiver's shape
     /// (`Vm::polymorphic_own_field_store_hit`), as a parser's `this.pos =` reads a parser
-    /// whose shape grows while it runs. A miss takes the general cached write, and moves
-    /// there for good once the site adds properties.
+    /// whose shape grows while it runs. A miss takes the general cached write.
+    ///
+    /// A site that also adds (splay's `Node.prototype.left = null` gives `.left =` four receiver
+    /// shapes, one of them without the property): a miss takes the proved add
+    /// (`Vm::proved_field_add_hit`, one of the site's add entries) before the general write.
     #[inline(never)]
     fn lane_set_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -7285,9 +7290,11 @@ script_handler! {
                 })
         });
         if !stored {
-            let general: Handler = if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> };
-            if unsafe { vm(cx) }.field_site_adds(i.c) {
-                requicken::<H>(ip, general);
+            let vm = unsafe { vm(cx) };
+            if object.is_some_and(|object| vm.proved_field_add_hit(object, i.imm(), r.get(i.a), i.c)) {
+                // Adding a property can allocate.
+                note_allocation(vm);
+                next!(cx, r, following(ip), Carried::script(cx))
             }
             if THIS {
                 sibling!(lane_set_this_field::<H>, r, ip, Carried::script(cx))
@@ -7316,7 +7323,7 @@ script_handler! {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
-        } else if polymorphic && !adds && !cell_receiver {
+        } else if polymorphic && !cell_receiver {
             Some(lane_set_field_polymorphic::<H, THIS>)
         } else if adds || polymorphic {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
@@ -13267,6 +13274,7 @@ impl<H: Host> Vm<H> {
     /// a new cell or a raised error: a dense `push` or `pop`, `charCodeAt`, an ASCII `charAt`,
     /// a collection lookup, `Array.isArray`. `None` leaves the call to the native itself, whose
     /// own steps begin with the same cases.
+    #[inline(always)]
     fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let first = args.first().copied();
         match native {
@@ -13276,6 +13284,7 @@ impl<H: Host> Vm<H> {
             Native::StringCharAt => string_char_at_ascii(self, receiver, first?),
             Native::MapGet | Native::MapHas | Native::SetHas | Native::WeakMapGet | Native::WeakMapHas
             | Native::WeakSetHas => self.pure_collection_lookup(native, receiver, first.unwrap_or(Value::UNDEFINED)),
+            Native::MapSet if self.map_set(receiver, args) => Some(receiver),
             Native::ArrayIsArray => self.steady_is_array(first.unwrap_or(Value::UNDEFINED))
                 .map(|holds| if holds { Value::TRUE } else { Value::FALSE }),
             _ => None,

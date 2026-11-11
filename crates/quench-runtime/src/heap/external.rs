@@ -23,7 +23,7 @@ impl Cell {
 }
 
 /// Element storage an array owns.
-pub(super) fn array_payload_bytes(array: &super::ArrayObject) -> usize {
+#[inline] pub(super) fn array_payload_bytes(array: &super::ArrayObject) -> usize {
     array.elements().capacity() * size_of::<super::Value>()
 }
 

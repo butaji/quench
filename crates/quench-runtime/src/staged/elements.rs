@@ -50,7 +50,7 @@ pub(crate) fn replace_uncounted_element<S: Stage>(stage: &mut S, address: S::Wor
 pub(crate) fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, capacity: S::Word,
     index: S::Word, value: S::Word, miss: S::Miss) -> Option<S::Word> {
     let past = stage.sub(index, length);
-    let at_end = stage.eq_imm(past, 0);
+    let at_end = stage.eq_imm(past, 0u32);
     stage.guard(at_end, miss)?;
     let room = stage.ult(length, capacity);
     stage.guard(room, miss)?;
@@ -62,7 +62,7 @@ pub(crate) fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S
     let others = recount(stage, others, added, none);
     stage.store_u32(values, crate::heap::OTHERS_FROM_VALUES, others);
     stage.store_u64(address, 0, value);
-    let grown = stage.add_imm(length, 1);
+    let grown = stage.add_imm(length, 1u32);
     let word = stage.uextend32(grown);
     stage.store_u32(values, crate::heap::LENGTH_FROM_VALUES, word);
     Some(grown)

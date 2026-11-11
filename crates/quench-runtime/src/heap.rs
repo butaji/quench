@@ -905,7 +905,7 @@ impl Heap {
         self.set_young_budget(self.pacing().minimum_young);
         self.external_collection_budget = self.pacing().minimum_external_budget;
     }
-    pub(crate) fn memory_policy(&self) -> MemoryPolicy {
+    #[inline] pub(crate) fn memory_policy(&self) -> MemoryPolicy {
         self.memory_policy
     }
     fn pacing(&self) -> pacing::GenerationalPacing {
@@ -1113,7 +1113,7 @@ impl Heap {
         })
     }
 
-    pub(crate) fn mark_prototype(&mut self, prototype: Value) {
+    #[inline] pub(crate) fn mark_prototype(&mut self, prototype: Value) {
         if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
         }
@@ -2036,6 +2036,7 @@ impl Heap {
         self.allocated += text.beside / payload_unit();
     }
 
+    #[inline]
     pub fn should_collect(&self) -> bool {
         self.allocated >= self.collect_at
     }
@@ -3606,6 +3607,13 @@ impl Heap {
     pub(crate) unsafe fn property_get_flat(&self, object: &Object, slot: usize) -> Value {
         // SAFETY: the caller proves the exact slot exists.
         unsafe { read_exact_slot(object, &self.properties, slot) }
+    }
+    /// The own field a hint (`shape`, `slot`) proves of `object`, `None` on another exact shape.
+    /// # Safety
+    /// As for `property_get_flat`, where the shape matches.
+    #[inline(always)]
+    pub(crate) unsafe fn own_field_hit(&self, object: &Object, shape: u32, slot: u16) -> Option<Value> {
+        unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) }
     }
     /// `property_get_flat` of a prototype holder, whose values usually live behind extras
     /// (`Object::extras_storage_start`), read without first testing the forms a holder

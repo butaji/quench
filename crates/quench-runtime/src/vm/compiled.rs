@@ -76,7 +76,7 @@ use lane_allocations::{lane_binary, lane_new_array, lane_new_object, lane_new_ob
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
 #[path = "compiled/lane_facts.rs"]
-mod lane_facts;
+pub(in crate::vm) mod lane_facts;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
 mod static_loops;
@@ -6199,7 +6199,7 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
 }
 
 /// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
-pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
+#[inline] pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
     tier_policy::by_policy(policy).js_function_tiers
 }
 
@@ -12521,7 +12521,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.execution_mode = mode;
+        self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
     }
 
     /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).

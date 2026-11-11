@@ -136,6 +136,12 @@ impl JsString {
         }))
     }
 
+    /// ASCII text of `length` bytes that `fill` writes in place (`FlatUnits::ascii_with`):
+    /// `fill` must write every byte it is given.
+    pub(in crate::vm) fn from_ascii_filled(length: usize, fill: impl FnOnce(&mut [MaybeUninit<u8>])) -> Self {
+        Self::from_flat(FlatUnits::ascii_with(length, fill))
+    }
+
     /// Whether `length` units are copied whole into a joined string (`concat_all`).
     pub(in crate::vm) fn copies_whole(length: usize) -> bool {
         length <= ROPE_LEAF_MAX_UNITS
