@@ -19,6 +19,8 @@ pub(in crate::vm) struct LaneBodyStats {
     leaves: std::cell::RefCell<Vec<(String, u32)>>,
     /// Entries of the specialized body that ran in the lane instead (`lane_body_admits`).
     pub(in crate::vm) refused: std::cell::Cell<u32>,
+    /// Why its body declined (`decline`).
+    pub(in crate::vm) declined: std::cell::Cell<&'static str>,
 }
 
 impl LaneBodyStats {
@@ -174,7 +176,7 @@ static UNLOWERED: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(V
 
 /// Counts one instruction of `op` that a lane body compile hands back to the lane.
 pub(in crate::vm) fn unlowered(op: impl std::fmt::Debug) {
-    let name = format!("{op:?}");
+    let name = format!("f{} {op:?}", LOWERING.with(std::cell::Cell::get));
     let mut counts = UNLOWERED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     match counts.iter_mut().find(|(known, _)| *known == name) {
         Some((_, count)) => *count += 1,
@@ -188,3 +190,17 @@ pub(in crate::vm) fn unlowered_report() -> String {
     let fields = counts.iter().map(|(name, count)| format!("\"{name}\":{count}")).collect::<Vec<_>>().join(",");
     format!("QUENCH_LANE_UNLOWERED {{{fields}}}")
 }
+
+thread_local! { static DECLINE: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") }; }
+
+/// Names why the decision in progress declines a body, which the view's `LaneBody::Declined`
+/// keeps for the diagnostics report (`QUENCH_LANE_STATE`).
+pub(in crate::vm) fn decline(reason: &'static str) { DECLINE.with(|cell| if cell.get().is_empty() { cell.set(reason) }); }
+
+/// The last `decline` reason, cleared.
+pub(in crate::vm) fn take_decline() -> &'static str { DECLINE.with(|cell| cell.replace("")) }
+
+thread_local! { static LOWERING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) }; }
+
+/// The function whose body the compile in progress lowers, which `unlowered` names.
+pub(in crate::vm) fn lowering_function(function: u32) { LOWERING.with(|cell| cell.set(function)); }
