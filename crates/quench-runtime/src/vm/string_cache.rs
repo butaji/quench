@@ -3,10 +3,11 @@ use super::*;
 /// The parts a `StringConcat` converts without a heap list: a template of up to four
 /// substitutions and their text.
 const STRING_CONCAT_INLINE_PARTS: usize = 9;
+/// The most text a string of parts may hold in its known parts (regexp -3% at 256, flat at 64):
+/// past it the copy a flat concatenation makes costs more than its record saves, and a string
+/// read soon is copied twice.
+const PARTS_KNOWN_LIMIT: usize = 64;
 /// The most parts `string_of_parts` reads before it knows the window is too long for it.
-/// The most text a string of parts may hold in its known parts: past it the copy a flat
-/// concatenation makes costs more than its record saves, and a string read soon is copied twice.
-const PARTS_KNOWN_LIMIT: usize = 256;
 const PARTS_PROBED: usize = super::wtf16::MAX_PARTS + 1;
 
 impl<H: Host> Vm<H> {
