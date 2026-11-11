@@ -75,6 +75,7 @@ use lane_allocations::{lane_binary, lane_new_array, lane_new_object, lane_new_ob
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
+#[path = "compiled/general_tier_queries.rs"] mod general_tier_queries;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
@@ -920,25 +921,18 @@ pub(super) fn emit_dense_array_view(
     writable: bool,
     fallback: ir::Block,
 ) -> DenseArrayView {
-    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
-
-    let record = emit_array_record(builder, payload, base, fallback);
-    let header = emit_array_header(builder, record);
-    let length = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_length_offset as i32);
+    let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
+        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
+    let mut stage = object_slots::Emit { builder, property_values: None };
+    let backing = crate::staged::elements::array_backing(&mut stage, record_base, base, fallback)
+        .expect("the emit stage continues past its guards");
+    let crate::staged::elements::Backing { values, length, .. } = backing;
     if writable {
-        let owners = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_owners_offset as i32);
-        let unique = builder.ins().icmp_imm_u(IntCC::Equal, owners, 1);
-        emit_js_guard(builder, unique, fallback);
-        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), record,
-            (ARRAY.object_offset + OBJECT.meta_offset) as i32);
-        let frozen = builder.ins().band_imm_u(meta, i64::from(ARRAY.frozen_mask));
-        let unfrozen = builder.ins().icmp_imm_u(IntCC::Equal, frozen, 0);
-        emit_js_guard(builder, unfrozen, fallback);
-        let extras = emit_array_extras(builder, record);
-        let plain = builder.ins().icmp_imm_u(IntCC::Equal, extras, 0);
-        emit_js_guard(builder, plain, fallback);
+        crate::staged::elements::writable_backing(&mut stage, backing, fallback)
+            .expect("the emit stage continues past its guards");
     }
-    let values = builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64);
+    // The view's length is an `i32`, the width an int32 index has.
+    let length = builder.ins().ireduce(types::I32, length);
     DenseArrayView { values, length, writable, uncounted: false }
 }
 
@@ -6199,7 +6193,7 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
 }
 
 /// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
-pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
+#[inline] pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
     tier_policy::by_policy(policy).js_function_tiers
 }
 
@@ -12521,7 +12515,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.execution_mode = mode;
+        self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
     }
 
     /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).
@@ -12578,8 +12572,7 @@ impl<H: Host> Vm<H> {
         // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim
         // costs a short call-free one its leaf calls. A function the numeric tier cannot take
         // is still theirs to claim.
-        let lane_claims = self.programs.js_jit_lane_methods_enabled() && (facts.has_calls
-            || program.function_get(function as usize).is_some_and(|body| body.loops() || body.code.len() >= TIERS.lane_body.min_instructions));
+        let lane_claims = self.lane_body_claims(program, function, &facts);
         if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
             return lane_claims || self.programs.js_jit_diagnostics_enabled();
         }
@@ -12592,47 +12585,10 @@ impl<H: Host> Vm<H> {
         candidate || self.js_general_tier_takes(program, function, &facts) || lane_claims
     }
 
-    /// Whether the general baseline may take `function`: a general candidate the tier admits
-    /// (`ProgramStore::general_tier_admits`). Every general-tier path on entry asks this
-    /// first, so a function it may not take costs those paths nothing.
-    fn js_general_tier_takes(
-        &self,
-        program: &ResidualProgram,
-        function: u32,
-        facts: &super::js_compiled::JsEntryFacts,
-    ) -> bool {
-        facts.general
-            && program.function_get(function as usize).is_some_and(|body| {
-                self.programs
-                    .general_tier_admits(body.code.len(), facts.general_acyclic, self.memory_policy())
-            })
-    }
-
-    /// Whether the general tier holds `function`: pending, due or compiled.
-    pub(super) fn js_tier_holds_for_general(&self, id: ProgramId, function: u32) -> bool {
-        match self.programs.js_tier(id, function) {
-            Some(
-                super::program_store::JsTierState::GeneralPromotionPending { .. }
-                | super::program_store::JsTierState::GeneralCompileDue,
-            ) => true,
-            Some(super::program_store::JsTierState::Compiled(compiled)) => compiled.is_general_dispatch(),
-            _ => false,
-        }
-    }
-
-    /// Whether a lane-entered frame must hand control to the general frame
-    /// loop so a pending or installed generic native region can run there.
-    pub(super) fn js_tier_needs_general_entry(&self, id: ProgramId, function: u32) -> bool {
-        // A lane that completed (`Vm::lane_returned`) or raised (`Vm::lane_raised`) at the
-        // instruction it stopped at leaves only that outcome: the tier would run it again.
-        if self.lane_returned.is_some() || self.lane_raised.is_some() { return false; }
-        match self.programs.js_tier(id, function) {
-            Some(super::program_store::JsTierState::GeneralCompileDue) => true,
-            Some(super::program_store::JsTierState::Compiled(compiled)) => {
-                compiled.is_general_dispatch()
-            }
-            _ => false,
-        }
+    /// Whether lane bodies may claim `function`: it has calls, loops, or enough instructions.
+    fn lane_body_claims(&self, program: &ResidualProgram, function: u32, facts: &super::js_compiled::JsEntryFacts) -> bool {
+        self.programs.js_jit_lane_methods_enabled()
+            && (facts.has_calls || program.function_get(function as usize).is_some_and(|body| body.loops() || body.code.len() >= TIERS.lane_body.min_instructions))
     }
 
     /// Notes an entry of `function` with the general tier where the tier observes it: a

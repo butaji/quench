@@ -765,7 +765,10 @@ pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) ->
     if let Some(value) = bitwise_value_operator::<OP>(left, right) {
         return Some(value);
     }
-    let (left, right) = Value::number_pair(left, right).or_else(|| immediate_number_pair(left, right))?;
+    let (left, right) = match Value::number_pair(left, right) {
+        Some(pair) => pair,
+        None => immediate_number_pair(left, right)?,
+    };
     number_operator::<OP>(left, right).map(Value::number)
 }
 

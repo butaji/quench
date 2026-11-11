@@ -42,7 +42,7 @@ pub(super) fn set(table: &mut Vec<u32>, index: u32, entry: u32, vacant: u32) {
 }
 
 impl StringAtoms {
-    pub(super) fn forget(&mut self, record_id: u32) {
+    #[inline] pub(super) fn forget(&mut self, record_id: u32) {
         self.hashes.forget(record_id);
         let Some(atom) = self.atoms.get_mut().get_mut(record_id as usize).map(|atom| std::mem::replace(atom, UNKNOWN))
         else {

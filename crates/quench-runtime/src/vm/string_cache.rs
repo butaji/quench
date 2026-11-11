@@ -101,30 +101,32 @@ impl<H: Host> Vm<H> {
     /// for any other parts.
     #[inline(always)]
     pub(super) fn string_of_parts(&mut self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<Value> {
-        let mut parts = smallvec::SmallVec::<[super::wtf16::Part; super::wtf16::MAX_PARTS]>::new();
+        let mut parts = super::wtf16::Parts::EMPTY;
         let (mut known, mut numbers) = (0, 0);
         for index in 0..count.min(PARTS_PROBED) {
             let value = part(self, index);
-            match value.direct_string_index() {
+            let pushed = match value.direct_string_index() {
                 Some(record_id) => {
                     let text = self.heap.string(value)?;
                     if !text.existing_flat()?.is_ascii() {
                         return None;
                     }
                     known += text.len();
-                    parts.push(super::wtf16::Part::Text(record_id));
+                    parts.push_text(record_id)
                 }
                 None => {
                     numbers += 1;
-                    parts.push(super::wtf16::Part::Number(value.as_number()?));
+                    parts.push_number(value.as_number()?)
                 }
+            };
+            if !pushed {
+                return None;
             }
         }
-        if known + numbers <= wtf16::SHORT_ASCII_CAPACITY || known >= PARTS_KNOWN_LIMIT {
+        if !parts.is_complete() || known + numbers <= wtf16::SHORT_ASCII_CAPACITY || known >= PARTS_KNOWN_LIMIT {
             return None;
         }
-        let parts = super::wtf16::Parts::new(&parts)?;
-        Some(self.heap.alloc_string(JsString::from_parts(parts)))
+        Some(self.heap.alloc_parts_string(parts))
     }
 
     /// `StringConcat` of `count` parts that `part` reads by position, each read when it is

@@ -13,6 +13,14 @@
 use std::cell::RefCell;
 use std::ops::Range;
 
+mod dispatch;
+pub mod native;
+mod scan;
+mod workspace;
+use dispatch::Dispatch;
+use native::NativeSlot;
+use workspace::{AnchoredRun, ClassRun, anchored_run_of, class_run_of};
+
 use super::{
     canonical, canonical_preimages_of, class_is_single_unit, class_item_matches, class_matches, equal, escape_matches, is_line_terminator, is_word_mode, merge_flags,
     literal_finder, Assertion, Backreference, ClassExpr, ClassItem, ClassKind, Expr, Flags, LiteralFinder, Lookaround,
@@ -436,6 +444,11 @@ enum Inst {
         alternative: u32,
         guard: u32,
     },
+    /// An alternation's branches, each beginning with known units: continue at the first
+    /// branch `Program::dispatches[table]` finds for the unit, the others being choices.
+    Dispatch {
+        table: u32,
+    },
     Jump(u32),
     /// A group's start into its temporary register: with a restore entry where the group
     /// may run again on one path (`Compiler::repeated`), plainly elsewhere, as the group's
@@ -542,13 +555,6 @@ pub(crate) struct Found {
     pub(crate) captures: Vec<Option<Range<usize>>>,
 }
 
-/// Registers and stack reused across searches.
-#[derive(Default)]
-struct Workspace {
-    registers: Vec<usize>,
-    stack: Vec<Frame>,
-}
-
 pub(crate) struct Program {
     instructions: Box<[Inst]>,
     sets: Box<[MatchSet]>,
@@ -556,6 +562,7 @@ pub(crate) struct Program {
     lists: Box<[u32]>,
     /// The starts of guarded bodies, for `GuardedSplit`.
     guards: Box<[MatchStarts]>,
+    dispatches: Box<[Dispatch]>,
     capture_count: usize,
     register_count: usize,
     /// Where matches can start; `None` where any position can.
@@ -585,22 +592,24 @@ pub(crate) struct Program {
     /// prefix holds this only in an ASCII subject, whose units have no other case forms
     /// (the Kelvin sign and long s are past ASCII); other subjects run the program.
     literal_length: Option<usize>,
-}
-
-thread_local! {
-    /// The registers and stack of the running search. A search never starts another, so
-    /// every program on a thread shares one workspace, sized by the largest search so far.
-    static WORKSPACE: RefCell<Workspace> = RefCell::default();
+    /// The unit test a pattern of one unbounded greedy `+` repeat is (`class_run_of`).
+    class_run: Option<Box<ClassRun>>,
+    /// The whole-subject test a pattern of one unit repeat between anchors is (`anchored_run_of`).
+    anchored_run: Option<AnchoredRun>,
+    /// The program's native search once it is hot (`native::NativeSlot`).
+    native: NativeSlot,
 }
 
 /// The compiled form of a construct this matcher does not run.
 struct Unsupported;
 
+#[derive(Default)]
 struct Compiler {
     instructions: Vec<Inst>,
     sets: Vec<MatchSet>,
     lists: Vec<u32>,
     guards: Vec<MatchStarts>,
+    dispatches: Vec<Dispatch>,
     registers: u32,
     /// Bodies being compiled that one path may run more than once, or whose registers a
     /// caller keeps across their run: loops with more than one iteration and lookarounds.
@@ -684,24 +693,7 @@ impl Compiler {
                     self.compile(part, flags)?;
                 }
             }
-            Expr::Alternation(alternatives) => {
-                let mut exits = Vec::new();
-                for (index, alternative_expr) in alternatives.iter().enumerate() {
-                    let last = index + 1 == alternatives.len();
-                    let split = (!last).then(|| self.emit(Inst::Split { alternative: 0 }));
-                    self.compile(alternative_expr, flags)?;
-                    if let Some(split) = split {
-                        exits.push(self.emit(Inst::Jump(0)));
-                        let alternative = self.pc();
-                        self.instructions[split as usize] =
-                            self.split(alternative, alternative_expr, flags);
-                    }
-                }
-                let end = self.pc();
-                for exit in exits {
-                    self.instructions[exit as usize] = Inst::Jump(end);
-                }
-            }
+            Expr::Alternation(alternatives) => self.alternation(alternatives, flags)?,
             Expr::Capture { index, body } => {
                 let capture = u32::try_from(*index).map_err(|_| Unsupported)?;
                 let temporary = self.register();
@@ -1084,42 +1076,13 @@ impl StartRanges {
     /// The offset of `haystack`'s first unit in a range, `table` deciding the units after the
     /// last whole block.
     fn find(self, haystack: &[u8], admits: impl Fn(u8) -> bool) -> Option<usize> {
-        let admits = |unit: &u8| admits(*unit);
-        // A near start, as between words, is found before the block scan's set-up pays.
-        let near = haystack.len().min(SCAN_BLOCK);
-        if let Some(found) = haystack[..near].iter().position(admits) {
-            return Some(found);
+        if haystack.len() < SCAN_BLOCK {
+            return haystack.iter().position(|unit| admits(*unit));
         }
-        let offset = near;
         #[cfg(target_arch = "x86_64")]
-        // SAFETY: SSE2 is part of the x86-64 baseline, and each load reads a whole block
-        // inside `haystack`.
-        let offset = unsafe {
-            let mut offset = offset;
-            use std::arch::x86_64::{
-                __m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_max_epu8, _mm_min_epu8, _mm_movemask_epi8,
-                _mm_or_si128, _mm_set1_epi8, _mm_setzero_si128,
-            };
-            let bounds: [(__m128i, __m128i); START_SCAN_RANGES] = std::array::from_fn(|range| {
-                (_mm_set1_epi8(self.low[range] as i8), _mm_set1_epi8(self.high[range] as i8))
-            });
-            while offset + SCAN_BLOCK <= haystack.len() {
-                let block = _mm_loadu_si128(haystack.as_ptr().add(offset).cast());
-                let mut hits = _mm_setzero_si128();
-                for (low, high) in &bounds[..self.count] {
-                    // A unit is in `low..=high` exactly when clamping it there leaves it.
-                    let clamped = _mm_min_epu8(_mm_max_epu8(block, *low), *high);
-                    hits = _mm_or_si128(hits, _mm_cmpeq_epi8(clamped, block));
-                }
-                let mask = _mm_movemask_epi8(hits) as u32;
-                if mask != 0 {
-                    return Some(offset + mask.trailing_zeros() as usize);
-                }
-                offset += SCAN_BLOCK;
-            }
-            offset
-        };
-        haystack[offset..].iter().position(admits).map(|found| offset + found)
+        return self.find_blocks(haystack);
+        #[cfg(not(target_arch = "x86_64"))]
+        haystack.iter().position(|unit| admits(*unit))
     }
 }
 
@@ -1365,14 +1328,7 @@ fn nullable(expr: &Expr) -> bool {
 impl Program {
     /// The program for `expr`, or `None` when it uses a construct this matcher does not run.
     pub(crate) fn compile(expr: &Expr, flags: Flags, capture_count: usize) -> Option<Self> {
-        let mut compiler = Compiler {
-            instructions: Vec::new(),
-            sets: Vec::new(),
-            lists: Vec::new(),
-            guards: Vec::new(),
-            registers: u32::try_from(2 * capture_count).ok()?,
-            repeated: 0,
-        };
+        let mut compiler = Compiler { registers: u32::try_from(2 * capture_count).ok()?, ..Compiler::default() };
         compiler.compile(expr, flags).ok()?;
         compiler.emit(Inst::Match);
         let mut prefix = Vec::new();
@@ -1385,17 +1341,18 @@ impl Program {
                 && compiler.instructions[..prefix.len()].iter().all(|instruction| matches!(instruction, Inst::Unit(_)))
         });
         Some(Self {
+            class_run: class_run_of(&compiler.instructions, &compiler.sets, capture_count),
+            anchored_run: anchored_run_of(&compiler.instructions, capture_count),
+            native: NativeSlot::default(),
             instructions: compiler.instructions.into_boxed_slice(),
             sets: compiler.sets.into_boxed_slice(),
             lists: compiler.lists.into_boxed_slice(),
             guards: compiler.guards.into_boxed_slice(),
+            dispatches: compiler.dispatches.into_boxed_slice(),
             capture_count,
             register_count: compiler.registers as usize,
             anchored,
-            anchored_first: anchored
-                .then(|| anchored_first_units(expr, flags))
-                .flatten()
-                .map(|units| Box::new(MatchSet::from(units))),
+            anchored_first: anchored.then(|| anchored_first_units(expr, flags)).flatten().map(|units| Box::new(MatchSet::from(units))),
             scan: starts.as_ref().map_or(AsciiScan::Nothing, |starts| AsciiScan::of(starts.units.ascii)),
             starts: starts.map(MatchStarts::from),
             literal_length: (whole_literal && capture_count == 0 && !prefix.is_empty()).then_some(prefix.len()),
@@ -1489,6 +1446,22 @@ impl Program {
         self.find(text, first, sticky, false).map(|found| found.start..found.end)
     }
 
+    /// Where a run of a search from `first` starts, once the start scan has found it: `None`
+    /// where no run can match (`next_start`, and an anchored pattern's first units).
+    #[inline(always)]
+    fn run_start<T: Text + ?Sized>(&self, text: &T, first: usize, sticky: bool) -> Option<(usize, Search)> {
+        let search = Search { last: if sticky { first } else { text.len() } };
+        let start = self.next_start(text, first, search.last)?;
+        // An anchored search has the one start, which a first unit outside the anchored
+        // pattern's first units fails before a run.
+        if let Some(units) = &self.anchored_first {
+            if start >= text.len() || !units.contains(text.unit(start)) {
+                return None;
+            }
+        }
+        Some((start, search))
+    }
+
     /// `find`, with the captures of a match built from its registers by `captures`.
     #[inline(always)]
     fn search<T: Text + ?Sized>(
@@ -1506,34 +1479,11 @@ impl Program {
                 captures: Vec::new(),
             });
         }
-        let search = Search {
-            last: if sticky { first } else { text.len() },
-        };
-        let start = self.next_start(text, first, search.last)?;
-        // An anchored search has the one start, which a first unit outside the anchored
-        // pattern's first units fails before a run.
-        if let Some(units) = &self.anchored_first {
-            if start >= text.len() || !units.contains(text.unit(start)) {
-                return None;
-            }
+        if let Some(found) = self.class_run_found(text, first, sticky).or_else(|| self.anchored_run_found(text, first)) {
+            return found;
         }
-        WORKSPACE.with_borrow_mut(|workspace| {
-            let Workspace { registers, stack } = &mut *workspace;
-            // A failed run restores every register it set, so one reset serves every start.
-            registers.clear();
-            registers.resize(self.register_count, UNSET);
-            stack.clear();
-            stack.push(Frame::Barrier);
-            let (pc, position) = self.entry(text, start);
-            let at = (pc, start, position);
-            let (start, end) = self.run(text, at, Some(search), registers, stack)?;
-            let captures = captures(registers);
-            Some(Found {
-                start,
-                end,
-                captures,
-            })
-        })
+        let (start, search) = self.run_start(text, first, sticky)?;
+        self.run_in_workspace(text, start, search, captures)
     }
 
     /// The pc and position a run from the search start `start` (`next_start`) begins at:
@@ -1642,11 +1592,8 @@ impl Program {
                     max,
                     greedy,
                 } => {
-                    let ceiling = if max == UNBOUNDED {
-                        length
-                    } else {
-                        position.saturating_add(max as usize).min(length)
-                    };
+                    // `UNBOUNDED` exceeds any subject's length, so the minimum is then `length`.
+                    let ceiling = position.saturating_add(max as usize).min(length);
                     let floor = position + min as usize;
                     if floor > length {
                         false
@@ -1694,25 +1641,17 @@ impl Program {
                     }
                 }
                 Inst::Split { alternative } => {
-                    stack.push(Frame::Choice {
-                        pc: alternative,
-                        position,
-                    });
+                    stack.push(Frame::Choice { pc: alternative, position });
                     pc += 1;
                     true
                 }
                 Inst::GuardedSplit { alternative, guard } => {
-                    if self.guards[guard as usize].admits(text, position) {
-                        stack.push(Frame::Choice {
-                            pc: alternative,
-                            position,
-                        });
-                        pc += 1;
-                    } else {
-                        pc = alternative;
-                    }
+                    let admitted = self.guards[guard as usize].admits(text, position);
+                    stack.extend(admitted.then_some(Frame::Choice { pc: alternative, position }));
+                    pc = if admitted { pc + 1 } else { alternative };
                     true
                 }
+                Inst::Dispatch { table } => self.dispatch_target(table, text, position, stack).map(|target| pc = target).is_some(),
                 Inst::Jump(target) => {
                     pc = target;
                     true

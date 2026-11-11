@@ -692,7 +692,7 @@ impl Heap {
 
     /// An ordinary object (`Cell::Object`, or a promise, whose internal slots change no
     /// object operation), whether it lives in the object record space or a legacy slot.
-    pub(crate) fn ordinary_object(&self, value: Value) -> Option<&Object> {
+    #[inline] pub(crate) fn ordinary_object(&self, value: Value) -> Option<&Object> {
         match self.object_record(value) {
             Some(object) => Some(object),
             None => match self.promise(value) {
@@ -705,7 +705,7 @@ impl Heap {
         }
     }
 
-    pub(crate) fn object_record(&self, value: Value) -> Option<&Object> {
+    #[inline] pub(crate) fn object_record(&self, value: Value) -> Option<&Object> {
         let record_id = value.direct_object_index()?;
         Some(self.object_record_by_id(record_id))
     }

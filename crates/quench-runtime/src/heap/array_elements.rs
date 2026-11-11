@@ -296,12 +296,12 @@ impl ArrayElements {
     }
 
     /// The backing's identity, which arrays that share it have in common.
-    pub(crate) fn as_ptr(&self) -> *const () {
+    #[inline] pub(crate) fn as_ptr(&self) -> *const () {
         self.header.as_ptr().cast()
     }
 
     /// The owners of this backing; zero for the shared empty one and young runs.
-    pub(crate) fn owner_count(&self) -> usize {
+    #[inline] pub(crate) fn owner_count(&self) -> usize {
         self.header().owners as usize
     }
 
@@ -441,7 +441,7 @@ impl PartialEq for ArrayElements {
 }
 
 impl UniqueElements {
-    fn set_others(&mut self, others: u32) {
+    #[inline] fn set_others(&mut self, others: u32) {
         if self.0.capacity() != 0 {
             // SAFETY: a unique backing with a capacity is this array's own allocation.
             unsafe { (*self.0.header.as_ptr()).others = others };
@@ -489,7 +489,7 @@ impl UniqueElements {
         self.0.values()
     }
 
-    fn set_len(&mut self, len: usize) {
+    #[inline] fn set_len(&mut self, len: usize) {
         debug_assert!(len <= self.0.capacity());
         if self.0.capacity() != 0 {
             // SAFETY: a unique backing with a capacity is this array's own allocation.

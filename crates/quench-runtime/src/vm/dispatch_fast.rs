@@ -574,7 +574,7 @@ const WINDOW_STORAGE: u16 = 3;
 pub(super) const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
 
 impl EnvironmentWindow {
-    fn captured(self, slot: usize) -> bool {
+    #[inline] fn captured(self, slot: usize) -> bool {
         self.captured & 1 << slot != 0
     }
 }
@@ -614,6 +614,7 @@ mod list_calls;
 mod loop_runs;
 mod root_calls; #[cfg(test)] pub(super) use root_calls::call_from_script_root_in_frames;
 mod unary_values;
+mod lane_capture_store; use lane_capture_store::{lane_capture_store, lane_environment_store};
 use unary_values::lane_unary_value;
 use list_calls::{lane_apply_activation, lane_list_activation, lane_spread_native_call};
 
@@ -1019,7 +1020,7 @@ impl LaneView {
         (start, start + self.records.len() * std::mem::size_of::<LaneInstruction>())
     }
 
-    pub(super) fn records(&self) -> Ip {
+    #[inline] pub(super) fn records(&self) -> Ip {
         std::cell::UnsafeCell::raw_get(self.records.as_ptr()).cast_const()
     }
 
@@ -1265,7 +1266,7 @@ enum ActivationKind {
 
 impl Activation {
     /// The frame state of a JavaScript activation; `None` for Wasm.
-    fn script(&self) -> Option<&ScriptActivation> {
+    #[inline] fn script(&self) -> Option<&ScriptActivation> {
         match &self.kind {
             ActivationKind::Script(script) => Some(script),
             ActivationKind::Wasm { .. } => None,
@@ -1281,7 +1282,7 @@ impl Activation {
         }
     }
 
-    fn frame_storage_bytes(&self) -> usize {
+    #[inline] fn frame_storage_bytes(&self) -> usize {
         match self.kind {
             ActivationKind::Script(_) => 0,
             ActivationKind::Wasm { frame_storage_bytes, .. } => frame_storage_bytes,
@@ -1392,7 +1393,7 @@ impl Completion {
     /// The completion of an activation a `new` made or not, of the caller's program or not,
     /// of a target whose return settles its call's promise or not. Only a plain call of the
     /// caller's program settles one (`lane_script_call_settles`).
-    fn of(constructs: bool, cross: bool, settles: bool) -> Self {
+    #[inline] fn of(constructs: bool, cross: bool, settles: bool) -> Self {
         debug_assert!(!settles || !constructs && !cross, "only a plain call of its own program settles");
         match (constructs, cross, settles) {
             (false, false, true) => Self::SettlesPromise,
@@ -1405,12 +1406,12 @@ impl Completion {
 
     /// Whether a `new` made the activation, whose completion substitutes its receiver for a
     /// non-object result.
-    fn constructs(self) -> bool {
+    #[inline] fn constructs(self) -> bool {
         matches!(self, Self::Constructs | Self::CrossConstructs | Self::ConstructsToBody)
     }
 
     /// Whether the activation's return makes the caller's program the lane's again.
-    fn crosses(self) -> bool {
+    #[inline] fn crosses(self) -> bool {
         matches!(self, Self::Cross | Self::CrossConstructs)
     }
 }
@@ -1542,7 +1543,7 @@ impl CallEntry {
     }
 
     /// The leaf entry of a body whose records read the context as `form` says.
-    fn leaf(form: LeafForm) -> Self {
+    #[inline] fn leaf(form: LeafForm) -> Self {
         match form {
             CONTEXT_LEAF => Self::ContextLeaf,
             CAPTURE_LEAF => Self::CaptureLeaf,
@@ -5273,50 +5274,6 @@ pub(super) unsafe fn lane_context_captures<H: Host>(context: usize) -> Option<(*
     }
 }
 
-/// The lane's store of `value` to the capture at `depth` and `slot` past the running
-/// function's dense slots (`lane_store_capture`): whether it stored, which a binding the
-/// direct store does not take (a `const`, an uninitialized `let`) does not.
-fn lane_capture_store<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, value: Value) -> bool {
-    let vm = unsafe { vm(cx) };
-    let env = unsafe { (*cx).env };
-    // A frame run's first depth-0 store finds its slots, tagged when they admit every
-    // store (reads leave them untagged: most frame runs store none), then stores through
-    // them.
-    if depth == 0
-        && env.is_deleted()
-        && let Some(capture) = lane_frame_capture(cx)
-    {
-        unsafe { (*cx).capture = capture };
-        if let Some(slots) = capture_stores(capture)
-            // SAFETY: the running function's dense capture slots, which admit this write
-            // (`CAPTURE_STORES`); no collection runs in the lane.
-            && unsafe { crate::heap::EnvironmentSlots::write_storage(slots, usize::from(slot), value) }.is_some()
-        {
-            return true;
-        }
-    }
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    let program = unsafe { (*cx).program };
-    // A frameless activation's function has no environment of its own: its depth-0
-    // capture is the environment it runs in, stored with one lookup.
-    if env.is_deleted() {
-        return vm.capture_env(unsafe { (*cx).frame }, depth)
-            .is_some_and(|target| vm.direct_store_environment(code, program, target, slot, value));
-    }
-    lane_environment_store(vm, code, program, env, depth, slot, value)
-}
-
-/// `lane_capture_store` of a function running in environment `env` without a frame: its
-/// depth-0 capture is `env` itself, stored with one lookup.
-fn lane_environment_store<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, program: ProgramId, env: Value, depth: u16, slot: u16, value: Value) -> bool {
-    if depth == 0 && vm.direct_store_own_environment(code, program, env, slot, value) {
-        return true;
-    }
-    vm.environment_capture_env(env, false, depth)
-        .is_some_and(|target| vm.direct_store_environment(code, program, target, slot, value))
-}
-
 /// The environment a running lane body's captures resolve in when it runs as a direct
 /// callee (`Vm::innermost_direct_callee`): its closure's, which no lane activation holds.
 fn lane_body_callee_env<H: Host>() -> Option<Value> {
@@ -7265,11 +7222,14 @@ script_handler! {
 }
 
 script_handler! {
-    /// An own-field store at a site past one shape that adds nothing (`lane_set_field_miss`):
+    /// An own-field store at a site past one shape (`lane_set_field_miss`):
     /// the slot its megamorphic entries record for the receiver's shape
     /// (`Vm::polymorphic_own_field_store_hit`), as a parser's `this.pos =` reads a parser
-    /// whose shape grows while it runs. A miss takes the general cached write, and moves
-    /// there for good once the site adds properties.
+    /// whose shape grows while it runs. A miss takes the general cached write.
+    ///
+    /// A site that also adds (splay's `Node.prototype.left = null` gives `.left =` four receiver
+    /// shapes, one of them without the property): a miss takes the proved add
+    /// (`Vm::proved_field_add_hit`, one of the site's add entries) before the general write.
     #[inline(never)]
     fn lane_set_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -7285,9 +7245,11 @@ script_handler! {
                 })
         });
         if !stored {
-            let general: Handler = if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> };
-            if unsafe { vm(cx) }.field_site_adds(i.c) {
-                requicken::<H>(ip, general);
+            let vm = unsafe { vm(cx) };
+            if object.is_some_and(|object| vm.proved_field_add_hit(object, i.imm(), r.get(i.a), i.c)) {
+                // Adding a property can allocate.
+                note_allocation(vm);
+                next!(cx, r, following(ip), Carried::script(cx))
             }
             if THIS {
                 sibling!(lane_set_this_field::<H>, r, ip, Carried::script(cx))
@@ -7316,7 +7278,7 @@ script_handler! {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
-        } else if polymorphic && !adds && !cell_receiver {
+        } else if polymorphic && !cell_receiver {
             Some(lane_set_field_polymorphic::<H, THIS>)
         } else if adds || polymorphic {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
@@ -13270,6 +13232,7 @@ impl<H: Host> Vm<H> {
     /// a new cell or a raised error: a dense `push` or `pop`, `charCodeAt`, an ASCII `charAt`,
     /// a collection lookup, `Array.isArray`. `None` leaves the call to the native itself, whose
     /// own steps begin with the same cases.
+    #[inline(always)]
     fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let first = args.first().copied();
         match native {
@@ -13279,6 +13242,7 @@ impl<H: Host> Vm<H> {
             Native::StringCharAt => string_char_at_ascii(self, receiver, first?),
             Native::MapGet | Native::MapHas | Native::SetHas | Native::WeakMapGet | Native::WeakMapHas
             | Native::WeakSetHas => self.pure_collection_lookup(native, receiver, first.unwrap_or(Value::UNDEFINED)),
+            Native::MapSet if self.map_set(receiver, args) => Some(receiver),
             Native::ArrayIsArray => self.steady_is_array(first.unwrap_or(Value::UNDEFINED))
                 .map(|holds| if holds { Value::TRUE } else { Value::FALSE }),
             _ => None,
