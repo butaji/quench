@@ -199,7 +199,7 @@ impl<'heap> ParallelMarkView<'heap> {
     }
 
     /// Pushes the elements a sparse `array` keeps beside its dense part.
-    fn sparse_elements(&self, array: Value, work: &mut Vec<Value>) {
+    #[inline] fn sparse_elements(&self, array: Value, work: &mut Vec<Value>) {
         if let Some(elements) = self.sparse_arrays.and_then(|arrays| arrays.get(&array)) {
             work.extend(elements.values.values().copied());
         }

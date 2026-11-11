@@ -196,7 +196,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         // A RegExp's `lastIndex`, made first, usually lies in its inline storage.
-        let inline = (slot < crate::value_vec::INLINE_PROPERTY_COUNT).then(|| object.inline_property(slot)).flatten();
+        let inline = if slot < crate::value_vec::INLINE_PROPERTY_COUNT { object.inline_property(slot) } else { None };
         let last_index = match inline {
             Some(value) => value,
             None => self.heap.property_get(object, slot)?,

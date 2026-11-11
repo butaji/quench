@@ -316,7 +316,7 @@ impl RecordBlock {
         }
     }
 
-    fn claim(&mut self, index: usize) -> bool {
+    #[inline] fn claim(&mut self, index: usize) -> bool {
         let word_index = index / OCCUPANCY_WORD_BITS;
         let bit = index % OCCUPANCY_WORD_BITS;
         let mask = 1_u64 << bit;

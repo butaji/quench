@@ -95,23 +95,23 @@ impl WideInstruction {
         Self { op, a, b, c, imm }
     }
 
-    pub(crate) const fn op(self) -> Op {
+    #[inline] pub(crate) const fn op(self) -> Op {
         self.op
     }
 
-    pub(crate) const fn a(self) -> u16 {
+    #[inline] pub(crate) const fn a(self) -> u16 {
         self.a
     }
 
-    pub(crate) const fn b(self) -> u16 {
+    #[inline] pub(crate) const fn b(self) -> u16 {
         self.b
     }
 
-    pub(crate) const fn c(self) -> u16 {
+    #[inline] pub(crate) const fn c(self) -> u16 {
         self.c
     }
 
-    pub(crate) const fn imm(self) -> u32 {
+    #[inline] pub(crate) const fn imm(self) -> u32 {
         self.imm
     }
 
@@ -119,24 +119,24 @@ impl WideInstruction {
         self.op = op;
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] #[inline]
     pub(crate) fn set_b(&mut self, value: u16) {
         self.b = value;
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] #[inline]
     pub(crate) fn set_c(&mut self, value: u16) {
         self.c = value;
     }
 
     /// Wide fields hold any `u16`, so these always succeed.
-    #[allow(dead_code)]
+    #[allow(dead_code)] #[inline]
     pub(crate) fn try_set_b(&mut self, value: u16) -> Option<()> {
         self.b = value;
         Some(())
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] #[inline]
     pub(crate) fn try_set_c(&mut self, value: u16) -> Option<()> {
         self.c = value;
         Some(())
@@ -174,7 +174,7 @@ macro_rules! layout_accessors {
             /// The register this instruction writes, for an op whose A field is a result
             /// register; `None` when A holds something else, including a numeric
             /// result stored directly into a local rather than a register.
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn defined_register(self) -> Option<Register> {
                 (self.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
                     && !self.writes_numeric_local())
@@ -184,7 +184,7 @@ macro_rules! layout_accessors {
             /// Register outputs described by the operand layout. Numeric-local
             /// results live in a different index space; optional outputs use
             /// their decoded register, not the biased field encoding.
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn written_registers(self) -> impl Iterator<Item = Register> {
                 InstructionField::ALL.iter().copied().filter_map(move |field| {
                     let layout = self.op().field_layout(field);
@@ -204,7 +204,7 @@ macro_rules! layout_accessors {
                 self.a() & !REGISTER_MASK
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn set_result_register(&mut self, register: Register) {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::A),
@@ -233,12 +233,12 @@ macro_rules! layout_accessors {
                     && self.op().result_layout().allows_numeric_local()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn numeric_local_target(self) -> Option<Register> {
                 self.writes_numeric_local().then(|| self.result_register())
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn set_result_local_target(&mut self, local: Register) {
                 debug_assert!(self.op().result_layout().allows_numeric_local());
                 debug_assert!(local <= REGISTER_MASK);
@@ -251,14 +251,14 @@ macro_rules! layout_accessors {
                 );
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn result_flags_valid(self) -> bool {
                 let layout: ResultLayout = self.op().result_layout();
                 self.result_flags() & !layout.allowed_flags() == 0
             }
 
             // The packed form decodes this only through its fixed-width form.
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn call_window(self) -> RegisterWindow {
                 debug_assert!(matches!(
                     self.op().immediate_layout(),
@@ -273,19 +273,19 @@ macro_rules! layout_accessors {
                 }
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn direct_eval(self) -> bool {
                 debug_assert!(self.op().is_call_with_eval_flags());
                 ImmediateLayout::direct_eval(self.imm())
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn parameter_eval(self) -> bool {
                 debug_assert!(self.op().is_call_with_eval_flags());
                 ImmediateLayout::parameter_eval(self.imm())
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn known_function_index(self) -> u16 {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
@@ -294,7 +294,7 @@ macro_rules! layout_accessors {
                 self.b()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn register_a(self) -> Register {
                 debug_assert!(
                     self.op()
@@ -304,7 +304,7 @@ macro_rules! layout_accessors {
                 self.a()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn register_b(self) -> Register {
                 debug_assert!(
                     self.op()
@@ -314,7 +314,7 @@ macro_rules! layout_accessors {
                 self.b()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn optional_register_b(self) -> Option<Register> {
                 debug_assert!(matches!(
                     self.op().field_layout(InstructionField::B),
@@ -326,7 +326,7 @@ macro_rules! layout_accessors {
                 }
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn set_optional_register_b(&mut self, register: Option<Register>) {
                 debug_assert!(matches!(
                     self.op().field_layout(InstructionField::B),
@@ -335,7 +335,7 @@ macro_rules! layout_accessors {
                 self.set_b(super::encode_optional_register(register));
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn numeric_local_store_target(
                 self,
             ) -> Option<super::NumericLocalStoreTarget> {
@@ -355,7 +355,7 @@ macro_rules! layout_accessors {
                 )
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn numeric_local_store_fields_valid(self) -> bool {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
@@ -374,7 +374,7 @@ macro_rules! layout_accessors {
                 }
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn set_numeric_local_store_target(
                 &mut self,
                 target: Option<super::NumericLocalStoreTarget>,
@@ -406,7 +406,7 @@ macro_rules! layout_accessors {
                 self.set_c(marker);
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn register_c(self) -> Register {
                 debug_assert!(
                     self.op()
@@ -416,7 +416,7 @@ macro_rules! layout_accessors {
                 self.c()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn cache_site_index(self) -> u16 {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::C),
@@ -425,7 +425,7 @@ macro_rules! layout_accessors {
                 self.c()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn boolean_field(self, field: InstructionField) -> Option<bool> {
                 debug_assert_eq!(self.op().field_layout(field), FieldLayout::BooleanFlag);
                 match self.field_value(field) {
@@ -435,13 +435,13 @@ macro_rules! layout_accessors {
                 }
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn unused_field_is_zero(self, field: InstructionField) -> bool {
                 debug_assert_eq!(self.op().field_layout(field), FieldLayout::Unused);
                 self.field_value(field) == 0
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn unused_fields_are_zero(self) -> bool {
                 InstructionField::ALL.iter().copied().all(|field| {
                     self.op().field_layout(field) != FieldLayout::Unused
@@ -449,13 +449,13 @@ macro_rules! layout_accessors {
                 })
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn unused_operands_are_zero(self) -> bool {
                 self.unused_fields_are_zero()
                     && (self.op().immediate_role() != ImmediateRole::Unused || self.imm() == 0)
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn operand_b(self) -> Operand {
                 debug_assert!(
                     self.op()
@@ -467,7 +467,7 @@ macro_rules! layout_accessors {
 
             /// Sets operand B, or leaves the instruction unchanged and returns `None` when the
             /// operand does not fit the field's packed width.
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn set_operand_b(&mut self, operand: Operand) -> Option<()> {
                 debug_assert!(
                     self.op()
@@ -477,7 +477,7 @@ macro_rules! layout_accessors {
                 self.try_set_b(operand.0)
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn operand_c(self) -> Operand {
                 debug_assert!(
                     self.op()
@@ -489,7 +489,7 @@ macro_rules! layout_accessors {
 
             /// Sets operand C, or leaves the instruction unchanged and returns `None` when the
             /// operand does not fit the field's packed width.
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn set_operand_c(&mut self, operand: Operand) -> Option<()> {
                 debug_assert!(
                     self.op()
@@ -499,7 +499,7 @@ macro_rules! layout_accessors {
                 self.try_set_c(operand.0)
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn binary_operator_field(self) -> u32 {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::A),
@@ -508,7 +508,7 @@ macro_rules! layout_accessors {
                 u32::from(self.a())
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn register_window(self) -> RegisterWindow {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
@@ -524,7 +524,7 @@ macro_rules! layout_accessors {
                 }
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn element_count(self) -> u16 {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
@@ -533,31 +533,31 @@ macro_rules! layout_accessors {
                 self.b()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn method_site_index(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::MethodSiteIndex);
                 self.imm() as usize
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn constant_index(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::ConstantIndex);
                 self.imm() as usize
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn array_length(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::ArrayLength);
                 self.imm() as usize
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn array_index(self) -> u32 {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::ArrayIndex);
                 self.imm()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn binary_operator(self) -> u32 {
                 debug_assert!(matches!(
                     self.op().immediate_role(),
@@ -568,25 +568,25 @@ macro_rules! layout_accessors {
                 self.imm()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn unary_operator(self) -> u32 {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::UnaryOperator);
                 self.imm()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn template_site_index(self) -> u32 {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::TemplateSiteIndex);
                 self.imm()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn atom_index(self) -> u32 {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::AtomIndex);
                 self.imm()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn function_name_prefix(self) -> u32 {
                 debug_assert_eq!(
                     self.op().immediate_role(),
@@ -595,7 +595,7 @@ macro_rules! layout_accessors {
                 self.imm()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn property_definition_mode(self) -> Option<super::PropertyDefinitionMode> {
                 debug_assert_eq!(
                     self.op().immediate_role(),
@@ -604,7 +604,7 @@ macro_rules! layout_accessors {
                 super::PropertyDefinitionMode::from_word(self.imm())
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn boolean_flag(self) -> Option<bool> {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::BooleanFlag);
                 match self.imm() {
@@ -614,7 +614,7 @@ macro_rules! layout_accessors {
                 }
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn field_lookup(self) -> Option<FieldLookup> {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::FieldLookup);
                 debug_assert_eq!(
@@ -636,7 +636,7 @@ macro_rules! layout_accessors {
                 }
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn set_field_lookup_site(&mut self, site: usize) {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::FieldLookup);
                 debug_assert_eq!(
@@ -652,7 +652,7 @@ macro_rules! layout_accessors {
                 self.set_imm(site as u32);
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn environment_clone_index(self) -> usize {
                 debug_assert_eq!(
                     self.op().immediate_role(),
@@ -666,19 +666,19 @@ macro_rules! layout_accessors {
                 self.imm() as usize
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn jump_target(self) -> u32 {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::JumpTarget);
                 self.imm()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn set_jump_target(&mut self, target: u32) {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::JumpTarget);
                 self.set_imm(target);
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn closure_function_index(self) -> u32 {
                 debug_assert_eq!(
                     self.op().immediate_role(),
@@ -687,13 +687,13 @@ macro_rules! layout_accessors {
                 self.imm()
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn object_site_index(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::ObjectSiteIndex);
                 self.imm() as usize
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn regexp_literal_site_index(self) -> usize {
                 debug_assert_eq!(
                     self.op().immediate_role(),
@@ -702,7 +702,7 @@ macro_rules! layout_accessors {
                 self.imm() as usize
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn literal_template_index(self) -> usize {
                 debug_assert_eq!(
                     self.op().immediate_role(),
@@ -711,7 +711,7 @@ macro_rules! layout_accessors {
                 self.imm() as usize
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn superinstruction_index(self) -> usize {
                 debug_assert_eq!(
                     self.op().immediate_role(),
@@ -720,7 +720,7 @@ macro_rules! layout_accessors {
                 self.imm() as usize
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn capture_depth(self) -> u16 {
                 debug_assert_eq!(
                     self.op().immediate_layout(),
@@ -729,7 +729,7 @@ macro_rules! layout_accessors {
                 ImmediateLayout::capture_depth(self.imm())
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn capture_slot(self) -> u16 {
                 debug_assert_eq!(
                     self.op().immediate_layout(),
@@ -739,14 +739,14 @@ macro_rules! layout_accessors {
             }
 
             // The packed form decodes this only through its fixed-width form.
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn register_pair(self) -> (Register, Register) {
                 debug_assert_eq!(self.op().immediate_layout(), ImmediateLayout::RegisterPair);
                 ImmediateLayout::register_pair(self.imm())
             }
 
             // The packed form decodes this only through its fixed-width form.
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn construct_arguments(self) -> ConstructArguments {
                 debug_assert_eq!(
                     self.op().immediate_layout(),
@@ -767,7 +767,7 @@ macro_rules! layout_accessors {
                 }
             }
 
-            #[allow(dead_code)]
+            #[allow(dead_code)] #[inline]
             pub(crate) fn is_super_construct(self) -> bool {
                 debug_assert_eq!(
                     self.op().immediate_layout(),
@@ -888,34 +888,34 @@ impl Instr {
         WideInstruction::new(self.op(), self.a(), self.b(), self.c(), self.imm())
     }
 
-    pub(crate) const fn op(self) -> Op {
+    #[inline] pub(crate) const fn op(self) -> Op {
         // SAFETY: construction and residual decoding reject IDs outside the
         // contiguous macro-generated opcode range.
         unsafe { std::mem::transmute::<u16, Op>((self.0 & ((1 << Self::OP_BITS) - 1)) as u16) }
     }
 
-    pub(crate) const fn a(self) -> u16 {
+    #[inline] pub(crate) const fn a(self) -> u16 {
         if self.is_wide() {
             return ((self.0 >> Self::A_SHIFT) & Self::FIELD_MASK) as u16;
         }
         Self::unpack_field(self.op(), 0, (self.0 >> Self::A_SHIFT) as u16)
     }
 
-    pub(crate) const fn b(self) -> u16 {
+    #[inline] pub(crate) const fn b(self) -> u16 {
         if self.is_wide() {
             return ((self.0 >> Self::B_SHIFT) & Self::FIELD_MASK) as u16;
         }
         Self::unpack_field(self.op(), 1, (self.0 >> Self::B_SHIFT) as u16)
     }
 
-    pub(crate) const fn c(self) -> u16 {
+    #[inline] pub(crate) const fn c(self) -> u16 {
         if self.is_wide() {
             return ((self.0 >> Self::C_SHIFT) & Self::FIELD_MASK) as u16;
         }
         Self::unpack_field(self.op(), 2, (self.0 >> Self::C_SHIFT) as u16)
     }
 
-    pub(crate) const fn imm(self) -> u32 {
+    #[inline] pub(crate) const fn imm(self) -> u32 {
         if self.is_wide() {
             return (self.0 >> Self::IMM_SHIFT) as u32;
         }

@@ -324,12 +324,12 @@ impl ArrayElements {
     }
 
     /// The backing's identity, which arrays that share it have in common.
-    pub(crate) fn as_ptr(&self) -> *const () {
+    #[inline] pub(crate) fn as_ptr(&self) -> *const () {
         self.header.as_ptr().cast()
     }
 
     /// The owners of this backing; zero for the shared empty one and young runs.
-    pub(crate) fn owner_count(&self) -> usize {
+    #[inline] pub(crate) fn owner_count(&self) -> usize {
         self.header().owners as usize
     }
 

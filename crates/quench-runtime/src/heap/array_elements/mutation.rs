@@ -67,7 +67,7 @@ impl UniqueElements {
         added
     }
 
-    pub(super) fn set_others(&mut self, others: u32) {
+    #[inline] pub(super) fn set_others(&mut self, others: u32) {
         if self.0.capacity() != 0 {
             // SAFETY: a unique backing with a capacity is this array's own allocation.
             unsafe { (*self.0.header.as_ptr()).others = others };
@@ -124,7 +124,7 @@ impl UniqueElements {
         self.0.values()
     }
 
-    fn set_len(&mut self, len: usize) {
+    #[inline] fn set_len(&mut self, len: usize) {
         debug_assert!(len <= self.0.capacity());
         if self.0.capacity() != 0 {
             // SAFETY: a unique backing with a capacity is this array's own allocation.

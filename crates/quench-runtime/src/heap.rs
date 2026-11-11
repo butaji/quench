@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 mod access;
+mod value_writes;
 mod array_elements;
 pub(crate) use array_elements::{ArrayElements, CAPACITY_FROM_VALUES, DOUBLE_ELEMENTS, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
@@ -642,6 +643,9 @@ pub(crate) struct Heap {
     collect_at: usize,
     total_allocations: u64,
     collections: u64,
+    /// Advances on every property write to an object a folded construct value names
+    /// (`ElementFacts::VALUE_DEPENDENTS`), which retires the folds (`Heap::value_epoch`).
+    value_epoch: u64,
     /// The prototypes `mark_prototype` marked last, most recent first, which keep their
     /// mark for life: an allocation with one of them needs no lookup. A collection may free
     /// one and reuse its handle, so each one forgets them.
@@ -905,7 +909,7 @@ impl Heap {
         self.set_young_budget(self.pacing().minimum_young);
         self.external_collection_budget = self.pacing().minimum_external_budget;
     }
-    pub(crate) fn memory_policy(&self) -> MemoryPolicy {
+    #[inline] pub(crate) fn memory_policy(&self) -> MemoryPolicy {
         self.memory_policy
     }
     fn pacing(&self) -> pacing::GenerationalPacing {
@@ -1113,7 +1117,7 @@ impl Heap {
         })
     }
 
-    pub(crate) fn mark_prototype(&mut self, prototype: Value) {
+    #[inline] pub(crate) fn mark_prototype(&mut self, prototype: Value) {
         if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
         }
@@ -1744,6 +1748,7 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) {
+        self.note_value_dependents(owner);
         // An array's payload holds its element backing, so its properties live in the arena.
         let inline = !self
             .object(owner)
@@ -3703,16 +3708,6 @@ impl Heap {
 
     /// Observes the value before writing the named object's slot.
     #[inline(always)]
-    fn note_value_slot(&mut self, object: Value, slot: usize, value: Value) {
-        if !self.properties.tracks() { return; }
-        if let Some(data) = self.object(object) {
-            let shape = data.exact_shape();
-            if shape == data.shape() && slot < self.properties.shape_length(shape) {
-                self.properties.note_slot_value(shape, slot, value);
-            }
-        }
-    }
-
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         self.note_value_slot(object, slot, value);
         let vector = {

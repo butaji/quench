@@ -97,21 +97,16 @@ impl ConstructPlan {
     /// parameter names (`argument`), or its fallback for a defaulted field passed a falsy
     /// value, or a constant field's constant, or a computed field's Number, as its store
     /// computes it. `None` when a computed field's argument is no Number.
-    pub(super) fn values<H: Host>(&self, vm: &mut Vm<H>, code: &ResidualProgram, argument: impl Fn(u16) -> Value) -> Option<[Value; CONSTRUCT_PLAN_FIELDS]> {
+    pub(super) fn values<H: Host>(&self, vm: &mut Vm<H>, _code: &ResidualProgram, argument: impl Fn(u16) -> Value) -> Option<[Value; CONSTRUCT_PLAN_FIELDS]> {
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
-        let mut environment: Option<Value> = None;
         for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
             if self.constant & (1 << field) != 0 {
                 *value = self.fallbacks[field];
                 continue;
             }
             if self.captured & (1 << field) != 0 {
-                // The constructor's environment, read once for every captured field it has.
-                let env = match environment {
-                    Some(env) => env,
-                    None => *environment.insert(construction_environment(vm, self.callee)?),
-                };
-                *value = captured_field_value(vm, code, env, self.captured_fields[field])?;
+                // Probe: the folded value; the environment read is skipped.
+                *value = self.fallbacks[field];
                 continue;
             }
             if self.computed & (1 << field) != 0 {
@@ -145,6 +140,23 @@ impl ConstructPlan {
     }
 
     /// This plan extended by the field `store` adds, `None` once it names all it can.
+    /// Marks the binding object whose captured field this plan folded (`VALUE_DEPENDENTS`) and
+    /// records the heap's value epoch, which any property write to it advances (`fold_holds`).
+    pub(super) fn cache_fold<H: Host>(&self, vm: &mut Vm<H>, index: usize) {
+        if self.captured == 0 { return; }
+        let (slot, _, _) = self.captured_fields[self.captured.trailing_zeros() as usize];
+        let marked = construction_environment(vm, self.callee)
+            .and_then(|environment| vm.environment_capture(environment, slot))
+            .inspect(|&object| vm.heap.mark_value_dependents(object));
+        vm.lane_stack.plan_value_epoch[index] = marked.map_or(u64::MAX, |_| vm.heap.value_epoch());
+    }
+
+    /// Whether this plan's folded values still hold: no property write has reached the object
+    /// its captured field names since it recorded the heap's value epoch.
+    pub(super) fn fold_holds<H: Host>(&self, vm: &Vm<H>, index: usize) -> bool {
+        self.captured == 0 || vm.lane_stack.plan_value_epoch[index] == vm.heap.value_epoch()
+    }
+
     pub(super) fn with_field(mut self, store: &crate::bytecode::InitializerStore, value: Value) -> Option<Self> {
         let field = usize::from(self.fields);
         let slot = self.parameters.get_mut(field)?;
@@ -169,10 +181,12 @@ impl ConstructPlan {
                 self.fallbacks[field] = Value::number(constant);
             }
             crate::bytecode::InitializerValue::CaptureField { depth: 0, slot, field: read, field_site } => {
-                // The value is read at each construction: the plan's own values hold nothing.
+                // Probe: the value the plan's own construction read, held in the unused
+                // fallback word (`values` reads it back). No invalidation yet.
                 self.kind = ConstructPlanKind::Defaulted;
                 self.captured |= 1 << field;
                 self.captured_fields[field] = (slot, read, field_site);
+                self.fallbacks[field] = value;
             }
             crate::bytecode::InitializerValue::CaptureField { depth: 1.., .. } => return None,
         }
@@ -389,7 +403,7 @@ fn initializer_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, cal
 fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
     // A copy: a plan reads no field of the VM to compute its values.
     let plan = vm.lane_stack.construct_plans[index];
-    if plan.kind == ConstructPlanKind::Forwarding {
+    if plan.kind == ConstructPlanKind::Forwarding || !plan.fold_holds(vm, index) {
         return None;
     }
     let values = plan.values(vm, code, argument)?;
@@ -405,7 +419,7 @@ pub(super) fn lane_construct_argument(r: Registers, i: &LaneInstruction) -> impl
 }
 
 /// The construct plan cache entry `callee` owns, when it names a heap cell.
-pub(super) fn construct_plan_index(callee: Value) -> Option<usize> {
+#[inline] pub(super) fn construct_plan_index(callee: Value) -> Option<usize> {
     callee.heap_index().map(|index| index as usize & (CONSTRUCT_PLANS - 1))
 }
 

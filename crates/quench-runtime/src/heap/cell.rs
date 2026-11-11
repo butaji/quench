@@ -12,7 +12,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod global_values;
-mod modes;
+mod modes; mod value_dependents;
 mod prototype_values;
 mod shape_id;
 mod snapshot;
@@ -1684,7 +1684,7 @@ impl ArrayObject {
 
 impl std::ops::Deref for ArrayObject {
     type Target = Object;
-    fn deref(&self) -> &Object {
+    #[inline] fn deref(&self) -> &Object {
         &self.object
     }
 }
@@ -2273,7 +2273,7 @@ impl Object {
 
     /// An object of a run header (`InlineObjectHeader::of_run`) whose values start at arena
     /// position `start`: what `with_property_storage` makes of that run, which has no extras.
-    pub(crate) fn from_run_header(header: InlineObjectHeader, start: u32) -> Self {
+    #[inline] pub(crate) fn from_run_header(header: InlineObjectHeader, start: u32) -> Self {
         Self {
             meta: header.meta,
             auxiliary: header.auxiliary,
@@ -2643,7 +2643,7 @@ impl Object {
             && !self.has_exotic_access()
             && !self.element_facts().has(ElementFacts::NOT_ORDINARY)
     }
-    pub(crate) fn is_arguments_object(&self) -> bool {
+    #[inline] pub(crate) fn is_arguments_object(&self) -> bool {
         self.brand() == ObjectBrand::Arguments
     }
     pub(crate) fn has_indexed_descriptors(&self) -> bool {

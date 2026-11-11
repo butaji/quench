@@ -545,7 +545,7 @@ const WINDOW_STORAGE: u16 = 3;
 const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
 
 impl EnvironmentWindow {
-    fn captured(self, slot: usize) -> bool {
+    #[inline] fn captured(self, slot: usize) -> bool {
         self.captured & 1 << slot != 0
     }
 }
@@ -1248,7 +1248,7 @@ enum ActivationKind {
 
 impl Activation {
     /// The frame state of a JavaScript activation; `None` for Wasm.
-    fn script(&self) -> Option<&ScriptActivation> {
+    #[inline] fn script(&self) -> Option<&ScriptActivation> {
         match &self.kind {
             ActivationKind::Script(script) => Some(script),
             ActivationKind::Wasm { .. } => None,
@@ -1365,7 +1365,7 @@ impl Completion {
     /// The completion of an activation a `new` made or not, of the caller's program or not,
     /// of a target whose return settles its call's promise or not. Only a plain call of the
     /// caller's program settles one (`lane_script_call_settles`).
-    fn of(constructs: bool, cross: bool, settles: bool) -> Self {
+    #[inline] fn of(constructs: bool, cross: bool, settles: bool) -> Self {
         debug_assert!(!settles || !constructs && !cross, "only a plain call of its own program settles");
         match (constructs, cross, settles) {
             (false, false, true) => Self::SettlesPromise,
@@ -1378,12 +1378,12 @@ impl Completion {
 
     /// Whether a `new` made the activation, whose completion substitutes its receiver for a
     /// non-object result.
-    fn constructs(self) -> bool {
+    #[inline] fn constructs(self) -> bool {
         matches!(self, Self::Constructs | Self::CrossConstructs)
     }
 
     /// Whether the activation's return makes the caller's program the lane's again.
-    fn crosses(self) -> bool {
+    #[inline] fn crosses(self) -> bool {
         matches!(self, Self::Cross | Self::CrossConstructs)
     }
 }
@@ -1515,7 +1515,7 @@ impl CallEntry {
     }
 
     /// The leaf entry of a body whose records read the context as `form` says.
-    fn leaf(form: LeafForm) -> Self {
+    #[inline] fn leaf(form: LeafForm) -> Self {
         match form {
             CONTEXT_LEAF => Self::ContextLeaf,
             CAPTURE_LEAF => Self::CaptureLeaf,
@@ -1800,6 +1800,7 @@ pub(super) struct LaneStack {
     cross_function_targets: Box<[ScriptCallTarget; FUNCTION_TARGETS]>,
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
+    plan_value_epoch: [u64; CONSTRUCT_PLANS],
     /// The reads call sites answered (`ReadMemo`), each in the slot its record names
     /// (`CallOperand::memo`).
     read_memos: Vec<ReadMemo>,
@@ -1857,6 +1858,7 @@ impl Default for LaneStack {
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
+            plan_value_epoch: [0; CONSTRUCT_PLANS],
             read_memos: Vec::new(),
             forwarders: Vec::new(),
             settling: Vec::new(),
@@ -13067,7 +13069,6 @@ script_handler! {
 const FRAME_CALL_INLINE_ARGUMENTS: usize = 8;
 
 
-
 /// The values a lane `Call` record passes: its window of the running function's registers.
 ///
 /// # Safety
@@ -14010,7 +14011,7 @@ fn lane_construct_keeping_activation<H: Host>(
 fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // A copy: a plan reads no field of the VM to compute its values.
-    let plan = vm.lane_stack.construct_plans[index];
+    let plan = vm.lane_stack.construct_plans[index]; if !plan.fold_holds(vm, index) { return None; }
     let (program, function) = plan.forwarded?.initializer?;
     let method = resolved_forwarded_method(vm, callee, &plan)?;
     if !matches!(vm.heap.function(method), Some(FunctionRecord { kind: FunctionKind::User(p, f), .. }) if *p == program && *f == function)
@@ -15412,7 +15413,6 @@ enum LaneBodyLeft {
 }
 
 
-
 fn lane_body_left<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
@@ -15864,7 +15864,7 @@ fn lane_initialize_fields<H: Host>(
     {
         plan.callee_layout = layout;
         plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
-        vm.lane_stack.construct_plans[index] = plan.finish();
+        plan.cache_fold(vm, index); vm.lane_stack.construct_plans[index] = plan.finish();
     }
     Some((this, true))
 }
