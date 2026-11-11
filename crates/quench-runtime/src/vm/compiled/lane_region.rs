@@ -4994,6 +4994,11 @@ impl Lowering<'_, '_> {
     fn represented(&mut self, slot: Type, value: ir::Value, otherwise: ir::Block) -> Type {
         // Only the type algebra may establish that an int fits. In particular,
         // nullable object contracts must not inherit the old numeric-chain rule.
+        if slot.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) {
+            let held = super::general_store::emit_holds_object_slot(&mut self.builder, value, slot);
+            emit_js_guard(&mut self.builder, held, otherwise);
+            return slot;
+        }
         let held = if Type::INT32.is_subtype(slot) { is_int_tagged(&mut self.builder, value) }
             else { self.ins().iconst(types::I8, 0) };
         emit_js_guard(&mut self.builder, held, otherwise);
