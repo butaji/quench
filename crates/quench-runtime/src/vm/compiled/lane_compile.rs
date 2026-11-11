@@ -3,6 +3,7 @@
 //! keeps everything the method holds but its code, so code generation may run on the code
 //! generator's thread (`jit_backend::run_in_background`) while the program runs on.
 
+use super::tier_policy::TIERS;
 use super::*;
 use std::collections::BTreeMap;
 
@@ -185,7 +186,7 @@ impl<H: Host> Vm<H> {
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: Vec<Option<DirectCallee>>, generic: &[LaneExit]) -> Option<LaneMethod> {
         self.host.before_native_compilation();
-        let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
+        let mut budget = TIERS.limits.inlining.unit_instructions;
         let method = loop {
             let Some((plan, native)) = self.plan_lane_method(program, function, targets, captures, &direct, generic, budget, None)
             else { break None };
@@ -278,7 +279,7 @@ impl<H: Host> Vm<H> {
         direct: &dyn Fn(&Self) -> Vec<Option<DirectCallee>>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         let mut observed = None;
         let mut pending = match work {
-            LaneBodyWork::Start { generic, shrinks, observed: seen } => { observed = seen; (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
+            LaneBodyWork::Start { generic, shrinks, observed: seen } => { observed = seen; (generic.to_vec(), TIERS.limits.inlining.unit_instructions >> shrinks) }
             LaneBodyWork::Poll(pending) => match self.lane_body_poll(pending) {
                 Ok(outcome) => return outcome,
                 Err(replan) => replan,
@@ -339,7 +340,7 @@ impl PendingLaneMethod {
     /// How many times its plan halved the inlining budget for its code to fit, which a
     /// successor plan of the function starts from.
     pub(in crate::vm) fn shrinks(&self) -> u8 {
-        (lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS / self.plan.budget.max(1)).ilog2() as u8
+        (TIERS.limits.inlining.unit_instructions / self.plan.budget.max(1)).ilog2() as u8
     }
 
     /// What its compile came to, or itself while its code compiles.

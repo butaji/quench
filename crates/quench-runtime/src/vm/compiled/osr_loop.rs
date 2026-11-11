@@ -28,6 +28,7 @@
 //! Collection debt exits with live values restored before the VM can collect. Other effect
 //! boundaries exit before their effects.
 
+use super::tier_policy::TIERS;
 use crate::bytecode::{
     Class, FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
     OperandKind, Register, WideInstruction,
@@ -40,16 +41,6 @@ use super::typed_ir::Type;
 use super::NativeFieldLoad;
 use oxc_ast::ast::UnaryOperator;
 
-/// The most instructions a region spans. Native code polls termination only at backward
-/// jumps, so the bound keeps compile time and code size proportional to small loop bodies.
-const MAX_REGION_INSTRUCTIONS: usize = 512;
-/// The most registers, captures and arrays a region names, bounding entry guards and the
-/// entry record.
-const MAX_REGION_REGISTERS: usize = 128;
-const MAX_REGION_ARRAYS: usize = 8;
-const MAX_REGION_CAPTURES: usize = 16;
-const MAX_REGION_FIELDS: usize = 16;
-const MAX_REGION_FIELD_STORES: usize = 16;
 
 #[path = "osr_loop/iteration.rs"]
 mod iteration;
@@ -1116,7 +1107,7 @@ pub(super) fn inline_region<'a>(
         }
         callee_flat.insert(pc, flat);
     }
-    (length as usize <= MAX_REGION_INSTRUCTIONS).then_some(())?;
+    (length as usize <= TIERS.limits.region.instructions).then_some(())?;
     let mut callee_captures: Vec<(usize, u16)> = Vec::new();
     let mut origins: Vec<Origin> = Vec::with_capacity(length as usize);
     let mut masks: Vec<RegisterSet> = Vec::with_capacity(length as usize);
@@ -1304,7 +1295,7 @@ pub(super) fn inline_region<'a>(
         frame.guard = InlineGuard::Field(intern_field(&mut region.fields, &path, true));
         frames.push(frame);
     }
-    (region.fields.len() <= MAX_REGION_FIELDS).then_some(())?;
+    (region.fields.len() <= TIERS.limits.region.fields).then_some(())?;
     region.inlining = Some(Box::new(Inlining { origins, frames, callee_captures, caller_registers, latch: backedge }));
     Some(region)
 }
@@ -1352,7 +1343,7 @@ pub(crate) struct LoopEntry {
     length: usize,
     /// An inlining region's callee registers, which leaving at an inlined instruction
     /// writes back here for its activation.
-    scratch: [std::mem::MaybeUninit<u64>; MAX_REGION_REGISTERS],
+    scratch: [std::mem::MaybeUninit<u64>; TIERS.limits.region.registers],
 }
 
 /// The longest array a region indexes: a negative `i32` index zero-extends past it, so one
@@ -1377,10 +1368,10 @@ const FIELD_STORE_WORDS: usize = 1;
 const NATIVE_HEAP_WORDS: usize = 4;
 const ENTRY_WORDS: usize =
     ENTRY_CAPTURES
-        + MAX_REGION_CAPTURES
-        + ARRAY_WORDS * MAX_REGION_ARRAYS
-        + MAX_REGION_FIELDS
-        + FIELD_STORE_WORDS * MAX_REGION_FIELD_STORES
+        + TIERS.limits.region.captures
+        + ARRAY_WORDS * TIERS.limits.region.arrays
+        + TIERS.limits.region.fields
+        + FIELD_STORE_WORDS * TIERS.limits.region.field_stores
         + NATIVE_HEAP_WORDS;
 
 impl LoopEntry {
@@ -1388,7 +1379,7 @@ impl LoopEntry {
         let mut words = [std::mem::MaybeUninit::uninit(); ENTRY_WORDS];
         // The backward-edge counter is the one leading word native code reads before any push.
         words[ENTRY_BACKEDGE_COUNT].write(0);
-        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS] }
+        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); TIERS.limits.region.registers] }
     }
 
     /// Number of taken executions of this region's backward edge in the most recent run.
@@ -1663,7 +1654,7 @@ pub(super) fn region(
     method_calls: MethodCalls,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     let (start, end) = (header as usize, backedge as usize);
-    if start > end || end >= decoded.len() || end - start >= MAX_REGION_INSTRUCTIONS {
+    if start > end || end >= decoded.len() || end - start >= TIERS.limits.region.instructions {
         return Err(RegionAnalysisFailure {
             reason: RegionRejection::RegionTooLarge,
             pc: backedge,
@@ -1739,7 +1730,7 @@ fn admit_lifetime_roles(
     header: u32,
 ) -> Option<LoopRegion> {
     use std::collections::{BTreeMap, BTreeSet};
-    if live.is_none() || instructions.is_empty() || registers > MAX_REGION_REGISTERS
+    if live.is_none() || instructions.is_empty() || registers > TIERS.limits.region.registers
         || !instructions.iter().all(|instruction| lifetime_instruction(*instruction))
     {
         return None;
@@ -1818,7 +1809,7 @@ fn admit_lifetime_roles(
         *definition < flow.entry_count()
             || number_definition(flow.instructions[*definition - flow.entry_count()]).is_some()
     }).collect();
-    if roots.len() > MAX_REGION_REGISTERS {
+    if roots.len() > TIERS.limits.region.registers {
         return None;
     }
     let identities: BTreeMap<Definition, Register> = roots.iter().enumerate()
@@ -2164,10 +2155,10 @@ fn admit_register_roles(
         };
         identity_branches.insert(header + offset as u32, branch);
     }
-    if admission.fields.len() > MAX_REGION_FIELDS {
+    if admission.fields.len() > TIERS.limits.region.fields {
         return Err(RegionAnalysisFailure { reason: RegionRejection::FieldLimit, pc: backedge });
     }
-    if field_store_sites.len() > MAX_REGION_FIELD_STORES {
+    if field_store_sites.len() > TIERS.limits.region.field_stores {
         return Err(RegionAnalysisFailure { reason: RegionRejection::FieldStoreLimit, pc: backedge });
     }
     // Entry-snapshot reads require a stable receiver. Direct one-step reads can instead
@@ -2195,11 +2186,11 @@ fn admit_register_roles(
         return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, write_offset));
     }
     if admission.roles.keys().any(|register| usize::from(*register) >= registers)
-        || admission.roles.len() > MAX_REGION_REGISTERS
+        || admission.roles.len() > TIERS.limits.region.registers
     {
         return Err(RegionAnalysisFailure { reason: RegionRejection::RegisterLimit, pc: backedge });
     }
-    if admission.captures.len() > MAX_REGION_CAPTURES {
+    if admission.captures.len() > TIERS.limits.region.captures {
         return Err(RegionAnalysisFailure { reason: RegionRejection::CaptureLimit, pc: backedge });
     }
     let numbers = admission
@@ -2238,7 +2229,7 @@ fn admit_register_roles(
         }
         arrays.push(ArrayUse { register: *register, written: *written, field: Some(held[register].1) });
     }
-    if arrays.len() > MAX_REGION_ARRAYS {
+    if arrays.len() > TIERS.limits.region.arrays {
         return Err(RegionAnalysisFailure { reason: RegionRejection::ArrayLimit, pc: backedge });
     }
     let stored: std::collections::BTreeSet<u16> = instructions.iter()

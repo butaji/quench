@@ -10,6 +10,7 @@
 //! outermost first, through the lane's own call path, and continues at the innermost one's
 //! record (`Vm::lane_body_inlined_activation`).
 
+use super::tier_policy::TIERS;
 use crate::bytecode::{Class, FieldLookup, ImmediateLayout, Op, Register, Traits, WideInstruction};
 use crate::bytecode::Function;
 use crate::value::Value;
@@ -214,17 +215,6 @@ impl Unit {
     }
 }
 
-/// The longest callee body the unit inlines: each copy of it costs code and compile time at
-/// every call site, and short bodies (accessors, field updates) are where a call costs most
-/// relative to its work.
-const MAX_INLINED_INSTRUCTIONS: usize = 96;
-/// The callee instructions one unit inlines in all, the region's budget: a hot loop's call
-/// graph, inlined, is the region an optimizing tier compiles as one function. Its compile
-/// cost grows with it (Richards' 600-instruction units cost ~63M instructions to compile),
-/// so it is TurboFan's cumulative inlining budget (`max_inlined_bytecode_size_cumulative`).
-pub(super) const MAX_UNIT_INLINED_INSTRUCTIONS: usize = 920;
-/// How deep calls nest inside a unit: JSC's inlining depth (`maximumInliningDepth`).
-const MAX_INLINING_DEPTH: usize = 5;
 
 /// Whether the lane-body lowering runs `instruction` of an inlined callee: a capture of its
 /// own environment only, no fusion but a returning one, which splits into the
@@ -422,7 +412,7 @@ impl Planner<'_, '_> {
             return (Vec::new(), false);
         }
         if !returns_or_keeps(instruction) || instruction.direct_eval()
-            || instruction.parameter_eval() || depth >= MAX_INLINING_DEPTH
+            || instruction.parameter_eval() || depth >= TIERS.limits.inlining.depth
         {
             return (Vec::new(), true);
         }
@@ -440,7 +430,7 @@ impl Planner<'_, '_> {
     fn inline_target(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
         let callee = (self.body)(target.function)?;
         let code = decoded(callee);
-        if code.len() > MAX_INLINED_INSTRUCTIONS
+        if code.len() > TIERS.limits.inlining.callee_instructions
             || code.len() > self.budget
             || ImmediateLayout::argument_count(instruction.imm()) > callee.registers
             || !code.iter().all(|instruction| inlinable(*instruction) && renamable(*instruction))
@@ -610,7 +600,7 @@ pub(crate) fn unit<'f>(
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
-    with_budget(program, function_id, function, MAX_UNIT_INLINED_INSTRUCTIONS, targets, body)
+    with_budget(program, function_id, function, TIERS.limits.inlining.unit_instructions, targets, body)
 }
 
 /// Plan the same unit under a smaller inlining budget after code-size rejection.

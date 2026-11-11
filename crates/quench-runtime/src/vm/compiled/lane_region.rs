@@ -75,7 +75,7 @@ const INLINE_LOOP_INPUTS: usize = 4;
 /// Common native-entry failure status; a pure scalar miss restarts its call.
 const NUMBER_ENTRY_MISS: i64 = 1;
 /// The executable memory a lane body may take: what a unit at its instruction bound
-/// (`lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS`) lowers to, at the bytes per instruction its
+/// (`InliningLimits::unit_instructions`) lowers to, at the bytes per instruction its
 /// guards and exits cost. A larger body is planned again with less inlined
 /// (`Vm::compile_lane_method`).
 const LANE_BODY_CODE_BYTES_PER_INSTRUCTION: usize = 128;
@@ -83,7 +83,7 @@ const LANE_BODY_CODE_BYTES_PER_INSTRUCTION: usize = 128;
 /// bodies (6.7 to 7.3), which a plan's size is judged by before it compiles.
 pub(super) const LANE_BODY_CODE_BYTES_PER_IR: usize = 8;
 pub(super) const LANE_BODY_MAX_CODE_BYTES: usize =
-    super::lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS * LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
+    super::tier_policy::TIERS.limits.inlining.unit_instructions * LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
 
 /// Semantic proof and active machine view; tagged bits may also be current.
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -26,6 +26,42 @@ pub(in crate::vm) struct Limits {
     /// The most instructions a lane unit (a lane body with its inlined callees) lowers to a
     /// native region.
     pub(in crate::vm) lane_region_blocks: usize,
+    /// The loop region's bounds.
+    pub(in crate::vm) region: RegionLimits,
+    /// The lane unit's inlining budgets.
+    pub(in crate::vm) inlining: InliningLimits,
+}
+
+/// What one OSR loop region may span and name.
+pub(in crate::vm) struct RegionLimits {
+    /// The most instructions a region spans. Native code polls termination only at backward
+    /// jumps, so the bound keeps compile time and code size proportional to small loop bodies.
+    pub(in crate::vm) instructions: usize,
+    /// The most registers a region names, bounding entry guards and the entry record.
+    pub(in crate::vm) registers: usize,
+    /// The most arrays a region names, bounding entry guards and the entry record.
+    pub(in crate::vm) arrays: usize,
+    /// The most captures a region names, bounding entry guards and the entry record.
+    pub(in crate::vm) captures: usize,
+    /// The most field loads a region names, bounding entry guards and the entry record.
+    pub(in crate::vm) fields: usize,
+    /// The most field stores a region names, bounding entry guards and the entry record.
+    pub(in crate::vm) field_stores: usize,
+}
+
+/// How much a lane unit inlines.
+pub(in crate::vm) struct InliningLimits {
+    /// The longest callee body the unit inlines: each copy of it costs code and compile time at
+    /// every call site, and short bodies (accessors, field updates) are where a call costs most
+    /// relative to its work.
+    pub(in crate::vm) callee_instructions: usize,
+    /// The callee instructions one unit inlines in all, the region's budget: a hot loop's call
+    /// graph, inlined, is the region an optimizing tier compiles as one function. Its compile
+    /// cost grows with it (Richards' 600-instruction units cost ~63M instructions to compile),
+    /// so it is TurboFan's cumulative inlining budget (`max_inlined_bytecode_size_cumulative`).
+    pub(in crate::vm) unit_instructions: usize,
+    /// How deep calls nest inside a unit: JSC's inlining depth (`maximumInliningDepth`).
+    pub(in crate::vm) depth: usize,
 }
 
 /// What the numeric function tier admits and emits.
@@ -226,6 +262,8 @@ const MEASURED: Tiers = Tiers {
         js_function: JsFunctionLimits { instructions: 256, registers: 256, parameters: 8, code_bytes: 64 * 1024 },
         general_blocks: 2048,
         lane_region_blocks: 2048,
+        region: RegionLimits { instructions: 512, registers: 128, arrays: 8, captures: 16, fields: 16, field_stores: 16 },
+        inlining: InliningLimits { callee_instructions: 96, unit_instructions: 920, depth: 5 },
     },
 };
 
