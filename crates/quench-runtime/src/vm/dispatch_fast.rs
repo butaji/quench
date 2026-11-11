@@ -7916,8 +7916,12 @@ script_handler! {
         }
         // A loop its region takes whole (no call it leaves at) stays the region's, which hoists
         // the typed element views a lane body does not yet.
+        // A loop with calls takes the shared OSR region with its callees inlined where that
+        // resolves (`lane_inlining_region`); the function's lane body only where inlining was
+        // declined, or where the region analysis failed for a reason other than a call.
         let body_loop = unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
-            && (!site.call_boundary_pcs.is_empty() || site.analysis_failure.is_some());
+            && if site.call_boundary_pcs.is_empty() { site.analysis_failure.is_some() }
+                else { site.inline_region.get().is_some_and(Option::is_none) };
         if body_loop && let Some(attempt) = lane_loop_body::<H>(cx, r, ip, site)
         {
             match attempt {
@@ -15380,7 +15384,21 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     // The rest activates the constructor, which native windows below would need shadow frames for.
     if Vm::<H>::lane_shadow_active() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructShadowActive); }
     // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
-    let Some(target) = vm.script_call_entry(callee).map(|entry| unsafe { *entry }) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
+    let target = vm.script_call_entry(callee).map(|entry| unsafe { *entry }).or_else(|| {
+        // An uncached constructor resolves as the lane's own construction does.
+        // SAFETY: the context's program outlives the lane run.
+        vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(|target| target.program == vm.active_program)
+    });
+    let Some(target) = target else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
+    // A forwarding constructor (`this.initialize.apply(this, arguments)`) is built by its
+    // forwarded initializer's plan, as the lane's keeping construction does first; where none
+    // holds, the lane's own construction runs it, which this one does not.
+    if target.forwards() {
+        let Some(this) = lane_forwarded_fields(vm, callee, lane_construct_argument(r, i)) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructForwarding) };
+        note_allocation(vm);
+        r.set(i.a & crate::bytecode::REGISTER_MASK, this);
+        return LANE_CALL_COMPLETED;
+    }
     if !target.constructs { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructor); }
     // The activation of the lane's own construction (`lane_script_construct`): a target that
     // keeps or gathers values, or is passed more than it has parameters, by the keeping form.
