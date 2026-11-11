@@ -14008,7 +14008,7 @@ fn lane_construct_keeping_activation<H: Host>(
 /// (`resolved_forwarded_method`): the receiver that initializer's adds would finish, whose
 /// body completes with `undefined`, as the forwarding body then does.
 #[inline(always)]
-fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
+fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, _code: &ResidualProgram, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // A copy: a plan reads no field of the VM to compute its values.
     let plan = vm.lane_stack.construct_plans[index]; if !plan.fold_holds(vm, index) { return None; }
@@ -14018,8 +14018,8 @@ fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee
     {
         return None;
     }
-    let values = plan.values(vm, code, argument)?;
-    Some(plan.allocate(&mut vm.heap, |field| values[field]))
+    let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS]; plan.fill_values(vm, &mut values, argument)?;
+    Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
 }
 
 /// Records in `callee`'s holding plan of no fields, whose forwarding resolved
