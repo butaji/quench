@@ -12516,11 +12516,8 @@ impl<H: Host> Vm<H> {
         self.execution_mode = mode;
     }
 
-    /// Lets hot functions reach lane bodies, through the tier gate alone (`Runtime`, where a
-    /// program runs for its speed; a VM built directly keeps the loop tiers on their own).
-    pub(crate) fn enable_lane_methods(&mut self) {
-        self.programs.enable_js_lane_methods();
-    }
+    /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).
+    pub(crate) fn enable_lane_methods(&mut self) { self.programs.enable_js_lane_methods(); }
 
     /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`).
     pub(crate) fn compile_wasm_eagerly(&mut self) {
