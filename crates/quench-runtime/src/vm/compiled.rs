@@ -76,7 +76,7 @@ use lane_allocations::{lane_binary, lane_new_array, lane_new_object, lane_new_ob
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
 #[path = "compiled/lane_facts.rs"]
-mod lane_facts;
+pub(in crate::vm) mod lane_facts;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
 mod static_loops;
