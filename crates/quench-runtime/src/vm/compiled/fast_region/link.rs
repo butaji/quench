@@ -80,17 +80,24 @@ pub(super) struct Layout<'a> {
     pub(super) header: u32,
     pub(super) backedge: u32,
     pub(super) homes: Homes,
+    pub(super) webs: Webs,
     pub(super) region: &'a LoopRegion,
 }
 
 impl Layout<'_> {
     /// The pinned registers live at `pc`: the ones a stub there writes back.
     pub(super) fn live_pins(&self, pc: u32) -> Vec<Pin> {
-        self.homes.pins.iter().copied().filter(|(_, register)| self.region.is_live(pc, *register)).collect()
+        self.live_homes(&self.homes.pins, pc)
     }
 
     pub(super) fn live_floats(&self, pc: u32) -> Vec<Pin> {
-        self.homes.floats.iter().copied().filter(|(_, register)| self.region.is_live(pc, *register)).collect()
+        self.live_homes(&self.homes.floats, pc)
+    }
+
+    /// The pins of `homes` whose web is live at `pc`, each with the register it writes back to.
+    fn live_homes(&self, homes: &[Pin], pc: u32) -> Vec<Pin> {
+        let live = self.webs.live_at(self.region, pc);
+        homes.iter().filter(|(_, web)| live.contains(&usize::from(*web))).map(|(pin, web)| (*pin, self.homes.orig[usize::from(*web)])).collect()
     }
 
     /// The code that leaves with `word`: spills the live pinned doubles (canonical words), tags
@@ -108,9 +115,9 @@ impl Layout<'_> {
 
     pub(super) fn chain(&self, pc: u32, ending: Vec<u8>) -> Result<Vec<u8>, String> {
         let tail = leave_row(ending);
-        let spills = self.homes.floats.iter().filter(|(_, register)| self.region.is_live(pc, *register));
+        let spills = self.live_floats(pc);
         let mut chain = Vec::new();
-        for (pin, register) in spills {
+        for (pin, register) in &spills {
             let row = numeric::Row { kind: Kind::Spill, dst: Place::Mem, a: Place::PinF(*pin as u8), b: Place::Mem, speculate: false };
             chain.push((numeric::stencil(row)?, [u64::from(*register) * SLOT, 0, 0]));
         }
@@ -135,26 +142,29 @@ impl Layout<'_> {
 /// checked (or, dead there, tagged), and each other Number register live there is checked, so a
 /// loop whose values are no Numbers is never entered.
 pub(super) fn entry_rows(layout: &Layout) -> Result<Vec<(&'static Stencil, [u64; HOLES])>, String> {
-    let (region, header) = (layout.region, layout.header);
+    let region = layout.region;
     let guard = |kind, dst, offset: u64| {
         numeric::stencil(numeric::Row { kind, dst, a: Place::Mem, b: Place::Mem, speculate: true }).map(|stencil| {
             (stencil, if kind == Kind::TagInit { [offset, 0, 0] } else { [0, offset, 0] })
         })
     };
     let mut rows = Vec::new();
-    for (pin, register) in layout.homes.pins.iter().filter(|(_, register)| region.is_live(header, *register)) {
-        rows.push(guard(Kind::Guard, Place::Pin(*pin as u8), u64::from(*register) * SLOT)?);
+    let entered = layout.webs.entry_live(region);
+    let slot = |web: Register| u64::from(layout.homes.orig[usize::from(web)]) * SLOT;
+    for (pin, web) in layout.homes.pins.iter().filter(|(_, web)| entered.contains(&usize::from(*web))) {
+        rows.push(guard(Kind::Guard, Place::Pin(*pin as u8), slot(*web))?);
     }
-    for (pin, register) in layout.homes.floats.iter().filter(|(_, register)| region.is_live(header, *register)) {
-        rows.push(guard(Kind::Guard, Place::PinF(*pin as u8), u64::from(*register) * SLOT)?);
+    for (pin, web) in layout.homes.floats.iter().filter(|(_, web)| entered.contains(&usize::from(*web))) {
+        rows.push(guard(Kind::Guard, Place::PinF(*pin as u8), slot(*web))?);
     }
-    for register in &layout.homes.slots {
-        let offset = u64::from(*register) * SLOT;
-        rows.push(if region.is_live(header, *register) { guard(Kind::Guard, Place::MemInt, offset)? } else { guard(Kind::TagInit, Place::MemInt, offset)? });
+    for web in &layout.homes.slots {
+        let live = entered.contains(&usize::from(*web));
+        rows.push(guard(if live { Kind::Guard } else { Kind::TagInit }, Place::MemInt, slot(*web))?);
     }
-    for register in region.number_registers() {
-        if layout.homes.place(*register) == Place::Mem && region.is_live(header, *register) {
-            rows.push(guard(Kind::Guard, Place::Mem, u64::from(*register) * SLOT)?);
+    for web in entered.iter().map(|web| *web as Register) {
+        let number = region.number_registers().contains(&layout.homes.orig[usize::from(web)]);
+        if number && layout.homes.place(web) == Place::Mem {
+            rows.push(guard(Kind::Guard, Place::Mem, slot(web))?);
         }
     }
     Ok(rows)

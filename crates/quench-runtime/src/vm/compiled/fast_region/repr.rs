@@ -60,21 +60,23 @@ fn loads_widened(decoded: &[Decoded], header: u32, widened: &[usize]) -> bool {
 
 /// The representation of every register the region names, to a fixed point: where the
 /// compile began (`ints`, `doubles`; dead at the header: none yet), then each writer's result.
-pub(super) fn representations(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN]) -> Reprs {
+pub(super) fn representations(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN], webs: &Webs) -> Reprs {
     let header = region.header;
     // One loaded value that left for its int32 speculation widens every loaded value at once: the
     // next compile need not discover them one leave at a time.
     let loads_widened = loads_widened(decoded, header, widened);
     let mut reprs = Reprs::new();
+    let entered = webs.entry_live(region);
     for row in decoded {
-        for register in row.registers() {
-            let start = match (region.is_live(header, register), seen[0].contains(&register), seen[1].contains(&register)) {
+        for web in row.registers() {
+            let register = webs.orig[usize::from(web)];
+            let start = match (entered.contains(&usize::from(web)), seen[0].contains(&register), seen[1].contains(&register)) {
                 (false, ..) => Repr::Unseen,
                 (_, true, _) => Repr::Int,
                 (_, _, true) => Repr::Double,
                 _ => Repr::Tagged,
             };
-            reprs.insert(register, start);
+            reprs.insert(web, start);
         }
     }
     let mut changed = true;
@@ -82,7 +84,7 @@ pub(super) fn representations(region: &LoopRegion, decoded: &[Decoded], widened:
         changed = false;
         for (k, row) in decoded.iter().enumerate() {
             let Some(dst) = row.dst else { continue };
-            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some()), region.number_registers().contains(&dst));
+            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some()), region.number_registers().contains(&webs.orig[usize::from(dst)]));
             if reprs[&dst] < result {
                 reprs.insert(dst, result);
                 changed = true;

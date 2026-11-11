@@ -16,7 +16,11 @@ pub(super) fn finish_int(b: &mut StencilBuilder, row: Row, value: ir::Value, sta
 }
 
 /// As `finish_int` for a tagged word, which only a frame slot holds.
-pub(super) fn finish_word(b: &mut StencilBuilder, word: ir::Value, start: Pins) {
+pub(super) fn finish_word(b: &mut StencilBuilder, dst: Place, word: ir::Value, start: Pins) {
+    // A pinned double takes the tagged result as a double, not the frame slot's word.
+    if matches!(dst, Place::PinF(_)) {
+        return deliver(b, dst, word);
+    }
     b.write(Source::Frame(Operand::Hole(0)), word);
     b.next();
     b.pins = start;
@@ -69,7 +73,7 @@ pub(super) fn double_path(b: &mut StencilBuilder, row: Row, x: ir::Value, y: ir:
     let (fx, fy) = (to_f64(b, x), to_f64(b, y));
     let value = float_arithmetic(b, row.kind, fx, fy);
     let word = canonical(b, value);
-    finish_word(b, word, start);
+    finish_word(b, row.dst, word, start);
 }
 
 pub(super) fn arith_row(b: &mut StencilBuilder, row: Row) {
@@ -92,7 +96,7 @@ pub(super) fn arith_row(b: &mut StencilBuilder, row: Row) {
     b.b.switch_to_block(fast);
     b.b.seal_block(fast);
     let word = int_word(b, value);
-    finish_word(b, word, start);
+    finish_word(b, row.dst, word, start);
     b.b.switch_to_block(slow);
     b.b.seal_block(slow);
     double_path(b, row, x, y, start);
@@ -124,13 +128,13 @@ pub(super) fn bitwise_row(b: &mut StencilBuilder, row: Row) {
             return finish_int(b, row, value, start);
         }
         let word = unsigned_word(b, value);
-        return finish_word(b, word, start);
+        return finish_word(b, row.dst, word, start);
     }
     let (x, y) = (word_of(b, row.a, 1), word_of(b, row.b, SECOND));
     let (x32, y32) = (to_i32(b, x), to_i32(b, y));
     let value = int_bitwise(b, row.kind, x32, y32);
     let word = if row.kind == Kind::UShr { unsigned_word(b, value) } else { int_word(b, value) };
-    finish_word(b, word, start);
+    finish_word(b, row.dst, word, start);
 }
 
 /// A move or constant load: into a pinned register an int32, else a tagged word.
@@ -141,5 +145,5 @@ pub(super) fn copy_row(b: &mut StencilBuilder, row: Row) {
         return finish_int(b, row, value, start);
     }
     let word = word_of(b, row.a, 1);
-    finish_word(b, word, start);
+    finish_word(b, row.dst, word, start);
 }

@@ -7,12 +7,14 @@ pub(super) struct Homes {
     pub(super) pins: Vec<Pin>,
     pub(super) floats: Vec<Pin>,
     pub(super) slots: Vec<Register>,
+    /// The register of the activation each web belongs to, whose frame slot a web uses.
+    pub(super) orig: Vec<Register>,
 }
 
 impl Homes {
-    pub(super) fn of(ints: Vec<Register>, doubles: Vec<Register>) -> Self {
+    pub(super) fn of(ints: Vec<Register>, doubles: Vec<Register>, orig: Vec<Register>) -> Self {
         let pinned = |registers: &[Register], count| registers.iter().take(count).copied().enumerate().collect();
-        Self { pins: pinned(&ints, PINNED), floats: pinned(&doubles, PINNED_F), slots: ints.into_iter().skip(PINNED).collect() }
+        Self { pins: pinned(&ints, PINNED), floats: pinned(&doubles, PINNED_F), slots: ints.into_iter().skip(PINNED).collect(), orig }
     }
 
     pub(super) fn place(&self, register: Register) -> Place {
@@ -30,7 +32,7 @@ impl Homes {
 /// The place and hole of an operand: an int32 constant is an immediate.
 pub(super) fn operand(homes: &Homes, source: Option<Source>) -> (Place, u64) {
     match source {
-        Some(Source::Register(register)) => (homes.place(register), u64::from(register) * SLOT),
+        Some(Source::Register(register)) => (homes.place(register), u64::from(homes.orig[usize::from(register)]) * SLOT),
         Some(Source::Constant(word)) if word >> HALF == INT_HIGH => (Place::Imm, word & u64::from(u32::MAX)),
         Some(Source::Constant(word)) => (Place::Const, word),
         None => (Place::Mem, 0),
@@ -70,8 +72,8 @@ fn pinned(place: Place) -> bool {
 }
 
 /// The plan of a heap row, given its (place, hole) of destination, first and second operand.
-fn heap_plan(decoded: &Decoded, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
-    let base = decoded.base.map_or(0, |register| u64::from(register) * SLOT);
+fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
+    let base = decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT);
     let holes = match heap {
         Heap::Store => [base, a_hole, b_hole],
         Heap::Field => [dst_hole, decoded.hole, 0],
@@ -106,7 +108,7 @@ pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> 
     let floats = [dst, a, b].iter().any(|place| matches!(place, Place::PinF(_))) && decoded.heap.is_none();
     let ((a, a_hole), (b, b_hole)) = if floats { (double(a, a_hole), double(b, b_hole)) } else { ((a, a_hole), (b, b_hole)) };
     if let Some(heap) = decoded.heap {
-        return heap_plan(decoded, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
+        return heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
     }
     let polls = decoded.target.is_some_and(|target| target <= pc) && decoded.kind == Kind::Jump;
     let kind = if polls { Kind::JumpPoll } else { decoded.kind };

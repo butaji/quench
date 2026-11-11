@@ -24,10 +24,12 @@ mod decode;
 mod link;
 mod plan;
 mod repr;
+mod webs;
 use decode::*;
 use link::*;
 use plan::*;
 use repr::*;
+use webs::*;
 
 /// Bytes of a register slot in the activation's register file.
 const SLOT: u64 = std::mem::size_of::<Value>() as u64;
@@ -102,9 +104,20 @@ fn assemble(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEEN]) -
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
     let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, header + k as u32, *instruction)).collect::<Result<Vec<_>, _>>()?;
-    let reprs = representations(region, &decoded, widened, seen);
-    let homes = Homes::of(ranked(&decoded, &reprs, Repr::Int), ranked(&decoded, &reprs, Repr::Double));
-    let layout = Layout { header, backedge, homes, region };
+    // A register with several webs may not have a web in an int slot, whose writes keep a
+    // tagged word's high half; such a register is left whole.
+    let mut merged: std::collections::BTreeSet<Register> = Default::default();
+    let (reprs, homes, webs, decoded) = loop {
+        let (webs, renamed) = Webs::split(region, &decoded, &merged);
+        let reprs = representations(region, &renamed, widened, seen, &webs);
+        let homes = Homes::of(ranked(&renamed, &reprs, Repr::Int), ranked(&renamed, &reprs, Repr::Double), webs.orig.clone());
+        let split: Vec<Register> = homes.slots.iter().map(|web| webs.orig[usize::from(*web)]).filter(|register| webs.count(*register) > 1).collect();
+        if split.is_empty() {
+            break (reprs, homes, webs, renamed);
+        }
+        merged.extend(split);
+    };
+    let layout = Layout { header, backedge, homes, webs, region };
     let mut body = Vec::with_capacity(count);
     for (k, row) in decoded.iter().enumerate() {
         body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs))?);
