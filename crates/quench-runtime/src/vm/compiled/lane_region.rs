@@ -2324,7 +2324,7 @@ impl Lowering<'_, '_> {
         #[cfg(not(feature = "aot"))]
         let fields = smallvec::SmallVec::new();
         self.admit_store_domains(instructions, &mut miss);
-        let records = self.invariant_field_records(instructions, &receiver, object_table, &mut miss);
+        let records = self.entry_field_records(instructions, &receiver, object_table, &mut miss);
         if let Some(miss) = miss {
             let admitted = self.builder.create_block();
             self.builder.ins().jump(admitted, &[]);
@@ -2340,6 +2340,15 @@ impl Lowering<'_, '_> {
             self.builder.switch_to_block(admitted);
         }
         Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, this, fields, calls, call_receivers }
+    }
+
+    /// `invariant_field_records`, unless the body left at its entry: it binds no receiver record
+    /// there, the reads it hoisted ran under a branch (`packet != null`) and the run declined at
+    /// its start.
+    fn entry_field_records(&mut self, instructions: &[WideInstruction], receiver: &LaneReceiver,
+        object_table: Option<CheckedObjectTable>, miss: &mut Option<ir::Block>) -> Vec<Option<ObjectRecord>> {
+        if self.generic.contains(&entry_leave(self.unit)) { return vec![None; usize::from(self.unit.registers) + 1]; }
+        self.invariant_field_records(instructions, receiver, object_table, miss)
     }
 
     /// Bind physical receiver facts once. The expanded unit's write set owns
