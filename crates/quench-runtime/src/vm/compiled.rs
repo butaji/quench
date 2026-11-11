@@ -51,7 +51,7 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
-mod osr_compile;
+mod osr_compile; pub(in crate::vm) mod fast_region; mod fast_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
 pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
@@ -830,7 +830,6 @@ fn emit_js_guard(
     builder.switch_to_block(passed);
     builder.seal_block(passed);
 }
-
 
 /// The record of the direct array `base`, tagged; any other value leaves through `fallback`.
 fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, fallback: ir::Block) -> ir::Value {
@@ -6042,6 +6041,7 @@ pub(super) struct CompiledOsrRegion {
     _code: CodeMemory,
     entry: Entry,
     pub(super) facts: OsrFacts,
+    crossing: Crossing,
 }
 
 impl CompiledOsrRegion {
@@ -6067,7 +6067,8 @@ impl CompiledOsrRegion {
         lane_context: usize,
     ) -> LoopOutcome {
         // SAFETY: the caller's contract; the region runs the same lane entry ABI.
-        unsafe { self.run_lane(registers, entry, region, vm, program, function, frame, interrupt, lane_context) }
+        unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(self.entry, registers, entry, region, interrupt) }
+            else { self.run_lane(registers, entry, region, vm, program, function, frame, interrupt, lane_context) } }
     }
 
     /// Runs a loop compiled through the lane region specializer: the shared lane entry ABI,
@@ -6091,7 +6092,7 @@ impl CompiledOsrRegion {
         let mut outcome = LoopOutcome::Terminated;
         #[cfg(test)]
         LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
-        let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, |native, vm| {
+        let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, self.crossing == Crossing::General, |native, vm| {
             native.dispatch.bind_native_storage(vm);
             native.dispatch.lane_context = lane_context;
             // A region's `THIS`-based reads take the running activation's receiver, as a
@@ -6490,6 +6491,8 @@ pub(super) struct JsNativeStep {
 /// different build than the runtime it links: the layout is declared, not left to the compiler.
 #[repr(C)]
 struct JsStepDispatch {
+    /// The loop entry record whose counter a region's backward edges bump; first, as a `Crossing::Bare` payload is this word alone.
+    loop_entry: usize,
     program_id: ProgramId,
     frame: usize,
     allow_inline_calls: bool,
@@ -6596,9 +6599,6 @@ struct JsStepDispatch {
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
     allocated: usize,
     collect_at: usize,
-    /// The loop entry record a lane OSR region counts its taken backward edges in
-    /// (`LoopEntry::backedge_count`); zero for every other lane run.
-    loop_entry: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -7486,7 +7486,7 @@ impl JsNativeActivation {
     /// large dispatch does not cross an optional aggregate-return boundary.
     #[inline(always)]
     fn with<H: Host, R>(vm: &mut Vm<H>, program_id: ProgramId, frame: usize, start_pc: usize,
-        allow_inline_calls: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
+        allow_inline_calls: bool, views: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
         let program = vm.programs.get(program_id)?;
         let body = program.function_get(vm.frames[frame].function as usize)? as *const _;
         let activation = &mut vm.frames[frame];
@@ -7522,7 +7522,7 @@ impl JsNativeActivation {
             global_name_cache_hits: 0,
             outcome: None,
         }, _program: program };
-        native.dispatch.refresh_heap_bases(vm, &native._program);
+        if views { native.dispatch.refresh_heap_bases(vm, &native._program); }
         Some(run(&mut native, vm))
     }
 }
@@ -12553,7 +12553,7 @@ impl<H: Host> Vm<H> {
         id: ProgramId,
         function: u32,
     ) -> bool {
-        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm {
+        if !self.js_function_compiles() || program.kind == crate::bytecode::ProgramKind::Wasm {
             return false;
         }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
@@ -12840,7 +12840,7 @@ impl<H: Host> Vm<H> {
         allow_inline_calls: bool,
         promote: bool,
     ) -> Option<JsNativeDispatchResult> {
-        if !self.js_tier_runs()
+        if !self.js_function_compiles()
             || !self.programs.js_jit_general_dispatch_enabled()
             || program.kind == crate::bytecode::ProgramKind::Wasm
             || start_pc >= program.function_get(self.frames.get(frame)?.function as usize)?.code.len()
@@ -12923,7 +12923,7 @@ impl<H: Host> Vm<H> {
             }
         }?;
 
-        JsNativeActivation::with(self, program_id, frame, start_pc, allow_inline_calls, |activation, vm| {
+        JsNativeActivation::with(self, program_id, frame, start_pc, allow_inline_calls, true, |activation, vm| {
             let dispatch = &mut activation.dispatch;
             // Native dispatch starts at the next unexecuted bytecode. Callouts
             // overwrite this with the exact failing PC before invoking VM semantics.
@@ -12956,7 +12956,7 @@ impl<H: Host> Vm<H> {
         entry: &TierEntry,
         specialized_guard_miss: &mut bool,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
-        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm {
+        if !self.js_function_compiles() || program.kind == crate::bytecode::ProgramKind::Wasm {
             return None;
         }
         let (program_id, function_id) = (entry.program, entry.function);
@@ -14364,7 +14364,7 @@ impl<H: Host> Vm<H> {
         let failure = |message: String| JsNativeStep {
             instruction_pc: start_pc, next_pc: start_pc, result: Err(JsError::validation(message)),
         };
-        JsNativeActivation::with(self, program, frame, start_pc, allow_inline_calls, |activation, vm| {
+        JsNativeActivation::with(self, program, frame, start_pc, allow_inline_calls, true, |activation, vm| {
             // SAFETY: the activation owns the immutable function admitted above.
             let instruction_count = unsafe { (*activation.dispatch.body).code.len() };
             let Some(entry) = code.entries().get(function as usize).copied() else {
@@ -17353,7 +17353,7 @@ mod tests {
         let receiver = vm.object();
         vm.frames[0].this = receiver;
         vm.frames[0].fixed_this = false;
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, _| {
+        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
             assert!(activation.dispatch.fixed_this_slot.is_null());
         }).unwrap();
         vm.frames[0].fixed_this = true;
@@ -17362,12 +17362,12 @@ mod tests {
             env: vm.frames[0].env, captured: vm.frames[0].captured,
             epoch: vm.heap.collection_epoch(), slots: &slots, root: None,
         };
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, vm| {
+        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
             assert_eq!(activation.dispatch.fixed_this_slot, &vm.frames[0].this as *const Value);
             assert!(!activation.dispatch.capture_values.is_null());
         }).unwrap();
         vm.frames[0].capture_cache.root = Some(Some(ProgramId::MAIN.raw()));
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, _| {
+        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
             assert!(activation.dispatch.capture_values.is_null());
         }).unwrap();
     }
@@ -17595,7 +17595,7 @@ mod tests {
         vm: &mut Vm<crate::test_host::TestHost>, pc: usize,
         run: impl FnOnce(*mut CallContext, *mut u64) -> i64,
     ) -> (i64, u64, Option<JsNativeStep>) {
-        JsNativeActivation::with(vm, ProgramId::MAIN, 0, pc, false, |activation, vm| {
+        JsNativeActivation::with(vm, ProgramId::MAIN, 0, pc, false, true, |activation, vm| {
             let dispatch = &mut activation.dispatch;
             let mut context = CallContext::native_adapter(
                 (dispatch as *mut JsStepDispatch).cast(),
@@ -17669,7 +17669,7 @@ mod tests {
         let probe = vm.lookup_atom("tableProbe").unwrap();
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let assert_binding = |vm: &mut Vm<crate::test_host::TestHost>, expected| {
-            JsNativeActivation::with(vm, ProgramId::MAIN, 0, 0, false, |activation, vm| {
+            JsNativeActivation::with(vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
                 assert_ne!(expected, 0);
                 assert_eq!(activation.dispatch.object_record_base, expected);
                 assert_eq!(vm.heap.object_record_base().unwrap() as usize, expected);
@@ -17687,7 +17687,7 @@ mod tests {
         let other_base = other.heap.object_record_base().unwrap() as usize;
         // Reentry in another VM admits that VM's table, without changing the
         // outer activation's admitted base or retaining it for later entries.
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, _| {
+        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
             assert_binding(&mut other, other_base);
             assert_eq!(activation.dispatch.object_record_base, original);
         }).unwrap();
@@ -17715,8 +17715,8 @@ mod tests {
         let vm_source = "throw 7;";
         let mut first_vm = semantic_vm(vm_source);
         let mut second_vm = semantic_vm(vm_source);
-        let weak = JsNativeActivation::with(&mut first_vm, ProgramId::MAIN, 0, 0, false, |first, _| {
-            JsNativeActivation::with(&mut second_vm, ProgramId::MAIN, 0, 0, false, |second, _| {
+        let weak = JsNativeActivation::with(&mut first_vm, ProgramId::MAIN, 0, 0, false, true, |first, _| {
+            JsNativeActivation::with(&mut second_vm, ProgramId::MAIN, 0, 0, false, true, |second, _| {
                 assert_eq!(first.dispatch.program_id, second.dispatch.program_id);
                 assert!(!Rc::ptr_eq(&first._program, &second._program));
                 assert_eq!(first.dispatch.residual, Rc::as_ptr(&first._program) as usize);
@@ -17746,7 +17746,7 @@ mod tests {
         }
         let mut vm = semantic_vm("throw 7;");
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, vm| {
+            JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
                 let dispatch = &mut activation.dispatch;
                 let interrupt = vm.execution_interrupt.atomic_flag() as *const _;
                 run_js_native_entry(report_panic, vm, ProgramId::MAIN,
@@ -17756,7 +17756,7 @@ mod tests {
         assert_eq!(panic.downcast_ref::<&str>(), Some(&"native panic"));
 
         let (_memory, entry, _operands) = live_native_graph(&vm);
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, vm| {
+        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
             let dispatch = &mut activation.dispatch;
             let interrupt = vm.execution_interrupt.atomic_flag() as *const _;
             let (status, _) = run_js_native_entry(entry, vm, ProgramId::MAIN,
