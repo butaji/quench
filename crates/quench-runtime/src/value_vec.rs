@@ -488,17 +488,22 @@ impl ValueArena {
         }
     }
 
-    /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened. The
-    /// untracked case, every store of a runtime without lane bodies, is the test alone: the
-    /// join is out of line (`note_tracked_slot_value`).
+    /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened. Only a
+    /// widening is out of line (`widen_owner`): an untracked store is the test alone.
     #[inline(always)] pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
-        self.tracking && self.note_tracked_slot_value(shape, slot, value)
+        if !self.tracking { return false; }
+        let owner = self.slot_owner(shape, slot);
+        let held = self.owner_types[owner as usize];
+        if held == SlotType::Tagged { return false; }
+        let class = held.join(SlotType::of(value));
+        class != held && self.widen_owner(owner, class)
     }
 
     #[inline(never)]
-    fn note_tracked_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
-        let owner = self.slot_owner(shape, slot);
-        self.join_owner_type(owner, SlotType::of(value))
+    fn widen_owner(&mut self, owner: u32, class: SlotType) -> bool {
+        self.slot_readers.retire(owner);
+        self.owner_types[owner as usize] = class;
+        true
     }
 
     /// Admits the possible writes of a no-reentry raw slot capability before exposing it.
@@ -512,13 +517,8 @@ impl ValueArena {
     #[inline(always)]
     fn join_owner_type(&mut self, owner: u32, incoming: SlotType) -> bool {
         let held = self.owner_types[owner as usize];
-        // Writes mostly repeat a class the slot already holds: one compare.
-        if held == incoming || held == SlotType::Tagged { return false; }
         let class = held.join(incoming);
-        if class == held { return false; }
-        self.slot_readers.retire(owner);
-        self.owner_types[owner as usize] = class;
-        true
+        class != held && self.widen_owner(owner, class)
     }
 
     pub(crate) fn get(&self, vector: ValueVec, index: usize) -> Option<Value> {
