@@ -101,12 +101,37 @@ pub(super) fn lane_loop_compile<H: Host>(
     }
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
+    promote_double_arrays(machine, r, region, entry);
     machine.host.before_native_compilation();
     let started = observe(machine, r, region, entry, &tier.widened, |observation| {
         super::super::compiled::start_osr_region(region, observation, &machine.execution_interrupt, machine.heap.memory_policy())
     });
     machine.host.after_native_compilation();
     tier.start(started, &mut machine.heap, site);
+}
+
+/// Makes each dense array the region accesses, and whose values are all Numbers that are not
+/// all int32s, a raw-double backing (`UniqueElements::promote_doubles`): the region's reads
+/// and stores then need no tag work. An int32 array keeps its representation for
+/// `prove_int32_kinds`; a non-Number one cannot be promoted and keeps the tagged path.
+fn promote_double_arrays<H: Host>(machine: &mut Vm<H>, r: Registers, region: &super::super::compiled::LoopRegion,
+    entry: &super::super::compiled::LoopEntry) {
+    for array in &region.arrays {
+        let value = match array.field {
+            Some(index) => entry.field_value(region, index),
+            None => r.get(array.register),
+        };
+        let promote = machine.heap.record_array(value).is_some_and(|record| {
+            let elements = record.elements();
+            !elements.is_doubles()
+                && !elements.iter().all(|value| value.as_int().is_some())
+                && elements.iter().all(|value| value.as_number().is_some())
+        });
+        if !promote { continue; }
+        if let Some(elements) = machine.heap.array_elements_mut(value) {
+            elements.make_mut().promote_doubles();
+        }
+    }
 }
 
 /// Runs `compile` on what the running activation (`r`, `entry`) shows `region`'s values to be.
@@ -133,6 +158,7 @@ fn observe<H: Host, T>(
         })
     };
     let only_int32 = |register| heap.record_array(array_value(register)).is_some_and(|array| array.elements().holds_only_int32());
+    let double_elements = |register| heap.record_array(array_value(register)).is_some_and(|array| array.elements().is_doubles());
     // An inlined callee's register is no register of the running activation: it holds
     // nothing at entry.
     let caller_registers = region.inlining.as_ref().map_or(Register::MAX, |inlining| inlining.caller_registers);
@@ -140,6 +166,7 @@ fn observe<H: Host, T>(
         register: Some(&|register| if register < caller_registers { r.get(register) } else { Value::UNDEFINED }),
         int32_elements: &int32_elements,
         only_int32: &only_int32,
+        double_elements: &double_elements,
         captures: &captures,
         fields: &fields,
         native_field_loads: &native_field_loads,

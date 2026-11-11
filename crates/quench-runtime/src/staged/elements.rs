@@ -60,6 +60,21 @@ fn other<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
 /// The backing is its array's own, alive, and holds `index`.
 #[inline(always)]
 pub(crate) unsafe fn concrete_replace_element(values: *mut crate::Value, index: usize, value: crate::Value) {
+    // A raw-double backing stores a Number as its double (an int 2 becomes 2.0) and clears
+    // the kind for any other value, whose word a native read must not take as a double.
+    // SAFETY: the caller passes the first value of a live backing, whose header precedes it.
+    let capacity = unsafe { values.cast::<u8>().offset(crate::heap::CAPACITY_FROM_VALUES as isize).cast::<u32>() };
+    let value = if unsafe { *capacity } & crate::heap::DOUBLE_ELEMENTS != 0 {
+        match value.as_number() {
+            Some(number) => crate::Value::from_bits(if number.is_nan() { crate::Value::NAN.to_bits() } else { number.to_bits() }),
+            None => {
+                unsafe { *capacity &= !crate::heap::DOUBLE_ELEMENTS };
+                value
+            }
+        }
+    } else {
+        value
+    };
     let mut stage = Concrete::new(std::ptr::null());
     // SAFETY: the caller's contract.
     let address = unsafe { values.add(index) };

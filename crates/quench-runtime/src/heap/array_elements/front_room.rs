@@ -16,7 +16,7 @@ impl UniqueElements {
         unsafe {
             let mut header = old.read();
             header.len -= 1;
-            header.capacity = ((header.capacity & !BIASED) - 1) | BIASED;
+            header.capacity = ((header.capacity & !CAPACITY_FLAGS) - 1) | (header.capacity & DOUBLE_ELEMENTS) | BIASED;
             let moved = old.cast::<Value>().add(1).cast::<Header>();
             moved.write(header);
             moved.cast::<usize>().sub(1).write(bias);
@@ -38,7 +38,7 @@ impl UniqueElements {
         unsafe {
             let mut header = self.0.header.as_ptr().read();
             header.len += count as u32;
-            header.capacity = ((header.capacity & !BIASED) + count as u32) | if bias == 0 { 0 } else { BIASED };
+            header.capacity = ((header.capacity & !CAPACITY_FLAGS) + count as u32) | (header.capacity & DOUBLE_ELEMENTS) | if bias == 0 { 0 } else { BIASED };
             let moved = self.0.header.as_ptr().cast::<Value>().sub(count).cast::<Header>();
             moved.write(header);
             if bias != 0 {
@@ -53,7 +53,7 @@ impl UniqueElements {
     fn regrow_front(&mut self, front: usize) {
         let (len, capacity) = (self.0.len(), self.0.capacity());
         let layout = ArrayElements::layout(front + capacity);
-        assert!(u32::try_from(capacity + front).is_ok_and(|word| word & BIASED == 0), "array backing capacity overflow");
+        assert!(u32::try_from(capacity + front).is_ok_and(|word| word & (BIASED | DOUBLE_ELEMENTS) == 0), "array backing capacity overflow");
         // SAFETY: the new allocation holds `front` values, a header and `capacity` values; the
         // old one, this array's own, is freed with the layout it was allocated with.
         unsafe {
@@ -62,7 +62,7 @@ impl UniqueElements {
             };
             let moved = start.as_ptr().cast::<Value>().add(front).cast::<Header>();
             let mut header = self.0.header.as_ptr().read();
-            header.capacity = capacity as u32 | BIASED;
+            header.capacity = capacity as u32 | BIASED | (header.capacity & DOUBLE_ELEMENTS);
             moved.write(header);
             moved.cast::<usize>().sub(1).write(front);
             std::ptr::copy_nonoverlapping(self.0.values(), moved.cast::<u8>().add(VALUES_OFFSET).cast(), len);
@@ -80,7 +80,7 @@ impl UniqueElements {
         // allocation; the regions may overlap.
         unsafe {
             let mut header = self.0.header.as_ptr().read();
-            header.capacity = (header.capacity & !BIASED) + bias as u32;
+            header.capacity = (header.capacity & !CAPACITY_FLAGS) + bias as u32 | (header.capacity & DOUBLE_ELEMENTS);
             std::ptr::copy(self.0.values(), start.add(VALUES_OFFSET).cast::<Value>(), len);
             let moved = start.cast::<Header>();
             moved.write(header);

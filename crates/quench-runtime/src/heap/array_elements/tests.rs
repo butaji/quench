@@ -263,3 +263,56 @@ fn shared_backings_copy_on_write_and_empty_arrays_allocate_nothing() {
     assert_eq!(&grown[3..], &[Value::NULL; 3]);
     drop(empty);
 }
+
+#[test]
+fn double_elements_kind_promotes_and_keeps_numbers_raw() {
+    let mut elements = ArrayElements::from([Value::integer(2), Value::number(0.5)]);
+    assert!(elements.make_mut().promote_doubles());
+    assert!(elements.is_doubles());
+    assert_eq!(elements.header().others, 2);
+    assert_eq!(elements[0].as_number(), Some(2.0));
+    assert_eq!(elements[0].as_int(), None);
+
+    // A Number store keeps the kind, as the double it names.
+    elements.make_mut().set(0, Value::integer(3));
+    assert!(elements.is_doubles());
+    assert_eq!(elements[0].as_number(), Some(3.0));
+    assert_eq!(elements.header().others, 2);
+
+    // Any other value clears the kind, since its word is not a double.
+    elements.make_mut().set(1, Value::UNDEFINED);
+    assert!(!elements.is_doubles());
+    assert!(elements[1].is_undefined());
+    assert_eq!(elements.header().others, 2);
+}
+
+#[test]
+fn double_elements_kind_survives_growth_and_proved_stores() {
+    let mut elements = ArrayElements::from([Value::number(0.5)]);
+    assert!(elements.make_mut().promote_doubles());
+    elements.make_mut().push(Value::integer(4));
+    assert!(elements.is_doubles());
+    assert_eq!(elements[1].as_number(), Some(4.0));
+    // Growth (a new allocation) keeps the kind with the copied values.
+    elements.make_mut().reserve(64);
+    assert!(elements.is_doubles());
+    assert_eq!(elements[0].as_number(), Some(0.5));
+
+    let values = elements.unique_values().unwrap();
+    // SAFETY: the backing stays unique and both indexes are below its length.
+    unsafe { ArrayElements::replace_through(values, 1, Value::integer(7)) };
+    assert!(elements.is_doubles());
+    assert_eq!(elements[1].as_number(), Some(7.0));
+    // SAFETY: as above.
+    unsafe { ArrayElements::replace_through(values, 0, Value::NULL) };
+    assert!(!elements.is_doubles());
+    assert!(elements[0].is_null());
+}
+
+#[test]
+fn double_elements_kind_is_not_promoted_from_a_non_number() {
+    let mut elements = ArrayElements::from([Value::number(0.5), Value::TRUE]);
+    assert!(!elements.make_mut().promote_doubles());
+    assert!(!elements.is_doubles());
+    assert_eq!(elements[1], Value::TRUE);
+}

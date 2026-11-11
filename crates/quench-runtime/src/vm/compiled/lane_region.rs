@@ -3632,7 +3632,7 @@ impl Lowering<'_, '_> {
                 ElementViews::Dense => {
                     let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
                     // Stores through the hoisted view then write the element alone.
-                    if array.writable { super::emit_dense_array_uncounted(&mut self.builder, view); }
+                    if array.writable { dense_elements::uncounted(&mut self.builder, view); }
                     self.builder.def_var(variables.values, view.values);
                     self.builder.def_var(variables.length, view.length);
                 }
@@ -3750,7 +3750,7 @@ impl Lowering<'_, '_> {
             let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
             // A grown backing may count its values again; stores through the view keep none.
             if array.writable {
-                super::emit_dense_array_uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true });
+                dense_elements::uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true });
             }
             self.builder.def_var(variables.values, values);
             self.builder.def_var(variables.length, length);

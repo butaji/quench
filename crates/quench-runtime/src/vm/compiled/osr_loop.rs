@@ -2562,6 +2562,9 @@ pub(crate) struct Observation<'a> {
     /// Whether the array in a register holds only int32s now, so that entry may prove it
     /// with one load (`Lowering::prove_int32_kinds`).
     pub(crate) only_int32: &'a dyn Fn(Register) -> bool,
+    /// Whether every value of the array in a register is a raw double now
+    /// (`ArrayElements::is_doubles`): its reads and stores need no tag work.
+    pub(crate) double_elements: &'a dyn Fn(Register) -> bool,
     pub(crate) captures: &'a [Value],
     /// The fields' values at the entry the compilation follows, in the region's order.
     pub(crate) fields: &'a [Value],
@@ -4161,6 +4164,9 @@ struct Lowering<'a, 'b> {
     result_proof: NodeProof,
     /// The `i32` arithmetic that needs no guard (`int32_facts`).
     facts: Int32Facts,
+    /// The region's arrays whose backing holds only raw doubles (`DOUBLE_ELEMENTS`): their
+    /// reads take the double the word loads as and their stores write a double's bits.
+    double_arrays: std::collections::BTreeSet<Register>,
     blocks: Vec<ir::Block>,
     /// The region's counted loops; each has a preheader block, which every arrival at its
     /// header from outside it takes, and a proved copy of its body's blocks.
@@ -4434,16 +4440,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .collect();
         let written: std::collections::BTreeSet<Register> =
             region.instructions.iter().filter_map(|instruction| number_definition(*instruction)).collect();
-        let one = Value::number(1.0);
-        let units = (0..region.numbers.len())
-            .filter(|entry| webs.entry_read[*entry])
-            .map(|entry| region.numbers[entry])
-            .filter(|register| {
-                !written.contains(register)
-                    && !observation.widened.contains(&Widening::Unit(*register))
-                    && observation.register.is_some_and(|read| read(*register) == one)
-            })
-            .collect();
+        let (units, double_arrays) = kinds::entry_sets(region, &webs, observation, &written);
         Self {
             body: super::Body::new(builder, context, poll, super::Int32Extension::Sign),
             region,
@@ -4462,6 +4459,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             obligations,
             result_proof: NodeProof::Pending,
             facts,
+            double_arrays,
             blocks,
             counted,
             preheaders,
@@ -5097,7 +5095,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             };
             self.fields.push(field);
         }
-        self.prove_int32_kinds();
+        self.prove_element_kinds();
         if let Some(inlining) = &self.region.inlining {
             // The scratch registers' address follows arrays and field-store slots; each
             // field-resolved callee is still the function it held when the region was made.
@@ -6696,11 +6694,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         let widen = self.widen_block(pc, Widening::Elements(base));
                         self.unbox(bits, representation, widen)
                     }
-                    Representation::Float64 => {
-                        let double = self.body.builder.ins().load(types::F64, flags(), address, displacement);
-                        let exit = self.exit_block(pc);
-                        self.unbox_float64(double, exit)
-                    }
+                    Representation::Float64 => self.element_load(pc, base, dynamic, address, displacement),
                     Representation::Tagged => {
                         let bits = self.body.builder.ins().load(types::I64, flags(), address, displacement);
                         let hole = self
@@ -6743,7 +6737,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 }
                 // A hole of an entry array takes the value as an own data element: the entry
                 // found no prototype that holds an index (`LoopRegion::arrays`).
-                let bits = self.encoding(value);
+                let bits = self.element_store_bits(base, value, elements);
                 self.body.builder.ins().store(flags(), bits, address, displacement);
                 self.fall_through(pc)
             }
@@ -6923,6 +6917,8 @@ fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) 
     }
 }
 
+#[path = "osr_loop/kinds.rs"]
+mod kinds;
 #[path = "osr_loop/iteration.rs"]
 mod iteration;
 #[path = "osr_loop/receivers.rs"]
@@ -6994,7 +6990,7 @@ mod tests {
     fn verify_unprofiled(region: &LoopRegion) -> Result<VerifiedRegion<'_>, TypeError> {
         let widened = std::collections::BTreeSet::new();
         let observation = Observation {
-            register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
+            register: None, int32_elements: &|_| false, only_int32: &|_| false, double_elements: &|_| false, captures: &[], fields: &[],
             native_field_loads: &[], widened: &widened,
         };
         verify_region(region, &observation)
@@ -7024,7 +7020,7 @@ mod tests {
             }]).collect();
             let widened = Default::default();
             let observation = Observation {
-                register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
+                register: None, int32_elements: &|_| false, only_int32: &|_| false, double_elements: &|_| false, captures: &[], fields: &[],
                 native_field_loads: &loads, widened: &widened,
             };
             let isa = super::super::super::jit_backend::target_isa().unwrap();
@@ -7129,7 +7125,7 @@ mod tests {
         let region = numeric_region();
         let widened = std::collections::BTreeSet::new();
         let observation = Observation {
-            register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
+            register: None, int32_elements: &|_| false, only_int32: &|_| false, double_elements: &|_| false, captures: &[], fields: &[],
             native_field_loads: &[], widened: &widened,
         };
         let isa = super::super::super::jit_backend::target_isa().unwrap();
@@ -7160,7 +7156,7 @@ mod tests {
         assert!(value_reads(&region, 1).contains(&(1, Type::ANY)));
         let widened = std::collections::BTreeSet::new();
         let observation = Observation {
-            register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
+            register: None, int32_elements: &|_| false, only_int32: &|_| false, double_elements: &|_| false, captures: &[], fields: &[],
             native_field_loads: &[], widened: &widened,
         };
         let verified = verify_region(&region, &observation).unwrap();
@@ -7184,7 +7180,7 @@ mod tests {
             .unwrap_or_else(|failure| panic!("comparison admission: {failure:?}"));
         let widened = std::collections::BTreeSet::new();
         let observation = Observation {
-            register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
+            register: None, int32_elements: &|_| false, only_int32: &|_| false, double_elements: &|_| false, captures: &[], fields: &[],
             native_field_loads: &[], widened: &widened,
         };
         let verified = verify_region(&region, &observation).unwrap();
@@ -7216,7 +7212,7 @@ mod tests {
                 Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default(), Vec::new(),).unwrap();
             let widened = Default::default();
             let observation = Observation {
-                register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
+                register: None, int32_elements: &|_| false, only_int32: &|_| false, double_elements: &|_| false, captures: &[], fields: &[],
                 native_field_loads: &[], widened: &widened,
             };
             let verified = verify_region(&region, &observation).unwrap();
@@ -7301,7 +7297,7 @@ mod tests {
         assert_eq!(values.find(values.leaves[&(3, 1)]), values.defined(&region, 2));
         let widened = std::collections::BTreeSet::from([Widening::Register(1)]);
         let observation = Observation {
-            register: Some(&|_| Value::number(1.0)), int32_elements: &|_| true, only_int32: &|_| true,
+            register: Some(&|_| Value::number(1.0)), int32_elements: &|_| true, only_int32: &|_| true, double_elements: &|_| false,
             captures: &[], fields: &[], native_field_loads: &[], widened: &widened,
         };
         let (representations, _) = representations(&region, &values, &observation);

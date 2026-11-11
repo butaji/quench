@@ -1159,7 +1159,7 @@ complexity quench-bench/src/contention.rs::assess_sample 21
 complexity quench-bench/src/jetstream.rs::source_path 11
 complexity quench-bench/src/main.rs::jit_wasm_selective_ab_error 18
 complexity quench-bench/src/main.rs::main 36
-complexity quench-bench/src/main.rs::parse_options_from 69
+complexity quench-bench/src/main.rs::parse_options_from 67
 complexity quench-bench/src/main.rs::quench_engine 12
 complexity quench-bench/src/main.rs::resume_metadata_matches 19
 complexity quench-bench/src/main.rs::validate_resume 13
@@ -1269,7 +1269,7 @@ dod-dense-hash crates/quench-runtime/src/vm/value_serializer.rs 1
 dod-dense-hash crates/quench-wasm-test/src/bin/bolt-profile.rs 2
 dod-dense-hash crates/quench-wasm-test/src/shared_wast.rs 1
 dod-dense-hash quench-bench/src/bin/verify-fixed-work.rs 1
-file-lines crates/quench-alloc/src/lib.rs 1071
+file-lines crates/quench-alloc/src/lib.rs 1068
 file-lines crates/quench-intl/src/calendar.rs 894
 file-lines crates/quench-intl/src/locale_canonicalization.rs 642
 file-lines crates/quench-node-test/src/bin/run-parallel.rs 551
@@ -1285,7 +1285,7 @@ file-lines crates/quench-node/src/host/startup_snapshot.rs 577
 file-lines crates/quench-node/src/modules/assert_shared_vm.rs 1358
 file-lines crates/quench-node/src/modules/async_hooks_shared_vm.rs 1159
 file-lines crates/quench-node/src/modules/blob_shared_vm.rs 719
-file-lines crates/quench-node/src/modules/buffer_binding_shared_vm.rs 836
+file-lines crates/quench-node/src/modules/buffer_binding_shared_vm.rs 812
 file-lines crates/quench-node/src/modules/buffer_module.rs 1324
 file-lines crates/quench-node/src/modules/cares_channel.rs 873
 file-lines crates/quench-node/src/modules/child_process_class_shared_vm.rs 755
@@ -1295,7 +1295,7 @@ file-lines crates/quench-node/src/modules/child_process_shared_vm.rs 2543
 file-lines crates/quench-node/src/modules/child_process_stdio_shared_vm.rs 565
 file-lines crates/quench-node/src/modules/cli_options.rs 565
 file-lines crates/quench-node/src/modules/cluster/primary.rs 611
-file-lines crates/quench-node/src/modules/console_class_shared_vm.rs 755
+file-lines crates/quench-node/src/modules/console_class_shared_vm.rs 640
 file-lines crates/quench-node/src/modules/console_shared_vm.rs 553
 file-lines crates/quench-node/src/modules/contextify_shared_vm.rs 793
 file-lines crates/quench-node/src/modules/crypto_asymmetric.rs 1233
@@ -1351,7 +1351,7 @@ file-lines crates/quench-node/src/modules/perf_timeline.rs 1132
 file-lines crates/quench-node/src/modules/pipe_binding.rs 948
 file-lines crates/quench-node/src/modules/process_shared_vm.rs 4494
 file-lines crates/quench-node/src/modules/process_state.rs 666
-file-lines crates/quench-node/src/modules/process_surface.rs 509
+file-lines crates/quench-node/src/modules/process_surface.rs 504
 file-lines crates/quench-node/src/modules/querystring_shared_vm.rs 534
 file-lines crates/quench-node/src/modules/readline_shared_vm.rs 2460
 file-lines crates/quench-node/src/modules/repl.rs 1033
@@ -1397,7 +1397,7 @@ file-lines crates/quench-node/src/modules/webstreams_shared_vm/writable.rs 916
 file-lines crates/quench-node/src/modules/worker_shared_vm/api.rs 1059
 file-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs 714
 file-lines crates/quench-node/src/modules/zlib_shared_vm.rs 1397
-file-lines crates/quench-node/src/shared_run.rs 1553
+file-lines crates/quench-node/src/shared_run.rs 1512
 file-lines crates/quench-node/tests/aot-bootstrap.rs 2030
 file-lines crates/quench-regexp/src/backtrack.rs 2308
 file-lines crates/quench-regexp/src/lib.rs 2983
@@ -1423,7 +1423,6 @@ file-lines crates/quench-runtime/src/compile/replay.rs 1050
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1680
 file-lines crates/quench-runtime/src/heap.rs 4660
 file-lines crates/quench-runtime/src/heap/access.rs 869
-file-lines crates/quench-runtime/src/heap/array_elements.rs 664
 file-lines crates/quench-runtime/src/heap/cell.rs 3990
 file-lines crates/quench-runtime/src/heap/cell/snapshot.rs 1143
 file-lines crates/quench-runtime/src/heap/environment_trace.rs 543
@@ -1455,14 +1454,14 @@ file-lines crates/quench-runtime/src/vm/compiled.rs 18954
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5454
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 860
-file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7473
+file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7469
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 570
 file-lines crates/quench-runtime/src/vm/construction.rs 1432
 file-lines crates/quench-runtime/src/vm/data_view.rs 648
 file-lines crates/quench-runtime/src/vm/date.rs 1349
 file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1908
-file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 22058
+file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 22017
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3029
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 650
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
@@ -1503,7 +1502,7 @@ file-lines crates/quench-runtime/src/vm/program_store.rs 4013
 file-lines crates/quench-runtime/src/vm/promise.rs 5473
 file-lines crates/quench-runtime/src/vm/promise_async.rs 538
 file-lines crates/quench-runtime/src/vm/promise_jobs.rs 660
-file-lines crates/quench-runtime/src/vm/regexp.rs 3417
+file-lines crates/quench-runtime/src/vm/regexp.rs 3405
 file-lines crates/quench-runtime/src/vm/relational.rs 638
 file-lines crates/quench-runtime/src/vm/shadow_realm.rs 609
 file-lines crates/quench-runtime/src/vm/snapshot.rs 980
@@ -1550,7 +1549,7 @@ file-lines quench-bench/src/bin/conformance-compare.rs 721
 file-lines quench-bench/src/bin/task61-fixed-work-guard.rs 1236
 file-lines quench-bench/src/bin/web.rs 583
 file-lines quench-bench/src/contention.rs 680
-file-lines quench-bench/src/main.rs 3553
+file-lines quench-bench/src/main.rs 3546
 fn-identity crates/quench-runtime/src/vm/dispatch_fast.rs 93
 fn-identity crates/quench-runtime/src/vm/dispatch_fast/capture_update_calls.rs 2
 fn-identity crates/quench-runtime/src/vm/dispatch_fast/getters.rs 1
@@ -2141,7 +2140,7 @@ function-lines crates/quench-node/src/modules/process_state.rs::ProcessCwd::conf
 function-lines crates/quench-node/src/modules/process_stdin_shared_vm.rs::platform::get 50
 function-lines crates/quench-node/src/modules/process_stdin_shared_vm.rs::platform::poll 67
 function-lines crates/quench-node/src/modules/process_stdin_shared_vm.rs::platform::pump 66
-function-lines crates/quench-node/src/modules/process_surface.rs::initialize 105
+function-lines crates/quench-node/src/modules/process_surface.rs::initialize 100
 function-lines crates/quench-node/src/modules/process_surface.rs::kill_portable 43
 function-lines crates/quench-node/src/modules/process_warning_shared_vm.rs::basename 62
 function-lines crates/quench-node/src/modules/process_warning_shared_vm.rs::emit 73
@@ -2937,9 +2936,9 @@ function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::boxed_float64 45
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::dynamic_array 61
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::enter 138
-function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::instruction 485
+function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::instruction 481
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::int32_arithmetic_guarded 80
-function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::new 90
+function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::new 82
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::proof 87
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::prove_int32_kinds 47
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::store_index 64
@@ -3477,7 +3476,7 @@ function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_literal_of 
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_proven_symbol_method 46
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_replace_with_literal 61
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_split_builtin 61
-function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_subject 69
+function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_subject 56
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_match 77
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_match_all 50
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_symbol_replace 174
@@ -4118,7 +4117,7 @@ function-lines quench-bench/src/main.rs::fixed_work_marginal_summary 43
 function-lines quench-bench/src/main.rs::fixed_work_tests::fixed_work_sample_requires_completion_marker_without_a_score 46
 function-lines quench-bench/src/main.rs::main 168
 function-lines quench-bench/src/main.rs::node_engine 42
-function-lines quench-bench/src/main.rs::parse_options_from 171
+function-lines quench-bench/src/main.rs::parse_options_from 168
 function-lines quench-bench/src/main.rs::quench_engine 76
 function-lines quench-bench/src/main.rs::retry_contended_rounds 50
 function-lines quench-bench/src/main.rs::run_fixed_work_attempt 47

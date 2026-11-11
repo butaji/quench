@@ -736,7 +736,7 @@ impl<H: Host> Vm<H> {
         if elements.owner_count() != 1 {
             return None;
         }
-        let elements = super::index::mutable_array_elements(elements);
+        let elements = super::index::mutable_array_elements(elements).without_doubles();
         let old = elements.as_mut_ptr();
         let before = elements.capacity();
         elements.reserve(1);

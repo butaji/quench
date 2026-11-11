@@ -38,6 +38,7 @@ pub(crate) const OTHERS_UNKNOWN: u32 = u32::MAX;
 
 use crate::staged::elements::{concrete_other as other, concrete_recount as recounted};
 
+
 fn others(values: &[Value]) -> u32 {
     values.iter().map(|value| other(*value)).sum()
 }
@@ -58,6 +59,9 @@ pub(crate) const LENGTH_FROM_VALUES: i32 = std::mem::offset_of!(Header, len) as 
 /// (`Header::others`), which native code reads at entry, and sets to `OTHERS_UNKNOWN` where
 /// it may store uncounted values.
 pub(crate) const OTHERS_FROM_VALUES: i32 = std::mem::offset_of!(Header, others) as i32 - VALUES_OFFSET as i32;
+/// The byte offset from a backing's first value to its capacity word, whose
+/// `DOUBLE_ELEMENTS` flag native code reads at entry.
+pub(crate) const CAPACITY_FROM_VALUES: i32 = std::mem::offset_of!(Header, capacity) as i32 - VALUES_OFFSET as i32;
 
 /// The header every empty backing shares: never written, never freed.
 static EMPTY: Header = Header {
@@ -70,6 +74,14 @@ static EMPTY: Header = Header {
 /// The `Header::capacity` flag of a backing whose header moved past dropped front values.
 /// Native code never reads the capacity word, so the flag changes no native layout.
 const BIASED: u32 = 1 << 31;
+
+/// The `Header::capacity` flag of a backing whose every value is a raw double
+/// (`UniqueElements::promote_doubles`): native code reads and writes its elements as `f64`
+/// words, and every other reader sees ordinary untagged Number values.
+pub(crate) const DOUBLE_ELEMENTS: u32 = 1 << 30;
+
+/// The capacity word's flags, which its value masks out.
+const CAPACITY_FLAGS: u32 = BIASED | DOUBLE_ELEMENTS;
 
 /// The shortest backing whose front removal moves its header instead of its values: V8
 /// moves the values of short arrays too, where the copy costs less than the bookkeeping.
@@ -211,7 +223,7 @@ impl ArrayElements {
     /// A backing of one owner with room for `capacity` values, the first `len` uninitialized.
     fn allocate(capacity: usize, len: usize) -> Self {
         debug_assert!(capacity > 0 && len <= capacity);
-        let capacity_word = u32::try_from(capacity).ok().filter(|word| word & BIASED == 0).expect("array backing capacity overflow");
+        let capacity_word = u32::try_from(capacity).ok().filter(|word| word & CAPACITY_FLAGS == 0).expect("array backing capacity overflow");
         let layout = Self::layout(capacity);
         // SAFETY: the layout has a non-zero size (the header).
         let pointer = unsafe { alloc(layout) }.cast::<Header>();
@@ -250,7 +262,23 @@ impl ArrayElements {
 
     #[inline(always)]
     pub(crate) fn capacity(&self) -> usize {
-        (self.header().capacity & !BIASED) as usize
+        (self.header().capacity & !CAPACITY_FLAGS) as usize
+    }
+
+    /// Whether every value is a raw double (`UniqueElements::promote_doubles`).
+    #[inline(always)]
+    pub(crate) fn is_doubles(&self) -> bool {
+        self.header().capacity & DOUBLE_ELEMENTS != 0
+    }
+
+    /// Clears the backing's double-elements kind: its words are ordinary Number values
+    /// either way, so nothing else changes.
+    #[inline(always)]
+    pub(crate) fn clear_doubles(&mut self) {
+        if self.is_doubles() && self.is_unique() {
+            // SAFETY: a unique backing is this array's own allocation.
+            unsafe { (*self.header.as_ptr()).capacity &= !DOUBLE_ELEMENTS };
+        }
     }
 
     /// The values a front removal dropped ahead of the header (`BIASED`).
@@ -440,206 +468,6 @@ impl PartialEq for ArrayElements {
     }
 }
 
-impl UniqueElements {
-    fn set_others(&mut self, others: u32) {
-        if self.0.capacity() != 0 {
-            // SAFETY: a unique backing with a capacity is this array's own allocation.
-            unsafe { (*self.0.header.as_ptr()).others = others };
-        }
-    }
-
-    /// Counts `added` other values in and `removed` out.
-    #[inline(always)]
-    fn recount(&mut self, added: u32, removed: u32) {
-        if added != removed {
-            self.set_others(recounted(self.0.header().others, added, removed));
-        }
-    }
-
-    /// Writes `value` at `index`, below the length.
-    #[inline(always)]
-    pub(crate) fn set(&mut self, index: usize, value: Value) {
-        assert!(index < self.0.len(), "array store index out of bounds");
-        self.recount(other(value), other(self.0[index]));
-        // SAFETY: the index is below the length of this unique backing.
-        unsafe { self.0.values().add(index).write(value) };
-    }
-
-    /// `value` at every index of `range`.
-    pub(crate) fn fill(&mut self, range: std::ops::Range<usize>, value: Value) {
-        assert!(range.start <= range.end && range.end <= self.0.len(), "array fill out of bounds");
-        self.recount(other(value) * range.len() as u32, others(&self.0[range.clone()]));
-        for index in range {
-            // SAFETY: the range is within the length of this unique backing.
-            unsafe { self.0.values().add(index).write(value) };
-        }
-    }
-
-    /// `values` at the indices from `start`.
-    pub(crate) fn copy_from(&mut self, start: usize, values: &[Value]) {
-        assert!(start + values.len() <= self.0.len(), "array copy out of bounds");
-        self.recount(others(values), others(&self.0[start..start + values.len()]));
-        // SAFETY: the range is within the length; `values` cannot alias this unique backing.
-        unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), self.0.values().add(start), values.len()) };
-    }
-
-    /// The first value, for native code that writes the backing and keeps its count of
-    /// other values (`OTHERS_FROM_VALUES`).
-    pub(crate) fn as_mut_ptr(&mut self) -> *mut Value {
-        self.0.values()
-    }
-
-    fn set_len(&mut self, len: usize) {
-        debug_assert!(len <= self.0.capacity());
-        if self.0.capacity() != 0 {
-            // SAFETY: a unique backing with a capacity is this array's own allocation.
-            unsafe { (*self.0.header.as_ptr()).len = len as u32 };
-        }
-    }
-
-    /// Room for `additional` more values, growing by `GROWTH_SHIFT`. Inline: a backing with
-    /// room, the common append, tests its capacity alone.
-    #[inline(always)]
-    pub(crate) fn reserve(&mut self, additional: usize) {
-        let required = self.0.len().checked_add(additional).expect("array backing overflow");
-        if required > self.0.capacity() {
-            self.grow_for(required);
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn grow_for(&mut self, required: usize) {
-        if self.0.bias() != 0 {
-            self.unbias();
-            if required <= self.0.capacity() && self.0.len() <= self.0.capacity() / COMPACT_LIVE_DIVISOR {
-                return;
-            }
-        }
-        let capacity = self.0.capacity();
-        let grown = required.max(capacity + (capacity >> GROWTH_SHIFT)).max(MIN_GROWN_CAPACITY);
-        self.grow_to(grown);
-    }
-
-    fn grow_to(&mut self, capacity: usize) {
-        let capacity_word = u32::try_from(capacity).expect("array backing capacity overflow");
-        let old = self.0.capacity();
-        if old == 0 {
-            // The shared empty header: a fresh backing of its own.
-            self.0 = ArrayElements::allocate(capacity, 0);
-            return;
-        }
-        let layout = ArrayElements::layout(capacity);
-        // SAFETY: this unique backing was allocated with the layout of its old capacity.
-        let pointer = unsafe {
-            realloc(self.0.header.as_ptr().cast(), ArrayElements::layout(old), layout.size())
-        }
-        .cast::<Header>();
-        let Some(header) = NonNull::new(pointer) else {
-            handle_alloc_error(layout);
-        };
-        self.0.header = header;
-        // SAFETY: the reallocated header is this array's own.
-        unsafe { (*header.as_ptr()).capacity = capacity_word };
-    }
-
-    #[inline(always)]
-    pub(crate) fn push(&mut self, value: Value) {
-        let len = self.0.len();
-        self.reserve(1);
-        self.recount(other(value), 0);
-        // SAFETY: `reserve` made room for one more value.
-        unsafe { self.0.values().add(len).write(value) };
-        self.set_len(len + 1);
-    }
-
-    #[inline(always)]
-    pub(crate) fn pop(&mut self) -> Option<Value> {
-        let len = self.0.len().checked_sub(1)?;
-        let value = self[len];
-        self.recount(0, other(value));
-        self.set_len(len);
-        Some(value)
-    }
-
-    pub(crate) fn truncate(&mut self, len: usize) {
-        if len < self.0.len() {
-            self.recount(0, others(&self.0[len..]));
-            self.set_len(len);
-        }
-    }
-
-    pub(crate) fn resize(&mut self, len: usize, value: Value) {
-        let current = self.0.len();
-        if len <= current {
-            self.truncate(len);
-            return;
-        }
-        self.reserve(len - current);
-        self.recount(other(value) * (len - current) as u32, 0);
-        // SAFETY: `reserve` made room for the values up to `len`.
-        unsafe {
-            for slot in current..len {
-                self.0.values().add(slot).write(value);
-            }
-        }
-        self.set_len(len);
-    }
-
-    pub(crate) fn extend_from_slice(&mut self, values: &[Value]) {
-        let len = self.0.len();
-        self.reserve(values.len());
-        self.recount(others(values), 0);
-        // SAFETY: `reserve` made room; `values` cannot alias this unique backing's spare room.
-        unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), self.0.values().add(len), values.len()) };
-        self.set_len(len + values.len());
-    }
-
-    pub(crate) fn remove(&mut self, index: usize) -> Value {
-        let len = self.0.len();
-        assert!(index < len, "array removal index out of bounds");
-        let value = self[index];
-        self.recount(0, other(value));
-        if index == 0 && len >= TRIM_MIN_LEN && self.0.capacity() != 0 {
-            self.trim_front();
-            return value;
-        }
-        // SAFETY: the tail shifts down within the initialized values.
-        unsafe {
-            let at = self.0.values().add(index);
-            std::ptr::copy(at.add(1), at, len - index - 1);
-        }
-        self.set_len(len - 1);
-        value
-    }
-
-    /// Replaces the values in `range` with `values`, as `Vec::splice` does.
-    pub(crate) fn splice(&mut self, range: std::ops::Range<usize>, values: &[Value]) {
-        let len = self.0.len();
-        assert!(range.start <= range.end && range.end <= len, "array splice out of bounds");
-        if range.end == 0 && len >= TRIM_MIN_LEN {
-            return self.prepend(values);
-        }
-        let removed = range.end - range.start;
-        if values.len() > removed {
-            self.reserve(values.len() - removed);
-        }
-        let new_len = len - removed + values.len();
-        self.recount(others(values), others(&self.0[range.clone()]));
-        // SAFETY: the tail moves within the reserved allocation, then `values` fills the gap.
-        unsafe {
-            let base = self.0.values();
-            std::ptr::copy(base.add(range.end), base.add(range.start + values.len()), len - range.end);
-            std::ptr::copy_nonoverlapping(values.as_ptr(), base.add(range.start), values.len());
-        }
-        self.set_len(new_len);
-    }
-
-    pub(crate) fn capacity(&self) -> usize {
-        self.0.capacity()
-    }
-}
-
 impl std::ops::Deref for UniqueElements {
     type Target = [Value];
 
@@ -659,6 +487,7 @@ impl Extend<Value> for UniqueElements {
     }
 }
 
+mod mutation;
 mod front_room;
 #[cfg(test)]
 mod tests;

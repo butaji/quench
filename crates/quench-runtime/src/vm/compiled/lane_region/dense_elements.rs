@@ -29,6 +29,17 @@ impl Lowering<'_, '_> {
     }
 }
 
+/// Prepares a writable dense view for this tier's stores: the backing's values become
+/// uncounted (`OTHERS_UNKNOWN`, the store writes one element) and lose the double-elements
+/// kind, since the store writes a tagged Number word. The next loop-region compilation
+/// promotes the array again if it still holds Numbers.
+pub(super) fn uncounted(builder: &mut FunctionBuilder<'_>, view: super::super::DenseArrayView) {
+    super::super::emit_dense_array_uncounted(builder, view);
+    let capacity = builder.ins().load(types::I32, ir::MemFlagsData::trusted(), view.values, crate::heap::CAPACITY_FROM_VALUES);
+    let cleared = builder.ins().band_imm_u(capacity, !i64::from(crate::heap::DOUBLE_ELEMENTS));
+    builder.ins().istore32(ir::MemFlagsData::trusted(), cleared, view.values, crate::heap::CAPACITY_FROM_VALUES);
+}
+
 impl Lowering<'_, '_> {
     /// Store `value` at `index` of the dense array `view`: the staged element write, whose
     /// hole or miss continues at `miss`.
