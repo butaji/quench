@@ -4319,7 +4319,7 @@ impl Lowering<'_, '_> {
                 // A single shape's read proves an object, as the facts the CFG carries say
                 // (`facts::analyze`); a shape switch's may read a function's own fields.
                 let header = lowering.object_header(state, register, shapes.len() > 1 || shapes[0].function_shape, generic);
-                (header.record.address(&mut lowering.builder), header.shape, header.inline)
+                (header.address, header.shape, header.inline)
             };
             let read = lowering.shape_switch_read(state, Some(owner), object, shape, inline, &shapes, generic)?;
             // A single own shape read proves the register's object has it, for the block, a
@@ -4357,7 +4357,7 @@ impl Lowering<'_, '_> {
             let records = lowering.object_table_base();
             let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
             let header = ObjectHeader::prove_readable(&mut lowering.builder, object_bits, records, functions, generic);
-            let record = header.record.address(&mut lowering.builder);
+            let record = header.address;
             lowering.shape_switch_read(state, None, record, header.shape, header.inline, &shapes, generic)
         }))
     }
@@ -4507,11 +4507,13 @@ impl Lowering<'_, '_> {
     fn prove_shape(&mut self, state: &mut State, owner: Option<Option<Register>>, shape: ir::Value, expected: u32, exit: ir::Block) {
         let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(expected));
         emit_js_guard(&mut self.builder, same, exit);
-        let constant = self.ins().iconst(types::I32, i64::from(expected));
         if let Some(owner) = owner {
             let index = state.header_index(owner);
-            if let Some(proof) = &mut state.proofs.headers[index] {
-                proof.shape = constant;
+            if state.proofs.headers[index].is_some() {
+                let constant = self.ins().iconst(types::I32, i64::from(expected));
+                if let Some(proof) = &mut state.proofs.headers[index] {
+                    proof.shape = constant;
+                }
             }
         }
     }
@@ -4799,7 +4801,7 @@ impl Lowering<'_, '_> {
             }
             _ => {
                 let header = self.object_header(state, register, false, exit);
-                let object = header.record.address(&mut self.builder);
+                let object = header.address;
                 let admitted = self.store_atom_admitted(atom);
                 let properties = { let entry = self.entry.as_ref().expect("entry facts"); self.builder.use_var(entry.receiver.properties) };
                 let (general, done) = (self.builder.create_block(), self.builder.create_block());
@@ -4820,7 +4822,7 @@ impl Lowering<'_, '_> {
         };
         let header = (!receiver).then(|| {
             let header = self.object_header(state, register, false, exit);
-            (header.record.address(&mut self.builder), header.shape, header.inline)
+            (header.address, header.shape, header.inline)
         });
         let admitted = self.store_atom_admitted(atom);
         let entry = self.entry.as_ref().expect("entry facts");
