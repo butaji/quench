@@ -1,6 +1,7 @@
 use super::*;
 
 mod increment;
+mod wasm_calls;
 pub(super) use increment::{integer_increment, number_increment};
 
 // Publish the current resume PC only while a binding-site consumer runs.
@@ -1408,6 +1409,9 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::Call | Op::CallArray | Op::CallSpread | Op::CallForwardingArguments => {
+                if allow_inline_calls && let Some(result) = self.wasm_reference_call_in_loop(p, f, i, *pc) {
+                    return result;
+                }
                 if i.op() == Op::CallForwardingArguments
                     && let Some(result) =
                         self.forward_activation_arguments(p, f, i, *pc, allow_inline_calls)
@@ -1593,26 +1597,7 @@ impl<H: Host> Vm<H> {
                     && !i.returns_from_frame()
                 {
                     self.profile.call_source(CallSource::Known);
-                    if let Some(result) =
-                        self.call_compiled(f, u32::from(i.known_function_index()), i.call_window())
-                    {
-                        let value = result?;
-                        self.write(f, i.result_register(), value);
-                        return Ok(StepResult::Continue);
-                    }
-                    self.frames[f].pc = *pc;
-                    self.frames[f].pc_is_resume = true;
-                    let call_guard = self.push_wasm_frame(
-                        p,
-                        f,
-                        u32::from(i.known_function_index()),
-                        i.call_window(),
-                    )?;
-                    return Ok(StepResult::PushFrame {
-                        destination: i.result_register(),
-                        call_guard,
-                        completion: CallCompletion::Value,
-                    });
+                    return self.call_wasm_in_loop(p, f, u32::from(i.known_function_index()), i, *pc);
                 }
                 self.profile.call_source(CallSource::Known);
                 let window = i.call_window();
