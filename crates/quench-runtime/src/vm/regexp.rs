@@ -1599,27 +1599,11 @@ impl<H: Host> Vm<H> {
     /// cannot change. A proof for the RegExp's shape under the current
     /// `prototype_layout_epoch` names the slot to read (`RegExpExecProof`).
     fn regexp_builtin_exec_matcher(&self, regexp: Value) -> Option<Rc<quench_regexp::Regex>> {
-        let Some(Cell::RegExp { object, meta }) = self.heap.get(regexp) else {
+        let Some(Cell::RegExp { meta, .. }) = self.heap.get(regexp) else {
             return None;
         };
         let matcher = Self::regexp_matcher(meta).ok()?;
-        let intrinsics = self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get(&self.realm.globals)?;
-        if object.proto() != intrinsics.prototype {
-            return None;
-        }
-        let (shape, epoch) = (object.shape(), crate::heap::prototype_layout_epoch());
-        let proof = match intrinsics.exec_proof.get() {
-            Some(proof) if proof.shape == shape && proof.epoch == epoch => proof,
-            _ => self.prove_regexp_exec(intrinsics, shape, epoch)?,
-        };
-        self.object_data(intrinsics.prototype)
-            .and_then(|data| self.heap.property_get(data, proof.exec_slot))
-            .is_some_and(|exec| self.is_native_function(exec, Native::RegExpExec))
-            .then_some(matcher)
+        self.regexp_exec_is_builtin(regexp).then_some(matcher)
     }
 
     /// `regexp_builtin_exec_matcher`'s lookups past its proof, recording where they found
