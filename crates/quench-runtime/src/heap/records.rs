@@ -139,6 +139,10 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> 
     /// `free_word_base`; allocation takes them highest first before scanning further.
     free_word: u64,
     free_word_base: RecordId,
+    /// The occupancy word `free_word` was loaded from: a claim sets its bit through this
+    /// pointer, with no block or word index. Valid while `free_word` is nonzero, as blocks are
+    /// added only once no free word is left (`claim_slow`), and set by `load_free_word` alone.
+    free_word_occupied: *mut u64,
     live: usize,
     /// Old records written since the last collection, each logged once by the write barrier.
     remembered: Vec<RecordId>,
@@ -179,6 +183,7 @@ impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
             free_cursor: 0,
             free_word: 0,
             free_word_base: 0,
+            free_word_occupied: std::ptr::null_mut(),
             live: 0,
             remembered: Vec::new(),
             young_floor: 0,
@@ -417,9 +422,9 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         let mask = 1_u64 << bit;
         self.free_word &= !mask;
         prefetch::next_free_record(self.base.as_ptr(), self.free_word_base, self.free_word);
-        let (block_index, word_index) = Self::word_position(self.free_word_base);
-        // SAFETY: a free word is loaded from an existing block's occupancy word.
-        let word = unsafe { &mut self.blocks.get_unchecked_mut(block_index).occupied[word_index] };
+        // SAFETY: `free_word_occupied` names the occupancy word the nonzero free word came from,
+        // in a block that has not moved since (see the field).
+        let word = unsafe { &mut *self.free_word_occupied };
         debug_assert_eq!(*word & mask, 0, "a free-word bit names an unoccupied id");
         *word |= mask;
         self.free_word_base + bit as RecordId
@@ -499,8 +504,9 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         let word_index = record_index / OCCUPANCY_WORD_BITS;
         let bit = record_index % OCCUPANCY_WORD_BITS;
         let below_and_at = u64::MAX >> (OCCUPANCY_WORD_BITS - 1 - bit);
-        let block = &self.blocks[block_index];
+        let block = &mut self.blocks[block_index];
         self.free_word = !(block.occupied[word_index] | block.withheld[word_index]) & below_and_at;
+        self.free_word_occupied = &raw mut block.occupied[word_index];
         self.free_word_base = id - bit as RecordId;
         self.free_cursor = self.free_word_base;
         self.young_words.push(self.free_word_base);
