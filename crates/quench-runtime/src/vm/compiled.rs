@@ -96,7 +96,7 @@ pub(in crate::vm) mod forced_miss {
     pub(in crate::vm) fn arm(forced: Option<usize>) { STATE.with(|state| state.set((forced, 0))); }
     /// Guards emitted since `arm`.
     pub(in crate::vm) fn emitted() -> usize { STATE.with(|state| state.get().1) }
-    pub(super) fn next() -> bool {
+    pub(in crate::vm::compiled) fn next() -> bool {
         STATE.with(|state| {
             let (forced, count) = state.get();
             state.set((forced, count + 1));
