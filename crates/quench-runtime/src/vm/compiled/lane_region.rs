@@ -3572,6 +3572,22 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// The registers a loop never writes whose every use proves them Numbers, each a Number header
+    /// contract: proved once on the entering edge, so the body holds it as a double and tests it no more.
+    fn number_inputs(&self, header: usize, back: usize, defined: &CompoundBitSet, candidates: &mut Vec<(super::facts::Contract, std::ops::RangeInclusive<usize>)>) {
+        let Some(types) = self.facts.at(header) else { return };
+        for instruction in &self.unit.instructions[header..=back] {
+            for register in super::facts::proves_numbers(*instruction, types.len(), &self.program.constants, &writes, self.native_calls) {
+                let index = usize::from(register);
+                let contract = (header, register, Type::NUMBER);
+                if !defined.contains(index) && !types[index].is_subtype(Type::NUMBER) && self.is_live(header, register)
+                    && !candidates.iter().any(|(known, _)| *known == contract) {
+                    candidates.push((contract, header..=back));
+                }
+            }
+        }
+    }
+
     /// An inner loop's counters and indices carried as int32s: a register its header joins as
     /// a Number (an index computed before the loop, say) while every definition in the loop
     /// yields an int32 takes an int32 header contract. The edge entering the loop proves it
@@ -3591,6 +3607,7 @@ impl Lowering<'_, '_> {
                     candidates.push(((header, index as Register, Type::INT32), header..=back));
                 }
             }
+            self.number_inputs(header, back, &defined, &mut candidates);
         }
         if let Some(facts) = super::facts::loop_int32(entry, initial, candidates, instructions, boundaries,
             &self.program.constants, &writes, own_shape, self.native_calls, self.observed) {
@@ -3665,12 +3682,20 @@ impl Lowering<'_, '_> {
         self.hoist_arrays(state, header, true);
     }
 
+    /// Whether an enclosing loop's entry hoisted the capture read at `pc` already (its body holds
+    /// this loop's, so the read is invariant there too): reading it again at each entry here would
+    /// be a helper call inside the outer loop, spilling every value live across it.
+    fn hoisted_by_enclosing_loop(&self, pc: usize, owner: Option<Register>) -> bool {
+        owner.is_none() && self.unit.instructions[pc].op().class().eq(Class::LoadCapture) && self.hoisted.contains_key(&pc)
+    }
+
     /// The loop's invariant captures and fields, read once on its entry edge.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
         let Some(reads) = self.hoists.get(&header).cloned() else { return };
         let boundaries = leaders(&self.unit.instructions);
         for InvariantRead { pc, owner, rooted } in reads.iter().copied() {
             let instruction = self.unit.instructions[pc];
+            if self.hoisted_by_enclosing_loop(pc, owner) { continue; }
             let field = self.loop_fields.iter().position(|field| field.reads[0] == pc);
             let exit = self.guard_exit(state, header as u32);
             let (value, int32) = if instruction.op().class().eq(Class::LoadCapture) {

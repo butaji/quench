@@ -289,6 +289,18 @@ fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Fl
     }
 }
 
+/// The registers `instruction` leaves unless they hold Numbers (what its transfer proves of
+/// operands it does not write): a loop that does not write one may have that proved once, on its
+/// entering edge, instead of by each use.
+pub(super) fn proves_numbers(instruction: WideInstruction, registers: usize, constants: &[Constant],
+    written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool) -> Vec<Register> {
+    let mut types = vec![Type::ANY; registers];
+    if matches!(transfer(&mut types, instruction, constants, written, native_calls), Flow::Leaves) { return Vec::new(); }
+    let written = written(instruction);
+    (0..registers).filter(|register| types[*register].is_subtype(Type::NUMBER) && !written.contains(&(*register as Register)))
+        .map(|register| register as Register).collect()
+}
+
 /// An element read the entry observed to hold Numbers or int32s: its unit PC and the type its
 /// result is proved to have, where it leaves for any other element.
 #[derive(Clone, Copy)]
