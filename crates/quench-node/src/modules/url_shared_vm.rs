@@ -161,6 +161,16 @@ fn windows_option(c: &mut Context<'_>, options: RootId) -> Result<bool, RootedEr
     Ok(cfg!(windows))
 }
 
+/// `ERR_INVALID_FILE_URL_PATH` (lib/internal/errors.js): its `input` is the URL, the one
+/// `given` or the one its text parsed to.
+fn invalid_file_url_path(c: &mut Context<'_>, reason: &str, given: RootId, url: &url::Url) -> Result<RootedError, RootedError> {
+    let error = c.type_error_rooted(&format!("File URL path {reason}"))?;
+    let input = if c.is_object_rooted(given)? { given } else { super::url_whatwg_shared_vm::url_object(c, url)? };
+    super::node_errors_shared_vm::decorate_type_error(c, error, "ERR_INVALID_FILE_URL_PATH")?;
+    c.assign_named_property_rooted(error, "input", input)?;
+    Ok(c.throw(error))
+}
+
 /// `fileURLToPath`'s path text: the URL's file path in the chosen convention.
 fn file_url_path(c: &mut Context<'_>, args: &[RootId]) -> Result<String, RootedError> {
     let input = argument(c, args, 0);
@@ -193,7 +203,7 @@ fn file_url_path(c: &mut Context<'_>, args: &[RootId]) -> Result<String, RootedE
     };
     if windows {
         if encoded_separator(&pathname, true) {
-            return Err(coded_type_error(c, "File URL path must not include encoded \\ or / characters", "ERR_INVALID_FILE_URL_PATH")?);
+            return Err(invalid_file_url_path(c, "must not include encoded \\ or / characters", input, &url)?);
         }
         let path = percent_decode(c, &pathname.replace('/', "\\"))?;
         if !hostname.is_empty() {
@@ -202,7 +212,7 @@ fn file_url_path(c: &mut Context<'_>, args: &[RootId]) -> Result<String, RootedE
         let bytes = path.as_bytes();
         let letter = bytes.get(1).map(|byte| byte | 0x20);
         if !letter.is_some_and(|letter| letter.is_ascii_lowercase()) || bytes.get(2) != Some(&b':') {
-            return Err(coded_type_error(c, "File URL path must be absolute", "ERR_INVALID_FILE_URL_PATH")?);
+            return Err(invalid_file_url_path(c, "must be absolute", input, &url)?);
         }
         return Ok(path[1..].to_owned());
     }
@@ -211,7 +221,7 @@ fn file_url_path(c: &mut Context<'_>, args: &[RootId]) -> Result<String, RootedE
         return Err(coded_type_error(c, &format!("File URL host must be \"localhost\" or empty on {platform}"), "ERR_INVALID_FILE_URL_HOST")?);
     }
     if encoded_separator(&pathname, false) {
-        return Err(coded_type_error(c, "File URL path must not include encoded / characters", "ERR_INVALID_FILE_URL_PATH")?);
+        return Err(invalid_file_url_path(c, "must not include encoded / characters", input, &url)?);
     }
     percent_decode(c, &pathname)
 }

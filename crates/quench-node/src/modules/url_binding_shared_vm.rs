@@ -353,10 +353,11 @@ pub(crate) fn path_to_file_url(c: &mut Context<'_>, _: RootId, args: &[RootId]) 
     let Ok(mut url) = Url::parse(&encode_path_chars(&path, windows)) else {
         return Err(invalid_url(c, Some(&path), None));
     };
-    if let Some(hostname) = hostname.filter(|_| windows) {
-        if url::quirks::set_hostname(&mut url, &hostname).is_err() {
-            return Err(invalid_url(c, Some(&path), Some(&hostname)));
-        }
+    // The hostname setter reads up to a path, query or fragment delimiter (URL Standard, file
+    // host state); nothing before one leaves the host empty, as for `\\?\C:\path`.
+    let named = hostname.as_deref().filter(|_| windows).and_then(|hostname| hostname.split(['/', '\\', '?', '#']).next()).filter(|name| !name.is_empty());
+    if named.is_some_and(|name| url::quirks::set_hostname(&mut url, name).is_err()) {
+        return Err(invalid_url(c, Some(&path), hostname.as_deref()));
     }
     publish(c, &url)
 }

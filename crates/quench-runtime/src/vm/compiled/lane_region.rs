@@ -2901,7 +2901,8 @@ impl Lowering<'_, '_> {
     /// no step is left unresolved.
     fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>)
         -> crate::staged::Step<ir::Value, ()> {
-        let locals = self.completion != Completion::Number;
+        let locals = (self.completion != Completion::Number).then(|| emit_js_payload_word(
+            &mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, native_locals)));
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),

@@ -16,19 +16,6 @@ pub(super) unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64
     object.to_bits()
 }
 
-/// A two-property object literal of literal `site`'s shape holding `first` and `second`, as
-/// the lane makes it (`dispatch_fast::lane_object_pair`); `DELETED` where a collection is due.
-pub(super) unsafe extern "C" fn lane_new_object_pair<H: Host>(vm: u64, residual: u64, payload: u64, site: u64,
-    first: u64, second: u64) -> u64 {
-    // SAFETY: as `lane_new_object`; the residual is the running program.
-    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
-    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let object = vm.object_pair(residual, site as usize, Value::from_bits(first), Value::from_bits(second));
-    super::dispatch_fast::note_allocation(vm);
-    dispatch.refresh_object_bases(vm);
-    object.to_bits()
-}
-
 /// A binary operator one operand of which is a string or BigInt, by the interpreter's own
 /// definition (`Vm::binary`); `DELETED` where an operand is an object (its coercion may run
 /// guest code), the operator throws, or a collection is due: the interpreter runs it then.

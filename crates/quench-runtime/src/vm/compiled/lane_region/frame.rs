@@ -1,6 +1,8 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
 use super::*;
 #[path = "frame_calls.rs"] pub(super) mod calls;
+#[path = "frame_truthiness.rs"] mod truthiness;
+use truthiness::register_truthiness;
 
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
 #[derive(Clone, Copy)]
@@ -26,23 +28,15 @@ pub(super) struct EmitFrame<'a> {
     pub(super) constants: &'a [crate::bytecode::Constant],
     /// The entry's `this` binding, where the lowering has entry facts.
     pub(super) this: Option<Variable>,
-    /// Whether this region may read or write the activation's local slots
-    /// (`JsStepDispatch::native_locals`); a numeric region's activation has none.
-    pub(super) locals: bool,
+    /// The activation's local slots (`JsStepDispatch::native_locals`), where this region
+    /// may read or write them; `None` for a numeric region, whose activation has none.
+    pub(super) locals: Option<ir::Value>,
     /// The running body's dispatch payload, which semantic helpers take.
     pub(super) payload: ir::Value,
     /// The helper table a callout addresses.
     pub(super) helpers: LaneHelpers,
     /// The poll instructions a fault-polling body records for later patching.
     pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
-}
-
-impl EmitFrame<'_> {
-    /// The activation's local slots, read where an instruction uses them.
-    fn native_locals(&self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
-        self.locals.then(|| super::super::emit_js_payload_word(stage.builder, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, native_locals)))
-    }
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -191,19 +185,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         Some(value)
     }
 
-    /// A two-property object literal: the lane's own allocator (`lane_new_object_pair`).
-    #[inline(always)]
-    fn allocate_object_pair(&mut self, stage: &mut Emit<'_, '_>, destination: Register, site: u32, first: ir::Value,
-        second: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::Allocation { miss } = proof else { return None };
-        let payload = self.payload;
-        let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewObjectPair);
-        let site = stage.builder.ins().iconst(types::I64, i64::from(site));
-        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload, site, first, second]);
-        calls::finish_allocation(stage, self, destination, value, miss);
-        Some(value)
-    }
-
     /// A typed array element: the kind's load, as a Number word.
     #[inline(always)]
     fn typed_index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
@@ -225,12 +206,8 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
-        // A heap cell's truthiness leaves at the operation's miss edge: a branch's or a guarded
-        // value's (`LogicalNot`).
-        let (Edges::Branch { miss, .. } | Edges::ValueGuarded { miss }) = self.edges else {
-            unreachable!("truthiness needs a miss edge")
-        };
-        Some(register_truthiness(stage.builder, self.registers, self.state, register, miss))
+        let (Edges::Branch { miss, .. } | Edges::ValueGuarded { miss }) = self.edges else { unreachable!("truthiness needs a miss edge") };
+        Some(register_truthiness(stage.builder, self.registers, self.state, register, (self.payload, self.helpers), miss))
     }
 
     #[inline(always)]
@@ -259,7 +236,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
         -> Option<(ir::Value, RegisterFact)> {
-        let locals = self.native_locals(stage)?;
+        let locals = self.locals?;
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
         let value = stage.builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
@@ -269,7 +246,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn store_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, value: ir::Value,
         _miss: Option<ir::Block>) -> bool {
-        let Some(locals) = self.native_locals(stage) else { return false };
+        let Some(locals) = self.locals else { return false };
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
         stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
@@ -277,32 +254,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 }
 
-
-/// ToBoolean of `register` as an i8, from its proved representation; a tagged value whose
-/// truthiness needs its cell (`emit_js_tagged_truthiness`) leaves at `miss`.
-#[inline(always)]
-pub(super) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &mut State, register: Register, miss: ir::Block) -> ir::Value {
-    let fact = state.values[usize::from(register)].value;
-    match fact.representation {
-        Representation::Int32 => {
-            let int = { let variable = register_int(builder, registers, usize::from(register)); builder.use_var(variable) };
-            builder.ins().icmp_imm_u(IntCC::NotEqual, int, 0)
-        }
-        Representation::Float64 => {
-            let number = { let variable = register_float(builder, registers, usize::from(register)); builder.use_var(variable) };
-            emit_number_truthiness(builder, number)
-        }
-        Representation::Tagged => {
-            let bits = register_tagged(builder, registers, state, register);
-            if fact.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
-                builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64)
-            } else {
-                emit_js_tagged_truthiness(builder, bits, miss)
-            }
-        }
-    }
-}
 
 /// `register`'s int32 view (`Registers::int`).
 #[inline(always)]

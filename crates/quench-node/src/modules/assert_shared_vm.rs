@@ -871,7 +871,7 @@ fn matches(c: &mut Context<'_>, call: Invocation, string: RootId, regexp: RootId
     Err(c.throw(error))
 }
 
-fn type_of(c: &Context<'_>, value: RootId) -> &'static str {
+pub(crate) fn type_of(c: &Context<'_>, value: RootId) -> &'static str {
     match c.value_type_rooted(value) {
         Some(ValueType::Undefined) => "undefined",
         Some(ValueType::Boolean) => "boolean",

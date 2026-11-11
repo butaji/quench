@@ -68,7 +68,7 @@ mod lane_unit;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{lane_binary, lane_new_array, lane_new_object, lane_new_object_pair};
+use lane_allocations::{lane_binary, lane_new_array, lane_new_object};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
@@ -1800,13 +1800,13 @@ lane_helper_inventory! { H;
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
     NewArray => lane_new_array::<H>,
-    /// A two-property object literal's allocation (`lane_new_object_pair`).
-    NewObjectPair => lane_new_object_pair::<H>,
     Binary => lane_binary::<H>,
     /// A store that may add its property (`lane_field_add`).
     FieldAdd => lane_field_add::<H>,
     /// A loop's hoisted typed array view (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
+    /// ToBoolean of a value its cell decides (`lane_truthy`).
+    Truthy => lane_truthy::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
@@ -6590,7 +6590,7 @@ pub(super) struct LaneMethod {
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
     pub(super) direct: Box<[DirectCallee]>,
-    /// Whether every call it makes is inlined or direct: under a direct caller's native
+    /// Whether every call of it that has run is inlined or direct: under a direct caller's native
     /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
     /// a body is called directly.
     closed: bool,
@@ -6768,6 +6768,13 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
         super::object::FieldCacheProbe::OrdinaryMiss => vm.field_miss_data_value(receiver, atom, vm.field_cache_index(site)).unwrap_or(Value::DELETED).to_bits(),
         _ => Value::DELETED.to_bits(),
     }
+}
+
+/// ToBoolean of `bits`, a value whose cell decides it (`Vm::truthy`): a read, which neither
+/// allocates nor runs guest code.
+unsafe extern "C" fn lane_truthy<H: Host>(vm: u64, _residual: u64, bits: u64) -> u64 {
+    // SAFETY: the payload holds the running VM, live and unborrowed while the body runs.
+    u64::from(unsafe { &*(vm as *const Vm<H>) }.truthy(Value::from_bits(bits)))
 }
 
 /// Admit a bound slot's write domain before any guest effect or raw store.

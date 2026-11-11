@@ -59,7 +59,7 @@ impl LoopBody {
         match outcome {
             LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: POLL, stuck, attempts },
             LaneBodyOutcome::Published(method) => Self::Ready { method, exits: 0, leaves: LaneLeaves::NONE, stuck, attempts },
-            LaneBodyOutcome::Stale => Self::Idle { stuck, attempts },
+            LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred => Self::Idle { stuck, attempts },
             LaneBodyOutcome::Declined => Self::Declined,
         }
     }
