@@ -19,6 +19,7 @@ pub(super) struct LaneBodyHistory {
     callee_waits: u8,
     /// The bodies it specialized past because a callee published one (`respecialize_callers`).
     callee_recompiles: u8,
+    late_calls: u32,
     /// Whether a compile of its body waited for its entries to pay for it (`LaneBodyOutcome::Unpaid`).
     unpaid: bool,
     /// Whether its body was declined for its length alone (`LaneBodyOutcome::Short`).
@@ -169,23 +170,33 @@ impl LaneView {
     /// (`compiled::DirectCallee`). A caller's running body keeps its code (`retired`).
     fn respecialize_callers(&self) {
         for caller in self.callers.take() {
-            // SAFETY: a program's views outlive its lane runs, and callers are views of it.
-            let caller = unsafe { &*caller };
-            let history = caller.history.get();
-            // SAFETY: as `lane_body`; a caller's running body holds its own lease.
-            let body = unsafe { &mut *caller.tier_lane.get() };
-            let LaneBody::Specialized { tier_prologue, recompiles, stuck, method, .. } = body else { continue };
-            // A caller that inlined this function has no call of it to bind to its body.
-            if !method.lease().is_some_and(|code| code.direct.iter().any(|callee| std::ptr::eq(callee.target.view, self))) { continue; }
-            if history.callee_recompiles >= TIERS.lane_body.max_callee_recompiles { continue; }
-            caller.history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, ..history });
-            // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
-            unsafe { (*caller.prologue.get()).handler = *tier_prologue };
-            let next = LaneBody::Unspecialized { entries: TIERS.lane_body.warmup_entries - 1, recompiles: *recompiles, stuck: *stuck };
-            let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
-            caller.entry.withdraw();
-            caller.retired.borrow_mut().push(method);
+            unsafe { &*caller }.respecialize();
         }
+    }
+
+    pub(super) fn note_late_call(&self) -> bool {
+        let history = self.history.get();
+        let late_calls = history.late_calls.saturating_add(1);
+        self.history.set(LaneBodyHistory { late_calls, ..history });
+        late_calls == TIERS.lane_body.late_call_calls
+    }
+
+    pub(super) fn owns_record(&self, record: super::Ip) -> bool {
+        let start = self.records();
+        record >= start && record < start.wrapping_add(self.records.len())
+    }
+
+    pub(super) fn respecialize(&self) {
+        let history = self.history.get();
+        let body = unsafe { &mut *self.tier_lane.get() };
+        let LaneBody::Specialized { tier_prologue, recompiles, stuck, .. } = body else { return };
+        if history.callee_recompiles >= TIERS.lane_body.max_callee_recompiles { return; }
+        self.history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, late_calls: 0, ..history });
+        unsafe { (*self.prologue.get()).handler = *tier_prologue };
+        let next = LaneBody::Unspecialized { entries: TIERS.lane_body.warmup_entries - 1, recompiles: *recompiles, stuck: *stuck };
+        let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
+        self.entry.withdraw();
+        self.retired.borrow_mut().push(method);
     }
 
     /// A compile a lifecycle edge outran counts as a dropped body: no run
