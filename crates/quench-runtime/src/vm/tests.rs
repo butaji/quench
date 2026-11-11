@@ -1049,6 +1049,30 @@ fn hot_bodies_construct_through_forwarded_initializers_that_do_more_than_store()
 }
 
 #[test]
+fn lane_bodies_join_unboxed_parameters_that_a_field_read_proves_objects() {
+    // `x` is an int32 or float parameter on some entries and an object on others: the unit
+    // joins its unboxed view with the object proof of `x['a']` and must keep lowering
+    // without a tagged view for it (it once reached an unreachable arm).
+    let source = r#"
+      function f1(x, y, i) { let s = 0; let k = i & 7; for (let j = 0; j < 5; j++) s = (s + ((((x|0) != (x*y)) + (x)['a']) || ((y?(x*y):k) != (3 ^ (x%5))))); return s; }
+      function P(v) { this.v = v; }
+      const A = [-3, new P(3), 1.5, NaN, [1, 2, 3]], B = [1.5, -2147483648, { a: 1 }, 7, null];
+      let h = 0;
+      for (let i = 0; i < 3500; i++) { try { h = (h * 31 + String(f1(A[i % 5], B[(i >> 1) % 5], i)).length) | 0; } catch (e) { h = (h * 31 + 1) | 0; } }
+      print(h);
+    "#;
+    let run = |tiers: bool| {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if tiers { vm.programs.enable_js_lane_methods(); }
+        let program = Engine::specialize(source, "tagged-view-join.js").unwrap();
+        vm.execute(&program).unwrap();
+        output.borrow().clone()
+    };
+    assert_eq!(run(true), run(false));
+}
+
+#[test]
 fn lane_constructions_forward_plain_loaded_arguments() {
     // A loop the lane runs constructs through a forwarding constructor
     // (`this.initialize.apply(this, arguments)`): its frameless activation reads the

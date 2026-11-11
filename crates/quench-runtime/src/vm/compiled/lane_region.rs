@@ -4601,7 +4601,9 @@ impl Lowering<'_, '_> {
 
     /// A register whose object an object proof names holds a direct object from then on.
     fn refine_owner(&mut self, state: &mut State, index: usize, fact: Option<VerifiedFact>) {
-        if let Some(fact) = fact {
+        // An unboxed register has no tagged view to keep: an object proof of it is a
+        // contradiction its reads leave at, so the register keeps its own fact.
+        if let Some(fact) = fact.filter(|_| state.values[index].tagged.current()) {
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,
                 ..RegisterFact::definition(
                     fact.ty.direct_object_part().unwrap_or(Type::DIRECT_OBJECT_FAMILY),
