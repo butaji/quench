@@ -7951,7 +7951,8 @@ script_handler! {
         let region = match site.region.get() {
             Some(region) => region,
             // The calls do not run inlined: the loop leaves at them, as at any other call.
-            None => match lane_inlining_region(cx, r, site).or_else(|| {
+            // `--f-jit` runs no inlining regions, so it does not analyze them.
+            None => match lane_inlining_region(cx, r, site).filter(|_| !crate::jit_mode::fast_only()).or_else(|| {
                 let _ = site.inline_region.set(None);
                 loop_tier::lane_method_call_region(cx, site)
             }) {
@@ -7963,7 +7964,7 @@ script_handler! {
                 }
             },
         };
-        let region = if !site.call_boundary_pcs.is_empty() && region.inlining.is_none() {
+        let region = if !site.call_boundary_pcs.is_empty() && region.inlining.is_none() && !crate::jit_mode::fast_only() {
             site.inline_region.get_or_init(|| lane_inlining_region(cx, r, site).map(Box::new)).as_deref().unwrap_or(region)
         } else { region };
         match lane_loop_native::<H>(cx, r, ip, header, site, region) {
