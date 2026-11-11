@@ -50,6 +50,34 @@ static TOTALS: Mutex<Totals> = Mutex::new(Totals { regions: 0, ops: 0, bytes: 0,
 static REJECTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
 static REPORT: std::sync::Once = std::sync::Once::new();
 
+/// What a loop site did in the lane, counted under `QUENCH_TRACE=js-jit` (printed with the totals): the
+/// cost of the tier machinery around the regions, which `--f-jit` pays whether or not a region exists.
+#[derive(Clone, Copy)]
+pub(in crate::vm) enum Event {
+    /// A loop site's run entered published code.
+    Entered,
+    /// A run left its code at an exit (the interpreter resumed mid-loop).
+    Left,
+    /// A run did not start code: the site is waiting for code, or the entry declined it.
+    Declined,
+    /// A compilation of a loop region started (`lane_loop_compile`).
+    Compiled,
+}
+
+static EVENTS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
+
+/// Counts `event` where the trace channel is on.
+pub(in crate::vm) fn count(event: Event) {
+    if !crate::trace::Channel::JsJit.on() {
+        return;
+    }
+    REPORT.call_once(|| {
+        // SAFETY: `report` is an `extern "C" fn()` that touches only statics.
+        unsafe { libc::atexit(report) };
+    });
+    EVENTS[event as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 extern "C" fn report() {
     let (Ok(totals), Ok(rejects)) = (TOTALS.lock(), REJECTS.lock()) else { return };
     let ops = totals.ops.max(1);
@@ -58,6 +86,8 @@ extern "C" fn report() {
         totals.regions, totals.rejected, totals.ops, totals.bytes, totals.bytes as f64 / ops as f64, totals.nanos,
         totals.nanos as f64 / ops as f64, numeric::generation_ns()
     );
+    let [entered, left, declined, compiled] = std::array::from_fn(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
+    eprintln!("QUENCH_FASTJIT_LOOPS entered={entered} left={left} declined={declined} compiles={compiled}");
     let mut ranked: Vec<_> = rejects.iter().collect();
     ranked.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
     for (name, count) in ranked {

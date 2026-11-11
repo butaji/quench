@@ -8036,6 +8036,11 @@ fn lane_loop_native<H: Host>(
     };
     // The tier's state is borrowed only here, so the dispatch below holds no borrow.
     let continuation = lane_loop_run(cx, r, site, region, &mut entry, views);
+    super::compiled::fast_region::count(match continuation {
+        LoopContinuation::Jump | LoopContinuation::Compiling => super::compiled::fast_region::Event::Declined,
+        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Safepoint | LoopContinuation::Callee => super::compiled::fast_region::Event::Left,
+        LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => super::compiled::fast_region::Event::Entered,
+    });
     site.declines.set(if matches!(continuation, LoopContinuation::Jump) { site.declines.get() + 1 } else { 0 });
     lane_loop_hold_header::<H>(header, site);
     match continuation {

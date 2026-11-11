@@ -51,7 +51,7 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
-mod osr_compile; mod fast_region; mod fast_rows;
+mod osr_compile; pub(in crate::vm) mod fast_region; mod fast_rows;
 pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
 pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
