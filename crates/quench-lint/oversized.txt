@@ -5424,7 +5424,6 @@ native_form LoadEnvLocal 1
 native_form LoadLocal 1
 native_form LoadNameTypeof 1
 native_form MakeClosure 1
-native_form MakeConstArray 1
 native_form MakeObjectLiteral 1
 native_form MarkPrivateName 1
 native_form NumericAdd 1

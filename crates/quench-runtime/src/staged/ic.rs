@@ -199,9 +199,9 @@ mod tests {
             run(&mut trace, &ops, at, None, ()).expect("a load ends the read");
             trace
         };
-        let (first, second) = (read(&[3, 9], 5, 1), read(&[40, 70], 6, 7));
+        let (first, second) = (read(&[3, 9], 5, 1), read(&[40, 70], 6, 0));
         assert_eq!(first.ops, second.ops, "the trace never depends on a site value");
         assert_eq!(first.holes, [3, 9, 5, 32, 8]);
-        assert_eq!(second.holes, [40, 70, 6, 224, 56]);
+        assert_eq!(second.holes, [40, 70, 6, 0, 0]);
     }
 }

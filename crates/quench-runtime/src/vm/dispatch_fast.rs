@@ -353,7 +353,7 @@ pub(super) struct LaneView {
     /// of the function, published and withdrawn with its body.
     entry: super::compiled::entry_cell::EntryCell,
     /// Every body it published, kept until the view drops: a native frame running a body that
-    /// retired recovers its leave through it (`LaneView::pinned_body`).
+    /// retired recovers its leave through `ShadowFrame::body`.
     pinned: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     history: std::cell::Cell<LaneBodyHistory>,
@@ -607,8 +607,8 @@ mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_initialize_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index};
-pub(in crate::vm) use construct_plan::{lane_body_construction, lane_context_constructs};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_initialize_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
+pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
 mod loop_runs;
@@ -901,11 +901,6 @@ impl LaneView {
 
     /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).
     pub(super) fn entry_cell(&self) -> usize { std::ptr::from_ref(&self.entry).addr() }
-
-    /// The body of this function at pin `pin` (`EntryCell::pin`), published or retired.
-    fn pinned_body(&self, pin: usize) -> Option<*const super::compiled::LaneMethod> {
-        self.pinned.borrow().get(pin).map(|body| std::ptr::from_ref(&**body))
-    }
 
     /// The publication of the specialized body, which a direct caller holds
     /// (`compiled::DirectCallee::method`).
@@ -1421,11 +1416,11 @@ impl Completion {
 /// (`lane_forwarded_construction`): what its frame holds when activations become frames,
 /// pending at its forwarding call.
 #[derive(Clone, Copy)]
-struct SkippedForwarder {
-    function: u32,
-    callee: Value,
-    env: Value,
-    method: crate::bytecode::ForwardedThisMethod,
+pub(in crate::vm) struct SkippedForwarder {
+    pub(in crate::vm) function: u32,
+    pub(in crate::vm) callee: Value,
+    pub(in crate::vm) env: Value,
+    pub(in crate::vm) method: crate::bytecode::ForwardedThisMethod,
 }
 
 /// Where a lane activation's arguments come from: a window of the caller's registers, or
@@ -1794,7 +1789,6 @@ const CONSTRUCT_PLANS: usize = 64;
 const _: () = assert!(CONSTRUCT_PLANS.is_power_of_two());
 
 /// A `ConstructPlan::epoch` no epoch reaches: the entry plans nothing.
-const NO_CONSTRUCT_PLAN_EPOCH: u64 = u64::MAX;
 
 /// Activations a lane runs without VM frames, innermost last, over the
 /// bottom VM frame of the lane run. They exist only while the lane runs:
@@ -1829,6 +1823,9 @@ pub(super) struct LaneStack {
     cross_function_targets: Box<[ScriptCallTarget; FUNCTION_TARGETS]>,
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
+    /// Per plan, the one dependency its proof is (`watch_construct_plan`): published while
+    /// every object the plan read keeps its values and layout.
+    construct_watches: [Option<crate::heap::PrototypeValueWatch>; CONSTRUCT_PLANS],
     /// The reads call sites answered (`ReadMemo`), each in the slot its record names
     /// (`CallOperand::memo`).
     read_memos: Vec<ReadMemo>,
@@ -1889,6 +1886,7 @@ impl Default for LaneStack {
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
+            construct_watches: [const { None }; CONSTRUCT_PLANS],
             read_memos: Vec::new(),
             forwarders: Vec::new(),
             settling: Vec::new(),
@@ -14014,7 +14012,6 @@ fn lane_construct_keeping_activation<H: Host>(
     let Some(this) = lane_planned_receiver(vm, callee, plan.as_ref()) else {
         return Err(Some(exit(ip)));
     };
-    // Allocating the receiver can make a collection due.
     note_allocation(vm);
     let arguments = ActivationArguments::Window(i.c);
     if let Some(&method) = vm.lane_stack.forwarded_methods.get(target.forwarded_method as usize)
@@ -14043,6 +14040,7 @@ fn lane_construct_keeping_activation<H: Host>(
                 return Ok(KeepingConstruction::Finished(this));
             }
         }
+        note_construct_site(vm, i, callee, &forwarded);
         let forwarder = SkippedForwarder {
             function: target.function,
             callee,
@@ -14167,7 +14165,7 @@ fn lane_forwarded_construction<H: Host>(
     let forwarded = lane_script_target(cx, function)?;
     if let Some(resolution) = forwarded_resolution(vm, constructor.callee, method, function, apply) {
         let index = construct_plan_index(constructor.callee)?;
-        vm.lane_stack.construct_plans[index].forwarded = Some(resolution);
+        record_forwarded_resolution(vm, index, function, resolution);
     }
     Some(forwarded)
 }
@@ -14952,10 +14950,43 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body
         let direct = instruction.op().is_call() && !instruction.direct_eval() && !instruction.parameter_eval()
             && !(tail_calls && instruction.returns_from_frame());
         let mut callees = super::compiled::DirectCandidates::new();
+        if instruction.op().class().eq(Class::Construct) {
+            callees.extend(lane_construct_callee(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm())));
+            return callees;
+        }
         callees.extend(lane_body_tier::compiled_site_targets(vm, view, pc).filter(|_| direct)
             .filter_map(|target| lane_direct_callee(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm()), target)));
         callees
     }).collect()
+}
+
+/// Records the forwarded initializer the construction at `i` ran, which a body may call by
+/// its entry (`lane_construct_callee`).
+fn note_construct_site<H: Host>(vm: &Vm<H>, i: &LaneInstruction, constructor: Value, forwarded: &ScriptCallTarget) {
+    vm.lane_stack.note_site_callee(&i.call_link, super::compiled::CallTarget {
+        callee: super::compiled::CalleeBinding::Forwarded { through: constructor, callee: forwarded.callee },
+        function: forwarded.function,
+    });
+}
+
+/// The `compiled::DirectCallee` of the construction at `pc` of `view` through a forwarding
+/// constructor: the forwarded initializer the site last ran (`lane_construct_keeping_activation`)
+/// as the callee, the constructor as the identity it guards and the activation it skips.
+fn lane_construct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: usize, argc: u16) -> Option<super::compiled::DirectCallee> {
+    for site in lane_site_targets(vm, view, pc as u32) {
+        let super::compiled::CalleeBinding::Forwarded { through, callee } = site.callee else { continue };
+        // SAFETY: as `Vm::script_call_entry`; both targets are copied before anything resolves one.
+        let (constructor, initializer) = unsafe { (*vm.script_call_entry(through)?, *vm.script_call_entry(callee)?) };
+        let method = *vm.lane_stack.forwarded_methods.get(constructor.forwarded_method as usize)?;
+        if !constructor.forwards() || !constructor.constructs || holding_construct_plan(vm, through).is_none_or(|plan| plan.forwarded.is_none()) {
+            return None;
+        }
+        let mut direct = lane_direct_callee(vm, view, function, pc, argc, initializer)?;
+        direct.callee = through;
+        direct.forwarder = Some(SkippedForwarder { function: constructor.function, callee: through, env: constructor.env, method });
+        return Some(direct);
+    }
+    None
 }
 
 /// The `compiled::DirectCallee` of `target`, the callee the call at `pc` of `view` passes
@@ -14977,7 +15008,7 @@ fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: u
         .unwrap_or((std::ptr::null(), 0));
     Some(super::compiled::DirectCallee {
         target, method, body, call: view.records().wrapping_add(pc).addr(), cell: view_of.entry_cell(),
-        callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len,
+        callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len, forwarder: None,
     })
 }
 
@@ -15066,7 +15097,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(), cell: unsafe { &*target.view }.entry_cell(),
         callee: leaf, registers: target.registers,
         sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals),
-        capture_values, capture_len,
+        capture_values, capture_len, forwarder: None,
     });
     let root_method = vm.compile_lane_method(&program, root_target.function,
         &|_, _| Vec::new(), &|_| (0, 0), direct, &[]).unwrap();
@@ -15109,9 +15140,9 @@ fn lane_materialize_frames<H: Host>(
         let call = callee.call as Ip;
         let argc = ImmediateLayout::argument_count(unsafe { (*call).imm() });
         let caller = unsafe { (*cx).registers };
-        lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), window, argc, Value::from_bits(frame.this), false);
+        lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), window, argc, Value::from_bits(frame.this), false, callee.forwarder);
         // The body the call ran is the cell's at that moment, not the descriptor's.
-        let method = unsafe { &*callee.target.view }.pinned_body(frame.pin).expect("a call through the cell ran a body its view pinned");
+        let method = frame.body as *const super::compiled::LaneMethod;
         // SAFETY: the active caller's code lease pins a named callee body through recovery, and
         // the view pins every body it published, even once its publication retired.
         innermost = Some(unsafe { (&*callee.target.view, &*method) });
@@ -15364,7 +15395,7 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     if vm.heap.should_collect() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructCollectionDue); }
     // The callee's plan first, the common `new C(…)`, which needs no call target; a returned
     // construction completes by it alone.
-    if let Some(this) = lane_planned_construction(vm, callee, r, i) {
+    if let Some(this) = lane_planned_construction(vm, callee, r, i).or_else(|| lane_forwarded_fields(vm, callee, lane_construct_argument(r, i))) {
         note_allocation(vm);
         r.set(i.a & crate::bytecode::REGISTER_MASK, this);
         return LANE_CALL_COMPLETED;
@@ -15699,7 +15730,7 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
         stack.values.set_len(window + count);
         Registers(registers)
     };
-    lane_enter_window::<H, GENERAL, SETTLES>(cx, r, ip, target, callee_registers, window, argc, this, constructs)
+    lane_enter_window::<H, GENERAL, SETTLES>(cx, r, ip, target, callee_registers, window, argc, this, constructs, None)
 }
 
 /// `lane_push_passed` past its window, which the stack's values cover from `window` on and
@@ -15715,8 +15746,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     callee_registers: Registers,
     window: usize,
     argc: u16,
-    this: Value,
-    constructs: bool,
+    this: Value, constructs: bool, skipped: Option<SkippedForwarder>,
 ) -> (Registers, Ip) {
     let vm = unsafe { vm(cx) };
     let stack = &mut vm.lane_stack;
@@ -15735,13 +15765,14 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
-            completion: Completion::of(constructs, cross, SETTLES),
+            completion: if skipped.is_some() { Completion::Forwarder } else { Completion::of(constructs, cross, SETTLES) },
             forwards: false,
             environment: false,
         }),
     };
     // SAFETY: the capacity check above leaves room for the activation.
     unsafe { stack.push_activation(activation) };
+    stack.forwarders.extend(skipped);
     // SAFETY: the program store keeps a derived view alive with its program.
     let base = unsafe { (*target.view).records() };
     unsafe {
@@ -16042,6 +16073,7 @@ fn lane_planned_receiver<H: Host>(
             ..EMPTY_CONSTRUCT_PLAN
         }
         .finish();
+        watch_construct_plan(vm, index, true, &[callee, prototype]);
     }
     Some(this)
 }

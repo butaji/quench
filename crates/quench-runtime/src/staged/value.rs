@@ -21,6 +21,15 @@ pub(crate) fn is_direct_object<S: Stage>(stage: &mut S, bits: S::Word) -> S::Con
     family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG)
 }
 
+/// Whether `bits` is a direct string reference (`Value::as_direct_string`).
+// Read by the u-jit and f-jit projections of GetField on string receivers (threads 13 and 7).
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn is_direct_string<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    let family = stage.and_imm(bits, ValueLayout::HEAP_FAMILY_MASK);
+    stage.eq_imm(family, ValueLayout::DIRECT_STRING_TAG)
+}
+
 /// Whether `bits` is a direct array reference (`Value::as_direct_array`).
 #[inline(always)]
 pub(crate) fn is_direct_array<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {

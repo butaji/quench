@@ -19,7 +19,7 @@ pub(super) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<u
 pub(super) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[DirectCandidates])
     -> (Box<[DirectCallee]>, BTreeMap<usize, *const DirectCallee>) {
     let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
-        .filter(|(_, instruction)| instruction.op().is_call())
+        .filter(|(_, instruction)| instruction.op().is_call() || instruction.op().class().eq(crate::bytecode::Class::Construct))
         .filter_map(|(pc, _)| match unit.origins[pc] {
             lane_unit::Origin::Caller(origin) => {
                 let inlined = |callee: &DirectCallee| unit.frames.iter()

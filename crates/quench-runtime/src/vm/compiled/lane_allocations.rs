@@ -42,6 +42,19 @@ pub(super) unsafe extern "C" fn lane_binary<H: Host>(vm: u64, residual: u64, pay
     value.to_bits()
 }
 
+/// A lane body's array literal of the `count` program constants from `constant`, as the lane's
+/// own (`dispatch_fast::lane_make_const_array`); `DELETED` where a collection is due or the
+/// range is outside the constants.
+pub(super) unsafe extern "C" fn lane_new_const_array<H: Host>(vm: u64, _residual: u64, payload: u64, constant: u64, count: u64) -> u64 {
+    // SAFETY: as `lane_new_object`.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let Some(array) = vm.const_array_value(dispatch.program_id, constant as usize, count as usize) else { return Value::DELETED.to_bits() };
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    array.to_bits()
+}
+
 /// A lane body's array literal of `length` holes, or of the `elements` its definitions
 /// write, as the lane's own (`dispatch_fast::lane_make_array`, `lane_make_array_elements`);
 /// `DELETED` where a collection is due, as `lane_new_object`.
