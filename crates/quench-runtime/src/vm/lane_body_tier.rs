@@ -200,9 +200,8 @@ impl LaneView {
         // Native callers enter a closed body through the view's cell, and leave inside it
         // through the view's pin.
         if let Some(body) = method.lease().filter(|body| body.calls_only_natively()) {
-            let pin = self.pinned.borrow().len();
             self.pinned.borrow_mut().push(body);
-            self.entry.publish(&method, pin);
+            self.entry.publish(&method);
         }
         LaneBody::Specialized { method, tier_prologue, completions: Cell::new(0), exits: Cell::new(0),
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }

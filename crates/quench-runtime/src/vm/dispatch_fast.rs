@@ -353,7 +353,7 @@ pub(super) struct LaneView {
     /// of the function, published and withdrawn with its body.
     entry: super::compiled::entry_cell::EntryCell,
     /// Every body it published, kept until the view drops: a native frame running a body that
-    /// retired recovers its leave through it (`LaneView::pinned_body`).
+    /// retired recovers its leave through `ShadowFrame::body`.
     pinned: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     history: std::cell::Cell<LaneBodyHistory>,
@@ -901,11 +901,6 @@ impl LaneView {
 
     /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).
     pub(super) fn entry_cell(&self) -> usize { std::ptr::from_ref(&self.entry).addr() }
-
-    /// The body of this function at pin `pin` (`EntryCell::pin`), published or retired.
-    fn pinned_body(&self, pin: usize) -> Option<*const super::compiled::LaneMethod> {
-        self.pinned.borrow().get(pin).map(|body| std::ptr::from_ref(&**body))
-    }
 
     /// The publication of the specialized body, which a direct caller holds
     /// (`compiled::DirectCallee::method`).
@@ -15114,7 +15109,7 @@ fn lane_materialize_frames<H: Host>(
         let caller = unsafe { (*cx).registers };
         lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), window, argc, Value::from_bits(frame.this), false);
         // The body the call ran is the cell's at that moment, not the descriptor's.
-        let method = unsafe { &*callee.target.view }.pinned_body(frame.pin).expect("a call through the cell ran a body its view pinned");
+        let method = frame.body as *const super::compiled::LaneMethod;
         // SAFETY: the active caller's code lease pins a named callee body through recovery, and
         // the view pins every body it published, even once its publication retired.
         innermost = Some(unsafe { (&*callee.target.view, &*method) });

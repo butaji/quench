@@ -7274,13 +7274,13 @@ pub(super) type DirectCandidates = smallvec::SmallVec<[DirectCallee; tier_policy
 #[repr(C)]
 pub(super) struct ShadowFrame {
     pub(super) callee: *const DirectCallee,
-    pub(super) this: u64, pub(super) pin: usize,
+    pub(super) this: u64, pub(super) body: usize,
     /// The address of its window of registers.
     pub(super) window: usize,
 }
 
 impl ShadowFrame {
-    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, pin: 0, window: 0 };
+    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, body: 0, window: 0 };
 }
 
 /// Direct calls a run nests natively: past them, a call takes the lane's helper path. The
