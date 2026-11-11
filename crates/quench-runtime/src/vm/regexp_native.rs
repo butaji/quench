@@ -2,7 +2,6 @@
 //! Cranelift block per instruction, backtracking as a pop of the native stack and a jump table
 //! to the frame's resume block. It runs the steps of `Program::run` exactly; the interpreter
 //! stays the one source of meaning, and a program or search the code cannot finish keeps it.
-use super::compiled::CodeMemory;
 use super::jit_backend::{compile_function, run_in_background, target_isa, NativeCompileRejection};
 use std::task::Poll;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
@@ -71,11 +70,9 @@ fn compile(plan: &NativePlan) -> Option<Vec<u8>> {
     .ok()
 }
 
-/// `code` in executable memory, as a native search.
+/// `code` in executable memory, as a native search (`publish_entry`).
 fn publish(code: &[u8]) -> Option<NativeCode> {
-    let memory = CodeMemory::new(code)?;
-    // SAFETY: the code is a function of `NativeFn`'s signature, which `emit` builds.
-    let entry = unsafe { std::mem::transmute::<*mut u8, NativeFn>(memory.pointer()) };
+    let (memory, entry) = super::compiled::publish_entry::<NativeFn>(code)?;
     Some(NativeCode { entry, keep: Box::new(memory) })
 }
 

@@ -6226,11 +6226,11 @@ fn dump_native_bytes(directory: &std::path::Path, header: u32, bytes: &[u8], add
 
 /// Publishes compiled `code` of a function lowered with `native_entry_signature` to
 /// executable memory, and its entry.
-fn publish_entry(code: &[u8]) -> Option<(CodeMemory, Entry)> {
+pub(in crate::vm) fn publish_entry<E: Copy>(code: &[u8]) -> Option<(CodeMemory, E)> {
     let memory = CodeMemory::new(code)?;
     write_perf_map("js-native", memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
     // SAFETY: callers lower the function with `native_entry_signature`.
-    let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
+    let entry = unsafe { std::mem::transmute_copy::<*mut u8, E>(&memory.pointer()) };
     Some((memory, entry))
 }
 
