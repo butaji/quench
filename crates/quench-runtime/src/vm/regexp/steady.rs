@@ -261,7 +261,7 @@ impl<H: Host> Vm<H> {
             return Some(Ok(if result_used { this } else { Value::UNDEFINED }));
         };
         let input = self.heap.string(this)?.clone();
-        if let Err(error) = self.record_regexp_legacy_pending(receiver, input, matcher, last.start) {
+        if let Err(error) = self.record_regexp_legacy_pending(receiver, input, Rc::clone(matcher), last.start) {
             return Some(Err(error));
         }
         Some(match output {
@@ -288,7 +288,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(if exec { Value::NULL } else { Value::FALSE });
         };
-        self.steady_ascii_match(receiver, subject, input, &regex, matched, (exec, stateful, slot), result_used && exec)
+        self.steady_ascii_match(receiver, subject, input, regex, matched, (exec, stateful, slot), result_used && exec)
     }
 
     /// The outcome of a match `matched` found in place, with `lastIndex` stored through
@@ -299,7 +299,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         subject: Value,
         input: JsString,
-        regex: &Rc<quench_regexp::Regex>,
+        regex: Rc<quench_regexp::Regex>,
         matched: quench_regexp::Match,
         (exec, stateful, slot): (bool, bool, usize),
         captures: bool,
@@ -341,7 +341,7 @@ impl<H: Host> Vm<H> {
                 unreachable!("a steady call's receiver is a RegExp");
             };
             let matcher = Self::regexp_matcher(meta)?;
-            self.record_regexp_legacy_pending(receiver, input, &matcher, matched.range.start)?;
+            self.record_regexp_legacy_pending(receiver, input, matcher, matched.range.start)?;
             return Ok(Value::UNDEFINED);
         }
         self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))
@@ -404,7 +404,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         // A RegExp's `lastIndex`, made first, usually lies in its inline storage.
-        let inline = (slot < crate::value_vec::INLINE_PROPERTY_COUNT).then(|| object.inline_property(slot)).flatten();
+        let inline = if slot < crate::value_vec::INLINE_PROPERTY_COUNT { object.inline_property(slot) } else { None };
         let last_index = match inline {
             Some(value) => value,
             None => self.heap.property_get(object, slot)?,
@@ -430,7 +430,10 @@ fn steady_search(meta: &crate::heap::RegExpMeta, input: &JsString, slot: usize, 
         // itself (`Regex::find_ascii`): the match outlives the borrows of the regexp and the
         // subject, which a result or the legacy statics keep, so only a match clones them.
         if let Some(found) = regex.find_ascii(bytes, start, sticky, captures) {
-            let matched = found.map(|found| (Rc::clone(regex), input.clone(), found));
+            let matched = match found {
+                Some(found) => Some((Rc::clone(regex), input.clone(), found)),
+                None => None,
+            };
             return SteadyRead::Ascii { slot, stateful, matched };
         }
         return SteadyRead::Prefiltered(slot, last_index, Prefilter::Undecided);

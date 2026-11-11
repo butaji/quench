@@ -347,3 +347,12 @@ impl Drop for CodeMemory {
 
 #[cfg(test)]
 mod tests;
+
+/// `code` in executable memory, listed in the perf map under `perf_label`, with the value
+/// `entry` makes of its first byte.
+pub(in crate::vm) fn publish_code<T>(code: &[u8], perf_label: &'static str, entry: impl FnOnce(*mut u8) -> T) -> Option<(CodeMemory, T)> {
+    let memory = CodeMemory::new(code)?;
+    super::write_perf_map(perf_label, memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
+    let value = entry(memory.pointer());
+    Some((memory, value))
+}
