@@ -8,9 +8,13 @@
 //! `mov rsp,rbp; pop rbp; jmp rel32`. [`Stencil::strip`] verifies those exact bytes and removes
 //! the frame pair from frameless stencils (the epilogue is overwritten by a 4-byte nop so the
 //! stencil's internal branch displacements stay valid).
+pub mod row;
+mod stencil_builder;
+pub use stencil_builder::StencilBuilder;
+
 use cranelift_codegen::control::ControlPlane;
 use cranelift_codegen::ir::{
-    self, AbiParam, ExtFuncData, ExternalName, GlobalValueData, InstBuilder, Signature, UserExternalName,
+    self, AbiParam, ExtFuncData, ExternalName, InstBuilder, Signature, UserExternalName,
     UserFuncName, types::I64,
 };
 use cranelift_codegen::isa::{CallConv, OwnedTargetIsa};
@@ -27,25 +31,6 @@ pub const TAKEN: u32 = 1;
 /// Exit hole indexes start here: exit `kind` is hole `EXIT + kind`, so each guard kind reaches
 /// its own exit stub (an `ExitSite` id), not one shared hole.
 pub const EXIT: u32 = 2;
-
-/// An operand of a row: a patched hole in a stencil, a constant in UltraJIT.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Operand {
-    Hole(u32),
-    Const(i64),
-}
-
-/// What differs between lowering a row as a stencil and as UltraJIT code.
-pub trait Flow {
-    /// The value of an operand.
-    fn imm(&mut self, b: &mut FunctionBuilder, operand: Operand) -> ir::Value;
-    /// Continue with the next row.
-    fn next(&mut self, b: &mut FunctionBuilder, frame: ir::Value, context: ir::Value);
-    /// Continue at the branch target when `condition` is nonzero, else fall through.
-    fn taken(&mut self, b: &mut FunctionBuilder, frame: ir::Value, context: ir::Value, condition: ir::Value);
-    /// Leave through exit `kind` when `condition` is nonzero.
-    fn exit(&mut self, b: &mut FunctionBuilder, frame: ir::Value, context: ir::Value, condition: ir::Value, kind: u32);
-}
 
 /// A successor hole: a colocated function whose call is a relocated `jmp rel32`.
 fn successor(b: &mut FunctionBuilder, index: u32) -> ir::FuncRef {
@@ -79,56 +64,6 @@ fn stencil_signature() -> Signature {
     signature
 }
 
-struct StencilFlow {
-    next: ir::FuncRef,
-    taken: ir::FuncRef,
-    exits: Vec<Option<ir::FuncRef>>,
-}
-
-impl Flow for StencilFlow {
-    fn imm(&mut self, b: &mut FunctionBuilder, operand: Operand) -> ir::Value {
-        match operand {
-            Operand::Const(value) => b.ins().iconst(I64, value),
-            Operand::Hole(index) => {
-                let name = b.func.declare_imported_user_function(UserExternalName::new(HOLE_VALUE, index));
-                let symbol = b.func.create_global_value(GlobalValueData::Symbol {
-                    name: ExternalName::User(name),
-                    offset: 0.into(),
-                    colocated: false,
-                    tls: false,
-                });
-                b.ins().symbol_value(I64, symbol)
-            }
-        }
-    }
-    fn next(&mut self, b: &mut FunctionBuilder, frame: ir::Value, context: ir::Value) {
-        b.ins().return_call(self.next, &[frame, context]);
-    }
-    fn taken(&mut self, b: &mut FunctionBuilder, frame: ir::Value, context: ir::Value, condition: ir::Value) {
-        let (jump, rest) = (b.create_block(), b.create_block());
-        b.ins().brif(condition, jump, &[], rest, &[]);
-        b.switch_to_block(jump);
-        b.ins().return_call(self.taken, &[frame, context]);
-        b.seal_block(jump);
-        b.switch_to_block(rest);
-        b.seal_block(rest);
-    }
-    fn exit(&mut self, b: &mut FunctionBuilder, frame: ir::Value, context: ir::Value, condition: ir::Value, kind: u32) {
-        if self.exits.len() <= kind as usize {
-            self.exits.resize(kind as usize + 1, None);
-        }
-        let target = *self.exits[kind as usize].get_or_insert_with(|| successor(b, EXIT + kind));
-        let (leave, rest) = (b.create_block(), b.create_block());
-        b.set_cold_block(leave);
-        b.ins().brif(condition, leave, &[], rest, &[]);
-        b.switch_to_block(leave);
-        b.ins().return_call(target, &[frame, context]);
-        b.seal_block(leave);
-        b.switch_to_block(rest);
-        b.seal_block(rest);
-    }
-}
-
 /// A relocation of a stencil: a 64-bit hole value, or a 32-bit pc-relative successor.
 #[derive(Clone, Debug)]
 pub struct Reloc {
@@ -160,21 +95,18 @@ const JMP_REL32_LEN: usize = 5;
 const SUB_RSP: [u8; 3] = [0x48, 0x83, 0xec];
 const RET: u8 = 0xc3;
 
-/// Lower one row into a stencil function: `emit` lowers the row through the given flow.
-fn lower(
-    isa: &OwnedTargetIsa,
-    emit: impl FnOnce(&mut FunctionBuilder, &mut dyn Flow, ir::Value, ir::Value),
-) -> ir::Function {
+/// Lower one row into a stencil function: `emit` lowers the row through the builder.
+fn lower(isa: &OwnedTargetIsa, emit: impl FnOnce(&mut StencilBuilder)) -> ir::Function {
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 0), stencil_signature());
     let mut builder_context = FunctionBuilderContext::new();
     let mut b = FunctionBuilder::new(&mut func, &mut builder_context);
-    let mut flow = StencilFlow { next: successor(&mut b, NEXT), taken: successor(&mut b, TAKEN), exits: Default::default() };
+    let (next, taken) = stencil_builder::new_successors(&mut b);
     let entry = b.create_block();
     b.append_block_params_for_function_params(entry);
     b.switch_to_block(entry);
     b.seal_block(entry);
     let (frame, context) = (b.block_params(entry)[0], b.block_params(entry)[1]);
-    emit(&mut b, &mut flow, frame, context);
+    emit(&mut StencilBuilder { b: &mut b, frame, context, next, taken, exits: Vec::new() });
     b.finalize(isa.frontend_config());
     func
 }
@@ -200,10 +132,7 @@ fn relocations(ctx: &Context) -> Result<Vec<Reloc>, String> {
 }
 
 /// Compile one row into a stencil. `emit` lowers the row through the given flow.
-pub fn generate(
-    isa: &OwnedTargetIsa,
-    emit: impl FnOnce(&mut FunctionBuilder, &mut dyn Flow, ir::Value, ir::Value),
-) -> Result<Stencil, String> {
+pub fn generate(isa: &OwnedTargetIsa, emit: impl FnOnce(&mut StencilBuilder)) -> Result<Stencil, String> {
     let mut ctx = Context::for_function(lower(isa, emit));
     ctx.compile(&**isa, &mut ControlPlane::default()).map_err(|e| format!("{:?}", e.inner))?;
     let relocs = relocations(&ctx)?;
@@ -314,31 +243,40 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
 
 #[cfg(test)]
 mod tests {
+    use super::row::{Effects, MemKind, Op, Operand, Region, RowBuilder, Source, Ty};
     use super::*;
-    use cranelift_codegen::ir::MemFlagsData;
 
-    /// `frame[hole0 / 8] += hole1`, guarded against i64 overflow, then next.
-    fn add_row(b: &mut FunctionBuilder, flow: &mut dyn Flow, frame: ir::Value, context: ir::Value) {
-        let (slot, delta) = (flow.imm(b, Operand::Hole(0)), flow.imm(b, Operand::Hole(1)));
-        let address = b.ins().iadd(frame, slot);
-        let value = b.ins().load(I64, MemFlagsData::trusted(), address, 0);
-        let (sum, overflow) = b.ins().sadd_overflow(value, delta);
-        flow.exit(b, frame, context, overflow, 0);
-        b.ins().store(MemFlagsData::trusted(), sum, address, 0);
-        flow.next(b, frame, context);
+    /// `frame[hole0] += hole1`, guarded against overflow, then next: the same row body any builder lowers.
+    fn add_row<B: RowBuilder<Exit = u32>>(b: &mut B) {
+        let slot = Source::Frame(Operand::Hole(0));
+        let (value, delta) = (b.read(slot, Ty::I64), b.operand(Operand::Hole(1), Ty::I64));
+        let overflow = b.op(Op::Overflow, Ty::I64, &[value, delta], Effects::Pure);
+        let fine = b.op(Op::Not, Ty::I64, &[overflow], Effects::Pure);
+        b.guard(fine, 0);
+        let sum = b.op(Op::Add, Ty::I64, &[value, delta], Effects::Pure);
+        b.write(slot, sum);
+        b.next();
+    }
+
+    /// `return frame[0]`.
+    fn return_row<B: RowBuilder<Exit = u32>>(b: &mut B) {
+        let _ = (Region::Frame, MemKind::Plain);
+        let value = b.read(Source::Frame(Operand::Const(0)), Ty::I64);
+        b.write(Source::Pinned(1), value);
     }
 
     #[test]
     fn copies_patches_and_chains_stencils() {
         let isa = stencil_isa().unwrap();
-        let add = generate(&isa, add_row).unwrap();
+        let add = generate(&isa, |b| add_row(b)).unwrap();
         assert!(add.raw_len > add.code.len(), "the frame pair of a frameless stencil is stripped");
         // The final stencil returns the slot: `mov rax, [rdi]; ret`.
-        let ret = generate(&isa, |b, _, frame, _| {
-            let value = b.ins().load(I64, MemFlagsData::trusted(), frame, 0);
-            b.ins().return_(&[value]);
+        let ret = generate(&isa, |b| {
+            let value = b.read(Source::Frame(Operand::Const(0)), Ty::I64);
+            b.b.ins().return_(&[value]);
         })
         .unwrap();
+        let _ = return_row::<StencilBuilder>;
         let (one, two): (&dyn Fn(u32) -> u64, &dyn Fn(u32) -> u64) = (&|i| [0, 5][i as usize], &|i| [0, i64::MAX as u64][i as usize]);
         let none: &dyn Fn(u32) -> u64 = &|_| 0;
         unsafe {
