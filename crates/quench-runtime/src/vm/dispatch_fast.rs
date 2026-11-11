@@ -8061,15 +8061,15 @@ fn lane_loop_native<H: Host>(
 fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     let machine = unsafe { vm(cx) };
-    let arithmetic = machine.programs.get(machine.active_program).as_deref().is_some_and(|program| {
+    let counted = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
         let body = program.function(site.function() as usize);
-        body.code.get(pc as usize).is_some_and(|packed| {
+        body.code.get(pc as usize).and_then(|packed| {
             let op = decoded_instruction(body, *packed).op();
-            op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
-                || matches!(op.class(), Class::LoadCapture)
+            (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
+                || matches!(op.class(), Class::LoadCapture)).then(|| op.is_get_index())
         })
     });
-    if arithmetic { site.tier.borrow_mut().left_at(pc); }
+    if let Some(read) = counted { site.tier.borrow_mut().left_at(pc, read); }
 }
 
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
