@@ -16355,7 +16355,8 @@ fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Valu
     }
     let common = match completion {
         Some(Completion::ReturnsToNative) => lane_complete_native_callback(cx, value),
-        Some(Completion::Plain) => lane_complete_plain_chain(cx, value),
+        // `lane_complete_activation` begins with the same chain.
+        Some(Completion::Plain) => None,
         Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
         Some(Completion::Constructs) => lane_return_from::<H, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
         _ => None,
@@ -16509,6 +16510,11 @@ fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> 
         let ActivationKind::Script(script) = &activation.kind else {
             return None;
         };
+        // A body's callee (`Completion::ReturnsToBody`) ends the run its call started: it is
+        // the outermost, whatever its call's register.
+        if script.completion == Completion::ReturnsToBody {
+            break index;
+        }
         if script.completion != Completion::Plain {
             return None;
         }
@@ -16522,7 +16528,21 @@ fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> 
     debug_assert!(activations[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
     vm.lane_stack.activations.truncate(outermost + 1);
     vm.lane_stack.drop_iterators_from(outermost + 1);
+    if matches!(&vm.lane_stack.activations[outermost].kind, ActivationKind::Script(script) if script.completion == Completion::ReturnsToBody) {
+        return lane_end_body_callee(cx, value);
+    }
     lane_complete_plain_activation::<H, NOT_LEAF>(cx, value)
+}
+
+/// The end of the nested run of a body's callee, the innermost activation (`Completion::ReturnsToBody`),
+/// with `value`: its caller's state restored and the call's register set, as the general loop's
+/// completion of it does (`body_calls::ends_run`).
+#[inline(always)]
+fn lane_end_body_callee<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let activation = vm.lane_stack.pop_activation()?;
+    let (_, this) = lane_restore_caller(cx, &activation);
+    body_calls::ends_run(cx, &activation, Completion::ReturnsToBody, this, value)
 }
 
 /// `lane_complete_activation` of a native's callback (`Completion::ReturnsToNative`): the
