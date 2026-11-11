@@ -50,10 +50,33 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
     }))
 }
 
-/// The word at byte offset `at` of the loop entry record `entry`: a field's value the loop
-/// holds there, which its field stores rewrite (so, unlike `entry_backing`, no merged load).
+/// The word the loop entry record holds at the per-site byte `offset`: a field value the loop's
+/// entry recorded (`LoopEntry`), written before the run and never during it.
+// Read by the f-jit stencil generator (thread 7), which replaces its hand `field` with this row.
+#[allow(dead_code)]
 #[inline(always)]
-pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, at: S::Word) -> S::Word {
+pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
+    stage.load_site(entry, offset)
+}
+
+/// The dense backing of an array the loop entry recorded: its first value, at the per-site
+/// byte `offset` of the entry record (which never changes during a run, so the load is of an
+/// immutable table), and its length, read from the backing's header.
+// Read by the f-jit stencil generator (thread 7), which replaces its hand `entry_view` with this row.
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let address = stage.add_imm(entry, offset);
+    let values = stage.load_table(address);
+    let length = stage.load_u32(values, ARRAY.header_length_offset as i32 - ARRAY.header_values_offset as i32);
+    (values, length)
+}
+
+/// The word at byte offset `at` of the loop entry record `entry`: a field's value the loop
+/// holds there, which its field stores rewrite (so, unlike `entry_backing_at`, no merged load). `entry_word` is the same row for an offset the stage holds as an immediate; a stencil's offset is a hole, a word.
+#[inline(always)]
+pub(crate) fn entry_word_at<S: Stage>(stage: &mut S, entry: S::Word, at: S::Word) -> S::Word {
     let address = stage.add(entry, at);
     stage.load_u64(address, 0)
 }
@@ -125,5 +148,23 @@ mod tests {
         let (record, entry) = (stage.constant(0), stage.constant(1));
         own_read_entry(&mut stage, record, entry, ());
         assert!(stage.holes.is_empty(), "{:?}", stage.holes);
+    }
+
+    #[test]
+    fn the_loop_entry_rows_read_the_recorded_field_and_array_backing() {
+        let mut backing = crate::heap::ArrayElements::from_slice(&[Value::integer(1), Value::number(0.5), Value::integer(3)]);
+        let values = backing.make_mut().as_mut_ptr() as u64;
+        let record = [Value::integer(7).to_bits(), values];
+        let mut stage = crate::staged::Concrete::new(std::ptr::null());
+        let entry = record.as_ptr() as u64;
+        assert_eq!(entry_word(&mut stage, entry, 0), Value::integer(7).to_bits());
+        let (first, length) = entry_backing(&mut stage, entry, std::mem::size_of::<u64>() as u64);
+        assert_eq!((first, length), (values, 3));
+        let mut trace = crate::staged::trace::Trace::default();
+        let entry = trace.constant(0);
+        let (offset, other) = (trace.site(8), trace.site(16));
+        entry_word(&mut trace, entry, offset);
+        entry_backing(&mut trace, entry, other);
+        assert_eq!(trace.holes, [8, 16], "the offsets are the rows' only operands");
     }
 }

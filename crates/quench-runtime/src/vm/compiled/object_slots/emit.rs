@@ -63,6 +63,11 @@ impl Stage for Emit<'_, '_> {
         // Native code keeps the helper for stores: an id is never below itself.
         self.ult(record_id, record_id)
     }
+    fn assumption(&mut self, _watch: u64) -> ir::Value {
+        // No assumption registry reaches emitted code yet: the read leaves at its miss.
+        let zero = self.constant(0);
+        self.ne_imm(zero, 0u32)
+    }
     fn ult(&mut self, a: ir::Value, b: ir::Value) -> ir::Value {
         self.builder.ins().icmp(IntCC::UnsignedLessThan, a, b)
     }

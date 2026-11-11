@@ -21,6 +21,6 @@ impl ValueArena {
 
     #[inline(never)]
     fn widen_owner_type(&mut self, owner: u32, incoming: SlotType) -> bool {
-        self.join_owner_type(owner, incoming)
+        self.join_owner_type(owner, || incoming)
     }
 }

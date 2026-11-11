@@ -37,7 +37,7 @@ pub(crate) struct Backing<W> {
 /// backing's header. The entry names no array record, so `record` is the header: a caller
 /// needing the record's own flags (`writable_backing`) proved them at entry.
 #[inline(always)]
-pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, at: S::Word) -> Backing<S::Word> {
+pub(crate) fn entry_backing_at<S: Stage>(stage: &mut S, entry: S::Word, at: S::Word) -> Backing<S::Word> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let address = stage.add(entry, at);
     let values = stage.load_table(address);

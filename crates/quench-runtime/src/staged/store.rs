@@ -5,7 +5,7 @@
 use super::object::{arena_run, inline_storage, plain_payload};
 use super::Stage;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-use crate::value::{NarrowLayout, ValueLayout};
+use crate::value::{NarrowLayout, ValueLayout, LOWER_WORD};
 
 /// The payload bits that code a narrow reference's family, and where they sit.
 const FAMILY_BITS: u64 = crate::value::HEAP_FAMILY_BITS;
@@ -15,7 +15,6 @@ const CONSTANT_UPPER_WORDS: [u64; 4] = [crate::value::TAG_UNDEFINED, crate::valu
 const FIRST_CONSTANT_CODE: u64 = crate::value::NARROW_HEAP_FAMILIES as u64;
 /// A bit mask's complement in the low word: the upper word of a value.
 const UPPER_WORD: u64 = !(u32::MAX as u64);
-const LOWER_WORD: u64 = u32::MAX as u64;
 /// Bytes in one half of a packed payload word.
 const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
 

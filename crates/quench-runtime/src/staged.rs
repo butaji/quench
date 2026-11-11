@@ -28,6 +28,7 @@ pub(crate) mod environment;
 pub(crate) mod ic;
 pub(crate) mod object;
 pub(crate) mod store;
+pub(crate) mod holder;
 pub(crate) mod value;
 mod steps;
 pub(crate) use steps::step;
@@ -92,6 +93,11 @@ pub(crate) trait Stage {
     /// one the barrier logs for this value. The one place the store barrier's layout is read;
     /// a stage without that layout answers no, and the store leaves at its miss.
     fn store_gate(&mut self, record_id: Self::Word, value: Self::Word) -> Self::Cond;
+    /// Whether the dependency named by `watch` (a per-site operand) still holds: the interpreter
+    /// tests it, a specializer proves it once at publication and its code pays no check (the
+    /// assumption registry retires the code when it breaks); a stage without a registry answers
+    /// no, and the read leaves at its miss.
+    fn assumption(&mut self, watch: Self::Imm) -> Self::Cond;
     fn not(&mut self, cond: Self::Cond) -> Self::Cond;
     /// Whether either condition holds.
     fn any(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
