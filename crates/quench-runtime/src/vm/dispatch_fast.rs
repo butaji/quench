@@ -1014,6 +1014,7 @@ impl LaneView {
         (start, start + self.records.len() * std::mem::size_of::<LaneInstruction>())
     }
 
+    #[inline]
     pub(super) fn records(&self) -> Ip {
         std::cell::UnsafeCell::raw_get(self.records.as_ptr()).cast_const()
     }
@@ -1276,6 +1277,7 @@ impl Activation {
         }
     }
 
+    #[inline]
     fn frame_storage_bytes(&self) -> usize {
         match self.kind {
             ActivationKind::Script(_) => 0,
