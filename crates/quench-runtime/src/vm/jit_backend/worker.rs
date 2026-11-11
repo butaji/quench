@@ -33,8 +33,9 @@ pub(in crate::vm) fn run_in_background<T: Send + 'static>(work: impl FnOnce() ->
         // The program may have dropped its pending work; nothing waits for the result then.
         let _ = deliver.send(work());
     });
-    // Tests read what a compile published right after the entry that started it.
-    if cfg!(test) {
+    // Tests read what a compile published right after the entry that started it, and a
+    // fixed-work measurement (`QUENCH_DEV=sync-compile`) sees the code a run installs.
+    if cfg!(test) || crate::trace::Dev::SyncCompile.on() {
         job();
         return Pending { result };
     }
