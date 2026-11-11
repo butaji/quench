@@ -71,7 +71,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{lane_binary, lane_new_array, lane_new_object, lane_new_object_pair};
+use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_new_object, lane_new_object_pair};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
@@ -1803,6 +1803,8 @@ lane_helper_inventory! { H;
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
     NewArray => lane_new_array::<H>,
+    /// An array literal of program constants (`lane_new_const_array`).
+    NewConstArray => lane_new_const_array::<H>,
     /// A two-property object literal's allocation (`lane_new_object_pair`).
     NewObjectPair => lane_new_object_pair::<H>,
     Binary => lane_binary::<H>,
