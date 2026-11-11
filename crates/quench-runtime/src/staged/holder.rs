@@ -29,6 +29,23 @@ pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, shape: u32, 
     Some(stage.add_imm(zero, value))
 }
 
+/// The value a method read of a string receiver finds on `String.prototype`: every direct string
+/// has the one prototype, so the family test replaces the shape and link guards, and the watch on
+/// the prototype's values is the assumption. `None` (leaving at `miss`) for any other receiver or
+/// once the watch is retired.
+#[inline(always)]
+pub(crate) fn string_holder_read<S: Stage>(stage: &mut S, receiver: S::Word, watch: u64, value: u64, miss: S::Miss)
+    -> Option<S::Word> {
+    let string = super::value::is_direct_string(stage, receiver);
+    stage.guard(string, miss)?;
+    let watch = stage.site(watch);
+    let holds = stage.assumption(watch);
+    stage.guard(holds, miss)?;
+    let zero = stage.constant(0);
+    let value = stage.site(value);
+    Some(stage.add_imm(zero, value))
+}
+
 /// The interpreter's reading of `holder_read`.
 ///
 /// # Safety
@@ -82,5 +99,22 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(holes, [3, 5, 100, 7]);
         assert_eq!(other, [4, 6, 200, 8]);
+    }
+
+    #[test]
+    fn a_string_receiver_reads_its_prototype_method_under_the_watch() {
+        let watch = Rc::new(PublishedCode::new(()));
+        let method = Value::integer(9);
+        let read = |receiver: Value| {
+            let mut stage = crate::staged::Concrete::new(std::ptr::null());
+            string_holder_read(&mut stage, receiver.to_bits(), Rc::as_ptr(&watch) as u64, method.to_bits(), ()).map(Value::from_bits)
+        };
+        let string = Value::direct_string(3);
+        assert_eq!(read(string), Some(method));
+        assert_eq!(read(Value::integer(1)), None, "not a string");
+        let mut trace = crate::staged::trace::Trace::default();
+        let receiver = trace.constant(0);
+        string_holder_read(&mut trace, receiver, 1, 2, ());
+        assert_eq!(trace.holes, [1, 2], "the watch and the value are the only operands");
     }
 }
