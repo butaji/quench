@@ -30,6 +30,7 @@ pub(super) struct KeyIndex {
 }
 
 /// A hash's tag: its top bits, which the bucket position (its low bits) leaves out.
+#[inline(always)]
 fn tag(hash: u32) -> u8 {
     (hash >> (u32::BITS - u8::BITS + 1)) as u8
 }
