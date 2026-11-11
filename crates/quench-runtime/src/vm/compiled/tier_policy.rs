@@ -142,6 +142,10 @@ pub(in crate::vm) const POLYMORPHISM: usize = 4;
 /// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
 pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
 
+/// The searches a regexp program runs interpreted before it is compiled to native code
+/// (`regexp_native`): compiling costs about what this many searches of a small program do.
+pub(in crate::vm) const REGEXP_NATIVE_RUNS: u32 = if STRESS { 1 } else { 2000 };
+
 /// The thresholds every tier controller compares against: the measured row, or under
 /// `STRESS` the floor row, which makes every eligible site compile on its first chance.
 pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };

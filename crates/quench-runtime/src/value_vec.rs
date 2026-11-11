@@ -213,7 +213,7 @@ impl ValueVec {
         }
     }
 
-    pub(crate) fn preserve_integrity_from(&mut self, previous: Self) {
+    #[inline] pub(crate) fn preserve_integrity_from(&mut self, previous: Self) {
         self.start = (self.start & !(NON_EXTENSIBLE | FROZEN))
             | (previous.start & (NON_EXTENSIBLE | FROZEN));
     }
@@ -1065,7 +1065,7 @@ impl ValueArena {
         self.shape_lengths[vector.auxiliary() as usize] as usize
     }
 
-    pub(crate) fn assert_shape_length(&self, shape: u32, length: usize) {
+    #[inline] pub(crate) fn assert_shape_length(&self, shape: u32, length: usize) {
         debug_assert_eq!(length, self.shape_lengths[shape as usize] as usize, "property values must match shape");
     }
 

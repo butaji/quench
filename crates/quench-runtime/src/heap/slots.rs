@@ -53,7 +53,7 @@ impl FreeSlotBitmap {
         Some(offset as u16)
     }
 
-    #[inline] pub(super) const fn len(&self) -> usize {
+    pub(super) const fn len(&self) -> usize {
         self.free_count as usize
     }
 
@@ -235,7 +235,7 @@ impl SlotArena {
         }
     }
 
-    #[inline] pub(super) unsafe fn get_unchecked(&self, index: usize) -> &Slot {
+    #[inline(always)] pub(super) unsafe fn get_unchecked(&self, index: usize) -> &Slot {
         debug_assert!(index < self.len);
         // SAFETY: the caller proves the index is below `len`.
         unsafe { &*self.base().add(index) }
@@ -306,7 +306,7 @@ impl SlotArena {
         self.base = std::ptr::NonNull::dangling().as_ptr();
     }
 
-    #[inline] pub(super) const fn len(&self) -> usize {
+    #[inline(always)] pub(super) const fn len(&self) -> usize {
         self.len
     }
 
@@ -381,7 +381,7 @@ impl SlotArena {
         }
     }
 
-    #[inline] pub(super) unsafe fn get_unchecked(&self, index: usize) -> &Slot {
+    #[inline(always)] pub(super) unsafe fn get_unchecked(&self, index: usize) -> &Slot {
         debug_assert!(index < self.len);
         // SAFETY: the caller proves the flat index is live; every slab has the
         // fixed size used by this decomposition.
@@ -460,7 +460,7 @@ impl SlotArena {
         self.len = 0;
     }
 
-    #[inline] pub(super) const fn len(&self) -> usize {
+    #[inline(always)] pub(super) const fn len(&self) -> usize {
         self.len
     }
 

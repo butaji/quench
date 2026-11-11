@@ -2583,7 +2583,7 @@ impl Object {
     pub(crate) fn has_exotic_access(&self) -> bool {
         self.auxiliary & crate::value_vec::EXOTIC_ACCESS != 0
     }
-    fn brand(&self) -> ObjectBrand {
+    #[inline] fn brand(&self) -> ObjectBrand {
         self.extras().map_or(ObjectBrand::Ordinary, |extras| extras.brand)
     }
     #[inline(always)]

@@ -12493,7 +12493,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.execution_mode = mode;
+        self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
     }
 
     /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`).

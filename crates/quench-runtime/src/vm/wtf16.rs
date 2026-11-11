@@ -230,8 +230,7 @@ impl FlatUnits {
         }
     }
 
-    #[inline]
-    pub(crate) fn view(&self) -> Units<'_> {
+    #[inline(always)] pub(crate) fn view(&self) -> Units<'_> {
         match self {
             Self::Short(text) => Units::Ascii(text.as_str().as_bytes()),
             Self::Ascii(_) | Self::AsciiSlice(_) => {

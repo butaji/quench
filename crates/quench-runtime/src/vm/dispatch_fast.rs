@@ -13220,6 +13220,7 @@ impl<H: Host> Vm<H> {
     /// a new cell or a raised error: a dense `push` or `pop`, `charCodeAt`, an ASCII `charAt`,
     /// a collection lookup, `Array.isArray`. `None` leaves the call to the native itself, whose
     /// own steps begin with the same cases.
+    #[inline(always)]
     fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let first = args.first().copied();
         match native {
@@ -13229,6 +13230,7 @@ impl<H: Host> Vm<H> {
             Native::StringCharAt => string_char_at_ascii(self, receiver, first?),
             Native::MapGet | Native::MapHas | Native::SetHas | Native::WeakMapGet | Native::WeakMapHas
             | Native::WeakSetHas => self.pure_collection_lookup(native, receiver, first.unwrap_or(Value::UNDEFINED)),
+            Native::MapSet if self.map_set(receiver, args) => Some(receiver),
             Native::ArrayIsArray => self.steady_is_array(first.unwrap_or(Value::UNDEFINED))
                 .map(|holds| if holds { Value::TRUE } else { Value::FALSE }),
             _ => None,

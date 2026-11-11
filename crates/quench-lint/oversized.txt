@@ -2377,11 +2377,9 @@ function-lines crates/quench-node/tests/cli-options.rs::internal_options_match_n
 function-lines crates/quench-node/tests/cli-options.rs::internal_options_matches_node_in_interpreter_and_jit 51
 function-lines crates/quench-regexp/src/backtrack.rs::Compiler::compile 184
 function-lines crates/quench-regexp/src/backtrack.rs::Program::run 346
-function-lines crates/quench-regexp/src/backtrack.rs::Program::search 46
 function-lines crates/quench-regexp/src/backtrack.rs::consuming_starts 45
 function-lines crates/quench-regexp/src/backtrack.rs::tests::class_ascii_mask_matches_each_unit 41
 function-lines crates/quench-regexp/src/backtrack.rs::tests::matches_the_repository_matcher 238
-function-lines crates/quench-regexp/src/lib.rs::Regex::backtracking_find 50
 function-lines crates/quench-regexp/src/lib.rs::Regex::unit_match 49
 function-lines crates/quench-regexp/src/lib.rs::assertion_matches 44
 function-lines crates/quench-regexp/src/lib.rs::class_item_matches 50
