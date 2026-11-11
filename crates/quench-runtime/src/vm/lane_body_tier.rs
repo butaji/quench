@@ -45,7 +45,10 @@ fn warm_clock() -> u32 { warm_ticks().wrapping_sub(1) }
 /// What a body whose leaves reached the reoptimization threshold does next: it specializes
 /// again, these places generically, until `max_recompiles` bodies have; the last of them has
 /// every place any body left at generic, and is permanent. A body never retires to the lane.
-fn verdict(recompiles: u8, leaves: LaneLeaves, stuck: LaneLeaves) -> Option<LaneLeaves> {
+fn verdict(completed: bool, recompiles: u8, leaves: LaneLeaves, stuck: LaneLeaves) -> Option<LaneLeaves> {
+    // A body no run of which completed leaves at the places its recompile would too: only a
+    // body that has run natively learns anything from its leaves.
+    if !completed { return None; }
     // Leaves only where the predecessors' bodies left, and those places already generic,
     // would plan the same body again: it stays.
     let nothing_new = leaves != LaneLeaves::Scattered && stuck != LaneLeaves::Scattered
@@ -73,7 +76,7 @@ impl LaneView {
         if exits.get() < TIERS.lane_body.reoptimize_exits || leaves * PERCENT <= runs * u64::from(TIERS.lane_body.reoptimize_share) {
             return;
         }
-        let Some(stuck) = verdict(*recompiles, leaves_at.get(), *stuck) else {
+        let Some(stuck) = verdict(completed.get(), *recompiles, leaves_at.get(), *stuck) else {
             // A body that keeps leaving where no other body would, and has never completed a
             // run, gains nothing from its entry: its function runs in the lane again.
             let costly = runs >= u64::from(TIERS.lane_body.retire_after_runs) && leaves * PERCENT > runs * u64::from(TIERS.lane_body.retire_share);
