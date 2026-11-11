@@ -490,6 +490,8 @@ struct Lowering<'a, 'f> {
     payload: ir::Value,
     registers_base: ir::Value,
     result: ir::Value,
+    /// The running body's receiver and capture words its caller passes (`entry_cell::capture_word`).
+    entry_words: (ir::Value, ir::Value),
     registers: Registers,
     written: CompoundBitSet,
     /// Source operations already consumed by an exact, unobservable scalar pair.
@@ -1439,7 +1441,7 @@ pub(super) fn lower(
     builder.append_block_params_for_function_params(entry_block);
     builder.switch_to_block(entry_block);
     let parameters = builder.block_params(entry_block).to_vec();
-    let (context, registers_base, result) = (parameters[0], parameters[3], parameters[4]);
+    let &[context, entry_this, entry_captures, registers_base, result] = parameters.as_slice() else { return None };
     let payload = if numeric { builder.ins().iconst(types::I64, 0) } else { builder.ins().load(
         types::I64,
         MemFlagsData::trusted(),
@@ -1527,6 +1529,7 @@ pub(super) fn lower(
         payload,
         registers_base,
         result,
+        entry_words: (entry_this, entry_captures),
         registers,
         written: CompoundBitSet::with_capacity(count),
         consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
@@ -2158,11 +2161,35 @@ impl Lowering<'_, '_> {
         format
     }
 
+    /// The receiver bits a run starts with: a lane body's caller passes them as the entry's
+    /// word, a loop region reads the payload's.
+    fn entry_receiver_bits(&mut self) -> ir::Value {
+        if self.body_entry() { return self.entry_words.0; }
+        emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver))
+    }
+
+    /// The running activation's dense capture slots (address, count): a lane body's caller
+    /// packs them in the entry's word (`entry_cell::capture_word`), a loop region reads the payload's.
+    fn entry_capture_words(&mut self) -> (ir::Value, ir::Value) {
+        if !self.body_entry() {
+            let values = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_values));
+            return (values, emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_len)));
+        }
+        let word = self.entry_words.1;
+        let mask = self.ins().iconst(types::I64, super::entry_cell::CAPTURE_ADDRESS_MASK);
+        let values = self.ins().band(word, mask);
+        (values, self.ins().ushr_imm_u(word, i64::from(super::entry_cell::CAPTURE_ADDRESS_BITS)))
+    }
+
+    /// Whether this run is a lane body, whose callers pass its receiver and captures as the
+    /// entry's words; a loop region reads the payload's.
+    fn body_entry(&self) -> bool { matches!(self.coverage, Coverage::Prefix | Coverage::PrefixFrom(_)) }
+
     /// The facts every run proves once at entry.
     fn entry_facts(&mut self, instructions: &[WideInstruction], _loops: &[(usize, usize)], _leaders: &CompoundBitSet) -> Entry {
         let this_bits = match self.helpers {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
-            LaneHelpers::Process(_) => emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver)),
+            LaneHelpers::Process(_) => self.entry_receiver_bits(),
             #[cfg(feature = "aot")]
             LaneHelpers::Bound(..) => self.fixed_this(),
             #[cfg(feature = "aot")]
@@ -2207,8 +2234,7 @@ impl Lowering<'_, '_> {
         // have stored to it.
         let capture_values = self.builder.declare_var(types::I64);
         let capture_len = self.builder.declare_var(types::I64);
-        let values = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_values));
-        let len = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_len));
+        let (values, len) = self.entry_capture_words();
         self.builder.def_var(capture_values, values);
         self.builder.def_var(capture_len, len);
         let mut miss = None;
