@@ -403,6 +403,7 @@ impl LanePlan {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
         let amortizes = amortizes_entry(unit, self.function, &self.direct);
+        let work = unit.instructions.len() as u64;
         let (dependencies, recovery_space) = (self.dependencies(), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
         let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
         let names_shapes = self.names_shapes();
@@ -423,6 +424,7 @@ impl LanePlan {
             names_shapes, inlined: self.unit.frames,
             scratch_width, caller_registers,
             amortizes, direct: self.direct, closed: self.closed,
+            ir: code.len() / lane_region::LANE_BODY_CODE_BYTES_PER_IR, work,
         })
     }
 }

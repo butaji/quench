@@ -6592,6 +6592,10 @@ pub(super) struct LaneMethod {
     caller_registers: u16,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
+    /// What its compile cost in IR instructions, and the interpreter instructions one run of
+    /// it replaces: the two sides of `lane_facts::repays_compile` for a recompile.
+    pub(super) ir: usize,
+    pub(super) work: u64,
     /// The callees it calls by their compiled entries, which its code names.
     pub(super) direct: Box<[DirectCallee]>,
     /// Whether every call of it that has run is inlined or direct: under a direct caller's native

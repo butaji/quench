@@ -171,10 +171,12 @@ impl LaneView {
             let history = caller.history.get();
             // SAFETY: as `lane_body`; a caller's running body holds its own lease.
             let body = unsafe { &mut *caller.tier_lane.get() };
-            let LaneBody::Specialized { tier_prologue, recompiles, stuck, method, .. } = body else { continue };
+            let LaneBody::Specialized { tier_prologue, recompiles, stuck, method, completions, .. } = body else { continue };
             // A caller that inlined this function has no call of it to bind to its body.
             if !method.lease().is_some_and(|code| code.direct.iter().any(|callee| std::ptr::eq(callee.target.view, self))) { continue; }
             if history.callee_recompiles >= TIERS.lane_body.max_callee_recompiles { continue; }
+            // A recompile its caller's completed runs would not repay stays a call by the helper.
+            if !method.lease().is_some_and(|code| super::compiled::lane_facts::repays_compile(u64::from(completions.get()) * code.work, code.ir)) { continue; }
             caller.history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, ..history });
             // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
             unsafe { (*caller.prologue.get()).handler = *tier_prologue };
