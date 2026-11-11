@@ -3608,6 +3608,13 @@ impl Heap {
         // SAFETY: the caller proves the exact slot exists.
         unsafe { read_exact_slot(object, &self.properties, slot) }
     }
+    /// The own field a hint (`shape`, `slot`) proves of `object`, `None` on another exact shape.
+    /// # Safety
+    /// As for `property_get_flat`, where the shape matches.
+    #[inline(always)]
+    pub(crate) unsafe fn own_field_hit(&self, object: &Object, shape: u32, slot: u16) -> Option<Value> {
+        unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) }
+    }
     /// `property_get_flat` of a prototype holder, whose values usually live behind extras
     /// (`Object::extras_storage_start`), read without first testing the forms a holder
     /// seldom has.
