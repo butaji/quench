@@ -50,6 +50,14 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
     }))
 }
 
+/// The word at byte offset `at` of the loop entry record `entry`: a field's value the loop
+/// holds there, which its field stores rewrite (so, unlike `entry_backing`, no merged load).
+#[inline(always)]
+pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, at: S::Word) -> S::Word {
+    let address = stage.add(entry, at);
+    stage.load_u64(address, 0)
+}
+
 /// The interpreter's reading of `own_read_entry` over a site table entry.
 ///
 /// # Safety

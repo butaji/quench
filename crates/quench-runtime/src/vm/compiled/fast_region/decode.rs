@@ -121,7 +121,8 @@ pub(super) fn inc_dec(instruction: WideInstruction) -> Result<Decoded, String> {
 /// The entry-record byte offset of the array `register` holds through the region, which an
 /// indexing row reads the backing of from the record; 0 where the array is looked up per access.
 fn entry_array(region: &LoopRegion, dense: bool, register: Register) -> u64 {
-    if dense { region.array_entry_offset(register).unwrap_or(0) } else { 0 }
+    // A row's hole is a u32 patch: an offset past it is looked up per access instead.
+    if dense { region.array_entry_offset(register).filter(|offset| u32::try_from(*offset).is_ok()).unwrap_or(0) } else { 0 }
 }
 
 pub(super) fn heap_row(region: &LoopRegion, dense: bool, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
@@ -146,7 +147,7 @@ pub(super) fn heap_row(region: &LoopRegion, dense: bool, pc: u32, instruction: W
             let index = *region.field_reads().get(&(pc - region.header))?;
             let word = super::super::osr_loop::field_word(region, index);
             let row = Decoded::heap(Heap::Field, Some(instruction.result_register()), None, None);
-            (!region.is_dynamic_field(index)).then_some(Decoded { hole: word as u64 * SLOT, ..row })
+            (!region.is_dynamic_field(index) && u32::try_from(word as u64 * SLOT).is_ok()).then_some(Decoded { hole: word as u64 * SLOT, ..row })
         }
         _ => None,
     }
