@@ -14106,11 +14106,7 @@ fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
     let interpreted = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
     let expected = interpreted.borrow().clone();
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "fill"))
-        .unwrap();
+    let function_id = program.functions.iter().position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "fill")).unwrap();
     for policy in crate::MemoryPolicy::ALL {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
@@ -14347,11 +14343,7 @@ fn shared_osr_returns_inside_a_loop_resume_the_lane_at_the_return() {
     let interpreted = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
     assert_eq!(interpreted.borrow().as_slice(), ["-4498"]);
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "cmp"))
-        .unwrap();
+    let function_id = program.functions.iter().position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "cmp")).unwrap();
     for policy in crate::MemoryPolicy::ALL {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
@@ -15565,11 +15557,7 @@ fn shared_osr_widens_an_int32_field_that_holds_a_double() {
       print(t);
     "#;
     let program = Engine::specialize(source, "osr-field-widening.js").unwrap();
-    let function_id = program
-        .functions
-        .iter()
-        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "sum"))
-        .unwrap();
+    let function_id = program.functions.iter().position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "sum")).unwrap();
     let interpreted_output = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
     assert_eq!(interpreted_output.borrow().as_slice(), ["87325000"]);

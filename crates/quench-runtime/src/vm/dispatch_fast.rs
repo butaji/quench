@@ -8050,8 +8050,9 @@ fn lane_loop_native<H: Host>(
 }
 
 /// Counts a leave at `pc` (`LoopTier::left_at`) where it is a Number operator, whose int32
-/// speculation a compilation can drop, or an element store, which a compilation then lowers
-/// through the append helper; a leave at any other guard (a shape, an element read) widens nothing.
+/// speculation a compilation can drop, an element read, whose observed type it can drop, an
+/// element store, whose append helper it can compile, or a capture read, whose root-held binding
+/// it can read by helper; a leave at any other guard (a shape, say) widens nothing.
 #[cold]
 fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
@@ -8060,7 +8061,8 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
         let body = program.function(site.function() as usize);
         body.code.get(pc as usize).is_some_and(|packed| {
             let op = decoded_instruction(body, *packed).op();
-            op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.stores_element()
+            op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
+                || matches!(op.class(), Class::LoadCapture)
         })
     });
     if arithmetic { site.tier.borrow_mut().left_at(pc); }
@@ -8239,7 +8241,8 @@ fn lane_loop_run<H: Host>(
         }
         let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
         let int_entries = loop_tier::int_entries(r, region);
-        lane_loop_compile(cx, site, region, &mut tier, &number_arrays, &int_entries);
+        let typed_captures = loop_tier::typed_capture_slots(cx);
+        lane_loop_compile(cx, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }

@@ -41,6 +41,7 @@ mod polls;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
+use captures::RootedRead;
 #[path = "lane_region/constructions.rs"] mod constructions;
 #[path = "lane_region/dense_elements.rs"] mod dense_elements;
 #[path = "lane_region/dense_appends.rs"] mod dense_appends;
@@ -54,7 +55,7 @@ pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/direct_calls.rs"] mod direct_calls;
 #[path = "lane_region/direct_admission.rs"] mod direct_admission;
 #[path = "lane_region/direct_enter.rs"] mod direct_enter;
-use loop_arrays::LoopArray;
+use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
 use polls::specialize_closed_polls;
@@ -451,7 +452,7 @@ struct Lowering<'a, 'f> {
     /// An OSR region's field reads answered from the entry record, by unit PC.
     entry_fields: &'a BTreeMap<usize, u32>,
     /// The element reads observed to hold Numbers (`RegionSpecializer::number_reads`).
-    number_reads: &'a [usize],
+    observed: super::facts::Observed<'a>,
     /// The registers observed to hold int32s at entry (`RegionSpecializer::int_entries`).
     int_entries: &'a [Register],
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
@@ -531,7 +532,7 @@ struct Lowering<'a, 'f> {
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
     /// Each hoisted base's tagged value and view, by register, across its loop's iterations.
-    array_vars: BTreeMap<Register, ArrayVariables>,
+    array_vars: BTreeMap<ArraySource, ArrayVariables>,
     views: ElementViews,
     /// Successful write-through stores defining a loop-header field's SSA variable.
     loop_fields: Vec<LoopField>,
@@ -817,7 +818,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             Some(block) => {
                 self.entered.insert(pc);
                 self.finishes |= pc <= self.at;
-                if self.at < pc { self.hoist_reads(state, pc); }
+                if self.at < pc { self.hoist_loop_entry(state, pc); }
                 self.conform(state, pc);
                 if self.at < pc { self.arrive(state, pc); }
                 self.ins().jump(block, &[]);
@@ -872,46 +873,56 @@ impl<'a, 'f> Lowering<'a, 'f> {
             if !self.is_live(target, register) { continue; }
             // A parameter's entry fact varies per call: a mismatched value declines the
             // region (the lane runs the header) instead of exiting native code.
-            let entry_param = target == self.coverage.entry() && index < self.params;
             let saved = self.proving_entry;
-            if entry_param { self.proving_entry = true; }
-            if ty == Type::INT32 && state.values[index].value.representation != Representation::Int32 {
-                let exit = self.guard_exit(state, target as u32);
-                self.int(state, register, exit);
-            } else if ty == Type::NUMBER && state.values[index].value.representation != Representation::Float64 {
-                let exit = self.guard_exit(state, target as u32);
-                let number = self.number(state, register, exit);
-                { let variable = self.float_var(index); self.builder.def_var(variable, number); }
-            } else if ty != Type::INT32 && ty != Type::NUMBER {
-                self.tagged(state, register);
-            }
-            if ty == Type::DIRECT_OBJECT_FAMILY && !state.values[index].value.ty.is_direct_object_family() {
-                let exit = self.guard_exit(state, target as u32);
-                let bits = self.tagged(state, register);
-                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), bits);
-                emit_js_guard(&mut self.builder, object, exit);
-                self.refine_object_family(state, bits);
-            }
-            // An exact shape the target's other edges proved is guarded on this one, the
-            // owner's header read once, so the edge keeps native code.
-            if let Some(shape) = ty.object_shape() && !state.values[index].value.ty.is_subtype(ty) {
-                let exit = self.guard_exit(state, target as u32);
-                let header = self.object_header(state, Some(register), false, exit);
-                self.prove_shape(state, Some(Some(register)), header.shape, shape, exit);
-                state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-                    ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
-            }
-            // A fact this edge does not prove and cannot guard leaves at the target, exactly:
-            // the edge loses native code, never the body (AGENTS.md, check once).
-            if !self.proves(state, register, ty, target) {
-                let exit = self.guard_exit(state, target as u32);
-                self.builder.ins().jump(exit, &[]);
-                let unreached = self.builder.create_block();
-                self.builder.switch_to_block(unreached);
-                self.proving_entry = saved;
-                return;
-            }
+            if target == self.coverage.entry() && index < self.params { self.proving_entry = true; }
+            let proved = self.conform_register(state, target, register, ty);
             self.proving_entry = saved;
+            if !proved { return; }
+        }
+    }
+
+    /// One live register conformed to `target`'s fact `ty`; whether the edge still reaches it.
+    fn conform_register(&mut self, state: &mut State, target: usize, register: Register, ty: Type) -> bool {
+        let index = usize::from(register);
+        if ty == Type::INT32 && state.values[index].value.representation != Representation::Int32 {
+            let exit = self.guard_exit(state, target as u32);
+            self.int(state, register, exit);
+        } else if ty == Type::NUMBER && state.values[index].value.representation != Representation::Float64 {
+            let exit = self.guard_exit(state, target as u32);
+            let number = self.number(state, register, exit);
+            { let variable = self.float_var(index); self.builder.def_var(variable, number); }
+        } else if ty != Type::INT32 && ty != Type::NUMBER {
+            self.tagged(state, register);
+        }
+        self.conform_object(state, target, register, ty);
+        // A fact this edge does not prove and cannot guard leaves at the target, exactly:
+        // the edge loses native code, never the body (AGENTS.md, check once).
+        if self.proves(state, register, ty, target) { return true; }
+        let exit = self.guard_exit(state, target as u32);
+        self.builder.ins().jump(exit, &[]);
+        let unreached = self.builder.create_block();
+        self.builder.switch_to_block(unreached);
+        false
+    }
+
+    /// An object fact of the target the edge has not proved: the direct-object family by one
+    /// guard, an exact shape guarded on this edge with the owner's header read once, so the
+    /// edge keeps native code.
+    fn conform_object(&mut self, state: &mut State, target: usize, register: Register, ty: Type) {
+        let index = usize::from(register);
+        if ty == Type::DIRECT_OBJECT_FAMILY && !state.values[index].value.ty.is_direct_object_family() {
+            let exit = self.guard_exit(state, target as u32);
+            let bits = self.tagged(state, register);
+            let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), bits);
+            emit_js_guard(&mut self.builder, object, exit);
+            self.refine_object_family(state, bits);
+        }
+        if let Some(shape) = ty.object_shape() && !state.values[index].value.ty.is_subtype(ty) {
+            let exit = self.guard_exit(state, target as u32);
+            let header = self.object_header(state, Some(register), false, exit);
+            self.prove_shape(state, Some(Some(register)), header.shape, shape, exit);
+            state.values[index] = RegisterFact { tagged: state.values[index].tagged,
+                ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
         }
     }
 
@@ -1038,14 +1049,12 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         _ if instruction.op().traits().has(Traits::FRAME_ONLY) => true,
         Class::LoadConst => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
         Class::IncDec => instruction.numeric_local_target().is_none(),
-        // ToNumeric of a Number is the Number; any other operand leaves (`Lowering::instruction`).
-        Class::ToNumeric => !instruction.returns_from_frame(),
         Class::LoadCapture => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
         Class::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
-        // A dense element, read natively; any other element leaves (`emit_dense_element_read`).
-        Class::GetIndex => !instruction.returns_from_frame(),
-        // A null or undefined operand leaves before any effect (`staged::require_object_coercible`).
-        Class::RequireObjectCoercible => !instruction.returns_from_frame(),
+        // ToNumeric of a Number is the Number; any other operand leaves (`Lowering::instruction`). A
+        // dense element is read natively, any other leaving (`emit_dense_element_read`); a null or
+        // undefined operand leaves before any effect (`staged::require_object_coercible`).
+        Class::ToNumeric | Class::GetIndex | Class::RequireObjectCoercible => !instruction.returns_from_frame(),
         _ => instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     }
 }
@@ -1327,10 +1336,12 @@ pub(super) struct RegionSpecializer<'p> {
     pub(super) entry_fields: &'p BTreeMap<usize, u32>,
     /// The unit PCs of element reads observed to hold Numbers (sorted): each leaves where its
     /// element is not one, and its result is typed a Number.
-    pub(super) number_reads: &'p [usize],
+    pub(super) number_reads: &'p [super::facts::ObservedRead],
     /// The registers whose values at entry were int32s: candidates for an int32 entry contract
     /// (`refine_inductive_inputs`), kept where every definition in the loop yields an int32.
     pub(super) int_entries: &'p [Register],
+    /// The capture slots that held typed arrays at compilation (`Observation::typed_captures`).
+    pub(super) typed_captures: &'p [u16],
     pub(super) plan: RegionPlan,
 }
 
@@ -1340,7 +1351,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.entry_fields, self.number_reads, self.int_entries, self.plan.coverage, self.plan.completion, self.plan.views)
+            self.isa, self.entry_fields, self.number_reads, self.int_entries, self.typed_captures, self.plan.coverage, self.plan.completion, self.plan.views)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1362,7 +1373,7 @@ pub(super) fn lower_body(
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
     let region = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
-        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
+        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[],
         plan: RegionPlan { coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::StatusAndPc, views: ElementViews::Dense } }
         .specialize(program).ok()?;
@@ -1392,8 +1403,9 @@ pub(super) fn lower(
     frame_captures: &[(usize, usize)],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     entry_fields: &BTreeMap<usize, u32>,
-    number_reads: &[usize],
+    number_reads: &[super::facts::ObservedRead],
     int_entries: &[Register],
+    typed_captures: &[u16],
     coverage: Coverage,
     completion: Completion,
     views: ElementViews,
@@ -1487,6 +1499,7 @@ pub(super) fn lower(
     builder.append_block_param(stop, types::I64);
     builder.set_cold_block(leave);
     builder.set_cold_block(stop);
+    let observed = super::facts::Observed(number_reads);
     let mut lowering = Lowering {
         builder,
         program,
@@ -1495,7 +1508,7 @@ pub(super) fn lower(
         helpers,
         fields,
         entry_fields,
-        number_reads,
+        observed,
         int_entries,
         interrupt,
         fault_poll,
@@ -1600,7 +1613,7 @@ pub(super) fn lower(
         let [field] = fields.get(&cache_site)?.as_slice() else { return None };
         field.own_direct().then_some((base.register_index()?, field.shape))
     };
-    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], number_reads);
+    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], observed);
     lowering.intrinsics = native_calls::intrinsic_calls(unit, global_reads, |pc| direct.contains_key(&pc));
     let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics);
     // One entry query of the call depth replaces each binding's helper with its cached
@@ -1643,7 +1656,7 @@ pub(super) fn lower(
             }
         }
         if refined {
-            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], number_reads);
+            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], observed);
         }
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
@@ -1652,7 +1665,10 @@ pub(super) fn lower(
     for &pc in generic { lowering.facts.widen(pc); }
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, &loops, &leaders)); }
     lowering.hoists = invariant_reads(program, unit, &loops);
-    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders);
+    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
+        |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
+            read.pc == at && read.owner.is_none() && instructions[at].op().class().eq(Class::LoadCapture))),
+        lowering.views, typed_captures);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
         lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner), rooted: false });
@@ -1722,7 +1738,7 @@ pub(super) fn lower(
         // A bounded range reads its fields at their sites; hoisting them to a shared entry
         // guard would make every call leave at the entry.
         lowering.proving_entry = !matches!(coverage, Coverage::Range { .. });
-        lowering.hoist_reads(&mut state, pc);
+        lowering.hoist_loop_entry(&mut state, pc);
         lowering.proving_entry = false;
         lowering.builder.ins().jump(target, &[]);
     }
@@ -1732,7 +1748,7 @@ pub(super) fn lower(
         if !coverage.lowered(pc) { continue; }
         if let Some(block) = lowering.blocks[pc] {
             if reachable {
-                lowering.hoist_reads(&mut state, pc);
+                lowering.hoist_loop_entry(&mut state, pc);
                 lowering.conform(&mut state, pc);
                 lowering.arrive(&state, pc);
                 lowering.entered.insert(pc);
@@ -2561,7 +2577,7 @@ impl Lowering<'_, '_> {
             }
             Class::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
                 let exit = self.guard_exit(state, pc as u32);
-                let value = self.load_capture(state, pc, instruction, exit, None, true);
+                let value = self.load_capture(state, pc, instruction, exit, None, RootedRead::InBody);
                 let value = self.frozen_capture(pc, value, exit);
                 self.set_tagged(state, instruction.result_register(), value);
                 Some(true)
@@ -2606,8 +2622,12 @@ impl Lowering<'_, '_> {
                             self.set_tagged(state, instruction.result_register(), value);
                         }
                     }
-                    // The element an observation typed a Number (`number_reads`), proved here.
-                    if self.number_reads.binary_search(&pc).is_ok() { self.number(state, instruction.result_register(), exit); }
+                    // The element an observation typed (`number_reads`), proved here.
+                    match self.observed.at(pc) {
+                        Some(ty) if ty == Type::INT32 => { self.int(state, instruction.result_register(), exit); }
+                        Some(_) => { self.number(state, instruction.result_register(), exit); }
+                        None => {}
+                    }
                     true
                 })
             }
@@ -3207,6 +3227,25 @@ impl Lowering<'_, '_> {
             destination, source)
     }
 
+    /// The inlined call's receiver admitted where no dominating proof covers it: the body's own
+    /// receiver recovery, a guard leaving at `exit`, but for a restartable numeric callee.
+    fn guard_inlined_receiver(&mut self, state: &mut State, frame: usize, exit: ir::Block) {
+        let inlined = self.unit.frames[frame];
+        let receiver = self.tagged(state, inlined.receiver);
+        let entry = self.entry.as_ref().expect("entry facts");
+        let admitted = entry.call_receivers.contains(frame)
+            || state.proofs.headers[usize::from(inlined.receiver)].is_some()
+            || entry.records[usize::from(inlined.receiver)].is_some()
+            || (state.proofs.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some());
+        let callee = self.program.function(inlined.target.function as usize);
+        let numeric = inlined.recovery == super::lane_unit::CallRecovery::RestartCall
+            && restartable_numeric_function(self.program, callee, &callee.instructions().collect::<Vec<_>>());
+        if !admitted && !numeric {
+            let admitted = self.receiver_recovery(receiver, ReceiverRecovery::for_body(callee));
+            emit_js_guard(&mut self.builder, admitted, exit);
+        }
+    }
+
     /// The call marker of inlined `frame` (`lane_unit::unit`): its callee is the function
     /// the call's site linked (an identity, compared) or a closure of the statically bound
     /// function (admitted by the VM's binding rule), and its receiver a direct object, which
@@ -3220,13 +3259,7 @@ impl Lowering<'_, '_> {
         // An OSR region's callee comes from the entry snapshot: the caller's read is
         // resolved at compile time and dropped, and its register is reused by the loop.
         let callee = match inlined.callee_entry_word {
-            Some(word) => {
-                let entry = emit_js_payload_word(&mut self.builder, self.payload,
-                    std::mem::offset_of!(super::JsStepDispatch, loop_entry));
-                let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
-                    * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
-                self.ins().load(types::I64, MemFlagsData::trusted(), entry, offset)
-            }
+            Some(word) => self.loop_entry_word(word),
             None => self.tagged(state, inlined.callee_register),
         };
         let callee_index = usize::from(inlined.callee_register);
@@ -3271,19 +3304,8 @@ impl Lowering<'_, '_> {
             let seen = self.ins().icmp_imm_u(IntCC::Equal, native, through.to_bits() as i64);
             emit_js_guard(&mut self.builder, seen, exit);
         }
-        let receiver = self.tagged(state, inlined.receiver);
-        let entry = self.entry.as_ref().expect("entry facts");
-        let admitted = entry.call_receivers.contains(frame)
-            || state.proofs.headers[usize::from(inlined.receiver)].is_some()
-            || entry.records[usize::from(inlined.receiver)].is_some()
-            || (state.proofs.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some());
         let callee = self.program.function(inlined.target.function as usize);
-        let numeric = inlined.recovery == super::lane_unit::CallRecovery::RestartCall
-            && restartable_numeric_function(self.program, callee, &callee.instructions().collect::<Vec<_>>());
-        if !admitted && !numeric {
-            let admitted = self.receiver_recovery(receiver, ReceiverRecovery::for_body(callee));
-            emit_js_guard(&mut self.builder, admitted, exit);
-        }
+        self.guard_inlined_receiver(state, frame, exit);
         for register in 0..inlined.registers {
             let destination = inlined.base + register;
             let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
@@ -3564,8 +3586,24 @@ impl Lowering<'_, '_> {
                 }
             });
         if let Some(facts) = super::facts::inductive_int32(initial, candidates, header..=back,
-            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, self.number_reads) {
+            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, self.observed) {
             self.facts = facts;
+        }
+    }
+
+    /// The registers a loop never writes whose every use proves them Numbers, each a Number header
+    /// contract: proved once on the entering edge, so the body holds it as a double and tests it no more.
+    fn number_inputs(&self, header: usize, back: usize, defined: &CompoundBitSet, candidates: &mut Vec<(super::facts::Contract, std::ops::RangeInclusive<usize>)>) {
+        let Some(types) = self.facts.at(header) else { return };
+        for instruction in &self.unit.instructions[header..=back] {
+            for register in super::facts::proves_numbers(*instruction, types.len(), &self.program.constants, &writes, self.native_calls) {
+                let index = usize::from(register);
+                let contract = (header, register, Type::NUMBER);
+                if !defined.contains(index) && !types[index].is_subtype(Type::NUMBER) && self.is_live(header, register)
+                    && !candidates.iter().any(|(known, _)| *known == contract) {
+                    candidates.push((contract, header..=back));
+                }
+            }
         }
     }
 
@@ -3588,9 +3626,10 @@ impl Lowering<'_, '_> {
                     candidates.push(((header, index as Register, Type::INT32), header..=back));
                 }
             }
+            self.number_inputs(header, back, &defined, &mut candidates);
         }
         if let Some(facts) = super::facts::loop_int32(entry, initial, candidates, instructions, boundaries,
-            &self.program.constants, &writes, own_shape, self.native_calls, self.number_reads) {
+            &self.program.constants, &writes, own_shape, self.native_calls, self.observed) {
             self.facts = facts;
         }
     }
@@ -3655,27 +3694,47 @@ impl Lowering<'_, '_> {
 
     /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a
     /// guard that fails there leaves at the header, before the loop runs.
+    fn hoist_loop_entry(&mut self, state: &mut State, header: usize) {
+        self.hoist_arrays(state, header, false);
+        self.hoist_stable(state, header);
+        self.hoist_reads(state, header);
+        self.hoist_arrays(state, header, true);
+    }
+
+    /// Whether an enclosing loop's entry hoisted the capture read at `pc` already (its body holds
+    /// this loop's, so the read is invariant there too): reading it again at each entry here would
+    /// be a helper call inside the outer loop, spilling every value live across it.
+    fn hoisted_by_enclosing_loop(&self, pc: usize, owner: Option<Register>) -> bool {
+        owner.is_none() && self.unit.instructions[pc].op().class().eq(Class::LoadCapture) && self.hoisted.contains_key(&pc)
+    }
+
+    /// The hoisted read of the callee an inlined capture read belongs to, where it is the callee
+    /// the frame's call binds: `Ok(None)` for a caller's own read, `Err` where the read is not
+    /// admitted (its loop then reads it where it runs).
+    fn admitted_callee_read(&mut self, pc: usize, reads: &[InvariantRead], boundaries: &CompoundBitSet) -> Result<Option<ir::Value>, ()> {
+        let super::lane_unit::Origin::Inlined { frame, .. } = self.unit.origins[pc] else { return Ok(None) };
+        let read = invariant_callee_read(self.unit, reads.iter().map(|read| read.pc), frame, boundaries)
+            .and_then(|read| self.hoisted.get(&read).copied()).ok_or(())?;
+        let target = self.unit.frames[frame].target;
+        let admitted = match target.callee {
+            CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => read.ty.function_identity() == Some(identity),
+            CalleeBinding::Function => read.ty.body_index() == Some(target.function),
+        };
+        if admitted { Ok(Some(self.builder.use_var(read.value))) } else { Err(()) }
+    }
+
+    /// The loop's invariant captures and fields, read once on its entry edge.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
-        self.hoist_arrays(state, header); self.hoist_stable(state, header);
         let Some(reads) = self.hoists.get(&header).cloned() else { return };
         let boundaries = leaders(&self.unit.instructions);
         for InvariantRead { pc, owner, rooted } in reads.iter().copied() {
             let instruction = self.unit.instructions[pc];
+            if self.hoisted_by_enclosing_loop(pc, owner) { continue; }
             let field = self.loop_fields.iter().position(|field| field.reads[0] == pc);
             let exit = self.guard_exit(state, header as u32);
             let (value, int32) = if instruction.op().class().eq(Class::LoadCapture) {
-                let admitted_callee = if let super::lane_unit::Origin::Inlined { frame, .. } = self.unit.origins[pc] {
-                    let Some(read) = invariant_callee_read(self.unit, reads.iter().map(|read| read.pc), frame, &boundaries)
-                        .and_then(|read| self.hoisted.get(&read).copied()) else { continue };
-                    let target = self.unit.frames[frame].target;
-                    let admitted = match target.callee {
-                        CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => read.ty.function_identity() == Some(identity),
-                        CalleeBinding::Function => read.ty.body_index() == Some(target.function),
-                    };
-                    if !admitted { continue; }
-                    Some(self.builder.use_var(read.value))
-                } else { None };
-                let value = self.load_capture(state, pc, instruction, exit, admitted_callee, rooted);
+                let Ok(admitted_callee) = self.admitted_callee_read(pc, &reads, &boundaries) else { continue };
+                let value = self.load_capture(state, pc, instruction, exit, admitted_callee, if rooted { RootedRead::OnEntry } else { RootedRead::No });
                 let value = self.frozen_capture(pc, value, exit);
                 let int32 = self.capture_int32_use(pc, &boundaries);
                 (value, int32)
@@ -3816,15 +3875,16 @@ impl Lowering<'_, '_> {
 
     /// Prove the views of the arrays the loop at `header` indexes without redefining them, on
     /// its entering edge; a base that is no such array leaves at the header.
-    fn hoist_arrays(&mut self, state: &mut State, header: usize) {
-        let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied().filter(|array| array.header == header).collect();
+    fn hoist_arrays(&mut self, state: &mut State, header: usize, captured: bool) {
+        let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
+            .filter(|array| array.header == header && matches!(array.source, ArraySource::Capture(_)) == captured).collect();
         if arrays.is_empty() { return; }
         let exit = self.guard_exit(state, header as u32);
         for array in arrays {
-            let bits = self.tagged(state, array.register);
-            let variables = self.array_variables(array.register);
+            let Some(bits) = self.hoisted_array_bits(state, array) else { continue };
+            let variables = self.array_variables(array);
             self.builder.def_var(variables.bits, bits);
-            match self.views {
+            match array.views {
                 ElementViews::Dense => {
                     let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
                     // Stores through the hoisted view then write the element alone.
@@ -3834,30 +3894,45 @@ impl Lowering<'_, '_> {
                     let unproved = self.ins().iconst(types::I32, 0);
                     self.builder.def_var(variables.room, unproved);
                 }
-                ElementViews::Typed => {
-                    let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
-                        size_of::<super::LaneTypedArrayView>() as u32, align_of::<super::LaneTypedArrayView>().trailing_zeros() as u8));
-                    let out = self.ins().stack_addr(types::I64, slot, 0);
-                    let writable = self.ins().iconst(types::I64, i64::from(array.writable));
-                    let viewed = self.helper_call(LaneHelper::TypedArrayView, &[bits, writable, out]);
-                    let admitted = self.ins().icmp_imm_u(IntCC::NotEqual, viewed, 0);
-                    emit_js_guard(&mut self.builder, admitted, exit);
-                    let word = |field: usize| i32::try_from(field).expect("view field offset fits i32");
-                    let values = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, elements)));
-                    let length = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, length)));
-                    let kind = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, kind)));
-                    self.builder.def_var(variables.values, values);
-                    self.builder.def_var(variables.length, length);
-                    self.builder.def_var(variables.kind, kind);
-                }
+                ElementViews::Typed => self.hoist_typed_view(array, bits, variables, exit),
             }
         }
     }
 
-    fn array_variables(&mut self, register: Register) -> ArrayVariables {
+    /// The tagged value of `array`'s source on the loop's entry edge: its register's, or its
+    /// hoisted capture read's (none where that read was not hoisted tagged).
+    fn hoisted_array_bits(&mut self, state: &mut State, array: LoopArray) -> Option<ir::Value> {
+        match array.source {
+            ArraySource::Register(register) => Some(self.tagged(state, register)),
+            ArraySource::Capture(pc) => {
+                let read = self.hoisted.get(&pc).copied().filter(|read| read.representation == Representation::Tagged)?;
+                Some(self.builder.use_var(read.value))
+            }
+        }
+    }
+
+    /// The typed array `bits` holds, viewed in place by the helper; a miss exits at the loop's entry.
+    fn hoist_typed_view(&mut self, array: LoopArray, bits: ir::Value, variables: ArrayVariables, exit: ir::Block) {
+            let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
+                size_of::<super::LaneTypedArrayView>() as u32, align_of::<super::LaneTypedArrayView>().trailing_zeros() as u8));
+            let out = self.ins().stack_addr(types::I64, slot, 0);
+            let writable = self.ins().iconst(types::I64, i64::from(array.writable));
+            let viewed = self.helper_call(LaneHelper::TypedArrayView, &[bits, writable, out]);
+            let admitted = self.ins().icmp_imm_u(IntCC::NotEqual, viewed, 0);
+            emit_js_guard(&mut self.builder, admitted, exit);
+            let word = |field: usize| i32::try_from(field).expect("view field offset fits i32");
+            let values = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, elements)));
+            let length = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, length)));
+            let kind = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, kind)));
+            self.builder.def_var(variables.values, values);
+            self.builder.def_var(variables.length, length);
+            self.builder.def_var(variables.kind, kind);
+    }
+
+    fn array_variables(&mut self, array: LoopArray) -> ArrayVariables {
         let builder = &mut self.builder;
-        let length = if self.views == ElementViews::Dense { types::I32 } else { types::I64 };
-        *self.array_vars.entry(register).or_insert_with(|| ArrayVariables {
+        let length = if array.views == ElementViews::Dense { types::I32 } else { types::I64 };
+        *self.array_vars.entry(array.source).or_insert_with(|| ArrayVariables {
             bits: builder.declare_var(types::I64),
             values: builder.declare_var(types::I64),
             length: builder.declare_var(length),
@@ -3933,12 +4008,11 @@ impl Lowering<'_, '_> {
     /// again (`emit_dense_array_reload`), and its append room is proved again
     /// (`forget_append_rooms`). A typed region's views, which no such store moves, stay.
     fn reload_dense_arrays(&mut self, pc: usize) {
-        if self.views != ElementViews::Dense { return; }
         self.forget_append_rooms(pc);
         let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
-            .filter(|array| (array.header..=array.back).contains(&pc)).collect();
+            .filter(|array| array.views == ElementViews::Dense && (array.header..=array.back).contains(&pc)).collect();
         for array in arrays {
-            let variables = self.array_variables(array.register);
+            let variables = self.array_variables(array);
             let bits = self.builder.use_var(variables.bits);
             let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
             // A grown backing may count its values again; stores through the view keep none.
@@ -3952,13 +4026,13 @@ impl Lowering<'_, '_> {
 
     /// The hoisted view's elements' address and count.
     fn hoisted_view(&mut self, array: LoopArray) -> (ir::Value, ir::Value) {
-        let variables = self.array_variables(array.register);
+        let variables = self.array_variables(array);
         (self.builder.use_var(variables.values), self.builder.use_var(variables.length))
     }
 
     /// A typed region's hoisted array kind.
     fn hoisted_kind(&mut self, array: LoopArray) -> ir::Value {
-        let variables = self.array_variables(array.register);
+        let variables = self.array_variables(array);
         self.builder.use_var(variables.kind)
     }
 
@@ -3967,8 +4041,8 @@ impl Lowering<'_, '_> {
     /// element exits.
     fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, (pc, destination): (usize, Register), exit: ir::Block) {
         let (values, length) = self.hoisted_view(array);
-        let number = self.number_reads.binary_search(&pc).is_ok();
-        if self.views == ElementViews::Dense && number {
+        let number = self.observed.at(pc).is_some();
+        if array.views == ElementViews::Dense && number {
             // An element read as a Number (`number_reads`) needs no hole test of its own: a hole
             // is a NaN pattern, which the Number proof's one NaN test sends to the tag check
             // that leaves.
@@ -3980,7 +4054,7 @@ impl Lowering<'_, '_> {
             let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             return self.set_tagged(state, destination, value);
         }
-        if self.views == ElementViews::Dense {
+        if array.views == ElementViews::Dense {
             let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable };
             let value = super::emit_dense_element(&mut self.builder, view, index, exit).1;
             return self.set_tagged(state, destination, value);
@@ -4034,7 +4108,7 @@ impl Lowering<'_, '_> {
     fn loop_element_write(&mut self, state: &mut State, array: LoopArray, pc: u32, instruction: WideInstruction, exit: ir::Block) {
         let index = self.int(state, instruction.register_c(), exit);
         let (values, length) = self.hoisted_view(array);
-        if self.views == ElementViews::Dense {
+        if array.views == ElementViews::Dense {
             return self.dense_element_write(state, array, pc, instruction, index, exit);
         }
         let number = self.number(state, instruction.register_a(), exit);
@@ -4043,6 +4117,44 @@ impl Lowering<'_, '_> {
         let step = self.step(state, frame::Edges::ValueGuarded { miss: exit },
             crate::staged::Operation::TypedIndexWrite { index, value: number, proof });
         debug_assert!(matches!(step, crate::staged::Step::Value(_)));
+    }
+
+    /// The reads of `instruction`'s lookup, one per site, and the sink a nested read of the
+    /// current `this` also stores to.
+    fn field_chain(&self, instruction: WideInstruction) -> Option<(Vec<(Atom, u16)>, Option<(Atom, u16)>)> {
+        Some(match instruction.field_lookup()? {
+            FieldLookup::Atom { atom, cache_site, .. } => (vec![(atom, cache_site)], None),
+            FieldLookup::Site(index) => {
+                let site = *self.program.field_sites.get(index)?;
+                let reads = [Some(site.first), site.second].into_iter().flatten().collect();
+                (reads, instruction.writes_current_this().then_some(site.sink).flatten())
+            }
+        })
+    }
+
+    /// The value word `word` of the loop's entry record, defining `destination`.
+    fn entry_field_read(&mut self, state: &mut State, destination: Register, word: u32) {
+        let bits = self.loop_entry_word(word);
+        self.set_tagged(state, destination, bits);
+    }
+
+    /// Word `word` of the loop's entry record.
+    fn loop_entry_word(&mut self, word: u32) -> ir::Value {
+        let entry = emit_js_payload_word(&mut self.builder, self.payload,
+            std::mem::offset_of!(super::JsStepDispatch, loop_entry));
+        let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
+            * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
+        self.ins().load(types::I64, MemFlagsData::trusted(), entry, offset)
+    }
+
+    /// The owner and name of a plain read of `instruction`'s lookup (no sink, no completion):
+    /// `None` where the lookup names a site the program does not have.
+    fn plain_field(&self, instruction: WideInstruction, owner: Option<Register>, plain: bool) -> Option<Option<(Option<Register>, Atom)>> {
+        Some(match instruction.field_lookup() {
+            Some(FieldLookup::Atom { atom, .. }) if plain => Some((owner, atom)),
+            Some(FieldLookup::Site(index)) if plain => Some((owner, self.program.field_sites.get(index)?.first.0)),
+            _ => None,
+        })
     }
 
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
@@ -4064,14 +4176,7 @@ impl Lowering<'_, '_> {
             _ => None,
         };
         let base = self.field_base(pc, instruction)?;
-        let (parts, sink): (Vec<(Atom, u16)>, _) = match instruction.field_lookup()? {
-            FieldLookup::Atom { atom, cache_site, .. } => (vec![(atom, cache_site)], None),
-            FieldLookup::Site(index) => {
-                let site = *self.program.field_sites.get(index)?;
-                let reads = [Some(site.first), site.second].into_iter().flatten().collect();
-                (reads, instruction.writes_current_this().then_some(site.sink).flatten())
-            }
-        };
+        let (parts, sink) = self.field_chain(instruction)?;
         let sink_owner = frame.map(|frame| frame.receiver);
         if instruction.writes_current_this() && sink.is_none() {
             return None;
@@ -4088,12 +4193,7 @@ impl Lowering<'_, '_> {
         if sink.is_none() && completes.is_none() && !instruction.writes_current_this()
             && let Some(&word) = self.entry_fields.get(&pc)
         {
-            let entry = emit_js_payload_word(&mut self.builder, self.payload,
-                std::mem::offset_of!(super::JsStepDispatch, loop_entry));
-            let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
-                * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
-            let bits = self.ins().load(types::I64, MemFlagsData::trusted(), entry, offset);
-            self.set_tagged(state, destination, bits);
+            self.entry_field_read(state, destination, word);
             return Some(true);
         }
         let exit = self.guard_exit(state, pc as u32);
@@ -4109,15 +4209,7 @@ impl Lowering<'_, '_> {
             self.set_int(state, destination, length);
             return Some(true);
         }
-        let field = match instruction.field_lookup() {
-            Some(FieldLookup::Atom { atom, .. }) if sink.is_none() && completes.is_none() => {
-                Some((register, atom))
-            }
-            Some(FieldLookup::Site(index)) if sink.is_none() && completes.is_none() => {
-                Some((register, self.program.field_sites.get(index)?.first.0))
-            }
-            _ => None,
-        };
+        let field = self.plain_field(instruction, register, sink.is_none() && completes.is_none())?;
         // A whole-program prototype value: read the field once here as data, require the
         // value the closed program gives it, then fold it. A changed prototype fails the
         // guard and leaves to the shared body.
@@ -4188,7 +4280,7 @@ impl Lowering<'_, '_> {
             return self.field_probe(state, probe_owner, object_bits, read, exit);
         }
         let owner = if receiver { None } else { register };
-        let probed = self.left_here || NativeFieldLoad::probes_misses(&shapes);
+        let probed = self.left_here || self.left_a_field_read() || NativeFieldLoad::probes_misses(&shapes);
         self.probed_read(state, owner, probe_owner, probed, object_bits, read, exit, |lowering, state, generic| {
             let (object, shape, inline) = if receiver {
                 let entry = lowering.entry.as_ref().expect("entry facts");
@@ -4214,6 +4306,13 @@ impl Lowering<'_, '_> {
         })
     }
 
+    /// Whether a previous body left at some field read of this unit: its shapes were not all
+    /// seen when it was planned, so every read now asks the VM's caches on a guard miss rather
+    /// than leave, as this unit's other reads would leave one recompile at a time.
+    fn left_a_field_read(&self) -> bool {
+        self.generic.iter().any(|pc| self.unit.instructions.get(*pc).is_some_and(|instruction| instruction.op().class().eq(Class::GetField)))
+    }
+
     /// The read through `site` of the object a previous read of a chain produced, whose
     /// record nothing else names, so it is proved for this read alone.
     fn object_field_read(&mut self, state: &mut State, object_bits: ir::Value, read: (Atom, u16), exit: ir::Block) -> Option<ir::Value> {
@@ -4222,7 +4321,7 @@ impl Lowering<'_, '_> {
         if shapes.is_empty() {
             return Some(self.field_probe(state, FieldOwner::Temporary, object_bits, read, exit));
         }
-        let probed = self.left_here || NativeFieldLoad::probes_misses(&shapes);
+        let probed = self.left_here || self.left_a_field_read() || NativeFieldLoad::probes_misses(&shapes);
         Some(self.probed_read(state, None, FieldOwner::Temporary, probed, object_bits, read, exit, |lowering, state, generic| {
             let records = lowering.object_table_base();
             let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
@@ -5216,7 +5315,7 @@ mod tests {
             let isa = super::super::super::jit_backend::target_isa().unwrap();
             let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
             let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-                &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
+                &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
             let function = region.function;
             let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
             let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
@@ -5475,7 +5574,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -5515,7 +5614,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
         assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
         for instruction in region.function.layout.blocks()
             .flat_map(|block| region.function.layout.block_insts(block)) {
@@ -5572,7 +5671,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         assert!(region.fault_poll);
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -5609,7 +5708,7 @@ mod tests {
         for ty in [Type::INT32, Type::ANY] {
             fields.values_mut().next().unwrap()[0].ty = ty;
             let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-                &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+                &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
             let native = region.function;
             let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
                 .any(|instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -5636,7 +5735,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -5666,7 +5765,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
         let native = region.function;
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
@@ -5692,7 +5791,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
         assert!(region.native > 0);
         let native = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
@@ -5749,7 +5848,7 @@ mod tests {
             helpers: LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
             fields: &BTreeMap::new(), global_reads: &Default::default(), facts: VmFacts::STATIC,
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
+            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[],
             plan: RegionPlan { coverage: Coverage::Loop { header, backedge, poll: true },
                 completion: Completion::StatusAndPc, views: ElementViews::Dense } }
             .specialize(&program).expect("the loop lowers");
@@ -5778,7 +5877,7 @@ mod tests {
         let specialize = |plan| RegionSpecializer { function_id: id, unit: &unit, helpers,
             fields: &BTreeMap::new(), global_reads: &Default::default(), facts: VmFacts::STATIC,
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], plan }
+            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], plan }
             .specialize(&program).expect("the region lowers");
         let jit = specialize(RegionPlan { coverage: Coverage::Prefix,
             completion: Completion::StatusAndPc, views: ElementViews::Dense });
