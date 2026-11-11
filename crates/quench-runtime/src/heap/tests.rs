@@ -1629,7 +1629,7 @@ fn named_property_publication_retires_readers_for_every_record_family() {
                 Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord {
                     state: PromiseState::Pending, result: Value::UNDEFINED,
                     reactions: Default::default(), rejection: PromiseRejectionState::Unobserved,
-                    rejection_id: None, host_context: None.into(), module_evaluation: false,
+                    host_context: None.into(), module_evaluation: false,
                 } })),
                 Family::Iterator => Cell::Iterator(Box::new(IteratorRecord {
                     object, source: Value::NULL, kind: IteratorKind::Array, index: 0, done: false,

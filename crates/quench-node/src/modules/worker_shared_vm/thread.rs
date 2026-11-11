@@ -142,6 +142,8 @@ pub(crate) struct Launch {
     pub(crate) data: Message,
     pub(crate) environment: Message,
     pub(crate) parent: Arc<Endpoint>,
+    /// The parent's execution mode, which the worker runs in.
+    pub(crate) mode: quench_runtime::ExecutionMode,
 }
 
 /// Start a worker thread; returns its thread id and control block.
@@ -173,7 +175,7 @@ fn run(thread_id: u64, launch: Launch, control: Arc<WorkerControl>) {
             libc::pthread_sigmask(libc::SIG_BLOCK, &mask, std::ptr::null_mut());
         }
     }
-    let Launch { filename, is_eval, argv, exec_path, exec_argv, env, data, environment, parent } = launch;
+    let Launch { filename, is_eval, argv, exec_path, exec_argv, env, data, environment, parent, mode } = launch;
     let (input, entry) = if is_eval {
         let input = SharedInput::Eval { source: filename, goal: EntryGoal::CommonJs, exec_argv, print: false };
         (input, EVAL_ENTRY_NAME.to_owned())
@@ -191,7 +193,7 @@ fn run(thread_id: u64, launch: Launch, control: Arc<WorkerControl>) {
         control: control.clone(),
         env,
     };
-    let outcome = crate::shared_run::execute_worker(input, process_argv, context);
+    let outcome = crate::shared_run::execute_worker(input, process_argv, context, mode);
     control.finish(outcome);
 }
 

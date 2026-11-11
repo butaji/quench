@@ -179,7 +179,7 @@ impl<H: Host> Vm<H> {
             return Some((slot, last_index, Prefilter::Undecided));
         };
         let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
-        let start = if stateful { regexp_to_length(index) } else { 0 };
+        let start = if stateful { crate::units::to_length(index) } else { 0 };
         let length = input.len();
         let rejected = (stateful && start > length) || regex.excludes_search(length, start, meta.flags.contains(RegExpFlags::STICKY), || units.unit(start));
         Some((slot, last_index, if rejected { Prefilter::Excludes { stateful } } else { Prefilter::Admits }))

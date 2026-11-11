@@ -226,7 +226,7 @@ console.log(JSON.stringify({{
     assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
     for jit in [false, true] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
-        if jit { command.arg("--jit"); }
+        if !jit { command.arg("--no-jit"); }
         let actual = command.arg(&entry).output().unwrap();
         assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
         assert_eq!(actual.stdout, oracle.stdout);
@@ -834,7 +834,7 @@ console.log(JSON.stringify({ identity:bare === prefixed, actual:bare.default ===
     assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
     for jit in [false, true] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
-        if jit { command.arg("--jit"); }
+        if !jit { command.arg("--no-jit"); }
         let actual = command.arg(&entry).output().unwrap();
         assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
         assert_eq!(actual.stdout, oracle.stdout);
@@ -900,7 +900,7 @@ fn typescript_esm_graph_erases_type_edges_without_assuming_value_types() {
         assert_eq!(output["effects"], 1);
         for jit in [false, true] {
             let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
-            if jit { command.arg("--jit"); }
+            if !jit { command.arg("--no-jit"); }
             let actual = command.arg(&entry).output().unwrap();
             assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
             assert_eq!(actual.stdout, oracle.stdout);
@@ -957,7 +957,7 @@ fn unscoped_typescript_type_import_does_not_force_module_goal() {
     assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
     for jit in [false, true] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
-        if jit { command.arg("--jit"); }
+        if !jit { command.arg("--no-jit"); }
         let actual = command.arg(&entry).output().unwrap();
         assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
         assert_eq!(actual.stdout, oracle.stdout);
@@ -976,7 +976,7 @@ fn unscoped_typescript_type_import_does_not_force_module_goal() {
     assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
     for jit in [false, true] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
-        if jit { command.arg("--jit"); }
+        if !jit { command.arg("--no-jit"); }
         let actual = command.arg(&entry).output().unwrap();
         assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
         assert_eq!(actual.stdout, oracle.stdout);
@@ -1002,7 +1002,7 @@ fn typescript_symlink_uses_real_package_scope() {
     assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
     for jit in [false, true] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
-        if jit { command.arg("--jit"); }
+        if !jit { command.arg("--no-jit"); }
         let actual = command.arg(&entry).output().unwrap();
         assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
         assert_eq!(actual.stdout, oracle.stdout);
@@ -1153,7 +1153,7 @@ fn literal_dynamic_imports_close_graph_without_evaluating_modules() {
         assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
         for jit in [false, true] {
             let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
-            if jit { command.arg("--jit"); }
+            if !jit { command.arg("--no-jit"); }
             let actual = command.arg(&entry).output().unwrap();
             assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
             assert_eq!(serde_json::from_slice::<serde_json::Value>(&actual.stdout).unwrap(),
@@ -1185,7 +1185,7 @@ fn shadow_realm_dynamic_imports_keep_the_requesting_realm() {
     assert_eq!(oracle.stdout, b"inner\n");
     for jit in [false, true] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
-        if jit { command.arg("--jit"); }
+        if !jit { command.arg("--no-jit"); }
         let actual = command.arg(&entry).output().unwrap();
         assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
         assert_eq!(actual.stdout, oracle.stdout, "jit={jit}");
@@ -1297,7 +1297,7 @@ fn captured_reference_errors_preserve_rhs_effects() {
         let entry = write_captured_reference_fixture(&directory.join(extension), extension);
         for jit in [false, true] {
             let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
-            if jit { command.arg("--jit"); }
+            if !jit { command.arg("--no-jit"); }
             let actual = command.arg(&entry).output().unwrap();
             assert!(actual.status.success(), "{}", String::from_utf8_lossy(&actual.stderr));
             assert!(actual.stderr.is_empty(), "{}", String::from_utf8_lossy(&actual.stderr));
@@ -1696,7 +1696,7 @@ if (mode === 'missing') {
             assert!(!oracle.stdout.is_empty()); fs::remove_dir_all(&data).unwrap();
             for jit in [false, true] {
                 let actual_data = directory.join(format!("{extension}-{mode}-jit-{jit}-data"));
-                let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node")); if jit { command.arg("--jit"); }
+                let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node")); if !jit { command.arg("--no-jit"); }
                 let actual = command.arg(&entry).arg(mode).arg(&actual_data).output().unwrap();
                 assert_eq!(actual.status.code(), oracle.status.code(), "{extension} {mode} jit={jit}: {}", String::from_utf8_lossy(&actual.stderr));
                 assert_eq!(actual.stdout, oracle.stdout, "{extension} {mode} jit={jit}"); assert_eq!(actual.stderr, oracle.stderr);
@@ -1753,7 +1753,7 @@ console.log(JSON.stringify({policy,entries,matches,error,promiseGlob:typeof fs.p
         let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).arg(&data).output().unwrap();
         assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr)); assert!(!oracle.stdout.is_empty());
         for jit in [false,true] {
-            let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node")); if jit { command.arg("--jit"); }
+            let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node")); if !jit { command.arg("--no-jit"); }
             let actual = command.arg(&entry).arg(&data).output().unwrap();
             assert_eq!(actual.status.code(),oracle.status.code(),"jit={jit}: {}",String::from_utf8_lossy(&actual.stderr));
             assert_eq!(actual.stdout,oracle.stdout,"{extension} jit={jit}"); assert_eq!(actual.stderr,oracle.stderr);

@@ -32,7 +32,6 @@ impl std::ops::Deref for PreparedSubject {
 // A short string's units fit a subject's inline text.
 const _: () = assert!(super::wtf16::SHORT_ASCII_CAPACITY <= quench_regexp::INLINE_SUBJECT_BYTES);
 
-use crate::units::MAX_SAFE_INTEGER;
 use crate::unicode::HIGH_SURROGATE_START;
 use crate::unicode::HIGH_SURROGATE_END;
 use crate::unicode::LOW_SURROGATE_START;
@@ -58,8 +57,7 @@ const REGEXP_LEGACY_ACCESSOR_GROUPS: &[(&[&str], bool)] = &[
 pub(super) struct RegExpIntrinsics {
     pub(super) constructor: Value,
     pub(super) prototype: Value,
-    legacy_input: Option<JsString>,
-    legacy_match: LegacyRegExpMatch,
+    legacy: LegacyStatics,
     /// The own-property layout every builtin exec result shares, recorded from the first.
     pub(super) result_template: Option<RegExpResultTemplate>,
     /// Where `regexp_builtin_exec_matcher` last proved the builtin exec (`RegExpExecProof`);
@@ -110,6 +108,28 @@ impl RegExpResultSlots {
 /// `index`, `input` and `groups`.
 const REGEXP_RESULT_PROPERTY_COUNT: usize = 3;
 
+/// The legacy `RegExp` statics: the last match, which holds the subject it was found in, and
+/// the `RegExp.input` a script set since, which reads in place of that subject.
+#[derive(Clone)]
+struct LegacyStatics {
+    last: LegacyRegExpMatch,
+    input_override: Option<JsString>,
+}
+
+impl LegacyStatics {
+    const EMPTY: Self = Self { last: LegacyRegExpMatch::Empty, input_override: None };
+
+    /// What `RegExp.input` reads, or `None` after a match of a subclass or other non-builtin
+    /// that poisoned the statics and no script has set it since.
+    fn input(&self) -> Option<JsString> {
+        self.input_override.clone().or_else(|| match &self.last {
+            LegacyRegExpMatch::Empty => Some(JsString::from_units(&[])),
+            LegacyRegExpMatch::Matched { input, .. } | LegacyRegExpMatch::Pending { input, .. } => Some(input.clone()),
+            LegacyRegExpMatch::Invalid => None,
+        })
+    }
+}
+
 #[derive(Clone)]
 enum LegacyRegExpMatch {
     Empty,
@@ -133,8 +153,7 @@ impl RegExpIntrinsics {
         Self {
             constructor,
             prototype,
-            legacy_input: Some(JsString::from_units(&[])),
-            legacy_match: LegacyRegExpMatch::Empty,
+            legacy: LegacyStatics::EMPTY,
             result_template: None,
             exec_proof: std::cell::Cell::new(None),
         }
@@ -143,10 +162,7 @@ impl RegExpIntrinsics {
 
 /// Legacy match data belongs to the embedding caller, not host builtin setup.
 /// These owned strings/match ranges contain no heap references and survive GC.
-pub(super) struct LegacyRegExpSnapshot {
-    input: Option<JsString>,
-    matched: LegacyRegExpMatch,
-}
+pub(super) struct LegacyRegExpSnapshot(LegacyStatics);
 
 impl<H: Host> Vm<H> {
     pub(super) fn snapshot_regexp_legacy(&self) -> LegacyRegExpSnapshot {
@@ -156,14 +172,8 @@ impl<H: Host> Vm<H> {
             .regexp_intrinsics
             .get(&self.realm.globals)
         {
-            Some(state) => LegacyRegExpSnapshot {
-                input: state.legacy_input.clone(),
-                matched: state.legacy_match.clone(),
-            },
-            None => LegacyRegExpSnapshot {
-                input: Some(JsString::from_units(&[])),
-                matched: LegacyRegExpMatch::Empty,
-            },
+            Some(state) => LegacyRegExpSnapshot(state.legacy.clone()),
+            None => LegacyRegExpSnapshot(LegacyStatics::EMPTY),
         }
     }
 
@@ -174,8 +184,7 @@ impl<H: Host> Vm<H> {
             .regexp_intrinsics
             .get_mut(&self.realm.globals)
         {
-            state.legacy_input = snapshot.input;
-            state.legacy_match = snapshot.matched;
+            state.legacy = snapshot.0;
         }
     }
 }
@@ -1842,11 +1851,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         // A number is its own primitive and number, so its conversion runs no guest code.
         if let Some(number) = value.as_number() {
-            return Ok(regexp_to_length(number));
+            return Ok(crate::units::to_length(number));
         }
         self.with_call_roots([value], |vm| {
             let value = vm.to_primitive(p, value, "number")?;
-            Ok(regexp_to_length(vm.to_number(p, value)?))
+            Ok(crate::units::to_length(vm.to_number(p, value)?))
         })
     }
 
@@ -2117,9 +2126,9 @@ impl<H: Host> Vm<H> {
             .get(&self.realm.globals)
             .expect("active realm has RegExp intrinsics");
         let value = if matches!(name, "input" | "$_") {
-            state.legacy_input.clone()
+            state.legacy.input()
         } else {
-            match &state.legacy_match {
+            match &state.legacy.last {
                 LegacyRegExpMatch::Invalid => None,
                 LegacyRegExpMatch::Empty => Some(JsString::from_units(&[])),
                 LegacyRegExpMatch::Pending { .. } => unreachable!("resolved above"),
@@ -2163,7 +2172,8 @@ impl<H: Host> Vm<H> {
             .regexp_intrinsics
             .get_mut(&self.realm.globals)
             .expect("active realm has RegExp intrinsics")
-            .legacy_input = Some(value);
+            .legacy
+            .input_override = Some(value);
         Ok(Value::UNDEFINED)
     }
 
@@ -2821,7 +2831,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .regexp_intrinsics
             .get(&self.realm.globals)
-            .map(|state| state.legacy_match.clone())
+            .map(|state| state.legacy.last.clone())
         else {
             return;
         };
@@ -2831,7 +2841,7 @@ impl<H: Host> Vm<H> {
             .next()
             .expect("a pending legacy match begins at its start");
         if let Some(state) = self.realm.intrinsics.regexp_intrinsics.get_mut(&self.realm.globals) {
-            state.legacy_match = LegacyRegExpMatch::Matched { input, matched };
+            state.legacy.last = LegacyRegExpMatch::Matched { input, matched };
         }
     }
 
@@ -2878,12 +2888,10 @@ impl<H: Host> Vm<H> {
         if owner.constructor() == state.constructor {
             match owner {
                 crate::heap::RegExpLegacyOwner::Enabled(_) => {
-                    state.legacy_input = Some(input.clone());
-                    state.legacy_match = matched(input);
+                    state.legacy = LegacyStatics { last: matched(input), input_override: None };
                 }
                 crate::heap::RegExpLegacyOwner::Disabled(_) => {
-                    state.legacy_input = None;
-                    state.legacy_match = LegacyRegExpMatch::Invalid;
+                    state.legacy = LegacyStatics { last: LegacyRegExpMatch::Invalid, input_override: None };
                 }
             }
         }
@@ -3126,16 +3134,6 @@ pub(super) fn advance_string_index_units(
     }
 }
 
-pub(super) fn regexp_to_length(value: f64) -> usize {
-    if value.is_nan() || value <= 0.0 {
-        0
-    } else if value.is_infinite() {
-        MAX_SAFE_INTEGER as usize
-    } else {
-        value.trunc().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize
-    }
-}
-
 fn regexp_to_integer_or_infinity(value: f64) -> f64 {
     if value.is_nan() || value == 0.0 {
         0.0
@@ -3347,20 +3345,22 @@ impl RegExpMatcherCache {
 
 impl crate::snapshot::Snap for RegExpIntrinsics {
     fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
-        let Self { constructor, prototype, legacy_input, legacy_match, result_template, exec_proof: _ } = self;
+        let Self { constructor, prototype, legacy, result_template, exec_proof: _ } = self;
         writer.value(*constructor);
         writer.value(*prototype);
-        writer.bool(legacy_input.is_some());
-        if let Some(input) = legacy_input {
-            input.write_snapshot(writer);
-        }
-        writer.bool(match legacy_match {
+        let invalid = match legacy.last {
             LegacyRegExpMatch::Empty => false,
             LegacyRegExpMatch::Invalid => true,
             LegacyRegExpMatch::Matched { .. } | LegacyRegExpMatch::Pending { .. } => {
                 return Err(crate::snapshot::SnapshotError::unsupported("legacy RegExp match data"));
             }
-        });
+        };
+        let input = legacy.input();
+        writer.bool(input.is_some());
+        if let Some(input) = input {
+            input.write_snapshot(writer);
+        }
+        writer.bool(invalid);
         writer.bool(result_template.is_some());
         if let Some(RegExpResultTemplate { anchor, index_slot, input_slot, groups_slot }) = result_template {
             writer.value(*anchor);
@@ -3374,8 +3374,9 @@ impl crate::snapshot::Snap for RegExpIntrinsics {
     fn unsnap(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
         let constructor = reader.value()?;
         let prototype = reader.value()?;
-        let legacy_input = if reader.bool()? { Some(JsString::read_snapshot(reader)?) } else { None };
-        let legacy_match = if reader.bool()? { LegacyRegExpMatch::Invalid } else { LegacyRegExpMatch::Empty };
+        let input_override = if reader.bool()? { Some(JsString::read_snapshot(reader)?) } else { None };
+        let last = if reader.bool()? { LegacyRegExpMatch::Invalid } else { LegacyRegExpMatch::Empty };
+        let legacy = LegacyStatics { last, input_override };
         let result_template = if reader.bool()? {
             Some(RegExpResultTemplate {
                 anchor: reader.value()?,
@@ -3389,8 +3390,7 @@ impl crate::snapshot::Snap for RegExpIntrinsics {
         Ok(Self {
             constructor,
             prototype,
-            legacy_input,
-            legacy_match,
+            legacy,
             result_template,
             exec_proof: std::cell::Cell::new(None),
         })

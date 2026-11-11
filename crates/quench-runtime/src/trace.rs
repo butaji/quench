@@ -115,6 +115,9 @@ setting! {
         /// Number loop regions build from FastJIT stencils (`quench-fastjit`) where every
         /// instruction has a row, instead of Cranelift IR.
         FastJit = "fastjit",
+        /// A requested compile runs on the requesting thread and installs at once, as in tests:
+        /// instruction counts then see the code a run installs.
+        SyncCompile = "sync-compile",
         /// Selective Wasm hot-root tiering (`wasm-selective`).
         WasmSelective = "wasm-selective",
         /// A bounded root compilation of the residual Wasm function `wasm-root=N`.

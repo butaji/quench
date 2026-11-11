@@ -16,7 +16,7 @@ use array_proofs::retire_array_storage_proofs;
 mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
-    INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache,
+    Dependencies, INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache,
     ProofKind,
 };
 mod cell_access;
@@ -34,7 +34,7 @@ mod memory_profile;
 mod pacing;
 mod parallel_mark;
 mod promise_record;
-pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
+pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState};
 mod records;
 mod root;
 mod slots;
@@ -1241,6 +1241,13 @@ impl Heap {
         self.total_allocations += 1;
     }
 
+    /// Counts one record that carries no payload weight.
+    #[inline(always)]
+    fn charge_unit_allocation(&mut self) {
+        self.allocated += 1;
+        self.total_allocations += 1;
+    }
+
     fn alloc_cell(&mut self, cell: Cell) -> Value {
         if let Some(object) = cell.object() {
             self.admit_object_contents(object);
@@ -1325,8 +1332,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::BigInt(value));
         }
-        self.allocated += 1;
-        self.total_allocations += 1;
+        self.charge_unit_allocation();
         // A BigInt holds no weak entries.
         self.alloc_in_slot_with(self.tracks_young_cells(), false, || Cell::BigInt(value))
     }
@@ -1345,8 +1351,7 @@ impl Heap {
         let environment = if cfg!(feature = "profile-aggregate") {
             self.alloc(cell)
         } else {
-            self.allocated += 1;
-            self.total_allocations += 1;
+            self.charge_unit_allocation();
             self.alloc_in_slot(cell, self.tracks_young_cells())
         };
         let storage = match self.get(environment) {
@@ -1444,8 +1449,7 @@ impl Heap {
     /// An object record of `object`, else a slot: one allocation, with no external bytes.
     #[inline(always)]
     fn insert_object_record(&mut self, object: Object) -> Value {
-        self.allocated += 1;
-        self.total_allocations += 1;
+        self.charge_unit_allocation();
         self.admit_object_contents(&object);
         match self.object_records.try_insert(object) {
             Ok(record_id) => {
@@ -1500,8 +1504,7 @@ impl Heap {
     #[inline(always)]
     fn insert_function_record(&mut self, function: FunctionRecord) -> Value {
         self.admit_object_contents(&function.object);
-        self.allocated += 1;
-        self.total_allocations += 1;
+        self.charge_unit_allocation();
         match self.function_records.try_insert(function) {
             Ok(record_id) => {
                 let value = Value::direct_function(record_id);
@@ -1524,8 +1527,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::AwaitState(Box::new(state)));
         }
-        self.allocated += 1;
-        self.total_allocations += 1;
+        self.charge_unit_allocation();
         match self.await_records.try_insert(state) {
             Ok(record_id) => Value::direct_await(record_id),
             Err(state) => {
@@ -1541,8 +1543,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::WasmV128(bytes));
         }
-        self.allocated += 1;
-        self.total_allocations += 1;
+        self.charge_unit_allocation();
         match self.v128_records.try_insert(bytes) {
             Ok(record_id) => Value::direct_v128(record_id),
             Err(bytes) => self.alloc_in_slot(Cell::WasmV128(bytes), self.tracks_young_cells()),
@@ -1571,8 +1572,7 @@ impl Heap {
         self.admit_object_contents(&iterator.object);
         self.mark_prototype(iterator.object.proto());
         // An iterator's weight is one allocation, and it holds no payload or external bytes.
-        self.allocated += 1;
-        self.total_allocations += 1;
+        self.charge_unit_allocation();
         match self.iterator_records.try_insert(iterator) {
             Ok(record_id) => {
                 let value = Value::direct_iterator(record_id);
@@ -1599,8 +1599,7 @@ impl Heap {
         self.admit_object_contents(&promise.object);
         self.mark_prototype(promise.object.proto());
         // A promise's weight is one allocation, and it holds no payload or external bytes.
-        self.allocated += 1;
-        self.total_allocations += 1;
+        self.charge_unit_allocation();
         match self.promise_records.try_insert(promise) {
             Ok(record_id) => {
                 let value = Value::direct_promise(record_id);

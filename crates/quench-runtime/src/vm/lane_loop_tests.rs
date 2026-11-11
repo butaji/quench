@@ -3,11 +3,11 @@ use crate::Engine;
 use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
-/// A call-free loop the loop tier rejects (every iteration allocates) runs in its function's
-/// lane body (when lane bodies are on), which makes each array literal with its elements in
-/// one allocation as the interpreter does, under collections the allocations bring.
+/// A call-free loop that allocates at every iteration runs in its loop region, which makes
+/// each array literal with its elements in one allocation as the interpreter does, under
+/// collections the allocations bring.
 #[test]
-fn lane_body_runs_a_rejected_allocating_loop_with_fused_array_literals() {
+fn an_allocating_loop_runs_natively_with_fused_array_literals() {
     let source = r#"
       function run(seed) {
         let total = 0;
@@ -33,8 +33,8 @@ fn lane_body_runs_a_rejected_allocating_loop_with_fused_array_literals() {
     assert_eq!(output.borrow().as_slice(), [expected.to_string()]);
     let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
     let view = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("loop lane view");
-    let report = view.body_stats.report(0, view.lane_body_state(), &|_, _| None).expect("the loop runs in the lane body");
-    assert!(report.contains("\"state\":\"specialized\"") && !report.contains("\"completed\":0,"), "the body runs the loop: {report}");
+    let osr = view.osr_diagnostics();
+    assert!(osr.native_region_runs > 0, "the allocating loop runs natively: {:?}", osr.sites);
 }
 
 /// A loop's read at a site of many shapes that hold the field at one slot (a layout family)

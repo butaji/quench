@@ -10,7 +10,7 @@ impl Lowering<'_, '_> {
     /// call does (`dispatch_fast::lane_body_construct`): the callee's plan, else its activation.
     pub(super) fn construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
-        if self.completion == Completion::StatusAndPc && self.generic.contains(&pc)
+        if self.completion == Completion::StatusAndPc
             && matches!(self.unit.origins.get(pc), Some(super::super::lane_unit::Origin::Caller(_)))
             && window.base + window.count <= self.unit.caller_registers
             && matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER) {

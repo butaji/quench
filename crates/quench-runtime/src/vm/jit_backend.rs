@@ -35,14 +35,6 @@ const VERIFY_IR: bool = cfg!(debug_assertions) || super::compiled::tier_policy::
 pub(super) enum CodePublication {
     #[cfg(feature = "jit")]
     ExecutableMemory,
-    /// Executable memory for a large lane body (`compiled::lane_compile`, at least
-    /// `LANE_SINGLE_PASS_MIN_INSTS` instructions), whose registers are allocated in one pass. Lane bodies are the largest units and compile on the code
-    /// generator thread while the interpreter runs them: JetStream 3 `--jit`, 25 tests, 6
-    /// interleaved rounds (2026-11-07) measured +3.8% geomean (richards +16%, Air +11%,
-    /// delta-blue +10%; earley-boyer -7%). Single-pass for every JIT unit measured -0.7%
-    /// (navier-stokes -22%, stanford-crypto-aes -17%): small hot loops keep backtracking.
-    #[cfg(feature = "jit")]
-    LaneBody,
     #[cfg(feature = "aot")]
     RelocatableObject,
     /// Copy-and-patch stencils: executable memory whose continuations are
@@ -58,8 +50,6 @@ impl CodePublication {
         match self {
             #[cfg(feature = "jit")]
             Self::ExecutableMemory => &[("is_pic", "false")],
-            #[cfg(feature = "jit")]
-            Self::LaneBody => &[("is_pic", "false"), ("regalloc_algorithm", "single_pass")],
             #[cfg(feature = "aot")]
             Self::RelocatableObject => &[("is_pic", "true")],
             #[cfg(all(feature = "aot", feature = "jit"))]
@@ -72,21 +62,16 @@ impl CodePublication {
 /// rounds, TOD-1467, 2026-11-07): while lane bodies compiled on the main thread, `none` won
 /// +4.5% over the JavaScript tests; once they compiled on the code-generator thread, `none` for
 /// main-thread compiles measured +1.2% and for every compile -0.1%, both within noise, and the
-/// Wasm tests lost 5-6%. The single-pass register allocator lost 2.7% (Wasm -25%), and
-/// `unwind_info=false` measured nothing.
+/// Wasm tests lost 5-6%. The single-pass register allocator lost 2.7% (Wasm -25%) for all JIT
+/// code, and left 46% of lane-body machine code as stack spill traffic (richards bodies,
+/// 2026-11-10: 91981 instructions against 69653 with the backtracking allocator; richards +34%,
+/// delta-blue +12% in lane mode, other six V8-v7 tests within noise; peak RSS +30% on the two
+/// largest bodies' tests). `unwind_info=false` measured nothing.
 const JS_JIT_OPT_LEVEL: &str = "speed";
 
 /// The executable-memory ISA of every JavaScript JIT tier.
 pub(super) fn target_isa() -> Option<Arc<TargetIsa>> {
     target_isa_at(JS_JIT_OPT_LEVEL)
-}
-
-/// The ISA of lane bodies: JavaScript JIT code whose register allocation runs in one pass.
-pub(super) fn lane_body_isa() -> Option<Arc<TargetIsa>> {
-    #[cfg(feature = "jit")]
-    { target_isa_for(JS_JIT_OPT_LEVEL, CodePublication::LaneBody) }
-    #[cfg(not(feature = "jit"))]
-    { None }
 }
 
 /// The executable-memory ISA at `opt_level`: the Wasm tier's, which picks its own level.
@@ -183,28 +168,39 @@ pub(super) fn compile_function<T>(
     ) -> Result<T, NativeCompileRejection>,
 ) -> Result<T, NativeCompileRejection> {
     select::convert(&mut function);
-    let mut context = cranelift_codegen::Context::for_function(function);
-    let compiled = context
-        .compile(
-            isa,
-            &mut cranelift_codegen::control::ControlPlane::default(),
-        )
-        .map_err(|_error| {
+    let mut context = COMPILE_CONTEXT.with(|held| held.take()).unwrap_or_else(cranelift_codegen::Context::new);
+    let instructions = function.dfg.num_insts();
+    context.clear();
+    context.func = function;
+    let compiled = context.compile(isa, &mut cranelift_codegen::control::ControlPlane::default()).map(|compiled| compiled.code_buffer().len());
+    let outcome = match compiled {
+        Err(_error) => {
             #[cfg(test)]
             eprintln!("shared native compile rejected by Cranelift: {_error:?}");
-            NativeCompileRejection::Cranelift
-        })?;
-    let size = compiled.code_buffer().len();
-    if size == 0 {
-        return Err(NativeCompileRejection::EmptyCode);
+            Err(NativeCompileRejection::Cranelift)
+        }
+        Ok(0) => Err(NativeCompileRejection::EmptyCode),
+        Ok(size) if max_code_bytes.is_some_and(|limit| size > limit) => Err(NativeCompileRejection::CodeSizeBudget),
+        Ok(_) => consume(context.compiled_code().expect("successful compilation"), &context.func),
+    };
+    // One context per compiling thread keeps its scratch for the next compile; a function
+    // past `RETAINED_COMPILE_INSTRUCTIONS` took scratch no later one needs, so it goes back.
+    if instructions <= RETAINED_COMPILE_INSTRUCTIONS {
+        context.clear();
+        COMPILE_CONTEXT.with(|held| held.set(Some(context)));
+    } else {
+        drop(context);
     }
-    if max_code_bytes.is_some_and(|limit| size > limit) {
-        return Err(NativeCompileRejection::CodeSizeBudget);
-    }
-    consume(
-        context.compiled_code().expect("successful compilation"),
-        &context.func,
-    )
+    outcome
+}
+
+/// The IR instructions of the largest function whose compile scratch a thread keeps.
+#[cfg(any(feature = "jit", feature = "aot"))]
+const RETAINED_COMPILE_INSTRUCTIONS: usize = 4096;
+
+#[cfg(any(feature = "jit", feature = "aot"))]
+thread_local! {
+    static COMPILE_CONTEXT: std::cell::Cell<Option<cranelift_codegen::Context>> = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(not(any(feature = "jit", feature = "aot")))]

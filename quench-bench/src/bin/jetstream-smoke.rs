@@ -2,7 +2,7 @@
 //! JetStream's own driver and the harness's shell prelude, and must exit successfully and
 //! print its test score. It measures nothing; `quench-bench --suite jetstream3` measures.
 //!
-//! usage: jetstream-smoke QUENCH_NODE [--jit] [TEST...]
+//! usage: jetstream-smoke QUENCH_NODE [--no-jit] [TEST...]
 #[allow(dead_code)]
 #[path = "../jetstream.rs"]
 mod jetstream;
@@ -17,7 +17,7 @@ use std::{
 
 /// One test per execution path a regression has broken unseen: a large compile-heavy
 /// bundle, a generator pipeline, a Proxy-heavy assertion library, async functions, a Wasm
-/// module, and small hot callees storing fields past their caches under `--jit` (cdjs,
+/// module, and small hot callees storing fields past their caches by default (cdjs,
 /// gbemu, Box2D: lane leaf calls into views the JS tier claims) and through getters
 /// (chai-wtb, jsdom-d3-startup).
 const DEFAULT_TESTS: &[&str] =
@@ -35,10 +35,10 @@ const COLD_ENVIRONMENT: &[(&str, &str)] = &[("XDG_CACHE_HOME", "/dev/null")];
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     let Some(quench) = args.next() else {
-        eprintln!("usage: jetstream-smoke QUENCH_NODE [--jit] [TEST...]");
+        eprintln!("usage: jetstream-smoke QUENCH_NODE [--no-jit] [TEST...]");
         return ExitCode::from(2);
     };
-    let (jit, tests): (Vec<String>, Vec<String>) = args.partition(|arg| arg == "--jit");
+    let (no_jit, tests): (Vec<String>, Vec<String>) = args.partition(|arg| arg == "--no-jit");
     let tests: Vec<String> =
         if tests.is_empty() { DEFAULT_TESTS.iter().map(|test| test.to_string()).collect() } else { tests };
     if let Some(unknown) = tests.iter().find(|test| !known(test)) {
@@ -50,7 +50,7 @@ fn main() -> ExitCode {
         eprintln!("jetstream-smoke: cannot write the prelude: {error}");
         return ExitCode::from(2);
     }
-    let failures = tests.iter().filter(|test| !passes(&quench, &prelude, !jit.is_empty(), test)).count();
+    let failures = tests.iter().filter(|test| !passes(&quench, &prelude, no_jit.is_empty(), test)).count();
     let _ = fs::remove_file(&prelude);
     if failures == 0 {
         ExitCode::SUCCESS
@@ -71,8 +71,8 @@ fn known(test: &str) -> bool {
 fn passes(quench: &str, prelude: &Path, jit: bool, test: &str) -> bool {
     let file = jetstream::fixture_path(test);
     let mut command = Command::new(quench);
-    if jit {
-        command.arg("--jit");
+    if !jit {
+        command.arg("--no-jit");
     }
     command
         .args(jetstream::arguments(&file, prelude))

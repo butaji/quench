@@ -34,6 +34,13 @@ pub(crate) fn replace_element<S: Stage>(stage: &mut S, values: S::Word, address:
     stage.store_u64(address, 0, value);
 }
 
+/// `replace_element` on a backing whose count is `OTHERS_UNKNOWN`: the count stays unknown
+/// (`recount`), so the write is the element's alone.
+#[inline(always)]
+pub(crate) fn replace_uncounted_element<S: Stage>(stage: &mut S, address: S::Word, value: S::Word) {
+    stage.store_u64(address, 0, value);
+}
+
 /// Appends `value` at `index` of the dense backing at `values`, which holds `length` values
 /// and room for `capacity`, as its owner proved: `None` (leaving at `miss`) unless `index` is
 /// the length and the room has a slot past it. The new element counts among the backing's

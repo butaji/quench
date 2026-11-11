@@ -2,8 +2,8 @@
 //! generator's thread compiles, and the next look publishes the code.
 
 use super::{
-    compile_native_function, dump_native_bytes, dump_native_code, native_dump_directory, lane_unit, osr_loop,
-    publish_entry, tier_policy, CompiledOsrRegion, LaneHelpers, LoopRegion,
+    compile_native_function, dump_native_bytes, dump_native_code, names_length, native_dump_directory, lane_unit, osr_loop,
+    publish_entry, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
 use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
@@ -72,7 +72,7 @@ fn loop_unit(function: &Function) -> lane_unit::Unit {
 /// Map an inlining loop region onto the lane unit: its instructions' jump targets become
 /// unit PCs, its origins name the caller/inlined frame of each instruction, and its frames
 /// carry the callee identity, function, call window and result.
-fn inlining_unit(region: &LoopRegion) -> Option<(lane_unit::Unit, BTreeMap<usize, u32>)> {
+fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane_unit::Unit, BTreeMap<usize, u32>)> {
     let inlining = region.inlining.as_deref()?;
     let count = region.instructions().len();
     let header = region.header as usize;
@@ -149,7 +149,7 @@ fn inlining_unit(region: &LoopRegion) -> Option<(lane_unit::Unit, BTreeMap<usize
     // before it.
     let unit_pc = |offset: usize| offset + inserted.iter().filter(|(at, _)| *at <= offset).count();
     let entry_fields: BTreeMap<usize, u32> = region.field_reads().iter()
-        .filter(|(_, index)| !region.is_dynamic_field(**index))
+        .filter(|(_, index)| entry_read(region, **index, program))
         .filter_map(|(offset, index)| Some((unit_pc(*offset as usize),
             u32::try_from(osr_loop::field_word(region, *index)).ok()?)))
         .collect();
@@ -161,12 +161,21 @@ fn inlining_unit(region: &LoopRegion) -> Option<(lane_unit::Unit, BTreeMap<usize
     }, entry_fields))
 }
 
+/// Whether the read of `region`'s field `index` answers from the entry record: a static read
+/// of a field, not a register's `length`, which native code reads from the array's length
+/// word at the read (`Lowering::array_length`) as the loop's stores may change it.
+fn entry_read(region: &LoopRegion, index: usize, program: &ResidualProgram) -> bool {
+    let field = &region.fields[index];
+    !region.is_dynamic_field(index)
+        && !(matches!(field.receiver, FieldReceiver::Register(_)) && names_length(program, field.atom))
+}
+
 /// A plain loop unit's static field reads, by the unit PC each instruction keeps, answered
 /// from the entry record.
-fn plain_entry_fields(region: &LoopRegion) -> BTreeMap<usize, u32> {
+fn plain_entry_fields(region: &LoopRegion, program: &ResidualProgram) -> BTreeMap<usize, u32> {
     let header = region.header as usize;
     region.field_reads().iter()
-        .filter(|(_, index)| !region.is_dynamic_field(**index))
+        .filter(|(_, index)| entry_read(region, **index, program))
         .filter_map(|(offset, index)| Some((header + *offset as usize,
             u32::try_from(osr_loop::field_word(region, *index)).ok()?)))
         .collect()
@@ -196,6 +205,7 @@ pub(in crate::vm) fn start_osr_region(
     program: &ResidualProgram,
     function_id: u32,
     helpers: LaneHelpers,
+    global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
     widened: &[usize],
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
@@ -216,10 +226,17 @@ pub(in crate::vm) fn start_osr_region(
     // at the call's exact PC, with no callee inlined. The inlined unit is an optimization over
     // that plan, used only where the general plan declines; an inlined callee the region
     // cannot prove exactly then costs the region nothing but the inlining.
-    let plan = |unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, header: usize, backedge: usize, generic: &[usize]| {
+    let mut plan = |unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, header: usize, backedge: usize, generic: &[usize]| {
+        // The element reads through an array observed to hold Numbers, where no earlier body
+        // left (`generic`): typed Numbers, each leaving at an element that is not one.
+        let number_reads: Vec<usize> = unit.instructions.iter().enumerate()
+            .filter(|(pc, instruction)| instruction.op().is_get_index() && !generic.contains(pc)
+                && instruction.operand_b().register_index().is_some_and(|register| observation.number_arrays.contains(&register)))
+            .map(|(pc, _)| pc).collect();
         super::lane_region::RegionSpecializer {
+            number_reads: &number_reads, int_entries: observation.int_entries,
             function_id, unit, helpers, fields: &fields,
-            global_reads: &Default::default(), facts: VmFacts::STATIC, generic,
+            global_reads: &global_reads(unit), facts: VmFacts::STATIC, generic,
             direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
             entry_fields,
             plan: super::lane_region::RegionPlan {
@@ -228,14 +245,14 @@ pub(in crate::vm) fn start_osr_region(
             },
         }.specialize(program).ok().filter(|lowered| views == super::ElementViews::Dense || lowered.hoists_arrays)
     };
-    let inlined = region.inlining.is_some().then(|| inlining_unit(region)).flatten();
+    let inlined = region.inlining.is_some().then(|| inlining_unit(region, program)).flatten();
     let lane = inlined
         .as_ref()
         .and_then(|(unit, fields)| plan(unit, fields, 0, unit.instructions.len().saturating_sub(1), &[]))
         .or_else(|| {
             let plain = loop_unit(program.function(function_id as usize));
             // The plain unit's PCs are the function's, which the site's leaves name.
-            plan(&plain, &plain_entry_fields(region), region.header as usize, region.backedge as usize, widened)
+            plan(&plain, &plain_entry_fields(region, program), region.header as usize, region.backedge as usize, widened)
         });
     // One plan lowers a loop: the region specializer, the same plan a lane body and a static
     // typed region use. A region it declines stays in the interpreter; there is no second
@@ -318,10 +335,10 @@ mod tests {
         }).expect("the function has a loop");
         let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
             .expect("the loop is admitted");
-        let observation = Observation { native_field_loads: &[], int_registers: &[], double_registers: &[] };
+        let observation = Observation { native_field_loads: &[], number_arrays: &[], int_entries: &[], int_registers: &[], double_registers: &[] };
         let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
             crate::MemoryPolicy::Throughput, &program, id,
-            super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &[])
+            super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &mut |_| Default::default(), &[])
             .expect("the loop plans");
         assert_eq!(pending.header, region.header, "the loop goes through RegionSpecializer");
     }
@@ -493,6 +510,49 @@ mod tests {
         assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
             "the lane OSR path ran");
     }
+    /// Runs `source` compiled, with OSR diagnostics, to the value it throws, and the native
+    /// region runs of the function named `name`.
+    fn thrown_with_native_runs(source: &str, name: &str) -> (Option<crate::Value>, u64) {
+        let program = crate::Engine::specialize(source, "lane-osr-views.js").unwrap();
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.programs.disable_js_entry_specializations();
+        let thrown = vm.execute(&program).unwrap_err().thrown_value();
+        let function_id = program.functions.iter().position(|function|
+            function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+        let views = vm.programs.lane_views(super::super::program_store::ProgramId::MAIN).unwrap();
+        let osr = views.get(function_id).and_then(super::super::program_store::derived_lane_view)
+            .unwrap().osr_diagnostics();
+        (thrown, osr.native_region_runs)
+    }
+    /// A loop reading a typed array takes the typed element views its entry observed.
+    #[test]
+    fn a_typed_array_read_loop_runs_through_typed_views() {
+        let (thrown, runs) = thrown_with_native_runs(
+            "function sum(a){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=s+a[i&3]; } } return s; }
+             const a=new Float64Array(4); a[0]=0.5; a[1]=1.5; a[2]=2.5; a[3]=3.5; throw sum(a);", "sum");
+        assert_eq!(thrown.and_then(crate::Value::as_number), Some(400_000.0));
+        assert!(runs > 0, "the typed read loop ran natively");
+    }
+    /// A loop storing into a typed array converts each Number by the array's kind.
+    #[test]
+    fn a_typed_array_write_loop_runs_through_typed_views() {
+        let (thrown, runs) = thrown_with_native_runs(
+            "function fill(a){ for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ a[i]=(i^k)+0.75; } } return a[99]+a[50]; }
+             throw fill(new Int32Array(100));", "fill");
+        assert_eq!(thrown.and_then(crate::Value::as_number), Some(f64::from((99 ^ 1999) + (50 ^ 1999))));
+        assert!(runs > 0, "the typed write loop ran natively");
+    }
+    /// A loop bounded by an array's `length` reads the array's length word, not a field.
+    #[test]
+    fn an_array_length_condition_loop_runs() {
+        let (thrown, runs) = thrown_with_native_runs(
+            "function count(a){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<a.length;i++){ s=(s+i)|0; } } return s; }
+             const a=[]; for(let j=0;j<100;j++) a.push(j); throw count(a);", "count");
+        assert_eq!(thrown, Some(crate::Value::integer(9_900_000)));
+        assert!(runs > 0, "the length-bounded loop ran natively");
+    }
     /// A loop reading a captured binding carries the loop entry's capture view.
     #[test]
     fn a_capture_loop_keeps_its_capture_value() {
@@ -507,6 +567,83 @@ mod tests {
         vm.programs.disable_js_entry_specializations();
         let error = vm.execute(&program).unwrap_err();
         assert_eq!(error.thrown_value(), Some(crate::Value::integer(10_100_000)));
+    }
+    /// Runs `source` interpreted and compiled with lane OSR, and returns the compiled output,
+    /// equal to the interpreter's, and the OSR diagnostics of the function named `function`.
+    fn osr_run(source: &str, function: &str) -> (Vec<String>, crate::vm::dispatch_fast::OsrDiagnostics) {
+        let program = crate::Engine::specialize(source, "lane-osr-admission.js").unwrap();
+        let expected = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        crate::vm::Vm::new(crate::test_host::TestHost::writing_to(expected.clone()))
+            .execute(&program).unwrap();
+        let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.programs.enable_js_lane_methods();
+        vm.programs.disable_js_entry_specializations();
+        vm.execute(&program).unwrap();
+        assert_eq!(*output.borrow(), *expected.borrow(), "compiled output matches the interpreter");
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|name| &program.atoms[name as usize] == function)).unwrap();
+        let views = vm.programs.lane_views(super::super::program_store::ProgramId::MAIN).unwrap();
+        let osr = views.get(id).and_then(super::super::program_store::derived_lane_view)
+            .unwrap().osr_diagnostics();
+        assert!(osr.native_region_runs > 0, "the loop ran natively: {osr:?}");
+        let lines = output.borrow().clone();
+        (lines, osr)
+    }
+
+    /// A loop storing a captured binding stores through the lane's own store, and its reads of
+    /// the binding see each store; another closure reads the value after the loop.
+    #[test]
+    fn a_capture_store_loop_keeps_its_capture_value() {
+        let (output, osr) = osr_run(
+            "function make(){ var c = 0; var peek = function(){ return c; };
+               function add(n){ var seen = 0; for (var i = 0; i < n; i++) { c = (c + i) | 0; seen = (seen + c) | 0; } return seen; }
+               return [add, peek]; }
+             var pair = make(), seen = 0;
+             for (var k = 0; k < 20; k++) seen = (seen + pair[0](5000)) | 0;
+             print(seen + ',' + pair[1]());", "add");
+        assert_eq!(output, ["1390216144,249950000"]);
+        assert_eq!(osr.exits, 0, "the capture store is no exit: {osr:?}");
+    }
+
+    /// A fused `typeof` test of an element whose type changes takes the lane's type test.
+    #[test]
+    fn a_typeof_test_loop_runs_through_the_lane_unit() {
+        let (output, _) = osr_run(
+            "var values = []; for (var j = 0; j < 6000; j++) values.push(j % 3 === 0 ? 's' : j % 3 === 1 ? j : (j & 1 ? null : {}));
+             function count(a, length){ var n = 0; for (var i = 0; i < length; i++) { if (typeof a[i] === 'number') n = (n + 1) | 0; } return n; }
+             var total = 0; for (var k = 0; k < 10; k++) total += count(values, values.length);
+             print(total);", "count");
+        assert_eq!(output, ["20000"]);
+    }
+
+    /// A global binding read in the loop is the lane's own global read: a write between runs
+    /// is the next run's value.
+    #[test]
+    fn a_global_read_loop_reads_the_current_binding() {
+        let (output, _) = osr_run(
+            "var G = 3;
+             function sum(n){ var acc = 0; for (var i = 0; i < n; i++) acc = (acc + G + i) | 0; return acc; }
+             var total = 0; for (var k = 0; k < 10; k++) { total = (total + sum(5000)) | 0; if (k === 4) G = 11; }
+             print(total);", "sum");
+        assert_eq!(output, ["125325000"]);
+    }
+
+    /// A loop allocating literals and constructions makes them in place, leaving where a
+    /// collection is due; what it keeps stays reachable across those collections.
+    #[test]
+    fn an_allocating_loop_keeps_its_objects() {
+        let (output, _) = osr_run(
+            "function Point(x, y){ this.x = x; this.y = y; }
+             function fill(n){ var keep = []; var sum = 0; for (var j = 0; j < 256; j++) keep.push(new Point(0, 0));
+               for (var i = 0; i < n; i++) { var a = [i, i + 1]; var p = new Point(i, -i); var o = {}; keep[i & 255] = p; sum = (sum + a[1] + keep[(i + 128) & 255].y) | 0; }
+               var check = 0; for (var k = 0; k < 256; k++) check = (check + keep[k].x + keep[k].y) | 0;
+               return sum + ':' + check; }
+             var out = ''; for (var r = 0; r < 4; r++) out = fill(50000);
+             print(out);", "fill");
+        assert_eq!(output, ["6441744:0"]);
     }
     /// A loop that stores a field either lowers through the lane specializer or stays in
     /// the interpreter; it never takes the private lowering.
@@ -564,7 +701,7 @@ mod tests {
         let region = super::super::osr_loop::inline_region(function, &decoded, &constants,
             &program.field_sites, live, header, backedge, &mut resolve)
             .expect("the loop inlines");
-        let (unit, _) = inlining_unit(&region).expect("the region maps onto a lane unit");
+        let (unit, _) = inlining_unit(&region, &program).expect("the region maps onto a lane unit");
         assert_eq!(unit.frames.len(), 1, "one inlined frame");
         assert!(unit.origins.iter().any(|origin|
             matches!(origin, lane_unit::Origin::Inlined { .. })), "inlined origins");

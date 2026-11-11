@@ -337,6 +337,7 @@ fn start_worker(c: &mut Context<'_>, worker: RootId, start: WorkerStart) -> Resu
         data,
         environment,
         parent: worker_side,
+        mode: c.execution_mode(),
     };
     let (thread_id, control) = thread::spawn(launch).map_err(RootedError::host)?;
     let object = c.retain(worker)?;

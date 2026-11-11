@@ -661,13 +661,11 @@ fn validate_diagnostic_ab(input: &SuiteInput, config: DiagnosticAbConfig) -> Res
             || !is_hex(&quench.executable_sha256)
             || quench.jit_proof_command.is_empty()
             || quench.inherits_environment
-            || quench.jit_mode != "enabled-by-cli-flag"
-            || quench.argv.len() != 1
-            || quench.argv[0] != "--jit"
-            || quench.jit_proof_command.len() != 2
+            || quench.jit_mode != "enabled-by-default"
+            || !quench.argv.is_empty()
+            || quench.jit_proof_command.len() != 1
             || quench.jit_proof_command[0] != quench.executable
-            || quench.jit_proof_command[1] != "--jit"
-            || !quench.jit_proof.contains("--jit")
+            || !quench.jit_proof.contains("default JIT")
         {
             return Err(format!(
                 "{} has invalid default-JIT provenance",
@@ -683,7 +681,7 @@ fn validate_diagnostic_ab(input: &SuiteInput, config: DiagnosticAbConfig) -> Res
         || off_engine.jit_proof_command != on_engine.jit_proof_command
     {
         return Err(format!(
-            "{} Quench arms must use the same executable and --jit arguments",
+            "{} Quench arms must use the same executable and default-JIT arguments",
             config.report_kind
         ));
     }
@@ -1094,12 +1092,12 @@ fn validate_engine(
                 && engine.argv.iter().any(|arg| arg == "--jitless")
                 && engine.jit_proof.contains("true")
         }
-        ("quench", crate::Suite::JetStream3, crate::JitMode::Jit) => {
-            engine.jit_mode == "enabled-by-cli-flag"
-                && engine.argv.iter().any(|arg| arg == "--jit")
-                && engine.jit_proof.contains("--jit")
+        ("quench", _, crate::JitMode::Jit) => {
+            engine.jit_mode == "enabled-by-default"
+                && engine.argv.is_empty()
+                && engine.jit_proof.contains("default JIT")
         }
-        ("bun", crate::Suite::JetStream3, crate::JitMode::Jit) => {
+        ("bun", _, crate::JitMode::Jit) => {
             engine.jit_mode == "enabled-and-probed"
                 && engine
                     .environment
@@ -1107,7 +1105,7 @@ fn validate_engine(
                     .is_some_and(|value| value == "1")
                 && engine.jit_proof.contains("useJIT=true")
         }
-        ("node", crate::Suite::JetStream3, crate::JitMode::Jit) => {
+        ("node", _, crate::JitMode::Jit) => {
             engine.jit_mode == "enabled-and-probed"
                 && !engine.argv.iter().any(|arg| arg == "--jitless")
                 && engine.jit_proof.contains("completed compiling")
@@ -1491,22 +1489,22 @@ mod tests {
         let on_environment = [(config.switch_env, config.on_value)];
         let mut direct_off = engine(
             config.off_engine,
-            "enabled-by-cli-flag",
-            &["--jit"],
+            "enabled-by-default",
+            &[],
             &off_environment,
-            "process launched with --jit and explicit A/B switch",
+            "process launched with the default JIT and explicit A/B switch",
         );
         direct_off.executable = "/quench-node".into();
         direct_off.executable_sha256 = "d".repeat(64);
         direct_off.version = "Quench JIT test".into();
-        direct_off.jit_proof_command = vec!["/quench-node".into(), "--jit".into()];
+        direct_off.jit_proof_command = vec!["/quench-node".into()];
         let mut direct_on = direct_off.clone();
         direct_on.name = config.on_engine.into();
         direct_on.environment = on_environment
             .iter()
             .map(|(key, value)| ((*key).into(), (*value).into()))
             .collect();
-        direct_on.jit_proof = "process launched with --jit and explicit A/B switch".into();
+        direct_on.jit_proof = "process launched with the default JIT and explicit A/B switch".into();
         let bun = engine(
             "bun",
             "enabled-and-probed",
@@ -1915,10 +1913,10 @@ mod tests {
         let engines = [
             engine(
                 "quench",
-                "enabled-by-cli-flag",
-                &["--jit"],
+                "enabled-by-default",
                 &[],
-                "process launched with --jit",
+                &[],
+                "process launched with the default JIT",
             ),
             engine(
                 "bun",

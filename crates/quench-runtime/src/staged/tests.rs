@@ -358,8 +358,10 @@ fn opcode_arms() -> std::collections::BTreeMap<(String, String), usize> {
 
 /// Adds `source`'s opcode names, outside an inline test module, to `arms` under `file`.
 fn count_opcode_names(source: &str, file: &str, arms: &mut std::collections::BTreeMap<(String, String), usize>) {
-    // An inline test module closes the file; its fixtures name opcodes freely.
-    let code = source.split("#[cfg(test)]\nmod tests").next().unwrap();
+    // Any inline test module (whatever its name) closes the production code; its fixtures name
+    // opcodes freely.
+    let code = source.split("\n#[cfg(test)]\nmod ").next().unwrap();
+    let code = code.split("#[cfg(test)]\nmod ").next().unwrap();
     for (at, _) in code.match_indices("Op::") {
         let op: String = code[at + 4..].chars().take_while(char::is_ascii_alphanumeric).collect();
         let qualified = code[..at].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_');
@@ -504,4 +506,23 @@ fn the_field_store_helper_is_the_host_callout_boundary() {
     let step = step(&mut stage, &mut frame,
         Operation::FieldStoreMiss { object: 0, atom: 0, site: 0, value: 1, proof: () });
     assert!(matches!(step, Step::Unresolved));
+}
+
+#[test]
+fn every_host_callout_operation_has_a_concrete_reading() {
+    // P5's criterion: each host/VM callout is a staged operation the interpreter stage either
+    // declines (leaving it to the host) or runs (the safepoint), never an unknown opcode.
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![0; 4], heap: None };
+    let declines = [
+        Operation::MakeObject { destination: 0, proof: () },
+        Operation::MakeArray { destination: 0, length: 0, elements: 0, proof: () },
+        Operation::IndexSetHelper { base: 0, key: 1, value: 2, proof: () },
+        Operation::GlobalRead { destination: 0, atom: 0, site: 0, proof: () },
+        Operation::FieldStoreMiss { object: 0, atom: 0, site: 0, value: 1, proof: () },
+    ];
+    for operation in declines {
+        assert!(matches!(step(&mut stage, &mut frame, operation), Step::Unresolved));
+    }
+    assert!(matches!(step(&mut stage, &mut frame, Operation::Safepoint { proof: () }), Step::Value(_)));
 }

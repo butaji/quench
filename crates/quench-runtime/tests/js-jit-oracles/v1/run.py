@@ -132,12 +132,12 @@ def main() -> int:
             print(f"  interpreter exit={interpreter.returncode} stdout={interpreter.stdout!r} stderr={interpreter_stderr!r}", file=sys.stderr)
             failed = True
 
-        jit = run([str(quench), "--jit", str(path)], env=quench_env, timeout=args.timeout_secs)
+        jit = run([str(quench), str(path)], env=quench_env, timeout=args.timeout_secs)
         jit_stderr = "\n".join(line for line in jit.stderr.splitlines() if not line.startswith("QUENCH_JS_JIT_"))
         if jit_stderr:
             jit_stderr += "\n"
         if (jit.returncode, jit.stdout, jit_stderr) != (oracle.returncode, oracle.stdout, oracle.stderr):
-            print(f"FAIL {fixture['id']}: --jit result differs from Node oracle", file=sys.stderr)
+            print(f"FAIL {fixture['id']}: JIT result differs from Node oracle", file=sys.stderr)
             print(f"  jit exit={jit.returncode} stdout={jit.stdout!r} stderr={jit_stderr!r}", file=sys.stderr)
             failed = True
         try:

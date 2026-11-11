@@ -111,8 +111,12 @@ pub(crate) struct LoopRegion {
     /// dense (`Vm::dense_array_length`), owns its backing alone, and no prototype of it holds
     /// an index (`Vm::prototypes_hold_no_index`).
     pub(crate) arrays: Vec<ArrayUse>,
-    /// The depth-0 capture slots `LoadCapture` reads, in entry-record order.
+    /// The depth-0 capture slots `LoadCapture` reads and the region does not store, in
+    /// entry-record order.
     pub(crate) captures: Vec<u16>,
+    /// The depth-0 capture slots the region both reads and stores: no entry snapshot holds
+    /// them, so each read takes the lane's own lookup where it runs.
+    pub(crate) stored_captures: Vec<u16>,
     /// The cached data fields the region reads, in entry-record order: a field read
     /// through another's value follows it (`intern_field`).
     pub(crate) fields: Vec<FieldUse>,
@@ -206,7 +210,7 @@ impl LoopRegion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RegionRejection {
     RegionTooLarge,
-    UnsupportedInstruction(Op),
+    UnsupportedInstruction(u16),
     RegisterLimit,
     CaptureLimit,
     ArrayLimit,
@@ -245,7 +249,7 @@ impl MethodCalls {
 
 impl RegionAnalysisFailure {
     /// The region stops only at a call, which may run inlined once the site is hot.
-    pub(crate) fn is_call_boundary(self) -> bool { self.reason == RegionRejection::UnsupportedInstruction(Op::Call) }
+    pub(crate) fn is_call_boundary(self) -> bool { self.reason == RegionRejection::UnsupportedInstruction(crate::bytecode::index::Call) }
 
     fn at(reason: RegionRejection, header: u32, offset: usize) -> Self {
         Self { reason, pc: header.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX)) }
@@ -483,11 +487,8 @@ fn tagged_registers_with_failure(
         .chain(
             instructions
                 .iter()
-                .filter(|instruction| {
-                    (instruction.op().is_unary()
-                        && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX)
-                        || number_comparison(**instruction).is_some()
-                })
+                .filter(|instruction| reads_type(**instruction) || allocates(instruction.op())
+                    || number_comparison(**instruction).is_some())
                 .map(|instruction| instruction.result_register()),
         )
         // An entry array's register; a dynamic array's (one the region defines) is tagged by
@@ -593,6 +594,7 @@ fn tagged_registers_with_failure(
             field_reads_alone_define(instructions, value).then_some(value)
         }))
         .collect();
+    let boxed = boxed(instructions);
     loop {
         let before = tagged.len();
         for (offset, instruction) in instructions.iter().copied().enumerate().rev() {
@@ -607,7 +609,8 @@ fn tagged_registers_with_failure(
                 }
                 continue;
             }
-            if !tagged.contains(&result) {
+            // A register an allocation also defines is held boxed throughout (`boxed`).
+            if !tagged.contains(&result) || boxed.contains(&result) {
                 continue;
             }
             match instruction.op().class() {
@@ -621,13 +624,14 @@ fn tagged_registers_with_failure(
                         return Err(offset);
                     }
                 }
-                // Entry captures and cached fields can carry arbitrary boxed values.
-                Class::LoadCapture | Class::GetField | Class::GetIndex | Class::MakeArray => {}
+                // Entry captures, cached fields, global bindings and fresh allocations can
+                // carry arbitrary boxed values.
+                Class::LoadCapture | Class::GetField | Class::GetIndex | Class::LoadName => {}
+                _ if allocates(instruction.op()) => {}
                 Class::Binary if number_comparison(instruction).is_some() => {}
-                // The type-name index is still a boxed Number at bytecode level. Its
-                // lowering reads only immediate tags and exits before the operation for
-                // heap values, whose language type depends on VM metadata.
-                Class::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => {
+                // A type test reads its operand's tag, and the VM's cell of a heap value
+                // (the type-name index exits for one instead).
+                Class::Unary if reads_type(instruction) => {
                     tagged.insert(instruction.register_b());
                 }
                 _ => {
@@ -1326,7 +1330,7 @@ impl LoopRegion {
             .copied()
     }
 
-    pub(super) fn entry_registers(&self) -> impl Iterator<Item = Register> + '_ {
+    pub(in crate::vm) fn entry_registers(&self) -> impl Iterator<Item = Register> + '_ {
         self.numbers.iter().chain(&self.tagged).copied()
     }
 
@@ -1380,16 +1384,13 @@ const FIELD_STORE_WORDS: usize = 1;
 /// The heap views native reads use (`LoopEntry::push_native_heap`): the object records'
 /// base, the property values' base and count, and the array records' base.
 const NATIVE_HEAP_WORDS: usize = 4;
-/// The scratch registers' address an inlining region's record ends with.
-const SCRATCH_WORDS: usize = 1;
 const ENTRY_WORDS: usize =
     ENTRY_CAPTURES
         + MAX_REGION_CAPTURES
         + ARRAY_WORDS * MAX_REGION_ARRAYS
         + MAX_REGION_FIELDS
         + FIELD_STORE_WORDS * MAX_REGION_FIELD_STORES
-        + NATIVE_HEAP_WORDS
-        + SCRATCH_WORDS;
+        + NATIVE_HEAP_WORDS;
 
 impl LoopEntry {
     pub(crate) fn new() -> Self {
@@ -1488,7 +1489,7 @@ impl LoopEntry {
     }
 
     /// The value an inlined callee's register `register` of an inlining region took when
-    /// native code left at an inlined instruction where it is live.
+    /// native code left at an inlined instruction: `undefined` where it was not live.
     ///
     /// # Safety
     /// The exit wrote the register back: it is live at the callee's PC the exit names.
@@ -1565,6 +1566,8 @@ enum Role {
 
 struct Admission<'a> {
     constants: &'a [Value],
+    /// The registers an allocation defines (`boxed`).
+    boxed: std::collections::BTreeSet<Register>,
     roles: std::collections::BTreeMap<Register, Role>,
     captures: Vec<u16>,
     pub(crate) fields: Vec<FieldUse>,
@@ -1614,7 +1617,10 @@ impl Admission<'_> {
         Some(())
     }
 
+    /// A Number a register an allocation also defines holds boxed: the lane gives each of
+    /// its values its own representation.
     fn number(&mut self, register: Register) -> Option<()> {
+        if self.boxed.contains(&register) { return self.tagged(register); }
         self.note(register, Role::Number)
     }
 
@@ -1703,7 +1709,7 @@ fn admit_region(
     method_calls: MethodCalls,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     if let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls) {
-        return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op()), header, offset));
+        return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }
     match admit_register_roles(
         instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, method_calls,
@@ -1750,7 +1756,7 @@ fn admit_lifetime_roles(
     let mut flow = LoopRegion {
         header, backedge: header + instructions.len() as u32 - 1,
         numbers: (0..registers).map(|register| register as Register).collect(),
-        tagged: Vec::new(), arrays: Vec::new(), captures: Vec::new(),
+        tagged: Vec::new(), arrays: Vec::new(), captures: Vec::new(), stored_captures: Vec::new(),
         fields: Vec::new(), field_reads: BTreeMap::new(), dynamic_field_reads: BTreeMap::new(),
         dynamic_arrays: BTreeSet::new(),
         field_stores: BTreeMap::new(), dynamic_field_stores: BTreeMap::new(), field_store_sites: Vec::new(), held: BTreeMap::new(),
@@ -1940,7 +1946,8 @@ fn admit_register_roles(
             continue;
         }
         if let Some((offset, _)) =
-            definitions.find(|(_, instruction)| !matches!(instruction.op().class(), Class::GetIndex | Class::GetField | Class::Move | Class::LoadCapture | Class::LoadEnvLocal | Class::MakeArray))
+            definitions.find(|(_, instruction)| !allocates(instruction.op()) && !matches!(instruction.op().class(),
+                Class::GetIndex | Class::GetField | Class::Move | Class::LoadCapture | Class::LoadEnvLocal | Class::LoadName))
         {
             return Err(RegionAnalysisFailure::at(RegionRejection::ArrayRedefined, header, offset));
         }
@@ -1975,7 +1982,7 @@ fn admit_register_roles(
                 }
             }
             return Err(RegionAnalysisFailure::at(
-                RegionRejection::UnsupportedInstruction(instructions[failure_offset].op()),
+                RegionRejection::UnsupportedInstruction(instructions[failure_offset].op() as u16),
                 header,
                 failure_offset,
             ));
@@ -1984,6 +1991,7 @@ fn admit_register_roles(
     tagged.extend(paths.keys().copied());
     let mut admission = Admission {
         constants,
+        boxed: boxed(&instructions),
         roles: std::collections::BTreeMap::new(),
         captures: Vec::new(),
         fields: Vec::new(),
@@ -2016,7 +2024,7 @@ fn admit_register_roles(
         if instruction.op().is_get_field() {
             let path = field_path(instruction, sites, &rooted).ok_or_else(|| {
                 RegionAnalysisFailure::at(
-                    RegionRejection::UnsupportedInstruction(Op::GetField),
+                    RegionRejection::UnsupportedInstruction(crate::bytecode::index::GetField),
                     header,
                     offset,
                 )
@@ -2044,7 +2052,7 @@ fn admit_register_roles(
         if admitted_store(instruction.op()) {
             if instruction.result_flags() != 0 || instruction.returns_from_frame() {
                 return Err(RegionAnalysisFailure::at(
-                    RegionRejection::UnsupportedInstruction(instruction.op()),
+                    RegionRejection::UnsupportedInstruction(instruction.op() as u16),
                     header,
                     offset,
                 ));
@@ -2102,7 +2110,7 @@ fn admit_register_roles(
                 .is_some_and(|definition| definition.op().is_get_field())
             {
                 return Err(RegionAnalysisFailure::at(
-                    RegionRejection::UnsupportedInstruction(instruction.op()),
+                    RegionRejection::UnsupportedInstruction(instruction.op() as u16),
                     header,
                     offset,
                 ));
@@ -2130,7 +2138,7 @@ fn admit_register_roles(
                 );
             }
             return Err(RegionAnalysisFailure::at(
-                RegionRejection::UnsupportedInstruction(instruction.op()),
+                RegionRejection::UnsupportedInstruction(instruction.op() as u16),
                 header,
                 offset,
             ));
@@ -2242,13 +2250,19 @@ fn admit_register_roles(
     if arrays.len() > MAX_REGION_ARRAYS {
         return Err(RegionAnalysisFailure { reason: RegionRejection::ArrayLimit, pc: backedge });
     }
+    let stored: std::collections::BTreeSet<u16> = instructions.iter()
+        .filter(|instruction| instruction.op().is_store_capture() && instruction.capture_depth() == 0)
+        .map(|instruction| instruction.capture_slot())
+        .collect();
+    let (stored_captures, captures) = admission.captures.into_iter().partition(|slot| stored.contains(slot));
     Ok(LoopRegion {
         header,
         backedge,
         numbers,
         tagged,
         arrays,
-        captures: admission.captures,
+        captures,
+        stored_captures,
         fields: admission.fields,
         field_reads,
         dynamic_field_reads,
@@ -2327,8 +2341,7 @@ fn admit(
             admission.number(instruction.register_b())?;
         }
         Class::Unary => {
-            if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
-                && tagged.contains(&instruction.result_register())
+            if reads_type(instruction) && tagged.contains(&instruction.result_register())
             {
                 admission.tagged(instruction.result_register())?;
                 admission.tagged(instruction.register_b())?;
@@ -2365,12 +2378,13 @@ fn admit(
                 admission.result(instruction)?;
             }
         }
-        // An array literal allocates by the lane's own (`compiled::lane_new_array`), leaving
-        // where a collection is due; it and its elements take no register role.
-        Class::MakeArray => (instruction.result_flags() == 0).then_some(())?,
-        Class::DefineArrayElement => {}
+        // A tagged value is stored as the lane's element store takes it.
         Class::SetIndex => {
-            admission.number(instruction.register_a())?;
+            if tagged.contains(&instruction.register_a()) {
+                admission.tagged(instruction.register_a())?;
+            } else {
+                admission.number(instruction.register_a())?;
+            }
             if !dynamic_arrays.contains(&instruction.register_b()) {
                 admission.array(instruction.register_b(), true)?;
             }
@@ -2389,6 +2403,33 @@ fn admit(
                 admission.tagged(receiver)?;
             }
         }
+        // The lane stores through the binding's own store, and a binding it does not take
+        // leaves; the entry snapshot holds no slot the region stores (`stored_captures`).
+        Class::StoreCapture => {
+            let value = instruction.register_a();
+            if tagged.contains(&value) || !defined_registers.contains(&value) {
+                admission.tagged(value)?;
+            } else {
+                admission.number(value)?;
+            }
+        }
+        // A global binding's read (`Vm::lane_global_reads`), a Number where arithmetic reads it.
+        Class::LoadName => {
+            (instruction.result_flags() == 0).then_some(())?;
+            if tagged.contains(&instruction.result_register()) {
+                admission.tagged(instruction.result_register())?;
+            } else {
+                admission.result(instruction)?;
+            }
+        }
+        // A literal or construction allocates without collecting, a due collection leaving
+        // first; its arguments and elements pass boxed.
+        _ if allocates(instruction.op()) => {
+            (instruction.result_flags() == 0).then_some(())?;
+            admission.tagged(instruction.result_register())?;
+        }
+        // Its literal's allocation writes it (`Lowering::literal_elements`).
+        Class::DefineArrayElement => {}
         Class::LoadEnvLocal => {
             if instruction.result_flags() != 0
                 || instruction.returns_from_frame()
@@ -2467,12 +2508,16 @@ fn admit(
     Some(())
 }
 
-/// The values a compilation starts from: what the region's registers and captures held when
-/// it compiled, and what earlier compilations found was no `i32` (`Widening`).
 /// The observations a compilation starts from: the holderless own-data field reads
 /// the native OSR reader may load directly, by region field index.
 pub(crate) struct Observation<'a> {
     pub(crate) native_field_loads: &'a [Vec<NativeFieldLoad>],
+    /// The registers holding arrays whose sampled elements were all Numbers at entry: reads
+    /// through them are typed Numbers, leaving where one is not.
+    pub(crate) number_arrays: &'a [Register],
+    /// The registers holding int32s at entry, whose loop may keep them as int32s where every
+    /// definition in it yields one (`RegionSpecializer::int_entries`).
+    pub(crate) int_entries: &'a [Register],
     /// The registers of the region that held an int32 where the compile began.
     pub(crate) int_registers: &'a [Register],
     /// The registers that held a Number that is no int32.
@@ -2549,7 +2594,7 @@ pub(super) fn number_reads(instruction: WideInstruction) -> Vec<Register> {
     let register = |operand: Operand| operand.register_index();
     match instruction.op().class() {
         _ if exits_before_effects(instruction) => Vec::new(),
-        Class::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => Vec::new(),
+        Class::Unary if reads_type(instruction) => Vec::new(),
         Class::Move | Class::IncDec | Class::Unary | Class::ToNumeric => vec![instruction.register_b()],
         Class::Binary | Class::NumericAdd | Class::NumericMultiply | Class::JumpBinaryFalse => [
             register(instruction.operand_b()),
@@ -2574,14 +2619,14 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
         && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand|
             operand.kind() == Some(OperandKind::Constant) && region.constants.contains_key(&usize::from(operand.payload())));
-    let expected = if matches!(instruction.op(), Op::Move | Op::JumpFalse | Op::JumpTrue)
+    let expected = if matches!(instruction.op().class(), Class::Move | Class::JumpFalse | Class::JumpTrue)
         || region.identity_branches.contains_key(&pc) || strict_number_test {
         Type::ANY
     } else {
         Type::NUMBER
     };
     let mut reads: Vec<_> = number_reads(instruction).into_iter().map(|register| (register, expected)).collect();
-    if instruction.op().is_unary() && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX {
+    if reads_type(instruction) {
         reads.push((instruction.register_b(), Type::ANY));
     }
     if let Some(register) = object_reads(instruction) {
@@ -2604,31 +2649,54 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
 
 /// The value register an instruction defines, numeric or tagged.
 fn number_definition(instruction: WideInstruction) -> Option<Register> {
-    matches!(instruction.op().class(), Class::LoadConst | Class::Move | Class::LoadCapture | Class::Binary
-        | Class::NumericAdd | Class::NumericMultiply | Class::IncDec | Class::Unary | Class::ToNumeric
-        | Class::GetIndex | Class::GetField | Class::LoadEnvLocal | Class::MakeArray)
+    (allocates(instruction.op()) || matches!(instruction.op().class(), Class::LoadConst | Class::Move
+        | Class::LoadCapture | Class::Binary | Class::NumericAdd | Class::NumericMultiply | Class::IncDec
+        | Class::Unary | Class::ToNumeric | Class::GetIndex | Class::GetField | Class::LoadEnvLocal | Class::LoadName))
     .then(|| instruction.result_register())
 }
 
-/// The instructions this tier lowers to native code (`admit`): a conditional jump only on a
-/// relation or a bitwise and, so one on `in` or `instanceof` is an exit.
+/// The instructions this tier lowers to native code (`admit`): those of the lane specializer's
+/// (`lane_region::Lowering::instruction`) that a loop's entry facts support.
 /// Every other one leaves at its exact PC before its effects and the interpreter runs its own
 /// definition, so the tier covers every opcode; analysis and emission keep that boundary.
 fn lowered_natively(instruction: WideInstruction) -> bool {
     let op = instruction.op();
-    admitted_store(op) || match op.class() {
+    admitted_store(op) || allocates(op) || match op.class() {
+        // A conditional jump only on a relation or a bitwise and, so one on `in` or
+        // `instanceof` is an exit.
         Class::JumpBinaryFalse => super::super::operations::NumberRelation::from_operator(instruction.binary_operator_field())
             .is_some() || bitwise_condition(instruction).is_some(),
         class => matches!(class,
-            Class::LoadConst | Class::Move | Class::LoadCapture | Class::Binary | Class::NumericAdd
+            Class::LoadConst | Class::Move | Class::LoadCapture | Class::StoreCapture | Class::LoadName
+            | Class::Binary | Class::NumericAdd
             | Class::NumericMultiply | Class::ToNumeric | Class::IncDec | Class::Unary
             | Class::RequireObjectCoercible | Class::GetIndex | Class::GetField | Class::SetIndex
-            | Class::LoadEnvLocal | Class::Return | Class::Jump | Class::JumpFalse | Class::JumpTrue
-            | Class::MakeArray | Class::DefineArrayElement),
+            | Class::DefineArrayElement
+            | Class::LoadEnvLocal | Class::Return | Class::Jump | Class::JumpFalse | Class::JumpTrue),
     }
 }
 
+/// An allocation the lane makes in place, running no guest code: a literal (`lane_new_object`,
+/// `lane_new_object_pair`, `lane_new_array`) or a construction by its callee's plan
+/// (`lane_construct`). A due collection leaves before it, so native code never collects.
+fn allocates(op: Op) -> bool {
+    matches!(op.class(), Class::MakeObject | Class::MakeObject2 | Class::MakeArray | Class::Construct)
+}
+
+/// The registers an allocation of `instructions` defines, which also hold the Numbers a
+/// register reuse writes to them.
+fn boxed(instructions: &[WideInstruction]) -> std::collections::BTreeSet<Register> {
+    instructions.iter().filter(|instruction| allocates(instruction.op())).map(|instruction| instruction.result_register()).collect()
+}
+
+/// A `typeof` of its operand: the type-name index or a fused test (`bytecode::typeof_test`).
+fn reads_type(instruction: WideInstruction) -> bool {
+    instruction.op().is_unary() && (instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
+        || crate::bytecode::typeof_test(instruction.unary_operator()).is_some())
+}
+
 fn exits_before_effects(instruction: WideInstruction) -> bool { !lowered_natively(instruction) }
+
 /// The register a native run defines at an instruction: an exit's definition is the VM's.
 fn native_definition(at: WideInstruction) -> Option<Register> { at.defined_register().filter(|_| lowered_natively(at)) }
 

@@ -144,7 +144,7 @@ macro_rules! number_arithmetic {
             /// specialized bytecodes are accepted only for their corresponding
             /// operator, as recorded in this table.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                if instruction == Op::Binary {
+                if instruction.is_binary() {
                     return Self::from_operator(operator);
                 }
                 $(number_arithmetic!(
@@ -172,7 +172,7 @@ macro_rules! number_arithmetic {
         None
     ) => {};
     (@specialized_instruction $instruction:ident, $operator:ident, $operation:expr, $operator_name:ident, $specialized_instruction:ident) => {
-        if $instruction == Op::$specialized_instruction
+        if $instruction.class().eq(crate::bytecode::Class::$specialized_instruction)
             && $operator == BinaryOperator::$operator_name as u32
         {
             return Some($operation);
@@ -246,7 +246,7 @@ macro_rules! number_unary {
             /// The side-effect-free Number unary operation denoted by JavaScript bytecode.
             /// Other unary operators still require their normal coercion and effect paths.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                (instruction == Op::Unary)
+                (instruction.is_unary())
                     .then(|| Self::from_operator(operator))
                     .flatten()
             }
@@ -335,7 +335,7 @@ macro_rules! number_bitwise {
             /// for the general `Binary` instruction; entry guards are checked
             /// separately by the caller.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                (instruction == Op::Binary)
+                (instruction.is_binary())
                     .then(|| Self::from_operator(operator))
                     .flatten()
             }
@@ -2449,11 +2449,7 @@ impl<H: Host> Vm<H> {
             let length_number = self.to_number(p, self.heap.root_value(length_value).unwrap());
             self.heap.release_root(length_value);
             let length_number = length_number?;
-            let length = if length_number.is_nan() || length_number <= 0.0 {
-                0
-            } else {
-                length_number.floor().min(MAX_SAFE_INTEGER) as usize
-            };
+            let length = crate::units::to_length(length_number);
             elements
                 .try_reserve(length)
                 .map_err(|_| self.type_error(p, "array-like list is too large".into()))?;

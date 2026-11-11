@@ -341,10 +341,9 @@ const CPU_FIELDS: [&str; 2] = ["user", "system"];
 
 /// Whether a previous CPU reading's field can be subtracted: a number in `[0, 2^53 - 1]`.
 fn previous_value_is_valid(c: &Context<'_>, value: RootId) -> bool {
-    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
     c.rooted_value(value)
         .and_then(|value| value.as_number())
-        .is_some_and(|number| (0.0..=MAX_SAFE_INTEGER).contains(&number))
+        .is_some_and(|number| (0.0..=quench_runtime::units::MAX_SAFE_INTEGER).contains(&number))
 }
 
 /// `cpuUsage(prevValue)` over `who`'s reading: the reading, less `prevValue` when given.

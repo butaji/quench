@@ -10,8 +10,8 @@ impl Drop for Fixture {
 }
 fn run(binary: &str, jit: bool, fixture: &Fixture) -> Output {
     let mut command = Command::new(binary);
-    if jit {
-        command.arg("--jit");
+    if !jit && binary != "node" {
+        command.arg("--no-jit");
     }
     command
         .arg(&fixture.0)

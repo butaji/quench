@@ -48,6 +48,7 @@ verify-replay = []
 tier-stress = []
 
 [dependencies]
+quench-alloc = { path = "../quench-alloc" }
 object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"], optional = true }
 serde_json = { version = "1", optional = true }
 quench-macros = { path = "../quench-macros" }
@@ -112,7 +113,6 @@ syn = { version = "2", features = ["full", "visit-mut"] }
 phf = { version = "0.14", features = ["macros"] }
 
 [dev-dependencies]
-quench-alloc = { path = "../quench-alloc" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

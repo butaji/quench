@@ -24,7 +24,7 @@ const DEFAULT_TARGETS: &str = "quench/express,quench/fastify,quench/hono,node/ex
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// The execution tier a board compares: every runtime without its JIT (the default, which
-/// existing evidence was measured in), or every runtime with it as shipped and Quench `--jit`.
+/// existing evidence was measured in), or every runtime with it as shipped and Quench in its default JIT mode.
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     NoJit,
@@ -49,7 +49,7 @@ impl Mode {
     fn server_args(self, runtime: &str) -> &'static [&'static str] {
         match (self, runtime) {
             (Self::NoJit, "node") => &["--jitless"],
-            (Self::Jit, "quench") => &["--jit"],
+            (Self::NoJit, "quench") => &["--no-jit"],
             _ => &[],
         }
     }
