@@ -35,6 +35,7 @@ fn tag(hash: u32) -> u8 {
 }
 
 /// The buckets of `bits`, set at the high bit of a group word's tags, from the group's start.
+#[inline(always)]
 fn buckets_of(bits: u64) -> impl Iterator<Item = usize> {
     let mut remaining = bits;
     std::iter::from_fn(move || {
@@ -56,6 +57,7 @@ impl KeyIndex {
     }
 
     /// The groups' starts in probe order for `hash`, from the group holding its bucket.
+    #[inline(always)]
     fn probe(&self, hash: u32) -> impl Iterator<Item = (usize, u64)> + '_ {
         let mask = self.tags.len() - 1;
         let first = hash as usize & mask & !(GROUP - 1);
@@ -92,9 +94,17 @@ impl KeyIndex {
             // a byte past a true match, which the slot's key then rejects.
             let differing = group ^ repeated;
             let agreeing = differing.wrapping_sub(LOW_BITS) & !differing & HIGH_BITS;
-            let found = buckets_of(agreeing).map(|bucket| self.slots[start + bucket] as usize).find(|&slot| matches(slot));
-            if found.is_some() || group & HIGH_BITS != 0 {
-                return found;
+            let mut remaining = agreeing;
+            while remaining != 0 {
+                let bucket = (remaining.trailing_zeros() / u8::BITS) as usize;
+                remaining &= remaining - 1;
+                let slot = self.slots[start + bucket] as usize;
+                if matches(slot) {
+                    return Some(slot);
+                }
+            }
+            if group & HIGH_BITS != 0 {
+                return None;
             }
         }
         unreachable!("an index keeps empty buckets")
