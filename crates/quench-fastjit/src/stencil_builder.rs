@@ -1,7 +1,8 @@
 //! The FastJIT back-end of [`RowBuilder`]: operands are holes, successors are relocated
 //! `return_call`s, and every dynamic value lives in the frame or a pinned register.
 use super::row::{Effects, MemKind, Op, Operand, Region, RowBuilder, Source, Ty};
-use super::{HOLE_VALUE, NEXT, TAKEN, EXIT, Mode, Sentinels, successor};
+use super::{HOLE_VALUE, NEXT, TAKEN, EXIT, Mode, successor};
+use super::patch;
 use cranelift_codegen::ir::{self, ExternalName, GlobalValueData, InstBuilder, MemFlagsData, UserExternalName, condcodes::IntCC, types};
 use cranelift_frontend::FunctionBuilder;
 
@@ -24,7 +25,7 @@ pub struct StencilBuilder<'a, 'f> {
     pub(crate) exits: Vec<Option<ir::FuncRef>>,
     pub(crate) mode: Mode,
     /// The 32-bit holes the row asked for (each must be found in its code).
-    pub(crate) used: [bool; 3],
+    pub(crate) used: u8,
     pub(crate) pending: Vec<(ir::Block, ir::FuncRef, Vec<ir::Value>)>,
 }
 
@@ -48,8 +49,8 @@ impl StencilBuilder<'_, '_> {
         match operand {
             Operand::Const(value) => self.b.ins().iconst(types::I64, value),
             Operand::Hole(index) if !wide && self.mode != Mode::Wide => {
-                let sentinel = Sentinels::of(self.mode, index);
-                self.used[index as usize] = true;
+                let sentinel = patch::sentinel(self.mode, index);
+                self.used |= 1 << index;
                 self.b.ins().iconst(types::I64, i64::from(sentinel))
             }
             Operand::Hole(index) => {

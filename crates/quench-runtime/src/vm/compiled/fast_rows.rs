@@ -56,14 +56,14 @@ fn capture(b: &mut StencilBuilder, payload: ir::Value, slot: u16, miss: ir::Bloc
 
 fn element(b: &mut StencilBuilder, payload: ir::Value, row: HeapRow, miss: ir::Block) -> ir::Value {
     let base = b.read(Source::Frame(Operand::Hole(1)), Ty::Word);
-    let index = numeric::index_of(b, row.b, 2);
+    let index = numeric::index_of(b, row.b, numeric::SECOND);
     let view = emit_dense_array_view(b.b, payload, base, false, miss);
     emit_dense_element(b.b, view, index, miss).1
 }
 
 fn store(b: &mut StencilBuilder, payload: ir::Value, row: HeapRow, miss: ir::Block) {
     let base = b.read(Source::Frame(Operand::Hole(0)), Ty::Word);
-    let index = numeric::index_of(b, row.b, 2);
+    let index = numeric::index_of(b, row.b, numeric::SECOND);
     let value = numeric::number_word(b, row.a, 1);
     let view = emit_dense_array_view(b.b, payload, base, true, miss);
     let (address, old) = emit_dense_element(b.b, view, index, miss);
