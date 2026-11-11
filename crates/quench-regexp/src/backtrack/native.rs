@@ -85,16 +85,27 @@ pub struct NativeCode {
     pub keep: Box<dyn std::any::Any>,
 }
 
-/// The embedder's compiler, and the searches a program runs before asking it for code.
-#[derive(Clone, Copy)]
-pub struct NativeCompiler {
-    pub runs: u32,
-    /// Starts compiling a plan, which the search polls for its code while the interpreter runs.
-    pub start: fn(NativePlan) -> NativeBuild,
+/// What the embedder's compiler answers a program's request for code.
+pub enum NativeOutcome {
+    Code(NativeCode),
+    /// The searches so far do not repay the compile; ask again after as many more.
+    Later,
+    /// The program has no native code.
+    Never,
 }
 
-/// A compile in progress: polled for the code, or `Ready(None)` where it has none.
-pub type NativeBuild = Box<dyn FnMut() -> Poll<Option<NativeCode>>>;
+/// The embedder's compiler, which decides from the searches a program has run (the first
+/// request comes after `first_request`, each next after twice the searches before it).
+#[derive(Clone, Copy)]
+pub struct NativeCompiler {
+    pub first_request: u32,
+    /// Starts compiling a plan for a program that has run `searches` searches, which the
+    /// program polls for the outcome while the interpreter runs.
+    pub start: fn(NativePlan, u32) -> NativeBuild,
+}
+
+/// A compile in progress, polled for what the embedder's compiler answers.
+pub type NativeBuild = Box<dyn FnMut() -> Poll<NativeOutcome>>;
 
 /// A building program asks its compile again on every this-many searches.
 const POLL_EVERY: u32 = 64;
@@ -121,6 +132,8 @@ pub fn set_native_compiler(compiler: NativeCompiler) {
 #[derive(Default)]
 pub(super) struct NativeSlot {
     runs: Cell<u32>,
+    /// The search count of the next request for code.
+    next_request: Cell<u32>,
     code: OnceCell<Option<NativeCode>>,
     building: RefCell<Option<NativeBuild>>,
 }
@@ -128,6 +141,8 @@ pub(super) struct NativeSlot {
 /// The frames a native search starts with room for, and the most a search may grow it to.
 const INITIAL_STACK_FRAMES: usize = 1024;
 const MAXIMUM_STACK_FRAMES: usize = 1 << 20;
+/// Each request for code waits for this many times the searches of the one before.
+const REQUEST_GROWTH: u32 = 2;
 /// A full stack grows by this factor.
 const STACK_GROWTH: usize = 4;
 /// The next start of a search lies a unit past the one that failed.
@@ -208,7 +223,10 @@ impl Program {
         let compiler = COMPILER.get().filter(|_| ENABLED.get())?;
         let runs = self.native.runs.get().saturating_add(1);
         self.native.runs.set(runs);
-        if runs < compiler.runs {
+        if self.native.next_request.get() == 0 {
+            self.native.next_request.set(compiler.first_request);
+        }
+        if runs < self.native.next_request.get() {
             return None;
         }
         let mut building = self.native.building.borrow_mut();
@@ -216,15 +234,22 @@ impl Program {
             let Some(plan) = self.native_plan() else {
                 return self.native.code.get_or_init(|| None).as_ref();
             };
-            *building = Some((compiler.start)(plan));
+            *building = Some((compiler.start)(plan, runs));
         } else if runs % POLL_EVERY != 0 {
             return None;
         }
-        let Some(Poll::Ready(code)) = building.as_mut().map(|build| build()) else {
+        let Some(Poll::Ready(outcome)) = building.as_mut().map(|build| build()) else {
             return None;
         };
         *building = None;
-        self.native.code.get_or_init(|| code).as_ref()
+        match outcome {
+            NativeOutcome::Code(code) => self.native.code.get_or_init(|| Some(code)).as_ref(),
+            NativeOutcome::Never => self.native.code.get_or_init(|| None).as_ref(),
+            NativeOutcome::Later => {
+                self.native.next_request.set(runs.saturating_mul(REQUEST_GROWTH));
+                None
+            }
+        }
     }
 
     /// `run`'s search of an ASCII subject from the search start `start` in native code: the

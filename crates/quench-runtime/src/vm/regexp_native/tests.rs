@@ -3,7 +3,7 @@ use crate::Engine;
 use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
-/// A pattern run until its program has native code (`REGEXP_NATIVE_RUNS` searches) gives
+/// A pattern run until its program has native code (`FIRST_REQUEST` searches) gives
 /// every subject the same `exec` result as its first, interpreted search did: greedy and
 /// lazy repeats that give units back, optional groups, alternation, captures and loops.
 #[test]

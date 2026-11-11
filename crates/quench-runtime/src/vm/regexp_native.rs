@@ -7,7 +7,7 @@ use std::task::Poll;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeGuard, NativeInst, NativePlan, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
+use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeGuard, NativeInst, NativeOutcome, NativePlan, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
 
 mod assertions;
 mod repeats;
@@ -41,33 +41,53 @@ pub(super) fn enable(enabled: bool) {
 
 /// The compiler `quench_regexp` asks for code.
 pub(super) fn compiler() -> NativeCompiler {
-    NativeCompiler { runs: super::compiled::tier_policy::REGEXP_NATIVE_RUNS, start }
+    NativeCompiler { first_request: if super::compiled::tier_policy::STRESS { 1 } else { FIRST_REQUEST }, start }
 }
 
-/// Compiles `plan` on the code generator's thread; the program polls for the code and keeps
-/// the interpreter meanwhile.
-fn start(plan: NativePlan) -> NativeBuild {
-    let pending = run_in_background(move || compile(&plan));
+/// The searches of a program before it first asks whether its native code repays.
+const FIRST_REQUEST: u32 = 64;
+
+/// What the codegen thread made of a plan: machine code, or the answer that none is wanted yet
+/// or at all.
+enum Built {
+    Code(Vec<u8>),
+    Later,
+    Never,
+}
+
+/// Compiles `plan` on the code generator's thread once `searches` repay it; the program polls
+/// for the outcome and keeps the interpreter meanwhile.
+fn start(plan: NativePlan, searches: u32) -> NativeBuild {
+    let pending = run_in_background(move || compile(&plan, searches));
     Box::new(move || match pending.poll() {
         Poll::Pending => Poll::Pending,
-        Poll::Ready(bytes) => Poll::Ready(bytes.flatten().and_then(|bytes| publish(&bytes))),
+        Poll::Ready(built) => Poll::Ready(match built {
+            Some(Built::Code(bytes)) => publish(&bytes).map_or(NativeOutcome::Never, NativeOutcome::Code),
+            Some(Built::Later) => NativeOutcome::Later,
+            Some(Built::Never) | None => NativeOutcome::Never,
+        }),
     })
 }
 
-/// The machine code of `plan`.
-fn compile(plan: &NativePlan) -> Option<Vec<u8>> {
-    let isa = target_isa()?;
-    if isa.pointer_type() != types::I64 {
-        return None;
-    }
+/// The compile of `plan` once `searches` repay it (`repays_compile`).
+fn compile(plan: &NativePlan, searches: u32) -> Built {
+    let Some(isa) = target_isa().filter(|isa| isa.pointer_type() == types::I64) else {
+        return Built::Never;
+    };
     let function = emit(plan, &*isa);
+    let ir = function.dfg.num_insts();
+    // A search runs at least each instruction of the program once, interpreted.
+    let work = u64::from(searches) * plan.insts.len() as u64;
+    if !super::compiled::lane_facts::repays_compile(work, ir) {
+        return Built::Later;
+    }
     compile_function(function, &*isa, Some(MAX_CODE_BYTES), |compiled, _| {
         if !compiled.buffer.relocs().is_empty() {
             return Err(NativeCompileRejection::Relocations);
         }
         Ok(compiled.code_buffer().to_vec())
     })
-    .ok()
+    .map_or(Built::Never, Built::Code)
 }
 
 /// `code` in executable memory, as a native search.
