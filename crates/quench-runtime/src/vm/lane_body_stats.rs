@@ -132,6 +132,7 @@ miss_reasons! {
     ConstructCollectionDue => "construct:collection-due",
     ConstructReturning => "construct:returning",
     ConstructNoTarget => "construct:no-target",
+    ConstructForwarding => "construct:forwarding-no-plan",
     ConstructNotConstructor => "construct:not-constructor",
     ConstructEntryNotActivation => "construct:entry-not-activation",
     ConstructNoActivationRoom => "construct:no-activation-room",
