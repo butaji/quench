@@ -1,7 +1,8 @@
 //! Admission of callees for frameless calls: a callee's function is admitted once per
 //! collection epoch, and each closure of it takes the function's admission with its own
 //! captures.
-use super::{CallEntry, CACHE_ENTRIES, MATERIALIZATION_LIMIT, META_PARAMS, META_REGISTERS, THIS_NONE, THIS_RECEIVER};
+use super::{CallEntry, META_PARAMS, META_REGISTERS, THIS_NONE, THIS_RECEIVER};
+use super::super::tier_policy::TIERS;
 use super::super::{Host, JsStepDispatch, ResidualProgram, Vm};
 use crate::Value;
 
@@ -26,7 +27,7 @@ fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDi
         None => admit_function(vm, program, dispatch, callee)?,
     };
     let entry = CallEntry { callee: callee.to_bits(), ..entry };
-    let slot = (callee.to_bits() as usize) & (CACHE_ENTRIES - 1);
+    let slot = (callee.to_bits() as usize) & (TIERS.lane_body.frameless_callee_slots - 1);
     vm.frameless.cache[slot] = entry;
     Some(&vm.frameless.cache[slot])
 }
@@ -64,7 +65,7 @@ fn admit_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: 
     if !plan.in_loop || !plan.registers_only || body.rest { return None; }
     let epoch = vm.heap.collection_epoch();
     if vm.frameless.materializations.get(&(owner.raw(), function))
-        .is_some_and(|&(leaves, counted)| leaves >= MATERIALIZATION_LIMIT && counted == epoch) {
+        .is_some_and(|&(leaves, counted)| leaves >= TIERS.lane_body.materialization_limit && counted == epoch) {
         return None;
     }
     let code = native_entry(vm, owner, function)?;

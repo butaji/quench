@@ -7,7 +7,8 @@
 //! (`materialize_chain`) and stops every native caller, and the general loop continues in
 //! the innermost frame exactly where it left. A function whose activations keep leaving
 //! within one collection cycle takes the framed call again until the next
-//! (`MATERIALIZATION_LIMIT`), so warm-up exits do not disable it for good.
+//! (`materialization_limit`), so warm-up exits do not disable it for good.
+use super::tier_policy::TIERS;
 use super::{
     emit_js_payload_word, emit_lane_helper_call, native_entry_signature, Host, JsExactFallback, JsNativeStep,
     JsStepDispatch, ResidualProgram, Vm, CONTEXT_STACK_LIMIT, JS_GENERAL_RETURN_STATUS_BASE,
@@ -24,13 +25,9 @@ pub(super) use admission::general_frameless_admit;
 /// Values of the windows of all frameless activations one native entry may hold.
 const WINDOW_VALUES: usize = 1 << 16;
 const SHADOW_RECORDS: usize = 1 << 12;
-const CACHE_ENTRIES: usize = 256;
 /// Native stack a frameless call leaves above the entry's limit for the exact steps and
 /// recovery that may follow inside it.
 const STACK_MARGIN: i64 = 128 * 1024;
-/// Recoveries of one function's frameless activations in one collection epoch after which
-/// its calls keep frames for the rest of the epoch.
-const MATERIALIZATION_LIMIT: u32 = 16;
 /// `CallEntry::meta`'s fields above its function: the register count, then the parameter count.
 const META_REGISTERS: u32 = u32::BITS;
 const META_PARAMS: u32 = META_REGISTERS + u16::BITS;
@@ -81,7 +78,7 @@ pub(crate) struct Frameless {
     /// environment: a fresh closure of it shares all but its callee and captures (`admit`).
     functions: Vec<(u32, Value, CallEntry)>,
     /// The leaves of each function's frameless activations in the epoch they count in
-    /// (`MATERIALIZATION_LIMIT`).
+    /// (`materialization_limit`).
     materializations: rustc_hash::FxHashMap<(u32, u32), (u32, u64)>,
 }
 
@@ -91,7 +88,7 @@ impl Default for Frameless {
         Self {
             windows: vec![Value::UNDEFINED; WINDOW_VALUES].into_boxed_slice(),
             shadow: vec![empty; SHADOW_RECORDS].into_boxed_slice(),
-            cache: vec![CallEntry::default(); CACHE_ENTRIES].into_boxed_slice(),
+            cache: vec![CallEntry::default(); TIERS.lane_body.frameless_callee_slots].into_boxed_slice(),
             functions: Vec::new(),
             materializations: rustc_hash::FxHashMap::default(),
         }
@@ -247,7 +244,7 @@ pub(super) fn emit_admitted_captures(builder: &mut FunctionBuilder<'_>, payload:
 /// miss; `framed` where it declines.
 fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir::Value, framed: ir::Block) -> ir::Value {
     let cache = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, call_cache));
-    let slot = builder.ins().band_imm_u(callee, (CACHE_ENTRIES - 1) as i64);
+    let slot = builder.ins().band_imm_u(callee, (TIERS.lane_body.frameless_callee_slots - 1) as i64);
     let offset = builder.ins().imul_imm_u(slot, size_of::<CallEntry>() as i64);
     let cached = builder.ins().iadd(cache, offset);
     let named = builder.ins().load(types::I64, MemFlagsData::trusted(), cached, std::mem::offset_of!(CallEntry, callee) as i32);
@@ -379,7 +376,7 @@ fn emit_enter(builder: &mut FunctionBuilder<'_>, (payload, context, result): (ir
 
 /// The chain of the payload's frameless activations, outermost first, followed by `inlined`:
 /// each continues at its callee's call, the innermost at `pc`. Counts the leave against the
-/// innermost frameless function (`MATERIALIZATION_LIMIT`).
+/// innermost frameless function (`materialization_limit`).
 pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDispatch, pc: u32,
     inlined: impl Iterator<Item = ChainFrame>) -> Vec<ChainFrame> {
     let live = vm.frameless.live(dispatch);
@@ -398,7 +395,7 @@ pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
         let (leaves, counted) = vm.frameless.materializations.entry((dispatch.program_id.raw(), last.function)).or_default();
         if *counted != epoch { (*leaves, *counted) = (0, epoch); }
         *leaves += 1;
-        if *leaves == MATERIALIZATION_LIMIT {
+        if *leaves == TIERS.lane_body.materialization_limit {
             // Calls of it keep frames for this epoch: no cached admission names it.
             vm.frameless.clear();
         }

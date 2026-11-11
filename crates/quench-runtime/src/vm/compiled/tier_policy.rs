@@ -130,6 +130,28 @@ pub(in crate::vm) struct LaneBody {
     pub(in crate::vm) saved_share: (u64, u64),
     /// How many times the compile's cost the saved work must reach before the body compiles.
     pub(in crate::vm) benefit_over_cost: u64,
+    /// The entries, with `recurrent_ticks`, past which a function specializes by its recurrence
+    /// alone: entered at least this many times, read at every multiple of it
+    /// (`LaneController::recurrent`).
+    pub(in crate::vm) recurrent_entries: u32,
+    /// The program's warming clock ticks since a function's first entry that its recurrence
+    /// must span (`LaneController::recurrent`).
+    pub(in crate::vm) recurrent_ticks: u32,
+    /// The doublings of the warm-up a function's dropped bodies may cause.
+    pub(in crate::vm) max_backoff: u8,
+    /// Recoveries of one function's frameless activations in one collection epoch after which
+    /// its calls keep frames for the rest of the epoch, so warm-up exits do not disable it for
+    /// good.
+    pub(in crate::vm) materialization_limit: u32,
+    /// The slots of the frameless callee table, indexed by the callee's bits: a power of two.
+    pub(in crate::vm) frameless_callee_slots: usize,
+    /// The lane records a loop-free body runs below which a frameless activation is cheaper than
+    /// the JavaScript tier's native entry of it. A direct native entry (`lane_tier_prologue`,
+    /// `direct_call`, the shared entry) costs about 380 machine instructions past the
+    /// activation, and a lane record about 20 (callgrind, typescript-lib under `--jit`,
+    /// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
+    /// `isLineBreak`), so a body shorter than this cannot recoup its entries.
+    pub(in crate::vm) native_entry_records: usize,
 }
 
 /// The per-function JavaScript tiers: the numeric optimizing tier and the general
@@ -239,6 +261,12 @@ const MEASURED: Tiers = Tiers {
         compile_cost_per_ir: 5,
         saved_share: (1, 2),
         benefit_over_cost: 1,
+        recurrent_entries: 16,
+        recurrent_ticks: 256,
+        max_backoff: 7,
+        materialization_limit: 16,
+        frameless_callee_slots: 256,
+        native_entry_records: 20,
     },
     js_function: JsFunction {
         promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)],
@@ -349,8 +377,8 @@ mod tests {
     fn the_tier_table_is_consistent() {
         let lane = &TIERS.lane_body;
         assert!(lane.warmup_entries > 0);
-        // The warm-up doubles per dropped body, at most seven times, and must not overflow.
-        assert!(u32::from(lane.warmup_entries) << 7 <= u32::from(u16::MAX));
+        // The warm-up doubles per dropped body, at most `max_backoff` times, and must not overflow.
+        assert!(u32::from(lane.warmup_entries) << lane.max_backoff <= u32::from(u16::MAX));
         // The reoptimization threshold doubles per recompile and must not overflow its counter.
         assert!(u32::from(lane.reoptimize_exits) << SPECULATIVE_BODIES <= u32::from(u16::MAX));
         let looks = TIERS.js_function.promotion_looks;

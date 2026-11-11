@@ -49,14 +49,8 @@ impl Drop for LaneCode {
     }
 }
 
-/// The entries and the program's warming clock past which a function specializes by its
-/// recurrence alone (`LaneController::recurrent`).
-const RECURRENT_ENTRIES: u32 = 16;
-const RECURRENT_TICKS: u32 = 256;
 /// Percent: the share a body's leaves may reach.
 const PERCENT: u64 = 100;
-/// Doublings of the warm-up a function's dropped bodies may cause.
-const MAX_BACKOFF: u8 = 7;
 /// Why a function whose body never completes a run is run by the lane.
 const NEVER_COMPLETES: &str = "lane-body-never-completes";
 
@@ -71,14 +65,15 @@ fn warm_ticks() -> u32 {
 fn warm_clock() -> u32 { warm_ticks().wrapping_sub(1) }
 
 impl LaneController {
-    /// Whether a function entered rarely has still been entered at least `RECURRENT_ENTRIES` times
-    /// over `RECURRENT_TICKS` warming entries of the program (`since` the first): an entry that
+    /// Whether a function entered rarely has still been entered at least `recurrent_entries` times
+    /// over `recurrent_ticks` warming entries of the program (`since` the first): an entry that
     /// runs long (a driver whose callees are hot) costs more than the many cheap entries the
     /// warm-up counts, and its callees' bodies run from the lane until it specializes and
-    /// inlines them. Read every `RECURRENT_ENTRIES`th entry.
-    fn recurrent(entries: u32, since: u32, past: &Past<LaneFeedback>) -> bool {
-        entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && past.refused == 0
-            && warm_clock().wrapping_sub(since) >= RECURRENT_TICKS
+    /// inlines them. Read every `recurrent_entries`th entry.
+    fn recurrent(policy: &Tiers, entries: u32, since: u32, past: &Past<LaneFeedback>) -> bool {
+        let lane = &policy.lane_body;
+        entries >= lane.recurrent_entries && entries % lane.recurrent_entries == 0 && past.refused == 0
+            && warm_clock().wrapping_sub(since) >= lane.recurrent_ticks
     }
 
     /// Whether `entries` is a count at which its function weighs a compile: the warm-up, then
@@ -115,12 +110,12 @@ impl Controller for LaneController {
 
     /// The entries before the next body specializes: the warm-up, doubled per dropped body.
     fn warmup(policy: &Tiers, past: &Past<LaneFeedback>) -> u32 {
-        u32::from(policy.lane_body.warmup_entries) << past.refused.min(MAX_BACKOFF)
+        u32::from(policy.lane_body.warmup_entries) << past.refused.min(policy.lane_body.max_backoff)
     }
 
     /// Each entry that does not end the warm-up ticks the program's clock.
     fn ready(policy: &Tiers, entries: u32, since: u32, past: &Past<LaneFeedback>) -> bool {
-        let ready = Self::attempts_at(policy, entries, past) || Self::recurrent(entries, since, past);
+        let ready = Self::attempts_at(policy, entries, past) || Self::recurrent(policy, entries, since, past);
         if !ready { warm_ticks(); }
         ready
     }

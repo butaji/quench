@@ -12754,7 +12754,7 @@ fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
             );
         }
         // A loop-free callee shorter than a native entry's overhead stays a frameless activation
-        // (`JS_TIER_LANE_ENTRY_RECORDS`).
+        // (`LaneBody::native_entry_records`).
         let plus = program
             .functions
             .iter()

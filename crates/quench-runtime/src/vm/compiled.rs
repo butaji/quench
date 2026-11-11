@@ -14258,19 +14258,10 @@ const INTEGER_TAG: u64 = crate::value::INTEGER_TAG_BITS;
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
-/// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
-/// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
-/// The lane records a loop-free body runs below which a frameless activation is cheaper than
-/// the JavaScript tier's native entry of it. A direct native entry (`lane_tier_prologue`,
-/// `direct_call`, the shared entry) costs about 380 machine instructions past the
-/// activation, and a lane record about 20 (callgrind, typescript-lib under `--jit`,
-/// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
-/// `isLineBreak`), so a body shorter than this cannot recoup its entries.
-const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
-/// overhead (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper in the interpreter at each entry.
+/// overhead (`LaneBody::native_entry_records`) runs cheaper in the interpreter at each entry.
 pub(super) fn pays_native_entry(body: &crate::bytecode::Function) -> bool {
-    body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
+    body.code.len() >= TIERS.lane_body.native_entry_records || body.loops()
 }
 
 /// A compiled body a frameless activation runs directly (`Vm::direct_tier_entry`): the
