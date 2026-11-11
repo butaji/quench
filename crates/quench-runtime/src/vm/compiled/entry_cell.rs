@@ -48,3 +48,15 @@ impl EntryCell {
         self.recovery.set(std::ptr::addr_of!(NO_RECOVERY).addr());
     }
 }
+
+/// Bits of a capture word that hold the dense slots' address; the slot count sits above them
+/// (a user-space address fits 48 bits).
+pub(super) const CAPTURE_ADDRESS_BITS: u32 = 48;
+/// The mask of those bits.
+pub(super) const CAPTURE_ADDRESS_MASK: i64 = (1 << CAPTURE_ADDRESS_BITS) - 1;
+
+/// The one word a body's entry takes its captures in: the dense slots' address and count.
+pub(in crate::vm) fn capture_word(values: *const Value, len: usize) -> u64 {
+    debug_assert!(values.addr() >> CAPTURE_ADDRESS_BITS == 0 && len >> (u64::BITS - CAPTURE_ADDRESS_BITS) == 0);
+    values.addr() as u64 | (len as u64) << CAPTURE_ADDRESS_BITS
+}

@@ -18,29 +18,13 @@ impl Lowering<'_, '_> {
             self.word_store(value, shadow, dispatch_offset(field));
         }
         let pushed = self.word_add_imm(shadow, std::mem::size_of::<ShadowFrame>() as i64);
-        let words = [
-            std::mem::offset_of!(JsStepDispatch, receiver),
-            std::mem::offset_of!(JsStepDispatch, capture_values),
-            std::mem::offset_of!(JsStepDispatch, capture_len),
-        ];
-        let capture_values = self.word_const(callee.capture_values as i64);
-        let capture_len = self.word_const(callee.capture_len as i64);
-        let saved: Vec<ir::Value> = words.iter()
-            .map(|field| self.word_load(payload, dispatch_offset(*field)))
-            .collect();
-        for (field, value) in words.iter().zip([this, capture_values, capture_len]) {
-            self.word_store(value, payload, dispatch_offset(*field));
-        }
         self.word_store(pushed, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
         self.word_store(next, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, native_top)));
         let signature = native_entry_signature(types::I64, self.builder.func.signature.call_conv);
         let signature = self.builder.import_signature(signature);
-        let zero = self.word_const(0);
+        let captures = self.word_const(super::super::entry_cell::capture_word(callee.capture_values, callee.capture_len) as i64);
         let context = self.context;
-        let status = self.word_call(signature, entry, &[context, zero, zero, top, result]);
-        for (field, value) in words.iter().zip(saved) {
-            self.word_store(value, payload, dispatch_offset(*field));
-        }
+        let status = self.word_call(signature, entry, &[context, this, captures, top, result]);
         self.word_store(top, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, native_top)));
         status
     }
