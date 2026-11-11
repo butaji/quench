@@ -115,3 +115,35 @@ fn forced_guards_hold_across_the_corpus() {
     }
     eprintln!("forced deopt corpus: {} guards, {} mismatches", total.0, total.1);
 }
+
+/// Generated programs (`research/tools/gen-tiers.py`, thread 16): mixed argument types and a
+/// shape change midway, each setting `answer`.
+const GENERATED: &[(&str, &str)] = &[
+    ("g7_0000.js", include_str!("forced_deopt_programs/g7_0000.js")),
+    ("g7_0001.js", include_str!("forced_deopt_programs/g7_0001.js")),
+    ("g7_0002.js", include_str!("forced_deopt_programs/g7_0002.js")),
+    ("g7_0003.js", include_str!("forced_deopt_programs/g7_0003.js")),
+    ("g7_0004.js", include_str!("forced_deopt_programs/g7_0004.js")),
+    ("g7_0005.js", include_str!("forced_deopt_programs/g7_0005.js")),
+    ("g7_0006.js", include_str!("forced_deopt_programs/g7_0006.js")),
+    ("g7_0007.js", include_str!("forced_deopt_programs/g7_0007.js")),
+    ("g7_0008.js", include_str!("forced_deopt_programs/g7_0008.js")),
+    ("g7_0009.js", include_str!("forced_deopt_programs/g7_0009.js")),
+    ("g7_0010.js", include_str!("forced_deopt_programs/g7_0010.js")),
+    ("g7_0011.js", include_str!("forced_deopt_programs/g7_0011.js")),
+];
+
+/// 68 s: run with `--ignored`.
+#[test]
+#[ignore]
+fn forced_guards_hold_across_generated_programs() {
+    let mut total = (0, 0, 0);
+    for (name, source) in GENERATED {
+        let (guards, mismatches) = forced_everywhere(source, name, 250);
+        eprintln!("forced deopt {name}: {guards} guards, {} forced, mismatches {mismatches:?}", guards.min(250));
+        total = (total.0 + guards, total.1 + guards.min(250), total.2 + mismatches.len());
+        if !mismatches.is_empty() { eprintln!("MISMATCH {name}: guards {mismatches:?}"); }
+    }
+    eprintln!("forced deopt generated: {} guards, {} forced, {} mismatches", total.0, total.1, total.2);
+    assert_eq!(total.2, 0);
+}
