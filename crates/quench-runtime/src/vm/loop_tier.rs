@@ -73,7 +73,14 @@ impl LoopTier {
 
     /// Whether this entry passes to the interpreter's jump while the code compiles: entries
     /// between looks count down, and a look publishes code that is ready.
+    #[inline(always)]
     pub(super) fn awaits_code(&mut self, heap: &mut crate::heap::Heap, site: &LoopSite) -> bool {
+        // A site with published code, or none under way, has nothing to wait for.
+        self.pending.is_some() && self.poll_pending(heap, site)
+    }
+
+    #[cold]
+    fn poll_pending(&mut self, heap: &mut crate::heap::Heap, site: &LoopSite) -> bool {
         let Some(pending) = self.pending.take() else { return false };
         if self.wait > 0 {
             self.wait -= 1;
@@ -104,6 +111,8 @@ impl LoopTier {
         self.wait = 0;
         if self.pending.is_none() {
             self.compilations = TIERS.loops.max_compilations;
+            // A declined or failed region retires the site now: later entries build no entry record.
+            site.declines.set(TIERS.loops.max_declines);
         }
         self.awaits_code(heap, site);
     }
@@ -124,6 +133,7 @@ impl LoopTier {
 /// and looks for its code at once: a code generator without its own thread has it ready.
 pub(super) fn lane_loop_compile<H: Host>(
     cx: *mut LaneContext<H>,
+    r: Registers,
     site: &LoopSite,
     region: &super::super::compiled::LoopRegion,
     tier: &mut LoopTier,
@@ -133,6 +143,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     int_captures: &[u16],
 ) {
     tier.compilations += 1;
+    super::super::compiled::fast_region::count(super::super::compiled::fast_region::Event::Compiled);
     if site.diagnostics {
         site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
     }
@@ -143,7 +154,13 @@ pub(super) fn lane_loop_compile<H: Host>(
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
     let native_field_loads = native_field_loads(machine, region);
-    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures };
+    let ints = region.registers_where(|register| r.get(register).as_int().is_some());
+    let doubles = region.registers_where(|register| {
+        let value = r.get(register);
+        value.as_number().is_some() && value.as_int().is_none()
+    });
+    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
+        int_registers: &ints, double_registers: &doubles };
     let policy = machine.heap.memory_policy();
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, policy, program, function, helpers,
@@ -281,14 +298,24 @@ const SAMPLED_ELEMENTS: usize = 64;
 /// Numbers (int32 or double, no hole), with that type: an observation (a guess the code checks at
 /// every read), not a proof.
 pub(super) fn number_arrays<H: Host>(vm: &Vm<H>, r: Registers, region: &LoopRegion) -> Vec<(Register, crate::typed_ir::Type)> {
+    region.arrays.iter().filter(|array| array.field.is_none())
+        .filter_map(|array| sample_array(vm, r.get(array.register)).map(|ty| (array.register, ty))).collect()
+}
+
+/// The type the first elements of the array `value` all have, int32 or Number (no hole), sampled:
+/// an observation (a guess the code checks at every read), not a proof.
+/// The array-typed values among `values` (register order), sampled: what a lane body's loops read typed.
+pub(super) fn sampled_arrays<H: Host>(vm: &Vm<H>, values: impl Iterator<Item = Value>) -> Vec<(crate::bytecode::Register, crate::typed_ir::Type)> {
+    values.enumerate().filter_map(|(register, value)| sample_array(vm, value).map(|ty| (register as crate::bytecode::Register, ty))).collect()
+}
+
+pub(super) fn sample_array<H: Host>(vm: &Vm<H>, value: Value) -> Option<crate::typed_ir::Type> {
     use crate::typed_ir::Type;
-    region.arrays.iter().filter(|array| array.field.is_none()).filter_map(|array| {
-        let elements = vm.heap.record_array(r.get(array.register))?.elements().as_slice();
-        let sample = &elements[..elements.len().min(SAMPLED_ELEMENTS)];
-        if sample.is_empty() { return None; }
-        if sample.iter().all(|value| value.as_int().is_some()) { Some((array.register, Type::INT32)) }
-        else { sample.iter().all(|value| value.as_number().is_some()).then_some((array.register, Type::NUMBER)) }
-    }).collect()
+    let elements = vm.heap.record_array(value)?.elements().as_slice();
+    let sample = &elements[..elements.len().min(SAMPLED_ELEMENTS)];
+    if sample.is_empty() { return None; }
+    if sample.iter().all(|value| value.as_int().is_some()) { Some(Type::INT32) }
+    else { sample.iter().all(|value| value.as_number().is_some()).then_some(Type::NUMBER) }
 }
 
 /// The registers of the running activation that hold int32s at entry and that the loop writes:

@@ -930,7 +930,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     execute_shared_with_teardown(
         input,
         argv,
-        jit_mode.unwrap_or_default().execution_mode(),
+        { let mode = jit_mode.unwrap_or_default(); mode.set_process_mode(); mode.execution_mode() },
         Teardown::ProcessExit,
     )
     .map(SharedCompletion::exit_code)

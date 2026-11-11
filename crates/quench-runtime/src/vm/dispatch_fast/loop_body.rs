@@ -31,6 +31,9 @@ const POLL: u16 = 16;
 impl LoopBody {
     pub(super) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
 
+    /// A new loop site's body: none is planned where the process runs no Cranelift function tiers (`--f-jit`).
+    pub(super) fn initial() -> Self { if crate::jit_mode::function_tiers() { Self::IDLE } else { Self::Declined } }
+
     /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
     /// next body's feedback (a failed entry contract drops the contract), until the bodies
     /// run out.
@@ -84,7 +87,7 @@ impl LoopBody {
 }
 
 /// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling` and due).
-fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, site: &LoopSite) {
+fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView, site: &LoopSite) {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -102,9 +105,11 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, site: &LoopS
         return;
     }
     let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
+    // The loop's arrays are the activation's registers now: sampled, as an OSR loop samples its own.
+    let arrays = super::loop_tier::sampled_arrays(vm, (0..code.function_get(function as usize).map_or(0, |body| body.registers)).map(|register| r.get(register)));
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending),
-        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, called: false, caller: own },
+        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, called: false, caller: own, arrays: &arrays },
     };
     let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc),
         &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header));
@@ -121,7 +126,7 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
     let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)?;
     let ready = site.body.borrow_mut().ready();
     let Some(method) = ready else {
-        if !matches!(*site.body.borrow(), LoopBody::Declined | LoopBody::Compiling { wait: 1.., .. }) { plan_loop_body(cx, own, site); }
+        if !matches!(*site.body.borrow(), LoopBody::Declined | LoopBody::Compiling { wait: 1.., .. }) { plan_loop_body(cx, r, own, site); }
         return None;
     };
     if !lane_body_admits(cx, &method) { return None; }

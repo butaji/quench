@@ -8040,12 +8040,13 @@ fn lane_loop_native<H: Host>(
     };
     // The tier's state is borrowed only here, so the dispatch below holds no borrow.
     let continuation = lane_loop_run(cx, r, site, region, &mut entry, views);
+    count_continuation(&continuation);
     site.declines.set(if matches!(continuation, LoopContinuation::Jump) { site.declines.get() + 1 } else { 0 });
     lane_loop_hold_header::<H>(header, site);
     match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => LoopAttempt::Declined,
         LoopContinuation::Resume(pc) => LoopAttempt::At(at(pc)),
-        LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc); LoopAttempt::Leave(exit(at(pc))) }
+        LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc, region.header..=region.backedge); LoopAttempt::Leave(exit(at(pc))) }
         LoopContinuation::Inlined { frame, pc } => { let frame = region.inlining.as_ref().expect("an inlining region").frames[frame];
             LoopAttempt::Leave(exit(lane_inlined_activation(cx, r, region, &entry, frame, at(frame.call), pc))) }
         LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
@@ -8062,15 +8063,19 @@ fn lane_loop_native<H: Host>(
 /// element store, whose append helper it can compile, or a capture read, whose root-held binding
 /// it can read by helper; a leave at any other guard (a shape, say) widens nothing.
 #[cold]
-fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
+fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32, region: std::ops::RangeInclusive<u32>) {
+    if !region.contains(&pc) { return; }
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     let machine = unsafe { vm(cx) };
     let counted = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
         let body = program.function(site.function() as usize);
         body.code.get(pc as usize).and_then(|packed| {
             let op = decoded_instruction(body, *packed).op();
+            super::compiled::fast_region::leave(site.function(), pc, op);
             (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
-                || matches!(op.class(), Class::LoadCapture)).then(|| op.is_get_index())
+                || matches!(op.class(), Class::LoadCapture)
+                // A FastJIT region also holds a loaded field as an int32 until it leaves there.
+                || (crate::jit_mode::fast_regions() && matches!(op.class(), Class::GetField))).then(|| op.is_get_index())
         })
     });
     if let Some(read) = counted { site.tier.borrow_mut().left_at(pc, read); }
@@ -8129,12 +8134,19 @@ script_handler! {
 /// Counts an entry of `function`'s lane activation toward its lane body (`own`), or, `now`,
 /// specializes it at once, from the targets and callees the program's views hold now. Whether the body
 /// is still warming or specialized (`LaneView::specialize_lane_body`).
-fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32, now: bool) -> bool {
+fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32, now: bool, parameters: &[Value]) -> bool {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
+    // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
+    let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
     let specialize = |work: super::compiled::LaneBodyWork| {
+        let work = match work {
+            super::compiled::LaneBodyWork::Start { generic, shrinks, observed, called, caller, .. } =>
+                super::compiled::LaneBodyWork::Start { generic, shrinks, observed, called, caller, arrays: &arrays },
+            poll => poll,
+        };
         if matches!(work, super::compiled::LaneBodyWork::Start { .. })
             && let Some(outcome) = lane_body_tier::start_gate(vm, own, code.function_get(function as usize))
         {
@@ -8172,7 +8184,7 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)
     {
-        lane_specialize(cx, own, site.function, true);
+        lane_specialize(cx, own, site.function, true, &[]);
         if own.warming() { return site.taken.set(0); }
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
@@ -8225,6 +8237,16 @@ enum LoopContinuation {
     Callee,
 }
 
+/// Counts what a loop run came to (`QUENCH_TRACE=js-jit`).
+fn count_continuation(continuation: &LoopContinuation) {
+    use super::compiled::fast_region::{count, Event};
+    count(match continuation {
+        LoopContinuation::Jump | LoopContinuation::Compiling => Event::Declined,
+        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Safepoint | LoopContinuation::Callee => Event::Left,
+        LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => Event::Entered,
+    });
+}
+
 /// Compiles `site`'s region if it has no current code, for the element `views` its entry
 /// proved, then runs it on `r` with `entry`. A representation an outcome shows wrong is
 /// widened, and the code dropped for the next compilation.
@@ -8251,7 +8273,7 @@ fn lane_loop_run<H: Host>(
         let int_entries = loop_tier::int_entries(r, region);
         let typed_captures = loop_tier::typed_capture_slots(cx);
         let int_captures = loop_tier::int_capture_slots(cx);
-        lane_loop_compile(cx, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
+        lane_loop_compile(cx, r, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }
@@ -8573,6 +8595,8 @@ fn lane_inlining_region<H: Host>(
     r: Registers,
     site: &LoopSite,
 ) -> Option<super::compiled::LoopRegion> {
+    // `--f-jit` runs no inlining regions, so it does not analyze them.
+    if crate::jit_mode::fast_only() { return None; }
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let program = unsafe { (*cx).program };
@@ -14820,7 +14844,7 @@ fn lane_tier_enter<H: Host>(
     if vm.programs.js_jit_lane_methods_enabled()
         && let Some(own) = own
     {
-        if !lane_specialize(cx, own, function, false) {
+        if !lane_specialize(cx, own, function, false, parameters) {
             own.release_from_tier();
         }
         return None;
@@ -15542,9 +15566,9 @@ fn lane_body_activate<H: Host>(
     // A target without a body warms toward one by these entries too, as by the lane's own
     // (`lane_specialize`): a constructor only body code constructs is entered by nothing else.
     if own.respecializes() {
-        lane_specialize(cx, own, target.function, true);
+        lane_specialize(cx, own, target.function, true, &[]);
     } else if own.lane_body().is_none() {
-        lane_specialize(cx, own, target.function, false);
+        lane_specialize(cx, own, target.function, false, &[]);
     }
     let Some(method) = own.lane_body().filter(|method| lane_body_admits(cx, method)) else {
         unsafe { (*cx).callee_warming = own.warming() };
@@ -19874,7 +19898,7 @@ fn install_loop_sites<'live, H: Host>(
                     widenings: std::cell::Cell::new(0),
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
-                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::IDLE),
+                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial()),
                 },
             )
         })
