@@ -241,7 +241,7 @@ impl<H: Host> Vm<H> {
         target_pc: usize,
     ) {
         if !self.js_tier_runs()
-            || !self.programs.js_jit_general_dispatch_enabled()
+            || !self.programs.switches.general_dispatch
             || program.kind == crate::bytecode::ProgramKind::Wasm
         {
             return;
@@ -545,7 +545,7 @@ impl<H: Host> Vm<H> {
         let program = self.active_program;
         let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
             && !self.js_tier_runs()
-            && !self.programs.js_jit_general_dispatch_enabled();
+            && !self.programs.switches.general_dispatch;
         #[cfg(feature = "native-execution")]
         let lane_runs = lane_runs && self.programs.native_js_code(program).is_none();
         if !lane_runs
@@ -1563,7 +1563,7 @@ impl<H: Host> Vm<H> {
         // instead of the lane, so only the tier-free loop's lane entry is mirrored here.
         let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
             && !self.js_tier_runs()
-            && !self.programs.js_jit_general_dispatch_enabled();
+            && !self.programs.switches.general_dispatch;
         let cursor = self.general_cursor(program, p, function, lane_runs);
         if !Self::lane_runs(cursor.lane, pc) {
             return self.run_frame_general_with_error(p, frame, None);
@@ -1868,7 +1868,7 @@ impl<H: Host> Vm<H> {
                 let program_id = self.frames[frame].program;
                 let function_id = self.frames[frame].function;
                 let tier = self.programs.js_tier(program_id, function_id);
-                let should_try_general = self.programs.js_jit_general_dispatch_enabled()
+                let should_try_general = self.programs.switches.general_dispatch
                     && tier.is_some_and(|tier| tier.baseline_due() || tier.baseline().is_some());
                 let baseline_due = tier.is_some_and(JsTier::baseline_due);
                 if should_try_general

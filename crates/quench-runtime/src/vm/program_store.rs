@@ -1,4 +1,4 @@
-use super::compiled::tier_policy::{STRESS, TIERS};
+use super::compiled::tier_policy::{Switches, STRESS, TIERS};
 use super::wtf16::JsString;
 use crate::Value;
 use crate::bytecode::ResidualProgram;
@@ -781,25 +781,12 @@ pub(crate) struct ProgramStore {
     js_general_artifacts: FxHashMap<Box<[u8]>, CachedJsGeneralArtifact>,
     js_general_artifact_key_bytes: usize,
     js_general_artifact_clock: u64,
-    /// Whether a hot function's general baseline waits until its entries pay for
-    /// the compile (`general_promotion_due`); tests of the baseline's semantics compile it
-    /// once hot.
-    general_baseline_priced: bool,
     /// When a selective Wasm module compiles whole (`WasmModule`).
     wasm_module_compile: WasmModuleCompile,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
-    /// Whether ordinary JS functions promote to the general native dispatch tier
-    /// (`note_js_general_dispatch_entry`). Off unless `QUENCH_DEV=js-general-dispatch`;
-    /// the memory policy's `js_function_tiers_compile` and the entry price of a
-    /// loop-free body still decide whether the tier takes a function
-    /// (`general_tier_admits`).
-    js_jit_general_dispatch_enabled: bool,
-    /// Whether the lane prologue specializes a declined function into a frameless lane
-    /// body (`Vm::compile_lane_method`).
-    js_jit_lane_methods_enabled: bool,
-    #[cfg(test)]
-    js_entry_specializations_enabled: bool,
+    /// The tier switches, read once (`Switches::read`).
+    pub(super) switches: Switches,
     /// Per-program, per-function estimated work from opt-in JS backedges.
     /// Both map levels are allocated only after the first eligible observation.
     js_general_dispatch_work: Option<FxHashMap<u32, FxHashMap<u32, u64>>>,
@@ -833,12 +820,8 @@ impl Default for ProgramStore {
             } else {
                 WasmModuleCompile::ADAPTIVE
             },
-            general_baseline_priced: !(STRESS || crate::trace::Dev::JsUnpricedGeneralDispatch.on()),
             js_jit_diagnostics: crate::trace::Channel::JsJit.on().then(FxHashMap::default),
-            js_jit_general_dispatch_enabled: STRESS || crate::trace::Dev::JsGeneralDispatch.on(),
-            js_jit_lane_methods_enabled: STRESS || crate::trace::Dev::JsLaneMethods.on(),
-            #[cfg(test)]
-            js_entry_specializations_enabled: true,
+            switches: Switches::read(),
             js_general_dispatch_work: None,
             js_jit_dataview_float64_get_entries: 0,
             js_jit_dataview_float64_set_entries: 0,
@@ -858,7 +841,7 @@ impl ProgramStore {
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
             let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body, !(STRESS || cfg!(test))); // tests pin tiny fixtures
             #[cfg(test)]
-            let facts = if self.js_entry_specializations_enabled { facts } else {
+            let facts = if self.switches.entry_specializations { facts } else {
                 // Select the requested test tier without depending on which
                 // source shapes newer entry specializers happen to support.
                 super::js_compiled::JsEntryFacts { general: facts.general,
@@ -1926,35 +1909,22 @@ impl ProgramStore {
 
     #[cfg(test)]
     pub(super) fn enable_js_lane_methods(&mut self) {
-        self.js_jit_lane_methods_enabled = true;
+        self.switches.lane_methods = true;
     }
 
     /// Set before loading a test program; general/OSR coverage then owns entry.
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn disable_js_entry_specializations(&mut self) {
-        self.js_entry_specializations_enabled = false;
-    }
-
-    #[cfg(test)]
-    pub(super) fn js_entry_specializations_enabled(&self) -> bool {
-        self.js_entry_specializations_enabled
+        self.switches.entry_specializations = false;
     }
 
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn enable_js_general_dispatch(&mut self) {
-        self.js_jit_general_dispatch_enabled = true;
-    }
-
-    pub(super) fn js_jit_lane_methods_enabled(&self) -> bool {
-        self.js_jit_lane_methods_enabled
+        self.switches.general_dispatch = true;
     }
 
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
         self.js_jit_diagnostics.is_some()
-    }
-
-    pub(super) fn js_jit_general_dispatch_enabled(&self) -> bool {
-        self.js_jit_general_dispatch_enabled
     }
 
     /// Records the counters `QUENCH_TRACE=js-jit` enables, for a test to read.
@@ -2022,7 +1992,7 @@ impl ProgramStore {
     /// `instructions`: unpriced, or its entries save something past the baseline's entry
     /// overhead. A loop-free body that cannot is not counted toward it at all.
     pub(super) fn general_baseline_may_pay(&self, instructions: usize) -> bool {
-        !self.general_baseline_priced || general_saved_per_entry(instructions).is_some()
+        !self.switches.general_priced || general_saved_per_entry(instructions).is_some()
     }
 
     /// Whether the code cache has room for one more JavaScript function's body. A full one does
@@ -2043,8 +2013,8 @@ impl ProgramStore {
         acyclic: bool,
         policy: crate::MemoryPolicy,
     ) -> bool {
-        self.js_jit_general_dispatch_enabled
-            && super::compiled::js_function_tiers_compile(policy)
+        self.switches.general_dispatch
+            && super::compiled::tier_policy::by_policy(policy).js_function_tiers
             && (!acyclic || self.general_baseline_may_pay(instructions))
     }
 
@@ -2052,7 +2022,7 @@ impl ProgramStore {
     /// semantics.
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn compile_general_baseline_when_hot(&mut self) {
-        self.general_baseline_priced = false;
+        self.switches.general_priced = false;
     }
 
     /// Promote any ordinary JS function to the complete-semantics native
@@ -2067,10 +2037,10 @@ impl ProgramStore {
         policy: crate::MemoryPolicy,
     ) -> bool {
         // Admission: the tier's switch, and the memory policy's (`PolicyTiers::js_function_tiers`).
-        if !self.js_jit_general_dispatch_enabled || !super::compiled::js_function_tiers_compile(policy) {
+        if !self.switches.general_dispatch || !super::compiled::tier_policy::by_policy(policy).js_function_tiers {
             return false;
         }
-        let priced = self.general_baseline_priced;
+        let priced = self.switches.general_priced;
         let open = self.js_cache_has_room();
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
         let Some(entry) = self.entry_mut(id) else {
@@ -2111,7 +2081,7 @@ impl ProgramStore {
         work: usize,
         instructions: usize,
     ) -> bool {
-        if !self.js_jit_general_dispatch_enabled || work == 0 {
+        if !self.switches.general_dispatch || work == 0 {
             return false;
         }
         // A zero-byte admission probe checks count and aggregate artifact
@@ -2121,7 +2091,7 @@ impl ProgramStore {
         {
             return false;
         }
-        let priced = self.general_baseline_priced;
+        let priced = self.switches.general_priced;
         if !self.entry(id).is_some_and(|entry| {
             !entry.jit_tiers.is_wasm() && entry.jit_tiers.js(function).is_some_and(JsTier::awaits_general_work)
         }) {
@@ -2158,10 +2128,10 @@ impl ProgramStore {
         function: u32,
         instructions: usize,
     ) -> bool {
-        if !self.js_jit_general_dispatch_enabled {
+        if !self.switches.general_dispatch {
             return false;
         }
-        let priced = self.general_baseline_priced;
+        let priced = self.switches.general_priced;
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
@@ -3197,7 +3167,7 @@ impl Drop for ProgramStore {
                 .unwrap_or(0);
             let general_dispatch_work_required = general_dispatch_work_required(
                 u64::from(counters.instruction_count),
-                self.general_baseline_priced,
+                self.switches.general_priced,
             );
             let osr = entry
                 .and_then(|entry| entry.lane_views.derived(*function))
@@ -3733,8 +3703,7 @@ mod jit_code_cache_tests {
     #[test]
     fn general_dispatch_backedge_is_disabled_without_opt_in() {
         let mut store = super::ProgramStore::default();
-        store.js_jit_general_dispatch_enabled = false;
-        assert!(!store.js_jit_general_dispatch_enabled());
+        store.switches.general_dispatch = false;
         assert!(!store.note_js_general_dispatch_backedge(
             super::ProgramId::MAIN,
             1,

@@ -13375,9 +13375,9 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
             .expect("hot sum loop lane view");
         let osr = view.osr_diagnostics();
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
-        let analyzes = super::compiled::js_function_tiers_compile(policy);
+        let analyzes = super::compiled::tier_policy::by_policy(policy).js_function_tiers;
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field loop admission under {policy:?}");
-        let compiles = super::compiled::loop_tier_compiles(policy);
+        let compiles = super::compiled::tier_policy::by_policy(policy).loop_tier;
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field loop native code under {policy:?}");
     }
 }
@@ -13423,9 +13423,9 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
             .expect("hot fill loop lane view")
             .osr_diagnostics();
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
-        let analyzes = super::compiled::js_function_tiers_compile(policy);
+        let analyzes = super::compiled::tier_policy::by_policy(policy).js_function_tiers;
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-reading store loop admission under {policy:?}");
-        let compiles = super::compiled::loop_tier_compiles(policy);
+        let compiles = super::compiled::tier_policy::by_policy(policy).loop_tier;
         assert_eq!(usize::from(osr.compile_successes > 0), usize::from(compiles), "store loop native code under {policy:?}");
     }
 }
@@ -13911,7 +13911,7 @@ fn shared_osr_appends_and_fills_holes_in_place() {
         compiled.execute(&program).unwrap();
 
         assert_eq!(output.borrow().as_slice(), ["6003994 2000 2000 | 6003934 2000 2000 22"], "{policy:?}");
-        if !super::compiled::loop_tier_compiles(policy) {
+        if !super::compiled::tier_policy::by_policy(policy).loop_tier {
             continue;
         }
         let views = compiled
@@ -13987,7 +13987,7 @@ fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
         compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), expected, "{policy:?}");
-        if !super::compiled::loop_tier_compiles(policy) {
+        if !super::compiled::tier_policy::by_policy(policy).loop_tier {
             continue;
         }
         let views = compiled
@@ -14048,7 +14048,7 @@ fn shared_osr_stores_fields_of_receivers_the_loop_redefines() {
         compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
         assert_eq!(*output.borrow(), expected, "{policy:?}");
-        if !super::compiled::loop_tier_compiles(policy) {
+        if !super::compiled::tier_policy::by_policy(policy).loop_tier {
             continue;
         }
         let views = compiled
@@ -14101,7 +14101,7 @@ fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
         compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
         assert_eq!(*output.borrow(), expected, "{policy:?}");
-        if !super::compiled::loop_tier_compiles(policy) {
+        if !super::compiled::tier_policy::by_policy(policy).loop_tier {
             continue;
         }
         let views = compiled
@@ -14342,7 +14342,7 @@ fn shared_osr_returns_inside_a_loop_resume_the_lane_at_the_return() {
         compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["-4498"], "{policy:?}");
-        if !super::compiled::loop_tier_compiles(policy) {
+        if !super::compiled::tier_policy::by_policy(policy).loop_tier {
             continue;
         }
         let views = compiled.programs.lane_views(super::program_store::ProgramId::MAIN).expect("main program lane views");
@@ -14438,9 +14438,9 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
             .expect("hot mix loop lane view")
             .osr_diagnostics();
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
-        let analyzes = super::compiled::js_function_tiers_compile(policy);
+        let analyzes = super::compiled::tier_policy::by_policy(policy).js_function_tiers;
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-array loop admission under {policy:?}");
-        let compiles = super::compiled::loop_tier_compiles(policy);
+        let compiles = super::compiled::tier_policy::by_policy(policy).loop_tier;
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field-array loop native code under {policy:?}");
     }
 }
@@ -15267,7 +15267,7 @@ print(t + " " + w.array[5] + " " + w.array[77]);
             .and_then(super::program_store::derived_lane_view)
             .expect("hot caller loop lane view")
             .osr_diagnostics();
-        let compiles = super::compiled::loop_tier_compiles(policy);
+        let compiles = super::compiled::tier_policy::by_policy(policy).loop_tier;
         assert_eq!(usize::from(osr.compile_successes > 0), usize::from(compiles), "inlining loop native code under {policy:?}");
         assert_eq!(osr.native_region_runs > 0, compiles, "inlining loop native runs under {policy:?}");
     }
@@ -15333,7 +15333,7 @@ print(total + " " + w.arr.slice(35, 50).join(","));
             .and_then(super::program_store::derived_lane_view)
             .expect("hot caller loop lane view")
             .osr_diagnostics();
-        let compiles = super::compiled::loop_tier_compiles(policy);
+        let compiles = super::compiled::tier_policy::by_policy(policy).loop_tier;
         assert_eq!(usize::from(osr.compile_successes > 0), usize::from(compiles), "inlining loop native code under {policy:?}");
         assert_eq!(osr.native_region_runs > 0, compiles, "inlining loop native runs under {policy:?}");
         if compiles {
@@ -15507,7 +15507,7 @@ print(t);
         compiled.execute(&program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
-        if !super::compiled::loop_tier_compiles(policy) {
+        if !super::compiled::tier_policy::by_policy(policy).loop_tier {
             continue;
         }
         let views = compiled
@@ -15564,7 +15564,7 @@ fn shared_osr_widens_an_int32_field_that_holds_a_double() {
         compiled.execute(&program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
-        if !super::compiled::loop_tier_compiles(policy) {
+        if !super::compiled::tier_policy::by_policy(policy).loop_tier {
             continue;
         }
         let views = compiled
@@ -15648,7 +15648,7 @@ print(result);
         vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["200"], "{policy:?}");
-        if super::compiled::loop_tier_compiles(policy) {
+        if super::compiled::tier_policy::by_policy(policy).loop_tier {
             let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
             let diagnostics = super::program_store::derived_lane_view(&views[function_id]).unwrap().osr_diagnostics();
             assert!(diagnostics.native_region_runs > 0, "{policy:?}: {diagnostics:?}");
@@ -21507,10 +21507,10 @@ fn js_function_tiers_follow_the_memory_policy() {
         let mut vm = Vm::new(TestHost::default());
         vm.set_memory_policy(policy);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        assert_eq!(vm.js_tier_runs(), super::compiled::js_function_tiers_compile(policy), "{policy:?}");
+        assert_eq!(vm.js_tier_runs(), super::compiled::tier_policy::by_policy(policy).js_function_tiers, "{policy:?}");
     }
-    assert!(super::compiled::js_function_tiers_compile(crate::MemoryPolicy::Throughput));
-    assert!(!super::compiled::js_function_tiers_compile(crate::MemoryPolicy::MemoryFirst));
+    assert!(super::compiled::tier_policy::by_policy(crate::MemoryPolicy::Throughput).js_function_tiers);
+    assert!(!super::compiled::tier_policy::by_policy(crate::MemoryPolicy::MemoryFirst).js_function_tiers);
 }
 
 #[test]
@@ -22325,7 +22325,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         assert_eq!(registers[usize::from(terminal.register_a())], Value::number(expected_total + 11.0));
         assert_eq!(vm.own_property(receiver, total), Some(Value::number(expected_total)));
         assert_eq!(vm.own_property(receiver, calls), Some(Value::number(before_calls + 1.0)));
-        if mode == crate::ExecutionMode::Compiled && super::compiled::js_function_tiers_compile(vm.memory_policy()) {
+        if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::by_policy(vm.memory_policy()).js_function_tiers {
             let after = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
             assert!(after > before, "the storing callee runs inlined in its caller's lane body");
         }
@@ -22392,7 +22392,7 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
         let atom = vm.intern_atom("answer");
         let answer = vm.own_property(global, atom).and_then(Value::as_number);
         answers.push(answer);
-        if mode == crate::ExecutionMode::Compiled && super::compiled::js_function_tiers_compile(vm.memory_policy()) {
+        if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::by_policy(vm.memory_policy()).js_function_tiers {
             let after = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
             assert!(after > before, "a declined method runs as a lane body");
         }

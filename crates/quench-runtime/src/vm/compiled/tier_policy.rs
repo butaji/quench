@@ -199,6 +199,37 @@ pub(in crate::vm) const fn tiers_enter(stops: bool) -> bool {
     crate::DYNAMIC_EXECUTION_ENABLED && !stops
 }
 
+/// Which tiers a program store runs, read once when the store is made from the development
+/// experiments (`QUENCH_DEV`); a `tier-stress` build has every arm on and nothing priced.
+pub(in crate::vm) struct Switches {
+    /// Whether ordinary JS functions promote to the general native dispatch tier. The memory
+    /// policy (`PolicyTiers::js_function_tiers`) and the entry price still decide which
+    /// function the tier takes.
+    pub(in crate::vm) general_dispatch: bool,
+    /// Whether the lane prologue specializes a declined function into a frameless lane body.
+    pub(in crate::vm) lane_methods: bool,
+    /// Whether a hot function's general baseline waits until its entries pay for the compile;
+    /// tests of the baseline's semantics compile it once hot.
+    pub(in crate::vm) general_priced: bool,
+    /// Whether the numeric entry specializers run; a test turns them off to select a tier
+    /// without depending on which shapes they support.
+    #[cfg(test)]
+    pub(in crate::vm) entry_specializations: bool,
+}
+
+impl Switches {
+    pub(in crate::vm) fn read() -> Self {
+        use crate::trace::Dev;
+        Self {
+            general_dispatch: STRESS || Dev::JsGeneralDispatch.on(),
+            lane_methods: STRESS || Dev::JsLaneMethods.on(),
+            general_priced: !(STRESS || Dev::JsUnpricedGeneralDispatch.on()),
+            #[cfg(test)]
+            entry_specializations: true,
+        }
+    }
+}
+
 /// What a memory policy lets the tiers compile.
 pub(in crate::vm) struct PolicyTiers {
     /// The Cranelift opt level loop regions compile at, or `None` where no loop region

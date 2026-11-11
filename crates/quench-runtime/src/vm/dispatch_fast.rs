@@ -7814,7 +7814,7 @@ script_handler! {
         // lookups. Only the opt-in shared JS baseline observes loop work here.
         let runtime = unsafe { vm(cx) };
         if runtime.js_tier_runs()
-            && runtime.programs.js_jit_general_dispatch_enabled()
+            && runtime.programs.switches.general_dispatch
             && unsafe { &*(*cx).code }.kind != crate::bytecode::ProgramKind::Wasm
         {
             let (program_id, code) = unsafe {
@@ -7843,7 +7843,7 @@ script_handler! {
         }
         // A loop its region takes whole (no call it leaves at) stays the region's, which hoists
         // the typed element views a lane body does not yet.
-        let body_loop = unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
+        let body_loop = unsafe { vm(cx) }.programs.switches.lane_methods
             && (!site.call_boundary_pcs.is_empty() || site.analysis_failure.is_some());
         if body_loop && let Some(attempt) = lane_loop_body::<H>(cx, r, ip, site)
         {
@@ -8077,7 +8077,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
 /// it runs the site stays.
 fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
-    if unsafe { vm(cx) }.programs.js_jit_general_dispatch_enabled() {
+    if unsafe { vm(cx) }.programs.switches.general_dispatch {
         return;
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
@@ -8232,7 +8232,7 @@ fn lane_loop_run<H: Host>(
     }
     let general_dispatch_due = {
         let runtime = unsafe { vm(cx) };
-        if runtime.programs.js_jit_general_dispatch_enabled() {
+        if runtime.programs.switches.general_dispatch {
             let backedges = usize::try_from(entry.backedge_count()).unwrap_or(usize::MAX);
             // Every completed iteration executed at least its own backedge. The
             // loop body's static span is not a sound work estimate when branches
@@ -10767,7 +10767,7 @@ fn lane_frame_state<H: Host>(
                     live,
                     sites,
                     vm.js_tier_runs(),
-                    vm.programs.js_jit_general_dispatch_enabled(),
+                    vm.programs.switches.general_dispatch,
                     diagnostics,
                 )
             }) else {
@@ -11410,7 +11410,7 @@ impl<H: Host> Vm<H> {
             && shape.entry == CallEntry::Activates
             && tier_may_claim
             // SAFETY: as below.
-            && (!self.programs.js_jit_lane_methods_enabled() || unsafe { &*view }.lane_tier_unclaimed())
+            && (!self.programs.switches.lane_methods || unsafe { &*view }.lane_tier_unclaimed())
         {
             // SAFETY: the program store keeps a derived view alive with its program.
             unsafe { &*view }.claim_for_tier(lane_tier_prologue::<H>, function, body.params, !body.is_arrow);
@@ -11483,7 +11483,7 @@ impl<H: Host> Vm<H> {
     /// Whether a callee of another program (where `cross`) may take the tier prologue: a lane
     /// body runs in its own program's context, which the activation enters first.
     fn claims_across(&self, cross: bool) -> bool {
-        !cross || self.programs.js_jit_lane_methods_enabled()
+        !cross || self.programs.switches.lane_methods
     }
 
     /// Record a resolved `target`, also as its function's unless its closure is numeric; a
@@ -11568,7 +11568,7 @@ impl<H: Host> Vm<H> {
                 live,
                 sites,
                 self.js_tier_runs(),
-                self.programs.js_jit_general_dispatch_enabled(),
+                self.programs.switches.general_dispatch,
                 diagnostics,
             )
         })
@@ -14719,7 +14719,7 @@ fn lane_tier_enter<H: Host>(
     // A lane body runs on the activation itself, so it takes the function from the
     // frame-entering tier: the activation warms toward it in the lane, and a function whose
     // body declines runs in the lane, as it does without lane bodies.
-    if vm.programs.js_jit_lane_methods_enabled()
+    if vm.programs.switches.lane_methods
         && let Some(own) = own
     {
         if !lane_specialize(cx, own, function, false) {
@@ -20924,7 +20924,7 @@ impl<H: Host> Vm<H> {
                     live,
                     sites,
                     self.js_tier_runs(),
-                    self.programs.js_jit_general_dispatch_enabled(),
+                    self.programs.switches.general_dispatch,
                     diagnostics,
                 )
             })

@@ -6188,16 +6188,6 @@ pub(super) fn analyze_osr_region_detailed(
     osr_loop::region(function, decoded, constants, sites, live, header, backedge, method_calls)
 }
 
-/// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_tier`).
-pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
-    tier_policy::by_policy(policy).loop_tier
-}
-
-/// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
-pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
-    tier_policy::by_policy(policy).js_function_tiers
-}
-
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
 /// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
 fn process_peak_rss_kib() -> i64 {
@@ -12520,7 +12510,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn js_tier_runs(&self) -> bool {
         !cfg!(quench_profiled)
             && self.execution_mode == ExecutionMode::Compiled
-            && js_function_tiers_compile(self.memory_policy())
+            && tier_policy::by_policy(self.memory_policy()).js_function_tiers
     }
 
     /// Keep usable legacy specialized candidates first. If that tier rejects a
@@ -12541,7 +12531,7 @@ impl<H: Host> Vm<H> {
         // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim
         // costs a short call-free one its leaf calls. A function the numeric tier cannot take
         // is still theirs to claim.
-        let lane_claims = self.programs.js_jit_lane_methods_enabled() && (facts.has_calls
+        let lane_claims = self.programs.switches.lane_methods && (facts.has_calls
             || program.function_get(function as usize).is_some_and(|body| body.loops() || body.code.len() >= TIERS.lane_body.min_instructions));
         if self.programs.js_tier(id, function).is_some_and(JsTier::is_unsupported) {
             return lane_claims || self.programs.js_jit_diagnostics_enabled();
@@ -12842,7 +12832,7 @@ impl<H: Host> Vm<H> {
         promote: bool,
     ) -> Option<JsNativeDispatchResult> {
         if !self.js_tier_runs()
-            || !self.programs.js_jit_general_dispatch_enabled()
+            || !self.programs.switches.general_dispatch
             || program.kind == crate::bytecode::ProgramKind::Wasm
             || start_pc >= program.function_get(self.frames.get(frame)?.function as usize)?.code.len()
         {
@@ -12962,7 +12952,7 @@ impl<H: Host> Vm<H> {
         let function = program.function_get(function_id as usize)?;
         let facts = &*entry.facts;
         #[cfg(test)]
-        if !self.programs.js_entry_specializations_enabled() { return None; }
+        if !self.programs.switches.entry_specializations { return None; }
         // Most entries are of functions no entry path can claim; diagnostics still count them.
         if !facts.candidate && !self.programs.js_jit_diagnostics_enabled() {
             return None;
