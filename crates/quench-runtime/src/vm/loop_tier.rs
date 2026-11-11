@@ -35,16 +35,17 @@ impl LoopTier {
     }
 
     /// Counts a run of the code that left at `pc`. An operation left `widen_after_leaves`
-    /// times joins the widened ones and the code goes, where a compilation remains: the next
+    /// times joins the widened ones, with every other operation left so far, and the code goes, where a compilation remains: the next
     /// entry compiles the loop holding that operation's result as a double.
     pub(super) fn left_at(&mut self, pc: u32) {
         if self.widened.binary_search(&(pc as usize)).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
         let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
         self.leaves[at].1 += 1;
         if self.leaves[at].1 < TIERS.loops.widen_after_leaves { return; }
-        self.leaves.swap_remove(at);
-        self.widened.push(pc as usize);
+        // Every operation seen leaving widens at once, so one recompile covers them all.
+        self.widened.extend(self.leaves.drain(..).map(|(left, _)| left as usize));
         self.widened.sort_unstable();
+        self.widened.dedup();
         if let Some(code) = self.code.take() { code.retire(); }
     }
 

@@ -141,6 +141,8 @@ const JMP_REL32_LEN: usize = 5;
 const SUB_RSP: [u8; 3] = [0x48, 0x83, 0xec];
 const RET: u8 = 0xc3;
 const REL32_LEN: usize = 4;
+/// How far from a sentinel a folded constant may move a field.
+const SCAN_RANGE: u32 = 255;
 /// An exit tail: the nop that replaced the frame teardown, then `jmp rel32`.
 const UNIT_LEN: usize = NOP4.len() + JMP_REL32_LEN;
 const JCC_ESCAPE: u8 = 0x0f;
@@ -150,7 +152,7 @@ const JCC_REL32_LEN: usize = 6;
 const JMP_REL32_OPCODE: u8 = 0xe9;
 
 /// Lower one row into a stencil function: `emit` lowers the row through the builder.
-fn lower(isa: &OwnedTargetIsa, emit: &impl Fn(&mut StencilBuilder), mode: Mode) -> ir::Function {
+fn lower(isa: &OwnedTargetIsa, emit: &impl Fn(&mut StencilBuilder), mode: Mode) -> (ir::Function, [bool; 3]) {
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 0), stencil_signature());
     let mut builder_context = FunctionBuilderContext::new();
     let mut b = FunctionBuilder::new(&mut func, &mut builder_context);
@@ -161,11 +163,12 @@ fn lower(isa: &OwnedTargetIsa, emit: &impl Fn(&mut StencilBuilder), mode: Mode) 
     b.seal_block(entry);
     let params = b.block_params(entry).to_vec();
     let pins = Pins { ints: std::array::from_fn(|k| params[2 + k]), floats: std::array::from_fn(|k| params[PINNED + 2 + k]) };
-    let mut stencil = StencilBuilder { b: &mut b, frame: params[0], context: params[1], pins, next, taken, exits: Vec::new(), mode, pending: Vec::new() };
+    let mut stencil = StencilBuilder { b: &mut b, frame: params[0], context: params[1], pins, next, taken, exits: Vec::new(), mode, used: [false; 3], pending: Vec::new() };
     emit(&mut stencil);
     stencil.finish();
+    let used = stencil.used;
     b.finalize(isa.frontend_config());
-    func
+    (func, used)
 }
 
 /// The relocations of compiled code, by hole.
@@ -188,24 +191,33 @@ fn relocations(ctx: &Context) -> Result<Vec<Reloc>, String> {
     Ok(relocs)
 }
 
-fn compile(isa: &OwnedTargetIsa, emit: &impl Fn(&mut StencilBuilder), mode: Mode) -> Result<Stencil, String> {
-    let mut ctx = Context::for_function(lower(isa, emit, mode));
+fn compile(isa: &OwnedTargetIsa, emit: &impl Fn(&mut StencilBuilder), mode: Mode) -> Result<(Stencil, [bool; 3]), String> {
+    let (function, used) = lower(isa, emit, mode);
+    let mut ctx = Context::for_function(function);
     ctx.compile(&**isa, &mut ControlPlane::default()).map_err(|e| format!("{:?}", e.inner))?;
     let relocs = relocations(&ctx)?;
-    Stencil::strip(ctx.compiled_code().ok_or("no code")?.code_buffer(), relocs)
+    Ok((Stencil::strip(ctx.compiled_code().ok_or("no code")?.code_buffer(), relocs)?, used))
 }
 
-/// Compile one row into a stencil. `emit` lowers the row through the given builder. The row is
-/// compiled with two sets of sentinels for its 32-bit holes; where the codes differ only in
-/// fields that are a hole (negated, plus a constant) the fields are patched in place, else the
-/// holes are 64-bit immediates.
+/// Compile one row into a stencil. `emit` lowers the row through the given builder with a
+/// sentinel for each 32-bit hole; the fields that hold a sentinel (negated, plus a small
+/// constant) are patched in place. Under test and `STENCIL_VERIFY` a second pass with other
+/// sentinels must explain exactly the same fields, else the holes are 64-bit immediates.
 pub fn generate(isa: &OwnedTargetIsa, emit: impl Fn(&mut StencilBuilder)) -> Result<Stencil, String> {
-    let (first, second) = (compile(isa, &emit, Mode::Sentinel(0))?, compile(isa, &emit, Mode::Sentinel(1))?);
-    match Stencil::fields(&first, &second) {
+    let (first, used) = compile(isa, &emit, Mode::Sentinel(0))?;
+    let found = Stencil::scan(&first, used);
+    let verify = cfg!(test) || std::env::var_os("STENCIL_VERIFY").is_some();
+    // A hole the scan cannot find (dead, or folded into other code) needs the second pass to say which.
+    let second = if found.is_none() || verify { Some(compile(isa, &emit, Mode::Sentinel(1))?.0) } else { None };
+    let explained = second.as_ref().and_then(|second| Stencil::fields(&first, second));
+    if verify && found.is_some() {
+        assert_eq!(found, explained, "the sentinel scan must agree with the two-pass diff");
+    }
+    match found.or(explained) {
         Some(imm32) => Ok(Stencil { imm32, ..first }),
         None => {
             WIDE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            compile(isa, &emit, Mode::Wide)
+            compile(isa, &emit, Mode::Wide).map(|(stencil, _)| stencil)
         }
     }
 }
@@ -289,6 +301,37 @@ impl Stencil {
         let mut relocs: Vec<Reloc> = relocs.into_iter().filter(|r| (r.offset as usize) < hot_end).collect();
         relocs.extend(added);
         (code, relocs)
+    }
+
+    /// The 32-bit hole fields found by their sentinel in one pass: a field within `SCAN_RANGE` of
+    /// a sentinel or of its negation. `None` when a hole the row used appears nowhere (its
+    /// constant was folded away).
+    fn scan(stencil: &Stencil, used: [bool; 3]) -> Option<Vec<Imm32>> {
+        let code = &stencil.code;
+        let (mut fields, mut at) = (Vec::new(), 0);
+        while at + REL32_LEN <= code.len() {
+            let word = u32::from_le_bytes([code[at], code[at + 1], code[at + 2], code[at + 3]]);
+            let near = |delta: u32| (delta as i32).unsigned_abs() <= SCAN_RANGE;
+            let hit = (0..3u32).find_map(|index| {
+                let sentinel = Sentinels::PASSES[0][index as usize];
+                if near(word.wrapping_sub(sentinel)) {
+                    Some(Imm32 { offset: at as u32, index, negate: false, addend: word.wrapping_sub(sentinel) })
+                } else if near(word.wrapping_add(sentinel)) {
+                    Some(Imm32 { offset: at as u32, index, negate: true, addend: word.wrapping_add(sentinel) })
+                } else {
+                    None
+                }
+            });
+            match hit {
+                Some(field) => {
+                    fields.push(field);
+                    at += REL32_LEN;
+                }
+                None => at += 1,
+            }
+        }
+        let all_found = (0..3u32).all(|index| !used[index as usize] || fields.iter().any(|f| f.index == index));
+        all_found.then_some(fields)
     }
 
     /// The 32-bit hole fields that explain every difference between the two sentinel passes, or

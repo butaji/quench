@@ -23,6 +23,8 @@ pub struct StencilBuilder<'a, 'f> {
     pub(crate) taken: ir::FuncRef,
     pub(crate) exits: Vec<Option<ir::FuncRef>>,
     pub(crate) mode: Mode,
+    /// The 32-bit holes the row asked for (each must be found in its code).
+    pub(crate) used: [bool; 3],
     pub(crate) pending: Vec<(ir::Block, ir::FuncRef, Vec<ir::Value>)>,
 }
 
@@ -47,6 +49,7 @@ impl StencilBuilder<'_, '_> {
             Operand::Const(value) => self.b.ins().iconst(types::I64, value),
             Operand::Hole(index) if !wide && self.mode != Mode::Wide => {
                 let sentinel = Sentinels::of(self.mode, index);
+                self.used[index as usize] = true;
                 self.b.ins().iconst(types::I64, i64::from(sentinel))
             }
             Operand::Hole(index) => {
