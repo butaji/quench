@@ -8045,16 +8045,18 @@ fn lane_loop_native<H: Host>(
 }
 
 /// Counts a leave at `pc` (`LoopTier::left_at`) where it is a Number operator, whose int32
-/// speculation a compilation can drop; a leave at any other guard (a shape, an element)
-/// widens nothing.
+/// speculation a compilation can drop, or an element store, which a compilation then lowers
+/// through the append helper; a leave at any other guard (a shape, an element read) widens nothing.
 #[cold]
 fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     let machine = unsafe { vm(cx) };
     let arithmetic = machine.programs.get(machine.active_program).as_deref().is_some_and(|program| {
         let body = program.function(site.function() as usize);
-        body.code.get(pc as usize).is_some_and(|packed|
-            decoded_instruction(body, *packed).op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary)
+        body.code.get(pc as usize).is_some_and(|packed| {
+            let op = decoded_instruction(body, *packed).op();
+            op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.stores_element()
+        })
     });
     if arithmetic { site.tier.borrow_mut().left_at(pc); }
 }

@@ -62,6 +62,11 @@ impl Op {
         matches!(self, Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible)
     }
 
+    /// A store to an indexed element, which a compiled loop lowers in place or leaves.
+    pub(crate) const fn stores_element(self) -> bool {
+        matches!(self, Op::SetIndex)
+    }
+
     /// An instruction that names a frame or environment local slot.
     pub(crate) const fn addresses_local_slot(self) -> bool {
         self.loads_frame_local() || self.addresses_env_local()
