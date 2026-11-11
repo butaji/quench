@@ -9,6 +9,8 @@ use std::ops::Range;
 struct Workspace {
     registers: Vec<usize>,
     stack: Vec<Frame>,
+    /// The frames of a native search (`Program::run_native`).
+    native_stack: Vec<usize>,
 }
 
 thread_local! {
@@ -70,15 +72,20 @@ impl Program {
         search: Search,
         captures: impl FnOnce(&[usize]) -> Vec<Option<Range<usize>>>,
     ) -> Option<Found> {
-        let Workspace { registers, stack } = workspace;
+        let Workspace { registers, stack, native_stack } = workspace;
         if registers.len() < self.register_count {
             registers.resize(self.register_count, UNSET);
         }
         let registers = &mut registers[..self.register_count];
-        stack.clear();
-        stack.push(Frame::Barrier);
-        let (pc, position) = self.entry(text, start);
-        let ran = self.run(text, (pc, start, position), Some(search), registers, stack);
+        let ran = match self.run_native(text, start, search, registers, native_stack) {
+            Some(ran) => ran,
+            None => {
+                stack.clear();
+                stack.push(Frame::Barrier);
+                let (pc, position) = self.entry(text, start);
+                self.run(text, (pc, start, position), Some(search), registers, stack)
+            }
+        };
         let found = ran.map(|(start, end)| Found { start, end, captures: captures(registers) });
         registers.fill(UNSET);
         found

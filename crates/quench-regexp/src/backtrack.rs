@@ -14,9 +14,11 @@ use std::cell::RefCell;
 use std::ops::Range;
 
 mod dispatch;
+pub mod native;
 mod scan;
 mod workspace;
 use dispatch::Dispatch;
+use native::NativeSlot;
 use workspace::{AnchoredRun, ClassRun, anchored_run_of, class_run_of};
 
 use super::{
@@ -594,6 +596,8 @@ pub(crate) struct Program {
     class_run: Option<Box<ClassRun>>,
     /// The whole-subject test a pattern of one unit repeat between anchors is (`anchored_run_of`).
     anchored_run: Option<AnchoredRun>,
+    /// The program's native search once it is hot (`native::NativeSlot`).
+    native: NativeSlot,
 }
 
 /// The compiled form of a construct this matcher does not run.
@@ -1339,6 +1343,7 @@ impl Program {
         Some(Self {
             class_run: class_run_of(&compiler.instructions, &compiler.sets, capture_count),
             anchored_run: anchored_run_of(&compiler.instructions, capture_count),
+            native: NativeSlot::default(),
             instructions: compiler.instructions.into_boxed_slice(),
             sets: compiler.sets.into_boxed_slice(),
             lists: compiler.lists.into_boxed_slice(),
