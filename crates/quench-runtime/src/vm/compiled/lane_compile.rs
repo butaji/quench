@@ -52,7 +52,9 @@ enum LaneCompile {
 pub(in crate::vm) enum LaneBodyWork<'a> {
     /// Plan a body from a predecessor's leaves (`generic`) and start compiling its code, its
     /// inlining budget halved `shrinks` times (`PendingLaneMethod::shrinks`).
-    Start { generic: &'a [LaneExit], shrinks: u8, observed: Option<u32>, called: bool, caller: &'a super::super::dispatch_fast::LaneView },
+    Start { generic: &'a [LaneExit], shrinks: u8, observed: Option<u32>, called: bool, caller: &'a super::super::dispatch_fast::LaneView,
+        /// The activation's array parameters sampled at entry, with their element type (`loop_tier::sample_array`).
+        arrays: &'a [(crate::bytecode::Register, crate::typed_ir::Type)] },
     /// Look for the code of the body compiling.
     Poll(Box<PendingLaneMethod>),
 }
@@ -167,7 +169,8 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn plan_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates],
-        generic: &[LaneExit], budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
+        generic: &[LaneExit], budget: usize, entry: Option<u32>,
+        arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)]) -> Option<(LanePlan, ir::Function)> {
         let unit = self.lane_plan_unit(program, function, targets, generic, budget)?;
         let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(Miss::PlanNoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
@@ -193,8 +196,9 @@ impl<H: Host> Vm<H> {
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
             invalidation: invalidation.address(), constants }), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
+        let number_reads = super::osr_compile::observed_reads(&unit, arrays, &[], &left_at);
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
-            &leaves, &direct_sites, &frame_captures, entry).or_else(|| { plan_miss(Miss::PlanNotLowered); None })?;
+            &leaves, &direct_sites, &frame_captures, entry, &number_reads).or_else(|| { plan_miss(Miss::PlanNotLowered); None })?;
         if lowered.region.native == 0 { plan_miss(Miss::PlanNothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation, budget }, native))
@@ -211,7 +215,7 @@ impl<H: Host> Vm<H> {
         self.host.before_native_compilation();
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let method = loop {
-            let Some((plan, native)) = self.plan_lane_method(program, function, targets, captures, &direct, generic, budget, None)
+            let Some((plan, native)) = self.plan_lane_method(program, function, targets, captures, &direct, generic, budget, None, &[])
             else { break None };
             match lane_code(native, super::jit_backend::CompileLevel::run_default()) {
                 Ok(code) => break plan.finish(&code),
@@ -229,10 +233,11 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn plan_lane_method_sized(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[DirectCandidates], generic: &[LaneExit], mut budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
+        direct: &[DirectCandidates], generic: &[LaneExit], mut budget: usize, entry: Option<u32>,
+        arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)]) -> Option<(LanePlan, ir::Function)> {
         loop {
             self.host.before_native_compilation();
-            let planned = self.plan_lane_method(program, function, targets, captures, direct, generic, budget, entry);
+            let planned = self.plan_lane_method(program, function, targets, captures, direct, generic, budget, entry, arrays);
             self.host.after_native_compilation();
             let (plan, native) = planned?;
             let oversized = native.dfg.num_insts() * lane_region::LANE_BODY_CODE_BYTES_PER_IR > lane_region::LANE_BODY_MAX_CODE_BYTES;
@@ -246,15 +251,16 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>, called: bool, caller: &super::super::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
-        let (plan, native) = self.plan_lane_method_sized(program, function, targets, captures, direct, generic, budget, entry)
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>, called: bool, caller: &super::super::dispatch_fast::LaneView,
+        arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)]) -> Result<PendingLaneMethod, Unstarted> {
+        let (plan, native) = self.plan_lane_method_sized(program, function, targets, captures, direct, generic, budget, entry, arrays)
             .ok_or(Unstarted::Declined)?;
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
         if entry.is_none() && !called && !amortizes_entry(&plan.unit, function, &plan.direct) { return Err(Unstarted::Short); }
         bind_callees(&plan.direct, caller);
-        let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget));
+        let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
         if let Some(entries) = observed && !pays_compile(program, function, entries, native.dfg.num_insts()) { return Err(Unstarted::Unpaid); }
         if !self.programs.admit_lane_compile(&key, TIERS.lane_body.max_compiles) { plan_miss(Miss::PlanCompileBound); return Err(Unstarted::Declined); }
@@ -293,9 +299,9 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn lane_body_work(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
-        let (mut observed, mut called, mut caller) = (None, false, None);
+        let (mut observed, mut called, mut caller, mut arrays) = (None, false, None, Vec::new());
         let mut pending = match work {
-            LaneBodyWork::Start { generic, shrinks, observed: seen, called: by_bodies, caller: view } => { (observed, called, caller) = (seen, by_bodies, Some(view)); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
+            LaneBodyWork::Start { generic, shrinks, observed: seen, called: by_bodies, caller: view, arrays: sampled } => { (observed, called, caller, arrays) = (seen, by_bodies, Some(view), sampled.to_vec()); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
             LaneBodyWork::Poll(pending) => match self.lane_body_poll(pending) {
                 Ok(outcome) => return outcome,
                 Err(replan) => replan,
@@ -307,7 +313,7 @@ impl<H: Host> Vm<H> {
         loop {
             let (generic, budget) = pending;
             let direct = direct(self);
-            let started = match self.start_lane_method(program, function, targets, captures, &direct, &generic, budget, entry, observed, called, caller.expect("a started body names its view")) {
+            let started = match self.start_lane_method(program, function, targets, captures, &direct, &generic, budget, entry, observed, called, caller.expect("a started body names its view"), &arrays) {
                 Ok(started) => started,
                 Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
                 Err(Unstarted::Unpaid) => return LaneBodyOutcome::Unpaid,
