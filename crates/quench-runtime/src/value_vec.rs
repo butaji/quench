@@ -96,8 +96,8 @@ struct Nursery {
 /// The nursery's young range, `[floor, top)`, which a collection's releases leave as it is.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct YoungRuns {
-    floor: usize,
-    top: usize,
+    pub(crate) floor: usize,
+    pub(crate) top: usize,
 }
 
 impl YoungRuns {

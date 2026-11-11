@@ -72,3 +72,11 @@ pub(in crate::heap) fn warm_array_elements(array: &ArrayObject) {
     #[cfg(not(target_arch = "x86_64"))]
     let _ = address;
 }
+
+/// Whether an object sweep must show its survivors: to list the owners of young runs, or to
+/// rewrite property storage for a compaction. With neither, the visit reads every live
+/// record for nothing.
+#[inline(always)]
+pub(in crate::heap) fn objects_visited(young_runs: crate::value_vec::YoungRuns, compacts: bool) -> bool {
+    compacts || young_runs.top != young_runs.floor
+}

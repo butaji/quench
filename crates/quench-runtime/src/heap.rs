@@ -2459,7 +2459,7 @@ impl Heap {
                 memory_profile.freed_record_cell(Value::direct_object(_record_id), properties.len(object.properties()));
                 object.release_storage(properties)
             };
-            let (object_live, object_freed) = self.object_records.sweep_disposing(full, age, true, dispose, |record| match record {
+            let (object_live, object_freed) = self.object_records.sweep_disposing(full, age, records::sweep_support::objects_visited(young_runs, compacts), dispose, |record| match record {
                 RecordSweep::Keep(record_id, object) => {
                     if compacts && object.properties().has_compact_range() {
                         direct_property_owners.push((
