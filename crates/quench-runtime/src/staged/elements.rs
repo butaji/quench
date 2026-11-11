@@ -21,6 +21,36 @@ pub(crate) fn dense_element<S: Stage>(stage: &mut S, values: S::Word, length: S:
     Some((address, value))
 }
 
+/// A dense array's backing as an access reaches it from the array value: the record, the
+/// backing's header, its first value and its length.
+#[derive(Clone, Copy)]
+pub(crate) struct Backing<W> {
+    pub(crate) record: W,
+    pub(crate) header: W,
+    pub(crate) values: W,
+    pub(crate) length: W,
+}
+
+/// The backing of the direct array `base` among the array records at `record_base`: `None`
+/// (leaving at `miss`) for any other value, or before the first array record exists
+/// (`record_base` zero). The record's address is its index, `base`'s low half, times the
+/// record size past `record_base`; the backing's header is one load, its length another.
+#[inline(always)]
+pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<Backing<S::Word>> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let is_array = super::value::is_direct_array(stage, base);
+    stage.guard(is_array, miss)?;
+    let index = stage.and_imm(base, u64::from(u32::MAX));
+    let present = stage.ne_imm(record_base, 0u32);
+    stage.guard(present, miss)?;
+    let offset = stage.mul_imm(index, ARRAY.record_size as u64);
+    let record = stage.add(record_base, offset);
+    let header = stage.load_u64(record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+    let length = stage.load_u32(header, ARRAY.header_length_offset as i32);
+    let values = stage.add_imm(header, ARRAY.header_values_offset as u64);
+    Some(Backing { record, header, values, length })
+}
+
 /// Replaces the present element at `address` of the dense backing at `values`, which held
 /// `old`, with `value`: the backing's count of values that are no int32 (its others) follows
 /// the write, and a count native code made unknown (`OTHERS_UNKNOWN`) stays unknown. The
@@ -114,10 +144,21 @@ pub(crate) fn concrete_recount(others: u32, added: u32, removed: u32) -> u32 {
 }
 
 /// The interpreter's reading of `dense_element` over `elements`.
+#[cfg(test)]
 #[inline(always)]
 pub(crate) fn concrete_dense_element(elements: &[crate::Value], index: usize) -> Option<crate::Value> {
     let mut stage = Concrete::new(std::ptr::null());
     dense_element(&mut stage, elements.as_ptr() as u64, elements.len() as u64, index as u64, ())
+        .map(|(_, value)| crate::Value::from_bits(value))
+}
+
+/// The interpreter's reading of `array_backing` then `dense_element`: element `index` of the
+/// direct array `base` among the array records at `record_base`.
+#[inline(always)]
+pub(crate) fn concrete_record_element(record_base: *const crate::heap::ArrayObject, base: crate::Value, index: usize) -> Option<crate::Value> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let backing = array_backing(&mut stage, record_base as u64, base.to_bits(), ())?;
+    dense_element(&mut stage, backing.values, backing.length, index as u64, ())
         .map(|(_, value)| crate::Value::from_bits(value))
 }
 

@@ -922,9 +922,12 @@ pub(super) fn emit_dense_array_view(
 ) -> DenseArrayView {
     use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
 
-    let record = emit_array_record(builder, payload, base, fallback);
-    let header = emit_array_header(builder, record);
-    let length = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_length_offset as i32);
+    let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
+        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
+    let mut stage = object_slots::Emit { builder, property_values: None };
+    let crate::staged::elements::Backing { record, header, values, length } =
+        crate::staged::elements::array_backing(&mut stage, record_base, base, fallback)
+            .expect("the emit stage continues past its guards");
     if writable {
         let owners = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_owners_offset as i32);
         let unique = builder.ins().icmp_imm_u(IntCC::Equal, owners, 1);
@@ -938,7 +941,8 @@ pub(super) fn emit_dense_array_view(
         let plain = builder.ins().icmp_imm_u(IntCC::Equal, extras, 0);
         emit_js_guard(builder, plain, fallback);
     }
-    let values = builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64);
+    // The view's length is an `i32`, the width an int32 index has.
+    let length = builder.ins().ireduce(types::I32, length);
     DenseArrayView { values, length, writable, uncounted: false }
 }
 
