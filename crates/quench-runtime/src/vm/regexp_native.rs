@@ -373,10 +373,15 @@ impl<'a, 'f> Emit<'a, 'f> {
         self.b.switch_to_block(barrier);
         let failed = self.constant(NATIVE_FAIL as i64);
         self.b.ins().return_(&[failed]);
-        let resumes = std::mem::take(&mut self.resumes);
-        for (resume, block) in resumes {
+        // A resume may push another frame of its own id while it is emitted (a greedy repeat
+        // giving back a unit), so the list stays as it is: taking it would mint a second id
+        // for an existing resume, which the jump table made before this loop already names.
+        let mut index = 0;
+        while index < self.resumes.len() {
+            let (resume, block) = self.resumes[index];
             self.b.switch_to_block(block);
             self.resume(resume);
+            index += 1;
         }
     }
 

@@ -176,6 +176,16 @@ const FOUND: &[&str] = &[
     // A lane call that threw ran again where the general tier entered at its record.
     "var n = 0; function inner(a) { for (var i = 0; i < 4; i++) {} a.forEach(function () { n++; throw 0; }); }
      for (var k = 0; k < 40; k++) { try { inner([1]); } catch (e) {} } throw n;",
+    // Regexp native code: a greedy repeat that gave back a unit pushed a frame whose resume
+    // id was minted while the resume blocks were emitted, colliding with the first resume.
+    "var re = /^(180(\\.0+)?|\\d{1,2}(\\.\\d+)?)$/;
+     for (var k = 0; k < 4100; k++) { re.test('184'); }
+     var out = [];
+     ['180.00001', '180.1', '180.0', '18.1', '184', ' -180.0', ' -180.00001'].forEach(function (s) {
+       var found = re.exec(s);
+       out.push(found ? found[0] + '|' + found[1] + '|' + found[2] + '|' + found[3] : 'null');
+     });
+     throw out.join(';');",
 ];
 
 #[test]
