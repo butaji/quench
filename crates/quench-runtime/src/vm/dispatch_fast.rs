@@ -807,6 +807,7 @@ impl ActivationShape {
 
 /// Storage and guest-call allowance proved before an inlined body runs.
 #[derive(Clone, Copy, Default)]
+#[repr(C)]
 pub(super) struct LaneRecoverySpace {
     pub(super) values: usize,
     pub(super) activations: usize,
@@ -8063,18 +8064,18 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
     if !region.contains(&pc) { return; }
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     let machine = unsafe { vm(cx) };
-    let arithmetic = machine.programs.get(machine.active_program).as_deref().is_some_and(|program| {
+    let counted = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
         let body = program.function(site.function() as usize);
-        body.code.get(pc as usize).is_some_and(|packed| {
+        body.code.get(pc as usize).and_then(|packed| {
             let op = decoded_instruction(body, *packed).op();
             super::compiled::fast_region::leave(site.function(), pc, op);
-            op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
+            (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
                 || matches!(op.class(), Class::LoadCapture)
                 // A FastJIT region also holds a loaded field as an int32 until it leaves there.
-                || (crate::jit_mode::fast_regions() && matches!(op.class(), Class::GetField))
+                || (crate::jit_mode::fast_regions() && matches!(op.class(), Class::GetField))).then(|| op.is_get_index())
         })
     });
-    if arithmetic { site.tier.borrow_mut().left_at(pc); }
+    if let Some(read) = counted { site.tier.borrow_mut().left_at(pc, read); }
 }
 
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
@@ -15398,11 +15399,11 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return lane_body_stats::miss(lane_body_stats::Miss::ConstructReturning);
     }
-    // The rest activates the constructor, which native windows below would need shadow frames for.
-    if Vm::<H>::lane_shadow_active() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructShadowActive); }
     let Some(target) = lane_construct_target(cx, vm, callee) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
     // A forwarding constructor is built by its forwarded initializer's plan or not at all here.
     if target.forwards() { return lane_body_forwarded(vm, callee, r, i); }
+    // The rest activates the constructor, which native windows below would need shadow frames for.
+    if Vm::<H>::lane_shadow_active() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructShadowActive); }
     if !target.constructs { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructor); }
     // The activation of the lane's own construction (`lane_script_construct`): a target that
     // keeps or gathers values, or is passed more than it has parameters, by the keeping form.

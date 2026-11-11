@@ -2543,6 +2543,8 @@ pub(crate) struct Observation<'a> {
     /// The registers holding arrays whose sampled elements were all int32s, or all Numbers, at
     /// entry, with that type: reads through them have it, leaving where one does not.
     pub(crate) number_arrays: &'a [(Register, crate::typed_ir::Type)],
+    /// The element reads that left again after their observation widened to Numbers: typed no more.
+    pub(crate) abandoned: &'a [usize],
     /// The registers holding int32s at entry, whose loop may keep them as int32s where every
     /// definition in it yields one (`RegionSpecializer::int_entries`).
     pub(crate) int_entries: &'a [Register],

@@ -24,7 +24,8 @@ use cranelift_codegen::ir::{
 };
 use cranelift_codegen::isa::{CallConv, OwnedTargetIsa};
 use cranelift_codegen::settings::{self, Configurable};
-use cranelift_codegen::{Context, FinalizedRelocTarget};
+use cranelift_codegen::Context;
+use cranelift_codegen::RelocTarget;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 
 /// Value registers a stencil takes after (frame, context): the tail convention passes them in
@@ -156,7 +157,7 @@ fn relocations(ctx: &Context) -> Result<Vec<Reloc>, String> {
     let compiled = ctx.compiled_code().ok_or("no code")?;
     let mut relocs = Vec::new();
     for r in compiled.buffer.relocs() {
-        let FinalizedRelocTarget::ExternalName(ExternalName::User(name)) = &r.target else {
+        let RelocTarget::ExternalName(ExternalName::User(name)) = &r.target else {
             return Err("stencil relocation to a non-hole target".into());
         };
         let name = &ctx.func.params.user_named_funcs()[*name];

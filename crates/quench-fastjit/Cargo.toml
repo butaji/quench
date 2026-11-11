@@ -9,9 +9,9 @@ description = "FastJIT: Cranelift-built stencils copied and patched at run time"
 doctest = false
 
 [dependencies]
-cranelift-codegen = { version = "=0.134.3", default-features = false, features = ["std"] }
-cranelift-frontend = { version = "=0.134.3", default-features = false, features = ["std"] }
-cranelift-native = { version = "=0.134.3", default-features = false }
+cranelift-codegen = { version = "=0.137.1", default-features = false, features = ["std"] }
+cranelift-frontend = { version = "=0.137.1", default-features = false, features = ["std"] }
+cranelift-native = { version = "=0.137.1", default-features = false }
 
 [lints]
 workspace = true

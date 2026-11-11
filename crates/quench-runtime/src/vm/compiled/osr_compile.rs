@@ -247,13 +247,14 @@ impl OsrFacts {
 /// left (`generic`): typed, each leaving at an element that is not one.
 fn observed_reads(unit: &lane_unit::Unit, observation: &Observation<'_>, generic: &[usize]) -> Vec<super::facts::ObservedRead> {
     unit.instructions.iter().enumerate()
-        .filter(|(pc, instruction)| instruction.op().is_get_index() && !generic.contains(pc))
+        .filter(|(pc, instruction)| instruction.op().is_get_index() && !observation.abandoned.contains(pc))
         .filter_map(|(pc, instruction)| {
             let register = instruction.operand_b().register_index()?;
             let ty = observation.number_arrays.iter().find(|(array, _)| *array == register)?.1;
             // An inlined callee's reads are Numbers whatever the entry showed: its registers
-            // hold nothing at entry that the sample could have seen.
-            let ty = if unit.frames.is_empty() { ty } else { crate::typed_ir::Type::NUMBER };
+            // hold nothing at entry that the sample could have seen. So is a read that left
+            // once: an int32 observation it outgrew widens to Numbers before it is dropped.
+            let ty = if unit.frames.is_empty() && !generic.contains(&pc) { ty } else { crate::typed_ir::Type::NUMBER };
             Some(super::facts::ObservedRead { pc, ty })
         }).collect()
 }

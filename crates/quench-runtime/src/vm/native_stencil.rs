@@ -31,7 +31,7 @@ use super::specialize::{CallThreaded, CallThreadedExtension, Continuation, Instr
 use crate::Host;
 use crate::bytecode::ResidualProgram;
 use cranelift_codegen::{
-    FinalizedRelocTarget,
+    RelocTarget,
     binemit::Reloc,
     ir::{self, InstBuilder, MemFlagsData, condcodes::IntCC, types},
     isa::{CallConv, TargetIsa},
@@ -182,13 +182,13 @@ impl Stencil {
             let names = function.params.user_named_funcs();
             let mut patches = Vec::new();
             for relocation in compiled.buffer.relocs() {
-                let FinalizedRelocTarget::ExternalName(ir::ExternalName::User(name)) =
-                    relocation.target
+                let RelocTarget::ExternalName(ir::ExternalName::User(name)) =
+                    &relocation.target
                 else {
                     return Err(super::jit_backend::NativeCompileRejection::Relocations);
                 };
                 let name = names
-                    .get(name)
+                    .get(*name)
                     .filter(|name| name.namespace == HOLE_NAMESPACE)
                     .ok_or(super::jit_backend::NativeCompileRejection::Relocations)?;
                 let hole = Hole::from_index(name.index)

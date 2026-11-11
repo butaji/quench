@@ -83,11 +83,11 @@ quench-temporal = { path = "../quench-temporal" }
 wasmparser = "0.247"
 # The compiled execution mode: Cranelift is the code generator the generating
 # extension emits into; libc maps the resulting code executable.
-cranelift-codegen = { version = "=0.134.3", default-features = false, features = ["std"] }
-cranelift-frontend = { version = "=0.134.3", default-features = false, features = ["std"] }
-cranelift-native = { version = "=0.134.3", default-features = false, optional = true }
-cranelift-object = { version = "=0.134.3", default-features = false, optional = true }
-cranelift-module = { version = "=0.134.3", default-features = false, features = ["std"], optional = true }
+cranelift-codegen = { version = "=0.137.1", default-features = false, features = ["std"] }
+cranelift-frontend = { version = "=0.137.1", default-features = false, features = ["std"] }
+cranelift-native = { version = "=0.137.1", default-features = false, optional = true }
+cranelift-object = { version = "=0.137.1", default-features = false, optional = true }
+cranelift-module = { version = "=0.137.1", default-features = false, features = ["std"], optional = true }
 libc = "0.2"
 # fdlibm atan is part of the shared binary64 Math rounding policy.
 libm = "=0.2.16"
