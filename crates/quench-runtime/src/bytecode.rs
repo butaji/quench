@@ -2518,6 +2518,11 @@ impl Function {
                     pc += 1;
                 }
                 written if temporaries.write(written, self.params, &fallbacks, constants) => pc += 1,
+                nested if nested.op() == Op::LoadCapture
+                    && let Some((store, length)) = initializer_stores::nested_store(&instructions, pc, self.params, constants) => {
+                    stores.push(store);
+                    pc += length;
+                }
                 _ => break,
             }
         }

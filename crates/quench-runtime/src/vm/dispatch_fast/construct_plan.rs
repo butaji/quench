@@ -181,6 +181,7 @@ impl ConstructPlan {
                 self.operators[field] = operator;
                 self.fallbacks[field] = Value::number(constant);
             }
+            crate::bytecode::InitializerValue::Construct(_) => return None,
         }
         self.fields += 1;
         Some(self)
@@ -238,6 +239,7 @@ pub(super) fn initializer_store_value<H: Host>(vm: &Vm<H>, store: &crate::byteco
         }
         crate::bytecode::InitializerValue::Constant(constant) => constant.value(|index| vm.active_constant(index)),
         crate::bytecode::InitializerValue::Numeric { parameter, operator, constant } => numeric_initializer(argument(parameter), operator, constant),
+        crate::bytecode::InitializerValue::Construct(_) => None,
     }
 }
 
