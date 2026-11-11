@@ -225,6 +225,7 @@ mod promise_state;
 mod proxy;
 mod reflect;
 mod regexp;
+mod regexp_native;
 mod shadow_realm;
 mod sort;
 mod string;
