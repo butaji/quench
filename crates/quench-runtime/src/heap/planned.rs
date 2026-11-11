@@ -42,4 +42,12 @@ impl Heap {
         self.allocated += 1;
         Some((Value::direct_object(id), self.object_records.record_ptr(id)))
     }
+
+    /// `alloc_object` of an object with no properties, which admit no slot values.
+    #[inline(always)]
+    pub(crate) fn alloc_empty_object(&mut self, object: Object) -> Value {
+        debug_assert!(object.exact_shape() == object.shape() && self.properties.shape_length(object.exact_shape()) == 0);
+        self.mark_prototype(object.proto());
+        self.insert_admitted_object_record(object)
+    }
 }
