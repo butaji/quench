@@ -2,7 +2,7 @@
 //! generator's thread compiles, and the next look publishes the code.
 
 use super::{
-    compile_native_function, dump_native_code, native_dump_directory, lane_unit, osr_loop,
+    compile_native_function, dump_native_bytes, dump_native_code, native_dump_directory, lane_unit, osr_loop,
     publish_entry, tier_policy, CompiledOsrRegion, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
@@ -199,6 +199,25 @@ pub(in crate::vm) fn start_osr_region(
     widened: &[usize],
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
+    if crate::jit_mode::fast_only() && region.inlining.is_some() {
+        return None;
+    }
+    if crate::jit_mode::fast_regions() && region.inlining.is_none() {
+        // Number loops whose every instruction has a stencil row skip Cranelift.
+        if let Ok(code) = super::fast_region::build(region, widened, [observation.int_registers, observation.double_registers]) {
+            if let Some(directory) = native_dump_directory() {
+                dump_native_bytes(directory, region.header, &code, None, "");
+            }
+            let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
+            let code = super::super::jit_backend::run_in_background(move || Ok(code));
+            return Some(PendingOsrRegion { code, watch, header: region.header, clif: None,
+                facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new() } });
+        }
+        // `--f-jit` has no Cranelift tier: a region with no stencil rows stays interpreted.
+        if crate::jit_mode::fast_only() {
+            return None;
+        }
+    }
     let fields = loop_fields(region, observation);
     // The function's own unit run over the loop is the general plan: a call inside it leaves
     // at the call's exact PC, with no callee inlined. The inlined unit is an optimization over
@@ -306,7 +325,7 @@ mod tests {
         }).expect("the function has a loop");
         let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
             .expect("the loop is admitted");
-        let observation = Observation { native_field_loads: &[] };
+        let observation = Observation { native_field_loads: &[], int_registers: &[], double_registers: &[] };
         let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
             crate::MemoryPolicy::Throughput, &program, id,
             super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &[])

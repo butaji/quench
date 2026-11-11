@@ -630,3 +630,15 @@
  ;; eq(icmp(ty, cc, x, y), 0) == icmp(ty, cc_complement, x, y)
  ;; e.g. eq(ugt(x, y), 0) == ule(x, y)
  (rule (simplify (eq ty
+--- a/cranelift-codegen/src/isa/x64/abi.rs
++++ b/cranelift-codegen/src/isa/x64/abi.rs
+@@ -931,6 +931,9 @@ impl ABIMachineSpec for X64ABIMachineSpec {
+             // The `winch` calling convention doesn't have any callee-save
+             // registers.
+             CallConv::Winch => vec![],
++            // FastJIT stencils (`unwind_info=false` with the tail convention) save nothing: the entry
++            // thunk preserves the callee-saved registers once for the whole chain.
++            CallConv::Tail if !flags.unwind_info() => vec![],
+             CallConv::Fast | CallConv::SystemV | CallConv::Tail => regs
+                 .iter()
+                 .cloned()

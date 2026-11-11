@@ -8011,7 +8011,7 @@ fn lane_loop_native<H: Host>(
     match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => LoopAttempt::Declined,
         LoopContinuation::Resume(pc) => LoopAttempt::At(at(pc)),
-        LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc); LoopAttempt::Leave(exit(at(pc))) }
+        LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc, region.header..=region.backedge); LoopAttempt::Leave(exit(at(pc))) }
         LoopContinuation::Inlined { frame, pc } => { let frame = region.inlining.as_ref().expect("an inlining region").frames[frame];
             LoopAttempt::Leave(exit(lane_inlined_activation(cx, r, region, &entry, frame, at(frame.call), pc))) }
         LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
@@ -8027,13 +8027,18 @@ fn lane_loop_native<H: Host>(
 /// speculation a compilation can drop; a leave at any other guard (a shape, an element)
 /// widens nothing.
 #[cold]
-fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
+fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32, region: std::ops::RangeInclusive<u32>) {
+    if !region.contains(&pc) { return; }
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     let machine = unsafe { vm(cx) };
     let arithmetic = machine.programs.get(machine.active_program).as_deref().is_some_and(|program| {
         let body = program.function(site.function() as usize);
-        body.code.get(pc as usize).is_some_and(|packed|
-            decoded_instruction(body, *packed).op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary)
+        body.code.get(pc as usize).is_some_and(|packed| {
+            let op = decoded_instruction(body, *packed).op();
+            // A FastJIT region also holds a loaded value (a capture, an element, a field) as an int32 until it leaves there.
+            op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+                || (crate::jit_mode::fast_regions() && matches!(op.class(), Class::LoadCapture | Class::GetIndex | Class::GetField))
+        })
     });
     if arithmetic { site.tier.borrow_mut().left_at(pc); }
 }
@@ -8207,7 +8212,7 @@ fn lane_loop_run<H: Host>(
         if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
             return LoopContinuation::Jump;
         }
-        lane_loop_compile(cx, site, region, &mut tier);
+        lane_loop_compile(cx, r, site, region, &mut tier);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }

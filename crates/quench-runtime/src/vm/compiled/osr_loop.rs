@@ -155,6 +155,14 @@ impl LoopRegion {
     /// The function's full decoded code, which a loop unit keeps so its PCs stay the
     /// function's; only `header..=backedge` lowers.
     pub(crate) fn instructions(&self) -> &[WideInstruction] { &self.instructions }
+    /// The Number constant the region reads at pool index `index`.
+    pub(super) fn number_constant(&self, index: usize) -> Option<f64> { self.constants.get(&index).copied() }
+    /// The registers of the region for which `is_int` holds.
+    pub(crate) fn registers_where(&self, is_int: impl Fn(Register) -> bool) -> Vec<Register> {
+        self.entry_registers().filter(|register| is_int(*register)).collect()
+    }
+    /// The registers the region treats as Numbers.
+    pub(super) fn number_registers(&self) -> &[Register] { &self.numbers }
     /// The cached field reads, by offset from the header: the lane specializer's field
     /// sites, mapped from the observation's descriptors.
     pub(crate) fn field_reads(&self) -> &std::collections::BTreeMap<u32, usize> { &self.field_reads }
@@ -2465,6 +2473,10 @@ fn admit(
 /// the native OSR reader may load directly, by region field index.
 pub(crate) struct Observation<'a> {
     pub(crate) native_field_loads: &'a [Vec<NativeFieldLoad>],
+    /// The registers of the region that held an int32 where the compile began.
+    pub(crate) int_registers: &'a [Register],
+    /// The registers that held a Number that is no int32.
+    pub(crate) double_registers: &'a [Register],
 }
 
 

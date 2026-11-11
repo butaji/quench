@@ -35,16 +35,17 @@ impl LoopTier {
     }
 
     /// Counts a run of the code that left at `pc`. An operation left `widen_after_leaves`
-    /// times joins the widened ones and the code goes, where a compilation remains: the next
+    /// times joins the widened ones, with every other operation left so far, and the code goes, where a compilation remains: the next
     /// entry compiles the loop holding that operation's result as a double.
     pub(super) fn left_at(&mut self, pc: u32) {
         if self.widened.binary_search(&(pc as usize)).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
         let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
         self.leaves[at].1 += 1;
         if self.leaves[at].1 < TIERS.loops.widen_after_leaves { return; }
-        self.leaves.swap_remove(at);
-        self.widened.push(pc as usize);
+        // Every operation seen leaving widens at once, so one recompile covers them all.
+        self.widened.extend(self.leaves.drain(..).map(|(left, _)| left as usize));
         self.widened.sort_unstable();
+        self.widened.dedup();
         if let Some(code) = self.code.take() { code.retire(); }
     }
 
@@ -120,6 +121,7 @@ impl LoopTier {
 /// for its code at once: a code generator without its own thread has it ready.
 pub(super) fn lane_loop_compile<H: Host>(
     cx: *mut LaneContext<H>,
+    r: Registers,
     site: &LoopSite,
     region: &super::super::compiled::LoopRegion,
     tier: &mut LoopTier,
@@ -134,7 +136,12 @@ pub(super) fn lane_loop_compile<H: Host>(
     let function = site.function();
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
-    let started = observe(machine, region, |observation| {
+    let ints = region.registers_where(|register| r.get(register).as_int().is_some());
+    let doubles = region.registers_where(|register| {
+        let value = r.get(register);
+        value.as_number().is_some() && value.as_int().is_none()
+    });
+    let started = observe(machine, region, [&ints, &doubles], |observation| {
         super::super::compiled::start_osr_region(region, tier.views, observation,
             machine.heap.memory_policy(), program.as_deref()?, function, helpers, &tier.widened)
     });
@@ -147,10 +154,11 @@ pub(super) fn lane_loop_compile<H: Host>(
 fn observe<H: Host, T>(
     machine: &Vm<H>,
     region: &super::super::compiled::LoopRegion,
+    numbers: [&[crate::bytecode::Register]; 2],
     compile: impl FnOnce(&super::super::compiled::Observation<'_>) -> T,
 ) -> T {
     let native_field_loads = native_field_loads(machine, region);
-    compile(&super::super::compiled::Observation { native_field_loads: &native_field_loads })
+    compile(&super::super::compiled::Observation { native_field_loads: &native_field_loads, int_registers: numbers[0], double_registers: numbers[1] })
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.

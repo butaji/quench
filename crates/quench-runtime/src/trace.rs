@@ -115,6 +115,9 @@ setting! {
         /// Every JavaScript JIT compile at `CompileLevel::Quick` (no mid-end optimization,
         /// one-pass register allocation), to measure the level's cost and code quality.
         QuickCompile = "quick-compile",
+        /// Number loop regions build from FastJIT stencils (`quench-fastjit`) where every
+        /// instruction has a row, instead of Cranelift IR.
+        FastJit = "fastjit",
         /// Selective Wasm hot-root tiering (`wasm-selective`).
         WasmSelective = "wasm-selective",
         /// A bounded root compilation of the residual Wasm function `wasm-root=N`.
