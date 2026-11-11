@@ -44,6 +44,8 @@ pub(in crate::vm) struct PendingOsrRegion {
     header: u32,
     clif: Option<String>,
     facts: OsrFacts,
+    /// A stencil region: it reads none of the general tier's views, so a run builds none (`CompiledOsrRegion::lean`).
+    lean: bool,
 }
 
 /// What a background loop-region compile came to.
@@ -314,7 +316,7 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usiz
     }
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let code = super::super::jit_backend::run_in_background(move || Ok(code));
-    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None,
+    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, lean: true,
         facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new() } }))
 }
 
@@ -356,7 +358,7 @@ pub(in crate::vm) fn start_osr_region(
         compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts })
+    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, lean: false })
 }
 
 impl PendingOsrRegion {
@@ -380,12 +382,12 @@ impl PendingOsrRegion {
             std::task::Poll::Ready(Some(Ok(code))) => code,
             std::task::Poll::Ready(_) => return Ok(OsrCompile::Failed),
         };
-        let Self { header, clif, facts, .. } = *self;
+        let Self { header, clif, facts, lean, .. } = *self;
         let Some((memory, entry)) = publish_entry(&code) else { return Ok(OsrCompile::Failed) };
         if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
             dump_native_code(directory, header, &memory, &clif);
         }
-        Ok(OsrCompile::Done(CompiledOsrRegion { _code: memory, entry, facts }))
+        Ok(OsrCompile::Done(CompiledOsrRegion { _code: memory, entry, facts, lean }))
     }
 }
 

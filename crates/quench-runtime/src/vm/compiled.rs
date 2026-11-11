@@ -6005,6 +6005,8 @@ pub(super) struct CompiledOsrRegion {
     _code: CodeMemory,
     entry: Entry,
     pub(super) facts: OsrFacts,
+    /// A stencil region, which runs without the general tier's views (`JsNativeActivation::with_views`).
+    lean: bool,
 }
 
 impl CompiledOsrRegion {
@@ -6054,7 +6056,7 @@ impl CompiledOsrRegion {
         let mut outcome = LoopOutcome::Terminated;
         #[cfg(test)]
         LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
-        let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, |native, vm| {
+        let ran = unsafe { JsNativeActivation::with_views(&mut *vm, program, frame, 0, false, !self.lean, |native, vm| {
             native.dispatch.bind_native_storage(vm);
             native.dispatch.lane_context = lane_context;
             // A region's `THIS`-based reads take the running activation's receiver, as a
@@ -7509,6 +7511,13 @@ impl JsNativeActivation {
     #[inline(always)]
     fn with<H: Host, R>(vm: &mut Vm<H>, program_id: ProgramId, frame: usize, start_pc: usize,
         allow_inline_calls: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
+        Self::with_views(vm, program_id, frame, start_pc, allow_inline_calls, true, run)
+    }
+
+    /// `with`, whose general views (`refresh_heap_bases`) are refreshed only where `views`: a stencil region reads none of them.
+    #[inline(always)]
+    fn with_views<H: Host, R>(vm: &mut Vm<H>, program_id: ProgramId, frame: usize, start_pc: usize,
+        allow_inline_calls: bool, views: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
         let program = vm.programs.get(program_id)?;
         let body = program.function_get(vm.frames[frame].function as usize)? as *const _;
         let activation = &mut vm.frames[frame];
@@ -7544,7 +7553,7 @@ impl JsNativeActivation {
             global_name_cache_hits: 0,
             outcome: None,
         }, _program: program };
-        native.dispatch.refresh_heap_bases(vm, &native._program);
+        if views { native.dispatch.refresh_heap_bases(vm, &native._program); }
         Some(run(&mut native, vm))
     }
 }
