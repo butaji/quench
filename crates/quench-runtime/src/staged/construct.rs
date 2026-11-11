@@ -8,7 +8,8 @@
 // The native projection (thread 13) is the consumer; until it lands the row runs under the tests.
 #![allow(dead_code)]
 
-use super::value::is_direct_object;
+use super::value::{is_direct_array, is_direct_function, is_direct_object};
+use crate::value::ValueLayout;
 use super::Stage;
 
 /// What the initializer call leaves: its status (zero where it returned) and its value.
@@ -17,10 +18,38 @@ pub(crate) struct Returned<W> {
     pub(crate) value: W,
 }
 
+/// The result of a construction whose initializer returned `value`, as far as the word decides it:
+/// the value where it is a direct object, array or function, the `receiver` where it is no heap
+/// reference at all; `None` (leaving at `miss`) for any other heap reference, whose cell decides
+/// (an error record, a Wasm GC object, a string).
+#[inline(always)]
+pub(crate) fn construct_result<S: Stage>(stage: &mut S, value: S::Word, receiver: impl FnOnce(&mut S) -> S::Word, miss: S::Miss)
+    -> Option<S::Word> {
+    // Each arm runs only on its own path: a primitive (the common return) yields the receiver
+    // after one tag test, a direct object after two, and only another heap reference reaches the rest.
+    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
+    let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
+    let result = stage.choose(heap, |stage| {
+        let object = is_direct_object(stage, value);
+        stage.choose(object, |_| value, |stage| {
+            let array = is_direct_array(stage, value);
+            let function = is_direct_function(stage, value);
+            let record = stage.any(array, function);
+            let undecided = stage.constant(UNDECIDED);
+            stage.select(record, value, undecided)
+        })
+    }, receiver);
+    let decided = stage.ne_imm(result, UNDECIDED);
+    stage.guard(decided, miss)?;
+    Some(result)
+}
+
+/// The word no value has: a heap reference whose cell decides.
+const UNDECIDED: u64 = u64::MAX;
+
 /// The value of `new C(...)`: allocates the receiver with `allocate`, runs the initializer with
-/// `initialize(receiver)`, and yields the receiver unless the initializer returned an object.
-/// Leaving at `miss` where the initializer did not return (a throw or an exit) or returned some
-/// other value than undefined or a direct object, which the general construction decides.
+/// `initialize(receiver)`, and yields the receiver unless the initializer returned an object
+/// (`construct_result`). Leaving at `miss` where the initializer did not return (a throw or an exit).
 #[inline(always)]
 pub(crate) fn construct<S: Stage>(stage: &mut S, miss: S::Miss, allocate: impl FnOnce(&mut S) -> S::Word,
     initialize: impl FnOnce(&mut S, S::Word) -> Returned<S::Word>) -> Option<S::Word> {
@@ -28,11 +57,7 @@ pub(crate) fn construct<S: Stage>(stage: &mut S, miss: S::Miss, allocate: impl F
     let Returned { status, value } = initialize(stage, receiver);
     let returned = stage.eq_imm(status, 0u32);
     stage.guard(returned, miss)?;
-    let object = is_direct_object(stage, value);
-    let undefined = stage.eq_imm(value, crate::Value::UNDEFINED.to_bits());
-    let known = stage.any(object, undefined);
-    stage.guard(known, miss)?;
-    Some(stage.select(object, value, receiver))
+    construct_result(stage, value, |_| receiver, miss)
 }
 
 #[cfg(test)]
@@ -57,7 +82,9 @@ mod tests {
         assert_eq!(run(0, Value::UNDEFINED), Some(receiver));
         assert_eq!(run(0, object), Some(object.to_bits()));
         assert_eq!(run(1, Value::UNDEFINED), None, "a throw leaves");
-        assert_eq!(run(0, Value::integer(1)), None, "another value is the general path's");
+        assert_eq!(run(0, Value::integer(1)), Some(receiver), "a primitive yields the receiver");
+        let string = heap.alloc(crate::heap::Cell::Error(Default::default()));
+        assert_eq!(run(0, string), None, "another heap reference is the cell's to decide");
     }
 
     #[test]
