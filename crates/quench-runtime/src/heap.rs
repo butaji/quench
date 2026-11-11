@@ -32,7 +32,7 @@ pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
 mod pacing;
-mod parallel_mark;
+mod parallel_mark; mod planned;
 mod promise_record;
 pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
 mod records;
@@ -1444,9 +1444,14 @@ impl Heap {
     /// An object record of `object`, else a slot: one allocation, with no external bytes.
     #[inline(always)]
     fn insert_object_record(&mut self, object: Object) -> Value {
+        self.admit_object_contents(&object);
+        self.insert_admitted_object_record(object)
+    }
+    /// `insert_object_record` of an object whose initial values the caller already admitted.
+    #[inline(always)]
+    fn insert_admitted_object_record(&mut self, object: Object) -> Value {
         self.allocated += 1;
         self.total_allocations += 1;
-        self.admit_object_contents(&object);
         match self.object_records.try_insert(object) {
             Ok(record_id) => {
                 let value = Value::direct_object(record_id);
