@@ -25,8 +25,9 @@ impl Lowering<'_, '_> {
 
     /// The lane stack's top and the callee window's end, the shadow stack's top, and whether
     /// both stacks hold the window and the space the callee's published body needs to
-    /// recover (`EntryCell::values`, `activations`).
-    pub(super) fn direct_room(&mut self, callee: &DirectCallee, cell: ir::Value) -> (ir::Value, ir::Value, ir::Value, ir::Value) {
+    /// recover (`EntryCell::values`, `activations`), each as its own condition so each is one
+    /// compare and branch (`direct_admit`).
+    pub(super) fn direct_room(&mut self, callee: &DirectCallee, cell: ir::Value) -> (ir::Value, ir::Value, ir::Value, [ir::Value; 2]) {
         let word = std::mem::size_of::<Value>() as i64;
         let payload = self.payload;
         let load = |this: &mut Self, base: ir::Value, field: usize| this.word_load(base, dispatch_offset(field));
@@ -43,7 +44,17 @@ impl Lowering<'_, '_> {
         let frame_bytes = self.word_mul_imm(activations, std::mem::size_of::<ShadowFrame>() as i64);
         let recovered = self.word_add(shadow, frame_bytes);
         let room = self.word_cmp(IntCC::UnsignedLessThanOrEqual, recovered, shadow_end);
-        (top, next, shadow, self.word_and(fits, room))
+        (top, next, shadow, [fits, room])
+    }
+
+    /// Branches to `helper` unless every condition holds: one compare and branch each, not
+    /// their conjunction as a boolean word.
+    pub(super) fn direct_admit(&mut self, conditions: &[ir::Value], helper: ir::Block) {
+        for condition in conditions {
+            let next = self.builder.create_block();
+            self.word_brif(*condition, next, &[], helper, &[]);
+            self.builder.switch_to_block(next);
+        }
     }
 }
 

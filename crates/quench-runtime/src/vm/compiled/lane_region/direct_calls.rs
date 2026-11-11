@@ -16,11 +16,8 @@ impl Lowering<'_, '_> {
         let (base, payload, result) = (self.registers_base, self.payload, self.result);
         let (admitted, this) = self.direct_receiver(instruction, callee);
         let cell = self.word_const(callee.cell as i64);
-        let (top, next, shadow, room) = self.direct_room(callee, cell);
-        let admitted = self.word_and(admitted, room);
-        let enter = self.builder.create_block();
-        self.word_brif(admitted, enter, &[], helper, &[]);
-        self.builder.switch_to_block(enter);
+        let (top, next, shadow, [fits, room]) = self.direct_room(callee, cell);
+        self.direct_admit(&[admitted, fits, room], helper);
         let status = self.direct_enter(instruction, callee, cell, (this, top, next, shadow));
         let returned = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_RETURNED));
         let (back, check, left, missed) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
