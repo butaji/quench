@@ -52,6 +52,7 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod osr_compile;
+mod fast_region;
 pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
 use osr_compile::OsrFacts;
 use crate::typed_ir;

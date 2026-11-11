@@ -120,6 +120,7 @@ impl LoopTier {
 /// for its code at once: a code generator without its own thread has it ready.
 pub(super) fn lane_loop_compile<H: Host>(
     cx: *mut LaneContext<H>,
+    r: Registers,
     site: &LoopSite,
     region: &super::super::compiled::LoopRegion,
     tier: &mut LoopTier,
@@ -134,7 +135,8 @@ pub(super) fn lane_loop_compile<H: Host>(
     let function = site.function();
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
-    let started = observe(machine, region, |observation| {
+    let ints = region.registers_where(|register| r.get(register).as_int().is_some());
+    let started = observe(machine, region, &ints, |observation| {
         super::super::compiled::start_osr_region(region, tier.views, observation,
             machine.heap.memory_policy(), program.as_deref()?, function, helpers, &tier.widened)
     });
@@ -147,10 +149,11 @@ pub(super) fn lane_loop_compile<H: Host>(
 fn observe<H: Host, T>(
     machine: &Vm<H>,
     region: &super::super::compiled::LoopRegion,
+    ints: &[crate::bytecode::Register],
     compile: impl FnOnce(&super::super::compiled::Observation<'_>) -> T,
 ) -> T {
     let native_field_loads = native_field_loads(machine, region);
-    compile(&super::super::compiled::Observation { native_field_loads: &native_field_loads })
+    compile(&super::super::compiled::Observation { native_field_loads: &native_field_loads, int_registers: ints })
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.

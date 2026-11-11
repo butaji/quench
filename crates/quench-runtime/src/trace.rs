@@ -112,6 +112,9 @@ setting! {
         JsUnpricedGeneralDispatch = "js-unpriced-general-dispatch",
         /// The lane prologue specializes declined functions into frameless lane bodies.
         JsLaneMethods = "js-lane-methods",
+        /// Number loop regions build from FastJIT stencils (`quench-fastjit`) where every
+        /// instruction has a row, instead of Cranelift IR.
+        FastJit = "fastjit",
         /// Selective Wasm hot-root tiering (`wasm-selective`).
         WasmSelective = "wasm-selective",
         /// A bounded root compilation of the residual Wasm function `wasm-root=N`.

@@ -8,19 +8,24 @@
 //! `mov rsp,rbp; pop rbp; jmp rel32`. [`Stencil::strip`] verifies those exact bytes and removes
 //! the frame pair from frameless stencils (the epilogue is overwritten by a 4-byte nop so the
 //! stencil's internal branch displacements stay valid).
+pub mod numeric;
 pub mod row;
 mod stencil_builder;
 pub use stencil_builder::StencilBuilder;
 
 use cranelift_codegen::control::ControlPlane;
 use cranelift_codegen::ir::{
-    self, AbiParam, ExtFuncData, ExternalName, InstBuilder, Signature, UserExternalName,
+    self, AbiParam, ExtFuncData, ExternalName, Signature, UserExternalName,
     UserFuncName, types::I64,
 };
 use cranelift_codegen::isa::{CallConv, OwnedTargetIsa};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_codegen::{Context, FinalizedRelocTarget};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+
+/// Value registers a stencil takes after (frame, context): the tail convention passes them in
+/// rdx, rcx, r8 and r9, so a chain of stencils keeps hot values out of memory.
+pub const PINNED: usize = 4;
 
 /// Namespace of value holes (`symbol_value` → 64-bit immediate) and of successor holes.
 const HOLE_VALUE: u32 = 1;
@@ -59,7 +64,7 @@ pub fn stencil_isa() -> Result<OwnedTargetIsa, String> {
 
 fn stencil_signature() -> Signature {
     let mut signature = Signature::new(CallConv::Tail);
-    signature.params.extend([AbiParam::new(I64), AbiParam::new(I64)]);
+    signature.params.extend((0..PINNED + 2).map(|_| AbiParam::new(I64)));
     signature.returns.push(AbiParam::new(I64));
     signature
 }
@@ -79,8 +84,11 @@ pub struct Reloc {
 pub struct Stencil {
     pub code: Vec<u8>,
     pub relocs: Vec<Reloc>,
-    /// Where the trailing `jmp next` starts when it ends the code (so adjacency drops it).
+    /// Where the trailing tail (`jmp next`, and the nop that replaced a stripped frame teardown
+    /// before it) starts when it ends the code, so adjacency drops it.
     pub next_jump: Option<usize>,
+    /// Bytes of that tail.
+    pub tail_len: usize,
     /// Bytes before stripping.
     pub raw_len: usize,
 }
@@ -94,6 +102,14 @@ const JMP_REL32_LEN: usize = 5;
 /// `sub rsp, imm` after the prologue marks a stencil with spill slots.
 const SUB_RSP: [u8; 3] = [0x48, 0x83, 0xec];
 const RET: u8 = 0xc3;
+const REL32_LEN: usize = 4;
+/// An exit tail: the nop that replaced the frame teardown, then `jmp rel32`.
+const UNIT_LEN: usize = NOP4.len() + JMP_REL32_LEN;
+const JCC_ESCAPE: u8 = 0x0f;
+/// The high nibble of the second opcode byte of `jcc rel32`.
+const JCC_NEAR: u8 = 0x80;
+const JCC_REL32_LEN: usize = 6;
+const JMP_REL32_OPCODE: u8 = 0xe9;
 
 /// Lower one row into a stencil function: `emit` lowers the row through the builder.
 fn lower(isa: &OwnedTargetIsa, emit: impl FnOnce(&mut StencilBuilder)) -> ir::Function {
@@ -105,8 +121,9 @@ fn lower(isa: &OwnedTargetIsa, emit: impl FnOnce(&mut StencilBuilder)) -> ir::Fu
     b.append_block_params_for_function_params(entry);
     b.switch_to_block(entry);
     b.seal_block(entry);
-    let (frame, context) = (b.block_params(entry)[0], b.block_params(entry)[1]);
-    emit(&mut StencilBuilder { b: &mut b, frame, context, next, taken, exits: Vec::new() });
+    let params = b.block_params(entry).to_vec();
+    let values = [params[2], params[3], params[4], params[5]];
+    emit(&mut StencilBuilder { b: &mut b, frame: params[0], context: params[1], values, next, taken, exits: Vec::new() });
     b.finalize(isa.frontend_config());
     func
 }
@@ -148,7 +165,7 @@ impl Stencil {
             return Err(format!("unexpected stencil prologue {:02x?}", &code[..code.len().min(PROLOGUE.len() + SUB_RSP.len())]));
         }
         if code[PROLOGUE.len()..PROLOGUE.len() + SUB_RSP.len()] == SUB_RSP {
-            return Ok(Stencil { next_jump: Self::next_jump(&relocs, code.len()), code: code.to_vec(), relocs, raw_len });
+            return Ok(Stencil { next_jump: Self::next_jump(&relocs, code.len()), tail_len: JMP_REL32_LEN, code: code.to_vec(), relocs, raw_len });
         }
         let mut code = code.to_vec();
         for at in Self::epilogues(&relocs, &code) {
@@ -159,7 +176,58 @@ impl Stencil {
         }
         code.drain(..PROLOGUE.len());
         let relocs: Vec<Reloc> = relocs.into_iter().map(|r| Reloc { offset: r.offset - PROLOGUE.len() as u32, ..r }).collect();
-        Ok(Stencil { next_jump: Self::next_jump(&relocs, code.len()), code, relocs, raw_len })
+        let (code, relocs) = Self::hoist_exits(code, relocs);
+        let jump = Self::next_jump(&relocs, code.len());
+        // A frameless stencil's tail starts with the nop that replaced the frame teardown.
+        let nop = jump.filter(|at| *at >= NOP4.len() && code[at - NOP4.len()..*at] == NOP4);
+        let (next_jump, tail_len) = match nop {
+            Some(at) => (Some(at - NOP4.len()), NOP4.len() + JMP_REL32_LEN),
+            None => (jump, JMP_REL32_LEN),
+        };
+        Ok(Stencil { next_jump, tail_len, code, relocs, raw_len })
+    }
+
+    /// Moves the exit tails off the end: a frameless stencil's cold exits follow its hot
+    /// `jmp next` as units of `nop4; jmp rel32`. Each jump in the hot part that lands on a unit
+    /// becomes a jump relocated to that exit directly, and the units are cut, so the hot tail ends
+    /// the stencil and adjacency drops it. A stencil of any other shape is kept whole.
+    fn hoist_exits(code: Vec<u8>, relocs: Vec<Reloc>) -> (Vec<u8>, Vec<Reloc>) {
+        let Some(next) = relocs.iter().find(|r| r.pc_relative && r.namespace == HOLE_CODE && r.index == NEXT) else {
+            return (code, relocs);
+        };
+        let hot_end = next.offset as usize + REL32_LEN;
+        let tail = code.len() - hot_end;
+        let unit_at = |k: usize| hot_end + k * UNIT_LEN;
+        let units = tail / UNIT_LEN;
+        let unit_reloc = |k: usize| relocs.iter().find(|r| r.pc_relative && r.offset as usize == unit_at(k) + NOP4.len() + JMP_OPCODE_LEN);
+        let shaped = tail % UNIT_LEN == 0
+            && (0..units).all(|k| code[unit_at(k)..unit_at(k) + NOP4.len()] == NOP4 && unit_reloc(k).is_some());
+        if tail == 0 || !shaped {
+            return (code, relocs);
+        }
+        let relocated = |at: usize| relocs.iter().any(|r| (r.offset as usize..r.offset as usize + REL32_LEN).contains(&at));
+        let mut code = code;
+        let mut added = Vec::new();
+        for p in 0..hot_end.saturating_sub(JMP_REL32_LEN) {
+            let (length, disp_at) = match (code[p], code[p + 1] & 0xf0) {
+                (JCC_ESCAPE, JCC_NEAR) => (JCC_REL32_LEN, p + 2),
+                (JMP_REL32_OPCODE, _) => (JMP_REL32_LEN, p + 1),
+                _ => continue,
+            };
+            if relocated(disp_at) || relocated(p) {
+                continue;
+            }
+            let disp = i32::from_le_bytes([code[disp_at], code[disp_at + 1], code[disp_at + 2], code[disp_at + 3]]);
+            let target = (p + length) as i64 + i64::from(disp);
+            let Some(k) = (0..units).find(|k| unit_at(*k) as i64 == target) else { continue };
+            let exit = unit_reloc(k).expect("shaped above");
+            added.push(Reloc { offset: disp_at as u32, ..exit.clone() });
+            code[disp_at..disp_at + REL32_LEN].fill(0);
+        }
+        code.truncate(hot_end);
+        let mut relocs: Vec<Reloc> = relocs.into_iter().filter(|r| (r.offset as usize) < hot_end).collect();
+        relocs.extend(added);
+        (code, relocs)
     }
 
     /// Where each exit's frame teardown starts: before every `jmp rel32` and a closing `ret`.
@@ -204,7 +272,7 @@ fn layout(rows: &[Row]) -> (Vec<usize>, Vec<usize>, usize) {
     let (mut starts, mut sizes, mut len) = (Vec::new(), Vec::new(), 0);
     for (k, row) in rows.iter().enumerate() {
         starts.push(len);
-        let drop = if row.stencil.next_jump.is_some() && k + 1 < rows.len() { JMP_REL32_LEN } else { 0 };
+        let drop = if row.stencil.next_jump.is_some() && k + 1 < rows.len() { row.stencil.tail_len } else { 0 };
         sizes.push(row.stencil.code.len() - drop);
         len += sizes[k];
     }
@@ -243,6 +311,7 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
 
 #[cfg(test)]
 mod tests {
+    use cranelift_codegen::ir::InstBuilder;
     use super::row::{Effects, MemKind, Op, Operand, Region, RowBuilder, Source, Ty};
     use super::*;
 

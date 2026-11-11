@@ -9,6 +9,8 @@ pub struct StencilBuilder<'a, 'f> {
     pub(crate) b: &'a mut FunctionBuilder<'f>,
     pub(crate) frame: ir::Value,
     pub(crate) context: ir::Value,
+    /// The pinned value registers, passed to every successor.
+    pub(crate) values: [ir::Value; super::PINNED],
     pub(crate) next: ir::FuncRef,
     pub(crate) taken: ir::FuncRef,
     pub(crate) exits: Vec<Option<ir::FuncRef>>,
@@ -23,6 +25,12 @@ fn clif(ty: Ty) -> ir::Type {
 }
 
 impl StencilBuilder<'_, '_> {
+    /// The arguments of every successor: frame, context and the pinned values.
+    pub(crate) fn args(&self) -> [ir::Value; super::PINNED + 2] {
+        let [a, b, c, d] = self.values;
+        [self.frame, self.context, a, b, c, d]
+    }
+
     fn immediate(&mut self, operand: Operand) -> ir::Value {
         match operand {
             Operand::Const(value) => self.b.ins().iconst(types::I64, value),
@@ -70,15 +78,19 @@ impl StencilBuilder<'_, '_> {
         }
     }
 
-    /// Branch on `cond`; `leave` lowers the block taken when it is nonzero.
-    fn split(&mut self, cond: ir::Value, cold: bool, leave: impl FnOnce(&mut Self)) {
+    /// Leave through exit hole `exit` when `cond` equals `when`, else continue. The branch tests
+    /// `cond` itself, so a comparison or an overflow flag feeding it stays one compare and jump.
+    pub(crate) fn leave_when(&mut self, cond: ir::Value, when: bool, exit: u32) {
+        let target = *self.exits.resize_and_get(exit as usize).get_or_insert_with(|| successor(self.b, EXIT + exit));
+        let args = self.args();
         let (side, rest) = (self.b.create_block(), self.b.create_block());
-        if cold {
-            self.b.set_cold_block(side);
+        if when {
+            self.b.ins().brif(cond, side, &[], rest, &[]);
+        } else {
+            self.b.ins().brif(cond, rest, &[], side, &[]);
         }
-        self.b.ins().brif(cond, side, &[], rest, &[]);
         self.b.switch_to_block(side);
-        leave(self);
+        self.b.ins().return_call(target, &args);
         self.b.seal_block(side);
         self.b.switch_to_block(rest);
         self.b.seal_block(rest);
@@ -125,12 +137,7 @@ impl RowBuilder for StencilBuilder<'_, '_> {
 
     fn guard(&mut self, cond: ir::Value, exit: u32) {
         // `guard` continues when `cond` holds: leave when it does not.
-        let failed = self.b.ins().bxor_imm_u(cond, 1);
-        let target = *self.exits.resize_and_get(exit as usize).get_or_insert_with(|| successor(self.b, EXIT + exit));
-        let (frame, context) = (self.frame, self.context);
-        self.split(failed, true, |s| {
-            s.b.ins().return_call(target, &[frame, context]);
-        });
+        self.leave_when(cond, false, exit);
     }
 
     fn load(&mut self, _region: Region, base: ir::Value, off: Operand, ty: Ty, kind: MemKind) -> ir::Value {
@@ -192,14 +199,22 @@ impl RowBuilder for StencilBuilder<'_, '_> {
     }
 
     fn next(&mut self) {
-        self.b.ins().return_call(self.next, &[self.frame, self.context]);
+        let args = self.args();
+        self.b.ins().return_call(self.next, &args);
     }
 
     fn branch(&mut self, cond: ir::Value) {
-        let (frame, context, taken) = (self.frame, self.context, self.taken);
-        self.split(cond, false, |s| {
-            s.b.ins().return_call(taken, &[frame, context]);
-        });
+        // The continuation is laid out last, so the row's `jmp next` ends the stencil and
+        // adjacency drops it.
+        let (args, taken) = (self.args(), self.taken);
+        let (side, rest) = (self.b.create_block(), self.b.create_block());
+        self.b.ins().brif(cond, side, &[], rest, &[]);
+        self.b.switch_to_block(side);
+        self.b.ins().return_call(taken, &args);
+        self.b.seal_block(side);
+        self.b.set_cold_block(rest);
+        self.b.switch_to_block(rest);
+        self.b.seal_block(rest);
     }
 }
 
