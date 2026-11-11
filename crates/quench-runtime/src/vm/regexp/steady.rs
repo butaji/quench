@@ -392,7 +392,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         // A RegExp's `lastIndex`, made first, usually lies in its inline storage.
-        let inline = (slot < crate::value_vec::INLINE_PROPERTY_COUNT).then(|| object.inline_property(slot)).flatten();
+        let inline = if slot < crate::value_vec::INLINE_PROPERTY_COUNT { object.inline_property(slot) } else { None };
         let last_index = match inline {
             Some(value) => value,
             None => self.heap.property_get(object, slot)?,
@@ -418,7 +418,10 @@ fn steady_search(meta: &crate::heap::RegExpMeta, input: &JsString, slot: usize, 
         // itself (`Regex::find_ascii`): the match outlives the borrows of the regexp and the
         // subject, which a result or the legacy statics keep, so only a match clones them.
         if let Some(found) = regex.find_ascii(bytes, start, sticky, captures) {
-            let matched = found.map(|found| (Rc::clone(regex), input.clone(), found));
+            let matched = match found {
+                Some(found) => Some((Rc::clone(regex), input.clone(), found)),
+                None => None,
+            };
             return SteadyRead::Ascii { slot, stateful, matched };
         }
         return SteadyRead::Prefiltered(slot, last_index, Prefilter::Undecided);
