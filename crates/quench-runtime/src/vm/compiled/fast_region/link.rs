@@ -181,19 +181,25 @@ fn exit_routines(layout: &Layout, body: &[&Planned], first: usize) -> Result<(Ve
     Ok((exits, routines.into_iter().map(|(_, _, code)| code).collect()))
 }
 
+/// The index of each planned row's first part among all parts.
+fn row_starts(planned: &[Planned]) -> Vec<usize> {
+    let mut at = 0;
+    planned
+        .iter()
+        .map(|row| {
+            let start = at;
+            at += row.pre.len() + 1 + row.post.len();
+            start
+        })
+        .collect()
+}
+
 /// Lays the entry rows, rows and leave stubs out as one code buffer behind the entry thunk.
 pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<Vec<u8>, String> {
     let (header, backedge) = (layout.header, layout.backedge);
     // A row's own rows run before and after it at its PC: a branch to the PC lands on the first.
     let body: Vec<&Planned> = planned.iter().flat_map(|row| row.pre.iter().chain(std::iter::once(row)).chain(&row.post)).collect();
-    let starts: Vec<usize> = planned
-        .iter()
-        .scan(0, |at, row| {
-            let start = *at;
-            *at += row.pre.len() + 1 + row.post.len();
-            Some(start)
-        })
-        .collect();
+    let starts = row_starts(planned);
     let entry = entry_rows(layout)?;
     // Leave stubs: the fall-through past the backedge, the failed entry (nothing to write
     // back), then each branch target outside the region.
