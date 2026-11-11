@@ -101,6 +101,11 @@ pub(crate) trait Stage {
     /// assumption registry retires the code when it breaks); a stage without a registry answers
     /// no, and the read leaves at its miss.
     fn assumption(&mut self, watch: Self::Imm) -> Self::Cond;
+    /// A computed initializer store's value: the Number operator `operator` (a per-site operand,
+    /// the interpreter's operator table) over the Number `passed` and the Number word `constant`,
+    /// boxed as `Value::number` does, and whether `passed` was a Number and the operator numeric.
+    /// A stage with no arithmetic for the operator answers false, and the field leaves.
+    fn number_operator(&mut self, operator: Self::Imm, passed: Self::Word, constant: Self::Word) -> (Self::Word, Self::Cond);
     fn not(&mut self, cond: Self::Cond) -> Self::Cond;
     /// Whether either condition holds.
     fn any(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;

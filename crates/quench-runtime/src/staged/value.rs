@@ -10,7 +10,7 @@ const _: () = assert!(ValueLayout::HEAP_FAMILY_MASK == u64::MAX << FAMILY_SHIFT)
 
 #[inline(always)]
 fn family_is<S: Stage>(stage: &mut S, bits: S::Word, tag: u64) -> S::Cond {
-    let family = stage.shr_imm(bits, u64::from(FAMILY_SHIFT));
+    let family = stage.shr_imm(bits, FAMILY_SHIFT);
     stage.eq_imm(family, tag >> FAMILY_SHIFT)
 }
 

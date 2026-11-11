@@ -107,11 +107,7 @@ impl<H: Host> Vm<H> {
             let value = part(self, index);
             let pushed = match value.direct_string_index() {
                 Some(record_id) => {
-                    let text = self.heap.string(value)?;
-                    if !text.existing_flat()?.is_ascii() {
-                        return None;
-                    }
-                    known += text.len();
+                    known += self.heap.string(value)?.existing_flat()?.ascii_len()?;
                     parts.push_text(record_id)
                 }
                 None => {

@@ -129,7 +129,7 @@ const _: () = assert!(RECORD_SPACE_CAPACITY <= u32::MAX as usize);
 /// Each record family owns one fixed address range. Block metadata controls
 /// allocation and sweep, but resolving a live locator never walks it.
 pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> {
-    base: NonNull<MaybeUninit<T>>,
+    pub(super) base: NonNull<MaybeUninit<T>>,
     reservation: Reservation,
     blocks: Vec<RecordBlock>,
     next_id: u32,
@@ -137,13 +137,13 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> 
     free_cursor: RecordId,
     /// The reusable IDs of the occupancy word the scan last reached, starting at
     /// `free_word_base`; allocation takes them highest first before scanning further.
-    free_word: u64,
-    free_word_base: RecordId,
+    pub(super) free_word: u64,
+    pub(super) free_word_base: RecordId,
     /// The occupancy word `free_word` was loaded from: a claim sets its bit through this
     /// pointer, with no block or word index. Valid while `free_word` is nonzero, as blocks are
     /// added only once no free word is left (`claim_slow`), and set by `load_free_word` alone.
-    free_word_occupied: *mut u64,
-    live: usize,
+    pub(super) free_word_occupied: *mut u64,
+    pub(super) live: usize,
     /// Old records written since the last collection, each logged once by the write barrier.
     remembered: Vec<RecordId>,
     /// Where young records can be. Every sweep frees each occupied, unmarked record it
@@ -236,6 +236,12 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     /// The blocks stay valid until a heap callout can allocate or collect.
     pub(super) fn native_mark_blocks(&self) -> (*const u8, usize) {
         (self.blocks.as_ptr().cast(), self.blocks.len())
+    }
+
+    /// Blocks made so far: grows with every block `native_mark_blocks` may have moved.
+    #[expect(dead_code, reason = "see Heap::native_layout_epoch")]
+    pub(super) fn block_count(&self) -> usize {
+        self.blocks.len()
     }
 }
 
