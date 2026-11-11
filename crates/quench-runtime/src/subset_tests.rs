@@ -137,13 +137,13 @@ fn deterministic_hash_random_preserves_es5_bitwise_semantics() {
 #[test]
 fn returned_superinstruction_object_preserves_value() {
     let source = r#"
-      function build(key) { return { items: [1, 2], text: 'x' + key + 'y' }; }
+      function build(key) { return { items: [1, 2], text: key + 1 + 2 }; }
       var value = build(3);
       print(value.items[1]); print(value.text);
     "#;
     let program = Engine::specialize(source, "super-return.js").unwrap();
     assert!(program.disassemble().contains("SuperConstArrayObject2"));
-    assert_eq!(output(source), ["2", "x3y"]);
+    assert_eq!(output(source), ["2", "6"]);
 }
 
 #[test]
