@@ -641,7 +641,6 @@ pub(crate) struct Heap {
     /// The `allocated` weight at which the next collection is due: the last collection's
     /// mark plus the young budget pacing planned (`set_young_budget`).
     collect_at: usize,
-    total_allocations: u64,
     collections: u64,
     /// The prototypes `mark_prototype` marked last, most recent first, which keep their
     /// mark for life: an allocation with one of them needs no lookup. A collection may free
@@ -1239,7 +1238,6 @@ impl Heap {
         let weight = 1 + payload / payload_unit();
         self.payload_bytes = self.payload_bytes.saturating_add(payload);
         self.allocated += weight;
-        self.total_allocations += 1;
     }
 
     fn alloc_cell(&mut self, cell: Cell) -> Value {
@@ -1327,7 +1325,6 @@ impl Heap {
             return self.alloc(Cell::BigInt(value));
         }
         self.allocated += 1;
-        self.total_allocations += 1;
         // A BigInt holds no weak entries.
         self.alloc_in_slot_with(self.tracks_young_cells(), false, || Cell::BigInt(value))
     }
@@ -1347,7 +1344,6 @@ impl Heap {
             self.alloc(cell)
         } else {
             self.allocated += 1;
-            self.total_allocations += 1;
             self.alloc_in_slot(cell, self.tracks_young_cells())
         };
         let storage = match self.get(environment) {
@@ -1446,7 +1442,6 @@ impl Heap {
     #[inline(always)]
     fn insert_object_record(&mut self, object: Object) -> Value {
         self.allocated += 1;
-        self.total_allocations += 1;
         self.admit_object_contents(&object);
         match self.object_records.try_insert(object) {
             Ok(record_id) => {
@@ -1502,7 +1497,6 @@ impl Heap {
     fn insert_function_record(&mut self, function: FunctionRecord) -> Value {
         self.admit_object_contents(&function.object);
         self.allocated += 1;
-        self.total_allocations += 1;
         match self.function_records.try_insert(function) {
             Ok(record_id) => {
                 let value = Value::direct_function(record_id);
@@ -1526,7 +1520,6 @@ impl Heap {
             return self.alloc(Cell::AwaitState(Box::new(state)));
         }
         self.allocated += 1;
-        self.total_allocations += 1;
         match self.await_records.try_insert(state) {
             Ok(record_id) => Value::direct_await(record_id),
             Err(state) => {
@@ -1543,7 +1536,6 @@ impl Heap {
             return self.alloc(Cell::WasmV128(bytes));
         }
         self.allocated += 1;
-        self.total_allocations += 1;
         match self.v128_records.try_insert(bytes) {
             Ok(record_id) => Value::direct_v128(record_id),
             Err(bytes) => self.alloc_in_slot(Cell::WasmV128(bytes), self.tracks_young_cells()),
@@ -1573,7 +1565,6 @@ impl Heap {
         self.mark_prototype(iterator.object.proto());
         // An iterator's weight is one allocation, and it holds no payload or external bytes.
         self.allocated += 1;
-        self.total_allocations += 1;
         match self.iterator_records.try_insert(iterator) {
             Ok(record_id) => {
                 let value = Value::direct_iterator(record_id);
@@ -1601,7 +1592,6 @@ impl Heap {
         self.mark_prototype(promise.object.proto());
         // A promise's weight is one allocation, and it holds no payload or external bytes.
         self.allocated += 1;
-        self.total_allocations += 1;
         match self.promise_records.try_insert(promise) {
             Ok(record_id) => {
                 let value = Value::direct_promise(record_id);
@@ -1976,7 +1966,6 @@ impl Heap {
         self.live_weight_after_previous = 0;
         self.live_weight_after_full = 0;
         self.old_live = 0;
-        self.total_allocations = 0;
         self.collections = 0;
         self.peak_live = 0;
         self.peak_survivors = 0;
