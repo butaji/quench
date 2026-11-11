@@ -2331,8 +2331,9 @@ impl Lowering<'_, '_> {
                 }),
                 _ => None,
             };
+            let contract = !self.generic.contains(&entry_leave(self.unit));
             if let Some(owner) = owner.filter(|owner| *owner == count
-                || (*owner < usize::from(self.unit.caller_registers) && !self.written.contains(*owner))) {
+                || (contract && *owner < usize::from(self.unit.caller_registers) && !self.written.contains(*owner))) {
                 owners.insert(owner);
             }
             if instruction.returns_from_frame() || instruction.op().control_flow_layout() == ControlFlowLayout::Terminal {
@@ -4212,7 +4213,7 @@ impl Lowering<'_, '_> {
             return self.field_probe(state, probe_owner, object_bits, read, exit);
         }
         let owner = if receiver { None } else { register };
-        let probed = self.left_here || NativeFieldLoad::probes_misses(&shapes);
+        let probed = self.left_here || shapes.len() > 1 || NativeFieldLoad::probes_misses(&shapes);
         self.probed_read(state, owner, probe_owner, probed, object_bits, read, exit, |lowering, state, generic| {
             let (object, shape, inline) = if receiver {
                 let entry = lowering.entry.as_ref().expect("entry facts");
@@ -4246,7 +4247,7 @@ impl Lowering<'_, '_> {
         if shapes.is_empty() {
             return Some(self.field_probe(state, FieldOwner::Temporary, object_bits, read, exit));
         }
-        let probed = self.left_here || NativeFieldLoad::probes_misses(&shapes);
+        let probed = self.left_here || shapes.len() > 1 || NativeFieldLoad::probes_misses(&shapes);
         Some(self.probed_read(state, None, FieldOwner::Temporary, probed, object_bits, read, exit, |lowering, state, generic| {
             let records = lowering.object_table_base();
             let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
