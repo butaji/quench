@@ -38,39 +38,32 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     type Fact = RegisterFact;
     type Control = ();
 
-    #[inline(always)]
-    fn fact(&self, register: Register) -> RegisterFact {
+    #[inline(always)] fn fact(&self, register: Register) -> RegisterFact {
         self.state.values[usize::from(register)]
     }
 
-    #[inline(always)]
-    fn read(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> ir::Value {
+    #[inline(always)] fn read(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> ir::Value {
         register_read(stage.builder, self.registers, self.state, register)
     }
 
-    #[inline(always)]
-    fn tagged(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> ir::Value {
+    #[inline(always)] fn tagged(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> ir::Value {
         register_tagged(stage.builder, self.registers, self.state, register)
     }
 
-    #[inline(always)]
-    fn write(&mut self, stage: &mut Emit<'_, '_>, register: Register, value: ir::Value, fact: RegisterFact) {
+    #[inline(always)] fn write(&mut self, stage: &mut Emit<'_, '_>, register: Register, value: ir::Value, fact: RegisterFact) {
         register_define(stage.builder, self.registers, self.written, self.state, register, value, fact);
     }
 
-    #[inline(always)]
-    fn move_register(&mut self, stage: &mut Emit<'_, '_>, destination: Register, source: Register) -> ir::Value {
+    #[inline(always)] fn move_register(&mut self, stage: &mut Emit<'_, '_>, destination: Register, source: Register) -> ir::Value {
         register_copy(stage.builder, self.registers, self.written, self.state, destination, source)
     }
 
-    #[inline(always)]
-    fn this(&mut self, stage: &mut Emit<'_, '_>) -> ir::Value {
+    #[inline(always)] fn this(&mut self, stage: &mut Emit<'_, '_>) -> ir::Value {
         stage.builder.use_var(self.this.expect("a this read has entry facts"))
     }
 
     /// The entry's `this` and the facts the entry proved of it, kept beside the registers'.
-    #[inline(always)]
-    fn define_this(&mut self, stage: &mut Emit<'_, '_>, destination: Register, this: ir::Value) {
+    #[inline(always)] fn define_this(&mut self, stage: &mut Emit<'_, '_>, destination: Register, this: ir::Value) {
         register_define(stage.builder, self.registers, self.written, self.state, destination, this,
             RegisterFact::definition(Type::ANY, Representation::Tagged));
         let (index, entry) = (usize::from(destination), self.state.values.len());
@@ -80,8 +73,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         self.state.proofs.receivers.insert(destination);
     }
 
-    #[inline(always)]
-    fn constant(&mut self, stage: &mut Emit<'_, '_>, constant: crate::staged::Constant)
+    #[inline(always)] fn constant(&mut self, stage: &mut Emit<'_, '_>, constant: crate::staged::Constant)
         -> (ir::Value, RegisterFact) {
         let (representation, value) = if let Some(int) = constant.value.as_int() {
             (Representation::Int32, stage.builder.ins().iconst(types::I32, i64::from(int)))
@@ -98,8 +90,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     /// A proven-slot read: the `CheckedObject` projection carries the layout and the slot
     /// read, so the frame adds no second decode.
-    #[inline(always)]
-    fn field_read(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, ty: Type,
+    #[inline(always)] fn field_read(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, ty: Type,
         proof: EmitProof) -> Option<(ir::Value, RegisterFact)> {
         let EmitProof::Field(proof) = proof else { return None };
         Some((proof.read(stage.builder, slot),
@@ -108,8 +99,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     /// A proven-slot write: the projection's arena address, with the miss edge its layout
     /// guard uses.
-    #[inline(always)]
-    fn field_write(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, _ty: Type,
+    #[inline(always)] fn field_write(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, _ty: Type,
         value: ir::Value, proof: EmitProof) -> Option<()> {
         let EmitProof::Field(proof) = proof else { return None };
         let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
@@ -120,14 +110,12 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     /// A dense element under the view proof; a hole or an index past the view continues at
     /// the proof's cold block, exactly as the lowering's cold path did.
-    #[inline(always)]
-    fn index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
+    #[inline(always)] fn index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
         let EmitProof::Index { view, absent } = proof else { return None };
         Some(super::super::emit_dense_element(stage.builder, view, index, absent).1)
     }
 
-    #[inline(always)]
-    fn index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
+    #[inline(always)] fn index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
         proof: EmitProof) -> Option<()> {
         let EmitProof::Index { view, absent } = proof else { return None };
         let (address, old) = super::super::emit_dense_element(stage.builder, view, index, absent);
@@ -141,8 +129,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)] fn field_store_miss(&mut self, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32, site: u16, value: ir::Value, proof: EmitProof) -> Option<()> { calls::field_store_miss(self, stage, object, atom, site, value, proof) }
 
     /// The element store's host helper: its nonzero answer means the store landed.
-    #[inline(always)]
-    fn index_set_helper(&mut self, stage: &mut Emit<'_, '_>, base: ir::Value, key: ir::Value,
+    #[inline(always)] fn index_set_helper(&mut self, stage: &mut Emit<'_, '_>, base: ir::Value, key: ir::Value,
         value: ir::Value, proof: EmitProof) -> Option<()> {
         calls::index_set_helper(self, stage, base, key, value, proof)
     }
@@ -150,16 +137,14 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     /// The interrupt/collection safepoint: a fault-polling body records its poll instruction,
     /// any other leaves at the miss edge when the flag is set.
-    #[inline(always)]
-    fn safepoint(&mut self, stage: &mut Emit<'_, '_>, proof: EmitProof) -> Option<()> {
+    #[inline(always)] fn safepoint(&mut self, stage: &mut Emit<'_, '_>, proof: EmitProof) -> Option<()> {
         calls::safepoint(self, stage, proof)
     }
 
 
     /// An object literal: the lane's own allocator, whose DELETED answer (a due collection)
     /// leaves at the proof's miss edge.
-    #[inline(always)]
-    fn allocate_object(&mut self, stage: &mut Emit<'_, '_>, destination: Register, proof: EmitProof) -> Option<ir::Value> {
+    #[inline(always)] fn allocate_object(&mut self, stage: &mut Emit<'_, '_>, destination: Register, proof: EmitProof) -> Option<ir::Value> {
         let EmitProof::Allocation { miss } = proof else { return None };
         let payload = self.payload;
         let address = self.helpers.address(stage.builder.ins(), LaneHelper::NewObject);
@@ -169,8 +154,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 
     /// An array literal: the lane's own allocator, with its holes or its written elements.
-    #[inline(always)]
-    fn allocate_array(&mut self, stage: &mut Emit<'_, '_>, destination: Register, length: ir::Value,
+    #[inline(always)] fn allocate_array(&mut self, stage: &mut Emit<'_, '_>, destination: Register, length: ir::Value,
         elements: ir::Value, proof: EmitProof) -> Option<ir::Value> {
         let EmitProof::Allocation { miss } = proof else { return None };
         let payload = self.payload;
@@ -181,15 +165,13 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 
     /// A typed array element: the kind's load, as a Number word.
-    #[inline(always)]
-    fn typed_index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
+    #[inline(always)] fn typed_index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
         let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
         Some(super::typed_element(stage.builder, values, length, kind, index, absent, super::typed_read))
     }
 
     /// A typed array element store: the kind's conversion, then its width.
-    #[inline(always)]
-    fn typed_index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
+    #[inline(always)] fn typed_index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
         proof: EmitProof) -> Option<()> {
         let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
         super::typed_element(stage.builder, values, length, kind, index, absent, |builder, load, address| {
@@ -199,22 +181,23 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         Some(())
     }
 
-    #[inline(always)]
-    fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
-        let Edges::Branch { miss, .. } = self.edges else { unreachable!("truthiness needs a branch edge") };
+    #[inline(always)] fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
+        // A heap cell's truthiness leaves at the operation's miss edge: a branch's or a guarded
+        // value's (`LogicalNot`).
+        let (Edges::Branch { miss, .. } | Edges::ValueGuarded { miss }) = self.edges else {
+            unreachable!("truthiness needs a miss edge")
+        };
         Some(register_truthiness(stage.builder, self.registers, self.state, register, miss))
     }
 
-    #[inline(always)]
-    fn branch(&mut self, stage: &mut Emit<'_, '_>, condition: ir::Value) {
+    #[inline(always)] fn branch(&mut self, stage: &mut Emit<'_, '_>, condition: ir::Value) {
         let Edges::Branch { target, following, .. } = self.edges else {
             unreachable!("a branch needs both edges")
         };
         stage.builder.ins().brif(condition, target, &[], following, &[]);
     }
 
-    #[inline(always)]
-    fn jump(&mut self, _stage: &mut Emit<'_, '_>) {
+    #[inline(always)] fn jump(&mut self, _stage: &mut Emit<'_, '_>) {
         debug_assert!(matches!(self.edges, Edges::Jump));
     }
 }
