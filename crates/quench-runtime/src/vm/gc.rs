@@ -551,8 +551,7 @@ impl<H: Host> Vm<H> {
             |(realm, intrinsics)| {
                 [*realm, intrinsics.constructor, intrinsics.prototype]
                     .into_iter()
-                    .chain(intrinsics.result_template.map(|template| template.anchor))
-                    .chain(intrinsics.builtin_exec.get())
+                    .chain(intrinsics.result_template.map(|template| template.anchor)).chain(intrinsics.builtin_exec.get())
             },
         ));
         roots.extend(
