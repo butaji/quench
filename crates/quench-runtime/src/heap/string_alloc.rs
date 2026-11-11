@@ -54,7 +54,11 @@ impl Heap {
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
             self.gc_profile.allocated_size_buckets[kind][crate::profile::size_bucket(bytes)] += 1;
         }
-        self.charge_payload_allocation(string.flat_unit_bytes());
+        self.charge_materialized_text();
+        let payload = string.flat_unit_bytes();
+        let weight = 1 + payload / payload_unit();
+        self.payload_bytes = self.payload_bytes.saturating_add(payload);
+        self.allocated += weight;
         match self.string_records.try_insert(string) {
             Ok(record_id) => Value::direct_string(record_id),
             Err(_) => panic!("string record space exhausted"),

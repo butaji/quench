@@ -20,7 +20,7 @@ pub(super) unsafe fn lane_unary_value<H: Host>(
         return Some(answer);
     }
     let pure = vm.converts_to_string_purely(operand);
-    if operator == crate::bytecode::UNARY_TO_STRING_PRIMITIVE && pure {
+    if matches!(operator, crate::bytecode::UNARY_TO_STRING_PRIMITIVE | crate::bytecode::UNARY_ADD_OPERAND_STRING) && pure {
         return Some(operand);
     }
     if operand.as_number().is_some() && super::coercion::numeric_unary(operator) {

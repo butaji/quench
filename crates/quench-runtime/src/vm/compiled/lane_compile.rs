@@ -84,15 +84,8 @@ pub(in crate::vm) enum LaneBodyOutcome {
 const REPLAN_BUDGET_DIVISOR: usize = 2;
 
 /// The code of one lane body, compiled on the calling thread.
-/// The helpers a body of this process calls by address.
-fn process_helpers<H: Host>() -> LaneHelpers {
-    let helpers = LaneHelper::addresses::<H>();
-    crate::jit_coverage::note_native_helpers(helpers);
-    LaneHelpers::Process(helpers)
-}
-
-fn lane_code(function: ir::Function) -> LaneCode {
-    let isa = super::jit_backend::target_isa()
+fn lane_code(function: ir::Function, level: super::jit_backend::CompileLevel) -> LaneCode {
+    let isa = super::jit_backend::target_isa_level(level)
         .ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
     compile_native_function(function, &*isa, lane_region::LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
 }
@@ -181,7 +174,9 @@ impl<H: Host> Vm<H> {
         let closed = unit_closed(&unit, function, &direct_sites, targets);
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
-        let helpers = process_helpers::<H>();
+        let helpers = LaneHelper::addresses::<H>();
+        crate::jit_coverage::note_native_helpers(helpers);
+        let helpers = LaneHelpers::Process(helpers);
         // The body folds Stable facts under its own invalidation word, which its publication
         // sets when one changes (`ProgramStore::publish_lane_method`).
         let invalidation = crate::code_dependencies::Invalidation::default();
@@ -212,7 +207,7 @@ impl<H: Host> Vm<H> {
         let method = loop {
             let Some((plan, native)) = self.plan_lane_method(program, function, targets, captures, &direct, generic, budget, None)
             else { break None };
-            match lane_code(native) {
+            match lane_code(native, super::jit_backend::CompileLevel::run_default()) {
                 Ok(code) => break plan.finish(&code),
                 Err(reason) if plan.replans(reason) => budget /= 2,
                 Err(_) => break None,
@@ -266,7 +261,7 @@ impl<H: Host> Vm<H> {
             .then(|| (function, entry.is_some(), plan.unit.instructions.len(), native.dfg.num_insts(), key.3));
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
-            let code = lane_code(native);
+            let code = lane_code(native, super::jit_backend::CompileLevel::run_default());
             if let Some((function, osr, unit, ir, key)) = census {
                 eprintln!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"key\":\"{key:016x}\",\"us\":{},\"bytes\":{}}}",
                     started.elapsed().as_micros(), code.as_ref().map_or(0, |code| code.len()));

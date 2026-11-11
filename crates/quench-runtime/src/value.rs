@@ -643,7 +643,7 @@ impl Value {
         Some(!(self.is_null() || self.is_undefined() || self.is_deleted() || self == Self::FALSE))
     }
 
-    pub fn is_heap(self) -> bool {
+    #[inline(always)] pub fn is_heap(self) -> bool {
         (self.0 & TAG_MASK) == TAG_HEAP
     }
 

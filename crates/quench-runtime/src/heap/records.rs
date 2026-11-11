@@ -7,7 +7,9 @@ mod primitive_bench;
 mod vacancy_tests;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
+mod prefetch;
 mod reservation;
+pub(super) mod sweep_support;
 use reservation::Reservation;
 use crate::vm::wtf16::JsString;
 use crate::value::Value;
@@ -137,6 +139,10 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> 
     /// `free_word_base`; allocation takes them highest first before scanning further.
     free_word: u64,
     free_word_base: RecordId,
+    /// The occupancy word `free_word` was loaded from: a claim sets its bit through this
+    /// pointer, with no block or word index. Valid while `free_word` is nonzero, as blocks are
+    /// added only once no free word is left (`claim_slow`), and set by `load_free_word` alone.
+    free_word_occupied: *mut u64,
     live: usize,
     /// Old records written since the last collection, each logged once by the write barrier.
     remembered: Vec<RecordId>,
@@ -162,6 +168,9 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> 
     aged_fates: AgedFates,
     /// How many ids `withhold` keeps from reuse.
     withheld: usize,
+    /// Touches what a dead record's drop will free, before the drop (`release`): the drops of
+    /// one occupancy word then wait on their cache misses together, not one after another.
+    warm: Option<fn(&T)>,
 }
 
 impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
@@ -174,6 +183,7 @@ impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
             free_cursor: 0,
             free_word: 0,
             free_word_base: 0,
+            free_word_occupied: std::ptr::null_mut(),
             live: 0,
             remembered: Vec::new(),
             young_floor: 0,
@@ -183,6 +193,7 @@ impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
             promoted: Vec::new(),
             aged_fates: AgedFates::default(),
             withheld: 0,
+            warm: None,
         }
     }
 }
@@ -328,7 +339,7 @@ impl RecordBlock {
         true
     }
 
-    fn is_occupied(&self, index: usize) -> bool {
+    #[inline(always)] fn is_occupied(&self, index: usize) -> bool {
         let word_index = index / OCCUPANCY_WORD_BITS;
         let bit = index % OCCUPANCY_WORD_BITS;
         self.occupied[word_index] & (1_u64 << bit) != 0
@@ -342,7 +353,7 @@ impl RecordBlock {
         self.occupied[word_index] &= !(1_u64 << bit);
     }
 
-    fn mark(&mut self, index: usize) -> bool {
+    #[inline(always)] fn mark(&mut self, index: usize) -> bool {
         let word_index = index / OCCUPANCY_WORD_BITS;
         let bit = index % OCCUPANCY_WORD_BITS;
         let mask = 1_u64 << bit;
@@ -403,17 +414,17 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     }
 
     /// Claims the highest id of the loaded free word, whose bits name unoccupied ids of one
-    /// occupancy word: the bit is set in that word, which the free word's base names, with no
-    /// test of the id it already proved free.
+    /// occupancy word, with no test of the id it already proved free; hints the next one.
     #[inline(always)]
     fn take_free_word_id(&mut self) -> RecordId {
         debug_assert_ne!(self.free_word, 0);
         let bit = OCCUPANCY_WORD_BITS - 1 - self.free_word.leading_zeros() as usize;
         let mask = 1_u64 << bit;
         self.free_word &= !mask;
-        let (block_index, word_index) = Self::word_position(self.free_word_base);
-        // SAFETY: a free word is loaded from an existing block's occupancy word.
-        let word = unsafe { &mut self.blocks.get_unchecked_mut(block_index).occupied[word_index] };
+        prefetch::next_free_record(self.base.as_ptr(), self.free_word_base, self.free_word);
+        // SAFETY: `free_word_occupied` names the occupancy word the nonzero free word came from,
+        // in a block that has not moved since (see the field).
+        let word = unsafe { &mut *self.free_word_occupied };
         debug_assert_eq!(*word & mask, 0, "a free-word bit names an unoccupied id");
         *word |= mask;
         self.free_word_base + bit as RecordId
@@ -493,8 +504,9 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         let word_index = record_index / OCCUPANCY_WORD_BITS;
         let bit = record_index % OCCUPANCY_WORD_BITS;
         let below_and_at = u64::MAX >> (OCCUPANCY_WORD_BITS - 1 - bit);
-        let block = &self.blocks[block_index];
+        let block = &mut self.blocks[block_index];
         self.free_word = !(block.occupied[word_index] | block.withheld[word_index]) & below_and_at;
+        self.free_word_occupied = &raw mut block.occupied[word_index];
         self.free_word_base = id - bit as RecordId;
         self.free_cursor = self.free_word_base;
         self.young_words.push(self.free_word_base);
@@ -618,7 +630,7 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         unsafe { self.base.as_ptr().add(id as usize).read().assume_init() }
     }
 
-    pub(super) fn mark(&mut self, id: RecordId) -> bool {
+    #[inline(always)] pub(super) fn mark(&mut self, id: RecordId) -> bool {
         let (block_index, record_index) = Self::split_id(id);
         self.blocks
             .get_mut(block_index)
@@ -823,9 +835,9 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             let mut live_count = 0;
             for block_index in 0..self.blocks.len() {
                 for word_index in 0..BLOCK_WORDS {
+                    self.warm_ahead(block_index, word_index);
                     let (live, freed) = self.sweep_word(block_index, word_index, if visit_live { u64::MAX } else { 0 }, &mut visit);
-                    live_count += live;
-                    freed_count += freed;
+                    (live_count, freed_count) = (live_count + live, freed_count + freed);
                 }
             }
             live_count
@@ -965,28 +977,6 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             dead &= dead - 1;
         }
         freed
-    }
-
-    /// After a sweep every occupied record is marked or aged, never both: the invariant that
-    /// lets a minor sweep skip the words no allocation reached and no aged record holds.
-    #[cfg(debug_assertions)]
-    fn debug_assert_swept(&self) {
-        for (block_index, block) in self.blocks.iter().enumerate() {
-            for word_index in 0..BLOCK_WORDS {
-                let (occupied, marked, aged) =
-                    (block.occupied[word_index], block.marked[word_index], block.aged[word_index]);
-                assert_eq!(
-                    occupied & !marked & !aged,
-                    0,
-                    "an unswept young record survives in block {block_index} word {word_index}"
-                );
-                assert_eq!(
-                    aged & (marked | !occupied),
-                    0,
-                    "an aged record is marked or free after a sweep in block {block_index} word {word_index}"
-                );
-            }
-        }
     }
 
     pub(super) fn for_each_live(&self, mut visit: impl FnMut(RecordId, &T)) {

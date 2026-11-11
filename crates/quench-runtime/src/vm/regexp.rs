@@ -1072,6 +1072,7 @@ impl<H: Host> Vm<H> {
             FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) | FlatUnits::AsciiPrefix(..) => {
                 return self.regexp_subjects.run(&flat);
             }
+            FlatUnits::Parts(_) => unreachable!("a string of parts is written out before it is read"),
         };
         let fresh = || match text {
             // Wide storage always holds a non-ASCII unit (`FlatUnits::Wide`).
