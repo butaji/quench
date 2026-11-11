@@ -3,11 +3,12 @@
 //! to the frame's resume block. It runs the steps of `Program::run` exactly; the interpreter
 //! stays the one source of meaning, and a program or search the code cannot finish keeps it.
 use super::compiled::CodeMemory;
-use super::jit_backend::{compile_function, target_isa, NativeCompileRejection};
+use super::jit_backend::{compile_function, run_in_background, target_isa, NativeCompileRejection};
+use std::task::Poll;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use quench_regexp::backtrack::native::{NativeCode, NativeCompiler, NativeFn, NativeGuard, NativeInst, NativePlan, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
+use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeGuard, NativeInst, NativePlan, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
 
 mod assertions;
 mod repeats;
@@ -41,22 +42,38 @@ pub(super) fn enable(enabled: bool) {
 
 /// The compiler `quench_regexp` asks for code.
 pub(super) fn compiler() -> NativeCompiler {
-    NativeCompiler { runs: super::compiled::tier_policy::REGEXP_NATIVE_RUNS, compile }
+    NativeCompiler { runs: super::compiled::tier_policy::REGEXP_NATIVE_RUNS, start }
 }
 
-fn compile(plan: &NativePlan) -> Option<NativeCode> {
+/// Compiles `plan` on the code generator's thread; the program polls for the code and keeps
+/// the interpreter meanwhile.
+fn start(plan: NativePlan) -> NativeBuild {
+    let pending = run_in_background(move || compile(&plan));
+    Box::new(move || match pending.poll() {
+        Poll::Pending => Poll::Pending,
+        Poll::Ready(bytes) => Poll::Ready(bytes.flatten().and_then(|bytes| publish(&bytes))),
+    })
+}
+
+/// The machine code of `plan`.
+fn compile(plan: &NativePlan) -> Option<Vec<u8>> {
     let isa = target_isa()?;
     if isa.pointer_type() != types::I64 {
         return None;
     }
     let function = emit(plan, &*isa);
-    let memory = compile_function(function, &*isa, Some(MAX_CODE_BYTES), |compiled, _| {
+    compile_function(function, &*isa, Some(MAX_CODE_BYTES), |compiled, _| {
         if !compiled.buffer.relocs().is_empty() {
             return Err(NativeCompileRejection::Relocations);
         }
-        CodeMemory::new(compiled.code_buffer()).ok_or(NativeCompileRejection::Publish)
+        Ok(compiled.code_buffer().to_vec())
     })
-    .ok()?;
+    .ok()
+}
+
+/// `code` in executable memory, as a native search.
+fn publish(code: &[u8]) -> Option<NativeCode> {
+    let memory = CodeMemory::new(code)?;
     // SAFETY: the code is a function of `NativeFn`'s signature, which `emit` builds.
     let entry = unsafe { std::mem::transmute::<*mut u8, NativeFn>(memory.pointer()) };
     Some(NativeCode { entry, keep: Box::new(memory) })
