@@ -126,14 +126,14 @@ impl JsString {
     /// ASCII `parts` in order as one string of their total `length`, written straight into
     /// its storage: inline when short, else one allocation.
     pub(crate) fn from_ascii_parts<'a>(length: usize, parts: impl Iterator<Item = &'a [u8]>) -> Self {
-        Self::from_ascii_filled(length, |output| {
+        Self::from_flat(FlatUnits::ascii_with(length, |output| {
             let mut written = 0;
             for part in parts {
                 output[written..written + part.len()].write_copy_of_slice(part);
                 written += part.len();
             }
             assert_eq!(written, output.len(), "the parts fill the string's length");
-        })
+        }))
     }
 
     /// ASCII text of `length` bytes that `fill` writes in place (`FlatUnits::ascii_with`):
