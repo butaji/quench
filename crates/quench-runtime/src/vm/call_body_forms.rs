@@ -186,12 +186,21 @@ pub(super) fn leaf_body(body: &Function, code: &ResidualProgram, private: impl F
     Some(form)
 }
 
+/// Whether `op` runs in a plain leaf: a register or constant value, a forward jump, or a
+/// construction the lane plans (`lane_planned_construct_returned`).
+#[inline(always)]
+fn plain_leaf(op: Op) -> bool {
+    op.is_leaf_value() || op.is_leaf_jump() || op.is_construct()
+}
+
 /// What `instruction`'s lane record reads of the context in a leaf (`leaf_body`), or `None`
 /// when no leaf runs it.
 fn leaf_reads(instruction: WideInstruction, body: &Function, code: &ResidualProgram,
     private: &impl Fn(crate::bytecode::Atom) -> bool) -> Option<LeafForm> {
     Some(match instruction.op() {
-        op if op.is_leaf_value() || op.is_leaf_jump() => PLAIN_LEAF,
+        // A construction the lane plans (`lane_planned_construct_returned`) allocates and
+        // returns its receiver; its decline leaves the lane, which materializes the leaf.
+        op if plain_leaf(op) => PLAIN_LEAF,
         op if op.is_leaf_binary() => return binary_leaf(instruction),
         op if op.traits().has(Traits::THIS_LEAF) => CONTEXT_LEAF,
         op if op.addresses_capture() => CAPTURE_LEAF,

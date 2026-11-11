@@ -13134,7 +13134,7 @@ fn lane_native_value<H: Host>(
 mod named_keys;
 mod denoted;
 mod wasm_calls;
-mod capture_update_calls; mod capture_binding;
+mod capture_update_calls; mod capture_binding; mod construct_calls;
 use capture_update_calls::capture_update_call_handler;
 use wasm_calls::{known_call_handler, reference_call_handler};
 use denoted::{denoted_handler, unary_handler};
@@ -13732,6 +13732,10 @@ script_handler! {
         {
             return exit(ip);
         }
+        // A construction inside a leaf is the activation its call would have pushed
+        // (`lane_materialize_running_leaf`), which completes the caller as any construction
+        // does; a leaf completes a planned one itself (`lane_planned_construct_returned`).
+        lane_materialize_running_leaf(cx);
         // The cached target in place, as a call reads it (`Vm::script_call_entry`); an
         // uncached callee resolves (`lane_script_target`), after which the construction
         // retries.
@@ -13763,11 +13767,11 @@ script_handler! {
             note_allocation(vm);
             // Later runs of the site try the plan first.
             if i.a & crate::bytecode::RETURN_REGISTER == 0 {
-                requicken::<H>(ip, lane_planned_construct::<H>);
+                requicken::<H>(ip, construct_calls::planned_construct_handler::<H>());
                 r.set(i.a, this);
                 next!(cx, r, following(ip), Carried::script(cx))
             }
-            requicken::<H>(ip, lane_planned_construct_returned::<H>);
+            requicken::<H>(ip, construct_calls::planned_construct_returned_handler::<H>());
             if let Some(resumed) = lane_complete_activation(cx, ip, this) {
                 resume!(cx, resumed)
             }
@@ -13813,56 +13817,6 @@ script_handler! {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Err(next) => next,
         }
-    }
-}
-
-script_handler! {
-    /// `lane_script_construct` at a site into a register whose construction was planned
-    /// (`lane_planned_construction`), which `lane_script_construct` moves it to: the plan of
-    /// the callee alone, without resolving its call target. A plan exists only for a callee
-    /// whose target constructs by its initializer stores, which its function fixes, and while
-    /// it holds the finished object is what the activation would make. Any other construction
-    /// moves the record back to `lane_script_construct`.
-    fn lane_planned_construct<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
-            return exit(ip);
-        }
-        let Some(this) = lane_planned_construction(vm, r.get(i.b), unsafe { &*(*cx).code }, r, i) else {
-            requicken::<H>(ip, lane_script_construct::<H>);
-            sibling!(lane_script_construct::<H>, r, ip, Carried::script(cx))
-        };
-        // Allocating the receiver can make a collection due.
-        note_allocation(vm);
-        r.set(i.a, this);
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
-    /// `lane_planned_construct` at a site whose construction is returned (`RETURN_REGISTER`),
-    /// which `lane_script_construct` moves it to: the planned receiver completes the
-    /// activation that returns it, or the frame's own returning construct where
-    /// `lane_finishes_construction` admits it. Any other construction moves the record back
-    /// to `lane_script_construct`.
-    fn lane_planned_construct_returned<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
-            return exit(ip);
-        }
-        let planned = lane_finishes_construction(cx, i)
-            .then(|| lane_planned_construction(vm, r.get(i.b), unsafe { &*(*cx).code }, r, i))
-            .flatten();
-        let Some(this) = planned else {
-            requicken::<H>(ip, lane_script_construct::<H>);
-            sibling!(lane_script_construct::<H>, r, ip, Carried::script(cx))
-        };
-        // Allocating the receiver can make a collection due.
-        note_allocation(vm);
-        if let Some(resumed) = lane_complete_activation(cx, ip, this) {
-            resume!(cx, resumed)
-        }
-        lane_frame_return(vm, ip, this)
     }
 }
 
@@ -16162,6 +16116,11 @@ return_handler! {
     /// entry frame belongs to the general loop.
     /// `LEAF` where the record is a leaf's (`LaneView::specialize_leaf_returns`).
     fn lane_return<LEAF: u8>(cx, r, ip, i, view) {
+        if LEAF != NOT_LEAF {
+            static QR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let n = QR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n < 6 { eprintln!("QLEAFRET leaf={LEAF} a={} value={:?} leafcall={}", i.a, r.get(i.a), unsafe { !(*cx).leaf.call.is_null() }); }
+        }
         if let Some(resumed) = lane_complete_plain_activation::<H, LEAF>(cx, r.get(i.a)) {
             resume!(cx, resumed)
         }
