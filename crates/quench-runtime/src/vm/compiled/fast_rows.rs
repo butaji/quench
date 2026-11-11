@@ -7,7 +7,7 @@
 //! operands' (a field row's entry-record byte offset in 1). Every failed proof leaves through exit
 //! 0 with nothing written, so the interpreter runs the instruction.
 
-use super::{emit_dense_array_view, emit_dense_element, emit_dense_element_replace, emit_js_payload_word, CallContext, JsStepDispatch};
+use super::{emit_dense_array_view, DenseArrayView, emit_dense_element, emit_dense_element_replace, emit_js_payload_word, CallContext, JsStepDispatch};
 use crate::staged;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, types};
 use quench_fastjit::numeric::{self, Place};
@@ -39,6 +39,8 @@ pub(super) struct HeapRow {
     pub(super) dst: Place,
     pub(super) a: Place,
     pub(super) b: Place,
+    /// The array's backing is the entry record's (the offset at the array hole), not looked up per access.
+    pub(super) entry: bool,
 }
 
 /// The activation's dispatch payload: the context's adapter pointer, which never changes during a run (so the load may merge).
@@ -54,18 +56,39 @@ fn capture(b: &mut StencilBuilder, payload: ir::Value, slot: u16, miss: ir::Bloc
     staged::environment::dense_capture(&mut stage, values, len, slot, miss).expect("the emit stage continues past its guards")
 }
 
+/// The view of the array whose entry-record element pointer sits at `hole`: the backing never
+/// moves during a run, and its length is read from the backing's header (so no second hole).
+fn entry_view(b: &mut StencilBuilder, payload: ir::Value, hole: u32, writable: bool) -> DenseArrayView {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let entry = emit_js_payload_word(b.b, payload, std::mem::offset_of!(JsStepDispatch, loop_entry));
+    let at = b.operand(Operand::Hole(hole), Ty::I64);
+    let address = b.b.ins().iadd(entry, at);
+    let values = b.b.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    let length_at = ARRAY.header_length_offset as i32 - ARRAY.header_values_offset as i32;
+    let length = b.b.ins().load(types::I32, MemFlagsData::trusted(), values, length_at);
+    DenseArrayView { values, length, writable }
+}
+
 fn element(b: &mut StencilBuilder, payload: ir::Value, row: HeapRow, miss: ir::Block) -> ir::Value {
-    let base = b.read(Source::Frame(Operand::Hole(1)), Ty::Word);
     let index = numeric::index_of(b, row.b, numeric::SECOND);
-    let view = emit_dense_array_view(b.b, payload, base, false, miss);
+    let view = if row.entry {
+        entry_view(b, payload, 1, false)
+    } else {
+        let base = b.read(Source::Frame(Operand::Hole(1)), Ty::Word);
+        emit_dense_array_view(b.b, payload, base, false, miss)
+    };
     emit_dense_element(b.b, view, index, miss).1
 }
 
 fn store(b: &mut StencilBuilder, payload: ir::Value, row: HeapRow, miss: ir::Block) {
-    let base = b.read(Source::Frame(Operand::Hole(0)), Ty::Word);
     let index = numeric::index_of(b, row.b, numeric::SECOND);
     let value = numeric::number_word(b, row.a, 1);
-    let view = emit_dense_array_view(b.b, payload, base, true, miss);
+    let view = if row.entry {
+        entry_view(b, payload, 0, true)
+    } else {
+        let base = b.read(Source::Frame(Operand::Hole(0)), Ty::Word);
+        emit_dense_array_view(b.b, payload, base, true, miss)
+    };
     let (address, old) = emit_dense_element(b.b, view, index, miss);
     emit_dense_element_replace(b.b, view, address, old, value);
     b.next();

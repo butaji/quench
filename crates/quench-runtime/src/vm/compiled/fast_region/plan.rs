@@ -78,14 +78,17 @@ impl Planned {
 
 /// The plan of a heap row, given its (place, hole) of destination, first and second operand.
 fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
-    let base = decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT);
+    // An array the entry record holds is named by its record offset (`decoded.hole`), else by its slot.
+    let entry = decoded.hole != 0 && matches!(heap, Heap::Store | Heap::Index);
+    let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
     let holes = match heap {
         Heap::Store => [base, a_hole, b_hole],
+        Heap::Index if entry => [dst_hole, decoded.hole, b_hole],
         Heap::Field => [dst_hole, decoded.hole, 0],
         _ => [dst_hole, a_hole, b_hole],
     };
     // The row's stencil reads pinned operands and delivers a pinned result itself.
-    Ok(Planned::single(fast_rows::stencil(HeapRow { heap, dst, a, b })?, holes, None, Some(pc)))
+    Ok(Planned::single(fast_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
 }
 
 pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Planned, String> {

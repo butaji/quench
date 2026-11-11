@@ -118,7 +118,13 @@ pub(super) fn inc_dec(instruction: WideInstruction) -> Result<Decoded, String> {
 
 /// The heap instructions: a capture, a dense element read or store, a recorded field, the proof
 /// that a base is an array.
-pub(super) fn heap_row(region: &LoopRegion, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+/// The entry-record byte offset of the array `register` holds through the region, which an
+/// indexing row reads the backing of from the record; 0 where the array is looked up per access.
+fn entry_array(region: &LoopRegion, dense: bool, register: Register) -> u64 {
+    if dense { region.array_entry_offset(register).unwrap_or(0) } else { 0 }
+}
+
+pub(super) fn heap_row(region: &LoopRegion, dense: bool, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     let register = |register| Some(Source::Register(register));
     match instruction.op().class() {
         Class::LoadCapture if instruction.capture_depth() == 0 => {
@@ -127,12 +133,13 @@ pub(super) fn heap_row(region: &LoopRegion, pc: u32, instruction: WideInstructio
         Class::GetIndex if !instruction.returns_from_frame() => {
             let base = instruction.operand_b().register_index()?;
             let index = source(region, instruction.operand_c()).ok()?;
-            Some(Decoded::heap(Heap::Index, Some(instruction.result_register()), register(base), Some(index)))
+            let row = Decoded::heap(Heap::Index, Some(instruction.result_register()), register(base), Some(index));
+            Some(Decoded { hole: entry_array(region, dense, base), ..row })
         }
         Class::SetIndex => {
             let value = register(instruction.register_a());
             let row = Decoded::heap(Heap::Store, None, value, register(instruction.register_c()));
-            Some(Decoded { base: Some(instruction.register_b()), ..row })
+            Some(Decoded { base: Some(instruction.register_b()), hole: entry_array(region, dense, instruction.register_b()), ..row })
         }
         Class::RequireObjectCoercible => Some(Decoded::heap(Heap::Array, None, register(instruction.register_b()), None)),
         Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => {
@@ -145,10 +152,10 @@ pub(super) fn heap_row(region: &LoopRegion, pc: u32, instruction: WideInstructio
     }
 }
 
-pub(super) fn decode(region: &LoopRegion, pc: u32, instruction: WideInstruction) -> Result<Decoded, String> {
+pub(super) fn decode(region: &LoopRegion, dense: bool, pc: u32, instruction: WideInstruction) -> Result<Decoded, String> {
     let decoded = match numeric_row(region, instruction) {
         Some(decoded) => decoded,
-        None => heap_row(region, pc, instruction).filter(|_| instruction.result_flags() == 0),
+        None => heap_row(region, dense, pc, instruction).filter(|_| instruction.result_flags() == 0),
     };
     decoded.ok_or_else(|| reject(region, instruction))
 }

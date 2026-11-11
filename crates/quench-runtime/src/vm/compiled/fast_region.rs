@@ -80,9 +80,9 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 
 /// The machine code of `region`, entered at the shared native entry ABI, or the instruction that
 /// has no row. `ints` are the registers that held an int32 as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows.
-pub(super) fn build(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<Vec<u8>, String> {
+pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<Vec<u8>, String> {
     let started = std::time::Instant::now();
-    let built = assemble(region, widened, seen);
+    let built = assemble(region, dense, widened, seen);
     let nanos = started.elapsed().as_nanos() as u64;
     note(|totals, rejects| match &built {
         Ok(code) => {
@@ -99,11 +99,11 @@ pub(super) fn build(region: &LoopRegion, widened: &[usize], seen: [&[Register]; 
     built
 }
 
-fn assemble(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<Vec<u8>, String> {
+fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<Vec<u8>, String> {
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
-    let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, header + k as u32, *instruction)).collect::<Result<Vec<_>, _>>()?;
+    let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, dense, header + k as u32, *instruction)).collect::<Result<Vec<_>, _>>()?;
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged: std::collections::BTreeSet<Register> = Default::default();

@@ -1341,6 +1341,13 @@ impl LoopRegion {
         live.is_live(index, register)
     }
 
+    /// The byte offset in the entry record of the element pointer, length and capacity of the array
+    /// `register` holds throughout the region, when the entry pushes one for it.
+    pub(crate) fn array_entry_offset(&self, register: Register) -> Option<u64> {
+        let k = self.arrays.iter().position(|array| array.register == register)?;
+        Some(((field_word(self, self.fields.len()) + k * ARRAY_WORDS) * std::mem::size_of::<u64>()) as u64)
+    }
+
     /// The field whose value `register` holds at every read, when it is one the region
     /// writes only with that field's reads (`held_registers`).
     pub(crate) fn held_field(&self, register: Register) -> Option<usize> {

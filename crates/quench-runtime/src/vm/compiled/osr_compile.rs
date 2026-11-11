@@ -204,7 +204,7 @@ pub(in crate::vm) fn start_osr_region(
     }
     if crate::jit_mode::fast_regions() && region.inlining.is_none() {
         // Number loops whose every instruction has a stencil row skip Cranelift.
-        if let Ok(code) = super::fast_region::build(region, widened, [observation.int_registers, observation.double_registers]) {
+        if let Ok(code) = super::fast_region::build(region, views == super::ElementViews::Dense, widened, [observation.int_registers, observation.double_registers]) {
             if let Some(directory) = native_dump_directory() {
                 dump_native_bytes(directory, region.header, &code, None, "");
             }
