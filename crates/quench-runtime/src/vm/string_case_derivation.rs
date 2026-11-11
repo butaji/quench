@@ -73,15 +73,15 @@ impl StringCaseFilter {
 pub(in super::super) fn specialize<H: Host>(
     heap: &crate::heap::Heap,
     constants: &[Value],
-    decoded: &[crate::bytecode::WideInstruction],
+    decoded: &[WideInstruction],
     records: &mut [LaneInstruction],
 ) -> Box<[StringCaseFilter]> {
     let mut filters = Vec::new();
     let mut sites = Vec::new();
-    for (pc, _record) in records.iter().enumerate() {
-        // The site's own opcode names it a case selector; a handler's address does not.
-        let Some(instruction) = decoded.get(pc) else { continue };
-        if !instruction.op().is_string_case_index() { continue; }
+    for (pc, instruction) in decoded.iter().enumerate() {
+        if !instruction.op().is_string_case_index() {
+            continue;
+        }
         // The range `lane_operand` validated before installing the selector.
         let start = instruction.imm() as usize;
         let Some(filter) = start.checked_add(usize::from(instruction.b())).and_then(|end| constants.get(start..end))

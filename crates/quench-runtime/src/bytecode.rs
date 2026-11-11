@@ -73,9 +73,7 @@ pub(crate) use field_store::{FieldStore, StoreReceiver, field_store_op};
 mod instruction;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
-mod numeric_ops;
-mod op_classes;
-mod unary_operators;
+mod numeric_ops; mod op_classes; mod unary_operators;
 pub(crate) use unary_operators::*;
 mod source_positions;
 pub(crate) use source_positions::SourcePositions;
@@ -133,7 +131,7 @@ pub(crate) const UNIQUE_CACHE_SITES: u16 = SHARED_UNCACHED_SITE - NAME_SHARED_CA
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
-pub(crate) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
+pub(crate) use crate::units::MAX_ARRAY_LENGTH;
 pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
 pub(crate) const OPTIONAL_REGISTER_BIAS: Register = 1;
 
@@ -744,8 +742,8 @@ pub(crate) enum Semantics {
 
 
 #[macro_use]
-mod op_catalog; mod denotation;
-pub(crate) use op_catalog::{Class, JsDenotation, Traits};
+mod op_catalog; mod denotation; mod opcode_table;
+pub(crate) use op_catalog::{Class, JsDenotation, Traits, OPCODE_COUNT, opcode_name};
 
 macro_rules! opcodes {
     ($d:tt; $($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? $(; semantics $semantics:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
@@ -2123,17 +2121,12 @@ impl Function {
             || self.inherited_with_scope
             || !self.binding_sites.is_empty()
             || self.instructions().any(|instruction| {
-                instruction.op().loads_name() && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
-                    tables
-                        .atom_name(atom)
-                        .is_none_or(|name| name.starts_with('\0') && !is_intrinsic_name(name))
-                })
+                name_bindings::reads_hidden_name(instruction, tables)
                     || matches!(
                         instruction.op(),
                         Op::ResolveName
                             | Op::LoadResolvedName
                             | Op::DeleteName
-                            | Op::StoreName
                             | Op::StoreResolvedName
                             | Op::StoreVarBinding
                             | Op::InitializeThis

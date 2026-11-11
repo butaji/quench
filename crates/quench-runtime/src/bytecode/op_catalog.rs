@@ -2,6 +2,7 @@
 //! (`Class`, `class_of!`) and its orthogonal tier traits (`Traits`, `traits_of!`), which the
 //! `opcodes!` table expands into `Op::class` and `Op::traits`.
 use super::Op;
+pub(crate) use super::opcode_table::{OPCODE_COUNT, opcode_name};
 
 /// A tier's operation family, declared once by the catalog (`Op::class`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,6 +28,9 @@ pub(crate) enum Class {
     WasmSelect,
     WasmI32Load,
     WasmI32Load8U,
+    WasmI32Load16U,
+    WasmI32Load16S,
+    WasmI32Load8S,
     WasmJumpI32EqualImmediate,
     WasmJumpI32NotEqualImmediate,
     GetField,
@@ -151,6 +155,9 @@ macro_rules! class_of {
     (WasmSelect) => { Class::WasmSelect };
     (WasmI32Load) => { Class::WasmI32Load };
     (WasmI32Load8U) => { Class::WasmI32Load8U };
+    (WasmI32Load16U) => { Class::WasmI32Load16U };
+    (WasmI32Load16S) => { Class::WasmI32Load16S };
+    (WasmI32Load8S) => { Class::WasmI32Load8S };
     (WasmJumpI32EqualImmediate) => { Class::WasmJumpI32EqualImmediate };
     (WasmJumpI32NotEqualImmediate) => { Class::WasmJumpI32NotEqualImmediate };
     (GetField) => { Class::GetField };

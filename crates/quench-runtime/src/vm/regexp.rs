@@ -33,7 +33,6 @@ impl std::ops::Deref for PreparedSubject {
 // A short string's units fit a subject's inline text.
 const _: () = assert!(super::wtf16::SHORT_ASCII_CAPACITY <= quench_regexp::INLINE_SUBJECT_BYTES);
 
-use crate::units::MAX_SAFE_INTEGER;
 use crate::unicode::HIGH_SURROGATE_START;
 use crate::unicode::HIGH_SURROGATE_END;
 use crate::unicode::LOW_SURROGATE_START;
@@ -1844,11 +1843,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         // A number is its own primitive and number, so its conversion runs no guest code.
         if let Some(number) = value.as_number() {
-            return Ok(regexp_to_length(number));
+            return Ok(crate::units::to_length(number));
         }
         self.with_call_roots([value], |vm| {
             let value = vm.to_primitive(p, value, "number")?;
-            Ok(regexp_to_length(vm.to_number(p, value)?))
+            Ok(crate::units::to_length(vm.to_number(p, value)?))
         })
     }
 
@@ -3123,16 +3122,6 @@ pub(super) fn advance_string_index_units(
         index + 2
     } else {
         index + 1
-    }
-}
-
-pub(super) fn regexp_to_length(value: f64) -> usize {
-    if value.is_nan() || value <= 0.0 {
-        0
-    } else if value.is_infinite() {
-        MAX_SAFE_INTEGER as usize
-    } else {
-        value.trunc().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize
     }
 }
 

@@ -214,11 +214,11 @@ node_api! {
     }
 
     fn napi_get_value_int32(env: *mut Env, value: NapiValue, result: *mut i32) -> Status {
-        api(env, |env, c| out(result, to_int32(number(c, env.value(value)?)?)))
+        api(env, |env, c| out(result, quench_runtime::units::to_int32(number(c, env.value(value)?)?)))
     }
 
     fn napi_get_value_uint32(env: *mut Env, value: NapiValue, result: *mut u32) -> Status {
-        api(env, |env, c| out(result, to_int32(number(c, env.value(value)?)?) as u32))
+        api(env, |env, c| out(result, quench_runtime::units::to_int32(number(c, env.value(value)?)?) as u32))
     }
 
     fn napi_get_value_int64(env: *mut Env, value: NapiValue, result: *mut i64) -> Status {
@@ -300,16 +300,6 @@ node_api! {
             out(result, c.strict_equal_rooted(left, right).napi(env, c)?)
         })
     }
-}
-
-/// ECMAScript ToInt32 of a Number; non-finite values become zero.
-fn to_int32(value: f64) -> i32 {
-    if !value.is_finite() {
-        return 0;
-    }
-    const TWO_32: f64 = 4_294_967_296.0;
-    let wrapped = value.trunc().rem_euclid(TWO_32);
-    wrapped as u32 as i32
 }
 
 fn utf16_units<'a>(text: *const u16, length: usize) -> Result<&'a [u16], Status> {

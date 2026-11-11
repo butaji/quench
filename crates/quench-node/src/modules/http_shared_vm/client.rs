@@ -60,8 +60,6 @@ crate::modules::host_members::members!(Member, "httpClient", [
 /// The methods whose requests carry no body by default.
 const BODYLESS_METHODS: [&str; 6] = ["GET", "HEAD", "DELETE", "OPTIONS", "TRACE", "CONNECT"];
 use crate::modules::http_shared_vm::agent::DEFAULT_PORT;
-/// The largest timer duration (`TIMEOUT_MAX`).
-const TIMEOUT_MAX: f64 = 2_147_483_647.0;
 /// The bytes a request path may hold (`INVALID_PATH_REGEX` rejects the rest).
 const PATH_BYTES: std::ops::RangeInclusive<u16> = 0x21..=0xff;
 
@@ -329,7 +327,7 @@ fn timer_duration(c: &mut Context<'_>, msecs: RootId, name: &str) -> Result<f64,
             &format!("The value of \"{name}\" is out of range. It must be a non-negative finite number. Received {received}"),
         ));
     }
-    Ok(value.min(TIMEOUT_MAX))
+    Ok(value.min(crate::modules::timers_shared_vm::MAX_TIMER_DELAY_MS as f64))
 }
 
 /// The request options from `(input, options, cb)`: a URL string or object, options, or

@@ -19,6 +19,11 @@ impl Stage for Emit<'_, '_> {
     /// Any integer: nonzero holds.
     type Cond = ir::Value;
     type Miss = ir::Block;
+    type Imm = u64;
+
+    fn site(&mut self, v: u64) -> u64 { v }
+    fn load_site(&mut self, base: ir::Value, offset: u64) -> ir::Value { self.load_u64(base, offset as i32) }
+    fn shape_in_site(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value { self.shape_in(shape, shapes) }
 
     fn constant(&mut self, bits: u64) -> ir::Value { self.builder.ins().iconst(types::I64, bits as i64) }
     fn load_u32(&mut self, base: ir::Value, offset: i32) -> ir::Value {
@@ -32,18 +37,18 @@ impl Stage for Emit<'_, '_> {
     }
     fn add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().iadd(a, b) }
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
-    fn add_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().iadd_imm_u(a, imm as i64) }
-    fn mul_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().imul_imm_u(a, imm as i64) }
-    fn and_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().band_imm_u(a, imm as i64) }
-    fn or_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().bor_imm_u(a, imm as i64) }
-    fn shr_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value { self.builder.ins().ushr_imm_u(a, i64::from(shift)) }
+    fn add_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value { self.builder.ins().iadd_imm_u(a, imm.into() as i64) }
+    fn mul_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value { self.builder.ins().imul_imm_u(a, imm.into() as i64) }
+    fn and_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value { self.builder.ins().band_imm_u(a, imm.into() as i64) }
+    fn or_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value { self.builder.ins().bor_imm_u(a, imm.into() as i64) }
+    fn shr_imm(&mut self, a: ir::Value, shift: impl Into<u64>) -> ir::Value { self.builder.ins().ushr_imm_u(a, shift.into() as i64) }
     fn sar32_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value {
         let low = self.builder.ins().ireduce(types::I32, a);
         let shifted = self.builder.ins().sshr_imm_u(low, i64::from(shift));
         self.builder.ins().uextend(types::I64, shifted)
     }
-    fn eq_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, imm as i64) }
-    fn ne_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::NotEqual, a, imm as i64) }
+    fn eq_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, imm.into() as i64) }
+    fn ne_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::NotEqual, a, imm.into() as i64) }
     fn sub(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().isub(a, b) }
     fn select(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
         self.builder.ins().select(cond, then, otherwise)
@@ -54,14 +59,23 @@ impl Stage for Emit<'_, '_> {
     fn store_u64(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
         self.builder.ins().store(MemFlagsData::trusted(), value, base, offset);
     }
+    fn store_gate(&mut self, record_id: ir::Value, _value: ir::Value) -> ir::Value {
+        // Native code keeps the helper for stores: an id is never below itself.
+        self.ult(record_id, record_id)
+    }
+    fn assumption(&mut self, _watch: u64) -> ir::Value {
+        // No assumption registry reaches emitted code yet: the read leaves at its miss.
+        let zero = self.constant(0);
+        self.ne_imm(zero, 0u32)
+    }
     fn ult(&mut self, a: ir::Value, b: ir::Value) -> ir::Value {
         self.builder.ins().icmp(IntCC::UnsignedLessThan, a, b)
     }
     fn uextend32(&mut self, a: ir::Value) -> ir::Value {
         if self.builder.func.dfg.value_type(a) == types::I32 { self.builder.ins().uextend(types::I64, a) } else { a }
     }
-    fn ugt_imm(&mut self, a: ir::Value, imm: u64) -> ir::Value {
-        self.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, a, imm as i64)
+    fn ugt_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value {
+        self.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, a, imm.into() as i64)
     }
     fn not(&mut self, cond: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, cond, 0) }
     fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }

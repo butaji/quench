@@ -3,80 +3,26 @@
 # decides opcode meaning by hand instead of deriving it from the interpreter (`staged`, a
 # semantic entry, an opcode-table fact). Entries may only shrink or disappear
 # (`staged::tests::tiers_derive_opcode_meaning_from_the_interpreter`).
-vm/compiled.rs COUNT 1
-vm/compiled.rs Call 1
-vm/compiled.rs WasmMemoryAddress 1
-vm/compiled/exact_budget.rs Binary 1
-vm/compiled/exact_budget.rs NAMES 1
-vm/compiled/general_binary.rs Binary 1
-vm/compiled/general_names.rs LoadNameCall 1
-vm/compiled/lane_region.rs LoadConst 1
-vm/compiled/lane_region/stable.rs GetField 1
-vm/compiled/lane_region/stable.rs GetIndex 1
-vm/compiled/lane_region/stable.rs LoadName 1
-vm/compiled/lane_region/stable.rs LoadNameCall 1
-vm/compiled/lane_unit/static_hints.rs DefineField 1
-vm/compiled/lane_unit/static_hints.rs DefinePropertyRecord 1
-vm/compiled/osr_loop.rs Call 1
-vm/compiled/osr_loop.rs GetField 1
-vm/compiled/osr_loop.rs JumpFalse 1
-vm/compiled/osr_loop.rs JumpTrue 1
-vm/compiled/osr_loop.rs Move 1
-vm/dispatch_fast.rs Move 2
-vm/dispatch_fast.rs WasmI32AddImmediate 2
-vm/dispatch_fast.rs WasmI32Load 1
-vm/dispatch_fast.rs WasmI32Load16S 1
-vm/dispatch_fast.rs WasmI32Load16U 1
-vm/dispatch_fast.rs WasmI32Load8S 1
-vm/dispatch_fast.rs WasmI32Load8U 1
-vm/dispatch_frame.rs Await 1
-vm/dispatch_frame.rs Binary 4
-vm/dispatch_frame.rs Call 2
-vm/dispatch_frame.rs CloneEnv 1
-vm/dispatch_frame.rs Construct 1
-vm/dispatch_frame.rs DefineArrayElement 1
-vm/dispatch_frame.rs GetField 2
-vm/dispatch_frame.rs GetIndex 4
-vm/dispatch_frame.rs IncDec 1
-vm/dispatch_frame.rs Jump 1
-vm/dispatch_frame.rs JumpBinaryFalse 3
-vm/dispatch_frame.rs JumpFalse 1
-vm/dispatch_frame.rs JumpTrue 1
-vm/dispatch_frame.rs LoadCapture 1
-vm/dispatch_frame.rs LoadConst 1
-vm/dispatch_frame.rs LoadLocalPlain 1
-vm/dispatch_frame.rs LoadName 1
-vm/dispatch_frame.rs LoadNameCall 1
-vm/dispatch_frame.rs Move 1
-vm/dispatch_frame.rs NumericAdd 1
-vm/dispatch_frame.rs NumericMultiply 1
-vm/dispatch_frame.rs PrivateIn 1
-vm/dispatch_frame.rs Return 2
-vm/dispatch_frame.rs SetIndex 4
-vm/dispatch_frame.rs StoreLocalPlain 2
-vm/dispatch_frame.rs ToNumeric 1
-vm/first_call_chunk.rs CallFirstChunk 2
-vm/lane_exits.rs COUNT 6
-vm/lane_exits.rs NAMES 6
-vm/native_graph.rs COUNT 2
-vm/native_graph.rs NAMES 1
-vm/native_op_profile.rs COUNT 2
-vm/native_op_profile.rs NAMES 3
-vm/object_static/for_in_keys.rs ForInNext 2
-vm/operations.rs Binary 7
-vm/operations.rs NumericAdd 3
-vm/operations.rs NumericMultiply 2
-vm/operations.rs Return 1
-vm/operations.rs Unary 4
-vm/program_store.rs Binary 1
-vm/program_store.rs COUNT 1
-vm/program_store.rs JumpBinaryFalse 2
-vm/program_store.rs JumpFalse 1
-vm/program_store.rs JumpTrue 1
-vm/program_store.rs NAMES 5
-vm/program_store.rs Unary 1
-vm/specialize.rs Jump 1
-vm/superinstruction.rs Binary 2
-vm/superinstruction.rs MakeConstArray 1
-vm/superinstruction.rs MakeObject2 1
-vm/wasm_js.rs LoadCapture 1
+#
+# Completion criteria (P4/P5/P6):
+# P4: zero sites in every category below. The categories are binding-time facts, not debt:
+#     opcode-index constants (`bytecode::index`) name an opcode value where a jump table needs
+#     one; a value-dependent use needs the opcode *value* (a const generic, handler-table key
+#     or `NAMES` lookup); an operation-specific body is not family dispatch.
+# P5: every host/VM callout crossing a lane body (allocation, element get/set helpers, global
+#     read, field-store helper, interrupt/collection safepoint) is an `Operation` with an
+#     `EmitFrame` implementation and a `Concrete` decline test in `staged::tests`.
+# P6: a body gets per-pc precise windowed masks whenever its tables fit `MAX_MASK_BYTES`
+#     (4 MiB); beyond that it gets a sound all-live map (tested: no per-pc entry, so every
+#     consumer treats every register as live), never a missing map.
+#
+# category: hot general loop — direct comparisons on `bytecode::index` constants (a
+# jump table, no class-table load per instruction); kept empty.
+#
+#
+# category: value-dependent — opcode value is a generic argument, table key or
+# handler index (Wasm lowering), not a family decision.
+#
+#
+# category: per-op bodies — operation-specific work, not family dispatch.
+#

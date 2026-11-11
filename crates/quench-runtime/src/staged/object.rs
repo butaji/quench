@@ -70,7 +70,7 @@ pub(crate) struct Layout<W, C> {
 pub(crate) fn inline_storage<S: Stage>(stage: &mut S, record: S::Word) -> S::Cond {
     let meta = stage.load_u32(record, OBJECT.meta_offset as i32);
     let inline = stage.and_imm(meta, u64::from(OBJECT.inline_storage_mask));
-    stage.ne_imm(inline, 0)
+    stage.ne_imm(inline, 0u32)
 }
 
 /// Whether an object's payload word points at its extras (`Object::payload`).
@@ -192,13 +192,19 @@ fn plain_slots<S: Stage>(stage: &mut S, payload: S::Word, packed: Packed<S::Word
 #[inline(always)]
 pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, slot: u16) -> S::Word {
     debug_assert!(usize::from(slot) < layout.storage_len);
-    let offset = i32::from(slot) * OBJECT.property_value_size as i32;
     match layout.slots {
-        Slots::Flat(base) => stage.load_u64(base, offset),
+        Slots::Flat(base) => flat_read(stage, base, slot),
         Slots::Packed(packed) => packed_read(stage, packed, slot),
         Slots::Either { packed, inline, flat } => stage.choose(inline,
-            |stage| packed_read(stage, packed, slot), |stage| stage.load_u64(flat, offset)),
+            |stage| packed_read(stage, packed, slot), |stage| flat_read(stage, flat, slot)),
     }
+}
+
+/// Flat value `slot`: the slot is a per-site operand, so its byte offset is a hole.
+#[inline(always)]
+fn flat_read<S: Stage>(stage: &mut S, base: S::Word, slot: u16) -> S::Word {
+    let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
+    stage.load_site(base, offset)
 }
 
 /// Packed value `slot`: its half of the payload word, decoded.
@@ -209,7 +215,8 @@ fn packed_read<S: Stage>(stage: &mut S, packed: Packed<S::Word>, slot: u16) -> S
         Packed::Snapshot(payload) => payload,
         Packed::Record(record) => stage.load_u64(record, OBJECT.payload_offset as i32),
     };
-    let half = stage.shr_imm(payload, u32::from(slot) * u32::BITS);
+    let shift = stage.site(u64::from(slot) * u64::from(u32::BITS));
+    let half = stage.shr_imm(payload, shift);
     let narrow = stage.and_imm(half, u64::from(u32::MAX));
     decode_narrow(stage, narrow)
 }
@@ -228,7 +235,7 @@ pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word
 #[inline(always)]
 pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, upper_words: S::Word) -> S::Word {
     let flag = stage.and_imm(narrow, u64::from(NarrowLayout::INTEGER_FLAG));
-    let integer = stage.ne_imm(flag, 0);
+    let integer = stage.ne_imm(flag, 0u32);
     stage.choose(integer, |stage| {
         let shifted = stage.sar32_imm(narrow, NarrowLayout::CODE_SHIFT);
         stage.or_imm(shifted, ValueLayout::INT_TAG)

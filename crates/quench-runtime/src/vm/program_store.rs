@@ -7,7 +7,7 @@ use crate::heap::{PromotionAge, WeakHandle};
 use rustc_hash::FxHashMap;
 use std::io::Write as _;
 
-mod lane_publication;
+pub(in crate::vm) mod lane_publication;
 mod snapshot;
 mod wasm_tier;
 pub(super) use wasm_tier::WasmTierState;
@@ -884,6 +884,10 @@ struct OwnedScript {
 pub(crate) struct ProgramStore {
     /// Weak native-call proofs; guest functions are never rooted by compiled code.
     native_call_bindings: std::cell::RefCell<Vec<lane_publication::NativeCallBinding>>,
+    /// The bodies published by what they compile from (`lane_publication::LaneKey`).
+    /// The compiles each body or loop entry has had (`lane_publication::LaneKey`'s first three).
+    lane_compiles: std::cell::RefCell<std::collections::BTreeMap<(u32, u32), u8>>,
+    lane_installed: std::cell::RefCell<std::collections::BTreeMap<lane_publication::LaneKey, Weak<crate::vm::compiled::PublishedLaneMethod>>>,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
@@ -943,6 +947,8 @@ impl Default for ProgramStore {
         crate::jit_coverage::sample_this_thread();
         Self {
             native_call_bindings: Default::default(),
+            lane_installed: Default::default(),
+            lane_compiles: Default::default(),
             programs: Vec::new(),
             global_eval_programs: FxHashMap::default(),
             owned_scripts: FxHashMap::default(),
@@ -967,7 +973,7 @@ impl Default for ProgramStore {
             general_baseline_priced: !(STRESS || crate::trace::Dev::JsUnpricedGeneralDispatch.on()),
             js_jit_diagnostics: crate::trace::Channel::JsJit.on().then(FxHashMap::default),
             js_jit_general_dispatch_enabled: STRESS || crate::trace::Dev::JsGeneralDispatch.on(),
-            js_jit_lane_methods_enabled: STRESS || crate::trace::Dev::JsLaneMethods.on(),
+            js_jit_lane_methods_enabled: STRESS,
             #[cfg(test)]
             js_entry_specializations_enabled: true,
             js_general_dispatch_work: None,
@@ -2027,7 +2033,6 @@ impl ProgramStore {
         self.entry(id)?.jit_tiers.js(function)
     }
 
-    #[cfg(test)]
     pub(super) fn enable_js_lane_methods(&mut self) {
         self.js_jit_lane_methods_enabled = true;
     }
@@ -2450,7 +2455,7 @@ impl ProgramStore {
                 let instruction_count = function_code.map_or(0, |function| {
                     u32::try_from(function.code.len()).unwrap_or(u32::MAX)
                 });
-                let mut opcode_counts = vec![0_u32; crate::bytecode::Op::COUNT];
+                let mut opcode_counts = vec![0_u32; crate::bytecode::OPCODE_COUNT];
                 if let Some(function) = function_code {
                     for instruction in &function.code {
                         let opcode = instruction.as_wide().op() as usize;
@@ -2469,22 +2474,22 @@ impl ProgramStore {
                 if let Some(function) = function_code {
                     for instruction in &function.code {
                         let instruction = instruction.as_wide();
-                        match instruction.op() {
-                            crate::bytecode::Op::JumpFalse
-                            | crate::bytecode::Op::JumpTrue
-                            | crate::bytecode::Op::JumpBinaryFalse => {
+                        match instruction.op().class() {
+                            crate::bytecode::Class::JumpFalse
+                            | crate::bytecode::Class::JumpTrue
+                            | crate::bytecode::Class::JumpBinaryFalse => {
                                 guard_census.0 = guard_census.0.saturating_add(1);
-                                if instruction.op() == crate::bytecode::Op::JumpBinaryFalse {
+                                if instruction.op().is_jump_binary_false() {
                                     count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
                                 }
                             }
-                            crate::bytecode::Op::Unary
+                            crate::bytecode::Class::Unary
                                 if instruction.unary_operator()
                                     == oxc_ast::ast::UnaryOperator::Typeof as u32 =>
                             {
                                 guard_census.1 = guard_census.1.saturating_add(1);
                             }
-                            crate::bytecode::Op::Binary => {
+                            crate::bytecode::Class::Binary => {
                                 count_comparison_guard(&mut guard_census, instruction.binary_operator())
                             }
                             _ => {}
@@ -3315,6 +3320,8 @@ impl Drop for ProgramStore {
                 }
             }
         }
+        eprintln!("{}", super::dispatch_fast::lane_miss_report());
+            eprintln!("{}", super::dispatch_fast::lane_unlowered_report());
         let mut records: Vec<_> = diagnostics.iter().collect();
         records.sort_unstable_by_key(|(key, _)| **key);
         let stderr = std::io::stderr();
@@ -3476,7 +3483,7 @@ impl Drop for ProgramStore {
                     let name = match failure.reason {
                         super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
                         super::compiled::RegionRejection::UnsupportedInstruction(op) => {
-                            crate::bytecode::Op::NAMES.get(op as usize).copied().unwrap_or("unknown-opcode")
+                            crate::bytecode::opcode_name(usize::from(op))
                         }
                         super::compiled::RegionRejection::RegisterLimit => "register-limit",
                         super::compiled::RegionRejection::CaptureLimit => "capture-limit",
@@ -3507,10 +3514,7 @@ impl Drop for ProgramStore {
                 if site_index != 0 {
                     let _ = write!(stderr, ",");
                 }
-                let opcode = crate::bytecode::Op::NAMES
-                    .get(usize::from(site.opcode))
-                    .copied()
-                    .unwrap_or("unknown");
+                let opcode = crate::bytecode::opcode_name(usize::from(site.opcode));
                 let _ = write!(stderr, "{{\"pc\":{},\"opcode\":", site.pc);
                 let _ = write_json_string(&mut stderr, opcode);
                 let _ = write!(stderr, ",\"attempts\":{},\"direct_target\":", site.attempts);
@@ -3568,10 +3572,7 @@ impl Drop for ProgramStore {
                 if index != 0 {
                     let _ = write!(stderr, ",");
                 }
-                let name = crate::bytecode::Op::NAMES
-                    .get(usize::from(*opcode))
-                    .copied()
-                    .unwrap_or("unknown");
+                let name = crate::bytecode::opcode_name(usize::from(*opcode));
                 let _ = write!(stderr, "[");
                 let _ = write_json_string(&mut stderr, name);
                 let _ = write!(stderr, ",{count}]");
@@ -3585,10 +3586,7 @@ impl Drop for ProgramStore {
                 if index != 0 {
                     let _ = write!(stderr, ",");
                 }
-                let name = crate::bytecode::Op::NAMES
-                    .get(usize::from(*opcode))
-                    .copied()
-                    .unwrap_or("unknown");
+                let name = crate::bytecode::opcode_name(usize::from(*opcode));
                 let _ = write!(stderr, "[");
                 let _ = write_json_string(&mut stderr, name);
                 let _ = write!(stderr, ",{count}]");
@@ -3601,10 +3599,7 @@ impl Drop for ProgramStore {
                 let name = match reason {
                     super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
                     super::compiled::RegionRejection::UnsupportedInstruction(op) => {
-                        crate::bytecode::Op::NAMES
-                            .get(*op as usize)
-                            .copied()
-                            .unwrap_or("unknown-opcode")
+                        crate::bytecode::opcode_name(usize::from(*op))
                     }
                     super::compiled::RegionRejection::RegisterLimit => "register-limit",
                     super::compiled::RegionRejection::CaptureLimit => "capture-limit",
