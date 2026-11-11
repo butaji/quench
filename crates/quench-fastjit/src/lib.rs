@@ -137,32 +137,39 @@ pub struct Stencil {
 const PROLOGUE: [u8; 4] = [0x55, 0x48, 0x89, 0xe5];
 const EPILOGUE: [u8; 4] = [0x48, 0x89, 0xec, 0x5d];
 const NOP4: [u8; 4] = [0x0f, 0x1f, 0x40, 0x00];
+/// `jmp rel32`: the opcode byte, then the displacement a relocation patches.
+const JMP_OPCODE_LEN: usize = 1;
+const JMP_REL32_LEN: usize = 5;
+/// `sub rsp, imm` after the prologue marks a stencil with spill slots.
+const SUB_RSP: [u8; 3] = [0x48, 0x83, 0xec];
+const RET: u8 = 0xc3;
 
-/// Compile one row into a stencil. `emit` lowers the row through the given flow.
-pub fn generate(
+/// Lower one row into a stencil function: `emit` lowers the row through the given flow.
+fn lower(
     isa: &OwnedTargetIsa,
     emit: impl FnOnce(&mut FunctionBuilder, &mut dyn Flow, ir::Value, ir::Value),
-) -> Result<Stencil, String> {
+) -> ir::Function {
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 0), stencil_signature());
     let mut builder_context = FunctionBuilderContext::new();
-    {
-        let mut b = FunctionBuilder::new(&mut func, &mut builder_context);
-        let successor = |b: &mut FunctionBuilder, index: u32| {
-            let name = b.func.declare_imported_user_function(UserExternalName::new(HOLE_CODE, index));
-            let signature = b.import_signature(stencil_signature());
-            b.import_function(ExtFuncData { name: ExternalName::User(name), signature, colocated: true, patchable: false })
-        };
-        let mut flow = StencilFlow { next: successor(&mut b, NEXT), taken: successor(&mut b, TAKEN), exit: successor(&mut b, EXIT) };
-        let entry = b.create_block();
-        b.append_block_params_for_function_params(entry);
-        b.switch_to_block(entry);
-        b.seal_block(entry);
-        let (frame, context) = (b.block_params(entry)[0], b.block_params(entry)[1]);
-        emit(&mut b, &mut flow, frame, context);
-        b.finalize(isa.frontend_config());
-    }
-    let mut ctx = Context::for_function(func);
-    ctx.compile(&**isa, &mut ControlPlane::default()).map_err(|e| format!("{:?}", e.inner))?;
+    let mut b = FunctionBuilder::new(&mut func, &mut builder_context);
+    let successor = |b: &mut FunctionBuilder, index: u32| {
+        let name = b.func.declare_imported_user_function(UserExternalName::new(HOLE_CODE, index));
+        let signature = b.import_signature(stencil_signature());
+        b.import_function(ExtFuncData { name: ExternalName::User(name), signature, colocated: true, patchable: false })
+    };
+    let mut flow = StencilFlow { next: successor(&mut b, NEXT), taken: successor(&mut b, TAKEN), exit: successor(&mut b, EXIT) };
+    let entry = b.create_block();
+    b.append_block_params_for_function_params(entry);
+    b.switch_to_block(entry);
+    b.seal_block(entry);
+    let (frame, context) = (b.block_params(entry)[0], b.block_params(entry)[1]);
+    emit(&mut b, &mut flow, frame, context);
+    b.finalize(isa.frontend_config());
+    func
+}
+
+/// The relocations of compiled code, by hole.
+fn relocations(ctx: &Context) -> Result<Vec<Reloc>, String> {
     let compiled = ctx.compiled_code().ok_or("no code")?;
     let mut relocs = Vec::new();
     for r in compiled.buffer.relocs() {
@@ -178,7 +185,18 @@ pub fn generate(
             addend: r.addend,
         });
     }
-    Stencil::strip(compiled.code_buffer(), relocs)
+    Ok(relocs)
+}
+
+/// Compile one row into a stencil. `emit` lowers the row through the given flow.
+pub fn generate(
+    isa: &OwnedTargetIsa,
+    emit: impl FnOnce(&mut FunctionBuilder, &mut dyn Flow, ir::Value, ir::Value),
+) -> Result<Stencil, String> {
+    let mut ctx = Context::for_function(lower(isa, emit));
+    ctx.compile(&**isa, &mut ControlPlane::default()).map_err(|e| format!("{:?}", e.inner))?;
+    let relocs = relocations(&ctx)?;
+    Stencil::strip(ctx.compiled_code().ok_or("no code")?.code_buffer(), relocs)
 }
 
 impl Stencil {
@@ -186,36 +204,39 @@ impl Stencil {
     /// (spill slots: `sub rsp` after the prologue) is kept whole.
     fn strip(code: &[u8], relocs: Vec<Reloc>) -> Result<Stencil, String> {
         let raw_len = code.len();
-        if code.len() < 8 || code[..4] != PROLOGUE {
-            return Err(format!("unexpected stencil prologue {:02x?}", &code[..code.len().min(8)]));
+        if code.len() < PROLOGUE.len() + SUB_RSP.len() || code[..PROLOGUE.len()] != PROLOGUE {
+            return Err(format!("unexpected stencil prologue {:02x?}", &code[..code.len().min(PROLOGUE.len() + SUB_RSP.len())]));
         }
-        if code[4..7] == [0x48, 0x83, 0xec] {
+        if code[PROLOGUE.len()..PROLOGUE.len() + SUB_RSP.len()] == SUB_RSP {
             return Ok(Stencil { next_jump: Self::next_jump(&relocs, code.len()), code: code.to_vec(), relocs, raw_len });
         }
         let mut code = code.to_vec();
-        let mut ends: Vec<usize> = Vec::new();
-        for r in relocs.iter().filter(|r| r.pc_relative) {
-            ends.push(r.offset as usize - 1 - EPILOGUE.len()); // `jmp rel32`: opcode byte, then the displacement
-        }
-        if code.last() == Some(&0xc3) {
-            ends.push(code.len() - 1 - EPILOGUE.len());
-        }
-        for at in ends {
-            if code[at..at + 4] != EPILOGUE {
-                return Err(format!("unexpected stencil epilogue at {at}: {:02x?}", &code[at..at + 4]));
+        for at in Self::epilogues(&relocs, &code) {
+            if code[at..at + EPILOGUE.len()] != EPILOGUE {
+                return Err(format!("unexpected stencil epilogue at {at}: {:02x?}", &code[at..at + EPILOGUE.len()]));
             }
-            code[at..at + 4].copy_from_slice(&NOP4);
+            code[at..at + NOP4.len()].copy_from_slice(&NOP4);
         }
         code.drain(..PROLOGUE.len());
         let relocs: Vec<Reloc> = relocs.into_iter().map(|r| Reloc { offset: r.offset - PROLOGUE.len() as u32, ..r }).collect();
         Ok(Stencil { next_jump: Self::next_jump(&relocs, code.len()), code, relocs, raw_len })
     }
 
+    /// Where each exit's frame teardown starts: before every `jmp rel32` and a closing `ret`.
+    fn epilogues(relocs: &[Reloc], code: &[u8]) -> Vec<usize> {
+        let mut ends: Vec<usize> =
+            relocs.iter().filter(|r| r.pc_relative).map(|r| r.offset as usize - JMP_OPCODE_LEN - EPILOGUE.len()).collect();
+        if code.last() == Some(&RET) {
+            ends.push(code.len() - 1 - EPILOGUE.len());
+        }
+        ends
+    }
+
     fn next_jump(relocs: &[Reloc], len: usize) -> Option<usize> {
         relocs
             .iter()
-            .find(|r| r.pc_relative && r.namespace == HOLE_CODE && r.index == NEXT && r.offset as usize + 4 == len)
-            .map(|r| r.offset as usize - 1)
+            .find(|r| r.pc_relative && r.namespace == HOLE_CODE && r.index == NEXT && r.offset as usize + JMP_REL32_LEN - JMP_OPCODE_LEN == len)
+            .map(|r| r.offset as usize - JMP_OPCODE_LEN)
     }
 }
 
@@ -230,47 +251,50 @@ pub struct Placement<'a> {
     pub exit: usize,
 }
 
-/// Copy `rows` into `out` back to back (a `jmp next` is dropped when the next stencil follows)
-/// and patch their holes. `exit` gives each row's exit stub address; `taken_row` its branch row.
-/// Returns the code length and each row's start offset.
+/// One row of a program: its stencil, hole values and branch target row.
+pub struct Row<'a> {
+    pub stencil: &'a Stencil,
+    pub hole: &'a dyn Fn(u32) -> u64,
+    pub taken: Option<usize>,
+}
+
+/// Each row's start offset and the code length once copied back to back, a `jmp next` dropped
+/// where the next stencil follows.
+fn layout(rows: &[Row]) -> (Vec<usize>, Vec<usize>, usize) {
+    let (mut starts, mut sizes, mut len) = (Vec::new(), Vec::new(), 0);
+    for (k, row) in rows.iter().enumerate() {
+        starts.push(len);
+        let drop = if row.stencil.next_jump.is_some() && k + 1 < rows.len() { JMP_REL32_LEN } else { 0 };
+        sizes.push(row.stencil.code.len() - drop);
+        len += sizes[k];
+    }
+    (starts, sizes, len)
+}
+
+/// Copy `rows` into `out` back to back and patch their holes; `exit` gives each row's exit
+/// stub address. Returns the code length and each row's start offset.
 ///
 /// # Safety
 /// `out` must be writable for the whole code.
-pub unsafe fn copy_patch(
-    rows: &[(&Stencil, &dyn Fn(u32) -> u64, Option<usize>)],
-    out: *mut u8,
-    exit: impl Fn(usize) -> usize,
-) -> (usize, Vec<usize>) {
-    let mut starts = Vec::with_capacity(rows.len());
-    let mut sizes = Vec::with_capacity(rows.len());
-    let mut len = 0;
-    for (k, (stencil, _, _)) in rows.iter().enumerate() {
-        starts.push(len);
-        let drop = if stencil.next_jump.is_some() && k + 1 < rows.len() { 5 } else { 0 };
-        sizes.push(stencil.code.len() - drop);
-        len += sizes[k];
-    }
-    for (k, (stencil, hole, taken)) in rows.iter().enumerate() {
-        // SAFETY: caller guarantees `out` holds the layout computed above.
+pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize) -> usize) -> (usize, Vec<usize>) {
+    let (starts, sizes, len) = layout(rows);
+    for (k, row) in rows.iter().enumerate() {
+        // SAFETY: the caller guarantees `out` holds the layout computed above.
         unsafe {
             let base = out.add(starts[k]);
-            std::ptr::copy_nonoverlapping(stencil.code.as_ptr(), base, sizes[k]);
-            for r in &stencil.relocs {
-                let at = r.offset as usize;
-                if at >= sizes[k] {
-                    continue; // inside a dropped fallthrough jump
-                }
-                let place = base.add(at);
+            std::ptr::copy_nonoverlapping(row.stencil.code.as_ptr(), base, sizes[k]);
+            for r in row.stencil.relocs.iter().filter(|r| (r.offset as usize) < sizes[k]) {
+                let place = base.add(r.offset as usize);
                 if !r.pc_relative {
-                    std::ptr::write_unaligned(place.cast::<u64>(), hole(r.index));
-                } else {
-                    let target = match r.index {
-                        NEXT => out as usize + starts[k + 1],
-                        TAKEN => out as usize + starts[taken.expect("a branch row names its target")],
-                        _ => exit(k),
-                    };
-                    std::ptr::write_unaligned(place.cast::<i32>(), (target as i64 + r.addend - place as i64) as i32);
+                    std::ptr::write_unaligned(place.cast::<u64>(), (row.hole)(r.index));
+                    continue;
                 }
+                let target = match r.index {
+                    NEXT => out as usize + starts[k + 1],
+                    TAKEN => out as usize + starts[row.taken.expect("a branch row names its target")],
+                    _ => exit(k),
+                };
+                std::ptr::write_unaligned(place.cast::<i32>(), (target as i64 + r.addend - place as i64) as i32);
             }
         }
     }
@@ -311,13 +335,14 @@ mod tests {
             assert_ne!(memory.cast(), libc::MAP_FAILED);
             let stub = memory.add(2048);
             std::ptr::copy_nonoverlapping([0xb8u8, 0xff, 0xff, 0xff, 0x7f, 0xc3].as_ptr(), stub, 6); // mov eax, 0x7fffffff; ret
-            let rows = [(&add, one, None), (&add, one, None), (&ret, none, None)];
+            let row = |stencil, hole| Row { stencil, hole, taken: None };
+            let rows = [row(&add, one), row(&add, one), row(&ret, none)];
             let (len, _) = copy_patch(&rows, memory, |_| stub as usize);
             assert!(len < 2048);
             let run: extern "C" fn(*mut i64, *mut u8) -> i64 = std::mem::transmute(memory);
             let mut frame = [1i64];
             assert_eq!(run(frame.as_mut_ptr(), std::ptr::null_mut()), 11, "two additions of 5");
-            let rows = [(&add, two, None), (&add, two, None), (&ret, none, None)];
+            let rows = [row(&add, two), row(&add, two), row(&ret, none)];
             copy_patch(&rows, memory, |_| stub as usize);
             let mut frame = [1i64];
             assert_eq!(run(frame.as_mut_ptr(), std::ptr::null_mut()), 0x7fff_ffff, "overflow leaves through the exit stub");
