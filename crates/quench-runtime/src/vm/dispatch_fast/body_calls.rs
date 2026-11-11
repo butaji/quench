@@ -1,0 +1,94 @@
+//! A lane body's call of a callee that does not complete in a body of its own: the callee's
+//! activation runs in the lane, nested under the body, and its return comes back to the
+//! body's call, so the caller's specialized code keeps running (V8's and JSC's baseline
+//! callers return into compiled code whatever tier the callee ran in).
+use super::*;
+use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT};
+
+/// The end of a nested run at the return with `value` of `activation`, popped with its
+/// caller's state restored: a native's callback's (`Completion::ReturnsToNative`), whose
+/// native takes the value, or a body's callee's, whose call's register takes it, a
+/// construction's receiver (`this`) for a non-object. `None` for any other completion.
+#[inline(always)]
+pub(super) fn ends_run<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, completion: Completion, this: Value, value: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    match completion {
+        Completion::ReturnsToNative => {}
+        Completion::ReturnsToBody | Completion::ConstructsToBody => {
+            let value = setters::completed_value(vm, activation, completion, this, value);
+            // SAFETY: the call record belongs to the caller's live view, whose registers the context names.
+            let destination = unsafe { (*activation.call).a } & crate::bytecode::REGISTER_MASK;
+            unsafe { (*cx).registers }.set(destination, value);
+        }
+        _ => return None,
+    }
+    vm.lane_native_returned = Some(value);
+    Some(Resumed::Exit(exit(activation.call)))
+}
+
+/// Whether `activation`, which becomes the frame at index `frame`, is the entry frame of
+/// the general loop that finishes it, as a native's callback is. A body's callee is not:
+/// its frame's return leaves the lane instead (`LaneStack::body_boundary`), which the
+/// innermost such frame decides.
+pub(super) fn enters_as_frame(stack: &mut LaneStack, activation: &Activation, frame: usize) -> bool {
+    match activation.script().map(|script| script.completion) {
+        Some(Completion::ReturnsToNative) => true,
+        Some(Completion::ReturnsToBody | Completion::ConstructsToBody) => {
+            stack.body_boundary = Some(frame);
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Whether `resume`, the record a body's callee left at, is where the lane left for the
+/// general path (`finish`), not a record the lane continues at.
+#[inline(always)]
+pub(super) fn left_lane(resume: Ip) -> bool {
+    resume.addr() & EXIT_TAG != 0
+}
+
+/// Changes the completion of the lane's `depth`th activation `from` one `to` another;
+/// false, changing nothing, where it holds another or is no script activation.
+fn recomplete<H: Host>(cx: *mut LaneContext<H>, depth: usize, from: Completion, to: Completion) -> bool {
+    match unsafe { vm(cx) }.lane_stack.activations.get_mut(depth).map(|activation| &mut activation.kind) {
+        Some(ActivationKind::Script(script)) if script.completion == from => {
+            script.completion = to;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Leaves the body for the lane at `resume`, the callee's activation's record
+/// (`LaneExit::Callee`).
+fn leave<H: Host>(cx: *mut LaneContext<H>, resume: Ip, acc: Value) -> u64 {
+    unsafe { (*cx).callee_resume = resume; (*cx).callee_acc = acc; }
+    LANE_CALL_LEFT
+}
+
+/// The rest of the activation a body's call made, the lane's `depth`th, from its record
+/// `resume` with accumulator `acc`: run in the lane to its return, which completes the call
+/// (`LANE_CALL_COMPLETED`). A run that leaves the lane for the general path leaves the body
+/// too, at the record the lane left at (`left_lane`), as does a call no nested run takes:
+/// one below such a leave, or without native stack.
+pub(super) fn finish<H: Host>(cx: *mut LaneContext<H>, depth: usize, resume: Ip, acc: Value, constructs: bool) -> u64 {
+    let vm = unsafe { vm(cx) };
+    let (plain, nested) = if constructs { (Completion::Constructs, Completion::ConstructsToBody) } else { (Completion::Plain, Completion::ReturnsToBody) };
+    let Ok(_stack) = crate::stack::StackGuard::enter() else { return leave(cx, resume, acc) };
+    if left_lane(resume) || !recomplete(cx, depth, plain, nested) {
+        return leave(cx, resume, acc);
+    }
+    unsafe {
+        (*cx).resumed_acc = Slot::of(acc);
+        (*cx).memory = MemoryView::script(cx);
+    }
+    let outer = vm.lane_stack.body_boundary.take();
+    let left = lane_dispatch(cx, resume);
+    vm.lane_stack.body_boundary = outer;
+    recomplete(cx, depth, nested, plain);
+    if vm.lane_native_returned.take().is_some() {
+        return LANE_CALL_COMPLETED;
+    }
+    leave(cx, exit(left), Value::UNDEFINED)
+}

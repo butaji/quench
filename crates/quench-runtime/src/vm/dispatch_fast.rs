@@ -628,6 +628,7 @@ mod indexed_compositions;
 
 #[path = "lane_body_stats.rs"]
 mod lane_body_stats;
+mod body_calls;
 #[path = "lane_leaves.rs"]
 mod lane_leaves;
 #[path = "lane_body_tier.rs"]
@@ -1382,6 +1383,12 @@ enum Completion {
     /// keeps (`lane_step_array_iteration`). Made a frame, its pending call finishes the
     /// iteration on the native's path (`CallCompletion::ArrayStep`).
     ArrayStep,
+    /// A plain call a lane body made of a callee that runs in the lane (`body_calls`): its
+    /// return ends that nested run with the value, which the body's call takes. Made a
+    /// frame, it is a plain call's.
+    ReturnsToBody,
+    /// `ReturnsToBody` of a body's `new`. Made a frame, it is a construction's.
+    ConstructsToBody,
 }
 
 impl Completion {
@@ -1402,7 +1409,7 @@ impl Completion {
     /// Whether a `new` made the activation, whose completion substitutes its receiver for a
     /// non-object result.
     fn constructs(self) -> bool {
-        matches!(self, Self::Constructs | Self::CrossConstructs)
+        matches!(self, Self::Constructs | Self::CrossConstructs | Self::ConstructsToBody)
     }
 
     /// Whether the activation's return makes the caller's program the lane's again.
@@ -1861,6 +1868,9 @@ pub(super) struct LaneStack {
     generation_key: (u64, Value),
     /// The boundary below a deferred native's callback while it runs (`NativeBoundary`).
     native_boundary: Option<NativeBoundary>,
+    /// The frame the innermost activation a body's call runs in the lane became, once a
+    /// materialization made it one (`body_calls::finish`): its return leaves the lane.
+    body_boundary: Option<usize>,
     /// The frames the boundary's caller activations became, once a materialization made them.
     boundary_frames: Option<usize>,
 }
@@ -1890,6 +1900,7 @@ impl Default for LaneStack {
             generation: NO_SCRIPT_GENERATION,
             generation_key: (0, Value::UNDEFINED),
             native_boundary: None,
+            body_boundary: None,
             boundary_frames: None,
         }
     }
@@ -11105,7 +11116,7 @@ impl<H: Host> Vm<H> {
                 other => setters::frame_completion(other),
             };
             // A native's callback is the entry frame of the loop that finishes it.
-            let to_native = activation.script().is_some_and(|script| script.completion == Completion::ReturnsToNative);
+            let to_native = body_calls::enters_as_frame(&mut self.lane_stack, &activation, self.frames.len());
             let call_guard = match activation.kind {
                 ActivationKind::Script(script) => {
                     let argc = usize::from(script.argc);
@@ -14775,6 +14786,7 @@ script_handler! {
         }
         match resumed {
             LaneBodyLeft::Terminated => return self::exit(ip),
+            LaneBodyLeft::Resume(_, resume, _) if body_calls::left_lane(resume) => return resume,
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
             LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value),
         }
@@ -15386,7 +15398,7 @@ fn lane_body_activate<H: Host>(
     this: Value,
     constructs: bool,
 ) -> u64 {
-    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_TERMINATED};
+    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_TERMINATED};
     let vm = unsafe { vm(cx) };
     let (registers, _) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, constructs);
     // A leave resumes at a record of the callee's view, never at its tier prologue, which
@@ -15394,10 +15406,8 @@ fn lane_body_activate<H: Host>(
     // lane there and needs its PC. `lane_specialize` below takes the prologue's warming step.
     // SAFETY: the push made the context the callee's.
     let start = unsafe { (*cx).base };
-    let leave = move |resume: Ip, acc: Value| {
-        unsafe { (*cx).callee_resume = resume; (*cx).callee_acc = acc; }
-        LANE_CALL_LEFT
-    };
+    let depth = vm.lane_stack.activations.len() - 1;
+    let leave = move |resume: Ip, acc: Value| body_calls::finish(cx, depth, resume, acc, constructs);
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view);
     let Some(own) = own else { return leave(start, Value::UNDEFINED) };
@@ -16450,9 +16460,8 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
         let (caller_memory, this) = lane_restore_caller(cx, &activation);
         if let ActivationKind::Script(script) = &activation.kind {
             // A native's callback ends its run, whatever the native's own call record is.
-            if script.completion == Completion::ReturnsToNative {
-                vm.lane_native_returned = Some(value);
-                return Some(Resumed::Exit(exit(activation.call)));
+            if let Some(ended) = body_calls::ends_run(cx, &activation, script.completion, this, value) {
+                return Some(ended);
             }
             if script.completion == Completion::ArrayStep {
                 return Some(lane_step_array_iteration(cx, &activation, value));
