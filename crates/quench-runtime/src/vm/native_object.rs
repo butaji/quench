@@ -174,7 +174,7 @@ pub fn emit_native_module(
                 .collect::<Vec<_>>();
             Ok(module.define_function_bytes(
                 id,
-                u64::from(code.buffer.alignment),
+                u64::from(code.buffer.min_alignment),
                 code.code_buffer(),
                 &relocations,
             ))

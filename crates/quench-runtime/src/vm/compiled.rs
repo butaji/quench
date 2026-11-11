@@ -11644,13 +11644,13 @@ fn compile_built(
             .relocs()
             .iter()
             .map(|relocation| {
-                let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
+                let cranelift_codegen::RelocTarget::ExternalName(ir::ExternalName::User(
                     name,
-                )) = relocation.target
+                )) = &relocation.target
                 else {
                     return None;
                 };
-                let name = names.get(name)?;
+                let name = names.get(*name)?;
                 (name.namespace == FUNCTION_NAMESPACE).then_some(Call {
                     offset: relocation.offset as usize,
                     kind: relocation.kind,
@@ -15257,7 +15257,7 @@ mod tests {
                 let memory = CodeMemory::new(code.buffer.data()).unwrap();
                 for (label, location) in [(PREVIOUS_LABEL, PREVIOUS_USE), (NEXT_LABEL, NEXT_USE)] {
                     let uses: Vec<_> = code.buffer.get_srclocs_sorted().iter().filter(|source|
-                        source.loc == ir::SourceLoc::new(location) && source.start < source.end).collect();
+                        source.loc == ir::MaybeRelSourceLoc::abs(ir::SourceLoc::new(location)) && source.start < source.end).collect();
                     if uses.is_empty() { continue; }
                     let ranges = code.value_labels_ranges.get(&ir::ValueLabel::from_u32(label)).unwrap_or_else(||
                         panic!("{ty} start{start} missing label{label}: {:?}\n{}", compiler.func.dfg.values_labels, compiler.func));
@@ -15377,7 +15377,7 @@ mod tests {
             assert!(!locations.is_empty());
             assert!(locations.windows(2).all(|pair| pair[0].end <= pair[1].start));
             let probes: Vec<_> = compiled.buffer.get_srclocs_sorted().iter()
-                .filter(|source| source.loc == probe_location && source.start < source.end).collect();
+                .filter(|source| source.loc == ir::MaybeRelSourceLoc::abs(probe_location) && source.start < source.end).collect();
             assert!(!probes.is_empty(), "the relocated backedge must retain its probe");
             for probe in probes {
                 assert!(locations.iter().any(|range| range.start <= probe.start && probe.end <= range.end),
@@ -15502,7 +15502,7 @@ mod tests {
             let compiled = compiler.compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
             let locations = compiled.value_labels_ranges.get(&update_label).expect("live update label");
             let probes: Vec<_> = compiled.buffer.get_srclocs_sorted().iter()
-                .filter(|source| source.loc == store_location && source.start < source.end).collect();
+                .filter(|source| source.loc == ir::MaybeRelSourceLoc::abs(store_location) && source.start < source.end).collect();
             assert!(!probes.is_empty());
             assert!(probes.iter().all(|probe| locations.iter().any(|range|
                 range.start <= probe.start && probe.end <= range.end)), "update label covers both storage arms");

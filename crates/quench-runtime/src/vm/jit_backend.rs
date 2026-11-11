@@ -254,6 +254,11 @@ pub(super) fn compile_function<T>(
     Err(NativeCompileRejection::BackendUnavailable)
 }
 
+/// The vendored patch's hunks are hunk-level checks of the x86_64 lowering (x86 overflow
+/// branches, two-operand `imul`, buffer alignment); aarch64 host coverage is the JIT suites.
+#[cfg(all(test, feature = "jit", target_arch = "x86_64"))]
+mod vendor_patch_tests;
+
 #[cfg(all(test, feature = "jit"))]
 mod tests {
     use super::*;
@@ -297,16 +302,16 @@ mod tests {
         compile_function(function(&*isa, true), &*isa, None, |compiled, function| {
             assert!(!compiled.buffer.relocs().is_empty());
             assert!(compiled.buffer.relocs().iter().any(|relocation| {
-                let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
+                let cranelift_codegen::RelocTarget::ExternalName(ir::ExternalName::User(
                     name,
-                )) = relocation.target
+                )) = &relocation.target
                 else {
                     return false;
                 };
                 function
                     .params
                     .user_named_funcs()
-                    .get(name)
+                    .get(*name)
                     .is_some_and(|name| name.namespace == 0 && name.index == 1)
             }));
             Ok(())
