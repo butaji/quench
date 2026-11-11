@@ -796,7 +796,6 @@ fn emit_js_guard(
     builder.seal_block(passed);
 }
 
-
 /// The record of the direct array `base`, tagged; any other value leaves through `fallback`.
 fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, fallback: ir::Block) -> ir::Value {
 
@@ -6005,8 +6004,7 @@ pub(super) struct CompiledOsrRegion {
     _code: CodeMemory,
     entry: Entry,
     pub(super) facts: OsrFacts,
-    /// A stencil region, which runs without the general tier's views (`JsNativeActivation::with_views`).
-    lean: bool,
+    lean: bool, // a stencil region: it runs without the general tier's views (`JsNativeActivation::with`)
 }
 
 impl CompiledOsrRegion {
@@ -6056,7 +6054,7 @@ impl CompiledOsrRegion {
         let mut outcome = LoopOutcome::Terminated;
         #[cfg(test)]
         LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
-        let ran = unsafe { JsNativeActivation::with_views(&mut *vm, program, frame, 0, false, !self.lean, |native, vm| {
+        let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, !self.lean, |native, vm| {
             native.dispatch.bind_native_storage(vm);
             native.dispatch.lane_context = lane_context;
             // A region's `THIS`-based reads take the running activation's receiver, as a
@@ -7510,13 +7508,6 @@ impl JsNativeActivation {
     /// large dispatch does not cross an optional aggregate-return boundary.
     #[inline(always)]
     fn with<H: Host, R>(vm: &mut Vm<H>, program_id: ProgramId, frame: usize, start_pc: usize,
-        allow_inline_calls: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
-        Self::with_views(vm, program_id, frame, start_pc, allow_inline_calls, true, run)
-    }
-
-    /// `with`, whose general views (`refresh_heap_bases`) are refreshed only where `views`: a stencil region reads none of them.
-    #[inline(always)]
-    fn with_views<H: Host, R>(vm: &mut Vm<H>, program_id: ProgramId, frame: usize, start_pc: usize,
         allow_inline_calls: bool, views: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
         let program = vm.programs.get(program_id)?;
         let body = program.function_get(vm.frames[frame].function as usize)? as *const _;
@@ -12959,7 +12950,7 @@ impl<H: Host> Vm<H> {
             }
         }?;
 
-        JsNativeActivation::with(self, program_id, frame, start_pc, allow_inline_calls, |activation, vm| {
+        JsNativeActivation::with(self, program_id, frame, start_pc, allow_inline_calls, true, |activation, vm| {
             let dispatch = &mut activation.dispatch;
             // Native dispatch starts at the next unexecuted bytecode. Callouts
             // overwrite this with the exact failing PC before invoking VM semantics.
@@ -14389,7 +14380,7 @@ impl<H: Host> Vm<H> {
         let failure = |message: String| JsNativeStep {
             instruction_pc: start_pc, next_pc: start_pc, result: Err(JsError::validation(message)),
         };
-        JsNativeActivation::with(self, program, frame, start_pc, allow_inline_calls, |activation, vm| {
+        JsNativeActivation::with(self, program, frame, start_pc, allow_inline_calls, true, |activation, vm| {
             // SAFETY: the activation owns the immutable function admitted above.
             let instruction_count = unsafe { (*activation.dispatch.body).code.len() };
             let Some(entry) = code.entries().get(function as usize).copied() else {
@@ -17378,7 +17369,7 @@ mod tests {
         let receiver = vm.object();
         vm.frames[0].this = receiver;
         vm.frames[0].fixed_this = false;
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, _| {
+        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
             assert!(activation.dispatch.fixed_this_slot.is_null());
         }).unwrap();
         vm.frames[0].fixed_this = true;
@@ -17387,12 +17378,12 @@ mod tests {
             env: vm.frames[0].env, captured: vm.frames[0].captured,
             epoch: vm.heap.collection_epoch(), slots: &slots, root: None,
         };
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, vm| {
+        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
             assert_eq!(activation.dispatch.fixed_this_slot, &vm.frames[0].this as *const Value);
             assert!(!activation.dispatch.capture_values.is_null());
         }).unwrap();
         vm.frames[0].capture_cache.root = Some(Some(ProgramId::MAIN.raw()));
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, _| {
+        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
             assert!(activation.dispatch.capture_values.is_null());
         }).unwrap();
     }
@@ -17620,7 +17611,7 @@ mod tests {
         vm: &mut Vm<crate::test_host::TestHost>, pc: usize,
         run: impl FnOnce(*mut CallContext, *mut u64) -> i64,
     ) -> (i64, u64, Option<JsNativeStep>) {
-        JsNativeActivation::with(vm, ProgramId::MAIN, 0, pc, false, |activation, vm| {
+        JsNativeActivation::with(vm, ProgramId::MAIN, 0, pc, false, true, |activation, vm| {
             let dispatch = &mut activation.dispatch;
             let mut context = CallContext::native_adapter(
                 (dispatch as *mut JsStepDispatch).cast(),
@@ -17694,7 +17685,7 @@ mod tests {
         let probe = vm.lookup_atom("tableProbe").unwrap();
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let assert_binding = |vm: &mut Vm<crate::test_host::TestHost>, expected| {
-            JsNativeActivation::with(vm, ProgramId::MAIN, 0, 0, false, |activation, vm| {
+            JsNativeActivation::with(vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
                 assert_ne!(expected, 0);
                 assert_eq!(activation.dispatch.object_record_base, expected);
                 assert_eq!(vm.heap.object_record_base().unwrap() as usize, expected);
@@ -17712,7 +17703,7 @@ mod tests {
         let other_base = other.heap.object_record_base().unwrap() as usize;
         // Reentry in another VM admits that VM's table, without changing the
         // outer activation's admitted base or retaining it for later entries.
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, _| {
+        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
             assert_binding(&mut other, other_base);
             assert_eq!(activation.dispatch.object_record_base, original);
         }).unwrap();
@@ -17740,8 +17731,8 @@ mod tests {
         let vm_source = "throw 7;";
         let mut first_vm = semantic_vm(vm_source);
         let mut second_vm = semantic_vm(vm_source);
-        let weak = JsNativeActivation::with(&mut first_vm, ProgramId::MAIN, 0, 0, false, |first, _| {
-            JsNativeActivation::with(&mut second_vm, ProgramId::MAIN, 0, 0, false, |second, _| {
+        let weak = JsNativeActivation::with(&mut first_vm, ProgramId::MAIN, 0, 0, false, true, |first, _| {
+            JsNativeActivation::with(&mut second_vm, ProgramId::MAIN, 0, 0, false, true, |second, _| {
                 assert_eq!(first.dispatch.program_id, second.dispatch.program_id);
                 assert!(!Rc::ptr_eq(&first._program, &second._program));
                 assert_eq!(first.dispatch.residual, Rc::as_ptr(&first._program) as usize);
@@ -17771,7 +17762,7 @@ mod tests {
         }
         let mut vm = semantic_vm("throw 7;");
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, vm| {
+            JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
                 let dispatch = &mut activation.dispatch;
                 let interrupt = vm.execution_interrupt.atomic_flag() as *const _;
                 run_js_native_entry(report_panic, vm, ProgramId::MAIN,
@@ -17781,7 +17772,7 @@ mod tests {
         assert_eq!(panic.downcast_ref::<&str>(), Some(&"native panic"));
 
         let (_memory, entry, _operands) = live_native_graph(&vm);
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, vm| {
+        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
             let dispatch = &mut activation.dispatch;
             let interrupt = vm.execution_interrupt.atomic_flag() as *const _;
             let (status, _) = run_js_native_entry(entry, vm, ProgramId::MAIN,
