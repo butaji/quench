@@ -1348,7 +1348,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn object_data_mut(&mut self, value: Value) -> Option<&mut Object> {
         self.heap.object_mut(value)
     }
-    pub(super) fn is_object_like(&self, value: Value) -> bool {
+    #[inline] pub(super) fn is_object_like(&self, value: Value) -> bool {
         self.heap.object(value).is_some()
             || matches!(self.heap.get(value), Some(Cell::Error(_)))
             || self.is_wasm_gc_object(value)
