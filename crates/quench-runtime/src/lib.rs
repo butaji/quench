@@ -48,6 +48,8 @@ mod heap;
     allow(dead_code)
 )]
 mod jit_coverage;
+mod jit_mode;
+pub use jit_mode::JitMode;
 mod host;
 #[cfg(any(feature = "profile-memory", feature = "profile-allocator"))]
 mod memory_edge;
