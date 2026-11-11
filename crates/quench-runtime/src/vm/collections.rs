@@ -1228,14 +1228,14 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         match (native, self.heap.get(receiver)?) {
             (Native::MapGet, Cell::Map { entries, .. }) => Some(
-                self.map_entry_index(receiver, key)
+                self.collection_entry_index(entries, key, self.same_value_zero_hash(key))
                     .map_or(Value::UNDEFINED, |index| entries.value_at(index)),
             ),
-            (Native::MapHas, Cell::Map { .. }) => {
-                Some(Value::boolean(self.map_entry_index(receiver, key).is_some()))
+            (Native::MapHas, Cell::Map { entries, .. }) => {
+                Some(Value::boolean(self.collection_entry_index(entries, key, self.same_value_zero_hash(key)).is_some()))
             }
-            (Native::SetHas, Cell::Set { .. }) => {
-                Some(Value::boolean(self.set_entry_index(receiver, key).is_some()))
+            (Native::SetHas, Cell::Set { entries, .. }) => {
+                Some(Value::boolean(self.collection_entry_index(entries, key, self.same_value_zero_hash(key)).is_some()))
             }
             // A value that cannot be held weakly is never a key.
             (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(entries.get(key).unwrap_or(Value::UNDEFINED)),
@@ -1322,14 +1322,16 @@ impl<H: Host> Vm<H> {
         let key = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));
         let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let key_hash = self.same_value_zero_hash(key);
-        let index = self.map_entry_index_hashed(map, key, key_hash);
+        if let Some(index) = self.map_entry_index_hashed(map, key, key_hash) {
+            // An existing entry takes the value: the payload does not grow.
+            if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(map) {
+                entries.set_value(index, value);
+            }
+            return true;
+        }
         self.heap.grow_cell_payload(map, |cell| {
-            let Cell::Map { entries, .. } = cell else {
-                unreachable!("a Map was checked above")
-            };
-            match index {
-                Some(index) => entries.set_value(index, value),
-                None => entries.push((key, value), key_hash),
+            if let Cell::Map { entries, .. } = cell {
+                entries.push((key, value), key_hash);
             }
         });
         true
