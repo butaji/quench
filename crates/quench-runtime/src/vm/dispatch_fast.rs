@@ -1445,7 +1445,7 @@ pub(super) struct ScriptCallTarget {
     /// The `LaneStack::generation` it was resolved in.
     generation: ScriptGeneration,
     program: ProgramId,
-    function: u32,
+    pub(super) function: u32,
     env: Value,
     view: *const LaneView,
     registers: u16,
@@ -14947,52 +14947,44 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// Per PC of `body`, the callee its call record links where the callee's own lane body
+/// Per PC of `body`, the callees its call site reached where the callee's own lane body
 /// specialized and the lane would activate it in place, with an ordinary `this`, from a
 /// plain call of at most its parameters: what a lane body calls by its compiled entry
-/// (`compiled::DirectCallee`).
-fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body: &crate::bytecode::Function) -> Vec<Option<super::compiled::DirectCallee>> {
+/// (`compiled::DirectCallee`), the latest first.
+fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body: &crate::bytecode::Function) -> Vec<super::compiled::DirectCandidates> {
     let tail_calls = vm.host.proper_tail_calls() && body.strict;
-    body.code
-        .iter()
-        .enumerate()
-        .map(|(pc, packed)| {
-            let instruction = decoded_instruction(body, *packed);
-            (instruction.op().is_call() && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
-            (!(tail_calls && instruction.returns_from_frame())).then_some(())?;
-            let target = lane_body_tier::compiled_site_target(vm, view, pc)?;
-            let sloppy = match target.this_binding {
-                ThisBinding::Sloppy => Some(vm.realm.globals),
-                ThisBinding::Strict => None,
-                _ => return None,
-            };
-            (target.generation == vm.lane_stack.generation
-                && target.program == vm.active_program
-                && target.entry.activates()
-                && !target.view.is_null()
-                && ImmediateLayout::argument_count(instruction.imm()) <= target.params)
-                .then_some(())?;
-            // SAFETY: a resolved target's view outlives its program.
-            let view_of = unsafe { &*target.view };
-            let (method, body) = view_of.pinned_callee(target.function == function);
-            // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
-            let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
-                .unwrap_or((std::ptr::null(), 0));
-            let cell = view_of.entry_cell();
-            Some(super::compiled::DirectCallee {
-                target,
-                method,
-                body,
-                call: view.records().wrapping_add(pc).addr(),
-                cell,
-                callee: target.callee,
-                registers: target.registers,
-                sloppy,
-                capture_values,
-                capture_len,
-            })
-        })
-        .collect()
+    body.code.iter().enumerate().map(|(pc, packed)| {
+        let instruction = decoded_instruction(body, *packed);
+        let direct = instruction.op().is_call() && !instruction.direct_eval() && !instruction.parameter_eval()
+            && !(tail_calls && instruction.returns_from_frame());
+        let mut callees = super::compiled::DirectCandidates::new();
+        callees.extend(lane_body_tier::compiled_site_targets(vm, view, pc).filter(|_| direct)
+            .filter_map(|target| lane_direct_callee(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm()), target)));
+        callees
+    }).collect()
+}
+
+/// The `compiled::DirectCallee` of `target`, the callee the call at `pc` of `view` passes
+/// `argc` arguments, where the lane would activate it in place.
+fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: usize, argc: u16, target: ScriptCallTarget) -> Option<super::compiled::DirectCallee> {
+    let sloppy = match target.this_binding {
+        ThisBinding::Sloppy => Some(vm.realm.globals),
+        ThisBinding::Strict => None,
+        _ => return None,
+    };
+    (target.generation == vm.lane_stack.generation && target.program == vm.active_program
+        && target.entry.activates() && !target.view.is_null() && argc <= target.params)
+        .then_some(())?;
+    // SAFETY: a resolved target's view outlives its program.
+    let view_of = unsafe { &*target.view };
+    let (method, body) = view_of.pinned_callee(target.function == function);
+    // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
+    let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
+        .unwrap_or((std::ptr::null(), 0));
+    Some(super::compiled::DirectCallee {
+        target, method, body, call: view.records().wrapping_add(pc).addr(), cell: view_of.entry_cell(),
+        callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len,
+    })
 }
 
 /// Whether a lane body's run may call bodies by their compiled entries: the lane may make
@@ -15117,8 +15109,8 @@ fn lane_materialize_frames<H: Host>(
         // outlive the run; the frame's window starts at the stack's values' end.
         let callee = unsafe { &*frame.callee };
         let vm = unsafe { vm(cx) };
-        let window = vm.lane_stack.values.len();
-        let registers = unsafe { vm.lane_stack.values.as_mut_ptr().add(window) };
+        let registers = frame.window as *mut Value;
+        let window = unsafe { registers.offset_from(vm.lane_stack.values.as_mut_ptr()) } as usize;
         unsafe { vm.lane_stack.values.set_len(window + usize::from(callee.registers)) };
         let call = callee.call as Ip;
         let argc = ImmediateLayout::argument_count(unsafe { (*call).imm() });

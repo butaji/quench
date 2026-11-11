@@ -167,7 +167,7 @@ impl<H: Host> Vm<H> {
     /// natively.
     #[allow(clippy::too_many_arguments)]
     fn plan_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
-        captures: &dyn Fn(Value) -> (usize, usize), direct: &[Option<DirectCallee>],
+        captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates],
         generic: &[LaneExit], budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
         let unit = self.lane_plan_unit(program, function, targets, generic, budget)?;
         let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(Miss::PlanNoEntry); None })?;
@@ -206,7 +206,7 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::vm) fn compile_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: Vec<Option<DirectCallee>>, generic: &[LaneExit]) -> Option<LaneMethod> {
+        direct: Vec<DirectCandidates>, generic: &[LaneExit]) -> Option<LaneMethod> {
         self.host.before_native_compilation();
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let method = loop {
@@ -228,7 +228,7 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn plan_lane_method_sized(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[Option<DirectCallee>], generic: &[LaneExit], mut budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
+        direct: &[DirectCandidates], generic: &[LaneExit], mut budget: usize, entry: Option<u32>) -> Option<(LanePlan, ir::Function)> {
         loop {
             self.host.before_native_compilation();
             let planned = self.plan_lane_method(program, function, targets, captures, direct, generic, budget, entry);
@@ -245,7 +245,7 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[Option<DirectCallee>], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>) -> Result<PendingLaneMethod, Unstarted> {
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>) -> Result<PendingLaneMethod, Unstarted> {
         let (plan, native) = self.plan_lane_method_sized(program, function, targets, captures, direct, generic, budget, entry)
             .ok_or(Unstarted::Declined)?;
         // A body that cannot amortize a lane entry would serve native callers only
@@ -292,7 +292,7 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::vm) fn lane_body_work(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &dyn Fn(&Self) -> Vec<Option<DirectCallee>>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
+        direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         let mut observed = None;
         let mut pending = match work {
             LaneBodyWork::Start { generic, shrinks, observed: seen } => { observed = seen; (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }

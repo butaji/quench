@@ -14,7 +14,7 @@ impl Lowering<'_, '_> {
         let descriptor = self.word_const(callee as *const DirectCallee as i64);
         let entry = self.word_load(cell, dispatch_offset(std::mem::offset_of!(EntryCell, entry)));
         let pin = self.word_load(cell, dispatch_offset(std::mem::offset_of!(EntryCell, pin)));
-        for (field, value) in [(std::mem::offset_of!(ShadowFrame, callee), descriptor), (std::mem::offset_of!(ShadowFrame, this), this), (std::mem::offset_of!(ShadowFrame, pin), pin)] {
+        for (field, value) in [(std::mem::offset_of!(ShadowFrame, callee), descriptor), (std::mem::offset_of!(ShadowFrame, this), this), (std::mem::offset_of!(ShadowFrame, pin), pin), (std::mem::offset_of!(ShadowFrame, window), top)] {
             self.word_store(value, shadow, dispatch_offset(field));
         }
         let pushed = self.word_add_imm(shadow, std::mem::size_of::<ShadowFrame>() as i64);

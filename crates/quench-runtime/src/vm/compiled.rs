@@ -65,6 +65,9 @@ mod stable_fact_tests;
 mod lane_region;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
+#[cfg(all(test, feature = "aot"))]
+#[path = "compiled/lane_unit_polymorphic_tests.rs"]
+mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
@@ -7256,6 +7259,9 @@ pub(super) struct DirectCallee {
     pub(super) capture_len: usize,
 }
 
+/// The callees a call site reached that a body may call by their entries, the latest first.
+pub(super) type DirectCandidates = smallvec::SmallVec<[DirectCallee; tier_policy::POLYMORPHISM]>;
+
 /// A native frame of a direct call (`DirectCallee`), which the lane materializes as an
 /// activation only if a run leaves inside it (`Vm::take_shadow_frames`): its callee, which
 /// names the call record it returns to, and its receiver. Its registers are the window past
@@ -7265,10 +7271,12 @@ pub(super) struct DirectCallee {
 pub(super) struct ShadowFrame {
     pub(super) callee: *const DirectCallee,
     pub(super) this: u64, pub(super) pin: usize,
+    /// The address of its window of registers.
+    pub(super) window: usize,
 }
 
 impl ShadowFrame {
-    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, pin: 0 };
+    const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, pin: 0, window: 0 };
 }
 
 /// Direct calls a run nests natively: past them, a call takes the lane's helper path. The
