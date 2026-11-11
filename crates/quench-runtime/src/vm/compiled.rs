@@ -5424,13 +5424,8 @@ fn compiled_reference_target<H: Host>(
             .filter(|compiled| std::ptr::eq(Rc::as_ptr(compiled), caller))
             .filter(|compiled| compiled.has_function(function))
             .or_else(|| {
-                u32::try_from(function).ok().and_then(|function| {
-                    vm.programs.wasm_tier_for_artifact_containing(
-                        program,
-                        function as usize,
-                        caller,
-                    )
-                })
+                let holder = vm.programs.wasm_tier_containing(program, u32::try_from(function).ok()?)?;
+                std::ptr::eq(Rc::as_ptr(&holder), caller).then_some(holder)
             })
     };
     current_artifact
@@ -8521,7 +8516,7 @@ impl<H: Host> Analysis<'_, H> {
         self.vm.heap.v128(value).map(u128::from_le_bytes)
     }
 
-    /// Check `register` names the function's memory for a vector access: the memory
+    /// Check `register` names the function's memory for a vector or bulk access: the memory
     /// register, or a register an instance binding loaded the same direct memory into
     /// (lowering binds the memory afresh for each such access), which then is the
     /// function's compiled memory (`memory_slot`).
@@ -9005,14 +9000,8 @@ impl<H: Host> Analysis<'_, H> {
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
             Class::WasmMemoryFill => {
-                let memory = instruction.a();
                 let (destination, _) = instruction.register_pair();
-                if Some(memory) != memory_register
-                    || state.get(memory, function.registers) != Some(Slot::Memory)
-                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
-                {
-                    return None;
-                }
+                self.vector_memory(function, state, instruction.a(), memory_register, memory_slot)?;
                 i32_value(state, instruction.b())?;
                 i32_value(state, instruction.c())?;
                 i32_value(state, destination)
@@ -9020,13 +9009,8 @@ impl<H: Host> Analysis<'_, H> {
             // A copy within the function's one memory: both memory operands name it.
             Class::WasmMemoryCopy => {
                 let (destination, source) = instruction.register_pair();
-                if Some(instruction.a()) != memory_register
-                    || Some(instruction.b()) != memory_register
-                    || state.get(instruction.a(), function.registers) != Some(Slot::Memory)
-                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
-                {
-                    return None;
-                }
+                self.vector_memory(function, state, instruction.a(), memory_register, memory_slot)?;
+                self.vector_memory(function, state, instruction.b(), memory_register, memory_slot)?;
                 i32_value(state, destination)?;
                 i32_value(state, source)?;
                 i32_value(state, instruction.c())

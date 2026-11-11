@@ -1942,26 +1942,6 @@ impl ProgramStore {
         self.entry(id)?.jit_tiers.wasm_holding(function).cloned()
     }
 
-    /// Find a selective tier with the requested function in the currently
-    /// executing artifact. Indirect-call promotion can place both caller and
-    /// profile-selected target in one closure; prefer that closure so the
-    /// native call does not bounce through the baseline artifact.
-    pub(super) fn wasm_tier_for_artifact_containing(
-        &self,
-        id: ProgramId,
-        function: usize,
-        artifact: *const super::compiled::CompiledProgram,
-    ) -> Option<Rc<super::compiled::CompiledProgram>> {
-        self.entry(id)?
-            .jit_tiers
-            .wasm_values()
-            .filter_map(WasmTierState::compiled)
-            .find(|compiled| {
-                std::ptr::eq(Rc::as_ptr(compiled), artifact) && compiled.has_function(function)
-            })
-            .cloned()
-    }
-
     /// Whether the code budget could still retain a Wasm tier artifact: a compile it could not
     /// keep is work thrown away (sqlite3-wasm `--jit`: hundreds of root compiles after the
     /// tier budget filled, 15 s of its first iteration).
