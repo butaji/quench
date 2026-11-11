@@ -392,18 +392,20 @@ impl<W, P> Operation<W, P> {
             Op::LoadConst => Self::LoadConst {
                 destination: instruction.result_register(),
                 constant: constant(instruction.constant_index())? },
-            Op::LoadLocalPlain => Self::LoadLocalPlain {
-                destination: instruction.result_register(),
-                slot: u16::try_from(instruction.local_slot()).ok()? },
-            Op::StoreLocalPlain => Self::StoreLocalPlain {
-                source: instruction.register_a(),
-                slot: u16::try_from(instruction.local_slot()).ok()?,
-                result: instruction.optional_register_b() },
+            Op::LoadLocalPlain | Op::StoreLocalPlain => return Self::decode_local(instruction),
             Op::Jump => Self::Jump,
             Op::JumpFalse => Self::JumpIf {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
+            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary => return Self::decode_value(instruction),
+            _ => return None,
+        })
+    }
+
+    /// The value-level operations of `decode`.
+    fn decode_value(instruction: WideInstruction) -> Option<Self> {
+        Some(match instruction.op() {
             Op::LoadThis => Self::LoadThis {
                 destination: instruction.result_register() },
             Op::RequireObjectCoercible => Self::RequireObjectCoercible {
@@ -413,6 +415,20 @@ impl<W, P> Operation<W, P> {
             Op::Unary if instruction.unary_operator()
                 == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot {
                     destination: instruction.result_register(), source: instruction.register_b() },
+            _ => return None,
+        })
+    }
+
+    /// The local-slot operations of `decode`.
+    fn decode_local(instruction: WideInstruction) -> Option<Self> {
+        Some(match instruction.op() {
+            Op::LoadLocalPlain => Self::LoadLocalPlain {
+                destination: instruction.result_register(),
+                slot: u16::try_from(instruction.local_slot()).ok()? },
+            Op::StoreLocalPlain => Self::StoreLocalPlain {
+                source: instruction.register_a(),
+                slot: u16::try_from(instruction.local_slot()).ok()?,
+                result: instruction.optional_register_b() },
             _ => return None,
         })
     }
