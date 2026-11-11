@@ -6205,7 +6205,7 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
 /// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
-fn process_peak_rss_kib() -> i64 {
+pub(super) fn process_peak_rss_kib() -> i64 {
     // SAFETY: `getrusage` writes into the struct this call owns.
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
     // SAFETY: as above; RUSAGE_SELF names this process.

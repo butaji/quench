@@ -219,7 +219,11 @@ pub(super) fn compile_function<T>(
     let instructions = function.dfg.num_insts();
     context.clear();
     context.func = function;
+    let peak_before = crate::trace::Channel::JitPeak.on().then(super::compiled::process_peak_rss_kib);
     let compiled = context.compile(isa, &mut cranelift_codegen::control::ControlPlane::default()).map(|compiled| compiled.code_buffer().len());
+    if let Some(before) = peak_before {
+        eprintln!("QUENCH_NATIVE_COMPILE ir={instructions} code={:?} peak_before_kib={before} peak_after_kib={}", compiled.as_ref().ok(), super::compiled::process_peak_rss_kib());
+    }
     let outcome = match compiled {
         Err(_error) => {
             #[cfg(test)]
