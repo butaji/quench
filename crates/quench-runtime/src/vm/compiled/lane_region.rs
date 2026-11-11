@@ -52,6 +52,7 @@ use captures::RootedRead;
 #[path = "lane_region/field_reads.rs"] mod field_reads;
 #[path = "lane_region/number_domains.rs"] mod number_domains;
 #[path = "lane_region/loop_arrays.rs"] mod loop_arrays;
+#[cfg(test)] #[path = "lane_region/counted_loops.rs"] mod counted_loops;
 #[path = "lane_region/direct_calls.rs"] mod direct_calls;
 #[path = "lane_region/direct_admission.rs"] mod direct_admission;
 #[path = "lane_region/direct_enter.rs"] mod direct_enter;
