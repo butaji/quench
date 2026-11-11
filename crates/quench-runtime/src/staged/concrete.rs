@@ -7,12 +7,21 @@ use super::{Stage, Table};
 #[derive(Clone, Copy)]
 pub(crate) struct Concrete {
     tables: [u64; Table::COUNT],
+    /// The heap whose store barrier `store_gate` reads; null where no store runs.
+    heap: *const crate::heap::Heap,
 }
 
 impl Concrete {
     #[inline(always)]
     pub(crate) fn new(property_values: *const crate::Value) -> Self {
-        Self { tables: [property_values as u64] }
+        Self { tables: [property_values as u64], heap: std::ptr::null() }
+    }
+
+    /// The stage of stores into `heap`'s objects.
+    #[inline(always)]
+    pub(crate) fn storing(heap: *const crate::heap::Heap) -> Self {
+        // SAFETY: the caller's heap is live.
+        Self { tables: [unsafe { (*heap).arena_values_base() } as u64], heap }
     }
 }
 
@@ -107,6 +116,11 @@ impl Stage for Concrete {
     fn guard(&mut self, cond: bool, _miss: ()) -> Option<()> { cond.then_some(()) }
     #[inline(always)]
     fn known(&self, cond: bool) -> Option<bool> { Some(cond) }
+    #[inline(always)]
+    fn store_gate(&mut self, record_id: u64, value: u64) -> bool {
+        // SAFETY: a stage that stores holds its live heap.
+        !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(record_id as u32, crate::Value::from_bits(value)) }
+    }
     #[inline(always)]
     fn table(&mut self, table: Table) -> u64 { self.tables[table as usize] }
 }
