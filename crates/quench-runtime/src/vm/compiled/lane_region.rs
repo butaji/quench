@@ -2256,9 +2256,13 @@ impl Lowering<'_, '_> {
             let mut aliases = roots.clone();
             let mut admitted = smallvec::SmallVec::<[(Register, super::lane_unit::CallTarget); 2]>::new();
             let mut receivers = smallvec::SmallVec::<[(Register, ReceiverRecovery); 2]>::new();
+            // Admitted once at entry, an inlined call's receiver and callee guard every run,
+            // also the ones that skip the call (`packet != null`). A body that left at its
+            // entry once admits them at their markers instead (`Lowering::inline_call`).
+            let at_entry = !self.generic.contains(&entry_leave(self.unit));
             for (pc, instruction) in instructions.iter().copied().enumerate() {
                 if self.blocks[pc].is_some() { aliases.copy_from_slice(&roots); }
-                if !self.facts.reached(pc) { continue; }
+                if !at_entry || !self.facts.reached(pc) { continue; }
                 if let Some(frame) = self.unit.markers.iter().position(|marker| *marker == pc) {
                     let call = self.unit.frames[frame];
                     let body = self.program.function(call.target.function as usize);
