@@ -8250,7 +8250,8 @@ fn lane_loop_run<H: Host>(
         let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
         let int_entries = loop_tier::int_entries(r, region);
         let typed_captures = loop_tier::typed_capture_slots(cx);
-        lane_loop_compile(cx, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures);
+        let int_captures = loop_tier::int_capture_slots(cx);
+        lane_loop_compile(cx, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }
@@ -15527,7 +15528,7 @@ fn lane_body_activate<H: Host>(
     how: LaneActivation,
 ) -> u64 {
     use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_TERMINATED};
-    let vm = unsafe { vm(cx) };
+    let vm = unsafe { vm(cx) }; lane_note_late_call(cx, ip, target, argc);
     let registers = match lane_body_push(cx, r, ip, target, passed, argc, this, constructs, how) { Ok(registers) => registers, Err(miss) => return miss };
     // A leave resumes at a record of the callee's view, never at its tier prologue, which
     // lies outside its records: a loop region's `Callee` exit (`lane_loop_native`) leaves the
@@ -22015,7 +22016,7 @@ mod instruction_set_tests;
 #[cfg(test)]
 mod call_site_history_tests;
 mod on_demand_metadata;
-use on_demand_metadata::lane_completes_return;
+use on_demand_metadata::{lane_completes_return, lane_note_late_call};
 
 #[cfg(test)]
 mod numeric_pair_tests {

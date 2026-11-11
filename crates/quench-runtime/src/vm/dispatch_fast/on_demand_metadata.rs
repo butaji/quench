@@ -39,3 +39,24 @@ fn caller_runs_general<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCa
             .get(vm.frames[call.caller].function as usize)
             .is_some_and(|view| super::super::program_store::derived_lane_view(view).is_none())
 }
+
+/// A call the running body made through the helper path to a callee it could call by its
+/// entry: its site first ran after the body compiled, so the compile knew no callee for it.
+/// Past `TIERS.lane_body.late_call_calls` of them the body specializes again, which finds
+/// the callee in the site's history (`LaneView::respecialize`).
+pub(super) fn lane_note_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target: &ScriptCallTarget, argc: u16) {
+    let vm = unsafe { vm(cx) };
+    let (caller, function) = match Vm::<H>::innermost_shadow_frame() {
+        Some(frame) => (unsafe { &*(*frame.callee).target.view }, unsafe { (*frame.callee).target.function }),
+        None => {
+            let function = match vm.lane_stack.activations.last() {
+                Some(activation) => activation.function,
+                None => { let Some(frame) = vm.frames.get(unsafe { (*cx).frame }) else { return }; frame.function }
+            };
+            let Some(view) = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view) else { return };
+            (view, function)
+        }
+    };
+    if caller.owns_record(ip) && caller.note_late_call()
+        && lane_direct_callee(vm, caller, function, 0, argc, *target).is_some() { caller.respecialize(); }
+}
