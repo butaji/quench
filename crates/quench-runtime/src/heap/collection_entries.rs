@@ -33,6 +33,7 @@ pub(crate) trait CollectionEntry: Copy {
 }
 
 impl CollectionEntry for Value {
+    #[inline(always)]
     fn key(&self) -> Value {
         *self
     }
@@ -42,6 +43,7 @@ impl CollectionEntry for Value {
 }
 
 impl CollectionEntry for (Value, Value) {
+    #[inline(always)]
     fn key(&self) -> Value {
         self.0
     }
@@ -51,6 +53,7 @@ impl CollectionEntry for (Value, Value) {
 }
 
 /// A key hash folded to the 32 bits an index entry keeps.
+#[inline(always)]
 fn folded_hash(hash: u64) -> u32 {
     (hash ^ (hash >> u32::BITS)) as u32
 }
@@ -59,6 +62,7 @@ fn folded_hash(hash: u64) -> u32 {
 /// integer's bits end in dozens of zeros, which a multiplicative hash would keep at the
 /// bottom, where the index picks buckets, so splitmix64's output function (Steele, Lea and
 /// Flood, OOPSLA 2014) mixes every bit into every other.
+#[inline(always)]
 pub(crate) fn number_key_hash(number: f64) -> u64 {
     let bits = if number == 0.0 { 0 } else if number.is_nan() { f64::NAN.to_bits() } else { number.to_bits() };
     let x = (bits ^ (bits >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);

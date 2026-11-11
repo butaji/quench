@@ -1014,6 +1014,7 @@ impl LaneView {
         (start, start + self.records.len() * std::mem::size_of::<LaneInstruction>())
     }
 
+    #[inline]
     pub(super) fn records(&self) -> Ip {
         std::cell::UnsafeCell::raw_get(self.records.as_ptr()).cast_const()
     }
@@ -1276,6 +1277,7 @@ impl Activation {
         }
     }
 
+    #[inline]
     fn frame_storage_bytes(&self) -> usize {
         match self.kind {
             ActivationKind::Script(_) => 0,
@@ -1387,7 +1389,7 @@ impl Completion {
     /// The completion of an activation a `new` made or not, of the caller's program or not,
     /// of a target whose return settles its call's promise or not. Only a plain call of the
     /// caller's program settles one (`lane_script_call_settles`).
-    fn of(constructs: bool, cross: bool, settles: bool) -> Self {
+    #[inline] fn of(constructs: bool, cross: bool, settles: bool) -> Self {
         debug_assert!(!settles || !constructs && !cross, "only a plain call of its own program settles");
         match (constructs, cross, settles) {
             (false, false, true) => Self::SettlesPromise,
@@ -1400,12 +1402,12 @@ impl Completion {
 
     /// Whether a `new` made the activation, whose completion substitutes its receiver for a
     /// non-object result.
-    fn constructs(self) -> bool {
+    #[inline] fn constructs(self) -> bool {
         matches!(self, Self::Constructs | Self::CrossConstructs | Self::ConstructsToBody)
     }
 
     /// Whether the activation's return makes the caller's program the lane's again.
-    fn crosses(self) -> bool {
+    #[inline] fn crosses(self) -> bool {
         matches!(self, Self::Cross | Self::CrossConstructs)
     }
 }
@@ -1537,7 +1539,7 @@ impl CallEntry {
     }
 
     /// The leaf entry of a body whose records read the context as `form` says.
-    fn leaf(form: LeafForm) -> Self {
+    #[inline] fn leaf(form: LeafForm) -> Self {
         match form {
             CONTEXT_LEAF => Self::ContextLeaf,
             CAPTURE_LEAF => Self::CaptureLeaf,
@@ -13215,6 +13217,7 @@ impl<H: Host> Vm<H> {
     /// a new cell or a raised error: a dense `push` or `pop`, `charCodeAt`, an ASCII `charAt`,
     /// a collection lookup, `Array.isArray`. `None` leaves the call to the native itself, whose
     /// own steps begin with the same cases.
+    #[inline(always)]
     fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let first = args.first().copied();
         match native {
@@ -13224,6 +13227,7 @@ impl<H: Host> Vm<H> {
             Native::StringCharAt => string_char_at_ascii(self, receiver, first?),
             Native::MapGet | Native::MapHas | Native::SetHas | Native::WeakMapGet | Native::WeakMapHas
             | Native::WeakSetHas => self.pure_collection_lookup(native, receiver, first.unwrap_or(Value::UNDEFINED)),
+            Native::MapSet if self.map_set(receiver, args) => Some(receiver),
             Native::ArrayIsArray => self.steady_is_array(first.unwrap_or(Value::UNDEFINED))
                 .map(|holds| if holds { Value::TRUE } else { Value::FALSE }),
             _ => None,
