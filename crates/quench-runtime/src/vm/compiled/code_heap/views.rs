@@ -40,7 +40,13 @@ impl Views {
             return Err("code region reservation failed".into());
         }
         // SAFETY: an old size of zero on a shared mapping maps the same pages a second time.
-        let exec = unsafe { libc::mremap(write, 0, bytes, libc::MREMAP_MAYMOVE) };
+        let mut exec = unsafe { libc::mremap(write, 0, bytes, libc::MREMAP_MAYMOVE) };
+        if exec == libc::MAP_FAILED {
+            // Valgrind rejects an old size of zero (EINVAL), which left every body without
+            // code memory: alias through a memfd instead, from which both views map.
+            // SAFETY: a fresh memfd sized to the region; the result is checked.
+            exec = unsafe { Self::alias_through_memfd(write, bytes) };
+        }
         // SAFETY: the alias just created, `bytes` long.
         if exec == libc::MAP_FAILED
             || unsafe { libc::mprotect(exec, bytes, libc::PROT_READ | libc::PROT_EXEC) } != 0
@@ -53,6 +59,30 @@ impl Views {
             exec: exec.cast(),
             write: write.cast(),
         })
+    }
+
+    /// Replaces the anonymous writable mapping at `write` with a memfd-backed one and maps the
+    /// same file a second time for execution. `MAP_FAILED` on any failure.
+    ///
+    /// # Safety
+    /// `write` is a mapping of `bytes` bytes owned by the caller and not yet shared.
+    unsafe fn alias_through_memfd(write: *mut libc::c_void, bytes: usize) -> *mut libc::c_void {
+        // SAFETY: plain system calls on the descriptor created here, which is closed on exit.
+        unsafe {
+            let fd = libc::memfd_create(c"quench-code".as_ptr(), libc::MFD_CLOEXEC);
+            if fd < 0 { return libc::MAP_FAILED; }
+            let alias = if libc::ftruncate(fd, bytes as libc::off_t) == 0
+                && libc::mmap(write, bytes, libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_SHARED | libc::MAP_FIXED | libc::MAP_NORESERVE, fd, 0) == write
+            {
+                libc::mmap(std::ptr::null_mut(), bytes, libc::PROT_READ | libc::PROT_EXEC,
+                    libc::MAP_SHARED | libc::MAP_NORESERVE, fd, 0)
+            } else {
+                libc::MAP_FAILED
+            };
+            libc::close(fd);
+            alias
+        }
     }
 
     /// Returns the pages of `[offset, offset + bytes)` to the system; both views read zero.
