@@ -63,7 +63,8 @@ fn entry_view(b: &mut StencilBuilder, payload: ir::Value, hole: u32, writable: b
     let entry = emit_js_payload_word(b.b, payload, std::mem::offset_of!(JsStepDispatch, loop_entry));
     let at = b.operand(Operand::Hole(hole), Ty::I64);
     let address = b.b.ins().iadd(entry, at);
-    let values = b.b.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    // The entry record's array words are written before the run and never during it.
+    let values = b.b.ins().load(types::I64, MemFlagsData::trusted().with_readonly().with_can_move(), address, 0);
     let length_at = ARRAY.header_length_offset as i32 - ARRAY.header_values_offset as i32;
     let length = b.b.ins().load(types::I32, MemFlagsData::trusted(), values, length_at);
     DenseArrayView { values, length, writable }
