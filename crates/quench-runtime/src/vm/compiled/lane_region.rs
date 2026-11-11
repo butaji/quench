@@ -691,7 +691,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
     // The word vocabulary of the native-call lowerings (`lane_region/direct_*.rs`).
     fn word_load(&mut self, base: ir::Value, offset: i32) -> ir::Value { self.ins().load(types::I64, MemFlagsData::trusted(), base, offset) }
     fn word_store(&mut self, value: ir::Value, base: ir::Value, offset: i32) { self.ins().store(MemFlagsData::trusted(), value, base, offset); }
-    fn word_const(&mut self, bits: i64) -> ir::Value { self.ins().iconst(types::I64, bits) }
+    fn word_const(&mut self, bits: i64) -> ir::Value { self.int_const(types::I64, bits) }
+    fn int_const(&mut self, ty: ir::Type, bits: i64) -> ir::Value { self.ins().iconst(ty, bits) }
     fn word_add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().iadd(a, b) }
     fn word_add_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().iadd_imm_u(a, imm) }
     fn word_mul_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().imul_imm_u(a, imm) }
@@ -2168,7 +2169,8 @@ impl Lowering<'_, '_> {
             #[cfg(feature = "aot")]
             LaneHelpers::Linked(..) => unreachable!("helper table bound before entry facts"),
         };
-        let receiver = emit_lane_receiver(&mut self.builder, self.payload, this_bits);
+        let accesses_fields = self.accesses_fields(instructions);
+        let receiver = if accesses_fields { emit_lane_receiver(&mut self.builder, self.payload, this_bits) } else { self.absent_receiver() };
         let this = self.builder.declare_var(types::I64);
         self.builder.def_var(this, this_bits);
         let mut receiver_shapes = BTreeMap::new();
@@ -2211,8 +2213,7 @@ impl Lowering<'_, '_> {
         self.builder.def_var(capture_values, values);
         self.builder.def_var(capture_len, len);
         let mut miss = None;
-        let object_table = instructions.iter().enumerate().any(|(pc, instruction)|
-            self.facts.reached(pc) && instruction.op().is_named_field_access())
+        let object_table = accesses_fields
             .then(|| {
                 let base = emit_js_payload_word(&mut self.builder, self.payload,
                     std::mem::offset_of!(JsStepDispatch, object_record_base));
