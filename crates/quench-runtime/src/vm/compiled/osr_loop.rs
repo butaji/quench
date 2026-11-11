@@ -263,6 +263,13 @@ struct FieldPath {
     steps: Vec<(crate::bytecode::Atom, u16)>,
 }
 
+/// Whether `path` is rooted at a register the loop defines, so the entry record's value is
+/// that register's first iteration: every step of the path, the nested ones included, reads
+/// the current heap instead.
+fn redefined_root(path: &FieldPath, defined: &std::collections::BTreeSet<Register>) -> bool {
+    matches!(path.root, FieldReceiver::Register(receiver) if defined.contains(&receiver))
+}
+
 impl FieldPath {
     /// Whether the two paths read one value in a region, which writes no field: the same
     /// root and names, whichever caches answer them.
@@ -2021,15 +2028,13 @@ fn admit_register_roles(
             })?;
             let index = intern_field(&mut admission.fields, &path, tagged.contains(&instruction.result_register()));
             field_reads.insert(offset as u32, index);
-            if path.steps.len() == 1
-                && let FieldReceiver::Register(receiver) = path.root
-                && defined_registers.contains(&receiver)
+            if redefined_root(&path, &defined_registers)
                 // A field result used as an array base is entry-pinned separately by the
                 // array lowering, so leave that combination on the conservative path.
-                && !instructions.iter().any(|candidate| {
+                && (path.steps.len() != 1 || !instructions.iter().any(|candidate| {
                     candidate.op().is_indexed_access()
                         && object_reads(*candidate) == Some(instruction.result_register())
-                })
+                }))
             {
                 dynamic_field_reads.insert(offset as u32, index);
             } else if path.steps.len() == 1 && stored_fixed.contains(&(path.steps[0].0, path.root)) {

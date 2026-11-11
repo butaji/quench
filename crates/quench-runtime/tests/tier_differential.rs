@@ -176,6 +176,11 @@ const FOUND: &[&str] = &[
     // A lane call that threw ran again where the general tier entered at its record.
     "var n = 0; function inner(a) { for (var i = 0; i < 4; i++) {} a.forEach(function () { n++; throw 0; }); }
      for (var k = 0; k < 40; k++) { try { inner([1]); } catch (e) {} } throw n;",
+    // An optional link short-circuits its whole chain: `this?.b.c` must not fuse the two
+    // reads and read `.c` of an undefined `this`.
+    "'use strict'; function f() { return this?.b.c; }
+     function g(o) { return o?.b.c; }
+     throw String(f()) + ' ' + String(g(undefined)) + ' ' + String(g({b: {c: 7}}));",
     // Regexp native code: a greedy repeat that gave back a unit pushed a frame whose resume
     // id was minted while the resume blocks were emitted, colliding with the first resume.
     "var re = /^(180(\\.0+)?|\\d{1,2}(\\.\\d+)?)$/;
