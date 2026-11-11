@@ -41,10 +41,10 @@ pub(super) struct HeapRow {
     pub(super) b: Place,
 }
 
-/// The activation's dispatch payload: the context's adapter pointer.
+/// The activation's dispatch payload: the context's adapter pointer, which never changes during a run (so the load may merge).
 fn payload(b: &mut StencilBuilder) -> ir::Value {
     let offset = std::mem::offset_of!(CallContext, adapter_payload) as i32;
-    b.b.ins().load(types::I64, MemFlagsData::trusted(), b.context, offset)
+    b.b.ins().load(types::I64, MemFlagsData::trusted().with_readonly().with_can_move(), b.context, offset)
 }
 
 fn capture(b: &mut StencilBuilder, payload: ir::Value, slot: u16, miss: ir::Block) -> ir::Value {

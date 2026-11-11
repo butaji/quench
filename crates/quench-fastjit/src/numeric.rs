@@ -579,12 +579,26 @@ pub fn deliver(b: &mut StencilBuilder, dst: Place, word: ir::Value) {
     let start = b.pins;
     match dst {
         Place::PinF(i) => {
-            let (int, double) = (is_int(b, word), is_double(b, word));
-            let number = b.b.ins().bor(int, double);
-            b.guard(number, 0);
+            // A double word is the hot case: its bits; an int word converts; else exit 0.
+            let (double_block, other, join) = (b.b.create_block(), b.b.create_block(), b.b.create_block());
+            let result = b.b.append_block_param(join, types::F64);
+            let is_double = is_double(b, word);
+            b.b.ins().brif(is_double, double_block, &[], other, &[]);
+            b.b.switch_to_block(double_block);
+            b.b.seal_block(double_block);
+            let bits = b.b.ins().bitcast(types::F64, ir::MemFlagsData::new(), word);
+            b.b.ins().jump(join, &[bits.into()]);
+            b.b.set_cold_block(other);
+            b.b.switch_to_block(other);
+            b.b.seal_block(other);
+            let int = is_int(b, word);
+            b.guard(int, 0);
             let narrow = b.b.ins().ireduce(types::I32, word);
-            let (from_int, bits) = (b.b.ins().fcvt_from_sint(types::F64, narrow), b.b.ins().bitcast(types::F64, ir::MemFlagsData::new(), word));
-            b.pins.floats[usize::from(i)] = b.b.ins().select(int, from_int, bits);
+            let converted = b.b.ins().fcvt_from_sint(types::F64, narrow);
+            b.b.ins().jump(join, &[converted.into()]);
+            b.b.switch_to_block(join);
+            b.b.seal_block(join);
+            b.pins.floats[usize::from(i)] = result;
         }
         Place::Pin(i) => {
             let ok = is_int(b, word);

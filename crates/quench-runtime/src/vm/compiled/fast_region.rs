@@ -59,8 +59,8 @@ fn thunk(rows_at: usize) -> Vec<u8> {
 /// A pinned register and the register of the activation it holds.
 type Pin = (usize, Register);
 
-/// A stub that tags the pinned registers back into the register file and returns `word`.
-fn stub(pins: &[Pin], word: u64) -> Vec<u8> {
+/// The code that tags the pinned registers back into the register file.
+fn tag_back(pins: &[Pin]) -> Vec<u8> {
     let mut code = Vec::new();
     if !pins.is_empty() {
         code.extend(MOVABS_R10);
@@ -72,6 +72,12 @@ fn stub(pins: &[Pin], word: u64) -> Vec<u8> {
         code.extend(STORE_R11);
         code.extend((u32::from(*register) * SLOT as u32).to_le_bytes());
     }
+    code
+}
+
+/// A stub that tags the pinned registers back into the register file and returns `word`.
+fn stub(pins: &[Pin], word: u64) -> Vec<u8> {
+    let mut code = tag_back(pins);
     match u32::try_from(word) {
         Ok(small) => {
             code.push(MOV_EAX);
@@ -85,6 +91,14 @@ fn stub(pins: &[Pin], word: u64) -> Vec<u8> {
     code.push(RET);
     code
 }
+
+/// `pop rax; ret`: the shared exit routine returns the PC its stub pushed.
+const POP_RET: [u8; 2] = [0x58, RET];
+/// `push imm32` and `jmp rel32`: a row's exit stub, which names its PC and the routine that
+/// writes the live registers back.
+const PUSH_IMM32: u8 = 0x68;
+const JMP_REL32: u8 = 0xe9;
+const EXIT_STUB_LEN: usize = 1 + 4 + 1 + 4;
 
 #[derive(Default)]
 struct Totals {
@@ -449,6 +463,10 @@ fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Plan
     let (a, a_hole) = operand(homes, decoded.a);
     let (b, b_hole) = operand(homes, decoded.b);
     let (dst, dst_hole) = operand(homes, decoded.dst.map(Source::Register));
+    // A double row reads an int32 constant as the double it converts to: a constant word, which no code folds.
+    let double = |place, hole: u64| if place == Place::Imm { (Place::Const, f64::from(hole as u32 as i32).to_bits()) } else { (place, hole) };
+    let floats = [dst, a, b].iter().any(|place| matches!(place, Place::PinF(_))) && decoded.heap.is_none();
+    let ((a, a_hole), (b, b_hole)) = if floats { (double(a, a_hole), double(b, b_hole)) } else { ((a, a_hole), (b, b_hole)) };
     if let Some(heap) = decoded.heap {
         let base = decoded.base.map_or(0, |register| u64::from(register) * SLOT);
         let holes = match heap {
@@ -473,7 +491,7 @@ fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Plan
 
 /// A leave row: the stub that tags the pinned registers back and returns `word`.
 fn leave_row(code: Vec<u8>) -> Stencil {
-    Stencil { raw_len: code.len(), code, relocs: Vec::new(), next_jump: None, tail_len: 0 }
+    Stencil { raw_len: code.len(), code, relocs: Vec::new(), imm32: Vec::new(), next_jump: None, tail_len: 0 }
 }
 
 /// The machine code of `region`, entered at the shared native entry ABI, or the instruction that
@@ -512,10 +530,25 @@ impl Layout<'_> {
         self.homes.pins.iter().copied().filter(|(_, register)| self.region.is_live(pc, *register)).collect()
     }
 
+    fn live_floats(&self, pc: u32) -> Vec<Pin> {
+        self.homes.floats.iter().copied().filter(|(_, register)| self.region.is_live(pc, *register)).collect()
+    }
+
     /// The code that leaves with `word`: spills the live pinned doubles (canonical words), tags
     /// the live pinned int32s back, and returns.
     fn exit_code(&self, pc: u32, word: u64) -> Result<Vec<u8>, String> {
-        let tail = leave_row(stub(&self.live_pins(pc), word));
+        self.chain(pc, stub(&self.live_pins(pc), word))
+    }
+
+    /// The routine a row's exit stub jumps to: as `exit_code`, returning the PC on the stack.
+    fn routine(&self, pc: u32) -> Result<Vec<u8>, String> {
+        let mut tail = tag_back(&self.live_pins(pc));
+        tail.extend(POP_RET);
+        self.chain(pc, tail)
+    }
+
+    fn chain(&self, pc: u32, ending: Vec<u8>) -> Result<Vec<u8>, String> {
+        let tail = leave_row(ending);
         let spills = self.homes.floats.iter().filter(|(_, register)| self.region.is_live(pc, *register));
         let mut chain = Vec::new();
         for (pin, register) in spills {
@@ -612,13 +645,24 @@ fn link(layout: &Layout, body: &[Planned]) -> Result<Vec<u8>, String> {
     rows.extend(entry.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil, hole: &*hole_fns[k], taken: Some(g + n + 1) }));
     rows.extend(body.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &*hole_fns[g + k], taken: targets[k] }));
     rows.extend(leave_stencils.iter().enumerate().map(|(k, stencil)| Placed { stencil, hole: &*hole_fns[g + n + k], taken: None }));
-    let mut exits: Vec<(usize, Vec<u8>)> = Vec::new();
+    // One routine per set of live pinned registers; each exiting row's stub names its PC.
+    let mut routines: Vec<(Vec<Pin>, Vec<Pin>, Vec<u8>)> = Vec::new();
+    let mut exits: Vec<(usize, u32, usize)> = Vec::new();
     for (k, row) in body.iter().enumerate() {
-        if let Some(pc) = row.exit_pc {
-            exits.push((g + k, layout.exit_code(pc, u64::from(pc))?));
-        }
+        let Some(pc) = row.exit_pc else { continue };
+        let (ints, floats) = (layout.live_pins(pc), layout.live_floats(pc));
+        let found = routines.iter().position(|(i, f, _)| *i == ints && *f == floats);
+        let at = match found {
+            Some(at) => at,
+            None => {
+                routines.push((ints, floats, layout.routine(pc)?));
+                routines.len() - 1
+            }
+        };
+        exits.push((g + k, pc, at));
     }
-    place_rows(&rows, &exits)
+    let routines: Vec<Vec<u8>> = routines.into_iter().map(|(_, _, code)| code).collect();
+    place_rows(&rows, &exits, &routines)
 }
 
 fn leaf_index(layout: &Layout, leaves: &mut Vec<(u64, Vec<u8>)>, pc: u32) -> Result<usize, String> {
@@ -630,29 +674,36 @@ fn leaf_index(layout: &Layout, leaves: &mut Vec<(u64, Vec<u8>)>, pc: u32) -> Res
     Ok(leaves.len() - 1)
 }
 
-/// Copies the rows behind the thunk and the exit stubs after them, patching each row's exit to
-/// its stub; the code is position independent, so the buffer can move to executable memory.
-fn place_rows(rows: &[Placed], exits: &[(usize, Vec<u8>)]) -> Result<Vec<u8>, String> {
+/// Copies the rows behind the thunk, then the exit routines and each row's stub, patching each
+/// row's exit to its stub; the code is position independent, so the buffer can move to
+/// executable memory.
+fn place_rows(rows: &[Placed], exits: &[(usize, u32, usize)], routines: &[Vec<u8>]) -> Result<Vec<u8>, String> {
     let head = thunk(0).len();
     let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();
-    let stubs: usize = exits.iter().map(|(_, code)| code.len()).sum();
-    let mut code = vec![0u8; head + bound + stubs];
+    let tail: usize = routines.iter().map(Vec::len).sum::<usize>() + exits.len() * EXIT_STUB_LEN;
+    let mut code = vec![0u8; head + bound + tail];
     let base = code.as_mut_ptr();
     // SAFETY: `base + head` has room for every stencil's full length, which bounds the rows.
     let (len, _) = unsafe { quench_fastjit::copy_patch(rows, base.add(head), |_, _| base as usize) };
-    let mut addresses = vec![base as usize; rows.len()];
     let mut at = head + len;
-    let mut offsets = Vec::with_capacity(exits.len());
-    for (row, bytes) in exits {
+    let mut routine_at = Vec::with_capacity(routines.len());
+    for routine in routines {
+        code[at..at + routine.len()].copy_from_slice(routine);
+        routine_at.push(at);
+        at += routine.len();
+    }
+    let mut addresses = vec![base as usize; rows.len()];
+    for (row, pc, routine) in exits {
         addresses[*row] = base as usize + at;
-        offsets.push(at);
-        at += bytes.len();
+        let displacement = routine_at[*routine] as i64 - (at + EXIT_STUB_LEN) as i64;
+        code[at] = PUSH_IMM32;
+        code[at + 1..at + 5].copy_from_slice(&pc.to_le_bytes());
+        code[at + 5] = JMP_REL32;
+        code[at + 6..at + 10].copy_from_slice(&(displacement as i32).to_le_bytes());
+        at += EXIT_STUB_LEN;
     }
     // SAFETY: as above; the stubs lie after the copied code inside `code`.
     unsafe { quench_fastjit::copy_patch(rows, base.add(head), |row, _| addresses[row]) };
-    for ((_, bytes), offset) in exits.iter().zip(offsets) {
-        code[offset..offset + bytes.len()].copy_from_slice(bytes);
-    }
     let thunk_bytes = thunk(head);
     code[..head].copy_from_slice(&thunk_bytes);
     code.truncate(at);

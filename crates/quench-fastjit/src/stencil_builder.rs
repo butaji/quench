@@ -1,7 +1,7 @@
 //! The FastJIT back-end of [`RowBuilder`]: operands are holes, successors are relocated
 //! `return_call`s, and every dynamic value lives in the frame or a pinned register.
 use super::row::{Effects, MemKind, Op, Operand, Region, RowBuilder, Source, Ty};
-use super::{HOLE_VALUE, NEXT, TAKEN, EXIT, successor};
+use super::{HOLE_VALUE, NEXT, TAKEN, EXIT, Mode, Sentinels, successor};
 use cranelift_codegen::ir::{self, ExternalName, GlobalValueData, InstBuilder, MemFlagsData, UserExternalName, condcodes::IntCC, types};
 use cranelift_frontend::FunctionBuilder;
 
@@ -22,6 +22,7 @@ pub struct StencilBuilder<'a, 'f> {
     pub(crate) next: ir::FuncRef,
     pub(crate) taken: ir::FuncRef,
     pub(crate) exits: Vec<Option<ir::FuncRef>>,
+    pub(crate) mode: Mode,
     pub(crate) pending: Vec<(ir::Block, ir::FuncRef, Vec<ir::Value>)>,
 }
 
@@ -39,9 +40,15 @@ impl StencilBuilder<'_, '_> {
         [self.frame, self.context].into_iter().chain(self.pins.ints).chain(self.pins.floats).collect()
     }
 
-    fn immediate(&mut self, operand: Operand) -> ir::Value {
+    /// The value of `operand`: a hole is a 64-bit immediate when `wide`, else a 32-bit one
+    /// (sign-extended) that the generator patches in place of a sentinel (`Mode`).
+    fn immediate(&mut self, operand: Operand, wide: bool) -> ir::Value {
         match operand {
             Operand::Const(value) => self.b.ins().iconst(types::I64, value),
+            Operand::Hole(index) if !wide && self.mode != Mode::Wide => {
+                let sentinel = Sentinels::of(self.mode, index);
+                self.b.ins().iconst(types::I64, i64::from(sentinel))
+            }
             Operand::Hole(index) => {
                 let name = self.b.func.declare_imported_user_function(UserExternalName::new(HOLE_VALUE, index));
                 let symbol = self.b.func.create_global_value(GlobalValueData::Symbol {
@@ -58,7 +65,7 @@ impl StencilBuilder<'_, '_> {
     fn address(&mut self, src: Source<ir::Value>) -> ir::Value {
         match src {
             Source::Frame(offset) => {
-                let offset = self.immediate(offset);
+                let offset = self.immediate(offset, false);
                 self.b.ins().iadd(self.frame, offset)
             }
             Source::Pinned(0) => self.frame,
@@ -147,8 +154,8 @@ impl RowBuilder for StencilBuilder<'_, '_> {
         self.b.ins().store(MemFlagsData::trusted(), v, address, 0);
     }
 
-    fn operand(&mut self, op: Operand, _ty: Ty) -> ir::Value {
-        self.immediate(op)
+    fn operand(&mut self, op: Operand, ty: Ty) -> ir::Value {
+        self.immediate(op, ty == Ty::Word)
     }
 
     fn op(&mut self, o: Op, _ty: Ty, args: &[ir::Value], _eff: Effects) -> ir::Value {
@@ -169,7 +176,7 @@ impl RowBuilder for StencilBuilder<'_, '_> {
     }
 
     fn load(&mut self, _region: Region, base: ir::Value, off: Operand, ty: Ty, kind: MemKind) -> ir::Value {
-        let offset = self.immediate(off);
+        let offset = self.immediate(off, false);
         let address = self.b.ins().iadd(base, offset);
         let flags = match kind {
             MemKind::Plain => MemFlagsData::trusted(),
@@ -179,7 +186,7 @@ impl RowBuilder for StencilBuilder<'_, '_> {
     }
 
     fn store(&mut self, _region: Region, base: ir::Value, off: Operand, v: ir::Value) {
-        let offset = self.immediate(off);
+        let offset = self.immediate(off, false);
         let address = self.b.ins().iadd(base, offset);
         self.b.ins().store(MemFlagsData::trusted(), v, address, 0);
     }
@@ -208,7 +215,7 @@ impl RowBuilder for StencilBuilder<'_, '_> {
         let join = self.b.create_block();
         let result = self.b.append_block_param(join, types::I64);
         for (case, arm) in arms {
-            let want = self.immediate(*case);
+            let want = self.immediate(*case, true);
             let hit = self.b.ins().icmp(IntCC::Equal, key, want);
             let (taken, rest) = (self.b.create_block(), self.b.create_block());
             self.b.ins().brif(hit, taken, &[], rest, &[]);

@@ -26,8 +26,8 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 /// Value registers a stencil takes after (frame, context): the tail convention passes them in
 /// rdx, rcx, r8 and r9, so a chain of stencils keeps hot values out of memory.
 pub const PINNED: usize = 4;
-/// Double registers a stencil takes after the value registers: xmm0 to xmm3.
-pub const PINNED_F: usize = 4;
+/// Double registers a stencil takes after the value registers: xmm0 to xmm7.
+pub const PINNED_F: usize = 8;
 
 /// Namespace of value holes (`symbol_value` → 64-bit immediate) and of successor holes.
 const HOLE_VALUE: u32 = 1;
@@ -57,6 +57,7 @@ pub fn stencil_isa() -> Result<OwnedTargetIsa, String> {
         ("is_pic", "false"),
         ("enable_verifier", if std::env::var_os("STENCIL_VERIFY").is_some() { "true" } else { "false" }),
         ("preserve_frame_pointers", "true"),
+        ("unwind_info", "false"),
         ("enable_probestack", "false"),
     ] {
         flags.set(name, value).map_err(|e| e.to_string())?;
@@ -82,11 +83,45 @@ pub struct Reloc {
     pub addend: i64,
 }
 
+/// How a stencil's 32-bit holes are compiled: as 64-bit immediates (`Wide`), or as the sentinels
+/// of one of two passes whose difference locates the 32-bit fields to patch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Mode {
+    Wide,
+    Sentinel(usize),
+}
+
+/// The 32-bit sentinels of each hole in each pass: every byte differs between the passes, and
+/// so do the differences between holes, so a field names its hole.
+pub(crate) struct Sentinels;
+
+impl Sentinels {
+    const PASSES: [[u32; 3]; 2] = [[0x1122_3344, 0x1a2b_3c4d, 0x2b3c_4d5e], [0x5566_7788, 0x5e6f_7081, 0x6f80_91a3]];
+
+    pub(crate) fn of(mode: Mode, hole: u32) -> u32 {
+        match mode {
+            Mode::Sentinel(pass) => Self::PASSES[pass][hole as usize],
+            Mode::Wide => 0,
+        }
+    }
+}
+
+/// A 32-bit field of a stencil's code: hole `index`, negated when `negate`, plus `addend`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Imm32 {
+    pub offset: u32,
+    pub index: u32,
+    pub negate: bool,
+    pub addend: u32,
+}
+
 /// One compiled stencil, after [`Stencil::strip`].
 #[derive(Clone, Debug)]
 pub struct Stencil {
     pub code: Vec<u8>,
     pub relocs: Vec<Reloc>,
+    /// The code's 32-bit hole fields.
+    pub imm32: Vec<Imm32>,
     /// Where the trailing tail (`jmp next`, and the nop that replaced a stripped frame teardown
     /// before it) starts when it ends the code, so adjacency drops it.
     pub next_jump: Option<usize>,
@@ -115,7 +150,7 @@ const JCC_REL32_LEN: usize = 6;
 const JMP_REL32_OPCODE: u8 = 0xe9;
 
 /// Lower one row into a stencil function: `emit` lowers the row through the builder.
-fn lower(isa: &OwnedTargetIsa, emit: impl FnOnce(&mut StencilBuilder)) -> ir::Function {
+fn lower(isa: &OwnedTargetIsa, emit: &impl Fn(&mut StencilBuilder), mode: Mode) -> ir::Function {
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, 0), stencil_signature());
     let mut builder_context = FunctionBuilderContext::new();
     let mut b = FunctionBuilder::new(&mut func, &mut builder_context);
@@ -125,8 +160,8 @@ fn lower(isa: &OwnedTargetIsa, emit: impl FnOnce(&mut StencilBuilder)) -> ir::Fu
     b.switch_to_block(entry);
     b.seal_block(entry);
     let params = b.block_params(entry).to_vec();
-    let pins = Pins { ints: [params[2], params[3], params[4], params[5]], floats: [params[6], params[7], params[8], params[9]] };
-    let mut stencil = StencilBuilder { b: &mut b, frame: params[0], context: params[1], pins, next, taken, exits: Vec::new(), pending: Vec::new() };
+    let pins = Pins { ints: std::array::from_fn(|k| params[2 + k]), floats: std::array::from_fn(|k| params[PINNED + 2 + k]) };
+    let mut stencil = StencilBuilder { b: &mut b, frame: params[0], context: params[1], pins, next, taken, exits: Vec::new(), mode, pending: Vec::new() };
     emit(&mut stencil);
     stencil.finish();
     b.finalize(isa.frontend_config());
@@ -153,12 +188,33 @@ fn relocations(ctx: &Context) -> Result<Vec<Reloc>, String> {
     Ok(relocs)
 }
 
-/// Compile one row into a stencil. `emit` lowers the row through the given flow.
-pub fn generate(isa: &OwnedTargetIsa, emit: impl FnOnce(&mut StencilBuilder)) -> Result<Stencil, String> {
-    let mut ctx = Context::for_function(lower(isa, emit));
+fn compile(isa: &OwnedTargetIsa, emit: &impl Fn(&mut StencilBuilder), mode: Mode) -> Result<Stencil, String> {
+    let mut ctx = Context::for_function(lower(isa, emit, mode));
     ctx.compile(&**isa, &mut ControlPlane::default()).map_err(|e| format!("{:?}", e.inner))?;
     let relocs = relocations(&ctx)?;
     Stencil::strip(ctx.compiled_code().ok_or("no code")?.code_buffer(), relocs)
+}
+
+/// Compile one row into a stencil. `emit` lowers the row through the given builder. The row is
+/// compiled with two sets of sentinels for its 32-bit holes; where the codes differ only in
+/// fields that are a hole (negated, plus a constant) the fields are patched in place, else the
+/// holes are 64-bit immediates.
+pub fn generate(isa: &OwnedTargetIsa, emit: impl Fn(&mut StencilBuilder)) -> Result<Stencil, String> {
+    let (first, second) = (compile(isa, &emit, Mode::Sentinel(0))?, compile(isa, &emit, Mode::Sentinel(1))?);
+    match Stencil::fields(&first, &second) {
+        Some(imm32) => Ok(Stencil { imm32, ..first }),
+        None => {
+            WIDE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            compile(isa, &emit, Mode::Wide)
+        }
+    }
+}
+
+static WIDE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Stencils whose holes stayed 64-bit immediates because the sentinel passes did not explain them.
+pub fn wide_stencils() -> u64 {
+    WIDE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Stencil {
@@ -170,7 +226,7 @@ impl Stencil {
             return Err(format!("unexpected stencil prologue {:02x?}", &code[..code.len().min(PROLOGUE.len() + SUB_RSP.len())]));
         }
         if code[PROLOGUE.len()..PROLOGUE.len() + SUB_RSP.len()] == SUB_RSP {
-            return Ok(Stencil { next_jump: Self::next_jump(&relocs, code.len()), tail_len: JMP_REL32_LEN, code: code.to_vec(), relocs, raw_len });
+            return Ok(Stencil { next_jump: Self::next_jump(&relocs, code.len()), tail_len: JMP_REL32_LEN, code: code.to_vec(), relocs, imm32: Vec::new(), raw_len });
         }
         let mut code = code.to_vec();
         for at in Self::epilogues(&relocs, &code) {
@@ -189,7 +245,7 @@ impl Stencil {
             Some(at) => (Some(at - NOP4.len()), NOP4.len() + JMP_REL32_LEN),
             None => (jump, JMP_REL32_LEN),
         };
-        Ok(Stencil { next_jump, tail_len, code, relocs, raw_len })
+        Ok(Stencil { next_jump, tail_len, code, relocs, imm32: Vec::new(), raw_len })
     }
 
     /// Moves the exit tails off the end: a frameless stencil's cold exits follow its hot
@@ -233,6 +289,43 @@ impl Stencil {
         let mut relocs: Vec<Reloc> = relocs.into_iter().filter(|r| (r.offset as usize) < hot_end).collect();
         relocs.extend(added);
         (code, relocs)
+    }
+
+    /// The 32-bit hole fields that explain every difference between the two sentinel passes, or
+    /// `None` when something else differs (a folded constant, another shape of code).
+    fn fields(first: &Stencil, second: &Stencil) -> Option<Vec<Imm32>> {
+        let same = first.code.len() == second.code.len() && first.relocs.len() == second.relocs.len();
+        if !same || first.relocs.iter().zip(&second.relocs).any(|(a, b)| (a.offset, a.index, a.namespace) != (b.offset, b.index, b.namespace)) {
+            return None;
+        }
+        let word = |code: &[u8], at: usize| u32::from_le_bytes([code[at], code[at + 1], code[at + 2], code[at + 3]]);
+        let (mut fields, mut at) = (Vec::new(), 0);
+        while at + REL32_LEN <= first.code.len() {
+            if first.code[at] == second.code[at] {
+                at += 1;
+                continue;
+            }
+            let (one, two) = (word(&first.code, at), word(&second.code, at));
+            let field = (0..3u32).find_map(|index| {
+                let (a, b) = (Sentinels::PASSES[0][index as usize], Sentinels::PASSES[1][index as usize]);
+                if two.wrapping_sub(one) == b.wrapping_sub(a) {
+                    Some(Imm32 { offset: at as u32, index, negate: false, addend: one.wrapping_sub(a) })
+                } else if two.wrapping_sub(one) == a.wrapping_sub(b) {
+                    Some(Imm32 { offset: at as u32, index, negate: true, addend: one.wrapping_add(a) })
+                } else {
+                    None
+                }
+            })?;
+            fields.push(field);
+            at += REL32_LEN;
+        }
+        let mut patched = first.code.clone();
+        for field in &fields {
+            let sentinel = Sentinels::PASSES[1][field.index as usize];
+            let value = if field.negate { field.addend.wrapping_sub(sentinel) } else { sentinel.wrapping_add(field.addend) };
+            patched[field.offset as usize..field.offset as usize + REL32_LEN].copy_from_slice(&value.to_le_bytes());
+        }
+        (patched == second.code).then_some(fields)
     }
 
     /// Where each exit's frame teardown starts: before every `jmp rel32` and a closing `ret`.
@@ -296,6 +389,11 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
         unsafe {
             let base = out.add(starts[k]);
             std::ptr::copy_nonoverlapping(row.stencil.code.as_ptr(), base, sizes[k]);
+            for field in row.stencil.imm32.iter().filter(|f| (f.offset as usize) < sizes[k]) {
+                let hole = (row.hole)(field.index) as u32;
+                let value = if field.negate { field.addend.wrapping_sub(hole) } else { hole.wrapping_add(field.addend) };
+                std::ptr::write_unaligned(base.add(field.offset as usize).cast::<u32>(), value);
+            }
             for r in row.stencil.relocs.iter().filter(|r| (r.offset as usize) < sizes[k]) {
                 let place = base.add(r.offset as usize);
                 if !r.pc_relative {
@@ -323,7 +421,7 @@ mod tests {
     /// `frame[hole0] += hole1`, guarded against overflow, then next: the same row body any builder lowers.
     fn add_row<B: RowBuilder<Exit = u32>>(b: &mut B) {
         let slot = Source::Frame(Operand::Hole(0));
-        let (value, delta) = (b.read(slot, Ty::I64), b.operand(Operand::Hole(1), Ty::I64));
+        let (value, delta) = (b.read(slot, Ty::I64), b.operand(Operand::Hole(1), Ty::Word));
         let overflow = b.op(Op::Overflow, Ty::I64, &[value, delta], Effects::Pure);
         let fine = b.op(Op::Not, Ty::I64, &[overflow], Effects::Pure);
         b.guard(fine, 0);
