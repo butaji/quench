@@ -1176,9 +1176,8 @@ impl<H: Host> Vm<H> {
         Ok(thrower)
     }
     pub(super) fn object(&mut self) -> Value {
-        self.heap.alloc(Cell::Object(Self::empty_object(
-            self.realm_object_prototype(self.realm.globals),
-        )))
+        let prototype = self.realm_object_prototype(self.realm.globals);
+        self.heap.alloc_object(Self::empty_object(prototype))
     }
     pub(super) fn lookup_atom(&self, name: &str) -> Option<Atom> {
         self.find_atom(Self::atom_hash_str(name), |atom| {
