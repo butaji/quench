@@ -23,6 +23,7 @@ mod heap;
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
+pub(crate) mod entry;
 pub(crate) mod environment;
 pub(crate) mod ic;
 pub(crate) mod object;
