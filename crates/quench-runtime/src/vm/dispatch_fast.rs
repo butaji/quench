@@ -18421,19 +18421,6 @@ fn lane_writes(instruction: WideInstruction, register: u16) -> bool {
     result || optional || filled
 }
 
-/// The shortest straight-line lane run the general loop enters. Entering
-/// builds the lane context and memory view, which one or two lane
-/// instructions do not repay: on V8-v7 fixed work, three keeps every
-/// JavaScript benchmark within one percent of the general path or better
-/// (one and two cost DeltaBlue three percent), and leaves Wasm loops,
-/// whose runs are long, unchanged.
-const LANE_ENTRY_MIN_RUN: usize = 3;
-
-/// `LANE_ENTRY_MIN_RUN` in a function with no loop the lane runs whole: each call the
-/// general loop makes into it enters the lane anew, so a run must repay a fresh lane
-/// context.
-const LANE_ENTRY_MIN_CALL_RUN: usize = 8;
-
 /// Whether records may read the accumulator. Without sibling calls every
 /// handler returns to the lane loop, which carries no accumulator.
 const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
@@ -19499,9 +19486,9 @@ fn derive_lane_view<'live, H: Host>(
         specialize_array_literals::<H>(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
-        LANE_ENTRY_MIN_RUN
+        TIERS.lane_view.entry_min_run
     } else {
-        LANE_ENTRY_MIN_CALL_RUN
+        TIERS.lane_view.entry_min_call_run
     };
     // A resumed JavaScript loop body's straight tail jumps back to its head, so its run
     // continues there; a Wasm body resumes nowhere, and following its jumps only made more

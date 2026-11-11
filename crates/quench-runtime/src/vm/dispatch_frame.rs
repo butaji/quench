@@ -1,3 +1,4 @@
+use super::compiled::tier_policy::TIERS;
 use super::*;
 use super::program_store::JsTier;
 use crate::bytecode::index;
@@ -59,7 +60,7 @@ struct HotLoop {
     /// Its back edges taken.
     taken: u16,
     /// The instructions those back edges spanned, and the span at which the loop has repaid
-    /// a view of the whole function (`LANE_VIEW_LOOP_PAYBACK` per instruction).
+    /// a view of the whole function (`LaneView::loop_payback` per instruction).
     work: u32,
     due: u32,
 }
@@ -67,25 +68,9 @@ struct HotLoop {
 impl HotLoop {
     fn of(function: &crate::bytecode::Function) -> Self {
         let instructions = u32::try_from(function.code.len()).unwrap_or(u32::MAX);
-        Self { taken: 0, work: 0, due: instructions.saturating_mul(LANE_VIEW_LOOP_PAYBACK) }
+        Self { taken: 0, work: 0, due: instructions.saturating_mul(TIERS.lane_view.loop_payback) }
     }
 }
-
-/// The backward jumps a JavaScript activation takes in the general path before its function's
-/// lane view is derived and the lane runs its loop (`Vm::note_back_edge`). Deriving a view
-/// costs some hundreds of instructions per instruction of the function; a module body that
-/// loops a few times (over its exports, say) ran faster without one.
-const HOT_LOOP_BACK_EDGES: u16 = 16;
-
-/// The loop work, in instructions its back edges span per instruction of the function, after
-/// which a view-less activation derives its function's lane view (`HotLoop`). A view costs
-/// some hundreds of instructions per instruction of the whole function, so a short loop in a
-/// large body that runs once (a module body filling a table) ran
-/// faster without one. Measured in instructions, warm compile cache, against deriving at
-/// `HOT_LOOP_BACK_EDGES` alone (x86_64 VM, 2026-10-26): @babel/core -11.0% (one: +0.9%,
-/// four: -9.9%), and within 0.2% on schema-utils, axios, semver, ajv, eslint, jiti, undici
-/// and source-map.
-const LANE_VIEW_LOOP_PAYBACK: u32 = 8;
 
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub(super) struct PendingGeneralCall {
@@ -213,7 +198,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Counts a backward jump of `cursor`'s activation in the general path over `span`
-    /// instructions; at `HOT_LOOP_BACK_EDGES` of them, once their spans repay a view
+    /// instructions; at `LaneView::hot_back_edges` of them, once their spans repay a view
     /// (`HotLoop`), its function's lane view is derived, which the lane enters at the loop's
     /// next instruction.
     #[inline(always)]
@@ -223,7 +208,7 @@ impl<H: Host> Vm<H> {
         };
         hot.taken = hot.taken.saturating_add(1);
         hot.work = hot.work.saturating_add(u32::try_from(span).unwrap_or(u32::MAX));
-        if hot.taken >= HOT_LOOP_BACK_EDGES && hot.work >= hot.due {
+        if hot.taken >= TIERS.lane_view.hot_back_edges && hot.work >= hot.due {
             cursor.back_edges = None;
             cursor.lane = self.hot_loop_lane_view(cursor.program, cursor.function);
         }

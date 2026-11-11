@@ -12,6 +12,40 @@ pub(in crate::vm) struct Tiers {
     pub(in crate::vm) js_function: JsFunction,
     pub(in crate::vm) wasm: Wasm,
     pub(in crate::vm) limits: Limits,
+    pub(in crate::vm) lane_view: LaneView,
+}
+
+/// When the general loop derives a function's lane view and enters the lane.
+pub(in crate::vm) struct LaneView {
+    /// The runs a function makes on the general path before it derives its lane view, which
+    /// costs about a thousand instructions per bytecode instruction, so a function that runs
+    /// fewer times costs no view. Measured in instructions against deriving at the second run:
+    /// four takes 3.3% from the jiti npm scenario (Babel's many functions that run a few times)
+    /// and 0.1-0.6% from semver, ajv, Babel, color-convert and typescript-eslint; eight adds at
+    /// most 0.3%.
+    pub(in crate::vm) deferred_runs: u8,
+    /// The backward jumps a JavaScript activation takes in the general path before its
+    /// function's lane view is derived and the lane runs its loop (`Vm::note_back_edge`).
+    /// Deriving a view costs some hundreds of instructions per instruction of the function; a
+    /// module body that loops a few times (over its exports, say) ran faster without one.
+    pub(in crate::vm) hot_back_edges: u16,
+    /// The loop work, in instructions its back edges span per instruction of the function,
+    /// after which a view-less activation derives its function's lane view (`HotLoop`). A view
+    /// costs some hundreds of instructions per instruction of the whole function, so a short
+    /// loop in a large body that runs once (a module body filling a table) ran faster without
+    /// one. Measured in instructions, warm compile cache, against deriving at `hot_back_edges`
+    /// alone (x86_64 VM, 2026-10-26): @babel/core -11.0% (one: +0.9%, four: -9.9%), and within
+    /// 0.2% on schema-utils, axios, semver, ajv, eslint, jiti, undici and source-map.
+    pub(in crate::vm) loop_payback: u32,
+    /// The shortest straight-line lane run the general loop enters. Entering builds the lane
+    /// context and memory view, which one or two lane instructions do not repay: on V8-v7 fixed
+    /// work, three keeps every JavaScript benchmark within one percent of the general path or
+    /// better (one and two cost DeltaBlue three percent), and leaves Wasm loops, whose runs are
+    /// long, unchanged.
+    pub(in crate::vm) entry_min_run: usize,
+    /// `entry_min_run` in a function with no loop the lane runs whole: each call the general
+    /// loop makes into it enters the lane anew, so a run must repay a fresh lane context.
+    pub(in crate::vm) entry_min_call_run: usize,
 }
 
 /// The sizes of what the compilers accept: a body past one stays with the interpreter.
@@ -248,6 +282,7 @@ const FLOOR: Tiers = Tiers {
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX, ..MEASURED.wasm },
     limits: MEASURED.limits,
+    lane_view: MEASURED.lane_view,
 };
 
 const MEASURED: Tiers = Tiers {
@@ -293,6 +328,7 @@ const MEASURED: Tiers = Tiers {
         region: RegionLimits { instructions: 512, registers: 128, arrays: 8, captures: 16, fields: 16, field_stores: 16 },
         inlining: InliningLimits { callee_instructions: 96, unit_instructions: 920, depth: 5 },
     },
+    lane_view: LaneView { deferred_runs: 4, hot_back_edges: 16, loop_payback: 8, entry_min_run: 3, entry_min_call_run: 8 },
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)

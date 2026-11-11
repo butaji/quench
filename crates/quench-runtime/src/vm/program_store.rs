@@ -652,7 +652,7 @@ struct ProgramEntry {
     /// Per function: what the JavaScript tier found at its entries (`js_entry_facts`).
     js_entry_facts: JsEntryFactsTable,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
-    /// `lane_call_may_derive`), up to `LANE_VIEW_DEFERRED_RUNS`.
+    /// `lane_call_may_derive`), up to `LaneView::deferred_runs`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
     /// The program's compiled functions, once the compiled mode first calls
     /// one; `Some(None)` records that none compile.
@@ -2901,7 +2901,7 @@ impl ProgramStore {
 
     /// The lane view a general-loop entry of `function` runs with. A function that may loop
     /// gets it at its first entry; any other once its deferred runs are complete
-    /// (`LANE_VIEW_DEFERRED_RUNS`), so code that runs a few times without looping (a module
+    /// (`LaneView::deferred_runs`), so code that runs a few times without looping (a module
     /// body) runs on the general path instead of first deriving a view of every instruction,
     /// which costs more than those runs.
     pub(super) fn entry_lane_view<'s>(
@@ -2930,7 +2930,7 @@ impl ProgramStore {
     }
 
     /// Whether a lane call may derive `function`'s view now: it has one, or its earlier entries
-    /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
+    /// and lane calls completed its deferred runs (`LaneView::deferred_runs`), as
     /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
     /// general path.
     pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
@@ -3471,17 +3471,10 @@ fn census_label(entry: &ProgramEntry, function: u32) -> String {
     )
 }
 
-/// The runs a function makes on the general path before it derives its lane view, which costs
-/// about a thousand instructions per bytecode instruction, so a function that runs fewer times
-/// costs no view. Measured in instructions against deriving at the second run: four takes 3.3%
-/// from the jiti npm scenario (Babel's many functions that run a few times) and 0.1-0.6% from
-/// semver, ajv, Babel, color-convert and typescript-eslint; eight adds at most 0.3%.
-const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
-
 /// Count one view-less run of a function; true once its deferred runs are complete.
 fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
     let done = runs.get();
-    if done >= LANE_VIEW_DEFERRED_RUNS {
+    if done >= TIERS.lane_view.deferred_runs {
         return true;
     }
     runs.set(done + 1);
