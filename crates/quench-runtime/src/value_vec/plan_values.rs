@@ -6,10 +6,13 @@ impl ValueArena {
     #[inline(always)]
     pub(crate) fn note_plan_values(&mut self, shape: u32, values: &[Value]) {
         if !self.tracking { return; }
-        let chain = self.shape_chains[shape as usize] as usize;
+        debug_assert!(values.len() <= self.shape_length(shape));
+        // SAFETY: a plan's shape holds `values.len()` slots, so its owner chain does; every
+        // owner names an `owner_types` entry (`slot_owner`).
+        let chain = unsafe { *self.shape_chains.get_unchecked(shape as usize) } as usize;
         for (slot, value) in values.iter().copied().enumerate() {
-            let owner = self.chain_owners[chain + slot];
-            let (held, class) = (self.owner_types[owner as usize], SlotType::of(value));
+            let owner = unsafe { *self.chain_owners.get_unchecked(chain + slot) };
+            let (held, class) = (unsafe { *self.owner_types.get_unchecked(owner as usize) }, SlotType::of(value));
             if held != SlotType::Tagged && held != class {
                 self.widen_owner_type(owner, class);
             }
