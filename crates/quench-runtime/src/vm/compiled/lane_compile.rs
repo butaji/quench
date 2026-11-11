@@ -38,8 +38,6 @@ pub(in crate::vm) struct PendingLaneMethod {
     code: super::jit_backend::Pending<LaneCode>,
     /// What it compiles from (`LanePlan::key`).
     key: LaneKey,
-    /// The IR instructions it compiles, which a later recompile of it weighs (`LaneMethod::ir`).
-    ir: usize,
 }
 
 /// What a pending body's compile came to.
@@ -224,7 +222,7 @@ impl<H: Host> Vm<H> {
             let Some((plan, native)) = self.plan_lane_method(program, function, targets, captures, &direct, generic, budget, None)
             else { break None };
             match lane_code(native, super::jit_backend::CompileLevel::run_default()) {
-                Ok(code) => break plan.finish(&code, 0),
+                Ok(code) => break plan.finish(&code),
                 Err(reason) if plan.replans(reason) => budget /= 2,
                 Err(_) => break None,
             }
@@ -275,7 +273,6 @@ impl<H: Host> Vm<H> {
         }
         let census = self.programs.js_jit_diagnostics_enabled()
             .then(|| (function, entry.is_some(), plan.unit.instructions.len(), native.dfg.num_insts(), key.3, generic.len(), plan.direct.len(), budget, observed));
-        let ir_count = native.dfg.num_insts();
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
             let code = lane_code(native, super::jit_backend::CompileLevel::run_default());
@@ -287,7 +284,7 @@ impl<H: Host> Vm<H> {
             code
         });
         self.programs.note_pending_native_calls(&watch, plan.callees());
-        Ok(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code, key, ir: ir_count })
+        Ok(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code, key })
     }
 
     /// The unit PCs of stores whose sites added their property to some receiver (they hold
@@ -379,7 +376,7 @@ impl PendingLaneMethod {
     fn poll(mut self: Box<Self>) -> Result<LaneCompile, Box<Self>> {
         Ok(match self.code.poll() {
             std::task::Poll::Pending => return Err(self),
-            std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code, self.ir)),
+            std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code)),
             std::task::Poll::Ready(Some(Err(reason))) if self.plan.replans(reason) =>
                 LaneCompile::Replan(std::mem::take(&mut self.generic), self.plan.budget),
             std::task::Poll::Ready(_) => LaneCompile::Done(None),
@@ -411,7 +408,7 @@ impl LanePlan {
 
     /// The method its compiled `code` makes, published to executable memory. The method
     /// takes its direct callees whole: the code names them by address.
-    fn finish(mut self, code: &[u8], ir: usize) -> Option<LaneMethod> {
+    fn finish(mut self, code: &[u8]) -> Option<LaneMethod> {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
         let amortizes = amortizes_entry(unit);
@@ -434,7 +431,7 @@ impl LanePlan {
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, inlined: self.unit.frames,
             scratch_width, caller_registers,
-            amortizes, direct: self.direct, closed: self.closed, ir,
+            amortizes, direct: self.direct, closed: self.closed,
         })
     }
 }
