@@ -360,15 +360,12 @@ pub(super) fn lane_method_call_region<H: Host>(cx: *mut LaneContext<H>, site: &L
         super::super::compiled::MethodCalls::Exit).ok()
 }
 
-/// How many elements of an entry array are sampled for Numbers.
-const SAMPLED_ELEMENTS: usize = 64;
-
 /// The registers of `region`'s arrays whose first elements, sampled on entry, are all Numbers
 /// (int32 or double, no hole): an observation (a guess the code checks at every read), not a proof.
 pub(super) fn number_arrays<H: Host>(vm: &Vm<H>, r: Registers, region: &LoopRegion) -> Vec<crate::bytecode::Register> {
     region.arrays.iter().filter(|array| array.field.is_none()).filter_map(|array| {
         let elements = vm.heap.record_array(r.get(array.register))?.elements().as_slice();
-        let sample = &elements[..elements.len().min(SAMPLED_ELEMENTS)];
+        let sample = &elements[..elements.len().min(super::compiled::tier_policy::TIERS.loops.sampled_elements)];
         (!sample.is_empty() && sample.iter().all(|value| value.as_number().is_some())).then_some(array.register)
     }).collect()
 }

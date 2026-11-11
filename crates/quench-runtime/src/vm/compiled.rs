@@ -4090,13 +4090,6 @@ const TRAPS: [crate::WasmTrap; 6] = [
 ];
 
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
-const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
-const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
-const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
-/// A selective root may include a few hot callees learned from earlier
-/// indirect-call executions. Keep the profile-guided closure bounded so one
-/// polymorphic module cannot turn a tier promotion into eager compilation.
-const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
     #[cfg(test)]
@@ -5776,7 +5769,7 @@ impl CompiledProgram {
         for (target, _) in targets {
             if !unique.contains(&target) {
                 unique.push(target);
-                if unique.len() == MAX_JIT_PROFILED_INDIRECT_TARGETS {
+                if unique.len() == tier_policy::TIERS.wasm.profiled_indirect_targets {
                     break;
                 }
             }
@@ -13216,11 +13209,11 @@ impl<H: Host> Vm<H> {
                 }
                 return None;
             };
-            if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
+            if function.code.len() > tier_policy::TIERS.wasm.root_function_bytecodes {
                 if diagnostics_enabled {
                     eprintln!(
-                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={root} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
-                        function.code.len()
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={root} bytecodes={} limit={limit}",
+                        function.code.len(), limit = tier_policy::TIERS.wasm.root_function_bytecodes
                     );
                 }
                 return None;
@@ -13243,11 +13236,11 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 let function = code.function_get(index)?;
-                if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
+                if function.code.len() > tier_policy::TIERS.wasm.root_function_bytecodes {
                     if diagnostics_enabled {
                         eprintln!(
-                            "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={index} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
-                            function.code.len()
+                            "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={index} bytecodes={} limit={limit}",
+                            function.code.len(), limit = tier_policy::TIERS.wasm.root_function_bytecodes
                         );
                     }
                     return None;
@@ -13293,11 +13286,11 @@ impl<H: Host> Vm<H> {
                         continue;
                     }
                     let function = code.function_get(index)?;
-                    if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
+                    if function.code.len() > tier_policy::TIERS.wasm.root_function_bytecodes {
                         if diagnostics_enabled {
                             eprintln!(
-                                "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={index} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
-                                function.code.len()
+                                "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={index} bytecodes={} limit={limit}",
+                                function.code.len(), limit = tier_policy::TIERS.wasm.root_function_bytecodes
                             );
                         }
                         return None;
@@ -13313,10 +13306,10 @@ impl<H: Host> Vm<H> {
                 }
             }
             let selected_count = selected.iter().filter(|selected| **selected).count();
-            if selected_count > MAX_JIT_ROOT_FUNCTIONS {
+            if selected_count > tier_policy::TIERS.wasm.root_functions {
                 if diagnostics_enabled {
                     eprintln!(
-                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} functions={selected_count} limit={MAX_JIT_ROOT_FUNCTIONS}"
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} functions={selected_count} limit={limit}", limit = tier_policy::TIERS.wasm.root_functions
                     );
                 }
                 return None;
@@ -13484,11 +13477,11 @@ impl<H: Host> Vm<H> {
             let (body, function_calls, entry) = bodies[index].take()?;
             let body_projected_len = projected_code_len(bytes.len(), body.len())?;
             if let Some(root) = root
-                && body_projected_len > MAX_JIT_ROOT_CODE_BYTES
+                && body_projected_len > tier_policy::TIERS.wasm.root_code_bytes
             {
                 if diagnostics_enabled {
                     eprintln!(
-                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={body_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={body_projected_len} limit={limit}", limit = tier_policy::TIERS.wasm.root_code_bytes
                     );
                 }
                 return None;
@@ -13500,11 +13493,11 @@ impl<H: Host> Vm<H> {
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
             let entry_projected_len = projected_code_len(bytes.len(), entry.len())?;
             if let Some(root) = root
-                && entry_projected_len > MAX_JIT_ROOT_CODE_BYTES
+                && entry_projected_len > tier_policy::TIERS.wasm.root_code_bytes
             {
                 if diagnostics_enabled {
                     eprintln!(
-                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={entry_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={entry_projected_len} limit={limit}", limit = tier_policy::TIERS.wasm.root_code_bytes
                     );
                 }
                 return None;

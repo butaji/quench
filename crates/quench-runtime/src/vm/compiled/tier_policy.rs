@@ -171,6 +171,9 @@ pub(in crate::vm) struct Loops {
     pub(in crate::vm) body_reoptimize_leaves: u16,
     /// The backedges between looks for a loop body's compiling code.
     pub(in crate::vm) body_poll_interval: u16,
+    /// How many elements of an entry array a region samples for Numbers: an observation the
+    /// code checks at every read, not a proof.
+    pub(in crate::vm) sampled_elements: usize,
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
@@ -292,6 +295,16 @@ pub(in crate::vm) struct Wasm {
     pub(in crate::vm) module_clock_interval: u32,
     /// The most bytecodes of a Wasm function a hot-root tier promotion compiles.
     pub(in crate::vm) tier_function_bytecodes: usize,
+    /// The most functions one selective root compiles with it.
+    pub(in crate::vm) root_functions: usize,
+    /// The most bytecodes of one function in a selective root.
+    pub(in crate::vm) root_function_bytecodes: usize,
+    /// The most bytes of native code of one selective root.
+    pub(in crate::vm) root_code_bytes: usize,
+    /// The hot callees a selective root may include from earlier indirect-call executions: the
+    /// profile-guided closure stays bounded so one polymorphic module cannot turn a tier
+    /// promotion into eager compilation.
+    pub(in crate::vm) profiled_indirect_targets: usize,
 }
 
 /// The distinct cases (shapes, callees, targets) a site's feedback keeps before it widens to
@@ -325,7 +338,7 @@ const FLOOR: Tiers = Tiers {
 };
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, body_reoptimize_leaves: 16, body_poll_interval: 16 },
+    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, body_reoptimize_leaves: 16, body_poll_interval: 16, sampled_elements: 64 },
     lane_body: LaneBody {
         warmup_entries: 400,
         reoptimize_share: 1,
@@ -359,6 +372,10 @@ const MEASURED: Tiers = Tiers {
         module_after_millis: 20,
         module_clock_interval: 16,
         tier_function_bytecodes: 2048,
+        root_functions: 128,
+        root_function_bytecodes: 80_000,
+        root_code_bytes: 2 * 1024 * 1024,
+        profiled_indirect_targets: 8,
     },
     limits: Limits {
         js_function: JsFunctionLimits { instructions: 256, registers: 256, parameters: 8, code_bytes: 64 * 1024 },
