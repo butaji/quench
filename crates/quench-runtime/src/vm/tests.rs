@@ -992,6 +992,36 @@ fn hot_bodies_construct_forwarding_classes_from_nested_calls() {
 }
 
 #[test]
+fn forwarded_construct_plans_retire_when_their_prototype_or_method_changes() {
+    // A plan made while hot holds under one dependency: a new method value, a new
+    // prototype object and a replaced method each take the next construction off it.
+    let source = r#"
+      var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+      var V = Class.create();
+      V.prototype = { initialize: function (x, y) { this.x = x; this.y = y; } };
+      function make(i) { return new V(i, 2); }
+      function run(n) { var s = 0; for (var i = 0; i < n; i++) { var v = make(i); s += v.x + v.y; } return s; }
+      function warm() { for (var k = 0; k < 40; k++) { run(300); } }
+      var out = [];
+      warm(); out.push(run(10));
+      V.prototype.initialize = function (x, y) { this.x = x * 10; this.y = y; };
+      out.push(run(10));
+      warm();
+      V.prototype = { initialize: function (x, y) { this.x = -x; this.y = y; } };
+      out.push(run(10));
+      warm();
+      V.prototype.initialize = function (x, y) { this.x = x; this.y = 100; };
+      out.push(run(10));
+      print(out.join());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "retiring-construct-plans.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["65,470,-25,1045"]);
+}
+
+#[test]
 fn lane_constructions_forward_plain_loaded_arguments() {
     // A loop the lane runs constructs through a forwarding constructor
     // (`this.initialize.apply(this, arguments)`): its frameless activation reads the
