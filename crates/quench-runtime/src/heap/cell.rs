@@ -1347,7 +1347,7 @@ pub(crate) struct InlineObjectHeader {
 
 impl InlineObjectHeader {
     /// The inline shape this header stores.
-    pub(crate) fn shape(self) -> u32 {
+    #[inline] pub(crate) fn shape(self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
 
@@ -1652,7 +1652,7 @@ impl ArrayObject {
 
     /// Whether a dead array owns anything its drop frees: extras, or an element allocation
     /// it counts among its backing's owners. Young runs and the empty header need none.
-    pub(crate) fn needs_drop(&self) -> bool {
+    #[inline] pub(crate) fn needs_drop(&self) -> bool {
         self.object.extras_pointer().is_some() || self.elements.owner_count() != 0
     }
 
@@ -1684,7 +1684,7 @@ impl ArrayObject {
 
 impl std::ops::Deref for ArrayObject {
     type Target = Object;
-    fn deref(&self) -> &Object {
+    #[inline] fn deref(&self) -> &Object {
         &self.object
     }
 }
@@ -2152,7 +2152,7 @@ impl Object {
         unsafe { &mut *extras }
     }
 
-    fn extras_mut_existing(&mut self) -> Option<&mut ObjectExtras> {
+    #[inline] fn extras_mut_existing(&mut self) -> Option<&mut ObjectExtras> {
         // SAFETY: as in `extras`, with `&mut self` making the borrow unique.
         self.extras_pointer().map(|extras| unsafe { &mut *extras })
     }
