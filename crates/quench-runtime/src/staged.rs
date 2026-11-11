@@ -456,3 +456,5 @@ pub(crate) enum Step<W, C> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod coverage_tests;
