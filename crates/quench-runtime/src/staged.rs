@@ -30,7 +30,7 @@ pub(crate) mod value;
 mod steps;
 pub(crate) mod effects;
 #[cfg(test)]
-mod trace;
+pub(crate) mod trace;
 #[allow(unused_imports)] // the Stage v2 vocabulary: stencil and UltraJIT stages use the rest
 pub(crate) use effects::{CallTarget, Effects, Region, RegionSet};
 pub(crate) use steps::step;
