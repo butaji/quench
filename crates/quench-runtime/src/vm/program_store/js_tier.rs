@@ -92,6 +92,10 @@ impl JsTier {
         match promotion {
             Some(true) => self.promote(Event::DUE, JsEntryStep::Promote),
             Some(false) if general_candidate => self.promote(Event::GENERALIZE, JsEntryStep::Promote),
+            // The last look found no numeric profile and no general body is wanted: the
+            // function is closed for good, so later entries are no longer counted (as the
+            // `Unsupported` state ended its counting before the tier lifecycle).
+            Some(false) if *entries >= u32::from(u8::MAX) => self.promote(Event::Failed(Refusal::Codegen), JsEntryStep::Count),
             _ => JsEntryStep::Count,
         }
     }
