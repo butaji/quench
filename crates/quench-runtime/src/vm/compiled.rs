@@ -14301,11 +14301,14 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// `isLineBreak`), so a body shorter than this cannot recoup its entries.
 const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
-/// loop, a call (which a plan inlines or binds), or length. A short call-free function never
+/// loop, a call or construction (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
 pub(super) fn lane_body_may_amortize(body: &crate::bytecode::Function) -> bool {
     body.loops() || body.code.len() >= TIERS.lane_body.min_instructions
-        || body.code.iter().any(|packed| super::dispatch_fast::decoded_instruction(body, *packed).op().is_call())
+        || body.code.iter().any(|packed| {
+            let op = super::dispatch_fast::decoded_instruction(body, *packed).op();
+            op.is_call() || op.class().eq(crate::bytecode::Class::Construct)
+        })
 }
 
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's

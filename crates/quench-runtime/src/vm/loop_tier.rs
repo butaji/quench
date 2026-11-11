@@ -298,14 +298,24 @@ const SAMPLED_ELEMENTS: usize = 64;
 /// Numbers (int32 or double, no hole), with that type: an observation (a guess the code checks at
 /// every read), not a proof.
 pub(super) fn number_arrays<H: Host>(vm: &Vm<H>, r: Registers, region: &LoopRegion) -> Vec<(Register, crate::typed_ir::Type)> {
+    region.arrays.iter().filter(|array| array.field.is_none())
+        .filter_map(|array| sample_array(vm, r.get(array.register)).map(|ty| (array.register, ty))).collect()
+}
+
+/// The type the first elements of the array `value` all have, int32 or Number (no hole), sampled:
+/// an observation (a guess the code checks at every read), not a proof.
+/// The array-typed values among `values` (register order), sampled: what a lane body's loops read typed.
+pub(super) fn sampled_arrays<H: Host>(vm: &Vm<H>, values: impl Iterator<Item = Value>) -> Vec<(crate::bytecode::Register, crate::typed_ir::Type)> {
+    values.enumerate().filter_map(|(register, value)| sample_array(vm, value).map(|ty| (register as crate::bytecode::Register, ty))).collect()
+}
+
+pub(super) fn sample_array<H: Host>(vm: &Vm<H>, value: Value) -> Option<crate::typed_ir::Type> {
     use crate::typed_ir::Type;
-    region.arrays.iter().filter(|array| array.field.is_none()).filter_map(|array| {
-        let elements = vm.heap.record_array(r.get(array.register))?.elements().as_slice();
-        let sample = &elements[..elements.len().min(SAMPLED_ELEMENTS)];
-        if sample.is_empty() { return None; }
-        if sample.iter().all(|value| value.as_int().is_some()) { Some((array.register, Type::INT32)) }
-        else { sample.iter().all(|value| value.as_number().is_some()).then_some((array.register, Type::NUMBER)) }
-    }).collect()
+    let elements = vm.heap.record_array(value)?.elements().as_slice();
+    let sample = &elements[..elements.len().min(SAMPLED_ELEMENTS)];
+    if sample.is_empty() { return None; }
+    if sample.iter().all(|value| value.as_int().is_some()) { Some(Type::INT32) }
+    else { sample.iter().all(|value| value.as_number().is_some()).then_some(Type::NUMBER) }
 }
 
 /// The registers of the running activation that hold int32s at entry and that the loop writes:

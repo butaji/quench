@@ -243,14 +243,16 @@ impl OsrFacts {
     }
 }
 
-/// The element reads through an array observed to hold int32s or Numbers, where no earlier body
-/// left (`generic`): typed, each leaving at an element that is not one.
-fn observed_reads(unit: &lane_unit::Unit, observation: &Observation<'_>, generic: &[usize]) -> Vec<super::facts::ObservedRead> {
+/// The element reads through an array observed to hold int32s or Numbers (`number_arrays`), where
+/// no earlier body left (`generic`) and none was `abandoned`: typed, each leaving at an element
+/// that is not one. A lane body's observation is its entry activation's array parameters.
+pub(super) fn observed_reads(unit: &lane_unit::Unit, number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
+    abandoned: &[usize], generic: &[usize]) -> Vec<super::facts::ObservedRead> {
     unit.instructions.iter().enumerate()
-        .filter(|(pc, instruction)| instruction.op().is_get_index() && !observation.abandoned.contains(pc))
+        .filter(|(pc, instruction)| instruction.op().is_get_index() && !abandoned.contains(pc))
         .filter_map(|(pc, instruction)| {
             let register = instruction.operand_b().register_index()?;
-            let ty = observation.number_arrays.iter().find(|(array, _)| *array == register)?.1;
+            let ty = number_arrays.iter().find(|(array, _)| *array == register)?.1;
             // An inlined callee's reads are Numbers whatever the entry showed: its registers
             // hold nothing at entry that the sample could have seen. So is a read that left
             // once: an int32 observation it outgrew widens to Numbers before it is dropped.
@@ -280,7 +282,7 @@ impl LoopPlanner<'_> {
     fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
         unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, (header, backedge): (usize, usize),
         generic: &[usize]) -> Option<super::lane_region::LoweredRegion> {
-        let number_reads = observed_reads(unit, self.observation, generic);
+        let number_reads = observed_reads(unit, self.observation.number_arrays, self.observation.abandoned, generic);
         super::lane_region::RegionSpecializer {
             number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,

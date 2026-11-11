@@ -8134,12 +8134,19 @@ script_handler! {
 /// Counts an entry of `function`'s lane activation toward its lane body (`own`), or, `now`,
 /// specializes it at once, from the targets and callees the program's views hold now. Whether the body
 /// is still warming or specialized (`LaneView::specialize_lane_body`).
-fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32, now: bool) -> bool {
+fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32, now: bool, parameters: &[Value]) -> bool {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
+    // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
+    let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
     let specialize = |work: super::compiled::LaneBodyWork| {
+        let work = match work {
+            super::compiled::LaneBodyWork::Start { generic, shrinks, observed, called, caller, .. } =>
+                super::compiled::LaneBodyWork::Start { generic, shrinks, observed, called, caller, arrays: &arrays },
+            poll => poll,
+        };
         if matches!(work, super::compiled::LaneBodyWork::Start { .. })
             && let Some(outcome) = lane_body_tier::start_gate(vm, own, code.function_get(function as usize))
         {
@@ -8177,7 +8184,7 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)
     {
-        lane_specialize(cx, own, site.function, true);
+        lane_specialize(cx, own, site.function, true, &[]);
         if own.warming() { return site.taken.set(0); }
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
@@ -14837,7 +14844,7 @@ fn lane_tier_enter<H: Host>(
     if vm.programs.js_jit_lane_methods_enabled()
         && let Some(own) = own
     {
-        if !lane_specialize(cx, own, function, false) {
+        if !lane_specialize(cx, own, function, false, parameters) {
             own.release_from_tier();
         }
         return None;
@@ -15559,9 +15566,9 @@ fn lane_body_activate<H: Host>(
     // A target without a body warms toward one by these entries too, as by the lane's own
     // (`lane_specialize`): a constructor only body code constructs is entered by nothing else.
     if own.respecializes() {
-        lane_specialize(cx, own, target.function, true);
+        lane_specialize(cx, own, target.function, true, &[]);
     } else if own.lane_body().is_none() {
-        lane_specialize(cx, own, target.function, false);
+        lane_specialize(cx, own, target.function, false, &[]);
     }
     let Some(method) = own.lane_body().filter(|method| lane_body_admits(cx, method)) else {
         unsafe { (*cx).callee_warming = own.warming() };
