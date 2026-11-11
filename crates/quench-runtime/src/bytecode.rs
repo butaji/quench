@@ -3211,7 +3211,7 @@ impl Operand {
     const TAG_SHIFT: u16 = 14;
     pub(crate) const PAYLOAD_MASK: u16 = (1 << Self::TAG_SHIFT) - 1;
 
-    pub(crate) const fn kind(self) -> Option<OperandKind> {
+    #[inline] pub(crate) const fn kind(self) -> Option<OperandKind> {
         match self.0 >> Self::TAG_SHIFT {
             tag if tag == OperandKind::Register as u16 => Some(OperandKind::Register),
             tag if tag == OperandKind::Constant as u16 => Some(OperandKind::Constant),
@@ -3244,7 +3244,7 @@ impl Operand {
         self.0 >> Self::TAG_SHIFT
     }
 
-    pub(crate) fn payload(self) -> u16 {
+    #[inline] pub(crate) fn payload(self) -> u16 {
         self.0 & Self::PAYLOAD_MASK
     }
 

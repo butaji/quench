@@ -246,7 +246,7 @@ impl FlatUnits {
     }
 
     /// Whether the units are known to be ASCII; a wide slice may be, but is not known to be.
-    pub(crate) fn is_ascii(&self) -> bool {
+    #[inline] pub(crate) fn is_ascii(&self) -> bool {
         !matches!(self, Self::Wide(_) | Self::WideSlice(_) | Self::WidePrefix(..))
     }
 
