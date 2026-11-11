@@ -70,9 +70,10 @@ fn compile(plan: &NativePlan) -> Option<Vec<u8>> {
     .ok()
 }
 
-/// `code` in executable memory, as a native search (`publish_entry`).
+/// `code` in executable memory, as a native search.
 fn publish(code: &[u8]) -> Option<NativeCode> {
-    let (memory, entry) = super::compiled::publish_entry::<NativeFn>(code)?;
+    // SAFETY: the code is a function of `NativeFn`'s signature, which `emit` builds.
+    let (memory, entry) = super::compiled::publish_code(code, "regexp-native", |pointer| unsafe { std::mem::transmute::<*mut u8, NativeFn>(pointer) })?;
     Some(NativeCode { entry, keep: Box::new(memory) })
 }
 

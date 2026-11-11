@@ -85,7 +85,7 @@ pub(super) use object_slots::{InheritedConstant, NativeFieldLoad};
 #[cfg(feature = "aot")]
 mod scalar_region;
 mod code_heap;
-pub(super) use code_heap::{CodeMemory, CODE_GRANULE};
+pub(super) use code_heap::{publish_code, CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
 #[path = "compiled/general_call.rs"]
@@ -6226,12 +6226,9 @@ fn dump_native_bytes(directory: &std::path::Path, header: u32, bytes: &[u8], add
 
 /// Publishes compiled `code` of a function lowered with `native_entry_signature` to
 /// executable memory, and its entry.
-pub(in crate::vm) fn publish_entry<E: Copy>(code: &[u8]) -> Option<(CodeMemory, E)> {
-    let memory = CodeMemory::new(code)?;
-    write_perf_map("js-native", memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
+fn publish_entry(code: &[u8]) -> Option<(CodeMemory, Entry)> {
     // SAFETY: callers lower the function with `native_entry_signature`.
-    let entry = unsafe { std::mem::transmute_copy::<*mut u8, E>(&memory.pointer()) };
-    Some((memory, entry))
+    publish_code(code, "js-native", |pointer| unsafe { std::mem::transmute::<*mut u8, Entry>(pointer) })
 }
 
 /// Whole-program globals a frozen image may fold: a `var` the program writes exactly
