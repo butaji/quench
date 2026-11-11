@@ -691,11 +691,11 @@ impl<'a, 'f> Lowering<'a, 'f> {
     // The word vocabulary of the native-call lowerings (`lane_region/direct_*.rs`).
     fn word_load(&mut self, base: ir::Value, offset: i32) -> ir::Value { self.ins().load(types::I64, MemFlagsData::trusted(), base, offset) }
     fn word_store(&mut self, value: ir::Value, base: ir::Value, offset: i32) { self.ins().store(MemFlagsData::trusted(), value, base, offset); }
-    fn word_const(&mut self, bits: i64) -> ir::Value { self.ins().iconst(types::I64, bits) }
+    fn word_const(&mut self, bits: i64) -> ir::Value { self.int_const(types::I64, bits) }
+    fn int_const(&mut self, ty: ir::Type, bits: i64) -> ir::Value { self.ins().iconst(ty, bits) }
     fn word_add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().iadd(a, b) }
     fn word_add_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().iadd_imm_u(a, imm) }
     fn word_mul_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().imul_imm_u(a, imm) }
-    fn word_and(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().band(a, b) }
     fn word_or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().bor(a, b) }
     fn word_select(&mut self, test: ir::Value, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().select(test, a, b) }
     fn word_cmp(&mut self, cc: IntCC, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().icmp(cc, a, b) }
@@ -2168,7 +2168,8 @@ impl Lowering<'_, '_> {
             #[cfg(feature = "aot")]
             LaneHelpers::Linked(..) => unreachable!("helper table bound before entry facts"),
         };
-        let receiver = emit_lane_receiver(&mut self.builder, self.payload, this_bits);
+        let accesses_fields = self.accesses_fields(instructions);
+        let receiver = if accesses_fields { emit_lane_receiver(&mut self.builder, self.payload, this_bits) } else { self.absent_receiver() };
         let this = self.builder.declare_var(types::I64);
         self.builder.def_var(this, this_bits);
         let mut receiver_shapes = BTreeMap::new();
@@ -2211,8 +2212,7 @@ impl Lowering<'_, '_> {
         self.builder.def_var(capture_values, values);
         self.builder.def_var(capture_len, len);
         let mut miss = None;
-        let object_table = instructions.iter().enumerate().any(|(pc, instruction)|
-            self.facts.reached(pc) && instruction.op().is_named_field_access())
+        let object_table = accesses_fields
             .then(|| {
                 let base = emit_js_payload_word(&mut self.builder, self.payload,
                     std::mem::offset_of!(JsStepDispatch, object_record_base));
@@ -4280,7 +4280,7 @@ impl Lowering<'_, '_> {
             return self.field_probe(state, probe_owner, object_bits, read, exit);
         }
         let owner = if receiver { None } else { register };
-        let probed = self.left_here || self.left_a_field_read() || NativeFieldLoad::probes_misses(&shapes);
+        let probed = self.probes_field_misses(&shapes);
         self.probed_read(state, owner, probe_owner, probed, object_bits, read, exit, |lowering, state, generic| {
             let (object, shape, inline) = if receiver {
                 let entry = lowering.entry.as_ref().expect("entry facts");
@@ -4306,6 +4306,11 @@ impl Lowering<'_, '_> {
         })
     }
 
+    /// Whether a read of these shapes asks the VM's caches on a guard miss rather than leaves.
+    fn probes_field_misses(&self, shapes: &[NativeFieldLoad]) -> bool {
+        self.left_here || self.left_a_field_read() || NativeFieldLoad::probes_misses(shapes)
+    }
+
     /// Whether a previous body left at some field read of this unit: its shapes were not all
     /// seen when it was planned, so every read now asks the VM's caches on a guard miss rather
     /// than leave, as this unit's other reads would leave one recompile at a time.
@@ -4321,7 +4326,7 @@ impl Lowering<'_, '_> {
         if shapes.is_empty() {
             return Some(self.field_probe(state, FieldOwner::Temporary, object_bits, read, exit));
         }
-        let probed = self.left_here || self.left_a_field_read() || NativeFieldLoad::probes_misses(&shapes);
+        let probed = self.probes_field_misses(&shapes);
         Some(self.probed_read(state, None, FieldOwner::Temporary, probed, object_bits, read, exit, |lowering, state, generic| {
             let records = lowering.object_table_base();
             let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));

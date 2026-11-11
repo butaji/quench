@@ -15381,24 +15381,11 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return lane_body_stats::miss(lane_body_stats::Miss::ConstructReturning);
     }
+    let Some(target) = lane_construct_target(cx, vm, callee) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
+    // A forwarding constructor is built by its forwarded initializer's plan or not at all here.
+    if target.forwards() { return lane_body_forwarded(vm, callee, r, i); }
     // The rest activates the constructor, which native windows below would need shadow frames for.
     if Vm::<H>::lane_shadow_active() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructShadowActive); }
-    // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
-    let target = vm.script_call_entry(callee).map(|entry| unsafe { *entry }).or_else(|| {
-        // An uncached constructor resolves as the lane's own construction does.
-        // SAFETY: the context's program outlives the lane run.
-        vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(|target| target.program == vm.active_program)
-    });
-    let Some(target) = target else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
-    // A forwarding constructor (`this.initialize.apply(this, arguments)`) is built by its
-    // forwarded initializer's plan, as the lane's keeping construction does first; where none
-    // holds, the lane's own construction runs it, which this one does not.
-    if target.forwards() {
-        let Some(this) = lane_forwarded_fields(vm, callee, lane_construct_argument(r, i)) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructForwarding) };
-        note_allocation(vm);
-        r.set(i.a & crate::bytecode::REGISTER_MASK, this);
-        return LANE_CALL_COMPLETED;
-    }
     if !target.constructs { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructor); }
     // The activation of the lane's own construction (`lane_script_construct`): a target that
     // keeps or gathers values, or is passed more than it has parameters, by the keeping form.
@@ -15423,6 +15410,24 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     // SAFETY: a construction passes its arguments from register `c` on.
     let passed = unsafe { r.0.add(usize::from(i.c)).cast_const() };
     lane_body_activate(cx, r, ip, &target, passed, argc, this, true, how)
+}
+
+/// The target a lane body's `new` of `callee` activates: its cached entry, else the one the
+/// lane's own construction resolves for a function of the running program.
+fn lane_construct_target<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, callee: Value) -> Option<ScriptCallTarget> {
+    // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
+    vm.script_call_entry(callee).map(|entry| unsafe { *entry }).or_else(|| {
+        // SAFETY: the context's program outlives the lane run.
+        vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(|target| target.program == vm.active_program)
+    })
+}
+
+/// A forwarding constructor's fields, built by its forwarded initializer's plan.
+fn lane_body_forwarded<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> u64 {
+    let Some(this) = lane_forwarded_fields(vm, callee, lane_construct_argument(r, i)) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructForwarding) };
+    note_allocation(vm);
+    r.set(i.a & crate::bytecode::REGISTER_MASK, this);
+    super::compiled::LANE_CALL_COMPLETED
 }
 
 /// The target a lane body's call of `callee` activates: the site's linked entry, else the one
