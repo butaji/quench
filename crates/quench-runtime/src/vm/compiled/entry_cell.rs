@@ -37,6 +37,7 @@ impl EntryCell {
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires.
     pub(in crate::vm) fn publish(&self, method: &PublishedLaneMethod, pin: usize) {
         let Some(body) = method.lease() else { return };
+        super::reserve_lane_scratch(body.scratch_width);
         self.recovery.set(std::ptr::addr_of!(body.recovery_space).addr());
         self.pin.set(pin);
         self.entry.set(body.entry_address());
