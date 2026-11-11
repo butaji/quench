@@ -37,12 +37,10 @@ pub(super) fn mark_flat_if_new(records: &ParallelRecordMarks<'_, JsString>, reco
     flat
 }
 
+#[inline]
 fn push_parts(string: &JsString, work: &mut Vec<Value>) {
     if let Some(parts) = string.parts() {
-        work.extend(parts.each().filter_map(|part| match part {
-            Part::Text(record_id) => Some(Value::direct_string(record_id)),
-            Part::Number(_) => None,
-        }));
+        parts.for_each_text(|record_id| work.push(Value::direct_string(record_id)));
     }
 }
 
