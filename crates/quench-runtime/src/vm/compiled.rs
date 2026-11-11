@@ -7090,9 +7090,6 @@ impl<H: Host> Vm<H> {
                 field_entries: self.program_field_entries(program).unwrap_or(0),
                 lane_context: lane_context.addr(),
                 native_registers: registers,
-                receiver: receiver.to_bits(),
-                capture_values,
-                capture_len,
                 residual: residual as *const ResidualProgram as usize,
             }
             .install(&mut *dispatch);
@@ -7125,10 +7122,10 @@ impl<H: Host> Vm<H> {
             let context = unsafe { &mut *context };
             context.bind_native_adapter(context.adapter_payload,
                 self.execution_interrupt.atomic_flag() as *const _, poll);
-            unsafe { enter_native(context, 0, 0, registers.cast_const().cast(),
+            unsafe { enter_native(context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast(),
                 &mut word, NativeEntryMode::Resumable, method.entry) }
         } else {
-            unsafe { (method.entry)(&mut *context, 0, 0, registers.cast_const().cast(), &mut word) }
+            unsafe { (method.entry)(&mut *context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast(), &mut word) }
         };
         if status == LANE_BODY_RETURNED {
             // SAFETY: as above; the body wrote the record before it returned.
@@ -7294,9 +7291,6 @@ struct LaneEntry {
     field_entries: usize,
     lane_context: usize,
     native_registers: *mut Value,
-    receiver: u64,
-    capture_values: *const Value,
-    capture_len: usize,
     residual: usize,
 }
 
@@ -7307,9 +7301,6 @@ impl LaneEntry {
             field_entries: dispatch.field_entries,
             lane_context: dispatch.lane_context,
             native_registers: dispatch.native_registers,
-            receiver: dispatch.receiver,
-            capture_values: dispatch.capture_values,
-            capture_len: dispatch.capture_len,
             residual: dispatch.residual,
         }
     }
@@ -7319,9 +7310,6 @@ impl LaneEntry {
         dispatch.field_entries = self.field_entries;
         dispatch.lane_context = self.lane_context;
         dispatch.native_registers = self.native_registers;
-        dispatch.receiver = self.receiver;
-        dispatch.capture_values = self.capture_values;
-        dispatch.capture_len = self.capture_len;
         dispatch.residual = self.residual;
     }
 }

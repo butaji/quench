@@ -37,6 +37,7 @@ impl EntryCell {
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires.
     pub(in crate::vm) fn publish(&self, method: &PublishedLaneMethod, pin: usize) {
         let Some(body) = method.lease() else { return };
+        reserve_lane_scratch(body.scratch_width);
         self.recovery.set(std::ptr::addr_of!(body.recovery_space).addr());
         self.pin.set(pin);
         self.entry.set(body.entry_address());
@@ -46,5 +47,32 @@ impl EntryCell {
     pub(in crate::vm) fn withdraw(&self) {
         self.entry.set(Self::stub());
         self.recovery.set(std::ptr::addr_of!(NO_RECOVERY).addr());
+    }
+}
+
+/// Bits of a capture word that hold the dense slots' address; the slot count sits above them
+/// (a user-space address fits 48 bits).
+pub(super) const CAPTURE_ADDRESS_BITS: u32 = 48;
+/// The mask of those bits.
+pub(super) const CAPTURE_ADDRESS_MASK: i64 = (1 << CAPTURE_ADDRESS_BITS) - 1;
+
+/// The one word a body's entry takes its captures in: the dense slots' address and count.
+pub(in crate::vm) fn capture_word(values: *const Value, len: usize) -> u64 {
+    debug_assert!(values.addr() >> CAPTURE_ADDRESS_BITS == 0 && len >> (u64::BITS - CAPTURE_ADDRESS_BITS) == 0);
+    values.addr() as u64 | (len as u64) << CAPTURE_ADDRESS_BITS
+}
+
+/// Grows the scratch window to `width` registers for a body native code may call: an
+/// inlined leave inside it fills its window, which the run that entered the outermost
+/// body sized for that body alone.
+pub(super) fn reserve_lane_scratch(width: usize) {
+    let frame = super::lane_frame();
+    // SAFETY: as `lane_frame`; native code reads the window's address from the dispatch
+    // record at each use, so the record follows a resize.
+    unsafe {
+        if (*frame).scratch.len() < width {
+            (*frame).scratch.resize(width, Value::UNDEFINED);
+            (*frame).dispatch.inlined = (*frame).scratch.as_mut_ptr().addr();
+        }
     }
 }
