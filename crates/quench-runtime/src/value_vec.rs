@@ -2,7 +2,7 @@ use crate::Value;
 use crate::typed_ir::SlotType;
 use rustc_hash::FxHashMap;
 
-mod buffer;
+mod buffer; mod plan_values;
 mod subscribe;
 use buffer::PropertyBuffer;
 pub(crate) use buffer::NATIVE_PROPERTY_BUFFER_LAYOUT;
