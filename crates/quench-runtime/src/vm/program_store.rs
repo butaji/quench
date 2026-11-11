@@ -3319,7 +3319,7 @@ impl Drop for ProgramStore {
                     eprintln!("{line}");
                 } else {
                     let (state, entries, claimed, warming) = view.lane_body_detail();
-                    eprintln!("QUENCH_LANE_STATE {{\"program\":{program},\"function\":{function},\"state\":\"{state}\",\"entries\":{entries:?},\"claimed\":{claimed},\"warming\":{warming},\"declined\":\"{}\"}}", view.body_stats.declined.get());
+                    eprintln!("QUENCH_LANE_STATE {{\"program\":{program},\"function\":{function},\"state\":\"{state}\",\"entries\":{},\"claimed\":{claimed},\"warming\":{warming},\"declined\":\"{}\"}}", entries.map_or(String::from("null"), |entries| entries.to_string()), view.body_stats.declined.get());
                 }
             }
         }
