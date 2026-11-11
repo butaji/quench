@@ -52,8 +52,6 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
 
 /// The word the loop entry record holds at the per-site byte `offset`: a field value the loop's
 /// entry recorded (`LoopEntry`), written before the run and never during it.
-// Read by the f-jit stencil generator (thread 7), which replaces its hand `field` with this row.
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
     stage.load_site(entry, offset)
@@ -62,8 +60,6 @@ pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm
 /// The dense backing of an array the loop entry recorded: its first value, at the per-site
 /// byte `offset` of the entry record (which never changes during a run, so the load is of an
 /// immutable table), and its length, read from the backing's header.
-// Read by the f-jit stencil generator (thread 7), which replaces its hand `entry_view` with this row.
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
@@ -71,14 +67,6 @@ pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::
     let values = stage.load_table(address);
     let length = stage.load_u32(values, ARRAY.header_length_offset as i32 - ARRAY.header_values_offset as i32);
     (values, length)
-}
-
-/// The word at byte offset `at` of the loop entry record `entry`: a field's value the loop
-/// holds there, which its field stores rewrite (so, unlike `entry_backing_at`, no merged load). `entry_word` is the same row for an offset the stage holds as an immediate; a stencil's offset is a hole, a word.
-#[inline(always)]
-pub(crate) fn entry_word_at<S: Stage>(stage: &mut S, entry: S::Word, at: S::Word) -> S::Word {
-    let address = stage.add(entry, at);
-    stage.load_u64(address, 0)
 }
 
 /// The interpreter's reading of `own_read_entry` over a site table entry.

@@ -445,7 +445,7 @@ mod tests {
 pub(super) use crate::staged::PackedAccess;
 use crate::staged::{Form, Layout, Slots};
 mod emit;
-pub(super) use emit::Emit;
+pub(super) use emit::{Emit, EmitImm};
 
 /// A projection for a guarded receiver and exact shape: `staged::own_layout`'s residual. It may
 /// only be reused while no admitted effect can change its layout, arena base or object lifetime.

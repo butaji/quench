@@ -8,6 +8,7 @@
 //! 0 with nothing written, so the interpreter runs the instruction.
 
 use super::{emit_dense_array_view, DenseArrayView, emit_dense_element, emit_dense_element_replace, emit_js_payload_word, CallContext, JsStepDispatch};
+use super::object_slots::EmitImm;
 use crate::staged::{self, Stage};
 use cranelift_codegen::ir;
 use quench_fastjit::numeric::{self, Place};
@@ -57,12 +58,12 @@ fn capture(b: &mut StencilBuilder, payload: ir::Value, slot: u16, miss: ir::Bloc
     staged::environment::dense_capture(&mut stage, values, len, slot, miss).expect("the emit stage continues past its guards")
 }
 
-/// The view of the array whose entry-record element pointer sits at `hole` (`staged::elements::entry_backing_at`).
+/// The view of the array whose entry-record element pointer sits at `hole` (`staged::entry::entry_backing`).
 fn entry_view(b: &mut StencilBuilder, payload: ir::Value, hole: u32, writable: bool) -> DenseArrayView {
     let entry = emit_js_payload_word(b.b, payload, std::mem::offset_of!(JsStepDispatch, loop_entry));
     let at = b.operand(Operand::Hole(hole), Ty::I64);
-    let backing = staged::elements::entry_backing_at(&mut super::object_slots::emit(b.b), entry, at);
-    DenseArrayView { values: backing.values, length: backing.length, writable, uncounted: false }
+    let (values, length) = staged::entry::entry_backing(&mut super::object_slots::emit(b.b), entry, EmitImm::Value(at));
+    DenseArrayView { values, length, writable, uncounted: false }
 }
 
 fn element(b: &mut StencilBuilder, payload: ir::Value, row: HeapRow, miss: ir::Block) -> ir::Value {
@@ -93,7 +94,7 @@ fn store(b: &mut StencilBuilder, payload: ir::Value, row: HeapRow, miss: ir::Blo
 fn field(b: &mut StencilBuilder, payload: ir::Value) -> ir::Value {
     let entry = emit_js_payload_word(b.b, payload, std::mem::offset_of!(JsStepDispatch, loop_entry));
     let at = b.operand(Operand::Hole(1), Ty::I64);
-    staged::entry::entry_word_at(&mut super::object_slots::emit(b.b), entry, at)
+    staged::entry::entry_word(&mut super::object_slots::emit(b.b), entry, EmitImm::Value(at))
 }
 
 fn emit(b: &mut StencilBuilder, row: HeapRow) {

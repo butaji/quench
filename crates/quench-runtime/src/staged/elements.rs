@@ -31,21 +31,6 @@ pub(crate) struct Backing<W> {
     pub(crate) length: W,
 }
 
-/// The backing of the array whose element pointer sits in the loop entry record `entry` at
-/// byte offset `at`: the entry's words are written before a run and never during it (so the
-/// pointer load may merge), and the backing never moves in it. The length is read from the
-/// backing's header. The entry names no array record, so `record` is the header: a caller
-/// needing the record's own flags (`writable_backing`) proved them at entry.
-#[inline(always)]
-pub(crate) fn entry_backing_at<S: Stage>(stage: &mut S, entry: S::Word, at: S::Word) -> Backing<S::Word> {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let address = stage.add(entry, at);
-    let values = stage.load_table(address);
-    let header = stage.add_imm(values, (ARRAY.header_values_offset as u64).wrapping_neg());
-    let length = stage.load_u32(header, ARRAY.header_length_offset as i32);
-    Backing { record: header, header, values, length }
-}
-
 /// The backing of the direct array `base` among the array records at `record_base`: `None`
 /// (leaving at `miss`) for any other value, or before the first array record exists
 /// (`record_base` zero). The record's address is its index, `base`'s low half, times the

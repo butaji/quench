@@ -13,16 +13,39 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
     pub(in crate::vm::compiled) property_values: Option<ir::Value>,
 }
 
+/// An immediate of the Cranelift stage: a constant, or a value the caller holds as one (a stencil's
+/// patch hole, which is an operand until the patcher fills it).
+#[derive(Clone, Copy)]
+pub(in crate::vm::compiled) enum EmitImm {
+    Const(u64),
+    Value(ir::Value),
+}
+
+impl From<u64> for EmitImm { fn from(bits: u64) -> Self { Self::Const(bits) } }
+impl From<u32> for EmitImm { fn from(bits: u32) -> Self { Self::Const(u64::from(bits)) } }
+
+impl Emit<'_, '_> {
+    /// `imm` as an operand: Cranelift folds a constant operand back into the instruction's immediate.
+    fn word(&mut self, imm: EmitImm) -> ir::Value {
+        match imm { EmitImm::Const(bits) => self.constant(bits), EmitImm::Value(value) => value }
+    }
+}
+
 impl Stage for Emit<'_, '_> {
     type Proof = super::super::EmitProof;
     type Word = ir::Value;
     /// Any integer: nonzero holds.
     type Cond = ir::Value;
     type Miss = ir::Block;
-    type Imm = u64;
+    type Imm = EmitImm;
 
-    fn site(&mut self, v: u64) -> u64 { v }
-    fn load_site(&mut self, base: ir::Value, offset: u64) -> ir::Value { self.load_u64(base, offset as i32) }
+    fn site(&mut self, v: u64) -> EmitImm { EmitImm::Const(v) }
+    fn load_site(&mut self, base: ir::Value, offset: EmitImm) -> ir::Value {
+        match offset {
+            EmitImm::Const(bits) => self.load_u64(base, bits as i32),
+            EmitImm::Value(value) => { let address = self.add(base, value); self.load_u64(address, 0) }
+        }
+    }
     fn shape_in_site(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value { self.shape_in(shape, shapes) }
 
     fn constant(&mut self, bits: u64) -> ir::Value { self.builder.ins().iconst(types::I64, bits as i64) }
@@ -37,18 +60,39 @@ impl Stage for Emit<'_, '_> {
     }
     fn add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().iadd(a, b) }
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
-    fn add_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value { self.builder.ins().iadd_imm_u(a, imm.into() as i64) }
-    fn mul_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value { self.builder.ins().imul_imm_u(a, imm.into() as i64) }
-    fn and_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value { self.builder.ins().band_imm_u(a, imm.into() as i64) }
-    fn or_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value { self.builder.ins().bor_imm_u(a, imm.into() as i64) }
-    fn shr_imm(&mut self, a: ir::Value, shift: impl Into<u64>) -> ir::Value { self.builder.ins().ushr_imm_u(a, shift.into() as i64) }
+    fn add_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
+        let v = self.word(imm.into());
+        self.builder.ins().iadd(a, v)
+    }
+    fn mul_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
+        let v = self.word(imm.into());
+        self.builder.ins().imul(a, v)
+    }
+    fn and_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
+        let v = self.word(imm.into());
+        self.builder.ins().band(a, v)
+    }
+    fn or_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
+        let v = self.word(imm.into());
+        self.builder.ins().bor(a, v)
+    }
+    fn shr_imm(&mut self, a: ir::Value, shift: impl Into<EmitImm>) -> ir::Value {
+        let v = self.word(shift.into());
+        self.builder.ins().ushr(a, v)
+    }
     fn sar32_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value {
         let low = self.builder.ins().ireduce(types::I32, a);
         let shifted = self.builder.ins().sshr_imm_u(low, i64::from(shift));
         self.builder.ins().uextend(types::I64, shifted)
     }
-    fn eq_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, imm.into() as i64) }
-    fn ne_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::NotEqual, a, imm.into() as i64) }
+    fn eq_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
+        let v = self.word(imm.into());
+        self.builder.ins().icmp(IntCC::Equal, a, v)
+    }
+    fn ne_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
+        let v = self.word(imm.into());
+        self.builder.ins().icmp(IntCC::NotEqual, a, v)
+    }
     fn sub(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().isub(a, b) }
     fn select(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
         self.builder.ins().select(cond, then, otherwise)
@@ -63,7 +107,7 @@ impl Stage for Emit<'_, '_> {
         // Native code keeps the helper for stores: an id is never below itself.
         self.ult(record_id, record_id)
     }
-    fn assumption(&mut self, _watch: u64) -> ir::Value {
+    fn assumption(&mut self, _watch: EmitImm) -> ir::Value {
         // No assumption registry reaches emitted code yet: the read leaves at its miss.
         let zero = self.constant(0);
         self.ne_imm(zero, 0u32)
@@ -74,8 +118,9 @@ impl Stage for Emit<'_, '_> {
     fn uextend32(&mut self, a: ir::Value) -> ir::Value {
         if self.builder.func.dfg.value_type(a) == types::I32 { self.builder.ins().uextend(types::I64, a) } else { a }
     }
-    fn ugt_imm(&mut self, a: ir::Value, imm: impl Into<u64>) -> ir::Value {
-        self.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, a, imm.into() as i64)
+    fn ugt_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
+        let v = self.word(imm.into());
+        self.builder.ins().icmp(IntCC::UnsignedGreaterThan, a, v)
     }
     fn not(&mut self, cond: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, cond, 0) }
     fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
