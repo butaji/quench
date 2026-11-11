@@ -4,7 +4,8 @@
 //! on a stack of its own. A search the native code cannot finish (its stack is full) is run
 //! again by the interpreter from the same start.
 use super::{Assertion, AssertionTest, Inst, MatchSet, Program, Search, Text, UnitTest, ASCII_UNITS};
-use std::cell::{Cell, OnceCell};
+use std::cell::{Cell, OnceCell, RefCell};
+use std::task::Poll;
 use std::sync::OnceLock;
 
 /// What one ASCII unit must be: a literal at or past 128 matches no ASCII unit.
@@ -88,8 +89,15 @@ pub struct NativeCode {
 #[derive(Clone, Copy)]
 pub struct NativeCompiler {
     pub runs: u32,
-    pub compile: fn(&NativePlan) -> Option<NativeCode>,
+    /// Starts compiling a plan, which the search polls for its code while the interpreter runs.
+    pub start: fn(NativePlan) -> NativeBuild,
 }
+
+/// A compile in progress: polled for the code, or `Ready(None)` where it has none.
+pub type NativeBuild = Box<dyn FnMut() -> Poll<Option<NativeCode>>>;
+
+/// A building program asks its compile again on every this-many searches.
+const POLL_EVERY: u32 = 64;
 
 static COMPILER: OnceLock<NativeCompiler> = OnceLock::new();
 
@@ -114,6 +122,7 @@ pub fn set_native_compiler(compiler: NativeCompiler) {
 pub(super) struct NativeSlot {
     runs: Cell<u32>,
     code: OnceCell<Option<NativeCode>>,
+    building: RefCell<Option<NativeBuild>>,
 }
 
 /// The frames a native search starts with room for, and the most a search may grow it to.
@@ -197,12 +206,24 @@ impl Program {
     #[inline(never)]
     fn native_counted(&self) -> Option<&NativeCode> {
         let compiler = COMPILER.get().filter(|_| ENABLED.get())?;
-        let runs = self.native.runs.get() + 1;
+        let runs = self.native.runs.get().saturating_add(1);
         self.native.runs.set(runs);
         if runs < compiler.runs {
             return None;
         }
-        let code = self.native_plan().and_then(|plan| (compiler.compile)(&plan));
+        let mut building = self.native.building.borrow_mut();
+        if building.is_none() {
+            let Some(plan) = self.native_plan() else {
+                return self.native.code.get_or_init(|| None).as_ref();
+            };
+            *building = Some((compiler.start)(plan));
+        } else if runs % POLL_EVERY != 0 {
+            return None;
+        }
+        let Some(Poll::Ready(code)) = building.as_mut().map(|build| build()) else {
+            return None;
+        };
+        *building = None;
         self.native.code.get_or_init(|| code).as_ref()
     }
 

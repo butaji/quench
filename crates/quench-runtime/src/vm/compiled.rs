@@ -11634,13 +11634,13 @@ fn compile_built(
             .relocs()
             .iter()
             .map(|relocation| {
-                let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
+                let cranelift_codegen::RelocTarget::ExternalName(ir::ExternalName::User(
                     name,
-                )) = relocation.target
+                )) = &relocation.target
                 else {
                     return None;
                 };
-                let name = names.get(name)?;
+                let name = names.get(*name)?;
                 (name.namespace == FUNCTION_NAMESPACE).then_some(Call {
                     offset: relocation.offset as usize,
                     kind: relocation.kind,
