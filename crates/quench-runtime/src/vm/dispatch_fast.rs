@@ -807,6 +807,7 @@ impl ActivationShape {
 
 /// Storage and guest-call allowance proved before an inlined body runs.
 #[derive(Clone, Copy, Default)]
+#[repr(C)]
 pub(super) struct LaneRecoverySpace {
     pub(super) values: usize,
     pub(super) activations: usize,
@@ -7921,8 +7922,12 @@ script_handler! {
         }
         // A loop its region takes whole (no call it leaves at) stays the region's, which hoists
         // the typed element views a lane body does not yet.
+        // A loop with calls takes the shared OSR region with its callees inlined where that
+        // resolves (`lane_inlining_region`); the function's lane body only where inlining was
+        // declined, or where the region analysis failed for a reason other than a call.
         let body_loop = unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
-            && (!site.call_boundary_pcs.is_empty() || site.analysis_failure.is_some());
+            && if site.call_boundary_pcs.is_empty() { site.analysis_failure.is_some() }
+                else { site.inline_region.get().is_some_and(Option::is_none) };
         if body_loop && let Some(attempt) = lane_loop_body::<H>(cx, r, ip, site)
         {
             match attempt {
@@ -8062,15 +8067,15 @@ fn lane_loop_native<H: Host>(
 fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     let machine = unsafe { vm(cx) };
-    let arithmetic = machine.programs.get(machine.active_program).as_deref().is_some_and(|program| {
+    let counted = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
         let body = program.function(site.function() as usize);
-        body.code.get(pc as usize).is_some_and(|packed| {
+        body.code.get(pc as usize).and_then(|packed| {
             let op = decoded_instruction(body, *packed).op();
-            op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
-                || matches!(op.class(), Class::LoadCapture)
+            (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
+                || matches!(op.class(), Class::LoadCapture)).then(|| op.is_get_index())
         })
     });
-    if arithmetic { site.tier.borrow_mut().left_at(pc); }
+    if let Some(read) = counted { site.tier.borrow_mut().left_at(pc, read); }
 }
 
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
@@ -15382,10 +15387,11 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return lane_body_stats::miss(lane_body_stats::Miss::ConstructReturning);
     }
+    let Some(target) = lane_construct_target(cx, vm, callee) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
+    // A forwarding constructor is built by its forwarded initializer's plan or not at all here.
+    if target.forwards() { return lane_body_forwarded(vm, callee, r, i); }
     // The rest activates the constructor, which native windows below would need shadow frames for.
     if Vm::<H>::lane_shadow_active() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructShadowActive); }
-    // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
-    let Some(target) = vm.script_call_entry(callee).map(|entry| unsafe { *entry }) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
     if !target.constructs { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructor); }
     // The activation of the lane's own construction (`lane_script_construct`): a target that
     // keeps or gathers values, or is passed more than it has parameters, by the keeping form.
@@ -15410,6 +15416,24 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     // SAFETY: a construction passes its arguments from register `c` on.
     let passed = unsafe { r.0.add(usize::from(i.c)).cast_const() };
     lane_body_activate(cx, r, ip, &target, passed, argc, this, true, how)
+}
+
+/// The target a lane body's `new` of `callee` activates: its cached entry, else the one the
+/// lane's own construction resolves for a function of the running program.
+fn lane_construct_target<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, callee: Value) -> Option<ScriptCallTarget> {
+    // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
+    vm.script_call_entry(callee).map(|entry| unsafe { *entry }).or_else(|| {
+        // SAFETY: the context's program outlives the lane run.
+        vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(|target| target.program == vm.active_program)
+    })
+}
+
+/// A forwarding constructor's fields, built by its forwarded initializer's plan.
+fn lane_body_forwarded<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> u64 {
+    let Some(this) = lane_forwarded_fields(vm, callee, lane_construct_argument(r, i)) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructForwarding) };
+    note_allocation(vm);
+    r.set(i.a & crate::bytecode::REGISTER_MASK, this);
+    super::compiled::LANE_CALL_COMPLETED
 }
 
 /// The target a lane body's call of `callee` activates: the site's linked entry, else the one

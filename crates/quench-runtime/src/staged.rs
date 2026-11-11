@@ -28,6 +28,9 @@ pub(crate) mod environment;
 pub(crate) mod ic;
 pub(crate) mod object;
 pub(crate) mod store;
+pub(crate) mod holder;
+pub(crate) mod call;
+pub(crate) mod construct;
 pub(crate) mod value;
 mod steps;
 pub(crate) use steps::step;
@@ -92,6 +95,11 @@ pub(crate) trait Stage {
     /// one the barrier logs for this value. The one place the store barrier's layout is read;
     /// a stage without that layout answers no, and the store leaves at its miss.
     fn store_gate(&mut self, record_id: Self::Word, value: Self::Word) -> Self::Cond;
+    /// Whether the dependency named by `watch` (a per-site operand) still holds: the interpreter
+    /// tests it, a specializer proves it once at publication and its code pays no check (the
+    /// assumption registry retires the code when it breaks); a stage without a registry answers
+    /// no, and the read leaves at its miss.
+    fn assumption(&mut self, watch: Self::Imm) -> Self::Cond;
     fn not(&mut self, cond: Self::Cond) -> Self::Cond;
     /// Whether either condition holds.
     fn any(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
@@ -107,6 +115,18 @@ pub(crate) trait Stage {
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
         otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
+    /// `choose` whose arms may leave: each runs only on its own path, and a `None` from the taken
+    /// arm (a guard inside it that failed) leaves the whole. The interpreter takes one arm as a
+    /// plain `if`; a specializer's guard inside an arm is a branch to its miss block, so the arm's
+    /// own cold path costs nothing on the other.
+    #[inline(always)]
+    fn choose_leaving(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Option<Self::Word>,
+        otherwise: impl FnOnce(&mut Self) -> Option<Self::Word>) -> Option<Self::Word> {
+        let left = std::cell::Cell::new(false);
+        let word = self.choose(cond, |stage| then(stage).unwrap_or_else(|| { left.set(true); stage.constant(0) }),
+            |stage| otherwise(stage).unwrap_or_else(|| { left.set(true); stage.constant(0) }));
+        (!left.get()).then_some(word)
+    }
     /// Continues where `cond` holds; `None` where it does not, so nothing runs past it.
     fn guard(&mut self, cond: Self::Cond, miss: Self::Miss) -> Option<()>;
     /// `cond`'s value where this stage knows it: the interpreter always does, a specializer

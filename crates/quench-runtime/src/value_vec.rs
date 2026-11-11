@@ -488,37 +488,35 @@ impl ValueArena {
         }
     }
 
-    /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened. The
-    /// untracked case, every store of a runtime without lane bodies, is the test alone: the
-    /// join is out of line (`note_tracked_slot_value`).
+    /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened. Only a
+    /// widening is out of line (`widen_owner`): an untracked store is the test alone.
     #[inline(always)] pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
-        self.tracking && self.note_tracked_slot_value(shape, slot, value)
+        self.tracking && { let owner = self.slot_owner(shape, slot); self.join_slot_owner(owner, value) }
     }
 
     #[inline(never)]
-    fn note_tracked_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
-        let owner = self.slot_owner(shape, slot);
-        self.join_owner_type(owner, SlotType::of(value))
+    fn widen_owner(&mut self, owner: u32, class: SlotType) -> bool {
+        self.slot_readers.retire(owner);
+        self.owner_types[owner as usize] = class;
+        true
     }
 
     /// Admits the possible writes of a no-reentry raw slot capability before exposing it.
     pub(crate) fn note_slot_type(&mut self, shape: u32, slot: usize, ty: crate::typed_ir::Type) -> bool {
         if !self.tracking { return false; }
         let owner = self.slot_owner(shape, slot);
-        self.join_owner_type(owner, SlotType::from_type(ty))
+        self.join_owner_type(owner, || SlotType::from_type(ty))
     }
 
     /// Joins `incoming` into the slot type `owner` holds; whether it widened.
     #[inline(always)]
-    fn join_owner_type(&mut self, owner: u32, incoming: SlotType) -> bool {
-        let held = self.owner_types[owner as usize];
-        // Writes mostly repeat a class the slot already holds: one compare.
-        if held == incoming || held == SlotType::Tagged { return false; }
-        let class = held.join(incoming);
-        if class == held { return false; }
-        self.slot_readers.retire(owner);
-        self.owner_types[owner as usize] = class;
-        true
+    fn join_owner_type(&mut self, owner: u32, incoming: impl FnOnce() -> SlotType) -> bool {
+        debug_assert!((owner as usize) < self.owner_types.len());
+        // SAFETY: owners come from `chain_owners`, which only names shapes `owner_types` covers.
+        let held = unsafe { *self.owner_types.get_unchecked(owner as usize) };
+        if held == SlotType::Tagged { return false; }
+        let class = held.join(incoming());
+        class != held && self.widen_owner(owner, class)
     }
 
     pub(crate) fn get(&self, vector: ValueVec, index: usize) -> Option<Value> {

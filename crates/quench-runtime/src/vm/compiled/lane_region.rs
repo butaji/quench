@@ -490,6 +490,8 @@ struct Lowering<'a, 'f> {
     payload: ir::Value,
     registers_base: ir::Value,
     result: ir::Value,
+    /// The running body's receiver and capture words its caller passes (`entry_cell::capture_word`).
+    entry_words: (ir::Value, ir::Value),
     registers: Registers,
     written: CompoundBitSet,
     /// Source operations already consumed by an exact, unobservable scalar pair.
@@ -691,11 +693,11 @@ impl<'a, 'f> Lowering<'a, 'f> {
     // The word vocabulary of the native-call lowerings (`lane_region/direct_*.rs`).
     fn word_load(&mut self, base: ir::Value, offset: i32) -> ir::Value { self.ins().load(types::I64, MemFlagsData::trusted(), base, offset) }
     fn word_store(&mut self, value: ir::Value, base: ir::Value, offset: i32) { self.ins().store(MemFlagsData::trusted(), value, base, offset); }
-    fn word_const(&mut self, bits: i64) -> ir::Value { self.ins().iconst(types::I64, bits) }
+    fn word_const(&mut self, bits: i64) -> ir::Value { self.int_const(types::I64, bits) }
+    fn int_const(&mut self, ty: ir::Type, bits: i64) -> ir::Value { self.ins().iconst(ty, bits) }
     fn word_add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().iadd(a, b) }
     fn word_add_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().iadd_imm_u(a, imm) }
     fn word_mul_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().imul_imm_u(a, imm) }
-    fn word_and(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().band(a, b) }
     fn word_or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().bor(a, b) }
     fn word_select(&mut self, test: ir::Value, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().select(test, a, b) }
     fn word_cmp(&mut self, cc: IntCC, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().icmp(cc, a, b) }
@@ -1450,7 +1452,7 @@ pub(super) fn lower(
     builder.append_block_params_for_function_params(entry_block);
     builder.switch_to_block(entry_block);
     let parameters = builder.block_params(entry_block).to_vec();
-    let (context, registers_base, result) = (parameters[0], parameters[3], parameters[4]);
+    let &[context, entry_this, entry_captures, registers_base, result] = parameters.as_slice() else { return None };
     let payload = if numeric { builder.ins().iconst(types::I64, 0) } else { builder.ins().load(
         types::I64,
         MemFlagsData::trusted(),
@@ -1538,6 +1540,7 @@ pub(super) fn lower(
         payload,
         registers_base,
         result,
+        entry_words: (entry_this, entry_captures),
         registers,
         written: CompoundBitSet::with_capacity(count),
         consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
@@ -2169,17 +2172,42 @@ impl Lowering<'_, '_> {
         format
     }
 
+    /// The receiver bits a run starts with: a lane body's caller passes them as the entry's
+    /// word, a loop region reads the payload's.
+    fn entry_receiver_bits(&mut self) -> ir::Value {
+        if self.body_entry() { return self.entry_words.0; }
+        emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver))
+    }
+
+    /// The running activation's dense capture slots (address, count): a lane body's caller
+    /// packs them in the entry's word (`entry_cell::capture_word`), a loop region reads the payload's.
+    fn entry_capture_words(&mut self) -> (ir::Value, ir::Value) {
+        if !self.body_entry() {
+            let values = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_values));
+            return (values, emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_len)));
+        }
+        let word = self.entry_words.1;
+        let mask = self.ins().iconst(types::I64, super::entry_cell::CAPTURE_ADDRESS_MASK);
+        let values = self.ins().band(word, mask);
+        (values, self.ins().ushr_imm_u(word, i64::from(super::entry_cell::CAPTURE_ADDRESS_BITS)))
+    }
+
+    /// Whether this run is a lane body, whose callers pass its receiver and captures as the
+    /// entry's words; a loop region reads the payload's.
+    fn body_entry(&self) -> bool { matches!(self.coverage, Coverage::Prefix | Coverage::PrefixFrom(_)) }
+
     /// The facts every run proves once at entry.
     fn entry_facts(&mut self, instructions: &[WideInstruction], _loops: &[(usize, usize)], _leaders: &CompoundBitSet) -> Entry {
         let this_bits = match self.helpers {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
-            LaneHelpers::Process(_) => emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver)),
+            LaneHelpers::Process(_) => self.entry_receiver_bits(),
             #[cfg(feature = "aot")]
             LaneHelpers::Bound(..) => self.fixed_this(),
             #[cfg(feature = "aot")]
             LaneHelpers::Linked(..) => unreachable!("helper table bound before entry facts"),
         };
-        let receiver = emit_lane_receiver(&mut self.builder, self.payload, this_bits);
+        let accesses_fields = self.accesses_fields(instructions);
+        let receiver = if accesses_fields { emit_lane_receiver(&mut self.builder, self.payload, this_bits) } else { self.absent_receiver() };
         let this = self.builder.declare_var(types::I64);
         self.builder.def_var(this, this_bits);
         let mut receiver_shapes = BTreeMap::new();
@@ -2217,13 +2245,11 @@ impl Lowering<'_, '_> {
         // have stored to it.
         let capture_values = self.builder.declare_var(types::I64);
         let capture_len = self.builder.declare_var(types::I64);
-        let values = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_values));
-        let len = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_len));
+        let (values, len) = self.entry_capture_words();
         self.builder.def_var(capture_values, values);
         self.builder.def_var(capture_len, len);
         let mut miss = None;
-        let object_table = instructions.iter().enumerate().any(|(pc, instruction)|
-            self.facts.reached(pc) && instruction.op().is_named_field_access())
+        let object_table = accesses_fields
             .then(|| {
                 let base = emit_js_payload_word(&mut self.builder, self.payload,
                     std::mem::offset_of!(JsStepDispatch, object_record_base));
@@ -4295,7 +4321,7 @@ impl Lowering<'_, '_> {
             return self.field_probe(state, probe_owner, object_bits, read, exit);
         }
         let owner = if receiver { None } else { register };
-        let probed = self.left_here || self.left_a_field_read() || NativeFieldLoad::probes_misses(&shapes);
+        let probed = self.probes_field_misses(&shapes);
         self.probed_read(state, owner, probe_owner, probed, object_bits, read, exit, |lowering, state, generic| {
             let (object, shape, inline) = if receiver {
                 let entry = lowering.entry.as_ref().expect("entry facts");
@@ -4321,6 +4347,11 @@ impl Lowering<'_, '_> {
         })
     }
 
+    /// Whether a read of these shapes asks the VM's caches on a guard miss rather than leaves.
+    fn probes_field_misses(&self, shapes: &[NativeFieldLoad]) -> bool {
+        self.left_here || self.left_a_field_read() || NativeFieldLoad::probes_misses(shapes)
+    }
+
     /// Whether a previous body left at some field read of this unit: its shapes were not all
     /// seen when it was planned, so every read now asks the VM's caches on a guard miss rather
     /// than leave, as this unit's other reads would leave one recompile at a time.
@@ -4336,7 +4367,7 @@ impl Lowering<'_, '_> {
         if shapes.is_empty() {
             return Some(self.field_probe(state, FieldOwner::Temporary, object_bits, read, exit));
         }
-        let probed = self.left_here || self.left_a_field_read() || NativeFieldLoad::probes_misses(&shapes);
+        let probed = self.probes_field_misses(&shapes);
         Some(self.probed_read(state, None, FieldOwner::Temporary, probed, object_bits, read, exit, |lowering, state, generic| {
             let records = lowering.object_table_base();
             let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
