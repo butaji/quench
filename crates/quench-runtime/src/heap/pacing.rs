@@ -603,12 +603,12 @@ const THROUGHPUT_MINIMUM_EXTERNAL_BUDGET: usize = 4 << 20;
 const MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET: usize = 512 << 10;
 
 /// Allocation between full collections, as a share of the live set, once most of each young
-/// generation survives (`Regime::FullOnly`) under throughput: three live sets. A heap whose
+/// generation survives (`Regime::FullOnly`) under throughput: one and a half live sets. A heap whose
 /// survivors fill each young generation, as V8-v7 Splay's tree does, collects only fully, and
 /// each full collection marks the whole live set: at one live set Splay ran 26 full
 /// collections a run (2026-11-01: Score 5140-5204 at 31.8 MB; 3/2: 5960-6124 at 39.3 MB). With
-/// strings of parts (2026-11-11, experiment profile, 8 runs): 3/2 5876 at 57 MB, 3: 6246 at 83 MB.
-const THROUGHPUT_FULL_ONLY_HEADROOM: Ratio = Ratio::new(3, 1);
+/// JIT default and strings of parts (2026-11-11, experiment profile, 5 runs): 3/2 3584 at 104 MB, 2: 3774 at 124 MB, 3: 4054 at 162 MB.
+const THROUGHPUT_FULL_ONLY_HEADROOM: Ratio = Ratio::new(3, 2);
 
 /// Memory-first lets half a live set of allocation pass between full collections once most of
 /// each young generation survives, not a whole one, which let the heap reach twice its live
