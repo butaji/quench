@@ -207,7 +207,7 @@ impl ParallelShapeTrace<'_> {
         if prototype || trace_kind == GcTraceKind::VerifyFull || self.marked_constructor_shapes[word].load(Ordering::Relaxed) & mask == 0 {
             self.append_shape_edges(trace_kind, shape, prototype, roots);
         }
-        if self.owned_root_filter.may_hold(owner)
+        if !self.owned_roots.is_empty() && self.owned_root_filter.may_hold(owner)
             && let Some(edges) = self.owned_roots.get(&owner)
         {
             roots.extend(edges.iter().copied());
