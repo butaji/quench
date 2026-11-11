@@ -61,7 +61,12 @@ impl Lowering<'_, '_> {
     /// miss, or a region with no lane context, leaves.
     fn capture_miss(&mut self, instruction: WideInstruction, callee: Option<ir::Value>, exit: ir::Block, rooted: bool) -> ir::Value {
         let Some(callee) = callee else {
-            if rooted && self.completion == Completion::StatusAndPc { return self.capture_get(instruction, exit); }
+            // A loop's read leaves at a root-held binding until the code has left here: the
+            // helper is a call every value live around the loop is spilled across (`left_here`).
+            let loop_code = matches!(self.coverage, Coverage::Loop { .. });
+            if rooted && self.completion == Completion::StatusAndPc && (self.left_here || !loop_code) {
+                return self.capture_get(instruction, exit);
+            }
             self.ins().jump(exit, &[]);
             let dead = self.builder.create_block();
             self.builder.switch_to_block(dead);

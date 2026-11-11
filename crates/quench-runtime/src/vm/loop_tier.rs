@@ -214,7 +214,7 @@ fn publish(heap: &mut crate::heap::Heap, region: CompiledOsrRegion, views: Eleme
 
 /// `site`'s region code for the element `views` its entry found, compiled now if the tier has
 /// none and may; or what the lane does instead.
-pub(super) fn lane_loop_code<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, region: &LoopRegion, views: ElementViews)
+pub(super) fn lane_loop_code<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite, region: &LoopRegion, views: ElementViews)
     -> Result<Rc<CompiledOsrRegion>, LoopContinuation> {
     site.region(|tier| {
         if !tier.admits(views) {
@@ -225,7 +225,9 @@ pub(super) fn lane_loop_code<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, 
             if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
                 return Err(LoopContinuation::Jump);
             }
-            lane_loop_compile(cx, site, region, views, tier);
+            // SAFETY: as above.
+            let (number_arrays, int_entries) = (number_arrays(unsafe { vm(cx) }, r, region), int_entries(r, region));
+            lane_loop_compile(cx, site, region, views, tier, &number_arrays, &int_entries);
         }
         tier.artifact().and_then(|code| code.publication.lease()).ok_or(LoopContinuation::Compiling)
     })
@@ -239,6 +241,8 @@ fn lane_loop_compile<H: Host>(
     region: &LoopRegion,
     views: ElementViews,
     tier: &mut RegionTier,
+    number_arrays: &[crate::bytecode::Register],
+    int_entries: &[crate::bytecode::Register],
 ) {
     if site.diagnostics {
         site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
@@ -250,7 +254,7 @@ fn lane_loop_compile<H: Host>(
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
     let native_field_loads = native_field_loads(machine, region);
-    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads };
+    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, int_entries };
     let policy = machine.heap.memory_policy();
     let widened = tier.widened(region);
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, views,
@@ -354,4 +358,23 @@ pub(super) fn lane_method_call_region<H: Host>(cx: *mut LaneContext<H>, site: &L
     super::super::compiled::analyze_osr_region_detailed(function, &decoded, &constants, &code.field_sites,
         code.shared_register_root_masks(function_index), site.header, site.backedge,
         super::super::compiled::MethodCalls::Exit).ok()
+}
+
+/// How many elements of an entry array are sampled for Numbers.
+const SAMPLED_ELEMENTS: usize = 64;
+
+/// The registers of `region`'s arrays whose first elements, sampled on entry, are all Numbers
+/// (int32 or double, no hole): an observation (a guess the code checks at every read), not a proof.
+pub(super) fn number_arrays<H: Host>(vm: &Vm<H>, r: Registers, region: &LoopRegion) -> Vec<crate::bytecode::Register> {
+    region.arrays.iter().filter(|array| array.field.is_none()).filter_map(|array| {
+        let elements = vm.heap.record_array(r.get(array.register))?.elements().as_slice();
+        let sample = &elements[..elements.len().min(SAMPLED_ELEMENTS)];
+        (!sample.is_empty() && sample.iter().all(|value| value.as_number().is_some())).then_some(array.register)
+    }).collect()
+}
+
+/// The registers of the running activation that hold int32s at entry and that the loop writes:
+/// an observation the compiled code's entry contract checks, as `number_arrays`'.
+pub(super) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<crate::bytecode::Register> {
+    region.entry_registers().filter(|register| r.get(*register).as_int().is_some()).collect()
 }

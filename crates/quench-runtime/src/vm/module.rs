@@ -16,6 +16,11 @@ pub(crate) enum ModulePhase {
 }
 
 impl ModulePhase {
+    /// Whether the module's evaluation has begun and not finished.
+    pub(crate) fn is_evaluating(self) -> bool {
+        matches!(self, ModulePhase::Evaluating | ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies)
+    }
+
     /// Whether the module's evaluation is still settling asynchronously.
     pub(crate) fn awaits_async_evaluation(self) -> bool {
         matches!(self, ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies)
@@ -206,9 +211,17 @@ impl ModuleRecord {
         self.pending_namespace = Some(namespace);
     }
 
-    pub(crate) fn begin_async_evaluation(&mut self, namespace: Value) {
+    /// The module's evaluation settles asynchronously, with `namespace` pending. Refused,
+    /// leaving the record alone, unless its evaluation has begun and not finished: a module
+    /// still loading or linking, or already evaluated, errored or deferred, is not one.
+    pub(crate) fn begin_async_evaluation(&mut self, namespace: Value) -> Result<(), crate::JsError> {
+        let phase = self.phase();
+        if !phase.is_evaluating() {
+            return Err(crate::JsError::validation(format!("module is not evaluating ({phase:?})")));
+        }
         self.outcome = ModuleOutcome::Pending(ModulePhase::EvaluatingAsync);
         self.pending_namespace = Some(namespace);
+        Ok(())
     }
 
     pub(crate) fn wait_for_dependencies(&mut self) -> bool {

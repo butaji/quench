@@ -72,6 +72,8 @@ mod lane_sites;
 use lane_allocations::{lane_binary, lane_new_array, lane_new_object, lane_new_object_pair};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
+#[path = "compiled/lane_facts.rs"]
+mod lane_facts;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
 mod static_loops;
@@ -428,7 +430,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
         helpers: LaneHelpers::Numeric, fields: &std::collections::BTreeMap::new(),
         global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS,
+        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
         plan: lane_region::RegionPlan { coverage: lane_region::Coverage::Full,
             completion: lane_region::Completion::Number, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok()?;
@@ -1808,6 +1810,8 @@ lane_helper_inventory! { H;
     FieldAdd => lane_field_add::<H>,
     /// A loop's hoisted typed array view (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
+    /// A value step the interpreter defines (`dispatch_fast::lane_body_value_step`).
+    ValueStep => super::dispatch_fast::lane_body_value_step::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
@@ -2240,7 +2244,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
             lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
                 fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
                 direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-                entry_fields: &lane_region::NO_ENTRY_FIELDS,
+                entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
                 plan: lane_region::RegionPlan { coverage, completion: lane_region::Completion::SourcePc, views } }
                 .specialize(program).ok().filter(|region| region.native != 0)
                 .map(|mut region| {
@@ -2296,7 +2300,7 @@ fn scalar_static_regions(program: &ResidualProgram, function_id: u32, unit: &lan
         let region = lane_region::RegionSpecializer { function_id, unit, helpers,
             fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
             direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-            entry_fields: &lane_region::NO_ENTRY_FIELDS,
+            entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[],
             plan: lane_region::RegionPlan {
                 coverage: lane_region::Coverage::Range { start: range.start, end: range.end },
                 completion: lane_region::Completion::SourcePc, views: lane_region::ElementViews::Dense } }
@@ -13815,9 +13819,7 @@ impl<H: Host> Vm<H> {
                                 .as_nanos(),
                         );
                     }
-                    let built = compiled.is_some();
-                    self.programs.set_compiled(program, compiled);
-                    self.programs.settle_wasm_module_tier(program, built);
+                    self.programs.set_compiled_module(program, compiled);
                     self.programs.compiled(program).flatten()
                 } else if self
                     .programs
@@ -13852,9 +13854,7 @@ impl<H: Host> Vm<H> {
                                 .as_nanos(),
                         );
                     }
-                    let built = compiled.is_some();
-                    self.programs.set_compiled(program, compiled);
-                    self.programs.settle_wasm_module_tier(program, built);
+                    self.programs.set_compiled_module(program, compiled);
                     self.programs.compiled(program).flatten()
                 }
             }
@@ -13892,9 +13892,7 @@ impl<H: Host> Vm<H> {
                     started.elapsed().as_nanos(),
                 );
             }
-            let built = compiled.is_some();
-            self.programs.set_compiled(program, compiled);
-            self.programs.settle_wasm_module_tier(program, built);
+            self.programs.set_compiled_module(program, compiled);
             baseline = self.programs.compiled(program).flatten();
         }
         // Root-first mode earns further tiering only after its selected root
@@ -13924,11 +13922,8 @@ impl<H: Host> Vm<H> {
                     Some(id as usize),
                 )
                 .map(Rc::new);
-            let built = tier.is_some();
-            if tier.is_some_and(|tier| self.programs.install_wasm_tier(program, id, tier)) {
+            if self.programs.install_built_wasm_tier(program, id, tier) {
                 compiled = self.programs.wasm_tier(program, id);
-            } else {
-                self.programs.note_wasm_tier_unbuilt(program, id, built);
             }
         }
         let Some(compiled) = compiled else {

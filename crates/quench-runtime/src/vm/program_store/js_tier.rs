@@ -9,9 +9,6 @@ use crate::vm::compiled::tier_policy::{TIERS, Tiers};
 use crate::vm::tier_state::{Controller, Event, Past, Refusal, Tier, Verdict, Why};
 use std::rc::Rc;
 
-/// Why the numeric tier gives a function it failed to generate code for to the baseline.
-const NUMERIC_CODEGEN_REFUSED: &str = "numeric-codegen-rejected";
-
 /// The function tiers' controller. Its speculative body is the numeric artifact, whose one
 /// assumption is its entry profile; its generic body is the general-dispatch baseline.
 pub(in crate::vm) struct JsController;
@@ -200,7 +197,7 @@ impl JsTier {
     pub(super) fn not_installed(&mut self, compiled: bool, general_fallback: bool) {
         let event = match (compiled, general_fallback) {
             (true, _) => Event::REFUSED,
-            (false, true) => Event::Failed(Refusal::Shape(NUMERIC_CODEGEN_REFUSED)),
+            (false, true) => Event::REPRICE,
             (false, false) => Event::Failed(Refusal::Codegen),
         };
         self.apply(event, &TIERS);

@@ -228,7 +228,6 @@ const BYTES_READ_SET_WARNING: &str = "Setting zlib.bytesRead is deprecated. This
 /// An unset slot in a parameter array (`fill(-1)` on a `Uint32Array`).
 const UNSET_PARAMETER: u32 = u32::MAX;
 /// `2 ** 32`, the modulus of `ToUint32`.
-pub(crate) const UINT32_MODULUS: f64 = u32::MAX as f64 + 1.0;
 /// The number of slots in `_writeState`: output then input bytes left.
 const WRITE_STATE_SLOTS: f64 = 2.0;
 
@@ -526,17 +525,13 @@ fn parameters(
             let value = c.get_property_rooted(given, key)?;
             values[slot] = match c.rooted_value(value) {
                 Some(value) if value.as_bool().is_some() => u32::from(value.as_bool() == Some(true)),
-                Some(value) if value.as_number().is_some() => to_uint32(value.as_number().unwrap_or_default()),
+                Some(value) if value.as_number().is_some() => quench_runtime::units::to_uint32(value.as_number().unwrap_or_default()),
                 _ => return Err(invalid_type(c, value, "options.params[key]", "of type number")),
             };
         }
     }
     let bytes: Vec<u8> = values.iter().flat_map(|value| value.to_ne_bytes()).collect();
     c.uint8_array_from_rooted(bytes)
-}
-
-fn to_uint32(number: f64) -> u32 {
-    if number.is_finite() { number.trunc().rem_euclid(UINT32_MODULUS) as u32 } else { 0 }
 }
 
 /// `Brotli(opts, mode)`.

@@ -81,6 +81,14 @@ impl LaneController {
             && warm_clock().wrapping_sub(since) >= RECURRENT_TICKS
     }
 
+    /// Whether `entries` is a count at which its function weighs a compile: the warm-up, then
+    /// each doubling of it, so a function that has not paid for its compile yet looks again
+    /// when it has done twice the work.
+    fn attempts_at(policy: &Tiers, entries: u32, past: &Past<LaneFeedback>) -> bool {
+        let warmup = Self::warmup(policy, past).max(1);
+        entries % warmup == 0 && (entries / warmup).is_power_of_two()
+    }
+
     /// Whether leaves at `leaves` would plan the same body again: only where the predecessors'
     /// bodies left, and those places already generic.
     fn nothing_new(leaves: LaneLeaves, stuck: LaneLeaves) -> bool {
@@ -112,7 +120,7 @@ impl Controller for LaneController {
 
     /// Each entry that does not end the warm-up ticks the program's clock.
     fn ready(policy: &Tiers, entries: u32, since: u32, past: &Past<LaneFeedback>) -> bool {
-        let ready = entries >= Self::warmup(policy, past) || Self::recurrent(entries, since, past);
+        let ready = Self::attempts_at(policy, entries, past) || Self::recurrent(entries, since, past);
         if !ready { warm_ticks(); }
         ready
     }
@@ -200,6 +208,8 @@ impl LaneView {
             LaneBodyOutcome::Published(method) => Event::Compiled(self.code(entry, method)),
             // A compile a collection or a changed fact outran is a body a lifecycle edge dropped.
             LaneBodyOutcome::Stale => Event::STALE,
+            // A compile the cost model puts off waits for the next look at its function.
+            LaneBodyOutcome::Deferred => Event::DEFERRED,
             LaneBodyOutcome::Declined => Event::Failed(Refusal::Codegen),
         }
     }
@@ -216,7 +226,7 @@ impl LaneView {
                 tier.poll_build(TIERS.lane_body.compile_poll_interval, |pending| match work(LaneBodyWork::Poll(pending)) {
                     LaneBodyOutcome::Compiling(pending) => Polled::Pending(pending),
                     LaneBodyOutcome::Published(method) => Polled::Ready(self.code(entry, method)),
-                    LaneBodyOutcome::Stale => Polled::Stale,
+                    LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred => Polled::Stale,
                     LaneBodyOutcome::Declined => Polled::Failed,
                 });
             }
@@ -225,7 +235,9 @@ impl LaneView {
                 // A predecessor's few leaves are the specialization's feedback.
                 let shrinks = tier.past().map_or(0, |past| past.feedback.shrinks);
                 let generic = super::generic_exits(tier.past(), length);
-                tier.apply(self.event_of(entry, work(LaneBodyWork::Start { generic: &generic, shrinks })), &TIERS);
+                // The entries a look at a doubled warm-up weighs, for the cost model.
+                let observed = match tier { Tier::Warming { entries, past, .. } if LaneController::attempts_at(&TIERS, *entries + 1, past) => Some(*entries + 1), _ => None };
+                tier.apply(self.event_of(entry, work(LaneBodyWork::Start { generic: &generic, shrinks, observed })), &TIERS);
             }
             Tier::Speculative { .. } | Tier::Generic { .. } | Tier::GenericInterpreted { .. } => {}
         }

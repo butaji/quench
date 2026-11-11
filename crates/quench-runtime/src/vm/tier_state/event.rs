@@ -60,7 +60,8 @@ pub(in crate::vm) enum Event<C: Controller> {
 /// An event of a tier that carries nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::vm) enum Note {
-    /// A run of the body completed.
+    /// A run of the body completed (the tests' stand-in for `Tier::complete`).
+    #[cfg(test)]
     Completed,
     /// An entry the tier counts for its diagnostics only.
     Observed,
@@ -70,18 +71,27 @@ pub(in crate::vm) enum Note {
     Generalize,
     /// The body's publication was retired from outside.
     Invalidated,
+    /// The owner weighed the compile and put it off: the entry counts toward the warm-up, and the
+    /// owner looks again when it asks (`Controller::ready`).
+    Deferred,
     /// The compile's facts changed.
     Stale,
+    /// The body's code failed to generate but a generic body may take the function: its entries
+    /// price that one from the first.
+    Reprice,
     /// The code cache refused the body.
     Refused,
 }
 
 impl<C: Controller> Event<C> {
+    #[cfg(test)]
     pub(in crate::vm) const COMPLETED: Self = Self::Note(Note::Completed);
     pub(in crate::vm) const OBSERVED: Self = Self::Note(Note::Observed);
     pub(in crate::vm) const DUE: Self = Self::Note(Note::Due);
     pub(in crate::vm) const GENERALIZE: Self = Self::Note(Note::Generalize);
     pub(in crate::vm) const INVALIDATED: Self = Self::Note(Note::Invalidated);
+    pub(in crate::vm) const DEFERRED: Self = Self::Note(Note::Deferred);
+    pub(in crate::vm) const REPRICE: Self = Self::Note(Note::Reprice);
     pub(in crate::vm) const STALE: Self = Self::Note(Note::Stale);
     pub(in crate::vm) const REFUSED: Self = Self::Note(Note::Refused);
 }

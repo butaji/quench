@@ -198,9 +198,12 @@ impl<C: Controller> Tier<C> {
 
     fn noted(self, note: Note) -> (Self, Why) {
         match note {
-            Note::Completed => self.completed(),
             Note::Observed => self.observed(),
             Note::Due => self.due(),
+            #[cfg(test)]
+            Note::Completed => { let mut tier = self; tier.complete(); (tier, Why::Counted) }
+            Note::Deferred => self.deferred(),
+            Note::Reprice => self.repriced(),
             Note::Generalize => self.generalized(),
             Note::Invalidated => self.invalidated(),
             Note::Stale => self.dropped(Why::Stale, Past::wasted),
@@ -276,11 +279,6 @@ impl<C: Controller> Tier<C> {
             return (Self::Warming { entries, favourable: 0, past: Past::spent(C::Feedback::default()) }, Why::Revived);
         }
         (Self::GenericInterpreted { entries, refusal }, Why::Counted)
-    }
-
-    fn completed(mut self) -> (Self, Why) {
-        self.complete();
-        (self, Why::Counted)
     }
 
     /// The warm-up that follows a dropped body: its successor's, carrying what the body earned.
@@ -425,6 +423,26 @@ impl<C: Controller> Tier<C> {
         match self {
             Self::Compiling { .. } | Self::Queued { .. } | Self::Warming { .. } | Self::Cold =>
                 (Self::GenericInterpreted { entries: 0, refusal }, Why::Failed),
+            other => (other, Why::Counted),
+        }
+    }
+
+    /// A compile in flight or due failed for good, but the generic body may take the function.
+    fn repriced(self) -> (Self, Why) {
+        match self {
+            Self::Cold | Self::Warming { .. } | Self::Queued { .. } | Self::Compiling { .. } =>
+                (Self::Warming { entries: 1, favourable: 0, past: Past::spent(C::Feedback::default()) }, Why::Generalized),
+            other => (other, Why::Counted),
+        }
+    }
+
+    /// The owner put the compile off: the entry that asked for it counts as warming.
+    fn deferred(self) -> (Self, Why) {
+        match self {
+            Self::Warming { entries, favourable, past } =>
+                (Self::Warming { entries: entries.saturating_add(1), favourable, past }, Why::Counted),
+            Self::Cold => (Self::Warming { entries: 1, favourable: 0, past: Past::default() }, Why::Counted),
+            Self::Queued { past } => (Self::Warming { entries: 1, favourable: 0, past }, Why::Counted),
             other => (other, Why::Counted),
         }
     }

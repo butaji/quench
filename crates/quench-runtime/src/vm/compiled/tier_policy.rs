@@ -59,6 +59,14 @@ pub(in crate::vm) struct LaneBody {
     /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
     /// most this many entries once ready.
     pub(in crate::vm) compile_poll_interval: u16,
+    /// What compiling one IR instruction of a body costs, in interpreted-instruction units: the
+    /// V8-v7 compiles took 7 us an IR instruction (`QUENCH_LANE_COMPILE`), an interpreted
+    /// instruction some 50 ns.
+    pub(in crate::vm) compile_cost_per_ir: u64,
+    /// The share of a function's interpreted work its compiled body saves, as a fraction.
+    pub(in crate::vm) saved_share: (u64, u64),
+    /// How many times the compile's cost the saved work must reach before the body compiles.
+    pub(in crate::vm) benefit_over_cost: u64,
 }
 
 /// The per-function JavaScript tiers: the numeric optimizing tier and the general
@@ -162,6 +170,9 @@ const MEASURED: Tiers = Tiers {
         reoptimize_exits: 64,
         min_instructions: 0,
         compile_poll_interval: 64,
+        compile_cost_per_ir: 5,
+        saved_share: (1, 2),
+        benefit_over_cost: 1,
     },
     js_function: JsFunction {
         promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)],

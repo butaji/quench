@@ -60,12 +60,16 @@ impl BodyTier {
     }
 }
 
+/// Why a loop in a function that activates another way than the lane's has no body.
+const NOT_PLAIN: &str = "loop-body-not-plain-activation";
+
 /// What the work for a body (`outcome`) did to it, as an event.
 fn event_of(outcome: LaneBodyOutcome) -> Event<BodyController> {
     match outcome {
         LaneBodyOutcome::Compiling(pending) => Event::Started(Build::new(pending, TIERS.loops.body_poll_interval)),
         LaneBodyOutcome::Published(method) => Event::Compiled(method),
         LaneBodyOutcome::Stale => Event::STALE,
+        LaneBodyOutcome::Deferred => Event::DEFERRED,
         LaneBodyOutcome::Declined => Event::Failed(Refusal::Codegen),
     }
 }
@@ -88,16 +92,23 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, site: &LoopS
             tier.poll_build(TIERS.loops.body_poll_interval, |pending| match loop_body_work(cx, own, site, LaneBodyWork::Poll(pending)) {
                 LaneBodyOutcome::Compiling(pending) => Polled::Pending(pending),
                 LaneBodyOutcome::Published(method) => Polled::Ready(method),
-                LaneBodyOutcome::Stale => Polled::Stale,
+                LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred => Polled::Stale,
                 LaneBodyOutcome::Declined => Polled::Failed,
             });
         }
         Tier::Speculative { .. } | Tier::Generic { .. } | Tier::GenericInterpreted { .. } => {}
         _ => {
             // SAFETY: the context's program outlives the lane run.
-            let length = unsafe { &*(*cx).code }.function_get(site.function as usize).map_or(0, |body| body.code.len());
+            let code = unsafe { &*(*cx).code };
+            // The body's registers are the activation's: a function that keeps frame locals or
+            // makes closures activates another way, and its loops have no body.
+            if !code.function_get(site.function as usize).is_some_and(|body| body.plain_activation(code)) {
+                tier.apply(Event::Failed(Refusal::Shape(NOT_PLAIN)), &TIERS);
+                return;
+            }
+            let length = code.function_get(site.function as usize).map_or(0, |body| body.code.len());
             let generic = generic_exits(tier.past(), length);
-            tier.apply(event_of(loop_body_work(cx, own, site, LaneBodyWork::Start { generic: &generic, shrinks: 0 })), &TIERS);
+            tier.apply(event_of(loop_body_work(cx, own, site, LaneBodyWork::Start { generic: &generic, shrinks: 0, observed: None })), &TIERS);
         }
     });
 }

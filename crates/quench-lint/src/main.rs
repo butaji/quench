@@ -17,6 +17,7 @@ mod fingerprints;
 mod guest_names;
 mod hot_path;
 mod magic;
+mod native_forms;
 mod shape;
 mod tier_state;
 
@@ -81,20 +82,23 @@ fn main() -> ExitCode {
     let mut files = Vec::new();
     roots.iter().for_each(|root| rust_files(Path::new(root), &mut files));
     files.sort();
-    let (repeated, oversized, trees) = match scan(&files) {
+    let (repeated, mut oversized, trees) = match scan(&files) {
         Ok(found) => found,
         Err(error) => {
             eprintln!("quench-lint: cannot read {error}");
             return ExitCode::FAILURE;
         }
     };
+    native_forms::scan(&files, &mut oversized);
     // A guest-name test has no allowance: `oversized.txt` cannot grandfather one.
     let recorded: shape::Measures = shape::parse(&fs::read_to_string(OVERSIZED).unwrap_or_default())
         .into_iter().filter(|(subject, _)| ![guest_names::MEASURE, tier_state::MEASURE].iter().any(|measure| subject.starts_with(measure))).collect();
-    let shrunk: shape::Measures = recorded
+    let mut shrunk: shape::Measures = recorded
         .iter()
         .filter_map(|(subject, limit)| Some((subject.clone(), (*oversized.get(subject)?).min(*limit))))
         .collect();
+    // A native-form measure is born with the rule: `--update` records its first baseline.
+    native_forms::first_baseline(&oversized, &recorded, &mut shrunk);
     let departures = shape::compare(if update.is_empty() { &recorded } else { &shrunk }, &oversized);
     if !update.is_empty() && departures == 0 {
         let _ = fs::write(OVERSIZED, shape::render(&oversized));

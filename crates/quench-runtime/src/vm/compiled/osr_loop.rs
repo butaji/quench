@@ -1322,7 +1322,7 @@ impl LoopRegion {
             .copied()
     }
 
-    pub(super) fn entry_registers(&self) -> impl Iterator<Item = Register> + '_ {
+    pub(in crate::vm) fn entry_registers(&self) -> impl Iterator<Item = Register> + '_ {
         self.numbers.iter().chain(&self.tagged).copied()
     }
 
@@ -2504,6 +2504,12 @@ fn admit(
 /// the native OSR reader may load directly, by region field index.
 pub(crate) struct Observation<'a> {
     pub(crate) native_field_loads: &'a [Vec<NativeFieldLoad>],
+    /// The registers holding arrays whose sampled elements were all Numbers at entry: reads
+    /// through them are typed Numbers, leaving where one is not.
+    pub(crate) number_arrays: &'a [Register],
+    /// The registers holding int32s at entry, whose loop may keep them as int32s where every
+    /// definition in it yields one (`RegionSpecializer::int_entries`).
+    pub(crate) int_entries: &'a [Register],
 }
 
 

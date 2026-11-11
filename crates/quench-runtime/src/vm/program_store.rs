@@ -1847,6 +1847,29 @@ impl ProgramStore {
         }
     }
 
+    /// `install_wasm_tier` of what a root's compile produced (`None`: the code generator failed
+    /// it); where nothing is installed, its tier records why.
+    pub(super) fn install_built_wasm_tier(
+        &mut self,
+        id: ProgramId,
+        root: u32,
+        tier: Option<Rc<super::compiled::CompiledProgram>>,
+    ) -> bool {
+        let built = tier.is_some();
+        let installed = tier.is_some_and(|tier| self.install_wasm_tier(id, root, tier));
+        if !installed {
+            self.note_wasm_tier_unbuilt(id, root, built);
+        }
+        installed
+    }
+
+    /// `set_compiled` of a whole module's compile, which settles the module's tier.
+    pub(super) fn set_compiled_module(&mut self, id: ProgramId, compiled: Option<Rc<super::compiled::CompiledProgram>>) {
+        let built = compiled.is_some();
+        self.set_compiled(id, compiled);
+        self.settle_wasm_module_tier(id, built);
+    }
+
     /// Retain one compiled root closure if the VM-wide tier budget permits
     /// it. Active calls retain their own Rc through native return.
     pub(super) fn install_wasm_tier(
