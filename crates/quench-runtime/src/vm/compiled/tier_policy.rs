@@ -150,12 +150,6 @@ pub(in crate::vm) struct Wasm {
 /// specializes a site into. One bound for every lattice of site feedback.
 pub(in crate::vm) const POLYMORPHISM: usize = 4;
 
-/// The recovery spaces of a body the lane stack keeps free when it grows for the body: the
-/// callee windows of its direct calls sit in the same capacity as the room they recover in,
-/// so a capacity of one space refuses every direct call of a body whose window and recovery
-/// space together exceed it.
-pub(in crate::vm) const RECOVERY_HEADROOM: usize = POLYMORPHISM;
-
 /// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
 /// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
 pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
