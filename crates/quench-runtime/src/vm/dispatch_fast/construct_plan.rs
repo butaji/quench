@@ -92,12 +92,27 @@ impl ConstructPlan {
         if self.constant & (1 << field) != 0 { self.fallbacks[field] } else { argument(self.parameters[field]) }
     }
 
+    /// `values` of a plan with no constant or computed field: each field the argument its
+    /// parameter names, or its fallback where the store defaults a falsy one.
+    #[inline(always)]
+    fn passed_values<H: Host>(&self, vm: &Vm<H>, mut values: [Value; CONSTRUCT_PLAN_FIELDS], argument: impl Fn(u16) -> Value) -> [Value; CONSTRUCT_PLAN_FIELDS] {
+        let fields = usize::from(self.fields).min(CONSTRUCT_PLAN_FIELDS);
+        for field in 0..fields {
+            let passed = argument(self.parameters[field]);
+            values[field] = if self.defaulted >> field & 1 != 0 && !vm.truthy(passed) { self.fallbacks[field] } else { passed };
+        }
+        values
+    }
+
     /// This plan's field values in order, `undefined` past them: the argument each field's
     /// parameter names (`argument`), or its fallback for a defaulted field passed a falsy
     /// value, or a constant field's constant, or a computed field's Number, as its store
     /// computes it. `None` when a computed field's argument is no Number.
     pub(super) fn values<H: Host>(&self, vm: &Vm<H>, argument: impl Fn(u16) -> Value) -> Option<[Value; CONSTRUCT_PLAN_FIELDS]> {
         let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+        if self.constant | self.computed == 0 {
+            return Some(self.passed_values(vm, values, argument));
+        }
         let mut stage = crate::staged::Concrete::new(std::ptr::null());
         for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
             let class = self.classes[field];

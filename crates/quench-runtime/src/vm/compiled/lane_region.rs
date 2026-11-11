@@ -761,8 +761,19 @@ impl<'a, 'f> Lowering<'a, 'f> {
         }
     }
 
-    /// Leave at `pc` with the interpreter's state: every written register back in the file.
+    /// `leave` naming the lowering line that decided the leave, which a diagnostics run reports
+    /// (`JsStepDispatch::exit_line`).
+    #[track_caller]
     fn exit(&mut self, state: &mut State, pc: u32) {
+        if self.vm.diagnostics && self.completion != Completion::Number {
+            let line = self.builder.ins().iconst(types::I64, i64::from(std::panic::Location::caller().line()));
+            self.builder.ins().store(MemFlagsData::trusted(), line, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
+        }
+        self.leave(state, pc);
+    }
+
+    /// Leave at `pc` with the interpreter's state: every written register back in the file.
+    fn leave(&mut self, state: &mut State, pc: u32) {
         if self.completion == Completion::Number {
             self.return_at(0);
             return;
@@ -1795,7 +1806,7 @@ pub(super) fn lower(
             let line = lowering.builder.ins().iconst(types::I64, i64::from(line));
             lowering.builder.ins().store(MemFlagsData::trusted(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
         }
-        lowering.exit(&mut leaving, pc);
+        lowering.leave(&mut leaving, pc);
     }
     // The exit blocks: write back every caller register the unit writes, and an inlined
     // callee's registers to the window its recovery makes the activation from, then leave
@@ -2259,7 +2270,7 @@ impl Lowering<'_, '_> {
             let mut receivers = smallvec::SmallVec::<[(Register, ReceiverRecovery); 2]>::new();
             for (pc, instruction) in instructions.iter().copied().enumerate() {
                 if self.blocks[pc].is_some() { aliases.copy_from_slice(&roots); }
-                if !self.facts.reached(pc) { continue; }
+                if !self.admits_at_entry(pc) { continue; }
                 if let Some(frame) = self.unit.markers.iter().position(|marker| *marker == pc) {
                     let call = self.unit.frames[frame];
                     let body = self.program.function(call.target.function as usize);
@@ -2383,6 +2394,13 @@ impl Lowering<'_, '_> {
             self.builder.switch_to_block(admitted);
         }
         Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, this, fields, calls, call_receivers }
+    }
+
+    /// Whether the entry edge admits the inlined call at `pc`, a call a run may skip
+    /// (`packet != null`) and so not one every run may be refused for: a body that left at
+    /// its entry once admits them at their markers instead (`Lowering::inline_call`).
+    fn admits_at_entry(&self, pc: usize) -> bool {
+        self.facts.reached(pc) && !self.generic.contains(&entry_leave(self.unit))
     }
 
     /// `invariant_field_records`, unless the body left at its entry: it binds no receiver record
@@ -4341,7 +4359,7 @@ impl Lowering<'_, '_> {
                 // A single shape's read proves an object, as the facts the CFG carries say
                 // (`facts::analyze`); a shape switch's may read a function's own fields.
                 let header = lowering.object_header(state, register, shapes.len() > 1 || shapes[0].function_shape, generic);
-                (header.record.address(&mut lowering.builder), header.shape, header.inline)
+                (header.address, header.shape, header.inline)
             };
             let read = lowering.shape_switch_read(state, Some(owner), object, shape, inline, &shapes, generic)?;
             // A single own shape read proves the register's object has it, for the block, a
@@ -4379,7 +4397,7 @@ impl Lowering<'_, '_> {
             let records = lowering.object_table_base();
             let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
             let header = ObjectHeader::prove_readable(&mut lowering.builder, object_bits, records, functions, generic);
-            let record = header.record.address(&mut lowering.builder);
+            let record = header.address;
             lowering.shape_switch_read(state, None, record, header.shape, header.inline, &shapes, generic)
         }))
     }
@@ -4529,11 +4547,13 @@ impl Lowering<'_, '_> {
     fn prove_shape(&mut self, state: &mut State, owner: Option<Option<Register>>, shape: ir::Value, expected: u32, exit: ir::Block) {
         let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(expected));
         emit_js_guard(&mut self.builder, same, exit);
-        let constant = self.ins().iconst(types::I32, i64::from(expected));
         if let Some(owner) = owner {
             let index = state.header_index(owner);
-            if let Some(proof) = &mut state.proofs.headers[index] {
-                proof.shape = constant;
+            if state.proofs.headers[index].is_some() {
+                let constant = self.ins().iconst(types::I32, i64::from(expected));
+                if let Some(proof) = &mut state.proofs.headers[index] {
+                    proof.shape = constant;
+                }
             }
         }
     }
@@ -4823,7 +4843,7 @@ impl Lowering<'_, '_> {
             }
             _ => {
                 let header = self.object_header(state, register, false, exit);
-                let object = header.record.address(&mut self.builder);
+                let object = header.address;
                 let admitted = self.store_atom_admitted(atom);
                 let properties = { let entry = self.entry.as_ref().expect("entry facts"); self.builder.use_var(entry.receiver.properties) };
                 let (general, done) = (self.builder.create_block(), self.builder.create_block());
@@ -4844,7 +4864,7 @@ impl Lowering<'_, '_> {
         };
         let header = (!receiver).then(|| {
             let header = self.object_header(state, register, false, exit);
-            (header.record.address(&mut self.builder), header.shape, header.inline)
+            (header.address, header.shape, header.inline)
         });
         let admitted = self.store_atom_admitted(atom);
         let entry = self.entry.as_ref().expect("entry facts");

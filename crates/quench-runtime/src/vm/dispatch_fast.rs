@@ -1067,6 +1067,11 @@ impl LaneView {
         self.warming() && self.start.get() != self.prologue.get().cast_const()
     }
 
+    /// Starts activations at the tier prologue again, which `claim_for_tier` wrote.
+    fn reclaim_for_tier(&self) {
+        self.start.set(self.prologue.get().cast_const());
+    }
+
     /// Starts activations at the first record again, once the tier declines the function.
     fn release_from_tier(&self) {
         self.start.set(self.records());
@@ -1456,7 +1461,7 @@ pub(super) struct ScriptCallTarget {
     program: ProgramId,
     pub(super) function: u32,
     env: Value,
-    view: *const LaneView,
+    pub(super) view: *const LaneView,
     registers: u16,
     /// The lane-stack room its plain activation reserves (`fill_room::<SCRIPT_FILL_BLOCK>` of
     /// `registers`), derived once.
@@ -14966,7 +14971,7 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body
             callees.extend(lane_construct_callee(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm())));
             return callees;
         }
-        callees.extend(lane_body_tier::compiled_site_targets(vm, view, pc).filter(|_| direct)
+        callees.extend(lane_body_tier::site_targets(vm, view, pc).filter(|_| direct)
             .filter_map(|target| lane_direct_callee(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm()), target)));
         callees
     }).collect()

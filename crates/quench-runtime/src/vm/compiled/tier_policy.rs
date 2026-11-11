@@ -186,7 +186,7 @@ const MEASURED: Tiers = Tiers {
         max_lifetimes: 8,
         max_callee_waits: 2,
         max_callee_recompiles: 3,
-        min_instructions: 0,
+        min_instructions: 40,
         compile_poll_interval: 64,
         compile_cost_per_ir: 5,
         saved_share: (1, 2),

@@ -61,8 +61,8 @@ const COMPACTED_CAPACITY_FACTOR: usize = 2;
 /// The values the nursery (`Nursery`) adds to its range at a time once its runs reach the end
 /// of it, while it ends the arena: one resize and one fill of `undefined` per that many values
 /// rather than per run. A range keeps its size across collections, so it grows to the largest
-/// cycle of new runs.
-const NURSERY_GROWTH: usize = 1 << 10;
+/// cycle of new runs. Large (1 MB of values) because allocations of ordinary runs end the arena and strand a small range: raytrace then took the slow path on 150k of 164k constructs (0 now).
+const NURSERY_GROWTH: usize = 1 << 17;
 /// The longest array whose elements a young run holds (`ValueArena::young_elements`): a
 /// young array's elements are copied once more when it survives or is first written, so the
 /// bound keeps that copy as short as the inline element initialization V8 unrolls for
