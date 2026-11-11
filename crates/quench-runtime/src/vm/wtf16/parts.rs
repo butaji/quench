@@ -93,14 +93,14 @@ impl Parts {
 impl JsString {
     /// A string that is these parts' text, not yet written out.
     pub(crate) fn from_parts(parts: Parts) -> Self {
-        Self { repr: Repr::Parts(parts) }
+        Self { repr: Repr::Flat(FlatUnits::Parts(parts)) }
     }
 
     /// The parts of a string not yet written out (`Heap::flatten_string`).
     #[inline(always)]
     pub(crate) fn parts(&self) -> Option<&Parts> {
         match &self.repr {
-            Repr::Parts(parts) => Some(parts),
+            Repr::Flat(FlatUnits::Parts(parts)) => Some(parts),
             Repr::Flat(_) | Repr::Shared(_) => None,
         }
     }
