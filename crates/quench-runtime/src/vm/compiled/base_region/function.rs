@@ -11,6 +11,7 @@ use super::call_plan::inline::Context;
 use super::call_plan::{CallShape, DirectFacts};
 use super::callees::{chains, Callees};
 use super::super::LaneHelpers;
+use crate::heap::GlobalFact;
 use quench_bjit::call_record::CallRecord;
 use quench_bjit::HOLES;
 
@@ -26,6 +27,8 @@ pub(in crate::vm::compiled) struct Body {
     pub(in crate::vm::compiled) records: Vec<Box<CallRecord>>,
     /// The calls it runs as their callees' rows, by frame.
     pub(in crate::vm::compiled) frames: Vec<InlinedCall>,
+    /// The Stable facts it folded, which its publication subscribes.
+    pub(in crate::vm::compiled) stable: Box<[GlobalFact]>,
 }
 
 /// What a body decides its call sites by: the callees they recorded and the stitch's budget.
@@ -137,10 +140,13 @@ fn plan_row(layout: &Layout, reprs: &Reprs, reached: bool, pc: u32, row: &Decode
 }
 
 /// What a body is built for: its function and registers, the rows whose int32 speculation failed
-/// (`widened`, by caller PC), and the registers its entry held as ints and doubles (`seen`).
+/// (`widened`, by caller PC), the registers its entry held as ints and doubles (`seen`), and the
+/// address of the invalidation word its method is published with (`Invalidation::address`), which
+/// its code reads where a call may have changed a fact it folded.
 pub(in crate::vm::compiled) struct BodySpec<'a> {
     pub(in crate::vm::compiled) function: u32,
     pub(in crate::vm::compiled) registers: u16,
+    pub(in crate::vm::compiled) invalidation: usize,
     pub(in crate::vm::compiled) widened: &'a [usize],
     pub(in crate::vm::compiled) seen: [&'a [Register]; SEEN],
 }
@@ -180,7 +186,7 @@ fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Pa
 }
 
 fn assemble_body(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {
-    let stitched = stitch(region, parts(region, &mut sites, helpers), spec.registers);
+    let mut stitched = stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.invalidation);
     let span = Span::stitched(region, stitched.rows.len(), &stitched.live);
     let reached = reachable(&span, &stitched.rows)?;
     if stitched.rows[0].step == Some(Step::Leave) {
@@ -196,5 +202,7 @@ fn assemble_body(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.iter().filter(|reached| **reached).count() - exits;
     let records = planned.iter_mut().filter_map(|row| row.owned.take()).collect();
-    Ok(Body { code, covered, exits, loops, records, frames: stitched.frames })
+    stitched.facts.sort_unstable();
+    stitched.facts.dedup();
+    Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: stitched.facts.into() })
 }

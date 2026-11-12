@@ -10,6 +10,11 @@
 //! * The callee's own jumps stay rows of the site, its registers renamed; a `Return` is a `Move`
 //!   of the value to the call's result register and a jump to the continuation, the end of the
 //!   site's rows; a final `Return` falls through to it. Several returns are several such pairs.
+//! * The callee's identity is a Stable fact where the callee register's by-name read is a global
+//!   cell (`Proof::Held`): the publication subscribes it (`StableFacts::globals`), so a
+//!   redefinition of the callee retires the code and the next plan names the new identity, with no
+//!   check per call. Any other callee (one a closure holds) is proved by a row at the call
+//!   (`Proof::Guard`).
 //! * Each row names the registers of the callee that are live before it (`SiteRow::live`), renamed
 //!   into the window, so the stitch derives what is live at every row of the flat program.
 //!
@@ -19,6 +24,7 @@
 use super::{choose, CallShape, Choice, DirectFacts};
 use crate::bytecode::{Class, Register, WideInstruction, REGISTER_MASK};
 use crate::compile::liveness::RegisterMasks;
+use crate::heap::GlobalFact;
 use crate::value::Value;
 use super::super::super::lane_unit::{CallRecovery, CallTarget, CalleeBinding, Frame};
 use super::super::super::osr_loop::{inlined_returning, renamed};
@@ -38,6 +44,8 @@ pub(in super::super) struct Callee<'f> {
     pub(in super::super) numbers: Numbers<'f>,
     /// The callee's live registers before each instruction (`compile::liveness`).
     pub(in super::super) live: &'f RegisterMasks,
+    /// The Stable fact the callee register's by-name read took: the global cell holding `identity`.
+    pub(in super::super) stable: Option<GlobalFact>,
 }
 
 /// The activations around a call being planned, and what is left of the stitch's budget.
@@ -91,6 +99,15 @@ pub(in super::super) enum Refused {
     Row(u32),
 }
 
+/// What proves a call runs the function its site was stitched for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in super::super) enum Proof {
+    /// The global cell holding it, which a change of retires the code.
+    Held(GlobalFact),
+    /// The callee register holds exactly this word, tested at the call.
+    Guard(Register, u64),
+}
+
 /// A row of an inlined site.
 pub(in super::super) struct SiteRow {
     pub(in super::super) decoded: Decoded,
@@ -105,8 +122,7 @@ pub(in super::super) struct SiteRow {
 /// A call planned as its callee's rows, each over registers of the caller or its window.
 pub(in super::super) struct InlineSite {
     pub(in super::super) shape: CallShape,
-    /// The callee register and function word the call is proved to run.
-    pub(in super::super) identity: (Register, u64),
+    pub(in super::super) proof: Proof,
     pub(in super::super) rows: Vec<SiteRow>,
     /// The first register above the callee's window.
     pub(in super::super) top: u32,
@@ -298,9 +314,9 @@ impl InlineSite {
             emitter.instruction(pc as u32, *instruction)?;
         }
         context.reserve(callee.code.len());
-        let identity = (shape.callee, callee.identity.to_bits());
+        let proof = callee.stable.map_or(Proof::Guard(shape.callee, callee.identity.to_bits()), Proof::Held);
         let copies = emitter.aliases.iter().map(|(home, argument)| (base + *home, *argument)).collect();
-        Ok(Self { shape: *shape, identity, rows: emitter.rows, top: context.top + u32::from(callee.registers), copies, frame: frame(shape, callee, base) })
+        Ok(Self { shape: *shape, proof, rows: emitter.rows, top: context.top + u32::from(callee.registers), copies, frame: frame(shape, callee, base) })
     }
 }
 
@@ -308,8 +324,11 @@ impl InlineSite {
 mod tests {
     use super::*;
     use crate::bytecode::{Op, Operand, RETURN_REGISTER};
+    use crate::code_dependencies::{DependentCode, PublishedCode};
+    use crate::heap::{global_value_fact, note_global_write, subscribe_global_value, GlobalCell};
     use crate::staged::call::{CellFacts, ENTRY_ACTIVATES};
     use oxc_ast::ast::BinaryOperator;
+    use std::rc::Rc;
 
     const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6 };
     /// The caller's registers: the callee's window starts here.
@@ -342,7 +361,7 @@ mod tests {
     }
 
     fn callee<'f>(code: &'f [WideInstruction], homes: &'f [(u16, Register)], live: &'f RegisterMasks) -> Callee<'f> {
-        Callee { function: CALLEE, identity: Value::from_bits(IDENTITY), code, registers: 4, homes, numbers: &no_numbers, live }
+        Callee { function: CALLEE, identity: Value::from_bits(IDENTITY), code, registers: 4, homes, numbers: &no_numbers, live, stable: None }
     }
 
     const HOMES: [(u16, Register); 2] = [(0, 0), (1, 1)];
@@ -359,7 +378,7 @@ mod tests {
         let add = &site.rows[0].decoded;
         assert_eq!(add.dst, Some(BASE + 2));
         assert!(matches!((add.a, add.b), (Some(Source::Register(3)), Some(Source::Register(4)))), "parameters read the caller's argument registers");
-        assert_eq!((site.identity, site.top), ((SHAPE.callee, IDENTITY), u32::from(BASE) + 4));
+        assert_eq!((site.proof, site.top), (Proof::Guard(SHAPE.callee, IDENTITY), u32::from(BASE) + 4));
         assert_eq!(site.rows[0].live, [3, 4], "the parameters are live before the add, renamed to the argument registers");
     }
 
@@ -415,6 +434,22 @@ mod tests {
         assert_eq!(InlineSite::plan(&SHAPE, &facts(), &missing, &mut Context::root(CALLER, BASE)).err(), Some(Refused::Arguments));
         let record = DirectFacts { callee: IDENTITY + 1, ..facts() };
         assert_eq!(InlineSite::plan(&SHAPE, &record, &callee(&code, &HOMES, &live), &mut Context::root(CALLER, BASE)).err(), Some(Refused::Identity));
+    }
+
+    #[test]
+    fn a_global_callee_is_held_by_its_fact_and_a_redefinition_retires_the_code() {
+        let table = crate::heap::new_table();
+        let first = global_value_fact(table, GlobalCell::Slot(0)).expect("a cell nothing wrote is folded");
+        let (code, live, mut context) = (sum(), parameters_live(), Context::root(CALLER, BASE));
+        let held = Callee { stable: Some(first), ..callee(&code, &HOMES, &live) };
+        let site = InlineSite::plan(&SHAPE, &facts(), &held, &mut context).expect("inlined");
+        assert_eq!(site.proof, Proof::Held(first));
+        let published = Rc::new(PublishedCode::new(()));
+        let reader: Rc<dyn DependentCode> = published.clone();
+        assert!(subscribe_global_value(first, &reader));
+        note_global_write(table, GlobalCell::Slot(0));
+        assert!(!published.is_published(), "the redefinition retires the code");
+        assert!(!subscribe_global_value(first, &reader), "the old identity cannot be subscribed again");
     }
 
     #[test]

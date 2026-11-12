@@ -246,3 +246,53 @@ fn a_guard_failing_mid_callee_resumes_in_the_callee() {
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the bodies ran {runs} times");
 }
+
+/// A callee a global holds is inlined under the global's Stable fact: no row proves it at the call,
+/// and the bodies still complete every activation they run.
+#[test]
+fn a_global_callee_is_inlined_without_a_guard_and_completes() {
+    let before = super::super::base_region::inlined_sites();
+    assert_bodies_never_leave(
+        "function sq(x) { return x * x; }
+         function f(n) { var s = 0; for (var i = 0; i < n; i++) s = s + sq(i); return s; }
+         var t = 0; for (var k = 0; k < 300; k++) t = (t + f(k % 9)) | 0;
+         print(t);",
+    );
+    assert!(super::super::base_region::inlined_sites() > before, "the callee's site was inlined");
+}
+
+/// Redefining the global that held the inlined callee retires the body that folded it: the next
+/// run calls the new function, and a call in the middle of a body that redefines it is called as
+/// the interpreter calls it.
+#[test]
+fn redefining_a_global_callee_retires_the_body_that_inlined_it() {
+    let (interpreted, compiled, _) = run_both(
+        "function bump(a) { return a + 1; }
+         function f(n) { var s = 0; for (var i = 0; i < n; i++) s = s + bump(i); return s; }
+         function swap() { bump = function (a) { return a - 1; }; return 0; }
+         function g(n) { var s = 0; for (var i = 0; i < n; i++) { s = s + bump(i); if (i == 2) swap(); } return s; }
+         var t = 0; for (var k = 0; k < 300; k++) t = (t + f(k % 7)) | 0;
+         print(t); print(f(6));
+         for (var k = 0; k < 300; k++) t = (t + g(1)) | 0;
+         print(g(6));
+         bump = function (a) { return a * 100; };
+         print(f(5));",
+    );
+    assert_eq!(interpreted, compiled);
+}
+
+/// A callee a closure holds is no global's: its site keeps the row that tests the callee register,
+/// and another closure of the same function that holds another callee runs as itself.
+#[test]
+fn a_closure_held_callee_keeps_its_guard() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function inc(a) { return a + 1; }
+         function dbl(a) { return a * 2; }
+         function make(h) { return function (n) { var t = 0; for (var i = 0; i < n; i++) t = t + h(i); return t; }; }
+         const f = make(inc), g = make(dbl);
+         var t = 0; for (var k = 0; k < 300; k++) t = (t + f(k % 8)) | 0;
+         print(t); print(g(7)); print(f(5)); print(g(4)); print(f(0.5));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+}

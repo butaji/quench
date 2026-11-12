@@ -19,7 +19,7 @@ use crate::places::{DEST, LEFT, Places};
 use crate::stage::StencilStage;
 use crate::staged::{Step, elements, entry, environment, load_this, read_local, value, write_local};
 
-pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, STORE_LOCAL_ROW, STORE_ROW, THIS_ROW};
+pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, HELD_ROW, IDENTITY_ROW, INDEX_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, STORE_LOCAL_ROW, STORE_ROW, THIS_ROW};
 
 unsafe extern "C" {
     static HOLE_V0: u8;
@@ -148,6 +148,14 @@ fn identity_row(s: S) -> Out {
     if word_at(s.frame, hole::<HOLE_A>()) == hole64::<HOLE_B>() { Out::Next(s) } else { Out::Exit(s) }
 }
 
+/// The invalidation word at the address of hole 2 is unset: every Stable fact the code folded holds.
+#[inline(always)]
+fn held_row(s: S) -> Out {
+    // SAFETY: hole 2 is the address of the method's invalidation word, which lives as long as the
+    // code that reads it (`Invalidation::address`).
+    if unsafe { (hole64::<HOLE_B>() as usize as *const u64).read() } == 0 { Out::Next(s) } else { Out::Exit(s) }
+}
+
 #[inline(always)]
 fn array_row(s: S) -> Out {
     let mut stage = StencilStage::from_hole(0);
@@ -186,6 +194,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         SITE_ROW => site_row::<D>(s, payload),
         ARRAY_ROW => array_row(s),
         IDENTITY_ROW => identity_row(s),
+        HELD_ROW => held_row(s),
         THIS_ROW => this_row::<D>(s),
         LOAD_LOCAL_ROW => load_local_row::<D>(s),
         STORE_LOCAL_ROW => store_local_row::<A>(s),

@@ -198,6 +198,6 @@ pub fn heap_library() -> Vec<HeapCode> {
         rows.extend([THIS_ROW, LOAD_LOCAL_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
     }
     rows.extend(srcs.iter().map(|&a| heap_canonical((STORE_LOCAL_ROW, false, MEM, a, MEM))));
-    rows.extend([ARRAY_ROW, IDENTITY_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
+    rows.extend([ARRAY_ROW, IDENTITY_ROW, HELD_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
     rows.into_iter().collect()
 }

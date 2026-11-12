@@ -15,6 +15,7 @@ use super::call_plan::{CallShape, DirectFacts};
 use super::super::{DirectCallee, DirectCandidates};
 use crate::bytecode::Function;
 use crate::compile::liveness::RegisterMasks;
+use crate::heap::GlobalFact;
 use std::rc::Rc;
 
 /// A function a site may inline: its instructions, registers, the register each parameter is
@@ -42,6 +43,9 @@ pub(in crate::vm::compiled) struct Callees {
     pub(in crate::vm::compiled) owned: Box<[DirectCallee]>,
     at: Vec<Option<usize>>,
     bodies: Vec<Option<InlineBody>>,
+    /// By PC, the Stable fact holding the callee its call site recorded: the global cell its
+    /// callee register is read from (`Vm::stable_callees`).
+    stable: Vec<Option<GlobalFact>>,
 }
 
 /// Whether the call at `instruction` is one a body's call chain makes.
@@ -49,18 +53,28 @@ pub(super) fn chains(instruction: WideInstruction) -> bool {
     instruction.op().class() == Class::Call && instruction.result_flags() == 0 && !instruction.direct_eval() && !instruction.parameter_eval()
 }
 
+/// The callee the call site `instruction` makes calls, if its body's call chain makes it: the
+/// latest its site reached.
+fn called<'a>(instruction: WideInstruction, site: &'a DirectCandidates) -> Option<&'a DirectCallee> {
+    site.first().filter(|_| chains(instruction))
+}
+
 impl Callees {
-    /// The callee each call site of `code` calls: the latest its site reached (`candidates`, by
-    /// PC), and `body_of` the function it runs.
-    pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(u32) -> Option<InlineBody>) -> Self {
+    /// The function each call site of `code` was recorded calling (`candidates`, by PC).
+    pub(in crate::vm::compiled) fn recorded(code: &[WideInstruction], candidates: &[DirectCandidates]) -> Vec<Option<crate::value::Value>> {
+        code.iter().zip(candidates).map(|(instruction, site)| called(*instruction, site).map(|callee| callee.callee)).collect()
+    }
+
+    /// The callee each call site of `code` calls (`candidates`, by PC), `body_of` the function it
+    /// runs, and `stable` the Stable fact holding it by PC.
+    pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(u32) -> Option<InlineBody>, stable: Vec<Option<GlobalFact>>) -> Self {
         let mut owned = Vec::new();
         let at = code.iter().zip(candidates).map(|(instruction, site)| {
-            let callee = site.first().filter(|_| chains(*instruction))?;
-            owned.push(callee.clone());
+            owned.push(called(*instruction, site)?.clone());
             Some(owned.len() - 1)
         }).collect();
         let bodies = owned.iter().map(|callee: &DirectCallee| body_of(callee.target.function)).collect();
-        Self { owned: owned.into_boxed_slice(), at, bodies }
+        Self { owned: owned.into_boxed_slice(), at, bodies, stable }
     }
 
     /// Whether every call of `code` is a direct one (`LaneMethod::closed`).
@@ -83,7 +97,7 @@ impl Callees {
         let at = (*self.at.get(shape.call_pc as usize)?)?;
         let (callee, body) = (&self.owned[at], self.bodies[at].as_ref()?);
         let numbers = |index: usize| region.number_constant(index);
-        let inlinable = Callee { function: callee.target.function, identity: callee.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live };
+        let inlinable = Callee { function: callee.target.function, identity: callee.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live, stable: self.stable[shape.call_pc as usize] };
         let mut trial = context.clone();
         let site = InlineSite::plan(shape, facts[shape.call_pc as usize].as_ref()?, &inlinable, &mut trial).ok()?;
         *context = trial;

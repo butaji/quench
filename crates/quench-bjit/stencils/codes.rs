@@ -62,6 +62,10 @@ pub const STORE_LOCAL_ROW: u8 = 8;
 /// The frame slot at hole 1 holds exactly the word at hole 2: the proof a call's callee is the one
 /// a site was stitched for.
 pub const IDENTITY_ROW: u8 = 9;
+/// The word at the address of hole 2 is zero: a method's invalidation word, set when a Stable fact
+/// its code folded changes (`code_dependencies::Invalidation`), which the code reads at an
+/// invalidation point where a call may have changed one.
+pub const HELD_ROW: u8 = 10;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries
 /// the destination's frame offset beneath it.
 pub const SITE_OBJECT_AT: u32 = 32;
