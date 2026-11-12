@@ -3763,6 +3763,9 @@ pub(crate) enum Cell {
     /// or f64 (a 32-bit one zero-extended), else the bits of the reference or vector handle,
     /// the only kind the collector follows (`Storage`).
     WasmGlobal { header: Box<WasmGlobalHeader>, bits: u64, ty: crate::WasmType, mutable: bool },
+    /// The persistent context of a Wasm instance, which its environment holds in a slot of its
+    /// own: native code reads the instance's words in place and rows name the instance by it.
+    WasmInstance(crate::vm::InstanceRecord),
     /// One memory identity owns its bytes and original optional maximum. `buffer` is the
     /// ArrayBuffer currently viewing the bytes, or undefined until one is requested; growth
     /// detaches it.
@@ -3883,6 +3886,7 @@ impl Cell {
             Self::BindingReference { .. } => "binding_reference",
             Self::Environment { .. } => "environment",
             Self::WasmBits64(_) => "wasm_bits64",
+            Self::WasmInstance(_) => "wasm_instance",
             Self::WasmV128(_) => "wasm_v128",
             Self::WasmExtern(_) => "wasm_extern",
             Self::AccessorPair { .. } => "accessor_pair",

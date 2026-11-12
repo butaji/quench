@@ -10,7 +10,7 @@ use crate::heap::TableTarget;
 impl<H: Host> Vm<H> {
     /// What a table element holding `value` presents to an indirect call (`TableTarget`): the
     /// null row for the null reference; for a function of a module its canonical signature, its
-    /// index and its instance's environment; the foreign row for anything the VM compares against
+    /// index and its instance's record (`InstanceContext::address`); the foreign row for anything the VM compares against
     /// the expected type (a host function).
     pub(super) fn wasm_element_target(&self, value: Value) -> TableTarget {
         if value.is_null() {
@@ -31,10 +31,13 @@ impl<H: Host> Vm<H> {
         else {
             return TableTarget::FOREIGN;
         };
+        let Some(instance) = self.wasm_instance_address(*env, *program) else {
+            return TableTarget::FOREIGN;
+        };
         TableTarget {
             signature,
             entry: *function,
-            instance: env.to_bits(),
+            instance: instance as u64,
         }
     }
 

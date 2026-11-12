@@ -25,6 +25,7 @@ mod snapshot;
 mod startup_intrinsics;
 mod wasm;
 pub use compiled::{AheadImages, ExecutionMode};
+pub(crate) use compiled::InstanceRecord;
 pub use date::local_timezone_changed;
 mod wasm_exception;
 mod wasm_gc;
@@ -1984,6 +1985,8 @@ pub(crate) struct Vm<H> {
     /// reentrant entry under it another, so nested native calls allocate none.
     #[allow(clippy::vec_box)]
     js_native_contexts: Vec<Box<compiled::CallContext>>,
+    /// The environments native Wasm code holds across its calls into other instances.
+    native_roots: Box<compiled::NativeRoots>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.

@@ -486,6 +486,7 @@ fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
         Cell::Iterator { .. }
         | Cell::WasmGc { .. }
         | Cell::WasmGlobal { .. }
+        | Cell::WasmInstance(_)
         | Cell::WasmTable { .. }
         | Cell::WasmTag { .. }
         | Cell::RegExp { .. } => Some(&SHARED_RC_DROP_LOCK),
@@ -501,6 +502,7 @@ fn cell_has_shared_rc_payload(cell: &Cell) -> bool {
         Cell::Iterator { .. }
         | Cell::WasmGc { .. }
         | Cell::WasmGlobal { .. }
+        | Cell::WasmInstance(_)
         | Cell::WasmTable { .. }
         | Cell::WasmTag { .. }
         | Cell::RegExp { .. } => true,
@@ -4209,6 +4211,7 @@ impl Heap {
                 ..
             }
             | Cell::WasmBits64(_)
+            | Cell::WasmInstance(_)
             | Cell::WasmV128(_) => {}
             Cell::WasmHostFunction {
                 target: crate::heap::WasmHostTarget::Js(target),
@@ -4390,6 +4393,7 @@ impl Heap {
             Cell::BigInt(_) => CellKind::BigInt,
             Cell::WasmElements(_) => CellKind::WasmElements,
             Cell::WasmGlobal { .. } => CellKind::WasmGlobal,
+            Cell::WasmInstance(_) => CellKind::WasmElements,
             Cell::WasmMemory { .. } => CellKind::WasmMemory,
             Cell::WasmTable { .. } => CellKind::WasmTable,
             Cell::WasmBits64(_) => CellKind::WasmBits64,
@@ -4438,6 +4442,7 @@ impl Heap {
                 | Cell::WeakRef { .. }
                 | Cell::FinalizationRegistry { .. }
                 | Cell::WasmGlobal { .. }
+                | Cell::WasmInstance(_)
                 | Cell::WasmBits64(_)
                 | Cell::WasmV128(_)
                 | Cell::WasmExtern(_)

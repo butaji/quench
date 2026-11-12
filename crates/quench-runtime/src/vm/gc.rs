@@ -445,6 +445,7 @@ impl<H: Host> Vm<H> {
         let mut roots = self.heap.take_mark_stack();
         self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
         roots.extend(self.wasm_js.roots());
+        roots.extend(self.native_roots.live().iter().copied());
         roots.extend([
             self.realm.globals,
             self.object_proto,

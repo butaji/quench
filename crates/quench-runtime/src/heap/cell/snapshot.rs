@@ -721,6 +721,7 @@ impl Cell {
                 writer.u8(tag::JS_TAG); write_object(writer, object)?;
             }
             Self::WasmBits64(_)
+            | Self::WasmInstance(_)
             | Self::WasmV128(_)
             | Self::WasmExtern(_)
             | Self::WasmException { .. }

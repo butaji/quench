@@ -63,7 +63,8 @@ impl std::ops::DerefMut for WasmGcFields {
 /// table's mirror, which compiled code reads in place: the canonical signature of its function
 /// (`CanonicalSignature::NULL` for the null reference, `FOREIGN` where it has none), the index
 /// of the function in the code table of its instance (`NO_ENTRY` for a function the module does
-/// not define) and the instance's environment (`Value` bits). A row is written with the element,
+/// not define) and the address of the instance's record (`InstanceContext`), which lives as long as
+/// the function does. A row is written with the element,
 /// so each is read from the function once per write, not per call; none of them is a reference
 /// the collector follows, the element being the one that keeps its function and instance alive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

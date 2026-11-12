@@ -336,7 +336,9 @@ impl<H: Host> Vm<H> {
                 self.heap.alloc(Cell::WasmTag { object, declarations: module.signatures.declarations.clone(), ty: tag.ty })
             }));
         }
-        // Imported function slots end the resource layout; ref.func derives their base.
+        // The instance's record (`install_wasm_instance`) takes the slot before the imported
+        // function slots, which end the resource layout; ref.func derives their base.
+        values.push(Value::UNDEFINED);
         values.extend(functions);
         let environment = self.heap.alloc(Cell::Environment {
             parent: Value::NULL,
@@ -352,8 +354,12 @@ impl<H: Host> Vm<H> {
         });
         let root = self.root(environment);
         let previous = self.replace_active_program(id);
+        let missing = || JsError::validation("invalid Wasm instance environment".into());
         let initialized = self
-            .initialize_wasm_globals(module, environment)
+            .install_wasm_instance(environment, id)
+            .ok_or_else(missing)
+            .and_then(|()| self.initialize_wasm_globals(module, environment))
+            .and_then(|()| self.bind_wasm_instance(environment, id).ok_or_else(missing))
             .and_then(|()| self.initialize_wasm_references(module, environment))
             .and_then(|()| self.initialize_wasm_data(module, environment))
             .and_then(|()| match module.start {

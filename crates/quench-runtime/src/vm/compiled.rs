@@ -32,7 +32,6 @@ use crate::bytecode::{Class,
 };
 use crate::staged::wasm_call::Call;
 use crate::staged::wasm_flow::Flow;
-use crate::staged::wasm_instance::Instance;
 use crate::staged::wasm_step::Step;
 use crate::staged::wasm::{WasmStage, Width, integer_binary};
 use crate::staged::wasm_operation::{Form, Operand as Right, WasmOperation};
@@ -88,12 +87,15 @@ mod wasm_callable;
 #[path = "compiled/wasm_stage.rs"]
 mod wasm_stage;
 mod wasm_instance_stage;
+mod instance_context;
+pub(crate) use instance_context::{InstanceContext, InstanceRecord, NativeRoots};
 #[cfg(test)]
 mod wasm_global_tests;
 mod wasm_memory_stage;
 mod wasm_flow_stage;
 mod wasm_call_stage;
 mod wasm_table_stage;
+mod wasm_instance_switch;
 mod wasm_simd_stage;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
@@ -4246,12 +4248,12 @@ pub(super) struct CallContext {
     /// The guarded memory reservation compiled code may fault in.
     guard_start: usize,
     guard_end: usize,
-    /// Per global the program accesses (`CompiledProgram::globals`), the
-    /// address of the global's native slot in this instance, read and written raw. Heap cells
-    /// never move, so the addresses outlive callouts.
+    /// Per environment slot (the instance's global area), the address of the native slot of the
+    /// global bound there, read and written raw; null for any other binding. Heap cells never
+    /// move, so the addresses outlive callouts.
     globals: *const *mut u64,
-    /// Per table an indirect call reads (`CompiledProgram::tables`), the words that publish its
-    /// mirror (`TableWords`): the table's rows are read in place, its growth rewrites the words.
+    /// Per environment slot, the words that publish the table bound there (`TableWords`): the
+    /// table's rows are read in place, its growth rewrites the words.
     table_words: *const *const crate::heap::TableWords,
     /// `import_callout` for the VM's host type.
     callout: usize,
@@ -4298,6 +4300,11 @@ pub(super) struct CallContext {
     js_constant_count: usize,
     /// Borrowed only during a running entry; a non-reentrant region may prove unique ownership.
     interrupt_owner: *const crate::ExecutionInterrupt,
+    /// The record of the instance this context is in (`InstanceContext`), whose words the fields
+    /// it shares by name hold (`SWITCHED`): what a mirror row's instance is compared with.
+    instance: *const InstanceContext,
+    /// The VM's roots for the instances native code enters beyond this one.
+    native_roots: *mut NativeRoots,
 }
 
 impl CallContext {
@@ -4339,6 +4346,8 @@ impl CallContext {
             js_constants: std::ptr::null(),
             js_constant_count: 0,
             interrupt_owner: std::ptr::null(),
+            instance: std::ptr::null(),
+            native_roots: std::ptr::null_mut(),
         };
         context.bind_native_adapter(adapter_payload, interrupt, poll_page);
         context
@@ -4392,6 +4401,8 @@ impl CallContext {
             js_constants: std::ptr::null(),
             js_constant_count: 0,
             interrupt_owner: interrupt,
+            instance: std::ptr::null(),
+            native_roots: std::ptr::null_mut(),
         }
     }
 
@@ -4439,6 +4450,8 @@ impl CallContext {
             js_constants: self.js_constants,
             js_constant_count: self.js_constant_count,
             interrupt_owner: self.interrupt_owner,
+            instance: self.instance,
+            native_roots: self.native_roots,
         }
     }
 }
@@ -4461,7 +4474,8 @@ const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, call_refer
 const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, memory_length) as i32;
 const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
     std::mem::offset_of!(CallContext, call_reference_diagnostic) as i32;
-const CONTEXT_ENV: i32 = std::mem::offset_of!(CallContext, env) as i32;
+const CONTEXT_INSTANCE: i32 = std::mem::offset_of!(CallContext, instance) as i32;
+const CONTEXT_NATIVE_ROOTS: i32 = std::mem::offset_of!(CallContext, native_roots) as i32;
 const CONTEXT_JS_CONSTANTS: i32 = std::mem::offset_of!(CallContext, js_constants) as i32;
 const CONTEXT_JS_CONSTANT_COUNT: i32 =
     std::mem::offset_of!(CallContext, js_constant_count) as i32;
@@ -4866,7 +4880,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                             vm,
                             compiled,
                             function as usize,
-                            context.env,
+                            (context.env, program),
                             context.memory,
                             Some((&params, result_type)),
                         )
@@ -4896,9 +4910,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             function,
             entry,
             (base, length),
-            memory_binding,
-            guard,
-            (globals, table_words),
+            record,
         )) = direct_entry
         {
             // A re-entrant import can mutate the table and collect while this
@@ -4933,30 +4945,8 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             }
             let native_entry_should_sample = compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
-            nested.compiled = Rc::as_ptr(&compiled);
-            nested.table = compiled.table.as_ptr();
-            nested.globals = globals.as_ptr();
-            nested.table_words = table_words.as_ptr();
-            nested.memory = memory_binding;
-            nested.memory_length = length;
-            let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
-                (start as usize, start as usize + size)
-            });
-            nested.guard_start = guard_start;
-            nested.guard_end = guard_end;
-            nested.call_reference_diagnostic = compiled.diagnostics.as_ref().map_or(0, |_| {
-                diagnostic_reference_callout::<H> as DiagnosticReferenceCallout as usize
-            });
-            nested.reference_call_sites = compiled
-                .diagnostics
-                .as_ref()
-                .map_or(std::ptr::null(), |stats| {
-                    stats.reference_call_sites.as_ptr()
-                });
-            nested.reference_call_site_count = compiled
-                .diagnostics
-                .as_ref()
-                .map_or(0, |stats| stats.reference_call_sites.len());
+            // SAFETY: the record belongs to the environment the target runs in.
+            nested.enter(unsafe { &*record });
             // SAFETY: the table/signature resolver ran first; same program,
             // exact instance environment, and exact scalar signature were
             // checked above. The caller's raw argument/result buffers have
@@ -5214,42 +5204,8 @@ type DirectReferenceEntry = (
     usize,
     Entry,
     (u64, u64),
-    Value,
-    Option<(*mut u8, usize)>,
-    InstanceWords,
+    *const InstanceContext,
 );
-
-/// The addresses a context reads in place for an instance: its globals' cells
-/// (`CallContext::globals`) and its tables' published words (`CallContext::table_words`).
-type InstanceWords = (
-    smallvec::SmallVec<[*mut u64; 8]>,
-    smallvec::SmallVec<[*const crate::heap::TableWords; 8]>,
-);
-
-/// The addresses of the cells and tables of `compiled` in the instance `env`.
-fn instance_words<H: Host>(
-    vm: &mut Vm<H>,
-    compiled: &CompiledProgram,
-    env: Value,
-) -> Option<InstanceWords> {
-    let mut globals = smallvec::SmallVec::new();
-    for slot in &compiled.globals {
-        let binding = vm.heap.environment_slot(env, *slot as usize)?;
-        match vm.heap.get_mut(binding)? {
-            Cell::WasmGlobal { bits, .. } => globals.push(bits as *mut u64),
-            _ => return None,
-        }
-    }
-    let mut tables = smallvec::SmallVec::new();
-    for slot in &compiled.tables {
-        let binding = vm.heap.environment_slot(env, *slot as usize)?;
-        match vm.heap.get(binding)? {
-            Cell::WasmTable { elements, .. } => tables.push(elements.words() as *const _),
-            _ => return None,
-        }
-    }
-    Some((globals, tables))
-}
 
 /// Build the per-invocation activation for a same-instance compiled indirect
 /// target. Even a monomorphic cache hit comes through here so memory, guards,
@@ -5258,7 +5214,7 @@ fn direct_reference_entry<H: Host>(
     vm: &mut Vm<H>,
     compiled: Rc<CompiledProgram>,
     function: usize,
-    env: Value,
+    (env, program): (Value, ProgramId),
     context_memory: Value,
     signature: Option<(&[crate::WasmType], Option<crate::WasmType>)>,
 ) -> Option<DirectReferenceEntry> {
@@ -5269,27 +5225,13 @@ fn direct_reference_entry<H: Host>(
         return None;
     }
     let entry = native.entry;
-    let (memory, memory_binding, guard) = match compiled.memory_slot {
-        None => ((0, 0), Value::UNDEFINED, None),
-        Some(slot) => {
-            let binding = vm.heap.environment_slot(env, slot as usize)?;
-            if binding != context_memory {
-                return None;
-            }
-            let (base, length) = super::dispatch_fast::direct_memory(vm, binding)?;
-            let guard = guarded_memory(vm, binding);
-            if compiled.guarded && guard.is_none()
-                || compiled.fixed_base.is_some_and(|fixed| {
-                    guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed))
-                })
-            {
-                return None;
-            }
-            ((base as u64, length as u64), binding, guard)
-        }
-    };
-    let words = instance_words(vm, &compiled, env)?;
-    Some((compiled, function, entry, memory, memory_binding, guard, words))
+    if let Some(slot) = compiled.memory_slot
+        && vm.heap.environment_slot(env, slot as usize)? != context_memory
+    {
+        return None;
+    }
+    let (record, memory) = vm.publish_wasm_instance(&compiled, env, program)?;
+    Some((compiled, function, entry, memory, record))
 }
 
 /// Pick a compiled artifact for an indirect target, preferring the artifact
@@ -5379,7 +5321,7 @@ fn cached_direct_reference<H: Host>(
         vm,
         compiled,
         cache.function as usize,
-        context.env,
+        (context.env, context.program),
         context.memory,
         None,
     )?;
@@ -5424,13 +5366,7 @@ pub(super) struct CompiledProgram {
     /// displacement (see `displacement_base`); calls with another base fall
     /// back to the interpreter.
     fixed_base: Option<i32>,
-    /// The environment slots of the globals compiled code accesses, in the
-    /// order of the context's global addresses.
-    globals: Vec<u32>,
     diagnostics: Option<WasmJitDiagnostics>,
-    /// The environment slots of the tables compiled code calls through, in the order of the
-    /// context's table words.
-    tables: Vec<u32>,
     /// One optional monomorphic cache per actual compiled `call_indirect`
     /// site. The vector is only pointers until a site becomes hot, and each
     /// cache weakly references its callee artifact to avoid Rc cycles.
@@ -9287,16 +9223,12 @@ struct Emitter<'a, 'b, H: Host> {
     guarded: bool,
     /// Per `Region`, its alias region in this function.
     regions: [ir::AliasRegion; Region::COUNT],
-    globals: &'a [u32],
     analysis: &'a Analysis<'a, H>,
     body: Body<'b>,
     plan: &'a Plan,
     blocks: Vec<Option<ir::Block>>,
     /// Dense ids for the compiled artifact's actual indirect call sites.
     reference_site_ids: &'a [(usize, usize)],
-    /// The environment slots of the tables the artifact calls through, in the order of the
-    /// context's table words (`CompiledProgram::tables`).
-    tables: &'a [u32],
     /// Selects the diagnostics ABI at compile time; both ABIs carry site ids.
     diagnostics_enabled: bool,
     base: ir::Value,
@@ -9460,25 +9392,16 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
     }
 
-    /// The position of the global bound at `slot` among the artifact's globals
-    /// (`CallContext::globals`).
-    fn global_position(&self, slot: u32) -> usize {
-        self.globals
-            .iter()
-            .position(|candidate| *candidate == slot)
-            .expect("planned globals are collected")
-    }
-
-    /// The address of the value of the global bound at `slot`.
+    /// The address of the native slot of the global bound at `slot`: the instance's global area
+    /// holds it, indexed by the binding.
     fn global_address(&mut self, slot: u32) -> ir::Value {
-        let position = self.global_position(slot);
         let table = self
             .body.core.builder
             .ins()
             .load(types::I64, invariant(), self.body.core.context, CONTEXT_GLOBALS);
         self.body.core.builder
             .ins()
-            .load(types::I64, invariant(), table, (position * 8) as i32)
+            .load(types::I64, invariant(), table, (slot as usize * size_of::<*mut u64>()) as i32)
     }
 
     /// The binding the `b` register of instruction `pc` holds.
@@ -9999,9 +9922,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         plans: &[Option<Plan>],
         guarded: bool,
         fixed_base: Option<i32>,
-        globals: &[u32],
         reference_site_ids: &'a [(usize, usize)],
-        tables: &'a [u32],
         diagnostics_enabled: bool,
     ) -> Option<ir::Function> {
         let function = &self.code.function(index);
@@ -10057,13 +9978,11 @@ impl<'a, H: Host> Analysis<'a, H> {
         let mut emitter = Emitter {
             guarded,
             regions,
-            globals,
             analysis: self,
             body: Body::new(builder, context, poll_address(&self.vm.execution_interrupt), Int32Extension::Zero),
             plan,
             blocks: vec![None; function.code.len()],
             reference_site_ids,
-            tables,
             diagnostics_enabled,
             base,
             length,
@@ -10547,7 +10466,12 @@ unsafe fn enter_native(
         // Their fixed ABI arguments stay live through this bounded call.
         return unsafe { entry(context, base, length, arguments, out) };
     }
-    match guard_trampoline() {
+    // A fault resumes here with native frames unreturned, which held roots (`NativeRoots`): the
+    // entry gives back what it found.
+    let roots = context.native_roots;
+    // SAFETY: a context with roots is a Wasm entry's, whose VM outlives the call.
+    let depth = (!roots.is_null()).then(|| unsafe { (*roots).depth() });
+    let status = match guard_trampoline() {
         Some(trampoline) => {
             let outer = ACTIVE_CONTEXT.with(|active| active.replace(context));
             // SAFETY: as the caller promises; the trampoline saves the caller's registers
@@ -10558,7 +10482,12 @@ unsafe fn enter_native(
         }
         // SAFETY: as the caller promises.
         None => unsafe { entry(context, base, length, arguments, out) },
+    };
+    if let Some(depth) = depth {
+        // SAFETY: as above.
+        unsafe { (*roots).set_depth(depth) };
     }
+    status
 }
 
 /// The poll page compiled code faults on to stop for `interrupt`: only where the guard
@@ -11641,12 +11570,8 @@ impl<H: Host> Vm<H> {
         let mut reference_call_sites = Vec::new();
         let mut reference_cache_sites = Vec::new();
         let mut reference_cache_count = 0usize;
-        // The globals compiled code accesses, each once.
-        let mut globals: Vec<u32> = Vec::new();
-        // The tables it calls through, each once.
-        let mut tables: Vec<u32> = Vec::new();
-        // One pass over each callable function's full plan finds both what every body's
-        // compilation reads first: its indirect reference sites and the globals it accesses.
+        // One pass over each callable function's full plan finds what every body's compilation
+        // reads first: its indirect reference sites.
         for index in 0..count {
             if plans[index].is_none() {
                 continue;
@@ -11655,38 +11580,23 @@ impl<H: Host> Vm<H> {
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                match Step::of(instruction.op(), instruction.imm()) {
-                    Some(Step::Call(Call::Reference)) => {
-                        if let Slot::IndirectReference { table, .. } = full_plan.operand(pc) {
-                            let site_id = reference_cache_count;
-                            reference_cache_count += 1;
-                            reference_site_ids[index].push((pc, site_id));
-                            reference_cache_sites.push((index, pc, table));
-                            if diagnostics_enabled {
-                                reference_call_sites.push(ReferenceCallSiteDiagnostics {
-                                    function: index,
-                                    pc,
-                                    counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
-                                    targets: std::cell::RefCell::new(Vec::new()),
-                                });
-                            }
-                        }
-                    }
-                    Some(Step::Call(Call::IndirectTarget)) => {
-                        if let Some(Slot::Binding(slot)) = full_plan.operands[pc]
-                            && !tables.contains(&slot)
-                        {
-                            tables.push(slot);
-                        }
-                    }
-                    Some(Step::Instance(step)) if step.accesses_global() => {
-                        if let Some(Slot::Binding(slot)) = full_plan.operands[pc]
-                            && !globals.contains(&slot)
-                        {
-                            globals.push(slot);
-                        }
-                    }
-                    _ => {}
+                if Step::of(instruction.op(), instruction.imm()) != Some(Step::Call(Call::Reference)) {
+                    continue;
+                }
+                let Slot::IndirectReference { table, .. } = full_plan.operand(pc) else {
+                    continue;
+                };
+                let site_id = reference_cache_count;
+                reference_cache_count += 1;
+                reference_site_ids[index].push((pc, site_id));
+                reference_cache_sites.push((index, pc, table));
+                if diagnostics_enabled {
+                    reference_call_sites.push(ReferenceCallSiteDiagnostics {
+                        function: index,
+                        pc,
+                        counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
+                        targets: std::cell::RefCell::new(Vec::new()),
+                    });
                 }
             }
         }
@@ -11723,9 +11633,7 @@ impl<H: Host> Vm<H> {
                 &plans,
                 guarded,
                 fixed_base,
-                &globals,
                 &reference_site_ids[index],
-                &tables,
                 diagnostics_enabled,
             );
             if let Some(started) = body_build_started {
@@ -11865,8 +11773,6 @@ impl<H: Host> Vm<H> {
             memory_slot,
             guarded,
             fixed_base,
-            globals,
-            tables,
             diagnostics,
             reference_call_caches: std::cell::RefCell::new(
                 std::iter::repeat_with(|| None)
@@ -12188,30 +12094,10 @@ impl<H: Host> Vm<H> {
         };
         let result = (|| {
             let function = compiled.function(id as usize)?;
-            let (base, length, guard, memory_binding) = match compiled.memory_slot {
-                Some(slot) => {
-                    let binding = self.heap.environment_slot(env, slot as usize)?;
-                    let (view, guard) = super::dispatch_fast::direct_memory_and_guard(self, binding)?;
-                    // Code compiled without bounds checks needs this memory's guard.
-                    if compiled.guarded && guard.is_none() {
-                        return None;
-                    }
-                    if compiled.fixed_base.is_some_and(|fixed| {
-                        guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed))
-                    }) {
-                        return None;
-                    }
-                    (view.0 as u64, view.1 as u64, guard, binding)
-                }
-                None => (0, 0, None, Value::UNDEFINED),
-            };
+            let (record, (base, length)) = self.publish_wasm_instance(&compiled, env, program)?;
             let raw = self.compiled_raw_args(args, &function.params)?;
             let marker = 0u8;
             let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
-            let (globals, table_words) = instance_words(self, &compiled, env)?;
-            let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
-                (start as usize, start as usize + size)
-            });
             let mut import_callouts = 0u64;
             let mut known_callouts = 0u64;
             let mut reference_callouts = 0u64;
@@ -12240,55 +12126,41 @@ impl<H: Host> Vm<H> {
             let mut context = CallContext {
                 stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
                 interrupt: self.execution_interrupt.atomic_flag(),
-                table: compiled.table.as_ptr(),
+                table: std::ptr::null(),
                 vm: (self as *mut Self).cast(),
                 env,
                 entry_stack: 0,
-                guard_start,
-                guard_end,
-                globals: globals.as_ptr(),
-                table_words: table_words.as_ptr(),
+                guard_start: 0,
+                guard_end: 0,
+                globals: std::ptr::null(),
+                table_words: std::ptr::null(),
                 callout: import_callout::<H> as Callout as usize,
                 call_reference: reference_callout::<H> as ReferenceCallout as usize,
-                compiled: Rc::as_ptr(&compiled),
+                compiled: std::ptr::null(),
                 program,
                 import_callouts: import_callouts_ptr,
                 known_callouts: known_callouts_ptr,
                 reference_callouts: reference_callouts_ptr,
-                memory: memory_binding,
-                memory_length: length,
+                memory: Value::UNDEFINED,
+                memory_length: 0,
                 raised: None,
-                call_reference_diagnostic: compiled.diagnostics.as_ref().map_or(0, |_| {
-                    diagnostic_reference_callout::<H> as DiagnosticReferenceCallout as usize
-                }),
-                reference_call_sites: compiled
-                    .diagnostics
-                    .as_ref()
-                    .map_or(std::ptr::null(), |stats| {
-                        stats.reference_call_sites.as_ptr()
-                    }),
-                reference_call_site_count: compiled
-                    .diagnostics
-                    .as_ref()
-                    .map_or(0, |stats| stats.reference_call_sites.len()),
+                call_reference_diagnostic: 0,
+                reference_call_sites: std::ptr::null(),
+                reference_call_site_count: 0,
                 poll_start: poll.map_or(0, |(start, _)| start),
                 poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
                 emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
-                import_callout_counts: compiled
-                    .diagnostics
-                    .as_ref()
-                    .map_or(std::ptr::null(), |stats| {
-                        stats.import_callout_counts.as_ptr()
-                    }),
-                import_callout_count: compiled
-                    .diagnostics
-                    .as_ref()
-                    .map_or(0, |stats| stats.import_callout_counts.len()),
+                import_callout_counts: std::ptr::null(),
+                import_callout_count: 0,
                 adapter_payload: std::ptr::null_mut(),
                 js_constants: std::ptr::null(),
                 js_constant_count: 0,
                 interrupt_owner: std::ptr::null(),
+                instance: std::ptr::null(),
+                native_roots: &mut *self.native_roots,
             };
+            // SAFETY: the record belongs to the environment the call runs in.
+            context.enter(unsafe { &*record });
             let mut out = 0u64;
             let native_entry_should_sample = compiled.note_native_entry(id as usize);
             let native_entry_sample_started =

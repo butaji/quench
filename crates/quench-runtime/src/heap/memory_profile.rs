@@ -674,6 +674,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::ArrayFromAsyncState(_)
             | Cell::AwaitState(_)
             | Cell::WasmBits64(_)
+            | Cell::WasmInstance(_)
             | Cell::WasmV128(_)
             | Cell::WasmExtern(_)
             | Cell::AccessorPair { .. }

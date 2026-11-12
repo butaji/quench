@@ -150,8 +150,11 @@ fn rows(vm: &Vm<crate::SystemHost>, table: Value) -> Vec<TableTarget> {
 #[test]
 fn a_row_names_the_function_and_the_instance_of_its_element_through_every_write() {
     let mut vm = Vm::new(crate::SystemHost);
-    let instance = vm.instantiate_wasm_module(&module()).unwrap();
-    let environment = vm.root_value(instance.environment).unwrap().to_bits();
+    let built = module();
+    let instance = vm.instantiate_wasm_module(&built).unwrap();
+    let environment = vm.root_value(instance.environment).unwrap();
+    let program = vm.programs.find_shared(&built.program).expect("a registered program");
+    let record = vm.wasm_instance_address(environment, program).expect("an instance record") as u64;
     let (table, other) = (
         vm.wasm_table(&instance, 0).unwrap(),
         vm.wasm_table(&instance, 1).unwrap(),
@@ -160,7 +163,7 @@ fn a_row_names_the_function_and_the_instance_of_its_element_through_every_write(
     let function = |entry: u32| TableTarget {
         signature: if entry == 0 { first.signature } else { second_row.signature },
         entry,
-        instance: environment,
+        instance: record,
     };
     assert_eq!(rows(&vm, table), [function(0); 3]);
 
@@ -258,4 +261,48 @@ fn a_write_to_a_table_changes_the_target_of_the_next_call_in_the_tier() {
     ];
     assert_eq!(run(false), expected);
     assert_eq!(run(true), expected);
+}
+
+#[test]
+fn another_instances_function_in_a_shared_table_is_called_natively_once_it_is_published() {
+    let mut vm = vm_running(true);
+    let (own, foreign) = (module(), module_returning(SEVEN + 2));
+    let instance = vm.instantiate_wasm_module(&own).unwrap();
+    let other = vm.instantiate_wasm_module(&foreign).unwrap();
+    // The VM enters the other instance once, which publishes its code in its record.
+    assert_eq!(
+        vm.invoke_wasm(&other, 0, &[]).unwrap(),
+        Some(WasmValue::I32(SEVEN + 2))
+    );
+    let table = vm.wasm_table(&instance, 0).unwrap();
+    let function = vm.wasm_function(&other, 0).unwrap();
+    vm.wasm_table_fill(table, 0, function, 1).unwrap();
+    let (before, caller) = (entries(&vm, &foreign, 0), entries(&vm, &own, CALLER as usize));
+    assert_eq!(before, Some(1));
+    for _ in 0..3 {
+        assert_eq!(call(&mut vm, &instance, 0), Ok(SEVEN + 2));
+    }
+    // The calls ran in the caller's code and switched to the other instance's: the VM entered
+    // only the caller, and its callout never ran the target.
+    assert_eq!(entries(&vm, &foreign, 0), before);
+    assert_eq!(entries(&vm, &own, CALLER as usize), caller.map(|entered| entered + 3));
+}
+
+#[test]
+fn a_row_names_the_record_its_function_keeps_alive() {
+    let mut vm = vm_running(true);
+    let (own, foreign) = (module(), module_returning(SEVEN + 2));
+    let instance = vm.instantiate_wasm_module(&own).unwrap();
+    let other = vm.instantiate_wasm_module(&foreign).unwrap();
+    let table = vm.wasm_table(&instance, 0).unwrap();
+    let function = vm.wasm_function(&other, 0).unwrap();
+    vm.wasm_table_fill(table, 0, function, 1).unwrap();
+    let environment = vm.root_value(other.environment).unwrap();
+    let program = vm.programs.find_shared(&foreign.program).expect("a registered program");
+    let record = vm.wasm_instance_address(environment, program).expect("a record");
+    assert_eq!(rows(&vm, table)[0].instance, record as u64);
+    assert!(vm.release_root(other.environment));
+    vm.collect_now(own.residual());
+    assert_eq!(call(&mut vm, &instance, 0), Ok(SEVEN + 2));
+    assert_eq!(vm.wasm_instance_address(environment, program), Some(record));
 }

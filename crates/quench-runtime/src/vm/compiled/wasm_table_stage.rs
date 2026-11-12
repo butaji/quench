@@ -3,15 +3,16 @@
 //! through a row's function. The target's checks are the staged rule
 //! (`staged::wasm_call::indirect_target`), emitted: the bound, the null id and the id compare
 //! trap in the interpreter's order; an id that is not the expected one is the VM's to relate.
-//! A call goes through the row natively where the row names a function this instance defines
-//! and this artifact compiled; every other target (a host function, another instance's
-//! function, code not compiled) goes through the VM's callout.
+//! A call goes through the row natively where the row names a function this artifact compiled,
+//! in this instance or, switching the context to the instance's record
+//! (`wasm_instance_switch`), in another; every other target (a host function, code not
+//! compiled, a memory the call cannot be made across) goes through the VM's callout.
 
 use super::wasm_stage::infallible;
 use super::{
-    Analysis, CONTEXT_CALL_REFERENCE, CONTEXT_CALL_REFERENCE_DIAGNOSTIC, CONTEXT_ENV,
-    CONTEXT_TABLE, CONTEXT_TABLE_WORDS, CallContext, Emitter, Host, Kind, Slot, Vm,
-    internal_signature, invariant,
+    Analysis, CONTEXT_CALL_REFERENCE, CONTEXT_CALL_REFERENCE_DIAGNOSTIC, CONTEXT_INSTANCE,
+    CONTEXT_TABLE, CONTEXT_TABLE_WORDS, CallContext, Emitter, Host, Kind,
+    Slot, Vm, internal_signature, invariant,
 };
 use crate::bytecode::WideInstruction;
 use crate::heap::{TableTarget, TableWords};
@@ -57,16 +58,12 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.indirect.expect("an indirect target is being emitted")
     }
 
-    /// The address of the published words of the table at binding `table`.
+    /// The address of the published words of the table at binding `table`: the instance's table
+    /// area holds them, indexed by the binding.
     fn table_words(&mut self, table: u32) -> ir::Value {
-        let position = self
-            .tables
-            .iter()
-            .position(|candidate| *candidate == table)
-            .expect("planned tables are collected");
         let builder = &mut self.body.core.builder;
         let array = builder.ins().load(types::I64, invariant(), self.body.core.context, CONTEXT_TABLE_WORDS);
-        let offset = (position * size_of::<*const TableWords>()) as i32;
+        let offset = (table as usize * size_of::<*const TableWords>()) as i32;
         builder.ins().load(types::I64, invariant(), array, offset)
     }
 
@@ -173,56 +170,84 @@ impl<H: Host> Emitter<'_, '_, H> {
         let (args, out) = self.spill_arguments(instruction, &signature);
         let row = self.read(instruction.b(), Kind::I64);
         let words = self.table_words(table);
-        let (slow, done) = (self.body.core.builder.create_block(), self.body.core.builder.create_block());
-        let status_slot = self.word_slot();
-        let body = self.direct_body(words, row, expected, slow);
-        let status = self.call_direct(body, &signature, args, out);
-        self.store_word(status_slot, status);
-        self.body.core.builder.ins().jump(done, &[]);
-        self.body.core.builder.switch_to_block(slow);
-        self.body.core.builder.set_cold_block(slow);
-        self.body.core.builder.seal_block(slow);
+        let builder = &mut self.body.core.builder;
+        let (slow, done) = (builder.create_block(), builder.create_block());
+        builder.append_block_param(done, types::I64);
+        self.native_calls(words, row, expected, &signature, (args, out), (slow, done));
+        let builder = &mut self.body.core.builder;
+        builder.switch_to_block(slow);
+        builder.set_cold_block(slow);
+        builder.seal_block(slow);
         let status = self.call_through_vm(pc, table, signature_index, row, (args, out));
-        self.store_word(status_slot, status);
-        self.body.core.builder.ins().jump(done, &[]);
-        self.body.core.builder.switch_to_block(done);
-        self.body.core.builder.seal_block(done);
-        let status = self.load_word(status_slot);
+        let builder = &mut self.body.core.builder;
+        builder.ins().jump(done, &[BlockArg::Value(status)]);
+        builder.switch_to_block(done);
+        builder.seal_block(done);
+        let status = builder.block_params(done)[0];
         self.propagate(status);
         self.take_result(instruction, &signature, out);
     }
 
-    /// The function entry the row names, which a call of the `expected` id may enter
-    /// directly: the row holds that id and a function of this instance (its environment is the
-    /// context's, so the function is this program's, whose code table the context holds), and
-    /// the artifact has compiled it. Any other row leaves for `slow`.
-    fn direct_body(
+    /// The native calls of the row: when it holds the `expected` id, a call of its function in
+    /// this instance (the running context's) or in another (the instance's record), each jumping
+    /// to `done` with its status; any other row, or a function without a body, leaves for `slow`.
+    fn native_calls(
         &mut self,
         words: ir::Value,
         row: ir::Value,
         expected: CanonicalSignature,
-        slow: ir::Block,
-    ) -> ir::Value {
+        signature: &crate::WasmSignature,
+        buffers: (ir::Value, ir::Value),
+        (slow, done): (ir::Block, ir::Block),
+    ) {
         let address = self.table_row(words, row);
         let context = self.body.core.context;
         let builder = &mut self.body.core.builder;
         let flags = MemFlagsData::trusted();
-        let signature = builder.ins().load(types::I32, flags, address, TableTarget::SIGNATURE);
-        let same_signature = builder.ins().icmp_imm_u(IntCC::Equal, signature, expected.word() as i64);
+        let id = builder.ins().load(types::I32, flags, address, TableTarget::SIGNATURE);
+        let same_signature = builder.ins().icmp_imm_u(IntCC::Equal, id, expected.word() as i64);
+        let (resolve, local, foreign) = (builder.create_block(), builder.create_block(), builder.create_block());
+        builder.ins().brif(same_signature, resolve, &[], slow, &[]);
+        builder.switch_to_block(resolve);
+        builder.seal_block(resolve);
         let instance = builder.ins().load(types::I64, flags, address, TableTarget::INSTANCE);
-        let environment = builder.ins().load(types::I64, invariant(), context, CONTEXT_ENV);
-        let same_instance = builder.ins().icmp(IntCC::Equal, instance, environment);
-        let direct = builder.ins().band(same_signature, same_instance);
-        let lookup = builder.create_block();
-        builder.ins().brif(direct, lookup, &[], slow, &[]);
-        builder.switch_to_block(lookup);
-        builder.seal_block(lookup);
         let entry = builder.ins().load(types::I32, flags, address, TableTarget::ENTRY);
         let entry = builder.ins().uextend(types::I64, entry);
-        let code = builder.ins().load(types::I64, invariant(), context, CONTEXT_TABLE);
+        let running = builder.ins().load(types::I64, invariant(), context, CONTEXT_INSTANCE);
+        let mine = builder.ins().icmp(IntCC::Equal, instance, running);
+        builder.ins().brif(mine, local, &[], foreign, &[]);
+        builder.switch_to_block(local);
+        builder.seal_block(local);
+        self.local_call(entry, signature, buffers, (slow, done));
+        let builder = &mut self.body.core.builder;
+        builder.switch_to_block(foreign);
+        builder.seal_block(foreign);
+        self.foreign_call(instance, entry, signature, buffers, (slow, done));
+    }
+
+    /// The call of the function at index `entry` of the running artifact's code table, in the
+    /// running context: its status jumps to `done`.
+    fn local_call(
+        &mut self,
+        entry: ir::Value,
+        signature: &crate::WasmSignature,
+        buffers: (ir::Value, ir::Value),
+        (slow, done): (ir::Block, ir::Block),
+    ) {
+        let context = self.body.core.context;
+        let table = self.body.core.builder.ins().load(types::I64, invariant(), context, CONTEXT_TABLE);
+        let body = self.entry_body(table, entry, slow);
+        let status = self.call_body(body, signature, buffers, (self.base, self.length));
+        self.body.core.builder.ins().jump(done, &[BlockArg::Value(status)]);
+    }
+
+    /// The body at index `entry` of the code table at `table`; a function without one leaves
+    /// for `slow`.
+    pub(super) fn entry_body(&mut self, table: ir::Value, entry: ir::Value, slow: ir::Block) -> ir::Value {
+        let builder = &mut self.body.core.builder;
         let offset = builder.ins().imul_imm_u(entry, size_of::<usize>() as i64);
-        let slot = builder.ins().iadd(code, offset);
-        let body = builder.ins().load(types::I64, flags, slot, 0);
+        let slot = builder.ins().iadd(table, offset);
+        let body = builder.ins().load(types::I64, MemFlagsData::trusted(), slot, 0);
         let compiled = builder.ins().icmp_imm_u(IntCC::NotEqual, body, 0);
         let enter = builder.create_block();
         builder.ins().brif(compiled, enter, &[], slow, &[]);
@@ -231,20 +256,20 @@ impl<H: Host> Emitter<'_, '_, H> {
         body
     }
 
-    /// The direct call of `body` with the arguments the call spilled; its status, the result
-    /// stored through `out`.
-    fn call_direct(
+    /// The call of `body` with the arguments the call spilled and the memory arguments the
+    /// callee takes: its status, the result stored through `out`.
+    pub(super) fn call_body(
         &mut self,
         body: ir::Value,
         signature: &crate::WasmSignature,
-        args: ir::Value,
-        out: ir::Value,
+        (args, out): (ir::Value, ir::Value),
+        (base, length): (ir::Value, Option<ir::Value>),
     ) -> ir::Value {
         let mut arguments = vec![self.body.core.context];
         if self.memory.base {
-            arguments.push(self.base);
+            arguments.push(base);
         }
-        arguments.extend(self.length);
+        arguments.extend(length);
         for (offset, ty) in signature.params.iter().enumerate() {
             let raw = self.load_word_at(args, offset);
             arguments.push(match Kind::of(*ty).expect("planned") {
@@ -278,22 +303,6 @@ impl<H: Host> Emitter<'_, '_, H> {
             (words * WORD) as u32,
             WORD.trailing_zeros() as u8,
         ))
-    }
-
-    fn word_slot(&mut self) -> ir::StackSlot {
-        self.words_slot(1)
-    }
-
-    fn store_word(&mut self, slot: ir::StackSlot, value: ir::Value) {
-        let builder = &mut self.body.core.builder;
-        let address = builder.ins().stack_addr(types::I64, slot, 0);
-        builder.ins().store(MemFlagsData::trusted(), value, address, 0);
-    }
-
-    fn load_word(&mut self, slot: ir::StackSlot) -> ir::Value {
-        let builder = &mut self.body.core.builder;
-        let address = builder.ins().stack_addr(types::I64, slot, 0);
-        builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0)
     }
 
     /// The word `offset` words from `address`.
