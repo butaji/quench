@@ -919,7 +919,7 @@ pub(in crate::vm::compiled) enum EmitProof {
     Field(object_slots::CheckedObject),
     Index { view: DenseArrayView, absent: ir::Block },
     TypedIndex { values: ir::Value, length: ir::Value, kind: ir::Value, absent: ir::Block }, Allocation { miss: ir::Block },
-    Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: ir::Block }, FieldStoreMiss { miss: ir::Block },
+    Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block> }, FieldStoreMiss { miss: ir::Block },
 }
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place
@@ -7110,7 +7110,7 @@ impl<H: Host> Vm<H> {
         unit.instructions
             .iter()
             .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
-            .filter(|(site, _)| !generic.contains(site))
+            .filter(|(site, _)| !generic.contains(site) && self.field_site_leaves(self.field_cache_index(*site)) < tier_policy::UNSTABLE_SITE_LEAVES)
             .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), ..load }).collect::<Vec<_>>()))
             .filter(|(_, shapes)| !shapes.is_empty())
             .collect()

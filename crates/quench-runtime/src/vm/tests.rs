@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 #[path = "osr_retirement_tests.rs"] mod osr_retirement_tests;
 #[path = "forced_deopt_tests.rs"] mod forced_deopt_tests;
+#[path = "no_rwx_tests.rs"] mod no_rwx_tests;
 #[test]
 fn deferred_math_joins_startup_intrinsics_before_guest_mutation() {
     let program = Engine::specialize(r#"
