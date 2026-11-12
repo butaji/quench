@@ -607,7 +607,7 @@ mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_initialize_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
@@ -878,6 +878,18 @@ impl LaneView {
             LaneBody::Specialized { .. } => "specialized",
             LaneBody::Declined => "declined",
         }
+    }
+
+    /// Its body's state, the entries it counted, and whether the tier claimed its prologue and
+    /// is still warming, for the diagnostics report of a view that never compiled
+    /// (`QUENCH_LANE_STATE`).
+    pub(super) fn lane_body_detail(&self) -> (&'static str, Option<u16>, bool, bool) {
+        // SAFETY: as `lane_body`.
+        let entries = match unsafe { &*self.tier_lane.get() } {
+            LaneBody::Unspecialized { entries, .. } => Some(*entries),
+            _ => None,
+        };
+        (self.lane_body_state(), entries, self.start.get() == self.prologue.get().cast_const(), self.warming())
     }
 
     /// The specialized frameless body, if there is one.
@@ -14043,11 +14055,8 @@ fn lane_construct_keeping_activation<H: Host>(
             // SAFETY: the context's program outlives the lane run, and the forwarded target is
             // one of its functions (`lane_script_target`).
             let code = unsafe { &*(*cx).code };
-            let mut fields = Some(EMPTY_CONSTRUCT_PLAN);
             let argument = lane_construct_argument(r, i);
-            if lane_add_initializer_fields(vm, code, this, forwarded.function, argument, |store, value| {
-                fields = fields.and_then(|fields| fields.with_field(store, value));
-            }) {
+            if let Some(fields) = construct_plan::lane_finish_forwarded(vm, code, forwarded.env, this, forwarded.function, argument) {
                 if let Some(fields) = fields {
                     lane_record_forwarded_fields(vm, callee, (forwarded.program, forwarded.function), this, &fields);
                 }
@@ -14083,6 +14092,11 @@ fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl 
     plan.forwarded?.initializer?;
     let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
     plan.fill_values(vm, &mut values, argument)?;
+    // A nested construction's field is a fresh object of its own plan; allocation never collects.
+    if let Some(nested) = vm.lane_stack.construct_plans[index].nested {
+        if !construct_plan::nested_root_holds(vm, &nested) { return None; }
+        values[usize::from(nested.field)] = construct_plan::nested_construction(vm, nested.constructor, &nested.arguments)?;
+    }
     Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
 }
 
@@ -14109,22 +14123,10 @@ fn lane_record_forwarded_fields<H: Host>(
     let Some(resolution) = plan.forwarded.filter(|_| plan.fields == 0) else {
         return;
     };
-    *plan = ConstructPlan {
-        shape,
-        fields: fields.fields,
-        parameters: fields.parameters,
-        defaulted: fields.defaulted,
-        constant: fields.constant,
-        computed: fields.computed,
-        operators: fields.operators,
-        fallbacks: fields.fallbacks,
-        forwarded: Some(ForwardedResolution {
-            initializer: Some(initializer),
-            ..resolution
-        }),
-        ..*plan
+    *plan = plan.with_recorded(fields, shape, ForwardedResolution { initializer: Some(initializer), ..resolution });
+    if let Some(nested) = fields.nested {
+        watch_construct_plan(vm, index, false, nested.held());
     }
-    .derive_header();
 }
 
 /// The method a forwarding constructor's body (`ScriptCallTarget::forwarded_method`) would
@@ -15762,7 +15764,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     };
     // SAFETY: the capacity check above leaves room for the activation.
     unsafe { stack.push_activation(activation) };
-    stack.forwarders.extend(skipped);
+    if let Some(skipped) = skipped { stack.forwarders.push(skipped); }
     // SAFETY: the program store keeps a derived view alive with its program.
     let base = unsafe { (*target.view).records() };
     unsafe {
@@ -16339,7 +16341,8 @@ fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Valu
     }
     let common = match completion {
         Some(Completion::ReturnsToNative) => lane_complete_native_callback(cx, value),
-        Some(Completion::Plain) => lane_complete_plain_chain(cx, value),
+        // `lane_complete_activation` begins with the same chain.
+        Some(Completion::Plain) => None,
         Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
         Some(Completion::Constructs) => lane_return_from::<H, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
         _ => None,
@@ -16493,6 +16496,11 @@ fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> 
         let ActivationKind::Script(script) = &activation.kind else {
             return None;
         };
+        // A body's callee (`Completion::ReturnsToBody`) ends the run its call started: it is
+        // the outermost, whatever its call's register.
+        if script.completion == Completion::ReturnsToBody {
+            break index;
+        }
         if script.completion != Completion::Plain {
             return None;
         }
@@ -16506,7 +16514,21 @@ fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> 
     debug_assert!(activations[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
     vm.lane_stack.activations.truncate(outermost + 1);
     vm.lane_stack.drop_iterators_from(outermost + 1);
+    if matches!(&vm.lane_stack.activations[outermost].kind, ActivationKind::Script(script) if script.completion == Completion::ReturnsToBody) {
+        return lane_end_body_callee(cx, value);
+    }
     lane_complete_plain_activation::<H, NOT_LEAF>(cx, value)
+}
+
+/// The end of the nested run of a body's callee, the innermost activation (`Completion::ReturnsToBody`),
+/// with `value`: its caller's state restored and the call's register set, as the general loop's
+/// completion of it does (`body_calls::ends_run`).
+#[inline(always)]
+fn lane_end_body_callee<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let activation = vm.lane_stack.pop_activation()?;
+    let (_, this) = lane_restore_caller(cx, &activation);
+    body_calls::ends_run(cx, &activation, Completion::ReturnsToBody, this, value)
 }
 
 /// `lane_complete_activation` of a native's callback (`Completion::ReturnsToNative`): the

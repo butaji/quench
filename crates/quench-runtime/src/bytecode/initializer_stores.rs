@@ -21,6 +21,26 @@ pub(crate) enum InitializerValue {
     /// Numeric binary `operator` of parameter `parameter`, when passed a Number, and the
     /// Number `constant`: `this.y = x + 1`. Any other argument leaves the stores to the body.
     Numeric { parameter: u16, operator: u8, constant: f64 },
+    /// A fresh object of the constructor a capture and a property chain name, constructed from
+    /// primitive constants: `this.color = new NS.Color(0, 0, 0)`.
+    Construct(NestedConstruct),
+}
+
+/// The most properties a nested construction's constructor is read through.
+pub(crate) const NESTED_CHAIN: usize = 2;
+/// The most constant arguments a nested construction passes.
+pub(crate) const NESTED_ARGUMENTS: usize = 4;
+
+/// `new <capture>.<chain>(<constants>)`: the constructor read from the captured binding
+/// `capture` (a `LoadCapture` immediate) through `chain[..depth]`, called with
+/// `arguments[..count]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct NestedConstruct {
+    pub(crate) capture: u32,
+    pub(crate) chain: [u32; NESTED_CHAIN],
+    pub(crate) depth: u8,
+    pub(crate) arguments: [InitializerConstant; NESTED_ARGUMENTS],
+    pub(crate) count: u8,
 }
 
 impl InitializerStore {
@@ -28,7 +48,7 @@ impl InitializerStore {
     pub(crate) fn parameter(&self) -> Option<u16> {
         match self.value {
             InitializerValue::Parameter { parameter, .. } | InitializerValue::Numeric { parameter, .. } => Some(parameter),
-            InitializerValue::Constant(_) => None,
+            InitializerValue::Constant(_) | InitializerValue::Construct(_) => None,
         }
     }
 }
@@ -76,6 +96,17 @@ impl InitializerConstant {
 pub(super) struct Temporaries(SmallVec<[(Register, InitializerValue); 4]>);
 
 impl Temporaries {
+    /// Consumes the instructions at `pc` that write a temporary (`write`) or make a nested
+    /// construction's store (`nested_store`), the latter pushed to `stores`: how many it took.
+    pub(super) fn consume(&mut self, instructions: &[WideInstruction], pc: usize, (params, fallbacks, constants): (u16, &[Option<f64>], &[Constant]), stores: &mut Vec<InitializerStore>) -> Option<usize> {
+        if self.write(instructions.get(pc)?, params, fallbacks, constants) {
+            return Some(1);
+        }
+        let (store, length) = nested_store(instructions, pc, params, constants)?;
+        stores.push(store);
+        Some(length)
+    }
+
     /// What temporary `register` holds, if one of these wrote it last.
     pub(super) fn value(&self, register: Register) -> Option<InitializerValue> {
         self.0.iter().rev().find(|(written, _)| *written == register).map(|(_, value)| *value)
@@ -108,4 +139,60 @@ impl Temporaries {
         (BinaryOperator::Addition as u32..=BinaryOperator::BitwiseAnd as u32).contains(&operator)
             .then_some(InitializerValue::Numeric { parameter, operator: operator as u8, constant: *constant })
     }
+}
+
+/// The stores a nested construction adds to those of its body: the instructions from pc `at`
+/// that read the constructor (`LoadCapture` and a chain of `GetField`), load the constant
+/// arguments into the window, construct, and store the result into `this`; with how many
+/// instructions they take. The registers they write are the body's temporaries, above its
+/// parameters, which nothing else reads.
+fn nested_store(instructions: &[WideInstruction], at: usize, params: u16, constants: &[Constant]) -> Option<(InitializerStore, usize)> {
+    let load = instructions.get(at).filter(|load| load.op() == Op::LoadCapture && temporary(load, params))?;
+    let (chain, depth, register) = constructor_chain(instructions, at + 1, load.result_register(), params);
+    (depth > 0).then_some(())?;
+    let pc = at + 1 + depth;
+    let (arguments, loaded) = constant_arguments(instructions, pc, params, constants)?;
+    let pc = pc + loaded.len();
+    let construct = instructions.get(pc).filter(|construct| construct.op() == Op::Construct && construct.register_b() == register
+        && construct.result_flags() == 0 && !construct.returns_from_frame())?;
+    let super::ConstructArguments::Registers(window) = construct.construct_arguments() else { return None };
+    // The window is the constants just loaded, in order.
+    (usize::from(window.count) == loaded.len()
+        && loaded.iter().enumerate().all(|(index, loaded)| *loaded == window.base + index as Register))
+        .then_some(())?;
+    let store = pc + 1;
+    let set = instructions.get(store).filter(|set| set.stores_to_this() && set.register_a() == construct.result_register())?;
+    let construct = NestedConstruct { capture: load.imm(), chain, depth: depth as u8, arguments, count: loaded.len() as u8 };
+    Some((InitializerStore { atom: set.imm(), site: set.c(), value: InitializerValue::Construct(construct) }, store + 1 - at))
+}
+
+/// Whether `instruction` writes a temporary: a register above the parameters, no flags.
+fn temporary(instruction: &WideInstruction, params: u16) -> bool {
+    instruction.result_register() >= params && instruction.result_flags() == 0
+}
+
+/// The `GetField` chain from pc `at` reading properties of `register`: the atoms, how many,
+/// and the register holding the last read.
+fn constructor_chain(instructions: &[WideInstruction], at: usize, mut register: Register, params: u16) -> ([u32; NESTED_CHAIN], usize, Register) {
+    let mut chain = [0; NESTED_CHAIN];
+    let mut depth = 0;
+    while let Some(read) = instructions.get(at + depth).filter(|read| read.op() == Op::GetField
+        && crate::bytecode::FieldBase(read.b()).register_index() == Some(register)
+        && temporary(read, params) && depth < NESTED_CHAIN) {
+        chain[depth] = read.imm();
+        register = read.result_register();
+        depth += 1;
+    }
+    (chain, depth, register)
+}
+
+/// The primitive constants the `LoadConst`s from pc `at` write to temporaries, and their registers.
+fn constant_arguments(instructions: &[WideInstruction], at: usize, params: u16, constants: &[Constant]) -> Option<([InitializerConstant; NESTED_ARGUMENTS], SmallVec<[Register; NESTED_ARGUMENTS]>)> {
+    let mut arguments = [InitializerConstant::Undefined; NESTED_ARGUMENTS];
+    let mut loaded = SmallVec::new();
+    while let Some(constant) = instructions.get(at + loaded.len()).filter(|constant| constant.op() == Op::LoadConst && temporary(constant, params)) {
+        *arguments.get_mut(loaded.len())? = InitializerConstant::of(constants, constant.constant_index())?;
+        loaded.push(constant.result_register());
+    }
+    Some((arguments, loaded))
 }

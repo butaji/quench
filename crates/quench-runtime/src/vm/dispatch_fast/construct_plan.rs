@@ -1,6 +1,10 @@
 //! Construct plans: a constructor's receiver allocated finished, its initializer stores made at once.
 use super::*;
 use crate::staged::plan_fields::{field_value, FieldClass};
+mod nested;
+mod adds;
+pub(super) use adds::{lane_add_initializer_fields, lane_add_stores};
+pub(super) use nested::{lane_finish_forwarded, nested_construction, nested_root_holds, NestedField};
 
 /// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
@@ -41,6 +45,8 @@ pub(super) struct ConstructPlan {
     /// (`lane_forwarded_construction`), which the plan's own proof keeps. Its fields, if any, are
     /// those its forwarded initializer stores (`lane_record_forwarded_fields`).
     pub(super) forwarded: Option<ForwardedResolution>,
+    /// The field a nested construction gives a fresh object each time (`NestedField`).
+    pub(super) nested: Option<NestedField>,
     /// For a class whose constructor only constructs its parent (`lane_super_construction`),
     /// the parent whose stores the plan holds; `undefined` for any other plan. The plan holds
     /// while the class's [[Prototype]] is still that parent, which `super(...)` constructs.
@@ -157,6 +163,25 @@ impl ConstructPlan {
         heap.alloc_planned_object(self.header, self.prototype, values, usize::from(self.fields))
     }
 
+    /// This plan holding the fields `fields` that a forwarded initializer's adds gave a receiver
+    /// of `shape` (`lane_record_forwarded_fields`), forwarding as `forwarded`.
+    pub(super) fn with_recorded(&self, fields: &Self, shape: u32, forwarded: ForwardedResolution) -> Self {
+        Self {
+            shape,
+            fields: fields.fields,
+            parameters: fields.parameters,
+            defaulted: fields.defaulted,
+            constant: fields.constant,
+            computed: fields.computed,
+            operators: fields.operators,
+            fallbacks: fields.fallbacks,
+            nested: fields.nested,
+            forwarded: Some(forwarded),
+            ..*self
+        }
+        .derive_header()
+    }
+
     /// This plan extended by the field `store` adds, `None` once it names all it can.
     pub(super) fn with_field(mut self, store: &crate::bytecode::InitializerStore, value: Value) -> Option<Self> {
         let field = usize::from(self.fields);
@@ -181,6 +206,7 @@ impl ConstructPlan {
                 self.operators[field] = operator;
                 self.fallbacks[field] = Value::number(constant);
             }
+            crate::bytecode::InitializerValue::Construct(_) => return None,
         }
         self.fields += 1;
         Some(self)
@@ -203,6 +229,7 @@ pub(super) const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     operators: [0; CONSTRUCT_PLAN_FIELDS],
     fallbacks: [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS],
     forwarded: None,
+    nested: None,
     super_parent: Value::UNDEFINED,
 };
 
@@ -238,49 +265,8 @@ pub(super) fn initializer_store_value<H: Host>(vm: &Vm<H>, store: &crate::byteco
         }
         crate::bytecode::InitializerValue::Constant(constant) => constant.value(|index| vm.active_constant(index)),
         crate::bytecode::InitializerValue::Numeric { parameter, operator, constant } => numeric_initializer(argument(parameter), operator, constant),
+        crate::bytecode::InitializerValue::Construct(_) => None,
     }
-}
-
-/// The adds an initializing body (`ScriptCallTarget::initializes`) of `function` makes to
-/// `this`, each the parameter its store names (`argument`) as a cached add that runs no guest
-/// code, passed to `each` in order. `false` at the first add the caches do not answer: the
-/// adds made so far are the body's own first stores of the same values, which an activation
-/// of the body then makes again as stores, leaving the object as the activation alone would.
-#[inline(always)]
-pub(super) fn lane_add_initializer_fields<H: Host>(
-    vm: &mut Vm<H>,
-    code: &ResidualProgram,
-    this: Value,
-    function: u32,
-    argument: impl Fn(u16) -> Value,
-    each: impl FnMut(&crate::bytecode::InitializerStore, Value),
-) -> bool {
-    let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
-        return false;
-    };
-    lane_add_stores(vm, code, this, stores, argument, each)
-}
-
-/// `lane_add_initializer_fields` of `stores`, a body's or a class chain's (`chain_stores`).
-#[inline(always)]
-pub(super) fn lane_add_stores<H: Host>(
-    vm: &mut Vm<H>,
-    code: &ResidualProgram,
-    this: Value,
-    stores: &[crate::bytecode::InitializerStore],
-    argument: impl Fn(u16) -> Value,
-    mut each: impl FnMut(&crate::bytecode::InitializerStore, Value),
-) -> bool {
-    for store in stores {
-        let Some(value) = initializer_store_value(vm, store, &argument) else {
-            return false;
-        };
-        if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
-            return false;
-        }
-        each(store, value);
-    }
-    true
 }
 
 /// `lane_initialize_fields` while `callee`'s plan holds: the finished receiver, its fields
@@ -473,7 +459,7 @@ pub(super) fn lane_initialize_stores<H: Host>(
         shape: source_shape,
         ..EMPTY_CONSTRUCT_PLAN
     });
-    let added = lane_add_stores(vm, code, this, stores, argument, |store, value| {
+    let added = lane_add_stores(vm, code, this, stores, argument, |_, _| None, |store, value| {
         planned = planned.and_then(|plan| plan.with_field(store, value));
     });
     if !added {
