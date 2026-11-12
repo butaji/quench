@@ -14,7 +14,7 @@
 //! (`docs/v2/specialization.md`). `staged_coverage` in this module's tests keeps hand-written
 //! decodes of the same layouts from reappearing elsewhere.
 
-use crate::bytecode::{Op, Register, WideInstruction};
+use crate::bytecode::{Op, Operand, Register, WideInstruction};
 use crate::typed_ir::Type;
 
 mod concrete;
@@ -36,6 +36,7 @@ pub(crate) mod construct;
 pub(crate) mod plan_fields;
 pub(crate) mod value;
 mod steps;
+mod control;
 pub(crate) use steps::step;
 pub(crate) mod effects;
 #[cfg(test)]
@@ -235,6 +236,9 @@ pub(crate) enum Operation<W, P> {
     RequireObjectCoercible { register: Register },
     /// Define `destination` with the logical negation of register `source`'s truthiness.
     LogicalNot { destination: Register, source: Register },
+    /// Define `destination` with the `typeof` name index (int32) of register `source`'s value
+    /// where its own word decides it; a heap value leaves at the frame's miss edge.
+    TypeofIndex { destination: Register, source: Register },
     /// The proven slot `slot` of `base`'s object, under `proof`, as a value (`Frame::field_read`).
     ReadField { base: Register, slot: u16, ty: Type, proof: P },
     /// Write `value` to the proven slot `slot` of `base`'s object under `proof`.
@@ -304,6 +308,11 @@ impl<W, P> Operation<W, P> {
             Op::Unary if instruction.unary_operator()
                 == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot {
                     destination: instruction.result_register(), source: instruction.register_b() },
+            Op::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => Self::TypeofIndex {
+                destination: instruction.result_register(), source: instruction.register_b() },
+            Op::Unary if instruction.unary_operator()
+                == oxc_ast::ast::UnaryOperator::BitwiseNot as u32 => Self::Number(NumberOperation::BitwiseNot {
+                    destination: instruction.result_register(), source: Operand::register(instruction.register_b()) }),
             _ => return None,
         })
     }

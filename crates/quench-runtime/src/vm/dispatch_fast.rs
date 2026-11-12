@@ -2768,7 +2768,7 @@ lane_handler! {
 mod lane_frame;
 mod loop_body;
 use loop_body::{lane_loop_body, LoopBody};
-use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_require_object_coercible, staged_to_numeric};
+use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
@@ -5166,7 +5166,9 @@ script_handler! {
     /// `Unary` of `UNARY_TYPEOF_INDEX`, chosen when the view was derived
     /// (`specialize_register_operands`): the index of `typeof`'s name, which runs no guest code.
     fn lane_typeof_index<>(cx, r, ip, i, view) {
-        r.set(i.a, unsafe { vm(cx) }.typeof_index_value(r.get(i.b)));
+        if !staged_typeof_index(r, Carried::script(cx), i.a, i.b) {
+            r.set(i.a, unsafe { vm(cx) }.typeof_index_value(r.get(i.b)));
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
