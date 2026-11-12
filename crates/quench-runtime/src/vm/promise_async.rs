@@ -302,37 +302,32 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    /// Runs an await's reaction: `state` is the `AwaitState` both its handlers name. The
-    /// first run takes the continuation, which resumes in the realm that awaited.
+    /// Runs an await's reaction: `state` is the `AwaitState` both its handlers name and `taken`
+    /// what its reaction took from it (`AwaitState::resume`). The first run takes the
+    /// continuation, which resumes in the realm that awaited.
     pub(super) fn resume_await(
         &mut self,
         p: &ResidualProgram,
         state: Value,
+        taken: Option<(AwaitKind, Value, Value)>,
         rejected: bool,
         value: Value,
     ) -> Result<Value, JsError> {
-        let spent = state;
-        let Some(state) = self.heap.await_state_mut(state) else {
-            return Err(JsError("await reaction without its state".into()));
-        };
-        let Some((kind, realm, promise)) = state.resume() else {
+        let Some((kind, realm, promise)) = taken else {
             return Err(JsError("stale async continuation".into()));
         };
         let (role, continuation) = kind.into_role();
-        let resume = AwaitResume { state: spent, promise, role, rejected };
+        let generator = role.generator();
+        let resume = AwaitResume { state, promise, role, rejected };
         let previous_global = self.switch_realm_global(realm);
-        let result = self.with_call_roots(
-            [Some(resume.promise), resume.role.generator(), Some(value)]
-                .into_iter()
-                .flatten(),
-            |vm| {
-                vm.resume_async_continuation(p, resume, continuation, value)?;
-                if let Some(generator) = resume.role.generator() {
-                    vm.resume_async_generator_queue(p, generator)?;
-                }
-                Ok(Value::UNDEFINED)
-            },
-        );
+        let roots = [promise, generator.unwrap_or(Value::UNDEFINED), value];
+        let result = self.with_call_roots(roots, |vm| {
+            vm.resume_async_continuation(p, resume, continuation, value)?;
+            if let Some(generator) = generator {
+                vm.resume_async_generator_queue(p, generator)?;
+            }
+            Ok(Value::UNDEFINED)
+        });
         self.switch_realm_global(previous_global);
         result
     }
