@@ -6122,8 +6122,11 @@ impl CompiledOsrRegion {
                 }
                 captures
             };
-            if let Some((values, len)) = live {
+            if let Some(((values, len), stores)) = live {
                 (native.dispatch.capture_values, native.dispatch.capture_len) = (values, len);
+                // The slots admit direct stores where their environment does (`lane_frame_capture` took
+                // its barrier once), which a region's capture store rows require.
+                native.dispatch.capture_stores = usize::from(stores);
             } else if !captures.is_empty() {
                 native.dispatch.capture_values = captures.as_ptr();
                 native.dispatch.capture_len = captures.len();

@@ -304,3 +304,18 @@ fn this_fields_run_in_a_method_body() {
          print(t); print(counter.n); print(acc.total);",
     );
 }
+
+/// A loop region stores an own field through a row and reads the field it just wrote from the
+/// site's entry, not from the entry record's snapshot, which the store would stale; a capture store
+/// in a closure's loop writes the activation's own slots. The output is the interpreter's.
+#[test]
+fn loop_regions_store_fields_and_captures_without_a_stale_snapshot() {
+    let (interpreted, compiled, _) = run_both(
+        "function fill(o, n) { for (let k = 0; k < n; k++) { o.count = o.count + 1; o.last = o.count + o.step; } return o.last; }
+         const o = { count: 0, last: 0, step: 5 };
+         print(fill(o, 600)); print(o.count); print(fill(o, 600)); print(o.last);
+         function make() { let acc = 0; return function (n) { for (let k = 0; k < n; k++) { acc = (acc + k) | 0; } return acc; }; }
+         const f = make(); print(f(500)); print(f(500));",
+    );
+    assert_eq!(interpreted, compiled);
+}

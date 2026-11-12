@@ -187,8 +187,5 @@ fn assemble_body(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEE
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.iter().filter(|reached| **reached).count() - exits;
     let records = planned.iter_mut().filter_map(|row| row.owned.take()).collect();
-    let mut atoms: Vec<Atom> = decoded.iter().filter_map(|row| row.atom).collect();
-    atoms.sort_unstable();
-    atoms.dedup();
-    Ok(Body { code, covered, exits, loops, records, atoms: atoms.into() })
+    Ok(Body { code, covered, exits, loops, records, atoms: held_atoms(&decoded) })
 }

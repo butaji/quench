@@ -5304,19 +5304,20 @@ script_handler! {
 }
 
 /// The running lane activation's dense capture slots, the view a lane body's reads take
-/// (`EnvironmentSlots::native_storage_view`): a frame run finds them as its first store does
-/// (`lane_capture_store`).
+/// (`EnvironmentSlots::native_storage_view`), and whether they admit every direct store
+/// (`capture_stores`): a frame run finds them as its first store does (`lane_capture_store`).
 ///
 /// # Safety
 /// `context` is the running lane's context.
-pub(super) unsafe fn lane_context_captures<H: Host>(context: usize) -> Option<(*const Value, usize)> {
+pub(super) unsafe fn lane_context_captures<H: Host>(context: usize) -> Option<((*const Value, usize), bool)> {
     let cx = context as *mut LaneContext<H>;
     unsafe {
         if capture_reads((*cx).capture).is_null() && (*cx).env.is_deleted() {
             (*cx).capture = lane_frame_capture(cx)?;
         }
         // SAFETY: the context's slots stay live while the lane runs, which collects nothing.
-        crate::heap::EnvironmentSlots::native_storage_view(capture_reads((*cx).capture))
+        let view = crate::heap::EnvironmentSlots::native_storage_view(capture_reads((*cx).capture))?;
+        Some((view, capture_stores((*cx).capture).is_some()))
     }
 }
 

@@ -138,7 +138,10 @@ pub(super) fn inc_dec(instruction: WideInstruction) -> Result<Decoded, String> {
 /// by its tables (an array word's record, a field's cache entry).
 #[derive(Clone, Copy)]
 pub(super) enum Facts {
-    Entry { dense: bool },
+    /// A loop region: `dense` where its arrays' views are the entry record's, `writes` where it
+    /// stores a field through a row, which may stale a field value the entry record holds
+    /// (`stores_field`), so its field reads are the site's, live.
+    Entry { dense: bool, writes: bool },
     Site,
 }
 
@@ -147,8 +150,8 @@ pub(super) enum Facts {
 fn entry_array(region: &LoopRegion, facts: Facts, register: Register) -> u64 {
     // A row's hole is a u32 patch: an offset past it is looked up per access instead.
     match facts {
-        Facts::Entry { dense: true } => region.array_entry_offset(register).filter(|offset| u32::try_from(*offset).is_ok()).unwrap_or(0),
-        Facts::Entry { dense: false } | Facts::Site => 0,
+        Facts::Entry { dense: true, .. } => region.array_entry_offset(register).filter(|offset| u32::try_from(*offset).is_ok()).unwrap_or(0),
+        Facts::Entry { dense: false, .. } | Facts::Site => 0,
     }
 }
 
@@ -199,15 +202,13 @@ fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
         return Some(Decoded::heap(Heap::Length, Some(instruction.result_register()), array, None));
     }
     match facts {
-        Facts::Entry { .. } => recorded_field(region, pc, instruction).or_else(|| site_row(known, instruction)),
-        Facts::Site => site_row(known, instruction),
+        Facts::Entry { writes: false, .. } => recorded_field(region, pc, instruction).or_else(|| site_row(known, instruction)),
+        Facts::Entry { writes: true, .. } | Facts::Site => site_row(known, instruction),
     }
 }
 
 /// The row of a named field store to a register's object, or to `this`, through the site's cache
-/// entry (`entry::site_store`): a function's, where the store may run in place
-/// (`Known::stores_in_place`). A loop region's reads may be entry snapshots of a field its stores
-/// write, so it has none.
+/// entry (`entry::site_store`), where the store may run in place (`Known::stores_in_place`).
 fn field_store_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
     let atom = instruction.atom_index();
     if !known.stores_in_place(atom) || instruction.returns_from_frame() || instruction.writes_current_this() {
@@ -221,20 +222,35 @@ fn field_store_row(known: Known, instruction: WideInstruction) -> Option<Decoded
     Some(Decoded { base, hole: entry_offset(instruction.cache_site_index()), atom: Some(atom), ..Decoded::heap(heap, None, value, None) })
 }
 
+/// Whether `instruction` is a field store a row makes (`field_store_row`).
+pub(super) fn stores_field(known: Known, instruction: WideInstruction) -> bool {
+    instruction.result_flags() == 0 && instruction.op().is_field_store() && field_store_row(known, instruction).is_some()
+}
+
+/// The atoms the rows hold unnamed by method caches (`Decoded::atom`), each once: the Stable facts
+/// the code takes, which a cache naming one retires it.
+pub(super) fn held_atoms(decoded: &[Decoded]) -> Box<[Atom]> {
+    let mut atoms: Vec<Atom> = decoded.iter().filter_map(|row| row.atom).collect();
+    atoms.sort_unstable();
+    atoms.dedup();
+    atoms.into()
+}
+
 /// Whether `instruction` stores to a depth-0 capture and nothing else (`general_capture::lower_capture`'s
 /// conditions): it completes no activation, sets no `this`, and is no numeric local's update.
 fn own_capture_store(instruction: WideInstruction) -> bool {
     instruction.capture_depth() == 0 && !instruction.returns_from_frame() && !instruction.writes_current_this() && instruction.numeric_local_target().is_none()
 }
 
-/// The row of a depth-0 capture access: a read, or a function's store (a loop region's payload
-/// never admits direct capture stores).
-fn capture_row(facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
+/// The row of a depth-0 capture access: a read, or a store, which the row makes where the run's
+/// slots admit every direct store (`JS_STEP_CAPTURE_STORES`) and leaves for the interpreter where
+/// they do not or the slot holds a marker (a loop's snapshot of a stored slot).
+fn capture_row(instruction: WideInstruction) -> Option<Decoded> {
     match instruction.op().class() {
         Class::LoadCapture if instruction.capture_depth() == 0 => {
             Some(Decoded::heap(Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None, None))
         }
-        Class::StoreCapture if matches!(facts, Facts::Site) && own_capture_store(instruction) => {
+        Class::StoreCapture if own_capture_store(instruction) => {
             Some(Decoded::heap(Heap::CaptureSet(instruction.capture_slot()), None, Some(Source::Register(instruction.register_a())), None))
         }
         _ => None,
@@ -283,11 +299,11 @@ fn activation_row(instruction: WideInstruction) -> Option<Decoded> {
 /// read or store, the proof that a base is an array, the activation's `this` and its local slots.
 pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     match instruction.op().class() {
-        Class::LoadCapture | Class::StoreCapture => capture_row(facts, instruction),
+        Class::LoadCapture | Class::StoreCapture => capture_row(instruction),
         Class::GetIndex | Class::SetIndex | Class::RequireObjectCoercible => array_row(region, facts, instruction),
         Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
         Class::LoadThis | Class::LoadLocalPlain | Class::StoreLocalPlain => activation_row(instruction),
-        _ if instruction.op().is_field_store() && matches!(facts, Facts::Site) => field_store_row(known, instruction),
+        _ if instruction.op().is_field_store() => field_store_row(known, instruction),
         _ => None,
     }
 }
