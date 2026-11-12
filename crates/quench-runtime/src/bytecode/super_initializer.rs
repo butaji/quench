@@ -114,18 +114,24 @@ impl Function {
             && self.simple_parameters
     }
 
-    /// The body as a `SuperInitializer`, for a derived constructor of simple parameters with
-    /// no fields or private elements of its own (`instance_initializer`): the parent read
-    /// (`super_base`), the `super(...)` construction of parameters and primitive constants,
-    /// the receiver's binding, stores of such values to `this`, and the return of `undefined`.
-    pub(crate) fn super_initializer(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperInitializer> {
-        if self.derived_constructor
+    /// Whether this is a derived constructor of one rest parameter whose activation binds
+    /// nothing a forwarding `SuperInitializer` leaves out: no handler, `arguments`, or fields
+    /// and private elements of its own.
+    fn constructs_parent_with_rest(&self) -> bool {
+        self.derived_constructor
             && self.rest
             && self.params == 1
             && self.handlers.is_empty()
             && self.arguments_slot.is_none()
             && self.instance_initializer.is_none()
-        {
+    }
+
+    /// The body as a `SuperInitializer`, for a derived constructor of simple parameters with
+    /// no fields or private elements of its own (`instance_initializer`): the parent read
+    /// (`super_base`), the `super(...)` construction of parameters and primitive constants,
+    /// the receiver's binding, stores of such values to `this`, and the return of `undefined`.
+    pub(crate) fn super_initializer(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperInitializer> {
+        if self.constructs_parent_with_rest() {
             return self.rest_super_initializer(atoms, constants);
         }
         if !self.constructs_parent_plainly() {
@@ -139,13 +145,7 @@ impl Function {
             return None;
         };
         let (check, binds) = (records.next()?, records.next()?);
-        let constructs = construct.is_super_construct()
-            && construct.result_flags() == 0
-            && construct.b() == parent
-            && check.op() == Op::SuperCallCheck
-            && binds.op() == Op::InitializeThis
-            && binds.a() == construct.result_register();
-        if !constructs {
+        if !binds_parent_construct(parent, [&construct, &check, &binds]) {
             return None;
         }
         let arguments = (0..window.count).map(|index| temporaries.value(window.base + index)).collect::<Option<_>>()?;
@@ -155,38 +155,49 @@ impl Function {
 
     /// The body of `constructor(...args) { super(...args); this.f = 1; }` as a
     /// `SuperInitializer` that forwards every argument: the parent read (`super_base`), the
-    /// argument array made from the rest list, the construction spreading it, the receiver's
-    /// binding (after the check `super(...)` makes), and stores of primitive constants to
-    /// `this`. A store of the list itself, which a parameter names, is no constant, so it
-    /// declines.
+    /// argument array made from the rest list (`rest_spread`), the construction spreading it,
+    /// the receiver's binding, and stores of primitive constants to `this`. A store of the
+    /// list itself, which a parameter names, is no constant, so it declines.
     fn rest_super_initializer(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperInitializer> {
         let mut records = self.instructions();
         let parent = super_base(&mut records, atoms, constants)?;
-        let [array, list, append, construct, check, binds] = [(); 6].map(|()| records.next());
-        let [array, list, append, construct, check, binds] = [array?, list?, append?, construct?, check?, binds?];
-        let spreads = array.op() == Op::MakeArray
-            && list.op() == Op::LoadLocalPlain
-            && list.local_slot() == 0
-            && append.op() == Op::AppendArray
-            && append.register_a() == array.result_register()
-            && append.optional_register_b() == Some(list.result_register())
-            && append.boolean_field(super::InstructionField::C) == Some(true)
-            && matches!(construct.construct_arguments(), ConstructArguments::Array(spread) if spread == array.result_register());
-        let constructs = spreads
-            && construct.op() == Op::Construct
-            && construct.is_super_construct()
-            && construct.result_flags() == 0
-            && construct.b() == parent
-            && check.op() == Op::SuperCallCheck
-            && binds.op() == Op::InitializeThis
-            && binds.a() == construct.result_register();
+        let array = rest_spread(&mut records)?;
+        let (construct, check, binds) = (records.next()?, records.next()?, records.next()?);
+        let spreads = matches!(construct.construct_arguments(), ConstructArguments::Array(spread) if spread == array);
         let mut temporaries = Temporaries { params: 0, constants, written: SmallVec::new() };
-        let stores: SmallVec<[InitializerStore; 4]> = this_stores(&mut temporaries, &mut records).filter(|_| constructs)?;
+        let stores: SmallVec<[InitializerStore; 4]> = this_stores(&mut temporaries, &mut records)
+            .filter(|_| spreads && binds_parent_construct(parent, [&construct, &check, &binds]))?;
         stores
             .iter()
             .all(|store| matches!(store.value, InitializerValue::Constant(_)))
             .then(|| SuperInitializer { arguments: SmallVec::new(), stores, forwards: true })
     }
+}
+
+/// Whether `construct`, `check` and `binds` are the `super(...)` construction of the parent in
+/// register `parent`, the check it makes, and the binding of its result as the receiver.
+fn binds_parent_construct(parent: Register, [construct, check, binds]: [&WideInstruction; 3]) -> bool {
+    construct.op() == Op::Construct
+        && construct.is_super_construct()
+        && construct.result_flags() == 0
+        && construct.b() == parent
+        && check.op() == Op::SuperCallCheck
+        && binds.op() == Op::InitializeThis
+        && binds.a() == construct.result_register()
+}
+
+/// The register of the array `super(...args)` builds from the rest list: its creation, the load
+/// of the list (the first parameter) and the spread of the list into it.
+fn rest_spread(records: &mut impl Iterator<Item = WideInstruction>) -> Option<Register> {
+    let (array, list, append) = (records.next()?, records.next()?, records.next()?);
+    (array.op() == Op::MakeArray
+        && list.op() == Op::LoadLocalPlain
+        && list.local_slot() == 0
+        && append.op() == Op::AppendArray
+        && append.register_a() == array.result_register()
+        && append.optional_register_b() == Some(list.result_register())
+        && append.boolean_field(super::InstructionField::C) == Some(true))
+    .then(|| array.result_register())
 }
 
 /// Whether `record` returns a temporary holding `undefined`.
