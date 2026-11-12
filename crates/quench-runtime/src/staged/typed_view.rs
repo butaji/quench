@@ -1,5 +1,5 @@
 //! A typed array's view proved from its record, as loads over `NATIVE_TYPED_ARRAY_LAYOUT`: the
-//! value is a legacy slot whose table entry names a view record (the typed array family), the
+//! value is a legacy slot below the table's pages whose entry names a view record (the typed array family), the
 //! record's kind is the one the site observed, its published address and count are current
 //! (its stamp is the process's buffer-relocation count) and it is attached. The proof is the same
 //! loads on every stage: the interpreter runs it on `Concrete` (`concrete_typed_element`), a
@@ -11,11 +11,12 @@ use super::{value, Concrete, Stage};
 use crate::heap::NATIVE_TYPED_ARRAY_LAYOUT as VIEW;
 
 /// Where a proof reads the typed arrays' records and the buffer-relocation count, which a
-/// stage holds as words: the table of record addresses by legacy slot (zero before the first
-/// typed array), and the address of the count.
+/// stage holds as words: the directory of the pages of record addresses by legacy slot, its page
+/// count, and the address of the count.
 #[derive(Clone, Copy)]
 pub(crate) struct TypedRecords<W> {
-    pub(crate) entries: W,
+    pub(crate) directory: W,
+    pub(crate) pages: W,
     pub(crate) relocations: W,
 }
 
@@ -33,13 +34,18 @@ impl ViewAccess {
 
 /// The record of the typed array `base`: `None` (leaving at `miss`) for any other value.
 #[inline(always)]
-fn view_record<S: Stage>(stage: &mut S, entries: S::Word, base: S::Word, miss: S::Miss) -> Option<S::Word> {
+fn view_record<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, miss: S::Miss) -> Option<S::Word> {
     let legacy = value::is_legacy_slot(stage, base);
     stage.guard(legacy, miss)?;
-    let present = stage.ne_imm(entries, 0u32);
-    stage.guard(present, miss)?;
     let slot = stage.and_imm(base, u64::from(u32::MAX));
-    let offset = stage.mul_imm(slot, VIEW.entry_size as u64);
+    let page = stage.shr_imm(slot, VIEW.page_shift);
+    let paged = stage.ult(page, records.pages);
+    stage.guard(paged, miss)?;
+    let page_offset = stage.mul_imm(page, VIEW.entry_size as u64);
+    let page_entry = stage.add(records.directory, page_offset);
+    let entries = stage.load_u64(page_entry, 0);
+    let within = stage.and_imm(slot, VIEW.page_mask as u64);
+    let offset = stage.mul_imm(within, VIEW.entry_size as u64);
     let entry = stage.add(entries, offset);
     let record = stage.load_u64(entry, 0);
     let named = stage.ne_imm(record, 0u32);
@@ -53,7 +59,7 @@ fn view_record<S: Stage>(stage: &mut S, entries: S::Word, base: S::Word, miss: S
 #[inline(always)]
 pub(crate) fn prove_typed_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word,
     access: ViewAccess, miss: S::Miss) -> Option<TypedView<S::Word>> {
-    let record = view_record(stage, records.entries, base, miss)?;
+    let record = view_record(stage, records, base, miss)?;
     let kind_word = stage.load_u8(record, VIEW.kind_offset as i32);
     let kind = match access.kind {
         Some(native) => {
@@ -81,13 +87,13 @@ pub(crate) fn prove_typed_view<S: Stage>(stage: &mut S, records: TypedRecords<S:
     Some(TypedView { values, length, kind })
 }
 
-/// The interpreter's view of the typed array `base` among the records at `entries`: the proof
+/// The interpreter's view of the typed array `base` among the record pages of `directory`: the proof
 /// without a frame; `None` for any other value, a record the VM has not published (or has
 /// withdrawn) or one whose published address is stale.
 #[inline(always)]
-pub(crate) fn concrete_typed_view(entries: *const usize, base: crate::Value) -> Option<TypedView<u64>> {
+pub(crate) fn concrete_typed_view((directory, pages): (*const usize, usize), base: crate::Value) -> Option<TypedView<u64>> {
     let relocations = crate::heap::buffer_relocations_address();
-    let records = TypedRecords { entries: entries.addr() as u64, relocations: relocations.addr() as u64 };
+    let records = TypedRecords { directory: directory.addr() as u64, pages: pages as u64, relocations: relocations.addr() as u64 };
     prove_typed_view(&mut Concrete::new(std::ptr::null()), records, base.to_bits(), ViewAccess::READ, ())
 }
 

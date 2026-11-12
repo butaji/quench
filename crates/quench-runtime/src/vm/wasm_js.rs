@@ -1470,12 +1470,7 @@ impl<H: Host> Vm<H> {
         }
 
         let (view_buffer, view_offset) = match self.heap.get(view) {
-            Some(Cell::TypedArray {
-                buffer,
-                kind: crate::heap::TypedArrayKind::Uint8,
-                object,
-                ..
-            }) => (*buffer, object.offset),
+            Some(Cell::TypedArray { buffer, object, .. }) if object.native.kind() == crate::heap::TypedArrayKind::Uint8 => (*buffer, object.offset),
             _ => return false,
         };
         if view_offset != 0 {
@@ -1534,10 +1529,10 @@ impl<H: Host> Vm<H> {
         view: Value,
         copy_within_atom: crate::bytecode::Atom,
     ) -> bool {
-        let Some(Cell::TypedArray { buffer, kind, .. }) = self.heap.get(view) else {
+        let Some(Cell::TypedArray { buffer, object, .. }) = self.heap.get(view) else {
             return false;
         };
-        if *kind != crate::heap::TypedArrayKind::Uint8
+        if object.native.kind() != crate::heap::TypedArrayKind::Uint8
             || self.typed_array_out_of_bounds(view)
             || self.array_buffer_detached(*buffer)
             || matches!(

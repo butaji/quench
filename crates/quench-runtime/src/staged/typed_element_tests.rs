@@ -158,8 +158,8 @@ fn typed_array(heap: &mut Heap, kind: Kind, bytes: Vec<u8>) -> (Value, Value) {
     let length = bytes.len() / kind.width();
     let buffer = heap.alloc(Cell::ArrayBuffer { object: Box::new(Object::new(Value::NULL)), bytes: BufferBytes::from(bytes),
         shared: false, detached: false, max_byte_length: 0, resizable: false, immutable: false });
-    let record = Box::new(BufferViewObject { native: Default::default(), object: Object::new(Value::NULL), offset: 0 });
-    (heap.alloc(Cell::TypedArray { kind, object: record, buffer, length: ViewLength::fixed(length) }), buffer)
+    let record = Box::new(BufferViewObject { native: crate::heap::NativeView::typed(kind), object: Object::new(Value::NULL), offset: 0 });
+    (heap.alloc(Cell::TypedArray { object: record, buffer, length: ViewLength::fixed(length) }), buffer)
 }
 
 /// Publishes the typed array `array` over `buffer`'s bytes, `unshared` or not, as the VM does.
@@ -167,13 +167,15 @@ fn publish(heap: &mut Heap, (array, buffer): (Value, Value), unshared: bool) {
     let Some(Cell::ArrayBuffer { bytes, .. }) = heap.get_mut(buffer) else { unreachable!("a buffer") };
     let store = bytes.lane_mut().expect("a buffer no other handle shares");
     let (data, length) = (store.as_mut_ptr(), store.len());
-    let Some(Cell::TypedArray { kind, object, .. }) = heap.get_mut(array) else { unreachable!("a typed array") };
-    object.native.publish(data, (length / kind.width()) as u32, unshared);
+    let Some(Cell::TypedArray { object, .. }) = heap.get_mut(array) else { unreachable!("a typed array") };
+    let width = object.native.kind().width();
+    object.native.publish(data, (length / width) as u32, unshared);
 }
 
 /// The proof of `base` for `access` over `heap`'s records.
 fn proof(heap: &Heap, base: Value, access: ViewAccess) -> Option<TypedView<u64>> {
-    let records = TypedRecords { entries: heap.typed_view_base().addr() as u64,
+    let (directory, pages) = heap.typed_view_directory();
+    let records = TypedRecords { directory: directory.addr() as u64, pages: pages as u64,
         relocations: crate::heap::buffer_relocations_address().addr() as u64 };
     prove_typed_view(&mut Concrete::new(std::ptr::null()), records, base.to_bits(), access, ())
 }
@@ -232,7 +234,7 @@ fn the_proof_refuses_another_kind_shared_bytes_to_a_store_a_stale_or_withdrawn_v
 fn the_frameless_arms_are_the_proof_and_the_row() {
     let mut heap = Heap::new();
     let array = typed_array(&mut heap, Kind::Int16, pattern(Kind::Int16));
-    let entries = heap.typed_view_base();
+    let entries = heap.typed_view_directory();
     assert!(concrete_typed_view(entries, array.0).is_none(), "an unpublished view");
     let view = (0..TRIES).find_map(|_| { publish(&mut heap, array, true); concrete_typed_view(entries, array.0) }).expect("a published view");
     let bytes = pattern(Kind::Int16);

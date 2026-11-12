@@ -89,6 +89,8 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeTypedArrayLayout {
     pub(crate) entry_size: usize,
+    pub(crate) page_shift: u32,
+    pub(crate) page_mask: usize,
     pub(crate) kind_offset: usize,
     pub(crate) detached_offset: usize,
     pub(crate) unshared_offset: usize,
@@ -99,6 +101,8 @@ pub(crate) struct NativeTypedArrayLayout {
 
 pub(crate) const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTypedArrayLayout {
     entry_size: 8,
+    page_shift: 12,
+    page_mask: 4095,
     kind_offset: 20,
     detached_offset: 21,
     unshared_offset: 22,

@@ -162,9 +162,8 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     return Ok(self.heap.alloc(Cell::TypedArray {
-                        kind,
                         object: Box::new(crate::heap::BufferViewObject {
-                            native: Default::default(),
+                            native: crate::heap::NativeView::typed(kind),
                             object: Self::empty_object(
                                 self.heap.root_value(prototype_root.unwrap()).unwrap(),
                             ),
@@ -192,7 +191,7 @@ impl<H: Host> Vm<H> {
                 let copied = matches!(initialization, Some(TypedArrayInitialization::TypedArray(_)))
                     .then(|| self.heap.root_value(source_root).unwrap())
                     .filter(|source| {
-                        matches!(self.heap.get(*source), Some(Cell::TypedArray { kind: source_kind, .. }) if *source_kind == kind)
+                        matches!(self.heap.get(*source), Some(Cell::TypedArray { object, .. }) if object.native.kind() == kind)
                     })
                     .and_then(|source| self.embedding_with_view_bytes(source, |bytes| bytes.get(..byte_length).map(<[u8]>::to_vec))?);
                 let source_copied = copied.is_some();
@@ -203,9 +202,8 @@ impl<H: Host> Vm<H> {
                 let buffer_root = self.heap.root(buffer);
                 backing = Some(buffer_root);
                 let typed_array = self.heap.alloc(Cell::TypedArray {
-                    kind,
                     object: Box::new(crate::heap::BufferViewObject {
-                        native: Default::default(),
+                        native: crate::heap::NativeView::typed(kind),
                         object: Self::empty_object(
                             self.heap.root_value(prototype_root.unwrap()).unwrap(),
                         ),

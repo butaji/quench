@@ -74,17 +74,12 @@ impl<H: Host> Vm<H> {
                 let byte_length = self.array_buffer_byte_length(value);
                 (kind, value, 0, byte_length, byte_length)
             }
-            Some(Cell::TypedArray {
-                object,
-                buffer,
-                kind,
-                ..
-            }) => {
+            Some(Cell::TypedArray { object, buffer, .. }) => {
                 let (kind, buffer, offset, width) = (
-                    super::embedding::typed_array_brand(*kind),
+                    super::embedding::typed_array_brand(object.native.kind()),
                     *buffer,
                     object.offset,
-                    kind.width(),
+                    object.native.kind().width(),
                 );
                 let length = self.typed_array_length(value).unwrap_or(0);
                 (kind, buffer, offset, length * width, length)
@@ -181,9 +176,8 @@ impl<H: Host> Vm<H> {
         let buffer = self.fixed_array_buffer_from(bytes.into(), false);
         let buffer_root = self.heap.root(buffer);
         let view = self.heap.alloc(Cell::TypedArray {
-            kind: TypedArrayKind::Uint8,
             object: Box::new(crate::heap::BufferViewObject {
-                native: Default::default(),
+                native: crate::heap::NativeView::typed(TypedArrayKind::Uint8),
                 object: Self::empty_object(self.typed_array_proto(TypedArrayKind::Uint8)),
                 offset: 0,
             }),
@@ -217,8 +211,8 @@ impl<H: Host> Vm<H> {
     pub(super) fn embedding_buffer_range(&self, value: Value) -> Option<(Value, std::ops::Range<usize>)> {
         let (buffer, offset, byte_length) = match self.heap.get(value)? {
             Cell::ArrayBuffer { bytes, .. } => (value, 0, bytes.len()),
-            Cell::TypedArray { object, buffer, kind, .. } => {
-                (*buffer, object.offset, self.typed_array_length(value)?.checked_mul(kind.width())?)
+            Cell::TypedArray { object, buffer, .. } => {
+                (*buffer, object.offset, self.typed_array_length(value)?.checked_mul(object.native.kind().width())?)
             }
             Cell::DataView { object, buffer, .. } => (*buffer, object.offset, self.embedding_view_bytes_length(value)),
             _ => return None,
@@ -356,8 +350,8 @@ impl<H: Host> Vm<H> {
     /// general read answers.
     fn staged_typed_number(&mut self, object: Value, kind: TypedArrayKind, index: usize) -> Option<f64> {
         crate::staged::typed_elements::NativeKind::new(kind)?;
-        let entries = self.heap.typed_view_base();
-        let prove = || crate::staged::typed_view::concrete_typed_view(entries, object);
+        let directory = self.heap.typed_view_directory();
+        let prove = || crate::staged::typed_view::concrete_typed_view(directory, object);
         let view = prove().or_else(|| self.publish_typed_view(object).then(prove).flatten())?;
         crate::staged::typed_view::concrete_typed_read(view, index).map(f64::from_bits)
     }
@@ -439,7 +433,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn typed_array_length(&self, object: Value) -> Option<usize> {
         let (buffer, offset, length, kind) = match self.heap.get(object) {
-            Some(Cell::TypedArray { buffer, object, length, kind }) => (*buffer, object.offset, *length, *kind),
+            Some(Cell::TypedArray { buffer, object, length }) => (*buffer, object.offset, *length, object.native.kind()),
             _ => return None,
         };
         Some(match self.heap.get(buffer) {
@@ -468,7 +462,6 @@ impl<H: Host> Vm<H> {
         let Some(Cell::TypedArray {
             buffer,
             object,
-            kind,
             length,
             ..
         }) = self.heap.get(object)
@@ -477,7 +470,7 @@ impl<H: Host> Vm<H> {
         };
         match self.heap.get(*buffer) {
             Some(Cell::ArrayBuffer { bytes, detached: false, .. }) => {
-                length.within(object.offset, kind.width(), bytes.len()).is_none()
+                length.within(object.offset, object.native.kind().width(), bytes.len()).is_none()
             }
             _ => true,
         }
@@ -496,7 +489,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn typed_array_kind(&self, object: Value) -> Option<TypedArrayKind> {
         match self.heap.get(object) {
-            Some(Cell::TypedArray { kind, .. }) => Some(*kind),
+            Some(Cell::TypedArray { object, .. }) => Some(object.native.kind()),
             _ => None,
         }
     }
@@ -673,8 +666,8 @@ impl<H: Host> Vm<H> {
     /// read, where `typed_array_length` and the buffer checks would each make their own.
     fn typed_array_view(&self, object: Value) -> Option<TypedArrayView> {
         match self.heap.get(object) {
-            Some(Cell::TypedArray { kind, object, buffer, length }) => Some(TypedArrayView {
-                kind: *kind,
+            Some(Cell::TypedArray { object, buffer, length }) => Some(TypedArrayView {
+                kind: object.native.kind(),
                 buffer: *buffer,
                 offset: object.offset,
                 length: *length,
@@ -740,9 +733,8 @@ impl<H: Host> Vm<H> {
             Some(Cell::TypedArray {
                 object: view,
                 buffer,
-                kind,
                 ..
-            }) => (*buffer, view.offset, *kind),
+            }) => (*buffer, view.offset, view.native.kind()),
             _ => return false,
         };
         if self.array_buffer_detached(buffer)
@@ -784,26 +776,14 @@ impl<H: Host> Vm<H> {
         target_start: usize,
         length: usize,
     ) -> Result<(), JsError> {
-        let Some(Cell::TypedArray {
-            kind,
-            buffer,
-            object,
-            ..
-        }) = self.heap.get(source)
-        else {
+        let Some(Cell::TypedArray { buffer, object, .. }) = self.heap.get(source) else {
             unreachable!("typed copy source was validated");
         };
-        let (source_kind, source_buffer, source_offset) = (*kind, *buffer, object.offset);
-        let Some(Cell::TypedArray {
-            kind,
-            buffer,
-            object,
-            ..
-        }) = self.heap.get(target)
-        else {
+        let (source_kind, source_buffer, source_offset) = (object.native.kind(), *buffer, object.offset);
+        let Some(Cell::TypedArray { buffer, object, .. }) = self.heap.get(target) else {
             unreachable!("typed copy target was validated");
         };
-        let (target_kind, target_buffer, target_offset) = (*kind, *buffer, object.offset);
+        let (target_kind, target_buffer, target_offset) = (object.native.kind(), *buffer, object.offset);
         if source_kind.is_bigint() != target_kind.is_bigint() {
             return Err(self.type_error(p, super::operations::MIXED_BIGINT_TYPES.into()));
         }

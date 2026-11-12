@@ -11,7 +11,7 @@ mod access;
 mod array_elements;
 mod store_gate;
 mod typed_view;
-pub(crate) use typed_view::NATIVE_TYPED_ARRAY_LAYOUT;
+pub(crate) use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NativeView};
 use typed_view::TypedViewTable;
 pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
@@ -694,7 +694,7 @@ pub(crate) struct Heap {
     properties: ValueArena,
     roots: RootTable,
     sparse_arrays: Option<Box<FxHashMap<Value, SparseElements>>>,
-    /// The typed arrays' view records by slot (`Heap::typed_view_base`); declared after `slots`, whose cells' records drop first.
+    /// The typed arrays' view records by slot (`Heap::typed_view_directory`); declared after `slots`, whose cells' records drop first.
     typed_views: TypedViewTable,
     #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     gc_profile: GcProfile,
@@ -1359,16 +1359,16 @@ impl Heap {
     /// Names the record of the typed array just allocated at `value` in the table native code reads.
     fn register_typed_view(&mut self, value: Value) {
         let Some(index) = value.legacy_heap_index() else { return };
-        if let Some(Cell::TypedArray { kind, object, .. }) = self.slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut()) {
-            self.typed_views.register(index, *kind, &mut object.native);
+        if let Some(Cell::TypedArray { object, .. }) = self.slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut()) {
+            self.typed_views.register(index, &mut object.native);
         }
     }
 
-    /// The base of the typed array view records by legacy slot, null before the first typed
-    /// array (`NATIVE_TYPED_ARRAY_LAYOUT`): read an entry from a current live typed array's
-    /// slot index, finish before any VM safepoint.
-    pub(crate) fn typed_view_base(&self) -> *const usize {
-        self.typed_views.base()
+    /// The directory of the typed array view record pages by legacy slot and its page count
+    /// (`NATIVE_TYPED_ARRAY_LAYOUT`): read an entry from a current live typed array's slot
+    /// index, finish before any VM safepoint, which an allocation may move the directory at.
+    pub(crate) fn typed_view_directory(&self) -> (*const usize, usize) {
+        self.typed_views.directory()
     }
 
     /// `alloc(Cell::BigInt(value))` without the dispatch on the cell's kind: a BigInt has no

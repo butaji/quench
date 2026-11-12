@@ -6564,11 +6564,12 @@ struct JsStepDispatch {
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
     allocated: usize,
     collect_at: usize,
-    /// The typed arrays' view records by legacy slot (`Heap::typed_view_base`), refreshed with
-    /// the other record bases, and the address of the process's buffer-relocation count
+    /// The typed arrays' view record directory and its page count (`Heap::typed_view_directory`),
+    /// refreshed with the other record bases, and the address of the process's buffer-relocation count
     /// (`buffer_relocations_address`): what a typed array's view proof reads
     /// (`staged::typed_view::TypedRecords`).
-    typed_view_base: usize,
+    typed_view_directory: usize,
+    typed_view_pages: usize,
     buffer_relocations: usize,
     #[cfg(test)]
     island_steps: u64,
@@ -7333,7 +7334,8 @@ impl LaneFrame {
                 native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0,
                 allocated: 0,
                 collect_at: 0,
-                typed_view_base: 0,
+                typed_view_directory: 0,
+                typed_view_pages: 0,
                 buffer_relocations: 0,
                 loop_entry: 0,
                 method_cache_atoms: 0,
@@ -7483,7 +7485,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, typed_view_base: 0, buffer_relocations: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
+            field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -7542,7 +7544,8 @@ impl JsStepDispatch {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
-        self.typed_view_base = vm.heap.typed_view_base().addr();
+        let (directory, pages) = vm.heap.typed_view_directory();
+        (self.typed_view_directory, self.typed_view_pages) = (directory.addr(), pages);
         self.buffer_relocations = crate::heap::buffer_relocations_address().addr();
         self.epoch = vm.heap.collection_epoch();
         let (blocks, count) = vm.heap.native_object_mark_blocks();

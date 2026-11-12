@@ -216,7 +216,7 @@ impl<H: Host> Vm<H> {
                 Some(Cell::RegExp { .. }) => "RegExp",
                 Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
                 Some(Cell::DataView { .. }) => "DataView",
-                Some(Cell::TypedArray { kind, .. }) => kind.name(),
+                Some(Cell::TypedArray { object, .. }) => object.native.kind().name(),
                 Some(Cell::WeakRef { .. }) => "WeakRef",
                 Some(Cell::FinalizationRegistry { .. }) => "FinalizationRegistry",
                 Some(Cell::Error(_)) => "Error",

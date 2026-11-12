@@ -3670,7 +3670,6 @@ pub(crate) enum Cell {
         immutable: bool,
     },
     TypedArray {
-        kind: TypedArrayKind,
         object: Box<BufferViewObject>,
         buffer: Value,
         length: ViewLength,

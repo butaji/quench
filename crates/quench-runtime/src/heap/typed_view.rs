@@ -9,11 +9,8 @@
 //! (`buffer_relocations`) changes where its bytes are or who shares them; the stamp is the
 //! count of such events at publication, so a stale prefix is one the proof refuses.
 
-use super::MAX_HEAP_CELLS;
 use super::buffer_bytes::buffer_relocations;
-use super::cell::TypedArrayKind;
-use std::alloc::{Layout, alloc_zeroed, dealloc};
-use std::ptr::NonNull;
+use super::cell::{TYPED_ARRAYS, TypedArrayKind};
 
 /// The kind byte of a view that is no typed array (a DataView): no native element has it.
 pub(crate) const NO_KIND: u8 = u8::MAX;
@@ -61,6 +58,16 @@ impl NativeView {
     }
 
     /// Publishes the view's elements: `length` of them from `data`, over bytes `unshared` or not.
+    /// The unpublished view of a typed array of `kind`.
+    pub(crate) fn typed(kind: TypedArrayKind) -> Self {
+        Self::unpublished(kind as u8)
+    }
+
+    /// The kind of a typed array's view; a DataView's has none.
+    pub(crate) fn kind(&self) -> TypedArrayKind {
+        TYPED_ARRAYS[usize::from(self.kind)].kind
+    }
+
     pub(crate) fn publish(&mut self, data: *mut u8, length: u32, unshared: bool) {
         (self.data, self.length, self.unshared) = (data.addr(), length, u8::from(unshared));
         self.detached = 0;
@@ -79,9 +86,9 @@ impl NativeView {
         self.detached == 1 && self.stamp == buffer_relocations()
     }
 
-    /// Names this record by `kind` and by the table entry that holds it.
-    fn bind(&mut self, kind: TypedArrayKind, entry: *mut usize) {
-        (self.kind, self.home) = (kind as u8, entry);
+    /// Names this record by the table entry that holds it.
+    fn bind(&mut self, entry: *mut usize) {
+        self.home = entry;
     }
 }
 
@@ -97,63 +104,53 @@ impl Drop for NativeView {
     }
 }
 
-/// The view records of a heap's typed arrays, by legacy slot: one word per slot the heap may
-/// hold, zero where the slot is no typed array. Reserved zeroed and in place on the first
-/// typed array, so its base is fixed for the heap's life; a failed reservation leaves every
-/// typed array to the VM.
+/// Entries a page of `TypedViewTable` holds, a power of two so a slot is a page and an entry by shift and mask.
+const PAGE_ENTRIES: usize = 1 << PAGE_SHIFT;
+const PAGE_SHIFT: u32 = 12;
+
+/// The view records of a heap's typed arrays, by legacy slot, in zeroed pages of `PAGE_ENTRIES`
+/// words behind a directory of page addresses: zero where the slot is no typed array. Its
+/// cost is one word per slot up to the highest slot a typed array has taken, in whole pages,
+/// and one directory word per page; both grow only where a typed array is allocated, which
+/// moves the directory (native code reads its base and length again after a callout) and never
+/// a page, so a record's entry stays where its `home` names it.
 #[derive(Default)]
 pub(super) struct TypedViewTable {
-    entries: Option<NonNull<usize>>,
-    reserved: bool,
+    pages: Vec<Box<[usize]>>,
+    directory: Vec<usize>,
 }
 
 impl TypedViewTable {
-    fn layout() -> Layout {
-        Layout::array::<usize>(MAX_HEAP_CELLS).expect("a slot-count table is a valid layout")
+    /// The directory's base and its page count.
+    pub(super) fn directory(&self) -> (*const usize, usize) {
+        (self.directory.as_ptr(), self.directory.len())
     }
 
-    /// The table's base, null before the first typed array.
-    pub(super) fn base(&self) -> *const usize {
-        self.entries.map_or(std::ptr::null(), |entries| entries.as_ptr().cast_const())
-    }
-
-    fn reserve(&mut self) -> Option<NonNull<usize>> {
-        if !self.reserved {
-            self.reserved = true;
-            // SAFETY: the layout has a nonzero size.
-            self.entries = NonNull::new(unsafe { alloc_zeroed(Self::layout()) }.cast());
+    /// Names the record `view` of the typed array in legacy slot `slot`.
+    pub(super) fn register(&mut self, slot: u32, view: &mut NativeView) {
+        let page = slot as usize >> PAGE_SHIFT;
+        while self.pages.len() <= page {
+            let mut entries = vec![0_usize; PAGE_ENTRIES].into_boxed_slice();
+            self.directory.push(entries.as_mut_ptr().addr());
+            self.pages.push(entries);
         }
-        self.entries
-    }
-
-    /// Names the record `view` of the typed array of `kind` in legacy slot `slot`.
-    pub(super) fn register(&mut self, slot: u32, kind: TypedArrayKind, view: &mut NativeView) {
-        let Some(entries) = self.reserve() else { return };
-        // SAFETY: a legacy slot index is below `MAX_HEAP_CELLS`, the entries' count.
-        let entry = unsafe { entries.as_ptr().add(slot as usize) };
-        view.bind(kind, entry);
-        // SAFETY: as above; the record is in its final place, a boxed view.
-        unsafe { entry.write(std::ptr::from_mut(view).addr()) };
-    }
-}
-
-impl Drop for TypedViewTable {
-    fn drop(&mut self) {
-        if let Some(entries) = self.entries {
-            // SAFETY: allocated with this layout by `reserve`.
-            unsafe { dealloc(entries.as_ptr().cast(), Self::layout()) };
-        }
+        let entry = &mut self.pages[page][slot as usize & (PAGE_ENTRIES - 1)];
+        view.bind(std::ptr::from_mut(entry));
+        *entry = std::ptr::from_mut(view).addr();
     }
 }
 
 /// The native reader's view of a typed array's record: the table entry holds the record's
-/// address (`entry_size` bytes), and these are the byte offsets of the prefix's fields from it.
-/// A consumer resolves a typed array's value to its entry by the slot index, proves the
+/// address (`entry_size` bytes), a slot's page is `slot >> page_shift` of the directory and its
+/// entry `slot & page_mask` of that page, and these are the byte offsets of the prefix's fields
+/// from the record. A consumer resolves a typed array's value to its entry by the slot index, proves the
 /// record's kind, that its `stamp` is the current `buffer_relocations` and that it is not
 /// `detached`, and reads `data` and `length`; a store also requires the bytes `unshared`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeTypedArrayLayout {
     pub(crate) entry_size: usize,
+    pub(crate) page_shift: u32,
+    pub(crate) page_mask: usize,
     pub(crate) kind_offset: usize,
     pub(crate) detached_offset: usize,
     pub(crate) unshared_offset: usize,
@@ -165,6 +162,8 @@ pub(crate) struct NativeTypedArrayLayout {
 /// Layout facts for code generators which read a typed array's elements in place.
 pub(crate) const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTypedArrayLayout {
     entry_size: std::mem::size_of::<usize>(),
+    page_shift: PAGE_SHIFT,
+    page_mask: PAGE_ENTRIES - 1,
     kind_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, kind),
     detached_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, detached),
     unshared_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, unshared),
@@ -198,12 +197,14 @@ mod tests {
     #[test]
     fn a_typed_array_registered_by_slot_leaves_its_entry_when_its_record_goes() {
         let mut table = TypedViewTable::default();
-        assert!(table.base().is_null());
-        let mut view = Box::new(NativeView::default());
-        table.register(7, TypedArrayKind::Float64, &mut view);
-        let entry = || unsafe { table.base().add(7).read() };
+        assert_eq!(table.directory().1, 0);
+        let mut view = Box::new(NativeView::typed(TypedArrayKind::Float64));
+        let slot = PAGE_ENTRIES as u32 + 7;
+        table.register(slot, &mut view);
+        assert_eq!(table.directory().1, 2, "the pages up to the slot's");
+        let entry = || unsafe { (table.directory().0.add(1).read() as *const usize).add(7).read() };
         assert_eq!(entry(), std::ptr::from_ref(&*view).addr());
-        assert_eq!(view.kind, TypedArrayKind::Float64 as u8);
+        assert_eq!(view.kind(), TypedArrayKind::Float64);
         let copy = view.clone();
         drop(copy);
         assert_ne!(entry(), 0, "an unregistered copy leaves the entry");
