@@ -4,13 +4,14 @@
 use super::*;
 use super::super::entry_cell::EntryCell;
 use super::direct_admission::dispatch_offset;
+use crate::staged::Invocation;
 
 impl Lowering<'_, '_> {
     /// Pushes the callee's window and shadow frame, installs the per-entry words it runs with
     /// and calls the entry its cell holds; its status and result word, with the caller's words back.
-    pub(super) fn direct_enter(&mut self, instruction: WideInstruction, callee: &DirectCallee, cell: ir::Value, (this, top, next, shadow): (ir::Value, ir::Value, ir::Value, ir::Value)) -> (ir::Value, ir::Value) {
+    pub(super) fn direct_enter(&mut self, state: &mut State, site: Invocation, callee: &DirectCallee, cell: ir::Value, (this, top, next, shadow): (ir::Value, ir::Value, ir::Value, ir::Value), helper: ir::Block) -> (ir::Value, ir::Value) {
         let payload = self.payload;
-        self.direct_window(instruction, callee, top);
+        self.direct_window(state, site, callee, top, helper);
         let descriptor = self.reloc(RelocKind::Descriptor, callee.target.function, callee as *const DirectCallee as u64);
         let entry = self.word_load(cell, dispatch_offset(std::mem::offset_of!(EntryCell, entry)));
         let body = self.word_load(cell, dispatch_offset(std::mem::offset_of!(EntryCell, body)));

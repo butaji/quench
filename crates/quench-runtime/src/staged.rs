@@ -38,6 +38,8 @@ pub(crate) mod store;
 pub(crate) mod holder;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
+pub(crate) mod protocol;
+pub(crate) use protocol::{CallOperation, Invocation, WindowFill};
 pub(crate) mod plan_fields;
 pub(crate) mod property;
 mod property_write;
@@ -331,6 +333,9 @@ pub(crate) enum Operation<W, P> {
     Delete { base: Register, key: Register, strict: bool },
     /// `base[key]` past the dense and typed element reads (`PropertyFrame::index_get_host`).
     IndexGetHost { base: W, key: W },
+    /// A step of the call protocol: admission, `this` binding, the callee's window, completion
+    /// (`protocol`).
+    Call(CallOperation<W>),
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes.
@@ -355,6 +360,8 @@ impl<W, P> Operation<W, P> {
             Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec => return Self::decode_value(instruction),
             Op::GetField | Op::Delete => return Self::decode_property(instruction),
             op if op.is_field_store() => return Self::decode_property(instruction),
+            Op::Call | Op::CallForwardingArguments | Op::Construct =>
+                Self::Call(CallOperation::Site(Invocation::of(instruction)?)),
             _ => return names::decode(instruction),
         })
     }

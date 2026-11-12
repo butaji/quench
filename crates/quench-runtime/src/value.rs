@@ -289,6 +289,10 @@ impl ValueLayout {
     pub(crate) const DIRECT_OBJECT_TAG: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;
     /// Tag and family bits that distinguish a direct function record.
     pub(crate) const DIRECT_FUNCTION_TAG: u64 = TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS;
+    /// Tag and family bits that distinguish a direct promise record.
+    pub(crate) const DIRECT_PROMISE_TAG: u64 = TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT;
+    /// Tag and family bits that distinguish a direct iterator record.
+    pub(crate) const DIRECT_ITERATOR_TAG: u64 = TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS;
     pub(crate) const HEAP_FAMILY_MASK: u64 = HEAP_FAMILY_MASK;
     /// Tag and family bits that distinguish a direct string record.
     pub(crate) const DIRECT_STRING_TAG: u64 = TAG_HEAP | DIRECT_STRING_HANDLE_BITS;
