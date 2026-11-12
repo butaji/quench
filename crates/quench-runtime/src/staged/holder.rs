@@ -33,7 +33,7 @@ pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, shape: u32, 
 /// has the one prototype, so the family test replaces the shape and link guards, and the watch on
 /// the prototype's values is the assumption. `None` (leaving at `miss`) for any other receiver or
 /// once the watch is retired.
-// Read by the u-jit and f-jit projections of GetField on string receivers (threads 13 and 7).
+// Read by the u-jit and b-jit projections of GetField on string receivers (threads 13 and 7).
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn string_holder_read<S: Stage>(stage: &mut S, receiver: S::Word, watch: u64, value: u64, miss: S::Miss)

@@ -78,13 +78,13 @@ impl CompileLevel {
     /// The level a compile uses unless its caller chooses: `Optimized`, or `Quick` while the
     /// `quick-compile` experiment measures that level.
     pub(super) fn run_default() -> Self {
-        if crate::trace::Dev::QuickCompile.on() { Self::Quick } else { Self::Optimized }
+        if crate::jit_mode::quick_only() || crate::trace::Dev::QuickCompile.on() { Self::Quick } else { Self::Optimized }
     }
 
     /// The Cranelift settings a level fixes, applied after the publication's.
     fn settings(self) -> &'static [(&'static str, &'static str)] {
         match self {
-            Self::Quick => &[("opt_level", "none"), ("regalloc_algorithm", "single_pass")],
+            Self::Quick => &[("opt_level", "none")],
             Self::Large => &[("regalloc_algorithm", "single_pass")],
             Self::Optimized => &[],
         }
@@ -101,6 +101,21 @@ impl CompileLevel {
 /// delta-blue +12% in lane mode, other six V8-v7 tests within noise; peak RSS +30% on the two
 /// largest bodies' tests). `unwind_info=false` measured nothing.
 const JS_JIT_OPT_LEVEL: &str = "speed";
+
+/// The address of the symbol `(namespace, key)`, a relocation the loader patches: the one form
+/// every position-independent constant takes (stencil holes, `lane_region::relocs`).
+#[cfg(any(feature = "jit", feature = "aot"))]
+pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, ty: cranelift_codegen::ir::Type, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
+    use cranelift_codegen::ir::{self, InstBuilder};
+    let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(namespace, key));
+    let symbol = builder.create_global_value(ir::GlobalValueData::Symbol {
+        name: ir::ExternalName::user(name),
+        offset: ir::immediates::Imm64::new(0),
+        colocated: false,
+        tls: false,
+    });
+    builder.ins().symbol_value(ty, symbol)
+}
 
 /// The executable-memory ISA of every JavaScript JIT tier.
 pub(super) fn target_isa() -> Option<Arc<TargetIsa>> {
