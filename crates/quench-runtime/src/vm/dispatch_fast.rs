@@ -860,6 +860,13 @@ enum LaneBody {
         leaves_at: std::cell::Cell<LaneLeaves>,
         /// Whether a run of it completed, natively called ones included.
         completed: std::cell::Cell<bool>,
+        /// Its runs a native caller's leave ended inside it (`LaneView::note_native_leave`): the
+        /// runs `note_lane_body_end` never sees, as no handler entered them.
+        native_leaves: std::cell::Cell<u32>,
+        /// Its runs that returned inside a native caller's completed run, as many as that caller
+        /// completed: a bound, as the caller's path may not reach the call
+        /// (`LaneView::note_native_completion`).
+        native_completions: std::cell::Cell<u32>,
         recompiles: u8,
         /// Its predecessor's few leaves, where it left only there.
         stuck: LaneLeaves,
@@ -15164,7 +15171,9 @@ fn lane_materialize_frames<H: Host>(
         let method = frame.body as *const super::compiled::LaneMethod;
         // SAFETY: the active caller's code lease pins a named callee body through recovery, and
         // the view pins every body it published, even once its publication retired.
-        innermost = Some(unsafe { (&*callee.target.view, &*method) });
+        let view = unsafe { &*callee.target.view };
+        view.note_native_leave();
+        innermost = Some((view, unsafe { &*method }));
     }
     innermost
 }

@@ -3315,6 +3315,7 @@ impl Drop for ProgramStore {
             let op_at = |function: u32, pc: u32| code.function_get(function as usize)
                 .and_then(|body| body.instructions().nth(pc as usize)).map(|instruction| format!("{:?}", instruction.op()));
             for (function, view) in (0..u32::MAX).map_while(|function| code.function_get(function as usize).map(|_| function)).filter_map(|function| entry.lane_views.derived(function).map(|view| (function, view))) {
+                view.report_completion_evidence(program, function);
                 if let Some(line) = view.body_stats.report(program, view.lane_body_state(), &op_at) {
                     eprintln!("{line}");
                 } else {

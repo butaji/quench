@@ -35,6 +35,10 @@ pub(super) struct LaneBodyHistory {
 const RECURRENT_ENTRIES: u16 = 16;
 const RECURRENT_TICKS: u32 = 256;
 
+/// The completed runs of a body per credit to the callees it calls natively
+/// (`LaneView::note_native_completions`): the credit lags its runs by fewer than this many.
+const NATIVE_CREDIT_RUNS: u32 = 64;
+
 /// The warming entries every function has counted so far: a clock of the work the program does
 /// while its functions warm, which, unlike wall time, a rerun repeats.
 fn warm_ticks() -> u32 {
@@ -57,6 +61,16 @@ fn verdict(completed: bool, recompiles: u8, leaves: LaneLeaves, stuck: LaneLeave
     let nothing_new = leaves != LaneLeaves::Scattered && stuck != LaneLeaves::Scattered
         && leaves.exits().all(|exit| stuck.exits().any(|known| known == exit));
     (recompiles < TIERS.lane_body.max_recompiles && !(recompiles > 0 && nothing_new)).then(|| stuck.union(leaves))
+}
+
+/// Credits the callees `method`'s body calls natively with `NATIVE_CREDIT_RUNS` completions
+/// (a bound, as the caller's completed runs need not reach each call).
+fn credit_native_callees(method: &super::compiled::PublishedLaneMethod) {
+    let Some(body) = method.lease() else { return };
+    for callee in body.direct_callees() {
+        // SAFETY: the caller's body owns the callee it named; the view outlives the run.
+        unsafe { &*callee.target.view }.note_native_completions(NATIVE_CREDIT_RUNS);
+    }
 }
 
 /// The function a leave at `exit` is in (`None`: the body's own) and its PC, for a leave that
@@ -89,16 +103,12 @@ impl LaneView {
     pub(super) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, left_new: impl FnOnce((Option<u32>, usize))) {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        let LaneBody::Specialized { exits, leaves_at, completed, completions, recompiles, stuck, method, promote_at, .. } = body else { return };
+        let LaneBody::Specialized { exits, leaves_at, completed, completions, recompiles, stuck, method, .. } = body else { return };
         if completed_region || matches!(exit, LaneExit::Returned { .. }) {
             completed.set(true);
             completions.set(completions.get().saturating_add(1));
-            if *promote_at != 0 && completions.get() >= *promote_at {
-                // A Quick body that ran this long repays an Optimized one: compile again.
-                self.history.set(LaneBodyHistory { promoted: true, ..self.history.get() });
-                let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles, stuck: *stuck };
-                self.retire_body(body, next);
-            }
+            if completions.get() % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); }
+            self.promote_if_repaid(body);
             return;
         }
         exits.set(exits.get().saturating_add(1));
@@ -120,6 +130,58 @@ impl LaneView {
         };
         let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck };
         self.retire_body(body, next);
+    }
+
+    /// Counts a leave inside this function's body that a native caller's run made, which no
+    /// handler entry notes (`lane_materialize_frames`).
+    pub(super) fn note_native_leave(&self) {
+        // SAFETY: as `lane_body`; the leave being recovered has finished with the body's counters.
+        if let LaneBody::Specialized { native_leaves, .. } = unsafe { &*self.tier_lane.get() } {
+            native_leaves.set(native_leaves.get().saturating_add(1));
+        }
+    }
+
+    /// Counts a run of this function's body that a completed native caller's run contains.
+    fn note_native_completions(&self, runs: u32) {
+        // SAFETY: as `note_native_leave`; no run of this body is inspecting it.
+        let body = unsafe { &mut *self.tier_lane.get() };
+        if let LaneBody::Specialized { native_completions, .. } = body {
+            native_completions.set(native_completions.get().saturating_add(runs));
+            self.promote_if_repaid(body);
+        }
+    }
+
+    /// A Quick body whose evidence (`body_completion_evidence`) shows it has run long enough
+    /// without leaving repays an Optimized compile: its next compile is one.
+    fn promote_if_repaid(&self, body: &mut LaneBody) {
+        let LaneBody::Specialized { promote_at, recompiles, stuck, native_completions, native_leaves, completions, exits, .. } = body else { return };
+        let (done, left) = (u64::from(native_completions.get()) + u64::from(completions.get()), u64::from(native_leaves.get()) + u64::from(exits.get()));
+        let (promote_at, recompiles, stuck) = (*promote_at, *recompiles, *stuck);
+        if promote_at == 0 || done < u64::from(promote_at) || left * PERCENT >= done { return; }
+        self.history.set(LaneBodyHistory { promoted: true, ..self.history.get() });
+        self.retire_body(body, LaneBody::Unspecialized { entries: 0, recompiles, stuck });
+    }
+
+    /// What the runs of this body have shown the tier machine: its completions, its leaves,
+    /// and whether the completions are exact (`false`: natively called runs count as many as
+    /// their caller's completed runs, a bound). `None` unless it is specialized.
+    pub(in crate::vm) fn body_completion_evidence(&self) -> Option<(u64, u64, bool)> {
+        // SAFETY: as `note_native_leave`.
+        match unsafe { &*self.tier_lane.get() } {
+            LaneBody::Specialized { native_completions, native_leaves, completions, exits, .. } => Some((
+                u64::from(native_completions.get()) + u64::from(completions.get()),
+                u64::from(native_leaves.get()) + u64::from(exits.get()),
+                false,
+            )),
+            _ => None,
+        }
+    }
+
+    /// The diagnostics line of what `body_completion_evidence` holds.
+    pub(in crate::vm) fn report_completion_evidence(&self, program: usize, function: u32) {
+        if let Some((completions, leaves, _)) = self.body_completion_evidence() {
+            eprintln!("QUENCH_LANE_EVIDENCE {{\"program\":{program},\"function\":{function},\"completions\":{completions},\"leaves\":{leaves}}}");
+        }
     }
 
     /// Replaces the specialized `body` with `next`: its entry's handler runs no more, its entry
@@ -298,7 +360,7 @@ impl LaneView {
             self.entry.publish(&method);
         }
         LaneBody::Specialized { method, tier_prologue, completions: Cell::new(0), exits: Cell::new(0),
-            leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck,
+            leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), native_leaves: Cell::new(0), native_completions: Cell::new(0), recompiles, stuck,
             promote_at: if self.compile_level() == super::jit_backend::CompileLevel::Quick && !crate::jit_mode::quick_only() { super::compiled::promotion_completions() } else { 0 } }
     }
 
