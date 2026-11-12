@@ -161,12 +161,18 @@ native_rows! {
     I64x2ExtMulLowI32x4U => ExtendMultiplyLowUnsigned, I32x4;
 }
 
-/// The native row of `operator`.
+/// The native row of `operator`, read from `NATIVE` laid out by operator once, so the
+/// interpreter's decision per execution is one index.
 pub(crate) fn native(operator: SimdOperator) -> Option<Native> {
-    NATIVE
-        .iter()
-        .find(|(candidate, _)| *candidate == operator)
-        .map(|(_, native)| *native)
+    static ROWS: std::sync::LazyLock<Vec<Option<Native>>> = std::sync::LazyLock::new(|| {
+        let length = NATIVE.iter().map(|(operator, _)| *operator as usize + 1).max();
+        let mut rows = vec![None; length.unwrap_or(0)];
+        for (operator, native) in NATIVE {
+            rows[operator as usize] = Some(native);
+        }
+        rows
+    });
+    ROWS.get(operator as usize).copied().flatten()
 }
 
 /// The vector registers of a machine. A value is a 128-bit vector or a scalar in its low bits,

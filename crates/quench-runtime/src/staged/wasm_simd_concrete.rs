@@ -1,12 +1,23 @@
 //! The SIMD stage on bits: vectors are `u128`, the native rows are per-lane loops, the kernels
-//! and the shuffle are the interpreter's own. The tests run every row against its kernel, which
-//! is the oracle the Wasm tier's vector instructions must equal.
+//! and the shuffle are the interpreter's own. The interpreter runs every vector operator through
+//! it (`execute`); the tests run every row against its kernel, which is the oracle the Wasm
+//! tier's vector instructions must equal.
 
-use super::wasm_simd::{Lanes, Native, NativeOp, WasmSimd};
+use super::wasm_simd::{Lanes, Native, NativeOp, WasmSimd, simd};
+use crate::WasmValue;
 use crate::wasm::V128_BYTES;
-use crate::wasm::simd::{SimdKernel, lane, replace, shuffle};
+use crate::wasm::simd::{SimdKernel, bits_of, lane, replace, shuffle, value_of};
 
 pub(crate) struct ConcreteSimd;
+
+/// The operator `selector` names on its decoded operands, by the staged decision (`simd`) on the
+/// bit stage: the interpreter's execution of a vector operator. The result's type is the
+/// operator's, read from its table entry.
+#[inline(always)]
+pub(crate) fn execute(selector: u32, left: WasmValue, right: Option<WasmValue>) -> WasmValue {
+    let bits = simd(&mut ConcreteSimd, selector, bits_of(left), right.map(bits_of));
+    value_of(SimdKernel::result_of(selector), bits)
+}
 
 /// `operation` on each lane of `bits`, cut at `width`.
 fn each_lane(width: u32, bits: u128, operation: impl Fn(u8, u64) -> u64) -> u128 {

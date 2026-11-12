@@ -3,6 +3,8 @@
 //! while both run in the same loop over the same frames.
 
 use super::*;
+use crate::staged::wasm_simd::WasmSimd as _;
+use crate::staged::wasm_simd_concrete::{ConcreteSimd, execute};
 use crate::wasm::integer::I32BinaryOperator;
 
 mod gc;
@@ -232,14 +234,14 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::WasmSimd => {
-                let (kernel, lane) =
+                let (kernel, _) =
                     crate::wasm::simd::SimdKernel::of(i.imm()).expect("validated SIMD operator");
                 let left = self.decode_wasm_value(self.read(f, i.register_b()), kernel.left)?;
                 let right = kernel
                     .right
                     .map(|ty| self.decode_wasm_value(self.read(f, i.register_c()), ty))
                     .transpose()?;
-                let value = self.encode_wasm_value((kernel.apply)(left, right, lane));
+                let value = self.encode_wasm_value(execute(i.imm(), left, right));
                 self.write(f, i.result_register(), value);
             }
             Op::WasmSimdShuffle => {
@@ -256,7 +258,7 @@ impl<H: Host> Vm<H> {
                 let Constant::WasmV128(indices) = p.constants[i.constant_index()] else {
                     unreachable!("validated shuffle indices")
                 };
-                let bits = crate::wasm::simd::shuffle(left, right, indices);
+                let bits = ConcreteSimd.vector_shuffle(indices, left, right);
                 let value = self.encode_wasm_value(crate::WasmValue::V128(bits));
                 self.write(f, i.result_register(), value);
             }

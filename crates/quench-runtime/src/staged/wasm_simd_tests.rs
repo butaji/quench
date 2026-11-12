@@ -5,13 +5,13 @@
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_memory::effective_address;
 use super::wasm_simd::{Lanes, NATIVE, Native, NativeOp, Simd, WasmSimd, native, simd};
-use super::wasm_simd_concrete::ConcreteSimd;
+use super::wasm_simd_concrete::{ConcreteSimd, execute};
 use super::wasm_step::Step;
 use super::wasm_tests::Probe;
 use crate::bytecode::{InstructionField, Op, WideInstruction};
 use crate::wasm::V128_BYTES;
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
-use crate::wasm::simd::{SimdKernel, SimdOperator, shuffle};
+use crate::wasm::simd::{SimdKernel, SimdOperator, shuffle, value_of};
 
 const VECTORS: [u128; 7] = [
     0,
@@ -177,4 +177,29 @@ fn a_vector_access_address_is_its_index_plus_its_offset_without_wrapping() {
     };
     let largest = u64::from(u32::MAX);
     assert_eq!(effective_address(&mut stage, largest, largest), largest * 2);
+}
+
+#[test]
+fn an_executed_operator_is_its_kernel_typed_by_its_table_entry() {
+    let kernels = [
+        SimdOperator::V128AnyTrue,
+        SimdOperator::I8x16Swizzle,
+        SimdOperator::I8x16Splat,
+        SimdOperator::I32x4ExtractLane,
+    ];
+    let operators = NATIVE.map(|(operator, _)| operator).into_iter().chain(kernels);
+    for operator in operators {
+        let selector = operator.selector(0);
+        let (kernel, lane) = SimdKernel::of(selector).expect("an operator");
+        assert_eq!(SimdKernel::result_of(selector), kernel.result_type(lane));
+        for (left, right) in VECTORS.iter().zip(VECTORS.iter().rev()) {
+            let left = value_of(kernel.left, *left);
+            let right = kernel.right.map(|ty| value_of(ty, *right));
+            assert_eq!(
+                execute(selector, left, right),
+                (kernel.apply)(left, right, lane),
+                "{operator:?} {left:?} {right:?}"
+            );
+        }
+    }
 }
