@@ -167,3 +167,22 @@ pub(crate) const JS_STEP_LOOP_ENTRY: usize = 0;
 pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 96;
 pub(crate) const JS_STEP_CAPTURE_LEN: usize = 104;
 pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 112;
+
+/// More `JsStepDispatch` fields the call rows read: the lane body's VM, residual and lane
+/// context (a helper call's first three arguments), the lane stack's free span and the shadow
+/// frames' span. Checked against the runtime by `stencil_layout_matches`.
+pub(crate) const JS_STEP_VM: usize = 208;
+pub(crate) const JS_STEP_RESIDUAL: usize = 216;
+pub(crate) const JS_STEP_LANE_CONTEXT: usize = 248;
+pub(crate) const JS_STEP_NATIVE_TOP: usize = 264;
+pub(crate) const JS_STEP_NATIVE_END: usize = 272;
+pub(crate) const JS_STEP_SHADOW_TOP: usize = 280;
+pub(crate) const JS_STEP_SHADOW_END: usize = 288;
+
+/// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
+/// values and activations (`LaneRecoverySpace`).
+pub(crate) const CELL_ENTRY_AT: usize = 0;
+pub(crate) const CELL_RECOVERY_AT: usize = 8;
+pub(crate) const CELL_BODY_AT: usize = 16;
+pub(crate) const RECOVERY_VALUES_AT: usize = 0;
+pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;

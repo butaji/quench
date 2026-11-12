@@ -11,6 +11,7 @@
 //! that finds a register that is no Number returns `LaneExit::Entry`.
 
 use super::osr_loop::LoopRegion;
+use crate::vm::dispatch_fast::operand_feedback::OperandKinds;
 use crate::bytecode::{Class, OperandKind, Register, WideInstruction};
 use crate::value::Value;
 use oxc_ast::ast::BinaryOperator;
@@ -20,6 +21,9 @@ use quench_bjit::{PINNED, PINNED_F, Row as Placed, Stencil};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+// The call planner: consumed by the whole-function b-jit planner, which names its chains.
+#[allow(dead_code)]
+mod call_plan;
 mod decode;
 mod link;
 mod plan;
@@ -158,10 +162,11 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 }
 
 /// The machine code of `region`, entered at the shared native entry ABI, or the instruction that
-/// has no row. `ints` are the registers that held an int32 as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows.
-pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<BaseCode, String> {
+/// has no row. `ints` are the registers that held an int32 as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows,
+/// as do those whose `kinds` (per instruction from the header) record a declined int32 step.
+pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], kinds: &[OperandKinds]) -> Result<BaseCode, String> {
     let started = std::time::Instant::now();
-    let built = assemble(region, dense, widened, seen);
+    let built = assemble(region, dense, widened, seen, kinds);
     let nanos = started.elapsed().as_nanos() as u64;
     note(|totals, rejects| match &built {
         Ok(built) => {
@@ -189,7 +194,7 @@ pub(in crate::vm) struct BaseCode {
 }
 
 /// The code of `region`.
-fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<BaseCode, String> {
+fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], kinds: &[OperandKinds]) -> Result<BaseCode, String> {
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
@@ -199,7 +204,7 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     let mut merged: std::collections::BTreeSet<Register> = Default::default();
     let (reprs, homes, webs, decoded) = loop {
         let (webs, renamed) = Webs::split(region, &decoded, &merged);
-        let reprs = representations(region, &renamed, widened, seen, &webs);
+        let reprs = representations(region, &renamed, widened, seen, kinds, &webs);
         let homes = Homes::of(&ranked(&renamed, &reprs, Repr::Int), &ranked(&renamed, &reprs, Repr::Double), webs.orig.clone(), &webs.clashes(region, &renamed));
         let split: Vec<Register> = homes.slots.iter().map(|web| webs.orig[usize::from(*web)]).filter(|register| webs.count(*register) > 1).collect();
         if split.is_empty() {
@@ -209,7 +214,7 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     };
     let layout = Layout { header, backedge, homes, webs, region };
     let general: Vec<bool> = decoded.iter().map(|row| is_general(row, &reprs)).collect();
-    let body = tile::plan_all(&layout, &decoded, &general)?;
+    let body = tile::plan_all(&layout, &decoded, &general, kinds)?;
     let bare = decoded.iter().all(|row| row.heap.is_none());
     let (code, resumes) = link(&layout, &body)?;
     residuals::report_rows(&layout, &decoded, &body, code.len());

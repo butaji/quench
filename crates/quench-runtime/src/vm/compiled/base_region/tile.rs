@@ -143,13 +143,13 @@ fn covered() -> Planned {
 }
 
 /// The plan of every row of the region, one entry per row: a tile at its first row, `covered`
-/// rows after it, a single row's plan elsewhere. `general` says which rows take general semantics.
-pub(super) fn plan_all(layout: &Layout, decoded: &[Decoded], general: &[bool]) -> Result<Vec<Planned>, String> {
+/// rows after it, a single row's plan elsewhere. `general` says which rows take general semantics and `kinds` the operand kinds each row's site saw.
+pub(super) fn plan_all(layout: &Layout, decoded: &[Decoded], general: &[bool], kinds: &[OperandKinds]) -> Result<Vec<Planned>, String> {
     let mut singles = decoded
         .iter()
         .zip(general)
         .enumerate()
-        .map(|(k, (row, &general))| plan(row, &layout.homes, layout.header + k as u32, general).map(Some))
+        .map(|(k, (row, &general))| plan(row, &layout.homes, layout.header + k as u32, general, variant_of(row.kind, kinds.get(k))).map(Some))
         .collect::<Result<Vec<_>, _>>()?;
     let targets = branch_targets(layout, decoded);
     let dead = |k: usize, web: Register| dead_after(layout, decoded, k, web);

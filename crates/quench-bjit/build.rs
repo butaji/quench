@@ -38,7 +38,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     thread,
 };
-use transfer::{Arch, check_no_return, check_transfer, check_value_field};
+use transfer::{Arch, check_call, check_no_return, check_transfer, check_value_field};
 
 const SOURCE: &str = "stencils/rows.rs";
 /// Environment variable of each rustc process naming its shard's instance file (`rows.rs` reads
@@ -55,10 +55,10 @@ const EXIT_BASE: u32 = 2;
 
 /// Every file whose change must recompile the stencils: the stencil sources and the runtime's
 /// staged rows they include, and nothing else.
-const SOURCES: [&str; 12] = [
+const SOURCES: [&str; 14] = [
     "stencils", "../quench-runtime/src/staged/stage.rs", "../quench-runtime/src/staged/value.rs",
     "../quench-runtime/src/staged/object.rs", "../quench-runtime/src/staged/elements.rs",
-    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "../quench-runtime/src/staged/frame.rs", "build.rs", "build", "src/class.rs", "src/numeric.rs",
+    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "../quench-runtime/src/staged/frame.rs", "../quench-runtime/src/staged/call.rs", "build.rs", "build", "src/class.rs", "src/numeric.rs", "src/call_record.rs",
 ];
 
 /// The architecture and object reader of a build target, if its stencils are supported.
@@ -144,6 +144,7 @@ fn stencil_rows(arch: Arch, rows: Vec<ObjectRow>) -> Vec<(String, String)> {
     rows.iter()
         .map(|row| {
             check_no_return(arch, &row.name, &row.code);
+            check_call(arch, &row.name, &row.code);
             let relocs = relocations(arch, row);
             (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{:?}, relocs: &{relocs:?} }},\n", row.name, row.code))
         })
@@ -165,7 +166,7 @@ fn relocations(arch: Arch, row: &ObjectRow) -> Vec<(u16, u8, u8, i32)> {
             if is_successor(reloc.class) {
                 check_transfer(arch, &row.name, &row.code, reloc.offset, reloc.class);
             }
-            check_value_field(&row.name, &row.code, reloc.offset, reloc.class);
+            check_value_field(arch, &row.name, &row.code, reloc.offset, reloc.class);
             let index = hole_index(&row.name, &reloc.symbol, reloc.class);
             (u16::try_from(reloc.offset).expect("a stencil under 64 KiB"), reloc.class, u8::try_from(index).expect("a small hole index"), i32::try_from(reloc.addend).expect("a small addend"))
         })

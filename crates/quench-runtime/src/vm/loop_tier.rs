@@ -190,8 +190,9 @@ pub(super) fn lane_loop_compile<H: Host>(
         let value = r.get(register);
         value.as_number().is_some() && value.as_int().is_none()
     });
+    let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
-        int_registers: &ints, double_registers: &doubles };
+        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds };
     let policy = machine.heap.memory_policy();
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, policy, program, function, helpers,

@@ -14,6 +14,8 @@
 #![allow(incomplete_features, non_upper_case_globals, dead_code, unused_imports)]
 extern crate core as std;
 
+#[cfg(all(fixed_rows, target_arch = "x86_64"))]
+mod call_rows;
 mod codes;
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]
 mod entry;

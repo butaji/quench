@@ -8,3 +8,4 @@ pub(crate) type Concrete = crate::stage::StencilStage;
 #[path = "../../quench-runtime/src/staged/environment.rs"] pub(crate) mod environment;
 #[path = "../../quench-runtime/src/staged/entry.rs"] pub(crate) mod entry;
 #[path = "../../quench-runtime/src/staged/frame.rs"] #[allow(dead_code)] pub(crate) mod frame;
+#[path = "../../quench-runtime/src/staged/call.rs"] pub(crate) mod call;

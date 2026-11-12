@@ -12,6 +12,8 @@ pub mod patch;
 #[path = "../stencils/shards.rs"]
 mod shards;
 pub mod numeric;
+pub mod call;
+pub mod call_record;
 pub mod stub;
 pub use class::{ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32};
 pub use patch::{HOLES, Imm32, PatchError, patch_successor, patch_value};

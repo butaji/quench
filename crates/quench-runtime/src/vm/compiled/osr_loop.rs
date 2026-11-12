@@ -2569,6 +2569,10 @@ pub(crate) struct Observation<'a> {
     pub(crate) int_registers: &'a [Register],
     /// The registers that held a Number that is no int32.
     pub(crate) double_registers: &'a [Register],
+    /// What each instruction of the region, from its header, met where its int32 handler
+    /// declined (`Vm::region_operand_kinds`): the feedback the representations start from,
+    /// which the sample of the live registers above completes.
+    pub(crate) operand_kinds: &'a [crate::vm::dispatch_fast::operand_feedback::OperandKinds],
     /// The depth-zero capture slots holding int32s when compiled: a read of such a capture
     /// takes the checked integer view where its uses are integer arithmetic.
     pub(crate) int_captures: &'a [u16],
