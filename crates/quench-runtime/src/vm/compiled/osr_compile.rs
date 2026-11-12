@@ -7,6 +7,7 @@ use super::{
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
 use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
+use crate::vm::global_facts::GlobalTable;
 use super::super::specializer::Specializer;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -24,6 +25,9 @@ pub(in crate::vm) struct OsrFacts {
     /// Atoms its stores run in place for, which no method cache names (a Stable fact): a cache
     /// naming one retires it (`MethodCacheAtoms::name`).
     atoms: Box<[crate::bytecode::Atom]>,
+    /// The layouts of the global objects whose slots its rows access (a Stable fact): a change
+    /// retires it (`heap::subscribe_global_layout`).
+    layouts: Box<[crate::heap::GlobalLayoutFact]>,
 }
 
 impl OsrFacts {
@@ -36,6 +40,7 @@ impl OsrFacts {
         self.departure_shapes.iter().all(|shape| heap.subscribe_shape(*shape, code))
             && self.slot_dependencies.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
             && self.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
+            && self.layouts.iter().all(|fact| crate::heap::subscribe_global_layout(*fact, code))
     }
 }
 
@@ -64,7 +69,7 @@ pub(in crate::vm) enum OsrCompile {
 /// The function's full decoded code as a plain lane unit: the loop coverage selects
 /// `header..=backedge`, so every other PC is an exact-PC exit and the loop's PCs stay the
 /// function's.
-fn loop_unit(function: &Function) -> lane_unit::Unit {
+pub(super) fn loop_unit(function: &Function) -> lane_unit::Unit {
     let instructions: Vec<_> = function.instructions().collect();
     let count = instructions.len();
     lane_unit::Unit {
@@ -244,7 +249,7 @@ impl OsrFacts {
         let mut slot_dependencies: Vec<_> = loads().filter_map(|field| field.slot_dependency()).collect();
         slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
         slot_dependencies.dedup();
-        Self { shape_dependencies, departure_shapes, slot_dependencies, atoms: Box::new([]) }
+        Self { shape_dependencies, departure_shapes, slot_dependencies, atoms: Box::new([]), layouts: Box::new([]) }
     }
 }
 
@@ -284,14 +289,14 @@ impl LoopPlanner<'_> {
     /// at the call's exact PC, with no callee inlined. The inlined unit is an optimization over
     /// that plan, used only where the general plan declines; an inlined callee the region
     /// cannot prove exactly then costs the region nothing but the inlining.
-    fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
+    fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads,
         unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, (header, backedge): (usize, usize),
         generic: &[usize]) -> Option<super::lane_region::LoweredRegion> {
         let number_reads = observed_reads(unit, self.observation.number_arrays, self.observation.abandoned, generic);
         super::lane_region::RegionSpecializer {
             number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
-            global_reads: &global_reads(unit), facts: VmFacts::STATIC, generic,
+            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts::STATIC, generic,
             direct: &BTreeMap::new(), frame_captures: &[], isa: self.isa,
             entry_fields,
             plan: super::lane_region::RegionPlan {
@@ -318,14 +323,14 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
     }
     let built = super::base_region::build(region, views == super::ElementViews::Dense, known, widened,
         [observation.int_registers, observation.double_registers], helpers);
-    let Ok(super::base_region::Built { code, bare, atoms }) = built else { return base_only.then_some(None) };
+    let Ok(super::base_region::Built { code, bare, atoms, layouts, slot_types }) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, region.header, &code, None, "");
     }
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let code = super::super::jit_backend::run_in_background(move || Ok(code));
     Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean },
-        facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new(), atoms } }))
+        facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: slot_types.into_vec(), atoms, layouts } }))
 }
 
 /// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
@@ -337,11 +342,14 @@ pub(in crate::vm) fn start_osr_region(
     program: &ResidualProgram,
     function_id: u32,
     helpers: LaneHelpers,
-    global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
+    global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads,
     (widened, stores): (&[usize], Option<&crate::vm::method_cache::AtomBits>),
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
-    if let Some(decided) = fast_pending(region, views, super::base_region::Known { program, stores, reads: None, invalidation: None }, widened, observation, helpers) {
+    // The b-jit's rows hold global slots where the VM and the program run specialized (`stores` is that fact).
+    let globals = (crate::jit_mode::base_regions() && region.inlining.is_none() && stores.is_some()).then(|| global_reads(&loop_unit(program.function(function_id as usize)), GlobalTable::Base));
+    let known = super::base_region::Known { program, stores, reads: None, invalidation: None, globals: globals.as_ref() };
+    if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers) {
         return decided;
     }
     let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views };

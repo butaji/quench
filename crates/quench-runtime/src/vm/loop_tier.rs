@@ -179,7 +179,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, policy, program, function, helpers,
-        &mut |unit| machine.lane_global_reads(program, function, unit), (&tier.widened, stores.as_ref())));
+        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref())));
     machine.host.after_native_compilation();
     tier.start(started, (&mut machine.heap, machine.method_cache_atoms.readers()), site);
 }

@@ -29,6 +29,10 @@ pub(in crate::vm::compiled) struct Body {
     /// The exact shapes of the holders whose values its folded reads hold (a Stable fact): a change
     /// of a value a prototype of one holds retires the body (`StableFacts::holders`).
     pub(in crate::vm::compiled) holders: Box<[u32]>,
+    /// The global layouts and slot types its rows hold (a Stable fact): a change retires the body
+    /// (`StableFacts::layouts`, `StableFacts::slots`).
+    pub(in crate::vm::compiled) layouts: Box<[crate::heap::GlobalLayoutFact]>,
+    pub(in crate::vm::compiled) slot_types: Box<[crate::code_dependencies::SlotDependency]>,
 }
 
 /// What a body decides its call sites by: the callees they recorded and the stitch's budget, and
@@ -190,7 +194,7 @@ pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, (function,
 
 /// Whether the row runs a call or a helper step, which may run guest code that changes a Stable fact.
 fn makes_calls(row: &Decoded) -> bool {
-    matches!(row.step, Some(Step::Call(_) | Step::Helper))
+    row.step.is_some_and(|step| matches!(step, Step::Call(_)) || step.runs_helper())
 }
 
 fn assemble_body(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEEN], mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {
@@ -203,12 +207,12 @@ fn assemble_body(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEE
     let decoded: Vec<Decoded> = covers.into_iter().enumerate().map(|(k, row)| if unreached(k) { Decoded::step(Step::Leave, None) } else { row }).collect();
     let (reprs, homes, webs, decoded) = analyze(region, &decoded, widened, seen);
     let invalidation = sites.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(makes_calls));
-    let layout = Layout { header: region.header, backedge: region.backedge, homes, webs, region, ending: Ending::Body, callees: sites.facts, invalidation };
+    let layout = Layout { header: region.header, backedge: region.backedge, homes, webs, region, ending: Ending::Body, callees: sites.facts, invalidation, realm: held_realm(&decoded) };
     let mut planned = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, &reprs, reached[k], k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let code = link(&layout, &planned)?;
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached[*k] && leaves(&layout, row)).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.iter().filter(|reached| **reached).count() - exits;
     let records = planned.iter_mut().filter_map(|row| row.owned.take()).collect();
-    Ok(Body { code, covered, exits, loops, records, atoms: held_atoms(&decoded), holders: held_holders(&decoded) })
+    Ok(Body { code, covered, exits, loops, records, atoms: held_atoms(&decoded), holders: held_holders(&decoded), layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded) })
 }

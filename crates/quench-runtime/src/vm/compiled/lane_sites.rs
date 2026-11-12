@@ -1,6 +1,6 @@
 //! What a lane unit's by-name loads read at compile time: the global scope's bindings.
 use super::*;
-use super::super::global_facts::GlobalRead;
+use super::super::global_facts::{GlobalRead, GlobalReads, GlobalTable};
 
 impl<H: Host> Vm<H> {
     /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
@@ -36,6 +36,29 @@ impl<H: Host> Vm<H> {
         let members: Vec<(usize, GlobalRead)> = reads.iter().filter_map(|(pc, read)| self.native_member(unit, *pc, read)).collect();
         let slots = self.lane_global_slots(program, function, unit);
         reads.into_iter().chain(members).chain(slots).collect()
+    }
+
+    /// The by-name global accesses of `unit` as `table`'s tier takes them: the lane's own
+    /// (`lane_global_reads`), or the b-jit's, where a load of a global object's own data property that
+    /// is no constant is held as a slot of the object's layout too, which its row reads live.
+    pub(in crate::vm) fn global_table(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit, table: GlobalTable)
+        -> GlobalReads {
+        let reads = self.lane_global_reads(program, function, unit);
+        match table {
+            GlobalTable::Lane => reads,
+            GlobalTable::Base => {
+                let loads: Vec<(usize, GlobalRead)> = reads.range(0..=usize::MAX).map(|(pc, read)| (pc, *read)).collect();
+                loads.into_iter().map(|(pc, read)| (pc, self.slot_load(unit, pc, read))).collect()
+            }
+        }
+    }
+
+    /// The by-name load at `pc` held as a slot of the global object's layout where its read is no
+    /// constant and the object owns the name as a data property (`Vm::stable_global_slot`); `read` otherwise.
+    fn slot_load(&mut self, unit: &lane_unit::Unit, pc: usize, read: GlobalRead) -> GlobalRead {
+        let instruction = unit.instructions[pc];
+        let loads = matches!(read, GlobalRead::Stable { .. } | GlobalRead::Dynamic) && instruction.op().is_throwing_name_load();
+        loads.then(|| self.stable_global_slot(instruction.atom_index(), false)).flatten().map_or(read, GlobalRead::Slot)
     }
 
     /// The PCs of `unit` whose `StoreName` (not a declaration's) or `LoadNameTypeof` reaches the

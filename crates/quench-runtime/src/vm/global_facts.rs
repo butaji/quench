@@ -56,6 +56,15 @@ pub(crate) enum GlobalRead {
     NativeMember { value: Value, native: super::Native },
 }
 
+/// Which tier a table of by-name global accesses is for (`Vm::global_table`): the lane specializer
+/// folds a cell's value as a Stable fact; the b-jit's rows read a global object's own data
+/// property from its slot live, under the object's layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GlobalTable {
+    Lane,
+    Base,
+}
+
 /// What each by-name global access of a function or unit takes, by PC: a flat table, empty at
 /// a PC that is no such access (`Vm::lane_global_reads`).
 #[derive(Default)]

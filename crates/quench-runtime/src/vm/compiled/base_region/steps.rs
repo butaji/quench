@@ -12,6 +12,8 @@
 //!    interpreter. A step that jumps (`ForInNext`) has its target as the row's branch: the helper
 //!    answers branched where the interpreter's step took it, which continues at the reloads of the
 //!    registers live at the target (`branching`).
+//!    A name store or `typeof` no row takes (`globals`) is the VM's own operation (`staged::CallOut`),
+//!    made in place by `LaneHelper::VmStep` in the same chain (`Step::CallOut`).
 //! 3. A leave (`CallRow::Here`): the region ends at the instruction and the interpreter runs it,
 //!    for every other instruction: jumps and branches the rows do not take, throws,
 //!    suspensions, scope entries, and any instruction that carries result flags, which a helper
@@ -38,6 +40,8 @@ use quench_bjit::call::{self, CallRow};
 pub(super) enum Step {
     /// `LaneHelper::Step` makes the record in place and the region continues.
     Helper,
+    /// `LaneHelper::VmStep` makes the record's call-out in place (`staged::CallOut`) and the region continues.
+    CallOut,
     /// The region leaves at the record.
     Leave,
     /// The activation completes with the register the row reads (a body's `Return`).
@@ -50,6 +54,11 @@ impl Step {
     /// Whether control continues at the next instruction: a leave and a return end the run.
     pub(super) fn falls(self) -> bool {
         !matches!(self, Self::Leave | Self::Return)
+    }
+
+    /// Whether a lane helper makes the record: it may write any heap value and run guest code.
+    pub(super) fn runs_helper(self) -> bool {
+        matches!(self, Self::Helper | Self::CallOut)
     }
 }
 
@@ -85,11 +94,24 @@ fn steps_in_place(instruction: WideInstruction) -> bool {
     instruction.op().traits().has(Traits::LANE_IN_PLACE) && instruction.result_flags() == 0 && instruction.written_registers().count() <= 1
 }
 
+/// Whether `instruction` is a global name store or `typeof`, a call-out the VM makes in place
+/// (`LaneHelper::VmStep`) that writes at most one register.
+fn calls_out(instruction: WideInstruction) -> bool {
+    let call = crate::staged::Operation::<(), ()>::decode(instruction, |_| None).and_then(|row| row.call_out());
+    instruction.result_flags() == 0 && matches!(call, Some((crate::staged::CallOut::GlobalWrite { .. } | crate::staged::CallOut::GlobalTypeof { .. }, _)))
+}
+
 /// The lowering of `instruction`, where helpers are `helpers`: a helper step where the helper
-/// table has the step helper's address, else the leave.
+/// table has the step helper's address, a call-out where it has the VM step helper's, else the leave.
 pub(super) fn lowering(instruction: WideInstruction, helpers: LaneHelpers) -> Step {
-    let addressed = call_plan::helper_address(helpers, LaneHelper::Step).is_some();
-    if addressed && steps_in_place(instruction) { Step::Helper } else { Step::Leave }
+    let addressed = |helper| call_plan::helper_address(helpers, helper).is_some();
+    if addressed(LaneHelper::Step) && steps_in_place(instruction) {
+        Step::Helper
+    } else if addressed(LaneHelper::VmStep) && calls_out(instruction) {
+        Step::CallOut
+    } else {
+        Step::Leave
+    }
 }
 
 /// The row of an instruction at `pc` that has no numeric or heap row: a `Nop` is the jump to the
@@ -99,20 +121,20 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, helpers: LaneHe
         Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
         _ => {
             let step = lowering(instruction, helpers);
-            let helped = step == Step::Helper;
-            let written = if helped { instruction.written_registers().next() } else { None };
-            let target = (helped && instruction.op().control_flow_layout().jumps()).then(|| instruction.jump_target());
+            let written = if step.runs_helper() { instruction.written_registers().next() } else { None };
+            let target = (step == Step::Helper && instruction.op().control_flow_layout().jumps()).then(|| instruction.jump_target());
             Decoded { target, ..Decoded::step(step, written) }
         }
     }
 }
 
 /// A helper step may write any heap value, which the snapshots a heap row reads (the entry
-/// record's captures, fields and array views) would not see: where the region has a heap row its
+/// record's captures, fields and array views) would not see, and run guest code that changes a
+/// Stable fact a region holds (the global object's layout): where the region has such a row its
 /// helper steps leave instead.
 pub(super) fn settle(decoded: &mut [Decoded]) {
-    if decoded.iter().any(|row| row.heap.is_some_and(Heap::reads_snapshot)) {
-        decoded.iter_mut().filter(|row| row.step == Some(Step::Helper)).for_each(|row| row.step = Some(Step::Leave));
+    if decoded.iter().any(|row| row.heap.is_some_and(Heap::reads_snapshot) || row.global.is_some()) {
+        decoded.iter_mut().filter(|row| row.step.is_some_and(Step::runs_helper)).for_each(|row| row.step = Some(Step::Leave));
     }
 }
 
@@ -146,7 +168,8 @@ fn chained(parts: Vec<CallPart>, spills: usize, owned: Option<Box<quench_bjit::c
 pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     match decoded.step.ok_or("plan_step: no step")? {
         Step::Leave => Ok(Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, Some(pc))),
-        Step::Helper => plan_helper(layout, pc, decoded.target, helpers),
+        Step::Helper => plan_helper(layout, (pc, decoded.target), (LaneHelper::Step, helpers)),
+        Step::CallOut => plan_helper(layout, (pc, decoded.target), (LaneHelper::VmStep, helpers)),
         Step::Return => {
             let slot = operand(&layout.homes, decoded.a).1;
             Ok(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) })
@@ -155,13 +178,16 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
     }
 }
 
-/// The chain of a helper step at `pc`, which also branches to `target` where its instruction jumps.
-fn plan_helper(layout: &Layout, pc: u32, target: Option<u32>, helpers: LaneHelpers) -> Result<Planned, String> {
-    let address = call_plan::helper_address(helpers, LaneHelper::Step).ok_or("step: no helper address")?;
+/// The chain of a step at `pc` that `helper` makes, which also branches to `target` where its instruction jumps.
+fn plan_helper(layout: &Layout, (pc, target): (u32, Option<u32>), (helper, helpers): (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
+    let address = call_plan::helper_address(helpers, helper).ok_or("step: no helper address")?;
     let (spills, reloads) = (layout.spills(pc), layout.spills(pc + 1));
     let mut row = chained(call_plan::plan_step(pc, address, &spills, &reloads)?, spills.len(), None)?;
     // The step helper answers completed, branched or missed: its (status, word) exit is the leave at the record too.
-    row.exits = vec![Exit::At(pc); row.exits.len()];
+    // A call-out may run guest code, which leaves the body through that exit.
+    if helper == LaneHelper::Step {
+        row.exits = vec![Exit::At(pc); row.exits.len()];
+    }
     match target {
         Some(target) => branching(row, layout, (pc, target)),
         None => Ok(row),

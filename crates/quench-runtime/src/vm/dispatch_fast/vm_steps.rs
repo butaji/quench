@@ -7,9 +7,9 @@ use super::*;
 
 /// The call-out of the record at `call_pc`, its operands read from the running registers:
 /// `LANE_CALL_COMPLETED` with the result written to its register, `LANE_CALL_MISSED` where it
-/// raised (the error stashed for the general path, which re-runs the record and raises it), or
-/// `LANE_CALL_LEFT` where guest code it ran made the lane's activations frames, which leave the
-/// body at the next record.
+/// raised (the error stashed for the general path, which re-runs the record and raises it) or where a
+/// native callee's shadow frames are active (nothing ran), or `LANE_CALL_LEFT` where guest code it ran
+/// made the lane's activations frames, which leave the body at the next record.
 ///
 /// The heap bases the body's rows read through the payload are reloaded after it
 /// (`Vm::refresh_body_bases`): the step may have allocated or run guest code.
@@ -27,6 +27,8 @@ unsafe fn lane_vm_step_record<H: Host>(_vm: u64, _residual: u64, context: u64, c
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
+    // A native callee's shadow frames hold registers and a function that are not the running frame's.
+    if Vm::<H>::lane_shadow_active() { return LANE_CALL_MISSED; }
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
     let function = match vm.lane_stack.activations.last() {
         Some(activation) => activation.function,

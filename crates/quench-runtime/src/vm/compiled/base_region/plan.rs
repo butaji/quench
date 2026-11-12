@@ -111,12 +111,14 @@ impl Planned {
 }
 
 /// Whether a heap row is the variant its decode's `hole` selects: an array the entry record holds
-/// is named by its record offset, else by its slot; a site read is a chain of two reads, and a
-/// folded read of the receiver stands on the receiver.
-fn heap_variant(heap: Heap, hole: u64) -> bool {
+/// is named by its record offset, else by its slot; a site read is a chain of two reads, a
+/// folded read of the receiver stands on the receiver, and a global store of a value held in a frame
+/// slot (any value, not a Number) takes the store gate.
+fn heap_variant(heap: Heap, hole: u64, operand: Place) -> bool {
     match heap {
         Heap::Store | Heap::Index => hole != 0,
         Heap::SiteChain | Heap::ThisChain | Heap::ThisHeld => true,
+        Heap::GlobalStore => operand == Place::Mem,
         _ => false,
     }
 }
@@ -142,7 +144,7 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
 /// The hole values of a heap row of `decoded`, given its holes of destination, first and second operand.
 fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, holes @ [dst_hole, a_hole, b_hole]: [u64; 3]) -> [u64; HOLES] {
     let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
-    site_holes(decoded, heap, base, holes).unwrap_or_else(|| match heap {
+    site_holes(decoded, heap, base, holes).or_else(|| global_holes(decoded, heap, holes)).unwrap_or_else(|| match heap {
         Heap::Store => [base, a_hole, b_hole],
         Heap::This => [dst_hole, 0, 0],
         Heap::Index if entry => [dst_hole, decoded.hole, b_hole],
@@ -156,12 +158,17 @@ fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, holes @
     })
 }
 
-/// The plan of a heap row, given its (place, hole) of destination, first and second operand.
+/// The plan of a heap row, given its (place, hole) of destination, first and second operand; a row
+/// that defines a second register (a name call's receiver) has its definition run after it.
 fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
-    let entry = heap_variant(heap, decoded.hole);
+    let entry = heap_variant(heap, decoded.hole, a);
     let holes = heap_holes(decoded, homes, heap, entry, [dst_hole, a_hole, b_hole]);
     // The row's stencil reads pinned operands and delivers a pinned result itself.
-    Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
+    let mut planned = Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc));
+    if let Some(receiver) = decoded.also {
+        planned.post.push(receiver_row(homes, receiver, pc)?);
+    }
+    Ok(planned)
 }
 
 /// The row of `decoded` at `pc`; a backward jump takes the poll row the layout's ending names.
@@ -178,6 +185,10 @@ pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, general: bool, h
     let floats = [dst, a, b].iter().any(|place| matches!(place, Place::PinF(_))) && decoded.heap.is_none();
     let ((a, a_hole), (b, b_hole)) = if floats { (double(a, a_hole), double(b, b_hole)) } else { ((a, a_hole), (b, b_hole)) };
     if let Some(heap) = decoded.heap {
+        // A global store whose operand's type the slot's observation does not admit is the VM's own.
+        if declines(decoded, a) {
+            return plan_step(&Decoded::step(Step::CallOut, None), layout, pc, helpers);
+        }
         return heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
     }
     let polls = decoded.target.is_some_and(|target| target <= pc) && decoded.kind == Kind::Jump;

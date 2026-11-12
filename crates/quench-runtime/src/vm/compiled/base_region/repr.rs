@@ -91,10 +91,14 @@ pub(super) fn representations(region: &LoopRegion, decoded: &[Decoded], widened:
         changed = false;
         for (k, row) in decoded.iter().enumerate() {
             let Some(dst) = row.dst else { continue };
-            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some()), region.number_registers().contains(&webs.orig[usize::from(dst)]));
-            if reprs[usize::from(dst)] < result {
-                reprs[usize::from(dst)] = result;
-                changed = true;
+            let numbers = region.number_registers().contains(&webs.orig[usize::from(dst)]) || row.global.is_some_and(Access::numeric);
+            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some()), numbers);
+            // A second definition is a name call's `undefined` receiver, a tagged word.
+            for (register, repr) in [(Some(dst), result), (row.also, Repr::Tagged)] {
+                if let Some(register) = register.filter(|register| reprs[usize::from(*register)] < repr) {
+                    reprs[usize::from(register)] = repr;
+                    changed = true;
+                }
             }
         }
     }

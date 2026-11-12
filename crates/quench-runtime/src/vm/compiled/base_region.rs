@@ -26,12 +26,14 @@ mod call_plan;
 pub(in crate::vm::compiled) mod callees;
 mod decode;
 pub(in crate::vm::compiled) mod function;
+mod globals;
 mod link;
 mod plan;
 mod repr;
 mod steps;
 mod webs;
 use decode::*;
+use globals::*;
 use link::*;
 use plan::*;
 use repr::*;
@@ -56,6 +58,9 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`), which a body that
     /// holds a Stable fact and makes a call reads before the rows that hold it. `None` for a region.
     pub(in crate::vm::compiled) invalidation: Option<usize>,
+    /// What each by-name global access takes (`Vm::global_table`, the b-jit's), where the code may hold
+    /// Stable facts: a global object's slot under its layout (`globals`). `None` where none may.
+    pub(in crate::vm::compiled) globals: Option<&'a crate::vm::global_facts::GlobalReads>,
 }
 
 impl Known<'_> {
@@ -238,27 +243,30 @@ fn analyze(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&
 }
 
 /// A loop region's code, whether it reads no heap row and makes no step (such a region needs from
-/// its payload only the entry record's address, `Crossing::Bare`), and the atoms its stores hold
-/// unnamed by method caches (a Stable fact: a cache naming one retires it, `OsrFacts::atoms`).
+/// its payload only the entry record's address, `Crossing::Bare`), the atoms its stores hold
+/// unnamed by method caches (a Stable fact: a cache naming one retires it, `OsrFacts::atoms`), and
+/// the global layouts and slot types its rows hold (`globals`).
 pub(in crate::vm::compiled) struct Built {
     pub(in crate::vm::compiled) code: Vec<u8>,
     pub(in crate::vm::compiled) bare: bool,
     pub(in crate::vm::compiled) atoms: Box<[Atom]>,
+    pub(in crate::vm::compiled) layouts: Box<[crate::heap::GlobalLayoutFact]>,
+    pub(in crate::vm::compiled) slot_types: Box<[crate::code_dependencies::SlotDependency]>,
 }
 
 fn assemble(region: &LoopRegion, (dense, known): (bool, Known), widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<Built, String> {
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
-    let writes = instructions.iter().any(|instruction| stores_field(known, *instruction));
+    let writes = instructions.iter().any(|instruction| stores_field(known, *instruction) || stores_name(*instruction));
     let facts = (Facts::Entry { dense, writes }, known);
     let mut decoded: Vec<Decoded> = instructions.iter().enumerate().map(|(k, instruction)| decode(region, facts, header + k as u32, *instruction, helpers)).collect();
     settle(&mut decoded);
     let (reprs, homes, webs, decoded) = analyze(region, &decoded, widened, seen);
-    let layout = Layout { header, backedge, homes, webs, region, ending: Ending::Region, callees: &[], invalidation: None };
+    let layout = Layout { header, backedge, homes, webs, region, ending: Ending::Region, callees: &[], invalidation: None, realm: held_realm(&decoded) };
     let body = decoded.iter().enumerate().map(|(k, row)| plan(row, &layout, header + k as u32, is_general(row, &reprs), helpers)).collect::<Result<Vec<_>, _>>()?;
-    let bare = decoded.iter().all(|row| row.heap.is_none() && row.step != Some(Step::Helper));
-    Ok(Built { code: link(&layout, &body)?, bare, atoms: held_atoms(&decoded) })
+    let bare = decoded.iter().all(|row| row.heap.is_none() && row.step.is_none_or(|step| !step.runs_helper()));
+    Ok(Built { code: link(&layout, &body)?, bare, atoms: held_atoms(&decoded), layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded) })
 }
 
 impl<H: crate::Host> crate::vm::Vm<H> {

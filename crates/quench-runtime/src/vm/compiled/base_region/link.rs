@@ -91,6 +91,8 @@ pub(super) struct Layout<'a> {
     /// The address of the invalidation word the code reads before each row that holds a Stable fact a
     /// call may have changed (`Decoded::holds_stable`): a body that folds one and makes a call.
     pub(super) invalidation: Option<usize>,
+    /// The realm the rows' global slots belong to, proved active once at entry (`Heap::Realm`).
+    pub(super) realm: Option<Realm>,
 }
 
 impl Layout<'_> {
@@ -127,8 +129,9 @@ impl Layout<'_> {
 }
 
 /// The entry rows: each pinned register live at the header loads its int32, each int slot is
-/// checked (or, dead there, tagged), and each other Number register live there is checked, so a
-/// loop whose values are no Numbers is never entered.
+/// checked (or, dead there, tagged), each other Number register live there is checked, so a
+/// loop whose values are no Numbers is never entered, and the realm its global slots belong to is
+/// the VM's active one.
 pub(super) fn entry_rows(layout: &Layout) -> Result<Vec<(&'static Stencil, [u64; HOLES])>, String> {
     let region = layout.region;
     let guard = |kind, dst, offset: u64| {
@@ -154,6 +157,10 @@ pub(super) fn entry_rows(layout: &Layout) -> Result<Vec<(&'static Stencil, [u64;
         if number && layout.homes.place(web) == Place::Mem {
             rows.push(guard(Kind::Guard, Place::Mem, slot(web))?);
         }
+    }
+    if let Some(realm) = layout.realm {
+        let proof = HeapRow { heap: Heap::Realm, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+        rows.push((base_rows::stencil(proof)?, [0, realm.offset, realm.global]));
     }
     Ok(rows)
 }

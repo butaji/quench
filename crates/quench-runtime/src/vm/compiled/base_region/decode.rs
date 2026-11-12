@@ -76,11 +76,16 @@ pub(super) struct Decoded {
     /// The callee register and function word a row stands on where it replaces the call of that
     /// function (`function::inlined_call`): the row proves the register holds it.
     pub(super) identity: Option<(Register, u64)>,
+    /// The global object's slot the row holds under the object's layout and the slot's observed type
+    /// (`globals`): Stable facts the code takes.
+    pub(super) global: Option<Access>,
+    /// A second register the row defines, with `undefined`: a name call's receiver.
+    pub(super) also: Option<Register>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, identity: None }
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, identity: None, global: None, also: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -91,16 +96,16 @@ impl Decoded {
         Self { step: Some(step), ..Self::number(Kind::Move, dst, None, None, None) }
     }
 
-    /// Whether the row holds a Stable fact its code took: a folded prototype-held read, or a store in
-    /// place for an atom no method cache names. A change of the fact retires the code, and a run
-    /// already inside it learns that from the invalidation word (`Heap::Live`).
+    /// Whether the row holds a Stable fact its code took: a folded prototype-held read, a store in
+    /// place for an atom no method cache names, or a global object's slot. A change of the fact retires
+    /// the code, and a run already inside it learns that from the invalidation word (`Heap::Live`).
     pub(super) fn holds_stable(&self) -> bool {
-        matches!(self.heap, Some(Heap::Held | Heap::ThisHeld | Heap::SiteStore | Heap::ThisStore))
+        matches!(self.heap, Some(Heap::Held | Heap::ThisHeld | Heap::SiteStore | Heap::ThisStore)) || self.global.is_some()
     }
 
     /// The registers the row names.
     pub(super) fn registers(&self) -> impl Iterator<Item = Register> {
-        [self.dst, self.a.and_then(register_of), self.b.and_then(register_of), self.base, self.identity.map(|(register, _)| register)].into_iter().flatten()
+        [self.dst, self.also, self.a.and_then(register_of), self.b.and_then(register_of), self.base, self.identity.map(|(register, _)| register)].into_iter().flatten()
     }
 }
 
@@ -275,7 +280,7 @@ pub(super) fn stores_field(known: Known, instruction: WideInstruction) -> bool {
 }
 
 /// The facts rows hold, each once, in order.
-fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
+pub(super) fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
     let mut facts: Vec<T> = facts.collect();
     facts.sort_unstable();
     facts.dedup();
@@ -354,13 +359,15 @@ fn activation_row(instruction: WideInstruction) -> Option<Decoded> {
 }
 
 /// The heap instructions: a capture, a dense element read or store, a recorded or cached field
-/// read or store, the proof that a base is an array, the activation's `this` and its local slots.
+/// read or store, the proof that a base is an array, the activation's `this` and its local slots, and
+/// a global name's access (`globals`).
 pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     match instruction.op().class() {
         Class::LoadCapture | Class::StoreCapture => capture_row(instruction),
         Class::GetIndex | Class::SetIndex | Class::RequireObjectCoercible => array_row(region, facts, instruction),
         Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
         Class::LoadThis | Class::LoadLocalPlain | Class::StoreLocalPlain => activation_row(instruction),
+        Class::LoadName | Class::LoadNameCall | Class::LoadNameTypeof | Class::StoreName => global_row(known, pc, instruction),
         _ if instruction.op().is_field_store() => field_store_row(known, instruction),
         _ => None,
     }
