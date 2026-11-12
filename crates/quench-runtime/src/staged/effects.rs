@@ -5,8 +5,6 @@
 
 #![allow(dead_code)] // Stage v2 vocabulary; first consumers are the rows moving under `Concrete` next.
 
-use super::Operation;
-
 /// An alias region of memory: an access to one never aliases an access to another.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Region {
@@ -64,12 +62,12 @@ impl Effects {
     pub(crate) const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE,
         may_alloc: false, may_collect: false, may_call_js: false, may_throw: false };
 
-    const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
+    pub(super) const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
 
-    const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
+    pub(super) const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
 
     /// An operation that may run guest code or collect: it reads and writes every region.
-    const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
+    pub(super) const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
         may_collect: true, may_call_js: true, may_throw: true };
 }
 
@@ -80,40 +78,4 @@ pub(crate) enum CallTarget<W> {
     Direct(u64),
     Indirect(W),
     Builtin(u32),
-}
-
-impl<W, P> Operation<W, P> {
-    /// The effect row of the operation, from its variant alone.
-    pub(crate) const fn effects(&self) -> Effects {
-        match self.memory_effects() {
-            Some(effects) => effects,
-            None => self.control_effects(),
-        }
-    }
-
-    /// Effects of the field, element and allocation operations.
-    const fn memory_effects(&self) -> Option<Effects> {
-        Some(match self {
-            Self::ReadField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord), ..Effects::NONE },
-            Self::WriteField { .. } => Effects::writes(Region::ObjectSlots),
-            Self::IndexRead { .. } | Self::TypedIndexRead { .. } => Effects::reads(Region::Elements),
-            Self::IndexWrite { .. } | Self::TypedIndexWrite { .. } => Effects::writes(Region::Elements),
-            Self::MakeObject { .. } | Self::MakeArray { .. } | Self::MakeConstArray { .. } | Self::MakeObjectPair { .. } => Effects {
-                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots), may_alloc: true, ..Effects::NONE },
-            _ => return None,
-        })
-    }
-
-    const fn control_effects(&self) -> Effects {
-        match self {
-            Self::Move { .. } | Self::LoadConst { .. } | Self::LoadThis { .. } => Effects::NONE,
-            Self::LoadLocalPlain { .. } => Effects::reads(Region::Frame),
-            Self::StoreLocalPlain { .. } => Effects::writes(Region::Frame),
-            Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Number(_) => Effects::NONE,
-            Self::RequireObjectCoercible { .. } => Effects { may_throw: true, ..Effects::NONE },
-            Self::Safepoint { .. } => Effects { may_collect: true, ..Effects::NONE },
-            // The memory operations answered in `memory_effects`; anything else is conservative.
-            _ => Effects::ANY,
-        }
-    }
 }

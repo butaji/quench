@@ -59,8 +59,11 @@ pub(crate) trait NumericStage: Stage {
 /// A frame whose operands a numeric operation proves in its representation and whose result
 /// it defines with that representation's fact.
 pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> {
-    fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> S::Word;
-    fn number_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> S::Word;
+    /// The int32 word of `operand`, proved here; `None` where it is none (a frame whose
+    /// facts prove it, or whose guard branches away at `miss`, always answers `Some`).
+    fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word>;
+    /// The binary64 word of `operand`, proved here; `None` where it is no Number.
+    fn number_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word>;
     /// Continue where `register` holds a Number; `None` where it does not, so nothing runs
     /// past it. A specializer may prove a narrower representation its facts favor (an
     /// untyped register taken for an int32), leaving at `miss` for the rest.
@@ -117,13 +120,14 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 
 /// `operation` of one Number `source` in `domain`; a negation of `i32::MIN` widens and
 /// leaves at the miss edge, since its Number result is no int32.
+#[inline(always)]
 fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Operand, operation: NumberUnary, domain: Domain,
 ) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     match domain {
         Domain::Float64 => {
-            let value = frame.number_operand(stage, source, miss);
+            let Some(value) = frame.number_operand(stage, source, miss) else { return Step::Unresolved };
             let result = match operation {
                 NumberUnary::Plus => value,
                 NumberUnary::Negate => stage.float_negate(value),
@@ -133,7 +137,7 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             Step::Value(result)
         }
         Domain::Int32 => {
-            let value = frame.int_operand(stage, source, miss);
+            let Some(value) = frame.int_operand(stage, source, miss) else { return Step::Unresolved };
             match operation {
                 NumberUnary::Plus => {
                     let fact = frame.int_fact();
@@ -150,35 +154,42 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     }
 }
 
+/// Both operands in `domain`'s representation, each proved by the frame; `None` where either
+/// is not.
+#[inline(always)]
+fn operands<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    left: Operand, right: Operand, domain: Domain) -> Option<(S::Word, S::Word)> {
+    let miss = frame.miss();
+    Some(match domain {
+        Domain::Int32 => (frame.int_operand(stage, left, miss)?, frame.int_operand(stage, right, miss)?),
+        Domain::Float64 => (frame.number_operand(stage, left, miss)?, frame.number_operand(stage, right, miss)?),
+    })
+}
+
 /// A relation of two operands in `domain`; its predicate word.
+#[inline(always)]
 fn relation<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> Step<S::Word, F::Control> {
-    let miss = frame.miss();
-    let (left, right) = match domain {
-        Domain::Int32 => (frame.int_operand(stage, left, miss), frame.int_operand(stage, right, miss)),
-        Domain::Float64 => (frame.number_operand(stage, left, miss), frame.number_operand(stage, right, miss)),
-    };
+    let Some((left, right)) = operands(stage, frame, left, right, domain) else { return Step::Unresolved };
     let condition = stage.relation(relation, domain, left, right);
     Step::Value(stage.cond_word(condition))
 }
 
 /// Arithmetic of two operands in `domain`; the result in `domain` or widened to binary64.
+#[inline(always)]
 fn arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand,
     operation: NumberArithmetic, domain: Domain, overflow: Overflow) -> Step<S::Word, F::Control> {
-    let miss = frame.miss();
+    let Some((left, right)) = operands(stage, frame, left, right, domain) else { return Step::Unresolved };
     match domain {
         Domain::Float64 => {
-            let left = frame.number_operand(stage, left, miss);
-            let right = frame.number_operand(stage, right, miss);
             let result = stage.float_arithmetic(operation, left, right);
             let fact = frame.number_fact();
             frame.write(stage, destination, result, fact);
             Step::Value(result)
         }
         Domain::Int32 => {
-            let left = frame.int_operand(stage, left, miss);
-            let right = frame.int_operand(stage, right, miss);
+            let miss = frame.miss();
             int_arithmetic_result(stage, frame, destination, left, right, operation, overflow, miss)
         }
     }
@@ -186,18 +197,14 @@ fn arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 
 /// `left % right` in `domain`. An int32 remainder is an int32 except at a zero divisor (NaN)
 /// and at a zero with a negative dividend (`-0`, `i32::MIN % -1` included): those leave.
+#[inline(always)]
 fn remainder<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand, domain: Domain) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
+    let Some((left, right)) = operands(stage, frame, left, right, domain) else { return Step::Unresolved };
     let (result, fact) = match domain {
-        Domain::Float64 => {
-            let left = frame.number_operand(stage, left, miss);
-            let right = frame.number_operand(stage, right, miss);
-            (stage.float_remainder(left, right), frame.number_fact())
-        }
+        Domain::Float64 => (stage.float_remainder(left, right), frame.number_fact()),
         Domain::Int32 => {
-            let left = frame.int_operand(stage, left, miss);
-            let right = frame.int_operand(stage, right, miss);
             let zero_divisor = stage.i32_is_zero(right);
             if stage.guard_false(zero_divisor, miss).is_none() {
                 return Step::Unresolved;
@@ -218,6 +225,7 @@ fn remainder<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 
 /// ToNumeric of a Number `source`: the Number itself, copied with its facts. Any other
 /// value leaves (the interpreter converts a BigInt or a primitive by its general path).
+#[inline(always)]
 fn to_numeric<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Register) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
@@ -228,16 +236,18 @@ fn to_numeric<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 }
 
 /// `source ± 1` (`++`/`--`) of an int32 `source`: the int32 sum or difference with one.
+#[inline(always)]
 fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Register, decrement: bool,
     overflow: Overflow) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
-    let value = frame.int_operand(stage, Operand::register(source), miss);
+    let Some(value) = frame.int_operand(stage, Operand::register(source), miss) else { return Step::Unresolved };
     let one = stage.i32_constant(1);
     let operation = if decrement { NumberArithmetic::Subtract } else { NumberArithmetic::Add };
     int_arithmetic_result(stage, frame, destination, value, one, operation, overflow, miss)
 }
 
+#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn int_arithmetic_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left_value: S::Word, right_value: S::Word,
@@ -272,6 +282,7 @@ fn int_arithmetic_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
 
 /// `-0` a zero int32 product yields, which no int32 holds: a zero result with a negative
 /// sign on either factor.
+#[inline(always)]
 fn negative_zero<S: NumericStage>(stage: &mut S, operation: NumberArithmetic,
     left: S::Word, right: S::Word, result: S::Word) -> Option<S::Cond> {
     (operation == NumberArithmetic::Multiply).then(|| {
@@ -282,6 +293,7 @@ fn negative_zero<S: NumericStage>(stage: &mut S, operation: NumberArithmetic,
     })
 }
 
+#[inline(always)]
 fn int32(word: u64) -> i32 { word as u32 as i32 }
 
 /// The interpreter's wrapping int32 result, from the same rows as every arithmetic stage.
@@ -309,6 +321,7 @@ macro_rules! wrapping_int32_arithmetic {
 crate::vm::operations::number_arithmetic_rows!(wrapping_int32_arithmetic);
 
 impl NumericStage for super::Concrete {
+    #[inline(always)]
     fn relation(&mut self, relation: NumberRelation, domain: Domain,
         left: u64, right: u64) -> bool {
         match domain {
@@ -317,13 +330,16 @@ impl NumericStage for super::Concrete {
                 f64::from_bits(left), f64::from_bits(right)),
         }
     }
+    #[inline(always)]
     fn float_arithmetic(&mut self, operation: NumberArithmetic, left: u64, right: u64) -> u64 {
         operation.apply(&mut NumberF64Stage,
             f64::from_bits(left), f64::from_bits(right)).to_bits()
     }
+    #[inline(always)]
     fn float_negate(&mut self, value: u64) -> u64 {
         (-f64::from_bits(value)).to_bits()
     }
+    #[inline(always)]
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: u64, right: u64) -> (u64, bool) {
         let (left, right) = (int32(left), int32(right));
@@ -332,19 +348,29 @@ impl NumericStage for super::Concrete {
         let result = checked.unwrap_or_else(|| operation.apply(&mut WrappingInt32Stage, left, right));
         (u64::from(result as u32), overflowed)
     }
+    #[inline(always)]
     fn float_remainder(&mut self, left: u64, right: u64) -> u64 {
         crate::vm::operations::number_remainder(f64::from_bits(left), f64::from_bits(right)).to_bits()
     }
+    #[inline(always)]
     fn int_remainder(&mut self, left: u64, right: u64) -> u64 {
         u64::from(int32(left).wrapping_rem(int32(right)) as u32)
     }
+    #[inline(always)]
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
+    #[inline(always)]
     fn i32_to_f64(&mut self, value: u64) -> u64 { f64::from(int32(value)).to_bits() }
+    #[inline(always)]
     fn i32_is_zero(&mut self, value: u64) -> bool { int32(value) == 0 }
+    #[inline(always)]
     fn i32_is_negative(&mut self, value: u64) -> bool { int32(value) < 0 }
+    #[inline(always)]
     fn both(&mut self, a: bool, b: bool) -> bool { a && b }
+    #[inline(always)]
     fn either(&mut self, a: bool, b: bool) -> bool { a || b }
+    #[inline(always)]
     fn cond_word(&mut self, cond: bool) -> u64 { u64::from(cond) }
+    #[inline(always)]
     fn guard_false(&mut self, cond: bool, _miss: ()) -> Option<()> { (!cond).then_some(()) }
 }
 
