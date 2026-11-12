@@ -73,7 +73,7 @@ fn write_first_call_scopes(out: &mut BinaryWriter, stubs: &crate::compile::first
             out.u32(level.len() as u32);
             for (name, slot) in level.iter() {
                 out.string(name);
-                out.u16(*slot);
+                out.u16(slot);
             }
         }
     }
@@ -84,8 +84,8 @@ fn read_first_call_scopes(input: &mut BinaryReader<'_>, functions: usize) -> Res
         let stub = input.u32()?;
         let strict = input.bool()?;
         let levels = input.list(|input| {
-            let level = input.list(|input| Ok((Box::<str>::from(input.string()?), input.u16()?)))?;
-            Ok(std::rc::Rc::from(level))
+            let level = input.list(|input| Ok((input.string()?.to_owned(), input.u16()?)))?;
+            Ok(std::rc::Rc::new(level.iter().map(|(name, slot)| (name.as_str(), *slot)).collect()))
         })?;
         Ok((stub, std::rc::Rc::new(crate::compile::first_call::FirstCallScopes::new(levels.into_boxed_slice(), strict))))
     })?;

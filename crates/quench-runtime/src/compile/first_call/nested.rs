@@ -11,8 +11,38 @@ use std::rc::Rc;
 /// The names a lazily parsed function's subtree reads from outside it, by the function's start.
 pub(in crate::compile) type FreeNames = FxHashMap<u32, Box<[Box<str>]>>;
 
-/// One scope level a stub's function closes over: its bindings by name and slot.
-pub(crate) type ScopeLevel = Rc<[(Box<str>, u16)]>;
+/// One scope level a stub's function closes over: its bindings by name and slot, the names
+/// packed into one text so a level costs three allocations however many names it binds.
+#[derive(Debug)]
+pub(crate) struct ScopeNames {
+    text: Box<str>,
+    /// Each binding's end in `text`, and its slot.
+    ends: Box<[(u32, u16)]>,
+}
+
+pub(crate) type ScopeLevel = Rc<ScopeNames>;
+
+impl ScopeNames {
+    pub(crate) fn len(&self) -> usize {
+        self.ends.len()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, u16)> {
+        let starts = std::iter::once(0).chain(self.ends.iter().map(|&(end, _)| end));
+        starts.zip(self.ends.iter()).map(|(start, &(end, slot))| (&self.text[start as usize..end as usize], slot))
+    }
+}
+
+impl<'n> FromIterator<(&'n str, u16)> for ScopeNames {
+    fn from_iter<I: IntoIterator<Item = (&'n str, u16)>>(bindings: I) -> Self {
+        let (mut text, mut ends) = (String::new(), Vec::new());
+        for (name, slot) in bindings {
+            text.push_str(name);
+            ends.push((text.len() as u32, slot));
+        }
+        Self { text: text.into(), ends: ends.into() }
+    }
+}
 
 /// A program's nested stubs by id, sorted, each with the scopes its chunk compiles against.
 pub(crate) type FirstCallStubs = Box<[(u32, Rc<FirstCallScopes>)]>;
@@ -94,7 +124,7 @@ impl FirstCallScopes {
         ScopeChain::new(
             self.levels
                 .iter()
-                .map(|level| Rc::new(level.iter().map(|(name, slot)| (atoms.intern(name), *slot)).collect::<CaptureScope>()))
+                .map(|level| Rc::new(level.iter().map(|(name, slot)| (atoms.intern(name), slot)).collect::<CaptureScope>()))
                 .collect(),
         )
     }
@@ -156,7 +186,7 @@ impl Compiler<'_> {
         if let Some((_, level)) = self.first_call.levels.get(&key) {
             return level.clone();
         }
-        let level: ScopeLevel = scope.iter().map(|(atom, slot)| (Box::from(&self.atoms[atom as usize]), slot)).collect();
+        let level: ScopeLevel = Rc::new(scope.iter().map(|(atom, slot)| (&self.atoms[atom as usize], slot)).collect());
         // The scope stays alive with the key, so its address names no other scope.
         self.first_call.levels.insert(key, (scope.clone(), level.clone()));
         level
