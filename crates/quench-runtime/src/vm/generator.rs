@@ -8,6 +8,8 @@ mod in_place_steps;
 mod job_windows;
 mod window_steps;
 #[cfg(test)]
+mod arguments_tests;
+#[cfg(test)]
 mod async_await_tests;
 
 /// How a generator's resumption stopped (`Vm::resume_generator_step`).

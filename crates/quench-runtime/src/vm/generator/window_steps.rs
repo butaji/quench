@@ -193,19 +193,9 @@ pub(super) mod tests {
         );
         let registers: Vec<bool> = layouts.iter().map(|(registers, _)| *registers).collect();
         assert_eq!(registers, [true, false, false, true, true, false, false]);
-        // `arguments` has no window in the lane, so those two keep their frames.
-        assert_eq!(layouts[2], (false, false));
-        assert_eq!(layouts[6], (false, false));
-    }
-
-    #[test]
-    fn a_generator_reading_arguments_keeps_its_frame_and_reads_them() {
-        let (lines, _) = run(
-            "function* reading() { yield arguments.length; yield arguments[1]; }
-             const it = reading(1, 2, 3);
-             print(JSON.stringify([it.next().value, it.next().value]));",
-        );
-        assert_eq!(lines, ["[3,2]"]);
+        // The `arguments` object each made on entry rides its window as a local.
+        assert_eq!(layouts[2], (false, true));
+        assert_eq!(layouts[6], (false, true));
     }
 
     #[test]

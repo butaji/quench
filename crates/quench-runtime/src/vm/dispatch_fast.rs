@@ -14630,11 +14630,13 @@ script_handler! {
     /// and the indices it kept from the frame's values; a materialized object its own data
     /// `length` in its creation layout (`Vm::arguments_object_length`) and its stored
     /// elements no parameter mapping reaches (`Vm::plain_arguments_element`). Any other read,
-    /// a mapped element (which aliases a parameter) among them, takes the general path.
+    /// a mapped element (which aliases a parameter) among them, takes the general path. A
+    /// suspended function's window holds the object made on entry (`window_arguments`).
     #[inline(never)]
     fn lane_frame_arguments<GET: bool>(cx, r, ip, i, view) {
         // An environment activation keeps the values passed after its locals
-        // (`Function::reads_passed_arguments_only`); no other activation runs such a function.
+        // (`Function::reads_passed_arguments_only`); a suspended function's window keeps the
+        // object itself (`Function::arguments_ride_window`).
         if !unsafe { (*cx).env }.is_deleted() {
             let vm = unsafe { vm(cx) };
             let Some((function, argc)) = vm.lane_stack.activations.last().and_then(|activation| {
@@ -14645,6 +14647,13 @@ script_handler! {
             };
             // SAFETY: the context's program outlives the lane run.
             let body = unsafe { &*(*cx).code }.function(function as usize);
+            if body.is_generator || body.is_async {
+                let Some(value) = window_arguments::<H, GET>(vm, r, i, body) else {
+                    return exit(ip);
+                };
+                r.set(i.a, value);
+                next!(cx, r, following(ip), view)
+            }
             let value = if GET {
                 let Some(index) = r.get(i.b).as_int().and_then(|index| u16::try_from(index).ok()).filter(|index| *index < argc)
                 else {
@@ -14691,6 +14700,19 @@ script_handler! {
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
     }
+}
+
+/// `ArgumentsLength` or `ArgumentGet` in the window of a suspended function: the `arguments`
+/// object it made on entry is the window's local `i.imm()` (`Function::arguments_ride_window`),
+/// read as a materialized object is. `None` takes the general path.
+#[inline(always)]
+fn window_arguments<H: Host, const GET: bool>(vm: &Vm<H>, r: Registers, i: &LaneInstruction, body: &Function) -> Option<Value> {
+    let binding = r.get(body.registers + WINDOW_LOCALS + i.imm() as u16);
+    if !GET {
+        return vm.arguments_object_length(binding);
+    }
+    let index = usize::try_from(r.get(i.b).as_int()?).ok()?;
+    vm.plain_arguments_element(binding, index)
 }
 
 /// The frameless target of a lane call to `callee`, resolved on first use.
@@ -20717,7 +20739,7 @@ fn specialize_environment_window<H: Host>(
     records: &mut [LaneInstruction],
 ) -> Option<EnvironmentWindow> {
     if u32::from(function.locals) > u64::BITS
-        || (function.arguments_slot.is_some() && !function.reads_passed_arguments_only())
+        || (function.arguments_slot.is_some() && !function.reads_passed_arguments_only() && !function.arguments_ride_window())
         || !function.local_registers.is_empty()
         || function.selective_capture_slots.is_none()
     {

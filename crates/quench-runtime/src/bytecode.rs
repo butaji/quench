@@ -2285,7 +2285,7 @@ impl Function {
             && self.self_binding_slot.is_none()
             && !self.inherited_with_scope
             && self.local_registers.is_empty()
-            && (self.arguments_slot.is_none() || self.reads_passed_arguments_only())
+            && (self.arguments_slot.is_none() || self.reads_passed_arguments_only() || self.arguments_ride_window())
             && self.binding_sites.is_empty()
             && self.selective_capture_slots.is_some()
             && self.initial_register == InitialRegister::Undefined
@@ -2315,6 +2315,24 @@ impl Function {
                         // The window keeps every value passed, which these answer.
                         || op.reads_arguments())
             })
+    }
+
+    /// Whether the `arguments` object a suspending function made on entry rides its window as
+    /// the local it was stored in, which the lane reads in place (`lane_frame_arguments`): no
+    /// closure captures the binding, and a mapped object (`arguments_alias_parameters`) aliases
+    /// parameters that nothing else reads, so the object holds each element's one value: no
+    /// instruction addresses a parameter and no closure captures one.
+    pub(crate) fn arguments_ride_window(&self) -> bool {
+        let parameters = usize::from(self.params);
+        self.arguments_slot.is_some_and(|slot| {
+            self.suspends_in_record()
+                && !self.local_slot_uses_environment(usize::from(slot))
+                && (!self.arguments_alias_parameters()
+                    || ((0..parameters).all(|parameter| !self.local_slot_uses_environment(parameter))
+                        && self.instructions().all(|instruction| {
+                            instruction.addressed_local_slots().all(|addressed| usize::from(addressed) >= parameters)
+                        })))
+        })
     }
 
     /// The function's `CallPlan`, derived on first use.
@@ -2394,13 +2412,13 @@ impl Function {
                 && self.initial_register == InitialRegister::Undefined
                 && !addresses_locals
                 && !self.has_dynamic_scope_access();
-            // Its locals and closures ride an environment window as an ordinary body's do; the
-            // `arguments` and dynamic scope shapes the lane has no window for stay frames.
+            // Its locals and closures ride an environment window as an ordinary body's do, and so
+            // does the `arguments` object it made on entry (`arguments_ride_window`); the dynamic
+            // scope shapes the lane has no window for stay frames.
             let suspended_environment = suspendable
                 && !suspended_registers
                 && self.parent.is_some()
                 && !self.parameter_eval_arguments_error
-                && self.arguments_slot.is_none()
                 && self.locals_ride_window(tables);
             CallPlan {
                 environment_activation,
