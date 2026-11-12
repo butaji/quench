@@ -3,7 +3,9 @@
 use super::{V128_BYTES, WasmType, WasmValue};
 use crate::bytecode::{Op, Register};
 
+mod bits;
 mod integer;
+pub(crate) use bits::{bits_of, value_of};
 
 const SELECTOR_LANE_BITS: u32 = u8::BITS;
 const SELECTOR_LANE_MASK: u32 = u8::MAX as u32;
@@ -167,44 +169,6 @@ impl SimdKernel {
     /// total, so applied to zero operands it answers with a value of that type.
     pub(crate) fn result_type(&self, lane: u8) -> WasmType {
         self.apply_bits_typed(0, 0, lane).ty()
-    }
-
-    /// The type of the result of the operator `selector` names, from a table of each
-    /// operator's `result_type` built once: an execution reads it instead of running the kernel.
-    pub(crate) fn result_of(selector: u32) -> WasmType {
-        static RESULTS: std::sync::LazyLock<Vec<WasmType>> = std::sync::LazyLock::new(|| {
-            SimdOperator::KERNELS
-                .iter()
-                .map(|kernel| kernel.result_type(0))
-                .collect()
-        });
-        RESULTS[(selector >> SELECTOR_LANE_BITS) as usize]
-    }
-
-    /// The operator applied to operands given as bits, its result as bits: a vector whole,
-    /// a scalar in the low bits (`ScalarBits`), as compiled code holds them.
-    pub(crate) fn apply_bits(&self, left: u128, right: u128, lane: u8) -> u128 {
-        bits_of(self.apply_bits_typed(left, right, lane))
-    }
-
-    fn apply_bits_typed(&self, left: u128, right: u128, lane: u8) -> WasmValue {
-        (self.apply)(value_of(self.left, left), self.right.map(|ty| value_of(ty, right)), lane)
-    }
-}
-
-/// The value of type `ty` that `bits` hold: a vector whole, a scalar in the low bits.
-pub(crate) fn value_of(ty: WasmType, bits: u128) -> WasmValue {
-    match ty {
-        WasmType::V128 => WasmValue::V128(bits),
-        ty => WasmValue::from_bits(ty, bits as u64),
-    }
-}
-
-/// The bits of `value`: a vector whole, a scalar in the low bits (the inverse of `value_of`).
-pub(crate) fn bits_of(value: WasmValue) -> u128 {
-    match value {
-        WasmValue::V128(bits) => bits,
-        value => u128::from(scalar(value)),
     }
 }
 

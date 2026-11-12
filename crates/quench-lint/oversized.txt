@@ -1455,7 +1455,7 @@ file-lines crates/quench-runtime/src/vm/date/legacy_parse.rs 511
 file-lines crates/quench-runtime/src/vm/dispatch.rs 1932
 file-lines crates/quench-runtime/src/vm/dispatch_fast.rs 22105
 file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 3029
-file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 650
+file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 649
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
 file-lines crates/quench-runtime/src/vm/embedding.rs 1901
 file-lines crates/quench-runtime/src/vm/environment.rs 2729
@@ -1526,7 +1526,7 @@ file-lines crates/quench-runtime/src/wasm/gc.rs 676
 file-lines crates/quench-runtime/src/wasm/inline.rs 694
 file-lines crates/quench-runtime/src/wasm/memory.rs 818
 file-lines crates/quench-runtime/src/wasm/scalar.rs 777
-file-lines crates/quench-runtime/src/wasm/simd.rs 935
+file-lines crates/quench-runtime/src/wasm/simd.rs 920
 file-lines crates/quench-test262/src/bin/compare-runs.rs 525
 file-lines crates/quench-test262/src/bin/run-all.rs 977
 file-lines crates/quench-test262/src/bin/run-stages.rs 567

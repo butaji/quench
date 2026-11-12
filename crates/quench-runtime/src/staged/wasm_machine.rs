@@ -139,7 +139,8 @@ fn load_word(memory: &[u8], access: Access, index: u64, offset: u32) -> u64 {
 /// Writes the low bytes of `value` as the checked `access` at `index + offset`.
 #[inline(always)]
 fn store_word(memory: &mut [u8], access: Access, index: u64, offset: u32, value: u64) {
-    memory[access_bytes(access, index, offset)].copy_from_slice(&value.to_le_bytes()[..access.bytes]);
+    let bytes = &value.to_le_bytes()[..access.bytes];
+    memory[access_bytes(access, index, offset)].copy_from_slice(bytes);
 }
 
 /// The flag that `extent` bytes from `index` pass the end of `memory`: the shared range check
