@@ -85,11 +85,15 @@ pub(super) struct Decoded {
     /// The instruction carried the return flag: the activation completes with the result the row
     /// writes (`steps::completing`), so control reaches nothing after it.
     pub(super) completes: bool,
+    /// The constructor an `instanceof` fast arm stands on, with what the VM proved of it (`Known::instanceofs`): its
+    /// identity is the row's `hole`, which the constructor register must hold, and the prototype link the walk looks for
+    /// is the fact's, a Stable fact the code depends on (`held_instanceofs`).
+    pub(super) instanceof: Option<(Value, InstanceofFact)>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, identity: None, completes: false }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, identity: None, completes: false, instanceof: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -100,11 +104,11 @@ impl Decoded {
         Self { step: Some(step), ..Self::number(Kind::Move, dst, None, None, None) }
     }
 
-    /// Whether the row holds a Stable fact its code took: a folded prototype-held read, or a store in
-    /// place for an atom no method cache names. A change of the fact retires the code, and a run
+    /// Whether the row holds a Stable fact its code took: a folded prototype-held read, an `instanceof` of a constructor's
+    /// `prototype`, or a store in place for an atom no method cache names. A change of the fact retires the code, and a run
     /// already inside it learns that from the invalidation word (`Heap::Live`).
     pub(super) fn holds_stable(&self) -> bool {
-        matches!(self.heap, Some(Heap::Held | Heap::ThisHeld | Heap::SiteStore | Heap::ThisStore))
+        matches!(self.heap, Some(Heap::Held | Heap::ThisHeld | Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some()
     }
 
     /// The registers the row names.
@@ -303,6 +307,19 @@ pub(super) fn held_atoms(decoded: &[Decoded]) -> Box<[Atom]> {
     distinct(decoded.iter().filter_map(|row| row.atom))
 }
 
+/// The exact shapes of the holders the rows' `instanceof`s inherit the native `@@hasInstance` from, with the slots and
+/// shapes of their constructors' `prototype`s (`Decoded::instanceof`): the Stable facts the code takes, which a write
+/// of a `prototype`, a departure of a constructor's shape or a change of a holder's values retires it.
+pub(super) fn held_instanceofs(decoded: &[Decoded]) -> Box<[InstanceofFact]> {
+    distinct(decoded.iter().filter_map(|row| row.instanceof.map(|(_, fact)| fact)))
+}
+
+/// The constructors whose identity the rows' `instanceof`s name (`Decoded::instanceof`): the code holds each
+/// one, which a collection that frees it retires the code over (`LaneMethod::constructors`).
+pub(super) fn held_constructors(decoded: &[Decoded]) -> Box<[Value]> {
+    distinct(decoded.iter().filter_map(|row| row.instanceof.map(|(constructor, _)| constructor.to_bits()))).iter().map(|bits| Value::from_bits(*bits)).collect()
+}
+
 /// Whether `instruction` stores to a depth-0 capture and nothing else (`general_capture::lower_capture`'s
 /// conditions): it completes no activation, sets no `this`, and is no numeric local's update.
 fn own_capture_store(instruction: WideInstruction) -> bool {
@@ -393,7 +410,18 @@ pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u3
         .flatten()
         .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0))
         .or_else(|| value_row(known, instruction))
-        .unwrap_or_else(|| names(known, decode_step(pc, instruction, (helpers, matches!(facts, Facts::Site)))))
+        .unwrap_or_else(|| names(known, instanceof_arm(known, pc, instruction, decode_step(pc, instruction, (helpers, matches!(facts, Facts::Site))))))
+}
+
+/// The step `row` of the `instanceof` at `pc` as the fast arm of a constructor the VM proved steady
+/// (`Known::instanceofs`): the value and constructor registers are its operands, the constructor's identity its
+/// `hole`, with the helper step behind it as the slow arm. Any other row is as it is.
+fn instanceof_arm(known: Known, pc: u32, instruction: WideInstruction, row: Decoded) -> Decoded {
+    let operands = instruction.operand_b().register_index().zip(instruction.operand_c().register_index());
+    let proved = known.instanceofs.zip(operands).filter(|_| is_instanceof(instruction) && row.step == Some(Step::Helper) && row.dst.is_some());
+    let Some((proved, (value, constructor))) = proved.and_then(|(facts, operands)| facts(pc as usize).map(|found| (found, operands))) else { return row };
+    let hole = proved.0.to_bits();
+    Decoded { step: Some(Step::Fast(Heap::Instanceof)), a: Some(Source::Register(value)), b: Some(Source::Register(constructor)), hole, instanceof: Some(proved), ..row }
 }
 
 /// The step `row` with the table of `typeof` result strings its fast arm reads (hole 2) where the VM has

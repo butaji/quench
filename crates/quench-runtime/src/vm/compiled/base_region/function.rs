@@ -33,6 +33,13 @@ pub(in crate::vm::compiled) struct Body {
     /// The exact shapes of the holders whose values its folded reads hold (a Stable fact): a change
     /// of a value a prototype of one holds retires the body (`StableFacts::holders`).
     pub(in crate::vm::compiled) holders: Box<[u32]>,
+    /// What its `instanceof` fast arms hold of their constructors' `prototype`s (a Stable fact): a write of a `prototype`,
+    /// a departure of a constructor's shape or a change of the `@@hasInstance` holder's values retires the body
+    /// (`StableFacts::instanceofs`).
+    pub(in crate::vm::compiled) instanceofs: Box<[InstanceofFact]>,
+    /// The constructors those arms guard their operands against by identity, which a collection must not free
+    /// while the body lives (`LaneMethod::constructors`).
+    pub(in crate::vm::compiled) constructors: Box<[Value]>,
 }
 
 /// What a body decides its call sites by: the callees they recorded and the stitch's budget, and
@@ -251,5 +258,5 @@ fn assemble_body(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEE
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.iter().filter(|reached| **reached).count() - exits;
     let records = planned.iter_mut().filter_map(|row| row.owned.take()).collect();
-    Ok(Body { code, covered, exits, loops, records, atoms: held_atoms(&decoded), holders: held_holders(&decoded) })
+    Ok(Body { code, covered, exits, loops, records, atoms: held_atoms(&decoded), holders: held_holders(&decoded), instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded) })
 }

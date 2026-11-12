@@ -13,6 +13,8 @@ pub(crate) struct StableFacts {
     pub(crate) atoms: Box<[Atom]>,
     /// Global cells whose values it holds (`heap::subscribe_global_value`).
     pub(crate) globals: Box<[crate::heap::GlobalFact]>,
+    /// Constructors whose `prototype` it holds for an `instanceof` (`Vm::instanceof_fact`).
+    pub(crate) instanceofs: Box<[crate::code_dependencies::InstanceofFact]>,
 }
 
 /// The Stable facts a lowering folded so far.
@@ -39,7 +41,7 @@ impl StableUses {
     pub(super) fn take(&mut self) -> StableFacts {
         StableFacts { holders: std::mem::take(&mut self.holders).into_iter().collect(),
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
-            globals: std::mem::take(&mut self.globals).into_iter().collect() }
+            globals: std::mem::take(&mut self.globals).into_iter().collect(), ..StableFacts::default() }
     }
 }
 

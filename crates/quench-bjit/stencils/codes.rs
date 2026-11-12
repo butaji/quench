@@ -107,6 +107,13 @@ pub const ENV_ROW: u8 = 25;
 /// sits `ENV_VIEW_AT` bits above it), slot hole 1 of the run. A hit continues at TAKEN; a slot past the run or holding
 /// an internal marker, or a view that admits no store, leaves through EXIT0 into the helper step after the row.
 pub const ENV_SET_ROW: u8 = 26;
+/// A fast arm of `Binary`'s `instanceof` of a constructor the code holds (`staged::object::instanceof_by_words`): the
+/// frame slot named by the value operand's offset above the destination's in hole 0 is walked along its prototype chain
+/// for the link above `HELD_LINK_AT` in hole 1, whose low half is the constructor operand's frame offset; hole 2 is the
+/// constructor's identity, which the slot must hold, else the row leaves. A hit writes the boolean to the destination and
+/// continues at TAKEN; a cell the walk does not follow, another constructor or a longer chain leaves through EXIT0 into
+/// the helper step after the row.
+pub const INSTANCEOF_ROW: u8 = 27;
 /// Bits below the environment view's payload byte offset in an environment row's hole 0, which carries the frame offset
 /// of the row's destination (`ENV_ROW`) or value operand (`ENV_SET_ROW`) beneath it.
 pub const ENV_VIEW_AT: u32 = 32;

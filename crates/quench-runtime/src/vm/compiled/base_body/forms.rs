@@ -142,3 +142,30 @@ fn a_numeric_operator_with_a_local_target_is_a_helper_step() {
     assert!(runs > 100, "the bodies ran {runs} times");
     assert_eq!(runs, returns, "{} of {runs} body runs left for the interpreter", runs - returns);
 }
+
+/// `v instanceof C` of a constructor the VM proved steady is the fast row over the value's chain (the constructor a
+/// parameter or a global the function reads, guarded by identity), with the interpreter's step behind it for a cell
+/// the words do not walk, a primitive's cousin of any kind and another constructor; and a write of the constructor's
+/// `prototype` retires the body that held it, so the next answer is the interpreter's.
+#[test]
+fn instanceof_of_a_held_constructor_is_a_row_and_a_prototype_change_retires_it() {
+    let before = fast_rows(Op::Binary);
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "class A {} class B extends A {} class C {} function F() {}
+         function is(v, K) { return v instanceof K; }
+         function isA(v) { return v instanceof A; }
+         function isF(v) { return v instanceof F; }
+         const f = new F();
+         const vs = [new A(), new B(), new C(), {}, [], 1, 'a', null, undefined, A, f];
+         let t = 0;
+         for (let k = 0; k < 600; k++) { const v = vs[k % 11]; t = (t + (is(v, A) ? 1 : 0) + (isA(v) ? 2 : 0) + (is(v, B) ? 4 : 0) + (isF(v) ? 8 : 0)) | 0; }
+         print(t); print(isF(f)); print(is(f, F));
+         F.prototype = {};
+         print(isF(f)); print(isF(new F())); print(is(f, F));
+         for (let k = 0; k < 600; k++) t = (t + (isF(vs[k % 11]) ? 1 : 0)) | 0;
+         print(t);",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+    assert!(fast_rows(Op::Binary) > before, "no instanceof fast row");
+}

@@ -318,24 +318,25 @@ fn number_typeof(fast: Heap, names: u64) -> Option<u64> {
 /// The run of a fast arm at `pc`: the heap row `fast` over the operands' places, whose hit hops past
 /// the rest of the run to the next instruction (to the completion where the instruction returns its
 /// result), and behind it the helper step the row leaves into where its proof fails. A row that reads a
-/// word of its operand's frame slot (`Heap::reads_frame_word`) with the operand held outside it has the
+/// word of its operand's frame slot (`Heap::reads_frame_word`) with an operand held outside it has the
 /// helper step alone, or, where the operand is a Number its representation proves, the constant the arm
 /// answers for one (`number_typeof`); so does a result held outside its frame slot.
 fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     let slow = plan_helper(layout, pc, decoded, helpers)?;
     let homes = &layout.homes;
     let ((read, read_hole), (written, written_hole)) = (operand(homes, decoded.a), operand(homes, decoded.dst.map(Source::Register)));
+    let (second, second_hole) = operand(homes, decoded.b);
     if written != Place::Mem {
         return Ok(slow);
     }
     if let Some(word) = number_typeof(fast, decoded.hole).filter(|_| matches!(read, Place::Pin(_) | Place::PinF(_) | Place::MemInt)) {
         return plan(&Decoded::number(Kind::Move, decoded.dst, Some(Source::Value(word)), None, None), layout, pc, true, helpers);
     }
-    if read != Place::Mem && fast.reads_frame_word() {
+    if (read != Place::Mem || second != Place::Mem) && fast.reads_frame_word() {
         return Ok(slow);
     }
     let row = HeapRow { heap: fast, dst: written, a: read, b: Place::Mem, entry: false };
-    let holes = heap_holes(decoded, homes, fast, false, [written_hole, read_hole, 0]);
+    let holes = heap_holes(decoded, homes, fast, false, [written_hole, read_hole, second_hole]);
     let parts = 2 + slow.pre.len() + slow.post.len();
     let mut run = Planned::single(base_rows::stencil(row)?, holes, None, None);
     run.branch = Some(if decoded.completes { Branch::Part(parts) } else { Branch::Pc(pc + 1) });

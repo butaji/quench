@@ -6661,6 +6661,9 @@ pub(super) struct LaneMethod {
     closed: bool,
     /// The call records its code reads (`CallRecord`), by address: the code must not outlive them.
     _records: Vec<Box<quench_bjit::call_record::CallRecord>>,
+    /// The constructors its `instanceof` rows guard their operands against by identity: a collection that frees one
+    /// retires it (`ProgramStore::retire_dead_native_calls`), so a word they name is never a reused one.
+    pub(super) constructors: Box<[Value]>,
 }
 
 impl LaneMethod {

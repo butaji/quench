@@ -98,6 +98,11 @@ pub(super) enum Heap {
     /// holds a value whose tag decides its index, the entry of the table of result strings at hole 2 written to
     /// the register at hole 0, else the row leaves into the helper step after it.
     TypeofString,
+    /// The fast arm of `Binary`'s `instanceof` of a constructor the code holds (`staged::object::instanceof_by_words`): the
+    /// register at hole 0's upper half is walked along its prototype chain for the `prototype` link the code holds (hole 1's
+    /// upper half, beside the constructor register's offset), where the constructor register holds exactly the identity of
+    /// hole 2, a boolean written to the register at hole 0's lower half, else the row leaves into the helper step after it.
+    Instanceof,
     /// The fast arm of `Unary`'s `typeof` test: whether (or, where `negated`, whether not) that index is
     /// `index` (hole 2), as a boolean.
     TypeofIs { index: u8, negated: bool },
@@ -144,6 +149,7 @@ impl Heap {
             Heap::Key => library::KEY_ROW,
             Heap::TypeofIndex => library::TYPEOF_INDEX_ROW,
             Heap::TypeofString => library::TYPEOF_STRING_ROW,
+            Heap::Instanceof => library::INSTANCEOF_ROW,
             Heap::TypeofIs { negated: false, .. } => library::TYPEOF_IS_ROW,
             Heap::TypeofIs { negated: true, .. } => library::TYPEOF_ISNOT_ROW,
         }
@@ -159,13 +165,13 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key | Heap::TypeofIndex | Heap::TypeofString | Heap::TypeofIs { .. })
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
     pub(super) fn reads_frame_word(self) -> bool {
-        matches!(self, Heap::Object | Heap::Key | Heap::TypeofIndex | Heap::TypeofString | Heap::TypeofIs { .. })
+        matches!(self, Heap::Object | Heap::Key | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value

@@ -10,7 +10,7 @@ use super::base_region::callees::{Callees, InlineBody};
 use super::base_region::function::{build_body, Body};
 use super::base_region::Known;
 use super::lane_facts::bind_callees;
-use crate::code_dependencies::Invalidation;
+use crate::code_dependencies::{InstanceofFact, Invalidation};
 use crate::bytecode::Register;
 use crate::compile::liveness::RegisterMasks;
 
@@ -38,11 +38,11 @@ impl LaneMethod {
         // SAFETY: `base_region::function` links its code behind `entry_body`, of the lane body ABI.
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         Some(Self {
-            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: super::lane_region::StableFacts { holders: body.holders, atoms: body.atoms, ..Default::default() }, invalidation, _code: memory, entry,
+            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: super::lane_region::StableFacts { holders: body.holders, atoms: body.atoms, instanceofs: body.instanceofs, ..Default::default() }, invalidation, _code: memory, entry,
             recovery_space: Default::default(), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: !direct.is_empty(), inlined: Vec::new(), scratch_width: 0,
             caller_registers: registers, amortizes: body.loops || body.covered >= TIERS.lane_body.min_instructions || !direct.is_empty(),
-            direct, closed, _records: body.records,
+            direct, closed, _records: body.records, constructors: body.constructors,
         })
     }
 }
@@ -66,13 +66,16 @@ impl<H: Host> Vm<H> {
         // Where the VM and the program run specialized, the code holds Stable facts: its stores run in
         // place for the atoms no method cache names, and its prototype-held reads fold to their values.
         let folds = self.specialized && program.specialized;
+        let constructors = if folds { self.instanceof_constructors(program, &code, parameters) } else { Vec::new() };
         let reads = |site: u16| self.native_field_read_descriptors(site);
+        let instanceofs = |pc: usize| constructors.get(pc).copied().flatten().and_then(|constructor| self.instanceof_fact(constructor).map(|fact| (constructor, fact)));
         let known = Known {
             program, stores: folds.then(|| self.method_cache_atoms.bits()),
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
             invalidation: Some(invalidation.address()),
             constants: self.programs.constants(self.active_program),
             typeof_names: &self.typeof_names,
+            instanceofs: folds.then_some(&instanceofs as &dyn Fn(usize) -> Option<(Value, InstanceofFact)>),
         };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, (function, body.registers), known, &widened(generic), [&ints, &doubles], &callees, helpers) }) else { return LaneBodyOutcome::Declined };

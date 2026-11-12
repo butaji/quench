@@ -56,7 +56,7 @@ impl ProgramStore {
     /// method atoms in `method_atoms`). A change of any retires it and sets its invalidation word.
     pub(in crate::vm) fn publish_lane_method(&self, method: LaneMethod, heap: &mut crate::heap::Heap,
         method_atoms: &mut crate::code_dependencies::CodeReaders) -> Option<Rc<PublishedLaneMethod>> {
-        let calls = !method.inlined.is_empty() || !method.direct.is_empty();
+        let calls = !method.inlined.is_empty() || !method.direct.is_empty() || !method.constructors.is_empty();
         let invalidation = method.invalidation.clone();
         let published = Rc::new(PublishedLaneMethod::with_invalidation(method, invalidation));
         let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
@@ -102,6 +102,7 @@ impl ProgramStore {
                 // not a particular closure locator. Realm/reset retirement
                 // still uses this inventory for both binding kinds.
                 let dead = method.inlined.iter().any(|call| call.target.identity().is_some_and(|callee| !live(callee)))
+                    || method.constructors.iter().any(|constructor| !live(*constructor))
                     || method.direct.iter().any(|callee| !live(callee.callee) || callee.method.as_ref().is_some_and(|method| !method.is_published()));
                 if dead {
                     code.retire();

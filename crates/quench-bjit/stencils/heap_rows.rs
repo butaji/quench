@@ -27,11 +27,11 @@ use crate::places::{DEST, LEFT, Places, Rep, tagged_place};
 use crate::stage::StencilStage;
 use crate::value::ValueLayout;
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-use crate::staged::{Frame, Stage, Step, elements, entry, environment, iteration, load_this, read_initialized_local, read_local, strings, value, write_initialized_local, write_local};
+use crate::staged::{Frame, Stage, Step, elements, entry, environment, iteration, load_this, object, read_initialized_local, read_local, strings, value, write_initialized_local, write_local};
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, ENV_ROW, ENV_SET_ROW, ENV_VIEW_AT,
+    STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, ENV_ROW, ENV_SET_ROW, ENV_VIEW_AT, INSTANCEOF_ROW,
 };
 
 unsafe extern "C" {
@@ -294,6 +294,25 @@ fn typeof_string_row(s: S) -> Out {
     finish_fast(frame, done)
 }
 
+/// The fast arm of `instanceof` of a held constructor: the value operand (the frame offset above the destination's in
+/// hole 0) walked along its prototype chain for the link above `HELD_LINK_AT` in hole 1 (`object::instanceof_by_words`),
+/// where the constructor operand (the frame offset in hole 1's low half) holds exactly the identity of hole 2. The boolean
+/// is written to the destination (hole 0), or the row leaves into the helper step.
+#[inline(always)]
+fn instanceof_row(s: S, payload: usize) -> Out {
+    let (value, constructor) = (hole64::<0>() >> SITE_OBJECT_AT, hole64::<HOLE_A>());
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let mut stage = StencilStage::from_hole(0);
+    let held = word_at(frame.s.frame, (constructor & u64::from(u32::MAX)) as usize) == hole64::<HOLE_B>();
+    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
+    let words = (word_at(frame.s.frame, value as usize), constructor >> HELD_LINK_AT);
+    let done = held && object::instanceof_by_words(&mut stage, records, words.0, words.1, ()).map(|holds| {
+        let (boolean, fact) = frame.boolean(&mut stage, holds);
+        frame.write(&mut stage, DEST, boolean, fact);
+    }).is_some();
+    finish_fast(frame, done)
+}
+
 /// Whether the tag-decided `typeof` index of the operand (hole 1) is the name at index hole 2 (or is
 /// not, where `NEGATED`), as a boolean in the destination (hole 0).
 #[inline(always)]
@@ -397,6 +416,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         CAPTURE_SET_ROW => capture_set_row::<A>(s, payload),
         ENV_ROW => env_row(s, payload),
         ENV_SET_ROW => env_set_row::<A>(s, payload),
+        INSTANCEOF_ROW => instanceof_row(s, payload),
         FIELD_ROW => field_row::<D>(s, payload),
         SITE_ROW => site_row::<D, ENTRY>(s, payload, register_object(&s)),
         SITE_STORE_ROW => site_store_row::<A>(s, payload, word_at(s.frame, hole::<0>())),

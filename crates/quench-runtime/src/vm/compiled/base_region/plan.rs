@@ -174,6 +174,10 @@ pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bo
         Heap::TypeofIs { index, .. } => [dst_hole, a_hole, u64::from(index)],
         Heap::Identity => [0, a_hole, decoded.hole],
         Heap::TypeofString => [dst_hole, a_hole, decoded.hole],
+        Heap::Instanceof => {
+            let link = decoded.instanceof.map_or(0, |(_, fact)| u64::from(fact.link));
+            [dst_hole | a_hole << numeric::library::SITE_OBJECT_AT, b_hole | link << numeric::library::HELD_LINK_AT, decoded.hole]
+        }
         Heap::CaptureSet(slot) => [a_hole, u64::from(slot), u64::from(slot) * SLOT],
         _ => [dst_hole, a_hole, b_hole],
     })

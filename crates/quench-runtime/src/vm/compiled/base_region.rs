@@ -12,6 +12,7 @@
 
 use super::osr_loop::LoopRegion;
 use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
+use crate::code_dependencies::InstanceofFact;
 use crate::value::Value;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
@@ -23,6 +24,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 mod call_plan;
+mod constructors;
 pub(in crate::vm::compiled) mod callees;
 mod decode;
 pub(in crate::vm::compiled) mod function;
@@ -33,6 +35,7 @@ mod repr;
 mod steps;
 mod throws;
 mod webs;
+use constructors::*;
 use decode::*;
 use link::*;
 use plan::*;
@@ -65,6 +68,12 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// `bytecode::TYPEOF_NAMES`: a `typeof` string row names it, so a value's string is the entry its tag's
     /// index selects. Empty for a region, whose `typeof` is the helper step.
     pub(in crate::vm::compiled) typeof_names: &'a [Value],
+    /// The constructor the `instanceof` at a PC names and what the VM proved of it (`Vm::instanceof_fact`), where the VM and
+    /// the program run specialized and the code may hold Stable facts: the row stands on the constructor's identity (its
+    /// register is guarded against it) and walks the value's chain for its `prototype` link, which a write of that
+    /// slot, a departure of its shape or a change of the `@@hasInstance` holder's values retires the code over
+    /// (`Body::instanceofs`). `None` where no fact may be held.
+    pub(in crate::vm::compiled) instanceofs: Option<&'a dyn Fn(usize) -> Option<(Value, InstanceofFact)>>,
 }
 
 impl Known<'_> {
