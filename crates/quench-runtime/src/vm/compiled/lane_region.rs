@@ -3111,38 +3111,20 @@ impl Lowering<'_, '_> {
     }
 
     fn typeof_index(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        use crate::value::ValueLayout;
-        let index = |kind: crate::ValueType| i64::try_from(crate::bytecode::typeof_name_index(
-            super::super::coercion::typeof_text(kind)).expect("a language typeof name")).expect("index fits i64");
         let source = instruction.register_b();
         let ty = state.values[usize::from(source)].value.ty;
         let known = [crate::ValueType::Number, crate::ValueType::Boolean, crate::ValueType::Null,
             crate::ValueType::Undefined, crate::ValueType::String, crate::ValueType::BigInt, crate::ValueType::Symbol]
             .into_iter().find(|kind| ty != Type::NEVER && ty.is_subtype(Type::language(*kind)));
-        let int = match known {
-            Some(kind) => self.ins().iconst(types::I32, index(kind)),
-            None => {
-                let exit = self.guard_exit(state, pc as u32);
-                let value = self.tagged(state, source);
-                let field = self.ins().ushr_imm_u(value, i64::from(ValueLayout::TAG_SHIFT));
-                let offset = self.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
-                let double = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, offset, ValueLayout::TAG_FIELD_SPAN as i64);
-                let int_tagged = is_int_tagged(&mut self.builder, value);
-                let number = self.ins().bor(double, int_tagged);
-                let tag = self.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-                let boolean = self.ins().icmp_imm_u(IntCC::Equal, tag, (Value::TRUE.to_bits() & ValueLayout::TAG_MASK) as i64);
-                let null = self.ins().icmp_imm_u(IntCC::Equal, value, Value::NULL.to_bits() as i64);
-                let heap = self.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::HEAP_TAG as i64);
-                emit_js_guard_not(&mut self.builder, heap, exit);
-                let mut int = self.ins().iconst(types::I32, index(crate::ValueType::Undefined));
-                for (holds, kind) in [(null, crate::ValueType::Null), (boolean, crate::ValueType::Boolean), (number, crate::ValueType::Number)] {
-                    let named = self.ins().iconst(types::I32, index(kind));
-                    int = self.ins().select(holds, named, int);
-                }
-                // Every other immediate is `undefined` or the deleted marker, whose name it is.
-                int
-            }
+        let Some(kind) = known else {
+            // The staged operation leaves at the instruction for a heap value, whose cell decides its name.
+            let exit = self.guard_exit(state, pc as u32);
+            let operation = crate::staged::Operation::decode(instruction, |_| None).expect("typeof index decodes");
+            self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
+            return Some(true);
         };
+        let index = crate::bytecode::typeof_name_index(super::super::coercion::typeof_text(kind)).expect("a language typeof name");
+        let int = self.ins().iconst(types::I32, i64::try_from(index).expect("index fits i64"));
         self.define(state, instruction.result_register(), int, RegisterFact::definition(Type::INT32, Representation::Int32));
         Some(true)
     }

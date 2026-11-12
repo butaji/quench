@@ -73,6 +73,11 @@ pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> {
     #[inline(always)]
     fn local_miss(&self) -> Option<S::Miss> { Some(self.miss()) }
 
+    /// The word `write` takes for the int32 `word` this frame defines with `int_fact`: the
+    /// int32 word itself, unless the frame keeps its registers tagged.
+    #[inline(always)]
+    fn int_result(&mut self, _stage: &mut S, word: S::Word) -> S::Word { word }
+
     fn int_fact(&self) -> Self::Fact;
     fn number_fact(&self) -> Self::Fact;
 }
@@ -92,6 +97,8 @@ pub(crate) enum NumberOperation {
     IncDec { destination: Register, source: Register, decrement: bool, overflow: Overflow },
     /// `+source` or `-source` of a Number `source`, in `domain`; any other value leaves.
     Unary { destination: Register, source: Operand, operation: NumberUnary, domain: Domain },
+    /// `~source` of an int32 `source`; any other value leaves.
+    BitwiseNot { destination: Register, source: Operand },
     /// ToNumeric of a Number `source` into `destination`; any other value leaves.
     ToNumeric { destination: Register, source: Register },
 }
@@ -109,6 +116,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             remainder(stage, frame, destination, left, right, domain),
         NumberOperation::IncDec { destination, source, decrement, overflow } =>
             increment(stage, frame, destination, source, decrement, overflow),
+        NumberOperation::BitwiseNot { destination, source } => bitwise_not(stage, frame, destination, source),
         NumberOperation::ToNumeric { destination, source } => to_numeric(stage, frame, destination, source),
         NumberOperation::Unary { destination, source, operation, domain } =>
             unary(stage, frame, destination, source, operation, domain),
@@ -148,6 +156,16 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             }
         }
     }
+}
+
+/// `~source` of an int32 `source`: `-1 - source`, which never overflows.
+fn bitwise_not<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, source: Operand) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let value = frame.int_operand(stage, source, miss);
+    let all_ones = stage.i32_constant(-1);
+    int_arithmetic_result(stage, frame, destination, all_ones, value,
+        NumberArithmetic::Subtract, Overflow::Exit, miss)
 }
 
 /// A relation of two operands in `domain`; its predicate word.

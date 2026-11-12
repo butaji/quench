@@ -190,6 +190,55 @@ fn staged_logical_not_is_the_javascript_truthiness_negation() {
     }
 }
 
+/// The `typeof` name index the row defines for `value`, or `None` where it leaves for the
+/// value's cell.
+fn typeof_index_of(value: Value) -> Option<u64> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![value.to_bits(), 0], heap: None };
+    match step(&mut stage, &mut frame, Operation::TypeofIndex { destination: 1, source: 0 }) {
+        Step::Value(word) => {
+            assert_eq!(frame.registers[1], word, "{value:?}");
+            Some(word)
+        }
+        Step::Unresolved => None,
+        Step::Control(_) => panic!("typeof transfers no control"),
+    }
+}
+
+/// `typeof` of every value its own word decides names what the interpreter names, and a heap
+/// value (whose cell decides, the IsHTMLDDA object included) is left to the host.
+#[test]
+fn staged_typeof_index_names_every_immediate_and_leaves_heap_values() {
+    let name = |text: &str| crate::bytecode::typeof_name_index(text).map(|index| index as u64);
+    let mut heap = Heap::new();
+    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let text = heap.alloc_string("x".into());
+    let cases = [
+        (Value::number(0.0), "number"), (Value::number(-0.0), "number"), (Value::number(1.5), "number"),
+        (Value::number(f64::NAN), "number"), (Value::number(f64::INFINITY), "number"),
+        (Value::integer(0), "number"), (Value::integer(i32::MIN), "number"), (Value::integer(7), "number"),
+        (Value::TRUE, "boolean"), (Value::FALSE, "boolean"), (Value::NULL, "object"),
+        (Value::UNDEFINED, "undefined"), (Value::DELETED, "undefined"),
+    ];
+    for (value, expected) in cases {
+        assert_eq!(typeof_index_of(value), name(expected), "{value:?}");
+    }
+    assert_eq!(typeof_index_of(object), None);
+    assert_eq!(typeof_index_of(text), None);
+}
+
+/// `~x` of an int32 is `-1 - x`: no overflow, every int32 stays an int32.
+#[test]
+fn staged_bitwise_not_of_an_int32_is_its_complement() {
+    let mut stage = Concrete::new(std::ptr::null());
+    for value in [0, 1, -1, 7, i32::MAX, i32::MIN] {
+        let mut frame = ConcreteFrame { registers: vec![Value::integer(value).to_bits(), 0], heap: None };
+        let operation = Operation::Number(NumberOperation::BitwiseNot { destination: 1, source: Operand::register(0) });
+        assert!(matches!(step(&mut stage, &mut frame, operation), Step::Value(_)));
+        assert_eq!(frame.registers[1] as u32 as i32, !value, "~{value}");
+    }
+}
+
 /// The catalog's staged set and `Operation::decode` agree: every opcode the catalog marks
 /// `Staged` decodes to one operation, and every other opcode is explicitly `Exact`.
 #[test]

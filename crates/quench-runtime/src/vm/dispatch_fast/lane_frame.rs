@@ -119,6 +119,10 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         Value::from_bits(self.read(stage, register)).as_number().map(|_| ())
     }
 
+    fn int_result(&mut self, _stage: &mut Concrete, word: u64) -> u64 {
+        Value::integer(word as u32 as i32).to_bits()
+    }
+
     fn miss(&self) {}
     fn int_fact(&self) {}
     fn number_fact(&self) {}
@@ -133,6 +137,19 @@ pub(super) fn staged_jump_if<const TAKEN: bool>(r: Registers, view: Carried, reg
         Step::Control(edge) => Some(edge),
         Step::Unresolved => None,
         Step::Value(_) => unreachable!("a jump produces no value"),
+    }
+}
+
+/// The `typeof` name index of `source` into `destination` by the staged operation; false,
+/// writing nothing, where a heap value's cell decides the name.
+#[inline(always)]
+pub(super) fn staged_typeof_index(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
+    match crate::staged::step(&mut stage, &mut frame, Operation::TypeofIndex { destination, source }) {
+        Step::Value(_) => true,
+        Step::Unresolved => false,
+        Step::Control(_) => unreachable!("a typeof transfers no control"),
     }
 }
 
