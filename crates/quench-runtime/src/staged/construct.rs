@@ -25,19 +25,27 @@ pub(crate) struct Returned<W> {
 #[inline(always)]
 pub(crate) fn construct_result<S: Stage>(stage: &mut S, value: S::Word, receiver: impl FnOnce(&mut S) -> S::Word, miss: S::Miss)
     -> Option<S::Word> {
+    construct_result_by(stage, value, receiver, |stage| {
+        let array = is_direct_array(stage, value);
+        let function = is_direct_function(stage, value);
+        let record = stage.any(array, function);
+        stage.guard(record, miss)?;
+        Some(value)
+    })
+}
+
+/// `construct_result` with `other` deciding every heap reference that is not a direct object
+/// (a frame that cannot leave there asks the host).
+#[inline(always)]
+pub(crate) fn construct_result_by<S: Stage>(stage: &mut S, value: S::Word, receiver: impl FnOnce(&mut S) -> S::Word,
+    other: impl FnOnce(&mut S) -> Option<S::Word>) -> Option<S::Word> {
     // Each arm runs only on its own path: a primitive (the common return) yields the receiver
     // after one tag test, a direct object after two, and only another heap reference reaches the rest.
     let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
     let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
     stage.choose_leaving(heap, |stage| {
         let object = is_direct_object(stage, value);
-        stage.choose_leaving(object, |_| Some(value), |stage| {
-            let array = is_direct_array(stage, value);
-            let function = is_direct_function(stage, value);
-            let record = stage.any(array, function);
-            stage.guard(record, miss)?;
-            Some(value)
-        })
+        stage.choose_leaving(object, |_| Some(value), other)
     }, |stage| Some(receiver(stage)))
 }
 
