@@ -51,14 +51,14 @@ impl Op {
     /// suspension or `this` binding. The lane's own in-place steps (`LANE_IN_PLACE`) are among them;
     /// the rest may replace the frame's environment, which the lane's own dispatch caches, so only a
     /// body, whose helper drops those caches after the step, makes them: the scope, operator,
-    /// constant, name, literal, element, field and class steps.
+    /// constant, name, literal, element, field and class steps, and `InitializeThis` (whose helper publishes the receiver it bound to the payload).
     pub(crate) const fn steps_in_body(self) -> bool {
         self.traits().has(crate::bytecode::Traits::LANE_IN_PLACE) || matches!(
             self,
             Op::CloneEnv | Op::InitializeTdz | Op::LoadLocal | Op::StoreLocal | Op::LoadEnvLocal | Op::StoreEnvLocal | Op::StoreVarBinding
                 | Op::LoadConst | Op::Unary | Op::Binary | Op::JumpBinaryFalse | Op::Throw
                 | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName | Op::StoreName | Op::StoreResolvedName
-                | Op::LoadCallee | Op::LoadImportMeta | Op::LoadCapture | Op::StoreCapture
+                | Op::LoadCallee | Op::LoadImportMeta | Op::LoadCapture | Op::StoreCapture | Op::InitializeThis
                 | Op::MakeClosure | Op::MakeArray | Op::MakeConstArray | Op::MakeObject | Op::MakeObject2 | Op::MakeObjectLiteral
                 | Op::MakeLiteralTemplate | Op::SuperConstArrayObject2 | Op::CreateRegExpLiteral | Op::CacheTemplateObject | Op::LoadCachedTemplateObject
                 | Op::StringCaseIndex | Op::StringConcat | Op::Delete | Op::GetAsyncIterator

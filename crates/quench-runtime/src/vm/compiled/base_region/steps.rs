@@ -26,9 +26,7 @@
 //!    to the handler's register and control goes to its block, as `Vm::exception_handler_target`
 //!    does, so the interpreter never re-executes the `throw` to find the handler.
 //! 4. A leave (`CallRow::Here`): the region ends at the instruction and the interpreter runs it,
-//!    for every other instruction: `InitializeThis`, which writes the frame's `this` that the rows
-//!    reading the receiver take from the dispatch payload (a constructor's body leaves there: the
-//!    rows after `super()` would read a stale receiver); the suspensions `Await`, `Yield` and
+//!    for every other instruction: the suspensions `Await`, `Yield` and
 //!    `YieldStar`, whose generator or async record the lane resumes in the interpreter, so no native
 //!    code could continue past them; the Wasm opcodes (`EXCLUDED`); a call with an `eval` flag, or with
 //!    a result flag other than the return flag (a `super()` that binds `this`, an update of a numeric

@@ -7262,6 +7262,14 @@ impl<H: Host> Vm<H> {
         unsafe { (*frame).dispatch.refresh_object_bases(self) }
     }
 
+    /// Publishes `receiver`, a `this` the running body's frame has just bound (`InitializeThis`), as the
+    /// payload's receiver the body's rows read: the frame's own and the payload's are written by the one step.
+    pub(super) fn publish_body_receiver(&self, receiver: Value) {
+        let frame = lane_frame();
+        // SAFETY: as `refresh_body_bases`.
+        unsafe { (*frame).dispatch.receiver = receiver.to_bits() }
+    }
+
     /// Hands `write` each of the `count` registers an inlined callee its lane body left
     /// inside held, as the body wrote them to the scratch window (`LaneFrame::scratch`).
     pub(super) fn lane_scratch(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {

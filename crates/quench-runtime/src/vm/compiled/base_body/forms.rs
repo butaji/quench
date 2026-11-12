@@ -42,3 +42,17 @@ fn typeof_strings_are_the_interned_table_entries() {
     assert!(runs > 100, "the bodies ran {runs} times");
     assert!(fast_rows(Op::Unary) > before, "no typeof string fast row");
 }
+
+/// `super()` binds the derived constructor's `this` and the rows after it read the receiver it bound: the helper
+/// step that binds the frame's `this` publishes the same receiver to the payload the rows read.
+#[test]
+fn initialize_this_publishes_the_receiver_to_the_rows_after_it() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "class A { constructor(n) { this.a = n; } }
+         class B extends A { constructor(n) { let s = 0; for (let i = 0; i < n; i++) s = s + i; super(s); this.b = this.a + 1; this.c = this.b * 2; } }
+         let t = 0; for (let k = 0; k < 300; k++) { const o = new B(k % 5); t = (t + o.a + o.b + o.c) | 0; }
+         print(t); const q = new B(4); print(q.a); print(q.b); print(q.c);",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 0, "no body ran");
+}

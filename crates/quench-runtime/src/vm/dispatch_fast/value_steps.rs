@@ -112,6 +112,10 @@ unsafe fn lane_body_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u
             next != following
         })
     });
+    if branched.is_some() && instruction.op() == crate::bytecode::Op::InitializeThis {
+        // The step bound the frame's `this`: the rows that read the receiver take the payload's.
+        vm.publish_body_receiver(unsafe { (*cx).registers }.get(instruction.register_a()));
+    }
     // SAFETY: as above; the dropped caches are derived again where the lane next needs them.
     unsafe {
         (*cx).capture = std::ptr::null();
