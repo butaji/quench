@@ -34,7 +34,9 @@ pub(crate) struct GeneratorFrame {
     /// `WINDOW` stays valid.
     pub(in crate::vm) registers: Vec<Value>,
     pub(in crate::vm) active_iterators: Vec<ActiveIterator>,
-    /// The scope stack the frame detached when it suspended.
+    /// The scope stack the frame detached when it suspended: the `with` objects of its
+    /// scope chain, those its closure captured and those it entered, outermost first. While a
+    /// lane activation runs the frame, the chain is the lane stack's (`LaneStack::with_objects`).
     pub(in crate::vm) with_objects: Vec<Value>,
     /// The registers live at the suspension, when liveness covers the function and every
     /// other register was cleared there (`Vm::suspend_activation`): only these can name a
@@ -135,16 +137,19 @@ impl GeneratorFrame {
 
     /// The suspension of a frame that ran in a lane activation over its register file: it resumes
     /// at `pc`, with the registers liveness finds live there, and takes back the iterators its
-    /// loops pushed while it ran. Only these change while a window runs the frame.
+    /// loops pushed and the `with` objects its scope chain holds while it ran (`with_scopes`).
+    /// Only these change while a window runs the frame.
     pub(in crate::vm) fn suspend_at(
         &mut self,
         pc: usize,
         live_registers: Option<RegisterSet>,
         iterators: impl Iterator<Item = ActiveIterator>,
+        with_objects: impl Iterator<Item = Value>,
     ) {
         self.pc = pc;
         self.live_registers = live_registers;
         self.active_iterators.extend(iterators);
+        self.with_objects.extend(with_objects);
     }
 
     /// `frame`'s suspended state, moved: its register file and buffers keep their storage. What

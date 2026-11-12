@@ -148,11 +148,12 @@ fn lane_resume_generator<H: Host>(
     // SAFETY: the record keeps the frame, and so its registers, until the activation ends.
     let (prefix, window) = unsafe { ((*frame).prefix(), (*frame).registers.as_mut_ptr()) };
     let activation = generator_activation(cx, r, ip, GeneratorWindow { prefix, function, generator, completion, environment });
-    // SAFETY: the limit check above leaves room for the activation, and the frame's loops
-    // resume as the new activation's (`LaneStack::iterators`).
+    // SAFETY: the limit check above leaves room for the activation, and the frame's loops and
+    // scope chain resume as the new activation's (`LaneStack::iterators`, `LaneStack::with_objects`).
     unsafe {
         vm.lane_stack.push_generator_activation(activation);
         vm.lane_stack.restore_iterators(depth, &mut (*frame).active_iterators);
+        vm.lane_stack.restore_with_objects(depth, &mut (*frame).with_objects);
     }
     let entry = PreparedEntry { view, env: parent, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
     // SAFETY: the window holds the suspended registers, which nothing else writes while it runs,

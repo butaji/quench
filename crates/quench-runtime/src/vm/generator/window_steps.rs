@@ -76,11 +76,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// Suspends the frame of a windowed run at `pc`: the environment window closed, its dead
-    /// registers cleared, and the iterators the activation at `depth` pushed taken back.
+    /// registers cleared, and the iterators and `with` objects the activation at `depth` holds
+    /// taken back.
     pub(in crate::vm) fn park_frame(&mut self, frame: &mut GeneratorFrame, pc: usize, depth: usize) {
         frame.close_environment_window();
         let live_registers = self.release_dead_registers(frame.program, frame.function, pc, &mut frame.registers);
-        frame.suspend_at(pc, live_registers, self.lane_stack.drain_iterators(depth));
+        let with_objects = self.lane_stack.drain_with_objects(depth);
+        frame.suspend_at(pc, live_registers, self.lane_stack.drain_iterators(depth), with_objects.into_iter());
     }
 
     /// Ends the windowed run of `generator` at its return: it completes, dropping its frame.
@@ -98,22 +100,26 @@ impl<H: Host> Vm<H> {
         &mut self,
         generator: Value,
         iterators: impl Iterator<Item = ActiveIterator>,
+        with_objects: impl Iterator<Item = Value>,
     ) {
         let frame = self
             .generator_record_mut(generator)
             .and_then(GeneratorRecord::take_windowed)
             .expect("a windowed generator's activation materializes");
-        self.push_resumed_frame(frame, iterators);
+        self.push_resumed_frame(frame, iterators, with_objects);
     }
 
     /// The frame of a windowed run's record, made a VM frame on the frame stack with the
-    /// iterators the lane's loops pushed since the lane resumed it.
+    /// iterators the lane's loops pushed and the `with` objects its scope chain holds since the
+    /// lane resumed it.
     pub(in crate::vm) fn push_resumed_frame(
         &mut self,
         mut frame: Box<GeneratorFrame>,
         iterators: impl Iterator<Item = ActiveIterator>,
+        with_objects: impl Iterator<Item = Value>,
     ) {
         frame.close_environment_window();
+        frame.with_objects.extend(with_objects);
         let mut frame = frame.into_frame(self.with_stack.len());
         frame.active_iterators.extend(iterators);
         self.activate_frame(&mut frame);

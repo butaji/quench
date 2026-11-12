@@ -1950,6 +1950,11 @@ pub(super) struct LaneStack {
     /// frame's `active_iterators`, which the activation's frame takes when it materializes.
     /// A completion drops its activation's entries, as a frame's pop drops its list.
     iterators: Vec<(usize, super::ActiveIterator)>,
+    /// The `with` objects of the activations' scope chains (`with_scopes`), each with the index of
+    /// the activation that owns it, innermost last: a frame's `with_objects`, which the
+    /// activation's frame takes when it materializes. A completion drops its activation's
+    /// entries, as a frame's pop truncates the VM's scope stack.
+    with_objects: Vec<(usize, Value)>,
     /// The forwarding constructor bodies call targets name (`ScriptCallTarget::forwarded_method`),
     /// each once: a program's bodies are fixed, so the table only grows with distinct ones.
     forwarded_methods: Vec<crate::bytecode::ForwardedThisMethod>,
@@ -2004,6 +2009,7 @@ impl Default for LaneStack {
             settling: Vec::new(),
             steps: Vec::new(),
             iterators: Vec::new(),
+            with_objects: Vec::new(),
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
@@ -2094,22 +2100,24 @@ impl LaneStack {
     fn pop_activation(&mut self) -> Option<Activation> {
         let activation = self.activations.pop()?;
         self.wasm_storage_bytes -= activation.frame_storage_bytes();
-        self.drop_iterators_from(self.activations.len());
+        self.drop_owned_from(self.activations.len());
         Some(activation)
     }
 
-    /// Drops the iterator entries of the activations from index `depth` on, which completed.
+    /// Drops what the activations from index `depth` on owned, which completed: their loops'
+    /// iterators and their `with` objects.
     #[inline(always)]
-    fn drop_iterators_from(&mut self, depth: usize) {
-        if !self.iterators.is_empty() {
-            self.drop_iterators_held_from(depth);
+    fn drop_owned_from(&mut self, depth: usize) {
+        if !self.iterators.is_empty() || !self.with_objects.is_empty() {
+            self.drop_owned_held_from(depth);
         }
     }
 
     #[cold]
     #[inline(never)]
-    fn drop_iterators_held_from(&mut self, depth: usize) {
+    fn drop_owned_held_from(&mut self, depth: usize) {
         self.iterators.retain(|(owner, _)| *owner < depth);
+        self.with_objects.retain(|(owner, _)| *owner < depth);
     }
 
     /// The generation of a lane run under `key`: the current one while the key holds, else
@@ -11196,6 +11204,7 @@ impl<H: Host> Vm<H> {
         let mut settling = std::mem::take(&mut self.lane_stack.settling).into_iter();
         let mut steps = std::mem::take(&mut self.lane_stack.steps).into_iter();
         let iterators = std::mem::take(&mut self.lane_stack.iterators);
+        let scopes = std::mem::take(&mut self.lane_stack.with_objects);
         let states = ActivationState::of(&activations, cx);
         // A deferred native's caller activations below its callback take the lane's outer
         // pending calls and executing program (`NativeBoundary`).
@@ -11256,7 +11265,8 @@ impl<H: Host> Vm<H> {
                 // A windowed activation's frame is its owner's, which takes the iterators its loops pushed.
                 ActivationKind::Script(script) if script.completion.is_windowed() => {
                     let owned = iterators.iter().filter(|(owner, _)| *owner == depth).map(|(_, iterator)| *iterator);
-                    self.push_window_frame(root, &script, owned);
+                    let entered = scopes.iter().filter(|(owner, _)| *owner == depth).map(|(_, object)| *object);
+                    self.push_window_frame(root, &script, owned, entered);
                     crate::stack::GuestCallGuard::enter().ok()
                 }
                 ActivationKind::Script(script) => {
@@ -11373,6 +11383,8 @@ impl<H: Host> Vm<H> {
                     frame.active_iterators.extend(
                         iterators.iter().filter(|(owner, _)| *owner == depth).map(|(_, iterator)| *iterator),
                     );
+                    // The scope chain it entered sits on the VM's scope stack above its base.
+                    self.with_stack.extend(scopes.iter().filter(|(owner, _)| *owner == depth).map(|(_, object)| *object));
                     // The activation counted within `LaneStack::activation_limit`; its frame
                     // takes the guest-call guard its push would have.
                     crate::stack::GuestCallGuard::enter().ok()
@@ -13359,6 +13371,12 @@ fn lane_native_value<H: Host>(
         Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => {
             return lane_call_native(cx, ip, native, callee, receiver, args);
         }
+        // `with (object)` and its exit, in a frameless activation: its scope chain is the lane stack's.
+        Native::WithEnter | Native::WithExit => {
+            if let Some(value) = with_scopes::lane_with_scope(cx, native, args) {
+                return Some(value);
+            }
+        }
         // Neither a string method nor a pure native: the promise shortcut, else the native.
         Native::PromiseThen | Native::PromiseCatch | Native::PromiseResolve => {
             // SAFETY: the context's program outlives the lane run.
@@ -13385,6 +13403,7 @@ use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
 mod native_calls; mod generator_yields; use generator_yields::suspend_handler;
 mod lane_roots;
+mod with_scopes;
 use lane_roots::{LaneRoot, LaneStart};
 pub(in crate::vm) use lane_roots::JobEnd;
 mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step};
@@ -16529,6 +16548,8 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
         stack.activations.discard_top();
         stack.values.release_window(window);
     }
+    // A return from inside a `with` leaves its scope without an exit.
+    stack.drop_with_objects_from(stack.activations.len());
     // The caller's memory view reads its program's records (`MemoryView::script`), which an
     // activation of the caller's own JavaScript program left in place.
     if CROSSES {
@@ -16630,7 +16651,7 @@ fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> 
     // ones go without its accounting.
     debug_assert!(activations[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
     vm.lane_stack.activations.truncate(outermost + 1);
-    vm.lane_stack.drop_iterators_from(outermost + 1);
+    vm.lane_stack.drop_owned_from(outermost + 1);
     if matches!(&vm.lane_stack.activations[outermost].kind, ActivationKind::Script(script) if script.completion == Completion::ReturnsToBody) {
         return lane_end_body_callee(cx, value);
     }
@@ -16663,7 +16684,7 @@ fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value)
     // (`Activation::frame_storage_bytes`); its slot stays as it is, unread by the stack, until
     // the next push, so it is read in place, as `lane_return_from` reads a plain one.
     unsafe { vm.lane_stack.activations.set_len(depth) };
-    vm.lane_stack.drop_iterators_from(depth);
+    vm.lane_stack.drop_owned_from(depth);
     let activation = unsafe { &*top };
     lane_restore_caller(cx, activation);
     vm.lane_native_returned = Some(value);

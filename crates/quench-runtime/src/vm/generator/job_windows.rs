@@ -25,7 +25,7 @@ impl<H: Host> Vm<H> {
             JobResume::Throws(_) => Value::UNDEFINED,
         };
         self.resume_job_window(job, sent).expect("a job's owner keeps the frame its suspension parked");
-        self.push_job_window_frame(job, std::iter::empty());
+        self.push_job_window_frame(job, std::iter::empty(), std::iter::empty());
         let frame = self.frames.len() - 1;
         JobEnd::Frames(match resume {
             JobResume::Sends(_) => self.run_resumed_frame(code, frame),
@@ -118,8 +118,13 @@ impl<H: Host> Vm<H> {
 
     /// `job`'s activation made a VM frame on the frame stack, where the lane's activations
     /// became frames: its owner gives the frame up, with the iterators the lane's loops pushed
-    /// since it resumed.
-    pub(in crate::vm) fn push_job_window_frame(&mut self, job: JobRoot, iterators: impl Iterator<Item = ActiveIterator>) {
+    /// and the `with` objects its scope chain holds since it resumed.
+    pub(in crate::vm) fn push_job_window_frame(
+        &mut self,
+        job: JobRoot,
+        iterators: impl Iterator<Item = ActiveIterator>,
+        with_objects: impl Iterator<Item = Value>,
+    ) {
         let frame = match job.kind {
             SuspendKind::AsyncFunction => self
                 .heap
@@ -129,6 +134,6 @@ impl<H: Host> Vm<H> {
             SuspendKind::AsyncGenerator => self.generator_record_mut(job.object).and_then(GeneratorRecord::take_windowed),
         }
         .expect("a job's activation materializes from its owner");
-        self.push_resumed_frame(frame, iterators);
+        self.push_resumed_frame(frame, iterators, with_objects);
     }
 }

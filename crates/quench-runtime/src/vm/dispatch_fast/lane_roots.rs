@@ -194,10 +194,13 @@ impl<H: Host> Vm<H> {
         root: LaneRoot,
         script: &ScriptActivation,
         iterators: impl Iterator<Item = super::super::ActiveIterator>,
+        with_objects: impl Iterator<Item = Value>,
     ) {
         match root {
-            LaneRoot::Job(job) if script.completion == Completion::ResumesJob => self.push_job_window_frame(job, iterators),
-            _ => self.push_generator_window_frame(script.callee, iterators),
+            LaneRoot::Job(job) if script.completion == Completion::ResumesJob => {
+                self.push_job_window_frame(job, iterators, with_objects)
+            }
+            _ => self.push_generator_window_frame(script.callee, iterators, with_objects),
         }
     }
 
@@ -318,7 +321,8 @@ struct JobWindow {
 
 impl JobWindow {
     /// Enters the window in `cx`, the context made for it: the activation is the lane stack's
-    /// first, the frame's loops resume as its own (`LaneStack::iterators`), and the lane
+    /// first, the frame's loops and scope chain resume as its own (`LaneStack::iterators`,
+    /// `LaneStack::with_objects`), and the lane
     /// continues at the record of `pc`, where the frame resumes in its function's view.
     fn enter<H: Host>(&self, cx: *mut LaneContext<H>) -> Ip {
         // SAFETY: the lane stack's limit admits its first activation, which resumes over the
@@ -328,6 +332,7 @@ impl JobWindow {
             let stack = &mut vm(cx).lane_stack;
             stack.push_generator_activation(self.activation);
             stack.restore_iterators(0, &mut (*self.frame).active_iterators);
+            stack.restore_with_objects(0, &mut (*self.frame).with_objects);
             lane_enter_suspended(cx, &self.entry, self.registers, self.pc)
         }
     }
