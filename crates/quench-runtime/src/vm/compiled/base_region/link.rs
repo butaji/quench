@@ -1,19 +1,21 @@
 use super::*;
 use quench_bjit::HOLES;
 
-/// `mov r11d, reg32` for the pinned registers rdx, rcx, r8 and r9: the raw int32 to tag.
-pub(super) const PIN_TO_R11: [[u8; 3]; PINNED] = [[0x41, 0x89, 0xd3], [0x41, 0x89, 0xcb], [0x45, 0x89, 0xc3], [0x45, 0x89, 0xcb]];
-/// `movabs r10, imm64` (the int tag), `or r11, r10`, and `mov [rdi+disp32], r11`.
+/// `mov r11d, reg32` for the pinned registers r14, r15, rdi and rsi (the b-jit convention: frame
+/// in r12, context in r13): the raw int32 to tag.
+pub(super) const PIN_TO_R11: [[u8; 3]; PINNED] = [[0x45, 0x89, 0xf3], [0x45, 0x89, 0xfb], [0x41, 0x89, 0xfb], [0x41, 0x89, 0xf3]];
+/// `movabs r10, imm64` (the int tag), `or r11, r10`, and `mov [r12+disp32], r11`.
 pub(super) const MOVABS_R10: [u8; 2] = [0x49, 0xba];
 pub(super) const OR_R11_R10: [u8; 3] = [0x4d, 0x09, 0xd3];
-pub(super) const STORE_R11: [u8; 3] = [0x4c, 0x89, 0x9f];
+pub(super) const STORE_R11: [u8; 4] = [0x4d, 0x89, 0x9c, 0x24];
 /// The int tag a pinned int32 takes back into a register slot.
 pub(super) const INT_TAG: u64 = 0x7ffd_0000_0000_0000;
-/// The callee-saved registers the thunk preserves (stencils of the tail convention save none):
+/// The callee-saved registers the thunk preserves (rows save none, and use rbx and r12-r15):
 /// push rbp, rbx, r12-r15 and r8 (the result pointer), in order.
 pub(super) const PROLOGUE: [u8; 12] = [0x55, 0x53, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x41, 0x50];
-/// `mov rsi, rdi; mov rdi, rcx`: the entry ABI's context and registers to the stencil convention.
-pub(super) const MOVE_ARGUMENTS: [u8; 6] = [0x48, 0x89, 0xfe, 0x48, 0x89, 0xcf];
+/// `mov r13, rdi; mov r12, rcx`: the entry ABI's context and registers to the stencil convention
+/// (the thunk saved r12 and r13 already).
+pub(super) const MOVE_ARGUMENTS: [u8; 6] = [0x49, 0x89, 0xfd, 0x49, 0x89, 0xcc];
 pub(super) const CALL_OPCODE: u8 = 0xe8;
 /// `pop r8; mov [r8], rax; pop r15..r12, rbx, rbp; xor eax, eax; ret`.
 pub(super) const EPILOGUE: [u8; 18] =

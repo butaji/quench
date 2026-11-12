@@ -85,6 +85,7 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
         Heap::Store => [base, a_hole, b_hole],
         Heap::Index if entry => [dst_hole, decoded.hole, b_hole],
         Heap::Field => [dst_hole, decoded.hole, 0],
+        Heap::Capture(slot) => [dst_hole, u64::from(slot), u64::from(slot) * SLOT],
         _ => [dst_hole, a_hole, b_hole],
     };
     // The row's stencil reads pinned operands and delivers a pinned result itself.

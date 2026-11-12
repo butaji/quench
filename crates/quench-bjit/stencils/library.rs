@@ -16,20 +16,22 @@ pub type Code = (u8, u8, u8, u8, bool);
 
 /// The row whose stencil computes `code`: operands and speculation a row ignores are fixed.
 pub fn canonical((kind, dst, a, b, spec): Code) -> Code {
+    let (copy, compare) = (kind <= 1, (12..=NE).contains(&kind));
+    // The operands a kind ignores are fixed first, so the float test sees only the ones it reads.
+    let (dst, a, b) = match kind {
+        _ if copy => (dst, a, MEM),
+        _ if compare => (MEM, a, b),
+        18 | 19 | 21 => (MEM, MEM, MEM),
+        20 => (dst, a, MEM),
+        22 => (MEM, a, MEM),
+        _ => (dst, a, b),
+    };
     let floats = [dst, a, b].iter().any(|&p| p >= PINF);
-    let (copy, compare, bare) = (kind <= 1, (12..=NE).contains(&kind), kind >= 18);
     if floats && kind <= NE && !(6..=11).contains(&kind) {
-        let b = if copy { MEM } else { b };
-        return (kind, if compare { MEM } else { dst }, a, b, false);
+        return (kind, dst, a, b, false);
     }
     match kind {
-        _ if copy => (kind, dst, a, MEM, true),
-        _ if compare => (kind, MEM, a, b, spec),
-        18 | 19 => (kind, MEM, MEM, MEM, true),
-        20 => (kind, dst, a, MEM, true),
-        21 => (kind, MEM, MEM, MEM, true),
-        22 => (kind, MEM, a, MEM, true),
-        _ if bare => (kind, dst, a, b, spec),
+        _ if copy || kind >= 18 => (kind, dst, a, b, true),
         _ => (kind, dst, a, b, spec),
     }
 }
@@ -45,7 +47,22 @@ pub fn library() -> Vec<Code> {
     let ints_src: Vec<u8> = [MEM, MEMINT, CONST, IMM].into_iter().chain(PIN..PIN + 4).collect();
     let floats_dst: Vec<u8> = (PINF..PINF + 8).chain([MEM]).collect();
     let floats_src: Vec<u8> = [MEM, CONST, MEMINT].into_iter().chain(PIN..PIN + 4).chain(PINF..PINF + 8).collect();
+    let floats_pins: Vec<u8> = (PINF..PINF + 8).collect();
     let mut rows = std::collections::BTreeSet::new();
+    // A bitwise row reads a pinned double as its ToInt32 (`x | 0`): either operand may be one.
+    for kind in 6..=11u8 {
+        for &dst in &ints_dst {
+            for &a in ints_src.iter().chain(&floats_pins) {
+                for &b in ints_src.iter().chain(&floats_pins) {
+                    if a >= PINF || b >= PINF {
+                        rows.insert(canonical((kind, dst, a, b, true)));
+                        // A general row (an int32 speculation that failed) writes a frame word.
+                        rows.insert(canonical((kind, MEM, a, b, false)));
+                    }
+                }
+            }
+        }
+    }
     let mut product = |kinds: &[u8], dsts: &[u8], srcs: &[u8], specs: &[bool]| {
         for &kind in kinds {
             for &dst in dsts {

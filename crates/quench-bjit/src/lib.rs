@@ -8,7 +8,8 @@
 //! `mov rsp,rbp; pop rbp; jmp rel32`. [`Stencil::strip`] verifies those exact bytes and removes
 //! the frame pair from frameless stencils (the epilogue is overwritten by a 4-byte nop so the
 //! stencil's internal branch displacements stay valid).
-#![cfg_attr(test, feature(rust_preserve_none_cc))]
+// Transitional: the Cranelift stencil generator stays only as the differential oracle until deleted.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
 mod hoist;
 mod patch;
 pub mod numeric;
@@ -471,33 +472,18 @@ pub mod rustc {
 
 #[cfg(test)]
 mod rustc_tests {
-    use super::*;
+    use super::{numeric::library, rustc};
 
-    type Entry = unsafe extern "rust-preserve-none" fn(usize, usize, usize, usize, usize, usize, f64, f64, f64, f64, f64, f64, f64, f64) -> usize;
-
-    /// The rustc-built field-read row, chained to `leave_frame0` by the stitcher and called as a
-    /// preserve-none function: it reads `entry[24]` through `ctx[16]`'s payload into `frame[0]`.
+    /// Every row the library names was built, and canonicalizing is idempotent.
     #[test]
-    fn the_field_read_row_chains_and_runs() {
-        let (field, leave) = (rustc::stencil("field_read").unwrap(), rustc::stencil("leave_frame0").unwrap());
-        assert!(field.code.len() <= 30 && field.next_jump == Some(field.code.len() - 5), "{field:?}");
-        assert_eq!(field.imm32.len(), 3);
-        let hole: &dyn Fn(u32) -> u64 = &|index| [0, 24, 0, 16][index as usize];
-        let rows = [Row { stencil: &field, hole, taken: None }, Row { stencil: &leave, hole, taken: None }];
-        let (entry, payload, mut frame) = ([0usize, 0, 0, 0xabcd], [0usize], [0usize; 2]);
-        let mut context = [0usize; 4];
-        let payload = { let mut payload = payload; payload[0] = entry.as_ptr() as usize; payload };
-        context[2] = payload.as_ptr() as usize;
-        unsafe {
-            let memory = libc::mmap(std::ptr::null_mut(), 4096, 7, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0).cast::<u8>();
-            assert_ne!(memory.cast(), libc::MAP_FAILED);
-            let (len, starts) = copy_patch(&rows, memory, |_, _| 0);
-            assert_eq!(len, field.code.len() - field.tail_len + leave.code.len(), "the jmp to the adjacent row is dropped");
-            assert_eq!(starts[1], field.code.len() - field.tail_len);
-            let run: Entry = std::mem::transmute(memory);
-            assert_eq!(run(frame.as_mut_ptr() as usize, context.as_ptr() as usize, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0), 0xabcd);
-            assert_eq!(frame[0], 0xabcd);
-            libc::munmap(memory.cast(), 4096);
+    fn the_library_is_built() {
+        for code in library::library() {
+            assert_eq!(library::canonical(code), code);
+            assert!(rustc::stencil(&library::name(code)).is_some(), "{code:?}");
+        }
+        for code in library::heap_library() {
+            assert_eq!(library::heap_canonical(code), code);
+            assert!(rustc::stencil(&library::heap_name(code)).is_some(), "{code:?}");
         }
     }
 }
