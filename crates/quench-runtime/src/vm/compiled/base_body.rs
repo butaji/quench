@@ -67,6 +67,7 @@ impl<H: Host> Vm<H> {
         // place for the atoms no method cache names, and its prototype-held reads fold to their values.
         let folds = self.specialized && program.specialized;
         let constructors = if folds { self.instanceof_constructors(program, &code, parameters) } else { Vec::new() };
+        let presences = if folds { self.membership_facts(&code) } else { Vec::new() };
         let reads = |site: u16| self.native_field_read_descriptors(site);
         let instanceofs = |pc: usize| constructors.get(pc).copied().flatten().and_then(|constructor| self.instanceof_fact(constructor).map(|fact| (constructor, fact)));
         let known = Known {
@@ -76,6 +77,7 @@ impl<H: Host> Vm<H> {
             constants: self.programs.constants(self.active_program),
             typeof_names: &self.typeof_names,
             instanceofs: folds.then_some(&instanceofs as &dyn Fn(usize) -> Option<(Value, InstanceofFact)>),
+            presences: folds.then_some(presences.as_slice()),
         };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, (function, body.registers), known, &widened(generic), [&ints, &doubles], &callees, helpers) }) else { return LaneBodyOutcome::Declined };

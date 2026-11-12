@@ -169,3 +169,30 @@ fn instanceof_of_a_held_constructor_is_a_row_and_a_prototype_change_retires_it()
     assert!(runs > 100, "the bodies ran {runs} times");
     assert!(fast_rows(Op::Binary) > before, "no instanceof fast row");
 }
+
+/// `'k' in o` of a constant key that one receiver layout answered is a row over the object's exact shape and prototype
+/// link (the boolean that layout answered: an own key, an inherited one or an absent one), with the interpreter's
+/// answer for any other layout; a prototype that gains or loses the key retires the body that held the answer.
+#[test]
+fn in_of_a_constant_key_is_a_row_and_a_prototype_layout_change_retires_it() {
+    let before = fast_rows(Op::Binary);
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "class P { m() { return 1; } } class Q extends P {}
+         function own(o) { return 'a' in o; }
+         function inherited(o) { return 'm' in o; }
+         function absent(o) { return 'z' in o; }
+         const q = new Q(); q.a = 1; const plain = { a: 1 }; const bare = Object.create(null);
+         let t = 0;
+         for (let k = 0; k < 600; k++) t = (t + (own(q) ? 1 : 0) + (inherited(q) ? 2 : 0) + (absent(q) ? 4 : 0) + (own(q) ? 8 : 0)) | 0;
+         print(t); print(own(bare)); print(inherited(bare)); print(absent(plain)); print(own([])); print(inherited(P.prototype));
+         P.prototype.z = 1;
+         print(absent(q)); print(absent(plain));
+         delete P.prototype.m;
+         print(inherited(q)); print(inherited(new Q()));
+         for (let k = 0; k < 600; k++) t = (t + (absent(q) ? 1 : 0) + (inherited(q) ? 2 : 0)) | 0;
+         print(t);",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+    assert!(fast_rows(Op::Binary) > before, "no `in` row");
+}

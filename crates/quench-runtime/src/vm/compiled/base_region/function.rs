@@ -78,9 +78,10 @@ fn lowered(region: &LoopRegion, pc: u32, sites: &mut Sites, (instruction, return
     }
 }
 
-/// Whether the row is a fast arm of its instruction: a fast step, or a constant written as it is.
+/// Whether the row is a fast arm of its instruction: a fast step, a constant written as it is, or the value a Stable
+/// fact folded (`Decoded::folded`).
 fn is_fast(row: &Decoded) -> bool {
-    matches!(row.step, Some(Step::Fast(_))) || matches!(row.a, Some(Source::Value(_)))
+    matches!(row.step, Some(Step::Fast(_))) || matches!(row.a, Some(Source::Value(_))) || row.folded.is_some()
 }
 
 /// Whether a row may be followed by the completion of the activation with its result: it falls

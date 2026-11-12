@@ -379,6 +379,17 @@ fn activation_row(instruction: WideInstruction) -> Option<Decoded> {
     }
 }
 
+/// The row of `key in object` over a register's object, where the VM remembers exactly one receiver layout answering the
+/// key (`Known::presences`): the boolean it answered, while the object has that exact shape and prototype link
+/// (`Heap::Held`, the folded read's row over a constant), under the dependency on the prototypes' layouts that
+/// `Folded::holder` names.
+fn membership_row(known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    let fact = known.presences?.get(pc as usize).copied().flatten().filter(|_| is_membership(instruction))?;
+    let object = Some(Source::Register(instruction.operand_c().register_index()?));
+    let row = Decoded::heap(Heap::Held, Some(instruction.result_register()), object, None);
+    Some(Decoded { hole: Value::boolean(fact.present).to_bits(), folded: Some(Folded { shape: fact.shape, link: fact.link, holder: fact.holder }), ..row })
+}
+
 /// The heap instructions: a capture, a dense element read or store, a recorded or cached field
 /// read or store, the proof that a base is an array, the activation's `this` and its local slots.
 pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
@@ -387,6 +398,7 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32,
         Class::GetIndex | Class::SetIndex | Class::RequireObjectCoercible => array_row(region, facts, instruction),
         Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
         Class::LoadThis | Class::LoadLocalPlain | Class::StoreLocalPlain => activation_row(instruction),
+        Class::Binary => membership_row(known, pc, instruction),
         _ if instruction.op().is_field_store() => field_store_row(known, instruction),
         _ => None,
     }

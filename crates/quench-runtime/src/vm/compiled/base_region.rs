@@ -14,6 +14,7 @@ use super::osr_loop::LoopRegion;
 use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::code_dependencies::InstanceofFact;
 use crate::value::Value;
+use crate::vm::in_presence::InPresence;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
 use super::NativeFieldLoad;
@@ -24,7 +25,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 mod call_plan;
-mod constructors;
+mod sites;
 pub(in crate::vm::compiled) mod callees;
 mod decode;
 pub(in crate::vm::compiled) mod function;
@@ -35,7 +36,7 @@ mod repr;
 mod steps;
 mod throws;
 mod webs;
-use constructors::*;
+use sites::*;
 use decode::*;
 use link::*;
 use plan::*;
@@ -74,6 +75,11 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// slot, a departure of its shape or a change of the `@@hasInstance` holder's values retires the code over
     /// (`Body::instanceofs`). `None` where no fact may be held.
     pub(in crate::vm::compiled) instanceofs: Option<&'a dyn Fn(usize) -> Option<(Value, InstanceofFact)>>,
+    /// What `key in object` answered at the PC of an `in` whose key is a constant string (`Vm::membership_facts`), where
+    /// the VM and the program run specialized and the code may hold Stable facts: the row answers the boolean while its
+    /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of any
+    /// prototype retires the code over (`Body::holders`). `None` where no fact may be held.
+    pub(in crate::vm::compiled) presences: Option<&'a [Option<InPresence>]>,
 }
 
 impl Known<'_> {

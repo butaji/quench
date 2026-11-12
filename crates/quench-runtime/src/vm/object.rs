@@ -1034,6 +1034,7 @@ impl<H: Host> Vm<H> {
         self.heap.dependencies_mut().clear_inherited();
         self.accessor_fields.clear();
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
+        self.in_presences = [None; super::in_presence::IN_PRESENCES];
         self.closure_shapes = [None; _];
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();

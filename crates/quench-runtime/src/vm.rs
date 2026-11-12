@@ -146,6 +146,7 @@ mod error;
 mod eval;
 mod fdlibm_math;
 mod field_cache;
+mod in_presence;
 mod site_table;
 mod finalization;
 mod first_call_chunk;
@@ -2160,6 +2161,9 @@ pub(crate) struct Vm<H> {
     /// data `prototype` at the paired slot, direct-mapped by shape; derived from shapes, so
     /// field-cache invalidation clears them.
     instanceof_constructor_layouts: [Option<(u32, usize)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+    /// What `key in object` answered of receiver shapes and keys (`in_presence`), direct-mapped; derived from
+    /// shapes, so field-cache invalidation clears it.
+    in_presences: [Option<in_presence::InPresence>; in_presence::IN_PRESENCES],
     /// Constructor prototypes (a subclass's parent constructor, `%TypedArray%`) proved to
     /// inherit the native `@@hasInstance` (`Vm::inherits_native_has_instance`), each with the
     /// prototype-layout epoch its proof holds under: the proof marks every link of the chain
@@ -3187,6 +3191,7 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.instanceof_inheriting_holders = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
+        self.in_presences = [None; in_presence::IN_PRESENCES];
         self.closure_shapes = [None; 2];
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();

@@ -397,7 +397,15 @@ impl<H: Host> Vm<H> {
         if !self.plain_named_key(atom) {
             return None;
         }
-        let property = PropertyKey::string(atom);
+        let found = self.plain_in_chain(object, PropertyKey::string(atom))?;
+        self.remember_presence(object, atom, found);
+        Some(found)
+    }
+
+    /// Whether a shape along the chain of `object`, ordinary objects up to `null`, names `property`
+    /// (`plain_in`'s walk): `None` where an object on it is not ordinary or holds the key in a
+    /// side table.
+    fn plain_in_chain(&self, object: Value, property: PropertyKey) -> Option<bool> {
         let mut current = object;
         loop {
             let data = self.heap.ordinary_object(current)?;
