@@ -10,7 +10,9 @@
 //! upper-word table as hole 1 and its cache entry's byte offset as hole 2. An array length read
 //! (`LENGTH_ROW`) takes the destination in hole 0 and the array word's frame offset in hole 1. A
 //! capture store (`CAPTURE_SET_ROW`) takes its value operand in hole 0 and the slot and its byte
-//! offset in holes 1 and 2.
+//! offset in holes 1 and 2. A field store (`SITE_STORE_ROW`) takes the object register's frame
+//! offset in hole 0, its value operand in hole 1 and the cache entry's byte offset in hole 2. A
+//! chained site read (`ENTRY`) carries both entry offsets in hole 2.
 //! Every failed proof leaves through exit 0 with nothing written, so the interpreter runs the
 //! instruction.
 
@@ -18,11 +20,11 @@ use crate::layout::{
     CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
     JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE,
 };
-use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole64, index_of, number_word, word_of};
+use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word, word_of};
 use crate::stage::StencilStage;
 use crate::staged::{elements, entry, environment, value};
 
-pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, INDEX_ROW, LENGTH_ROW, SITE_OBJECT_AT, SITE_ROW, STORE_ROW};
+pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, INDEX_ROW, LENGTH_ROW, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW, STORE_ROW};
 
 unsafe extern "C" {
     static HOLE_V0: u8;
@@ -131,6 +133,18 @@ fn site_row<const D: u8, const CHAIN: bool>(s: S, payload: usize, object: u64) -
     deliver::<D>(s, need!(s, word))
 }
 
+/// A store of the value operand (hole 1) through the site's cache entry (hole 2) into the object
+/// `object` names (`entry::site_store`): a leave writes nothing.
+#[inline(always)]
+fn site_store_row<const A: u8>(s: S, payload: usize, object: u64) -> Out {
+    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
+    let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
+    let tables = (word_at(payload, JS_STEP_FIELD_ENTRIES), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
+    let offset = stage_site(&mut stage);
+    need!(s, entry::site_store(&mut stage, tables, object, offset, word_of::<A, HOLE_A>(&s), ()));
+    Out::Next(s)
+}
+
 /// The object register a site row names: its frame offset sits above the destination's in hole 0.
 #[inline(always)]
 fn register_object(s: &S) -> u64 {
@@ -183,6 +197,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         CAPTURE_SET_ROW => capture_set_row::<A>(s, payload),
         FIELD_ROW => field_row::<D>(s, payload),
         SITE_ROW => site_row::<D, ENTRY>(s, payload, register_object(&s)),
+        SITE_STORE_ROW => site_store_row::<A>(s, payload, word_at(s.frame, hole::<0>())),
         ARRAY_ROW => array_row(s),
         LENGTH_ROW => length_row::<D>(s, payload),
         INDEX_ROW => index_row::<ENTRY, D, B>(s, payload),

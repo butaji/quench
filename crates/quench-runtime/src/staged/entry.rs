@@ -4,7 +4,7 @@
 //! the entry's address, so the code never changes when the site's feedback does (the entry
 //! record is the one feedback authority).
 
-use super::object::{arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, plain_payload};
+use super::object::{arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, packed_form, plain_payload};
 use super::Stage;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::vm::NATIVE_FIELD_CACHE_LAYOUT as ENTRY;
@@ -175,6 +175,60 @@ pub(crate) fn site_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
     site_read_in(stage, tables, middle, second, miss)
 }
 
+/// Stores `value` at `slot` of the plain object record at `record`, whose shape the caller proved
+/// and whose store gate (`Stage::store_gate`) admitted the write: a packed slot takes the value's
+/// narrow form, a flat one the value; `None` (leaving at `miss`) where its values are not plain or
+/// a packed slot cannot hold the value, nothing written.
+#[inline(always)]
+fn plain_store<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, value: S::Word, miss: S::Miss) -> Option<()> {
+    let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
+    let plain = plain_payload(stage, payload);
+    stage.guard(plain, miss)?;
+    let inline = inline_storage(stage, record);
+    let narrow = packed_form(stage, inline, value, miss)?;
+    stage.choose(inline, |stage| {
+        let half = stage.mul_imm(slot, std::mem::size_of::<u32>() as u64);
+        let address = stage.add(record, half);
+        stage.store_u32(address, OBJECT.payload_offset as i32, narrow);
+        stage.constant(0)
+    }, |stage| {
+        let run = arena_run(stage, payload);
+        let offset = stage.mul_imm(slot, OBJECT.property_value_size as u64);
+        let address = stage.add(run, offset);
+        stage.store_u64(address, 0, value);
+        stage.constant(0)
+    });
+    Some(())
+}
+
+/// A store of `value` through the cache entry `offset` bytes into the field cache table `entries`
+/// of the object `object` names in the record table at `records`: where the entry is an own entry
+/// for the record's exact shape, its values are plain and the store gate admits the write, the
+/// value goes to the entry's slot (`plain_store`). `None` (leaving at `miss`) otherwise, or where
+/// either table is absent or the word is no direct object, nothing written. Whether the program
+/// may store in place at all (a specialized run, no method cache naming the field) is the
+/// caller's.
+// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, value: S::Word, miss: S::Miss) -> Option<()> {
+    site_tables(stage, tables, miss)?;
+    let (entries, records) = tables;
+    let direct = super::value::is_direct_object(stage, object);
+    stage.guard(direct, miss)?;
+    let id = stage.and_imm(object, u64::from(u32::MAX));
+    let record = super::object::object_record_at(stage, records, id);
+    let entry = stage.add_imm(entries, offset);
+    let stored_holder = stage.load_u32(entry, ENTRY.holder_offset as i32);
+    let own = stage.eq_imm(stored_holder, u64::from(ENTRY.holder_complement ^ ENTRY.own_holder));
+    stage.guard(own, miss)?;
+    shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
+    let open = stage.store_gate(id, value);
+    stage.guard(open, miss)?;
+    let slot = entry_slot(stage, entry);
+    plain_store(stage, record, slot, value, miss)
+}
+
 /// The word the loop entry record holds at the per-site byte `offset`: a field value the loop's
 /// entry recorded (`LoopEntry`), written before the run and never during it.
 // Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
@@ -313,6 +367,39 @@ mod tests {
         };
         assert_eq!(read(outer), Some(Value::integer(9)));
         assert_eq!(read(plain), None, "an integer has no fields");
+    }
+
+    /// A store through an own entry writes the entry's slot in both storage forms, a value a
+    /// packed slot cannot hold or an entry that is not the record's own leaves, and a leave
+    /// writes nothing.
+    #[test]
+    fn a_site_store_writes_the_entry_slot_and_leaves_without_writing_on_any_miss() {
+        for count in [crate::value_vec::INLINE_PROPERTY_COUNT, crate::value_vec::INLINE_PROPERTY_COUNT + 2] {
+            let mut heap = Heap::new();
+            let (object, shape) = object_of(&mut heap, count);
+            let records = heap.object_record_base().expect("object records exist") as u64;
+            let store = |heap: &Heap, entry: [u32; 3], value: Value| {
+                let mut stage = crate::staged::Concrete::storing(heap);
+                site_store(&mut stage, (entry.as_ptr() as u64, records), object.to_bits(), 0u64, value.to_bits(), ()).is_some()
+            };
+            let read = |heap: &Heap, entry: [u32; 3]| {
+                // SAFETY: a live record, a stored entry and its arena.
+                unsafe { concrete_read_entry(heap.object(object).unwrap(), entry.as_ptr(), heap.arena_values_base()) }
+            };
+            for slot in 0..count as u32 {
+                let entry = stored(shape, ENTRY.own_holder, slot);
+                assert!(store(&heap, entry, Value::integer(-7)), "{count} values, slot {slot}");
+                assert_eq!(read(&heap, entry), Some(Value::integer(-7)));
+                let before = read(&heap, entry);
+                assert_eq!(store(&heap, entry, Value::number(1.5)), count > crate::value_vec::INLINE_PROPERTY_COUNT, "a double needs a flat slot");
+                assert_eq!(read(&heap, entry) == before, count <= crate::value_vec::INLINE_PROPERTY_COUNT);
+            }
+            let entry = stored(shape, ENTRY.own_holder, 0);
+            let before = read(&heap, entry);
+            assert!(!store(&heap, stored(shape + 1, ENTRY.own_holder, 0), Value::integer(1)), "another shape");
+            assert!(!store(&heap, stored(shape, 7, 0), Value::integer(1)), "a holder entry");
+            assert_eq!(read(&heap, entry), before, "a leave writes nothing");
+        }
     }
 
     /// The row has no per-site hole of its own: the entry address is the caller's word.

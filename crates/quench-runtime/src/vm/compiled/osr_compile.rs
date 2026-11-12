@@ -311,7 +311,7 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, program: &Resid
     if !crate::jit_mode::base_regions() || region.inlining.is_some() {
         return base_only.then_some(None);
     }
-    let built = super::base_region::build(region, views == super::ElementViews::Dense, super::base_region::Known { program }, widened,
+    let built = super::base_region::build(region, views == super::ElementViews::Dense, super::base_region::Known { program, stores: None }, widened,
         [observation.int_registers, observation.double_registers]);
     let Ok((code, bare)) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {

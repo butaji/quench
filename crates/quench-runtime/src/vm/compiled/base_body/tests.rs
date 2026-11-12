@@ -197,3 +197,23 @@ fn nested_field_chains_run_in_a_body() {
          print(t);",
     );
 }
+
+/// An own data field's store runs through the site's cache entry (packed int32 slots here), under
+/// the store gate and with no method cache naming the field; and the same stores on flat storage,
+/// of doubles, print what the interpreter prints.
+#[test]
+fn property_writes_run_in_a_body() {
+    assert_bodies_never_leave(
+        "function bump(p, d) { p.x = p.x + d; p.y = p.y - d; return p.x + p.y; }
+         const pt = { x: 1, y: 2 }; let t = 0;
+         for (let k = 0; k < 300; k++) t = (t + bump(pt, 1)) | 0;
+         print(t); print(pt.x); print(pt.y);",
+    );
+    let (interpreted, compiled, _) = run_both(
+        "function scale(o, f) { o.a = o.a * f; o.b = o.b + 1; o.c = o.c + 2; o.d = o.d * f; return o.b + o.c; }
+         const q = { a: 1, b: 3, c: 4, d: 2 }; let t = 0;
+         for (let k = 0; k < 300; k++) t = (t + scale(q, 1.5)) | 0;
+         print(t); print(q.a); print(q.d); print(scale({ a: 'x', b: 1, c: 2, d: 3 }, 2));",
+    );
+    assert_eq!(interpreted, compiled);
+}

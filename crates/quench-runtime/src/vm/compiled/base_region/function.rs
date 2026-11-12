@@ -16,6 +16,9 @@ pub(in crate::vm::compiled) struct Body {
     pub(in crate::vm::compiled) exits: usize,
     /// Whether it jumps backward: a loop pays an entry's cost over its iterations.
     pub(in crate::vm::compiled) loops: bool,
+    /// The atoms its stores run in place for, held unnamed by method caches (a Stable fact): a
+    /// cache naming one retires the body (`StableFacts::atoms`).
+    pub(in crate::vm::compiled) atoms: Box<[Atom]>,
 }
 
 /// The row of the instruction at `pc`: what the loop regions' decode covers (a heap row from the
@@ -96,7 +99,7 @@ fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, Str
 /// not kept current.
 fn framed(homes: &Homes, row: &Decoded) -> bool {
     let through = match row.heap {
-        Some(Heap::Store) => row.base,
+        Some(Heap::Store | Heap::SiteStore) => row.base,
         Some(Heap::Index | Heap::Array | Heap::Site | Heap::SiteChain | Heap::Length) => row.a.and_then(register_of),
         _ => None,
     };
@@ -144,5 +147,8 @@ fn assemble_body(region: &LoopRegion, known: Known, registers: u16, widened: &[u
     let exits = planned.iter().filter(|row| row.stop.is_some_and(|stop| stop.returns.is_none())).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.iter().filter(|reached| **reached).count() - exits;
-    Ok(Body { code: link(&layout, &planned)?, covered, exits, loops })
+    let mut atoms: Vec<Atom> = decoded.iter().filter_map(|row| row.atom).collect();
+    atoms.sort_unstable();
+    atoms.dedup();
+    Ok(Body { code: link(&layout, &planned)?, covered, exits, loops, atoms: atoms.into() })
 }

@@ -6608,6 +6608,10 @@ struct JsStepDispatch {
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
     allocated: usize,
     collect_at: usize,
+    /// Whether the property arena records its slots' value classes (`Heap::tracks_slot_values`),
+    /// which a native store's barrier (`Stage::store_gate`) requires clear. Last among the words
+    /// stencil rows read, so the words before it keep their offsets.
+    slots_tracked: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -7155,6 +7159,7 @@ impl<H: Host> Vm<H> {
             (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
             (*dispatch).refresh_object_bases_at_entry(self);
             (*dispatch).stores_specialized = usize::from(self.specialized && residual.specialized);
+            (*dispatch).slots_tracked = usize::from(self.heap.tracks_slot_values());
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);
             // A run starts with no native frames; its direct calls place their callees past
@@ -7390,6 +7395,7 @@ impl LaneFrame {
                 method_cache_atoms: 0,
                 method_cache_atom_words: 0,
                 stores_specialized: 0,
+                slots_tracked: 0,
                 receiver: Value::DELETED.to_bits(),
                 vm: 0,
                 residual: 0,
@@ -7536,6 +7542,7 @@ impl JsNativeActivation {
             object_mark_block_count: 0, property_buffer: 0,
             field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
             stores_specialized: 0,
+            slots_tracked: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
             residual: Rc::as_ptr(&program) as usize,
@@ -7596,6 +7603,7 @@ impl JsStepDispatch {
         self.epoch = vm.heap.collection_epoch();
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
+        self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
     }

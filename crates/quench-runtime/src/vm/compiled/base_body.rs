@@ -24,13 +24,15 @@ fn widened(generic: &[LaneExit]) -> Vec<usize> {
 
 impl LaneMethod {
     /// The lane body `body`'s code makes of `function`, published to executable memory. It names
-    /// no shapes, slots, callees or Stable facts, so it depends on nothing but its own entry guards.
+    /// no shapes, slots or callees, and its only Stable facts are the atoms its stores hold
+    /// unnamed by method caches (`Body::atoms`), so it depends on nothing but its own entry
+    /// guards and those, which retire it.
     fn of_base_body(body: &Body, function: u32, registers: u16) -> Option<Self> {
         let memory = super::code_heap::publishing("b-jit-body", function as usize, || CodeMemory::new(&body.code))?;
         // SAFETY: `base_region::function` links its code behind `entry_body`, of the lane body ABI.
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         Some(Self {
-            dependencies: Default::default(), stable: Default::default(), invalidation: Default::default(), _code: memory, entry,
+            dependencies: Default::default(), stable: super::lane_region::StableFacts { atoms: body.atoms.clone(), ..Default::default() }, invalidation: Default::default(), _code: memory, entry,
             recovery_space: Default::default(), fault_poll: false, names_shapes: false, inlined: Vec::new(), scratch_width: 0,
             caller_registers: registers, amortizes: body.loops || body.covered >= TIERS.lane_body.min_instructions,
             direct: Box::new([]), closed: false,
@@ -47,7 +49,7 @@ impl<H: Host> Vm<H> {
         let masks: Option<&std::rc::Rc<RegisterMasks>> = program.shared_register_root_masks(function);
         let Some(region) = LoopRegion::of_function(body.instructions().collect(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let (ints, doubles) = observed(parameters);
-        let Ok(built) = build_body(&region, Known { program }, body.registers, &widened(generic), [&ints, &doubles]) else { return LaneBodyOutcome::Declined };
+        let Ok(built) = build_body(&region, Known { program, stores: (self.specialized && program.specialized).then(|| self.method_cache_atoms.bits()) }, body.registers, &widened(generic), [&ints, &doubles]) else { return LaneBodyOutcome::Declined };
         let Some(method) = LaneMethod::of_base_body(&built, function, body.registers) else { return LaneBodyOutcome::Declined };
         if !method.amortizes_entry() { return LaneBodyOutcome::Short }
         self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()).map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)

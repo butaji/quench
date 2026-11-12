@@ -101,6 +101,7 @@ fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, [dst_ho
     let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
     match heap {
         Heap::Store => [base, a_hole, b_hole],
+        Heap::SiteStore => [base, a_hole, decoded.hole],
         Heap::Index if entry => [dst_hole, decoded.hole, b_hole],
         Heap::Field => [dst_hole, decoded.hole, 0],
         Heap::Site | Heap::SiteChain => [dst_hole | a_hole << numeric::library::SITE_OBJECT_AT, crate::value::NarrowLayout::upper_words() as u64, decoded.hole],

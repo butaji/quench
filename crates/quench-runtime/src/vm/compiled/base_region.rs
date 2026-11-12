@@ -33,13 +33,22 @@ use repr::*;
 use webs::*;
 
 /// What a row reads of the running program rather than of the registers: the names its
-/// instructions' atoms are.
+/// instructions' atoms are, and whether a store may run in place.
 #[derive(Clone, Copy)]
 pub(in crate::vm::compiled) struct Known<'a> {
     pub(in crate::vm::compiled) program: &'a ResidualProgram,
+    /// The names method caches hold now, where the VM and the program run specialized, so a
+    /// store of an unnamed atom may run in place; `None` where none may. Code that stores holds
+    /// each such atom unnamed as a Stable fact (`Body::atoms`), which a cache naming it retires.
+    pub(in crate::vm::compiled) stores: Option<&'a super::method_cache::AtomBits>,
 }
 
 impl Known<'_> {
+    /// Whether a store of `atom` may run in place: no method cache names it.
+    fn stores_in_place(&self, atom: Atom) -> bool {
+        self.stores.is_some_and(|names| !names.contains(atom as usize))
+    }
+
     /// Whether `atom` names `length`.
     fn names_length(&self, atom: Atom) -> bool {
         super::names_length(self.program, atom)

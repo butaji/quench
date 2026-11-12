@@ -156,6 +156,10 @@ pub(crate) mod words {
     pub(crate) const NARROW_INDEX_BITS: u32 = 25;
     pub(crate) const DIRECT_OBJECT_UPPER: u64 = 0x7ffc800000000000;
     pub(crate) const DIRECT_OBJECT_NARROW_CODE: u32 = 4;
+    pub(crate) const LOWER_WORD: u64 = 0xffff_ffff;
+    pub(crate) const HEAP_FAMILY_BITS: u64 = 0x0000_e000_0000_0000;
+    pub(crate) const HEAP_FAMILY_SHIFT: u32 = 45;
+    pub(crate) const NARROW_HEAP_FAMILIES: usize = 8;
 }
 
 /// Byte offsets of the fields of the compiled-code context (`CallContext`) and the dispatch
@@ -175,6 +179,12 @@ pub(crate) const CAPTURE_STORES_BIT: u64 = 1;
 /// `PROPERTY_BUFFER_BASE`) and the field cache entries of the running program.
 pub(crate) const JS_STEP_OBJECT_RECORD_BASE: usize = 120;
 pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 152;
+/// What a store's barrier reads (`Stage::store_gate`): the object records' mark blocks and their
+/// count, and whether the property arena records its slots' value classes (`slots_tracked`), which
+/// an unobserved store requires clear.
+pub(crate) const JS_STEP_OBJECT_MARK_BLOCKS: usize = 136;
+pub(crate) const JS_STEP_OBJECT_MARK_BLOCK_COUNT: usize = 144;
+pub(crate) const JS_STEP_SLOTS_TRACKED: usize = 528;
 pub(crate) const JS_STEP_FIELD_ENTRIES: usize = 160;
 pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;
 /// Bits of a body's capture word that hold the dense slots' address; the slot count sits above

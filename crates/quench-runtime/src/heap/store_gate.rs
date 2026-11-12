@@ -8,7 +8,14 @@ impl Heap {
     /// store's gate (`staged::Stage::store_gate`).
     #[inline(always)]
     pub(crate) fn store_unlogged(&self, record_id: u32, value: Value) -> bool {
-        !self.properties.tracks() && !self.object_records.store_logs(record_id, value)
+        !self.tracks_slot_values() && !self.object_records.store_logs(record_id, value)
+    }
+
+    /// Whether the property arena records its slots' value classes (`ValueArena::tracks`), which
+    /// native stores read (`JsStepDispatch::slots_tracked`) as the gate's observation test.
+    #[inline(always)]
+    pub(crate) fn tracks_slot_values(&self) -> bool {
+        self.properties.tracks()
     }
 
     /// The first arena value, which a flat run's position offsets (`staged::Table::PropertyValues`).
