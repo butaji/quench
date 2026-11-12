@@ -908,6 +908,12 @@ impl Native {
                 | Self::ArrayFindIndex
                 | Self::ArrayFindLast
                 | Self::ArrayFindLastIndex
+                | Self::ArrayReduce
+                | Self::ArrayReduceRight
+                | Self::ArrayFlatMap
+                | Self::ArraySort
+                | Self::MapForEach
+                | Self::SetForEach
                 | Self::RegExpTest
                 | Self::JsonParse
                 | Self::JsonStringify

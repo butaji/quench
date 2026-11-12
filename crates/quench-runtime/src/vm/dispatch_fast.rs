@@ -15417,7 +15417,7 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let Some(target) = lane_body_call_target(cx, vm, callee, &i.call_link) else {
         // A native may run guest code above the native windows below: the body leaves instead.
         if shadowed { return lane_body_stats::miss(lane_body_stats::Miss::CallShadowActive); }
-        return native_calls::lane_body_native_call(cx, r, i, callee);
+        return native_calls::lane_body_native_call(cx, r, ip, callee);
     };
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
     let target = unsafe { &*target };
