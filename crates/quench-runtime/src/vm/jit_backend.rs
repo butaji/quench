@@ -14,6 +14,8 @@ use std::sync::{Mutex, OnceLock};
 
 #[cfg(any(feature = "jit", feature = "aot"))]
 mod select;
+#[cfg(any(feature = "jit", feature = "aot"))]
+pub(super) mod relocatable_code;
 mod worker;
 pub(super) use worker::{Pending, run_in_background};
 

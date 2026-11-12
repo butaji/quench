@@ -75,6 +75,8 @@ use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_n
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
+#[path = "compiled/numeric_image.rs"] mod numeric_image;
+pub(super) use numeric_image::compile_js_typed_numeric_region;
 #[path = "compiled/general_tier_queries.rs"] mod general_tier_queries;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
@@ -450,35 +452,6 @@ fn emit_number_truthiness(builder: &mut FunctionBuilder<'_>, number: ir::Value) 
     }
 
     crate::vm::operations::number_truthiness(&mut Emit { builder }, number)
-}
-
-/// Bind the numeric JIT ABI to the same semantic SSA specializer used by
-/// frameless JIT bodies and linked AOT regions, without a canonical VM frame.
-pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, function_id: u32)
-    -> Option<super::js_compiled::JsJitArtifact> {
-    use super::specializer::Specializer;
-    let function = program.function_get(function_id as usize)?;
-    let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
-    let isa = super::jit_backend::target_isa()?;
-    let region = lane_region::RegionSpecializer { function_id, unit: &unit,
-        helpers: LaneHelpers::Numeric, fields: &std::collections::BTreeMap::new(),
-        global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
-        direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
-        plan: lane_region::RegionPlan { coverage: lane_region::Coverage::Full,
-            completion: lane_region::Completion::Number, views: lane_region::ElementViews::Dense } }
-        .specialize(program).ok()?;
-    let dump = native_dump_directory().map(|_| region.function.to_string());
-    let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
-        |code| Some(code.to_vec())).ok()?;
-    if let (Some(directory), Some(clif)) = (native_dump_directory(), dump) {
-        dump_native_bytes(directory, function_id, &code, None, &clif);
-    }
-    Some(super::js_compiled::JsJitArtifact {
-        code, params: usize::from(function.params),
-        result: super::js_compiled::JsJitResultKind::SharedNumberEntry(NativeEntryMode::Resumable, region.number_result?),
-        general_dispatch_native_pcs: Vec::new(),
-    })
 }
 
 const MAX_JS_GENERAL_DISPATCH_BLOCKS: usize = 2048;

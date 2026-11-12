@@ -3284,7 +3284,6 @@ function-lines crates/quench-runtime/src/vm/native_object.rs::tests::invalid_dat
 function-lines crates/quench-runtime/src/vm/native_object.rs::tests::invalid_function_address_relocations_are_diagnostics 47
 function-lines crates/quench-runtime/src/vm/native_object.rs::tests::object_links_and_loads_relocated_program_data 44
 function-lines crates/quench-runtime/src/vm/native_stencil.rs::StencilExtension<H>::finish 64
-function-lines crates/quench-runtime/src/vm/native_stencil.rs::patch 41
 function-lines crates/quench-runtime/src/vm/native_stencil.rs::step_stencil 44
 function-lines crates/quench-runtime/src/vm/number.rs::Vm<H>::install_number 67
 function-lines crates/quench-runtime/src/vm/number.rs::Vm<H>::install_number_for_realm 80
