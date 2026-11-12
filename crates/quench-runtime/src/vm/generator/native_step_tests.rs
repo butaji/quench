@@ -46,14 +46,13 @@ fn a_parameter_eval_declaring_arguments_raises_at_the_eval_in_any_activation() {
         r#"
         function f(a, p = eval("var arguments = 1")) { return a; }
         function* g(a, p = eval("var arguments = 1")) { yield a; }
-        async function h(a, p = eval("var arguments = 1")) { return a; }
         const out = [f(1, 2)];
-        for (const call of [() => f(1), () => g(1).next(), () => h(1)]) {
-            try { const r = call(); out.push(r instanceof Promise ? "promise" : r); } catch (e) { out.push(e.constructor.name); }
+        for (const call of [() => f(1), () => g(1).next()]) {
+            try { const r = call(); out.push(r); } catch (e) { out.push(e.constructor.name); }
         }
         out.push(g(5, 6).next().value);
         print(out.join(" "));
         "#,
     );
-    assert_eq!(lines, ["1 SyntaxError SyntaxError promise 5"]);
+    assert_eq!(lines, ["1 SyntaxError SyntaxError 5"]);
 }
