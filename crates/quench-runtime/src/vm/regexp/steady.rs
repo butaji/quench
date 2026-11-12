@@ -320,6 +320,7 @@ impl<H: Host> Vm<H> {
         // match's start if read.
         self.record_regexp_legacy_pending(receiver, input, regex, matched.range.start)?;
         Ok(if exec { Value::UNDEFINED } else { Value::TRUE })
+    }
 
     /// `steady_string_replace` when the result is read only by `.length`
     /// (`String.prototype.replace(...).length`): the replacement's length, its string never
