@@ -1974,20 +1974,26 @@ pub(crate) fn lazy_global_set(context: &mut Context<'_>, _: RootId, args: &[Root
     Ok(context.undefined())
 }
 
-/// `queueMicrotask(callback)`: the callback runs in a `Microtask` AsyncResource's scope,
+/// `queueMicrotask(callback)`: with no store or hook to carry, the callback is the microtask
+/// itself; otherwise it runs in a `Microtask` AsyncResource's scope,
 /// which is destroyed after it, so async context follows it; async_hooks loads on the first
-/// queued callback. Other values reach the host operation, which validates them.
+/// queued callback. A non-function throws `ERR_INVALID_ARG_TYPE`, as Node's `validateFunction` does.
 pub(crate) fn queue_microtask(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let state = context.host_function_data()?;
-    let enqueue = get(context, state, "enqueue")?;
     let callback = match args.first() {
         Some(callback) => *callback,
         None => context.undefined(),
     };
     let undefined = context.undefined();
-    if !context.is_callable_rooted(callback)? {
-        return context.call_rooted(enqueue, undefined, &[callback]);
+    crate::modules::async_hooks_public::validate_function(context, callback, "callback")?;
+    // Node's fast path (`internal/process/task_queues`): with no AsyncLocalStorage store
+    // visible and no async hook enabled, the callback itself is the microtask.
+    let visible_store = context.host_mut().shared_state().borrow().async_hooks.has_visible_store();
+    if !visible_store && !crate::modules::async_hook_registry_shared_vm::hooks_exist(context)? {
+        context.queue_microtask_rooted(callback, &[])?;
+        return Ok(undefined);
     }
+    let enqueue = get(context, state, "enqueue")?;
     let mut resource_class = get(context, state, "AsyncResource")?;
     if context.rooted_value(resource_class).is_some_and(|value| value.is_undefined()) {
         let require = get(context, state, "require")?;

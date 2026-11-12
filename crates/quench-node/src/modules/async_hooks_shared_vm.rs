@@ -340,10 +340,7 @@ pub(crate) fn capture_job_context(
     // A job with no resource, no Promise hook and no visible store has nothing to snapshot:
     // it runs in a fresh, empty frame (`enter_unobserved_job`), as V8 runs a microtask whose
     // continuation-preserved embedder data is undefined.
-    if resource.is_none()
-        && !state.tracks_promises()
-        && (state.local_stores.is_empty() || !state.local_stores.contains_key(&state.identity.store_context()))
-    {
+    if resource.is_none() && !state.tracks_promises() && !state.has_visible_store() {
         return None;
     }
     Some(snapshot_job_context(state, resource))

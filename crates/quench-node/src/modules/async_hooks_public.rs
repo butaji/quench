@@ -122,7 +122,7 @@ pub(super) fn new_only(c: &mut Context<'_>, name: &str) -> Result<(), RootedErro
     let error = c.type_error_rooted(&format!("Class constructor {name} cannot be invoked without 'new'"))?;
     Err(c.throw(error))
 }
-fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
+pub(crate) fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
     if c.is_callable_rooted(value)? {
         return Ok(());
     }

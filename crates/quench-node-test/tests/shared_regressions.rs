@@ -375,6 +375,38 @@ setTimeout(() => console.log(log.join(' ')), 0);
     assert_eq!(quench.stdout, node.stdout);
 }
 
+/// `queueMicrotask` takes Node's fast path (the callback is the microtask, with no
+/// `AsyncResource`) while no store is visible and no hook is enabled, and its `AsyncResource`
+/// path otherwise: execution ids, `this`, order with promise jobs, the validation error and
+/// an `AsyncLocalStorage` store carried through the queue all match Node.
+#[test]
+fn queue_microtask_fast_path_and_resource_path_match_node() {
+    let source = r#"
+const ah = require('async_hooks');
+const out = [];
+const ids = () => ah.executionAsyncId() + '/' + ah.triggerAsyncId();
+queueMicrotask(function () { out.push('q1 ' + ids() + ' ' + (this === globalThis) + ' ' + arguments.length); });
+Promise.resolve().then(() => out.push('p1'));
+queueMicrotask(() => { out.push('q2'); queueMicrotask(() => out.push('q2-inner')); });
+for (const bad of [undefined, 1, {}, 'f']) {
+  try { queueMicrotask(bad); } catch (e) { out.push(e.code + ' ' + e.message); }
+}
+setTimeout(() => {
+  const als = new ah.AsyncLocalStorage();
+  als.run('S', () => queueMicrotask(() => out.push('als ' + als.getStore())));
+  queueMicrotask(() => out.push('als-out ' + als.getStore()));
+  const hook = ah.createHook({ init(id, type) { if (type === 'Microtask') out.push('init Microtask'); } }).enable();
+  queueMicrotask(() => { out.push('hooked ' + (ah.executionAsyncId() > 0)); hook.disable(); });
+}, 5);
+setTimeout(() => console.log(out.join('\n')), 40);
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "Quench failed: {:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
+}
+
 /// Promise jobs that capture no store and no resource run in a fresh, empty context: job order
 /// across `then`, `await` and `queueMicrotask`, execution ids, thrown handlers, unhandled
 /// rejections, and an `enterWith` inside a job, which reaches the job's own continuations and
