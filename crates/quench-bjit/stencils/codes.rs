@@ -102,6 +102,14 @@ pub const TYPEOF_STRING_ROW: u8 = 24;
 /// continues at TAKEN; a slot past the run or holding an internal marker (a dead zone, a slot the environment took),
 /// or no view, leaves through EXIT0 into the helper step after the row.
 pub const ENV_ROW: u8 = 25;
+/// A fast arm of `StoreEnvLocal` over the same view where it admits every direct store
+/// (`staged::environment::dense_capture_store`): the value operand at hole 0 (below the view's payload offset, which
+/// sits `ENV_VIEW_AT` bits above it), slot hole 1 of the run. A hit continues at TAKEN; a slot past the run or holding
+/// an internal marker, or a view that admits no store, leaves through EXIT0 into the helper step after the row.
+pub const ENV_SET_ROW: u8 = 26;
+/// Bits below the environment view's payload byte offset in an environment row's hole 0, which carries the frame offset
+/// of the row's destination (`ENV_ROW`) or value operand (`ENV_SET_ROW`) beneath it.
+pub const ENV_VIEW_AT: u32 = 32;
 /// Bits below the prototype link in a folded read's hole 1, which carries the receiver's exact shape beneath it.
 pub const HELD_LINK_AT: u32 = 32;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries

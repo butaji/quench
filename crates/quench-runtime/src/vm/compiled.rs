@@ -7182,6 +7182,10 @@ impl<H: Host> Vm<H> {
             (*dispatch).slots_tracked = usize::from(self.heap.tracks_slot_values());
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);
+            // A body that runs in a VM frame starts with that frame's environment view, so its first environment row
+            // reads and writes in place.
+            let entered = super::dispatch_fast::entry_frame::<H>(lane_context);
+            (*dispatch).env_view = self.body_env_view(&*dispatch, entered, (general_capture::EnvView::EMPTY, false));
             // A run starts with no native frames; its direct calls push their callees' windows
             // and frames onto the lane stack's own tops, which the dispatch points at.
             (*dispatch).lane_values_top = words.values_top;
@@ -7260,14 +7264,21 @@ impl<H: Host> Vm<H> {
     /// A body that runs in the VM frame `frame` also reloads the view of that frame's environment slots its
     /// environment rows read (`env_view`, kept where its barrier admissions are); one that runs as lane
     /// activations has none.
-    pub(super) fn refresh_body_bases(&self, frame: Option<usize>) {
+    pub(super) fn refresh_body_bases(&mut self, frame: Option<usize>) {
         let lane = lane_frame();
         // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
         let dispatch = unsafe { &mut (*lane).dispatch };
         let (epoch, view) = (dispatch.epoch, dispatch.env_view);
         dispatch.refresh_object_bases(self);
-        dispatch.env_view = frame.map_or(general_capture::EnvView::EMPTY, |frame| general_capture::EnvView::of_frame(self, frame))
-            .kept(view, usize::from(epoch == dispatch.epoch));
+        dispatch.env_view = self.body_env_view(dispatch, frame, (view, epoch == dispatch.epoch));
+    }
+
+    /// The environment view of the VM frame `frame` a body runs in (`EnvView::after`), none where it runs as lane
+    /// activations; `previous` the payload's view and whether no collection ran since it was taken.
+    fn body_env_view(&mut self, dispatch: &JsStepDispatch, frame: Option<usize>, previous: (general_capture::EnvView, bool)) -> general_capture::EnvView {
+        // SAFETY: the dispatch's residual is the running program's, live for the run.
+        let program = unsafe { &*(dispatch.residual as *const ResidualProgram) };
+        frame.map_or(general_capture::EnvView::EMPTY, |frame| general_capture::EnvView::after(self, frame, (program, dispatch.program_id), previous))
     }
 
     /// Publishes `receiver`, a `this` the running body's frame has just bound (`InitializeThis`), as the

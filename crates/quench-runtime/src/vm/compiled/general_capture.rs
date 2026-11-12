@@ -7,7 +7,7 @@
 //! holds it (`EnvView`, the frame's locals), else asks `general_env_local`, the lane's
 //! operations on it (`Vm::initialized_frame_binding`, `Vm::store_initialized_frame_binding`),
 //! and a closure (`MakeClosure`) `general_closure`, the lane's (`lane_closure_value_of`).
-use super::{emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback, JsStepDispatch, ResidualProgram, Vm};
+use super::{emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback, JsStepDispatch, ProgramId, ResidualProgram, Vm};
 use crate::bytecode::WideInstruction;
 use crate::value::ValueLayout;
 use crate::Value;
@@ -175,7 +175,33 @@ impl EnvView {
         slots.native_dense_view().map_or(Self::EMPTY, |(values, len)| Self { values, len, stores: 0 })
     }
 
-    /// This view with `previous`'s admitted writes where it names the same slots and `kept`
+    /// The tag a view's `stores` holds where it admits every direct write.
+    const ADMITTED: usize = 1;
+
+    /// The view of frame `frame`'s environment as a body's helper leaves it, `previous` the view before the helper and
+    /// `epoch_kept` whether no collection ran: the previous view's admitted writes where it names the same slots and the
+    /// barrier it took still holds (`kept`), else a new admission (`admitted`), also a body's first.
+    pub(super) fn after<H: Host>(vm: &mut Vm<H>, frame: usize, (program, program_id): (&ResidualProgram, ProgramId), (previous, epoch_kept): (Self, bool)) -> Self {
+        let view = Self::of_frame(vm, frame);
+        if epoch_kept && previous.values == view.values {
+            return view.kept(previous, usize::from(epoch_kept));
+        }
+        view.admitted(vm, frame, (program, program_id))
+    }
+
+    /// This view where its environment admits every direct store (`Vm::admits_every_direct_store`), whose barrier this
+    /// takes once as `general_capture_slots` does: the environment joins the remembered set, so no store into it
+    /// needs another.
+    fn admitted<H: Host>(self, vm: &mut Vm<H>, frame: usize, (program, program_id): (&ResidualProgram, ProgramId)) -> Self {
+        let env = vm.frames[frame].env;
+        if self.len == 0 || !vm.admits_every_direct_store(program, program_id, env) {
+            return self;
+        }
+        vm.heap.remember_cell(env);
+        Self { stores: Self::ADMITTED, ..self }
+    }
+
+    /// This view with `previous` where it names the same slots and `kept`
     /// says its barrier still holds.
     pub(super) fn kept(self, previous: Self, kept: usize) -> Self {
         Self { stores: previous.stores & kept & usize::from(previous.values == self.values), ..self }

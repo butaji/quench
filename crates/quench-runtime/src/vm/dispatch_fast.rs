@@ -15358,15 +15358,25 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
     u64::from(stored)
 }
 
-/// The VM frame the running body runs in, whose environment its rows read (`Vm::refresh_body_bases`); none where
-/// it runs as lane activations, which keep their environments in their windows.
+/// The VM frame the body that runs in the lane context `cx` runs in, whose environment its rows read
+/// (`Vm::refresh_body_bases`); none where it runs as lane activations, which keep their environments in their windows,
+/// and where there is no context (a test's entry).
+///
+/// # Safety
+/// `cx` is null or a live `LaneContext<H>`.
+pub(super) unsafe fn entry_frame<H: Host>(cx: *mut ()) -> Option<usize> {
+    let cx = std::ptr::NonNull::new(cx.cast::<LaneContext<H>>())?.as_ptr();
+    // SAFETY: the caller's contract.
+    unsafe { vm(cx).lane_stack.activations.is_empty().then(|| (*cx).frame) }
+}
+
+/// `entry_frame` of the running body's helper, which holds its context as a word.
 ///
 /// # Safety
 /// `context` is the running lane's context.
 unsafe fn body_frame<H: Host>(context: u64) -> Option<usize> {
-    let cx = context as usize as *mut LaneContext<H>;
     // SAFETY: the caller's contract.
-    unsafe { vm(cx).lane_stack.activations.is_empty().then(|| (*cx).frame) }
+    unsafe { entry_frame::<H>(context as usize as *mut ()) }
 }
 
 /// The helper a body's call row runs (`LaneHelper::Call`): `lane_body_call_record`, then the

@@ -68,6 +68,10 @@ pub(super) enum Heap {
     /// `slot` (hole 1) of the view at the payload byte offset of hole 2 into the register at hole 0, where the slot is
     /// in the view and initialized, else the row leaves into the helper step after it.
     EnvLocal(u16),
+    /// The fast arm of `StoreEnvLocal` over the same view where it admits every direct store
+    /// (`staged::environment::dense_capture_store`): the register at hole 0 to slot `slot` (hole 1), else the row
+    /// leaves into the helper step after it.
+    EnvStore(u16),
     /// The register at the frame offset of hole 1 holds exactly the word of hole 2.
     Identity,
     /// A prototype-held field folded to the value its holder held when the code was compiled (hole 2):
@@ -131,6 +135,7 @@ impl Heap {
             Heap::StoreLocal(_) => library::STORE_LOCAL_ROW,
             Heap::LoadChecked(_) => library::LOAD_CHECKED_ROW,
             Heap::EnvLocal(_) => library::ENV_ROW,
+            Heap::EnvStore(_) => library::ENV_SET_ROW,
             Heap::StoreChecked(_) => library::STORE_CHECKED_ROW,
             Heap::Identity => library::IDENTITY_ROW,
             Heap::Held | Heap::ThisHeld => library::HELD_ROW,
@@ -154,7 +159,7 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key | Heap::TypeofIndex | Heap::TypeofString | Heap::TypeofIs { .. })
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key | Heap::TypeofIndex | Heap::TypeofString | Heap::TypeofIs { .. })
     }
 
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
@@ -238,7 +243,7 @@ mod tests {
              mirror::JS_STEP_OBJECT_MARK_BLOCKS, mirror::JS_STEP_OBJECT_MARK_BLOCK_COUNT, mirror::JS_STEP_SLOTS_TRACKED, mirror::JS_STEP_STRING_RECORD_BASE, mirror::JS_STEP_RECEIVER, mirror::JS_STEP_NATIVE_LOCALS, mirror::JS_STEP_LOCAL_COUNT]
         );
         use super::super::general_capture::EnvView;
-        assert_eq!([std::mem::offset_of!(EnvView, values), std::mem::offset_of!(EnvView, len)], [mirror::ENV_VIEW_VALUES, mirror::ENV_VIEW_LEN]);
+        assert_eq!([std::mem::offset_of!(EnvView, values), std::mem::offset_of!(EnvView, len), std::mem::offset_of!(EnvView, stores)], [mirror::ENV_VIEW_VALUES, mirror::ENV_VIEW_LEN, mirror::ENV_VIEW_STORES]);
         use crate::vm::wtf16::native_string as form;
         assert_eq!(
             [form::RECORD_SIZE as i32, form::TAG_OFFSET, i32::from(form::TAG_SHORT), i32::from(form::TAG_ASCII), i32::from(form::TAG_WIDE), form::SHORT_LENGTH_OFFSET, form::SHARED_LENGTH_OFFSET],

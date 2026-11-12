@@ -206,6 +206,7 @@ pub(crate) const JS_STEP_RETURNED_PC: usize = 256;
 /// count, at a payload byte offset a row names (`ENV_ROW`).
 pub(crate) const ENV_VIEW_VALUES: usize = 0;
 pub(crate) const ENV_VIEW_LEN: usize = 8;
+pub(crate) const ENV_VIEW_STORES: usize = 16;
 
 /// More `JsStepDispatch` fields the call rows read: the lane body's VM, residual and lane
 /// context (a helper call's first three arguments), the lane stack's free span and the shadow
