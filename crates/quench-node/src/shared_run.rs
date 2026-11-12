@@ -418,7 +418,7 @@ fn execute_shared_on_worker(
     let snapshot = snapshot_path.as_deref().and_then(crate::host::startup_snapshot::load_or_schedule);
     let mut runtime = EntryRuntime::new(Runtime::new(host), teardown);
     runtime.set_execution_mode(mode);
-    runtime.set_memory_policy(memory_policy);
+    runtime.set_memory_policy(memory_policy); crate::qimg::install(&mut runtime);
     #[cfg(feature = "profile-memory")]
     profile_startup_boundary("node_vm_allocated");
     crate::host::resident_pages::release_read_only_pages();
@@ -438,7 +438,7 @@ fn execute_shared_on_worker(
                 // The restore may have left the runtime half replaced: boot a fresh one.
                 *runtime = Runtime::new(new_host(None)?);
                 runtime.set_execution_mode(mode);
-                runtime.set_memory_policy(memory_policy);
+                runtime.set_memory_policy(memory_policy); crate::qimg::install(&mut runtime);
                 program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
             }
         }

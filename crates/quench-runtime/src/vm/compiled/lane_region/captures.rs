@@ -85,7 +85,7 @@ impl Lowering<'_, '_> {
         };
         let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
         let slot = self.ins().iconst(types::I64, i64::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())));
-        let helper = self.helpers.address(self.builder.ins(), LaneHelper::FunctionCapture);
+        let helper = self.helpers.address(&mut self.builder, LaneHelper::FunctionCapture);
         let read = emit_lane_call(&mut self.builder, helper, &[vm, callee, slot]);
         let hit = self.ins().icmp_imm_u(IntCC::NotEqual, read, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, hit, exit);

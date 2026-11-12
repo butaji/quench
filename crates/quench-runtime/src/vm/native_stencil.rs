@@ -27,6 +27,7 @@ use super::compiled::{
     CodeMemory, NATIVE_JS_INVALID_PC, NATIVE_JS_STOPPED, native_entry_signature,
     native_js_operation_signature, native_js_start_pc,
 };
+use super::jit_backend::relocatable_code::{apply_relocation, patchable, ARM64_BRANCH_IMMEDIATE_BITS, ARM64_INSTRUCTION_BYTES};
 use super::specialize::{CallThreaded, CallThreadedExtension, Continuation, InstructionSite, Specializer};
 use crate::Host;
 use crate::bytecode::ResidualProgram;
@@ -212,21 +213,11 @@ impl Stencil {
     }
 }
 
-fn patchable(kind: Reloc) -> bool {
-    matches!(
-        kind,
-        Reloc::Abs8 | Reloc::X86PCRel4 | Reloc::X86CallPCRel4 | Reloc::X86CallPLTRel4 | Reloc::Arm64Call
-    )
-}
-
 /// x86-64 `jmp rel32`: one opcode byte followed by the patched displacement.
 const X86_JMP_REL32_OPCODE: u8 = 0xe9;
 const X86_REL32_BYTES: usize = 4;
-/// AArch64 `b imm26`: the six opcode bits above the 26-bit word offset.
-const ARM64_BRANCH_IMMEDIATE_BITS: u32 = 26;
+/// AArch64 `b imm26` opcode, the six bits above the word offset.
 const ARM64_BRANCH_OPCODE: u32 = 0b000101;
-const ARM64_INSTRUCTION_BYTES: usize = 4;
-const ARM64_INSTRUCTION_ALIGNMENT_BITS: u32 = 2;
 
 /// The stencil length without its final unconditional jump to `Next`, when
 /// that jump is the last instruction. Copying the successor directly after the
@@ -252,44 +243,7 @@ fn trailing_next_jump(code: &[u8], patches: &[Patch]) -> Option<usize> {
 
 /// Fill one hole of a copied stencil. `address` is the copy's final address.
 fn patch(code: &mut [u8], address: u64, patch: &Patch, value: u64) -> Result<(), String> {
-    let site = address
-        .checked_add(patch.offset as u64)
-        .ok_or("stencil patch address overflow")?;
-    let relative = || -> Result<i64, String> {
-        (value as i64)
-            .checked_add(patch.addend)
-            .and_then(|target| target.checked_sub(site as i64))
-            .ok_or_else(|| "stencil displacement overflow".to_owned())
-    };
-    let bytes = code
-        .get_mut(patch.offset..)
-        .ok_or("stencil patch is outside its code")?;
-    match patch.kind {
-        Reloc::Abs8 => {
-            let word = value.wrapping_add(patch.addend as u64).to_le_bytes();
-            bytes.get_mut(..word.len()).ok_or("stencil patch is outside its code")?.copy_from_slice(&word);
-        }
-        Reloc::X86PCRel4 | Reloc::X86CallPCRel4 | Reloc::X86CallPLTRel4 => {
-            let displacement = i32::try_from(relative()?)
-                .map_err(|_| "stencil continuation is out of rel32 range")?
-                .to_le_bytes();
-            bytes.get_mut(..displacement.len()).ok_or("stencil patch is outside its code")?.copy_from_slice(&displacement);
-        }
-        Reloc::Arm64Call => {
-            let delta = relative()?;
-            let words = delta >> ARM64_INSTRUCTION_ALIGNMENT_BITS;
-            let limit = 1_i64 << (ARM64_BRANCH_IMMEDIATE_BITS - 1);
-            if delta & ((1 << ARM64_INSTRUCTION_ALIGNMENT_BITS) - 1) != 0 || !(-limit..limit).contains(&words) {
-                return Err("stencil continuation is out of branch range".into());
-            }
-            let field = bytes.get_mut(..ARM64_INSTRUCTION_BYTES).ok_or("stencil patch is outside its code")?;
-            let mask = (1_u32 << ARM64_BRANCH_IMMEDIATE_BITS) - 1;
-            let word = u32::from_le_bytes((&*field).try_into().expect("four-byte instruction"));
-            field.copy_from_slice(&((word & !mask) | (words as u32 & mask)).to_le_bytes());
-        }
-        _ => return Err("stencil relocation kind is not patchable".into()),
-    }
-    Ok(())
+    apply_relocation(code, address, (patch.offset, patch.kind, patch.addend), value)
 }
 
 // -- Stencil shapes ---------------------------------------------------------
