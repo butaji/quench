@@ -6168,7 +6168,7 @@ impl CompiledOsrRegion {
             if let Some(Raised::Panic(panic)) = context.raised.take() {
                 std::panic::resume_unwind(panic);
             }
-            let exit = LaneExit::read(status, word, || native.dispatch.returned_pc);
+            let exit = LaneExit::read_region(status, word, || native.dispatch.returned_pc);
             outcome = LoopOutcome::of(exit, region);
         }) };
         if ran.is_none() { return LoopOutcome::Terminated; }

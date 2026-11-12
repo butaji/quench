@@ -45,6 +45,6 @@ pub(super) unsafe fn run_bare(
     if let Some(Raised::Panic(panic)) = context.raised.take() {
         std::panic::resume_unwind(panic);
     }
-    LoopOutcome::of(LaneExit::read(status, word, || unreachable!("a bare region reads no heap row, so it completes no activation")), region)
+    LoopOutcome::of(LaneExit::read_region(status, word, || unreachable!("a bare region reads no heap row, so it completes no activation")), region)
 }
 

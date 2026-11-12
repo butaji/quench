@@ -26,3 +26,15 @@ fn forced_deopt_corpus_matches_the_interpreter() {
     }
     assert!(guards_total > 0, "the corpus compiled no guard");
 }
+
+/// A stencil region leaves with status 0 and its leave in the result word (`read_region`): the
+/// program whose forced guards 9 and 17 once read as a leave at PC 0.
+const STENCIL_LEAVE_SEED: u64 = 0xf9d8_02c6_6f7c_6717;
+
+#[test]
+fn forced_stencil_region_leaves_match_the_interpreter() {
+    let program = generate(STENCIL_LEAVE_SEED, Options { iterations: ITERATIONS, sink: Sink::Answer });
+    let name = format!("tier-corpus-{:016x}.js", program.seed);
+    let (_, mismatches) = forced_everywhere(&program.source, &name, GUARDS_PER_PROGRAM);
+    assert!(mismatches.is_empty(), "{name}: forced guards {mismatches:?} changed the answer");
+}
