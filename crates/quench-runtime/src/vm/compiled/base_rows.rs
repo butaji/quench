@@ -28,8 +28,9 @@ pub(super) enum Heap {
     Field,
     /// The array word at hole 1 is a direct array (what `RequireObjectCoercible` of one proves).
     Array,
-    /// The own data field the site's field cache entry names, read from the object register
-    /// whose frame offset sits above the destination's in hole 0 (hole 2: the entry's byte offset).
+    /// The data field the site's field cache entry names, own or held by the receiver's prototype
+    /// (`entry::site_read`), read from the object register whose frame offset sits above the
+    /// destination's in hole 0 (hole 2: the entry's byte offset).
     Site,
     /// The `length` of the direct array at hole 1, an int32 (what the array's record counts).
     Length,

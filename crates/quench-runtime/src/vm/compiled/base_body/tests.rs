@@ -170,3 +170,17 @@ fn capture_writes_run_in_a_body() {
          print(t); print(next());",
     );
 }
+
+/// A field the receiver's prototype holds is read through the site's cache entry, which names the
+/// holder: the receiver's shape and prototype link and the holder's shape are the entry's, and the
+/// value is the holder's, read at each use, so a prototype whose field changes between runs reads
+/// the new value in the body as in the interpreter.
+#[test]
+fn prototype_held_fields_run_in_a_body() {
+    assert_bodies_never_leave(
+        "const proto = { scale: 3 }; const o = Object.create(proto); o.x = 2;
+         function area(p) { return p.x * p.scale; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + area(o)) | 0;
+         print(t); proto.scale = 5; print(area(o));",
+    );
+}
