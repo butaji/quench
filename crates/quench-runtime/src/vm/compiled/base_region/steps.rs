@@ -6,9 +6,12 @@
 //!    (`LaneHelper::Step`: `(vm, residual, lane_context, call_pc) -> LANE_CALL_*`, the row
 //!    `quench_bjit::call::CallRow::Helper`) between the spills of the live pinned registers and
 //!    their reloads (`call_plan::plan_step`), for the instructions whose general step only
-//!    continues or throws (`Traits::LANE_IN_PLACE`) and writes at most one register. The helper
-//!    answers completed or missed, so both of the row's exits are the leave at the instruction:
-//!    a miss, where the helper made nothing or raised, leaves there for the interpreter.
+//!    continues, jumps or throws (`Traits::LANE_IN_PLACE`) and writes at most one register. The
+//!    helper answers completed, branched or missed, so both of the row's exits are the leave at
+//!    the instruction: a miss, where the helper made nothing or raised, leaves there for the
+//!    interpreter. A step that jumps (`ForInNext`) has its target as the row's branch: the helper
+//!    answers branched where the interpreter's step took it, which continues at the reloads of the
+//!    registers live at the target (`branching`).
 //! 3. A leave (`CallRow::Here`): the region ends at the instruction and the interpreter runs it,
 //!    for every other instruction: jumps and branches the rows do not take, throws,
 //!    suspensions, scope entries, and any instruction that carries result flags, which a helper
@@ -26,7 +29,7 @@
 use super::*;
 use super::call_plan::{self, CallChain, CallPart, CallPlan, CallShape, Choice};
 use super::super::{LaneHelper, LaneHelpers};
-use crate::bytecode::Traits;
+use crate::bytecode::{Op, Traits};
 use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
 
@@ -50,6 +53,33 @@ impl Step {
     }
 }
 
+/// The opcodes the b-jit does not compile, by opcode index: the Wasm opcodes (catalog names that
+/// begin `Wasm`). A Wasm function has its own compiler (`dispatch_wasm`, the Wasm tiers), which
+/// owns the linear memory, tables and typed registers these opcodes read, so a function holding
+/// one is not a b-jit body (`covers`), and a loop region holding one leaves at it.
+const EXCLUDED: [bool; Op::COUNT] = {
+    const PREFIX: &[u8] = b"Wasm";
+    let mut table = [false; Op::COUNT];
+    let mut index = 0;
+    while index < Op::COUNT {
+        let name = Op::NAMES[index].as_bytes();
+        let mut at = 0;
+        let mut named = name.len() >= PREFIX.len();
+        while named && at < PREFIX.len() {
+            named = name[at] == PREFIX[at];
+            at += 1;
+        }
+        table[index] = named;
+        index += 1;
+    }
+    table
+};
+
+/// Whether the b-jit compiles a function of these instructions: none is an excluded opcode.
+pub(in crate::vm::compiled) fn covers(code: &[WideInstruction]) -> bool {
+    code.iter().all(|instruction| !EXCLUDED[instruction.op() as usize])
+}
+
 /// Whether `instruction` is made in place by `LaneHelper::Step`.
 fn steps_in_place(instruction: WideInstruction) -> bool {
     instruction.op().traits().has(Traits::LANE_IN_PLACE) && instruction.result_flags() == 0 && instruction.written_registers().count() <= 1
@@ -69,8 +99,10 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, helpers: LaneHe
         Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
         _ => {
             let step = lowering(instruction, helpers);
-            let written = if step == Step::Helper { instruction.written_registers().next() } else { None };
-            Decoded::step(step, written)
+            let helped = step == Step::Helper;
+            let written = if helped { instruction.written_registers().next() } else { None };
+            let target = (helped && instruction.op().control_flow_layout().jumps()).then(|| instruction.jump_target());
+            Decoded { target, ..Decoded::step(step, written) }
         }
     }
 }
@@ -114,7 +146,7 @@ fn chained(parts: Vec<CallPart>, spills: usize, owned: Option<Box<quench_bjit::c
 pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     match decoded.step.ok_or("plan_step: no step")? {
         Step::Leave => Ok(Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, Some(pc))),
-        Step::Helper => plan_helper(layout, pc, helpers),
+        Step::Helper => plan_helper(layout, pc, decoded.target, helpers),
         Step::Return => {
             let slot = operand(&layout.homes, decoded.a).1;
             Ok(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) })
@@ -123,13 +155,40 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
     }
 }
 
-/// The chain of a helper step at `pc`.
-fn plan_helper(layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
+/// The chain of a helper step at `pc`, which also branches to `target` where its instruction jumps.
+fn plan_helper(layout: &Layout, pc: u32, target: Option<u32>, helpers: LaneHelpers) -> Result<Planned, String> {
     let address = call_plan::helper_address(helpers, LaneHelper::Step).ok_or("step: no helper address")?;
     let (spills, reloads) = (layout.spills(pc), layout.spills(pc + 1));
     let mut row = chained(call_plan::plan_step(pc, address, &spills, &reloads)?, spills.len(), None)?;
-    // The step helper answers completed or missed: its (status, word) exit is the leave at the record too.
+    // The step helper answers completed, branched or missed: its (status, word) exit is the leave at the record too.
     row.exits = vec![Exit::At(pc); row.exits.len()];
+    match target {
+        Some(target) => branching(row, layout, (pc, target)),
+        None => Ok(row),
+    }
+}
+
+/// The jump to `pc`, a part of a run whose NEXT is not where the run goes on.
+fn jump_to(pc: u32) -> Result<Planned, String> {
+    Ok(Planned::single(control(Kind::Jump)?, [0; HOLES], Some(pc), None))
+}
+
+/// The reloads of the pinned registers live at `pc`, then the jump to `pc`: the branch of a run
+/// that restores the registers its destination expects.
+fn landing(layout: &Layout, pc: u32) -> Result<Vec<Planned>, String> {
+    let reloads = layout.spills(pc).into_iter().map(|(place, register)| call_plan::reload_part(place, register).map(Planned::of_part));
+    reloads.chain(std::iter::once(jump_to(pc))).collect()
+}
+
+/// A helper step's run made to branch: its fall-through (the reloads of the next instruction's
+/// registers) jumps to the next instruction, and the TAKEN exit of the helper row (a step that took
+/// its jump, `LANE_CALL_BRANCHED`) lands at `target` after the fall-through, as a part's NEXT is the
+/// part laid out after it.
+fn branching(mut row: Planned, layout: &Layout, (pc, target): (u32, u32)) -> Result<Planned, String> {
+    row.post.push(jump_to(pc + 1)?);
+    let taken = row.pre.len() + 1 + row.post.len();
+    row.post.extend(landing(layout, target)?);
+    row.branch = Some(Branch::Part(taken));
     Ok(row)
 }
 
@@ -178,6 +237,52 @@ mod tests {
         for index in 0..Op::COUNT {
             let op = Op::from_index(index).expect("an opcode");
             assert_eq!(lowering(instruction(op), LaneHelpers::Ahead), Step::Leave, "{op:?}");
+        }
+    }
+
+    /// The opcodes whose only lowering is the generic helper step: no staged fast arm exists for
+    /// them (each allocates, runs guest code, or edits VM-held state no row reads), so the helper
+    /// is their whole operation, not a slow arm.
+    const RESIDUAL: [Op; 20] = [
+        Op::DefineField, Op::DefineComputedField, Op::DefinePrivateField, Op::CheckPrivate, Op::PrivateIn, Op::MarkPrivateName,
+        Op::SetFunctionName, Op::SetFunctionNameKey, Op::SetFunctionDebugName, Op::DefineArrayElement, Op::AppendArray,
+        Op::ToPropertyKey, Op::CopyDataProperties, Op::GetIterator, Op::ForInStart, Op::ForInNext, Op::RequireIteratorResult,
+        Op::IteratorClose, Op::IteratorCleanupPush, Op::IteratorCleanupPop,
+    ];
+
+    /// No function of the lane fixtures holds a generic helper step beyond the listed residual
+    /// opcodes, and a helper step that jumps names its target (its row branches).
+    #[test]
+    fn lane_fixtures_use_the_generic_helper_only_for_residual_opcodes() {
+        let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/lanes");
+        for entry in std::fs::read_dir(&directory).expect("the lane fixtures") {
+            let path = entry.expect("a directory entry").path();
+            if !path.extension().is_some_and(|extension| extension == "js") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("a fixture");
+            let program = crate::Engine::specialize(&source, "lane-fixture.js").unwrap_or_else(|errors| panic!("{path:?}: {errors:?}"));
+            for index in 0..program.functions.len() {
+                let function = program.function(index);
+                for packed in &function.code {
+                    let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);
+                    let row = decode_step(0, instruction, process);
+                    if row.step == Some(Step::Helper) {
+                        assert!(RESIDUAL.contains(&instruction.op()), "{path:?}: {:?} takes the generic helper", instruction.op());
+                        assert_eq!(row.target.is_some(), instruction.op().control_flow_layout().jumps(), "{:?}", instruction.op());
+                    }
+                }
+            }
+        }
+    }
+
+    /// A function holding a Wasm opcode is no b-jit body; the catalog's other opcodes are covered.
+    #[test]
+    fn wasm_opcodes_are_excluded_by_the_table() {
+        for index in 0..Op::COUNT {
+            let op = Op::from_index(index).expect("an opcode");
+            assert_eq!(!covers(&[instruction(op)]), Op::NAMES[index].starts_with("Wasm"), "{op:?}");
         }
     }
 

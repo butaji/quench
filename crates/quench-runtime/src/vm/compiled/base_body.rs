@@ -57,6 +57,7 @@ impl<H: Host> Vm<H> {
         let Some(body) = program.function_get(function as usize) else { return LaneBodyOutcome::Declined };
         let masks: Option<&std::rc::Rc<RegisterMasks>> = program.shared_register_root_masks(function);
         let code: Vec<_> = body.instructions().collect();
+        if !super::base_region::covers(&code) { return LaneBodyOutcome::Declined }
         let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let (ints, doubles) = observed(parameters);
         let callees = Callees::of(&code, &direct(self), &|callee| program.function_get(callee as usize).map(InlineBody::of));

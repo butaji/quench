@@ -36,6 +36,7 @@ use link::*;
 use plan::*;
 use repr::*;
 use steps::*;
+pub(in crate::vm::compiled) use steps::covers;
 use webs::*;
 
 /// What a row reads of the running program rather than of the registers: the names its
