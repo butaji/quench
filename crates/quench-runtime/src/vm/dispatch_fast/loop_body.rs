@@ -138,6 +138,25 @@ pub(super) fn left_for_tier_up<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite
     })
 }
 
+/// Where a body that left at `pc` resumes when a tier-up is pending: the header of the loop
+/// whose backward jump `pc` is, which dispatches the ready body, once that header runs the
+/// dispatch (`held`); otherwise the leave's own PC, whose jump record dispatches it.
+const fn tier_up_resume(header: u32, backedge: u32, pc: u32, held: bool, ready: bool) -> Option<u32> {
+    if pc == backedge && held && ready { Some(header) } else { None }
+}
+
+/// The leave of any body at a loop's backward jump (`LaneExit::At(backedge)`, whichever tier
+/// compiled it): while a tier-up is requested for a loop whose body has published, the lane
+/// resumes at that loop's header, as a region's leave does (`left_for_tier_up`). The leaving
+/// body stays published for its other entries.
+pub(super) fn header_for_tier_up<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, pc: usize) -> Option<usize> {
+    let pc = u32::try_from(pc).ok()?;
+    let site = own.loops.iter().find(|site| site.backedge == pc)?;
+    if !left_for_tier_up(cx, site, pc) { return None; }
+    let ready = matches!(*site.body.borrow(), LoopBody::Ready { .. });
+    tier_up_resume(site.header, site.backedge, pc, !site.header_handler.get().is_null(), ready).map(|header| header as usize)
+}
+
 /// The header dispatch rule, at a loop's backward jump and at its held header: a `Ready` body
 /// (leased) runs first, else the site's region (UltraJIT's before BaseJIT's), else the
 /// interpreter. A body is planned once the loop is hot, where function tiers run and the
@@ -189,4 +208,17 @@ fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: 
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
         LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(lane_return_value_general::<H>(cx, record, value)),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tier_up_resume;
+
+    #[test]
+    fn a_leave_at_a_held_loops_backedge_resumes_at_its_header() {
+        assert_eq!(tier_up_resume(4, 9, 9, true, true), Some(4));
+        assert_eq!(tier_up_resume(4, 9, 7, true, true), None, "a guard inside the loop keeps its own PC");
+        assert_eq!(tier_up_resume(4, 9, 9, false, true), None, "an unheld header would not dispatch");
+        assert_eq!(tier_up_resume(4, 9, 9, true, false), None, "no published body to dispatch");
+    }
 }

@@ -15680,6 +15680,7 @@ fn lane_body_left<H: Host>(
     (match exit.resumed() {
         super::compiled::LaneExit::Terminated | super::compiled::LaneExit::Entry => unreachable!("termination leaves before recovery; an entry leave resumes at its first record"),
         super::compiled::LaneExit::At(pc) => {
+            let pc = loop_body::header_for_tier_up(cx, own, pc).unwrap_or(pc);
             let mut carried = Carried::script(cx);
             if let Some(&register) = own.accumulator_registers.get(pc)
                 && register != NO_ACCUMULATOR
