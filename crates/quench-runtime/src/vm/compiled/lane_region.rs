@@ -2693,7 +2693,7 @@ impl Lowering<'_, '_> {
             Class::MakeObject | Class::MakeArray | Class::MakeConstArray | Class::MakeObject2 if self.literal_completes(instruction, pc) => Some(self.literal(state, pc, instruction)),
             Class::Construct if self.completion != Completion::Number && !instruction.is_super_construct()
                 && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
-            Class::Jump if plain => {
+            _ if plain && self.is_jump(instruction) => {
                 let target = instruction.jump_target() as usize;
                 if target <= pc {
                     self.backedge |= target == self.coverage.entry();

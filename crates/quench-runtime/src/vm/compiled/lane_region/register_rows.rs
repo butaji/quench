@@ -26,6 +26,11 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// Whether `instruction` is the unconditional jump row, whose block layout the lowering owns.
+    pub(super) fn is_jump(&self, instruction: WideInstruction) -> bool {
+        matches!(crate::staged::Operation::<ir::Value, EmitProof>::decode(instruction, |_| None), Some(crate::staged::Operation::Jump))
+    }
+
     /// Whether `instruction` is a row `register_step` lowers.
     pub(super) fn is_register_row(&self, instruction: WideInstruction) -> bool {
         self.register_row(instruction).is_some()
