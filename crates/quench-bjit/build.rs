@@ -265,7 +265,7 @@ fn ends_with_ret(code: &[u8]) -> bool {
 /// hole index of a relocation. Value hole `HOLE_V<n>` is index n; `HOLE_NEXT` 0, `HOLE_TAKEN` 1,
 /// `HOLE_EXIT<k>` 2 + k (the successor indexes of `quench_bjit`).
 fn hole_of(row: &str, symbol: &str, kind: u32) -> (u8, u32) {
-    let rest = symbol.strip_prefix("HOLE_").unwrap_or_else(|| panic!("stencil {row}: relocation against {symbol}, not a hole"));
+    let rest = symbol.strip_prefix("HOLE_").unwrap_or_else(|| panic!("stencil {row}: relocation against {symbol}, not a hole (a panic, bounds check or call the planner's facts should have removed)"));
     let class = match kind {
         R_X86_64_32 | R_X86_64_32S => ABS32,
         R_X86_64_PC32 | R_X86_64_PLT32 => SUCCESSOR,
