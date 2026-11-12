@@ -14,15 +14,26 @@ impl LaneStack {
     /// Which arrays lack room for a window of `room` values and one more activation.
     pub(super) fn full(&self, room: usize) -> LaneStackFull {
         LaneStackFull(
-            self.values.capacity() - self.values.len() < room,
+            self.values.room() < room,
             self.activations.len() == self.activations.capacity(),
         )
+    }
+
+    /// Makes room for `additional` more values, re-pointing every activation's window where
+    /// the values move: a window is an address, which only this moves.
+    pub(super) fn reserve_values(&mut self, additional: usize) {
+        let before = self.values.as_ptr().addr();
+        if !self.values.reserve(additional) { return; }
+        let after = self.values.as_ptr().addr();
+        for activation in &mut self.activations {
+            activation.native.window = activation.native.window.wrapping_sub(before).wrapping_add(after);
+        }
     }
 
     /// Grows the arrays `full` names; only a lack of room grows the stack.
     pub(super) fn grow(&mut self, full: LaneStackFull, room: usize) {
         if full.0 {
-            self.values.reserve((LANE_STACK_GROWTH * self.values.capacity()).max(room));
+            self.reserve_values((LANE_STACK_GROWTH * self.values.capacity()).max(room));
         }
         if full.1 {
             self.activations.reserve((LANE_STACK_GROWTH * self.activations.capacity()).max(1));
