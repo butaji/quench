@@ -9,8 +9,8 @@ use super::*;
 pub(super) fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        literal @ (Operation::MakeObject { .. } | Operation::MakeArray { .. } | Operation::MakeConstArray { .. } | Operation::MakeObjectPair { .. }) =>
-            allocation_step(stage, frame, literal),
+        literal @ (Operation::MakeObject { .. } | Operation::MakeArray { .. } | Operation::MakeConstArray { .. } | Operation::MakeObjectPair { .. }
+            | Operation::Allocate { .. }) => allocation_step(stage, frame, literal),
         helper @ (Operation::IndexSetHelper { .. } | Operation::GlobalRead { .. }
             | Operation::FieldStoreMiss { .. }) => helper_step(stage, frame, helper),
         index => index_step(stage, frame, index),
@@ -30,6 +30,8 @@ fn allocation_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             frame.allocate_const_array(stage, destination, constant, count, proof),
         Operation::MakeObjectPair { destination, site, first, second, proof } =>
             frame.allocate_object_pair(stage, destination, site, first, second, proof),
+        Operation::Allocate { destination, allocation, proof } =>
+            frame.allocate_value(stage, destination, allocation, proof),
         _ => None,
     };
     match value {
