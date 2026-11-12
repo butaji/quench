@@ -84,7 +84,7 @@ fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, slot: u16,
 }
 
 /// The reached record's exact shape word: the caller's where it holds one, else loaded.
-fn shape_word<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>) -> S::Word {
+pub(super) fn shape_word<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>) -> S::Word {
     at.shape.unwrap_or_else(|| stage.load_u32(at.record, OBJECT.auxiliary_offset as i32))
 }
 

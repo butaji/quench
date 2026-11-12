@@ -14,7 +14,7 @@
 //! (`docs/v2/specialization.md`). `staged_coverage` in this module's tests keeps hand-written
 //! decodes of the same layouts from reappearing elsewhere.
 
-use crate::bytecode::{Op, Register, WideInstruction};
+use crate::bytecode::{FieldBase, FieldLookup, Op, Register, WideInstruction};
 use crate::typed_ir::Type;
 
 mod concrete;
@@ -34,6 +34,9 @@ pub(crate) mod holder;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
 pub(crate) mod plan_fields;
+pub(crate) mod property;
+mod property_write;
+pub(crate) use property::{NoPlans, PropertyFrame};
 pub(crate) mod value;
 mod steps;
 pub(crate) use steps::step;
@@ -267,6 +270,22 @@ pub(crate) enum Operation<W, P> {
     GlobalRead { destination: Register, atom: u32, site: u16, binding: GlobalBinding, proof: P },
     /// The VM field-store helper for `object.atom = value` through cache `site`.
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
+    /// The value `base.name` reads through `lookup`'s plan (`property::read_plan`); the tier
+    /// defines the result register.
+    GetField { base: FieldBase, lookup: FieldLookup },
+    /// `base.atom = value` through cache `site`'s store plan (`property_write::set_field`);
+    /// `base` is `this` for `None`.
+    SetField { value: Register, base: Option<Register>, atom: u32, site: u16 },
+    /// The VM's cached read of `atom` of `object` through `site` (`PropertyFrame::field_get_host`).
+    FieldGetHost { object: W, atom: u32, site: u16 },
+    /// The VM's adding store of `value` to `atom` of `object` (`PropertyFrame::field_add`).
+    FieldAdd { object: W, atom: u32, site: u16, value: W },
+    /// `delete base[key]`, throwing on a refusal where `strict` (`PropertyFrame::delete_property`).
+    Delete { base: Register, key: Register, strict: bool },
+    /// `key in base` (`PropertyFrame::has_property`).
+    HasProperty { key: Register, base: Register },
+    /// `base[key]` past the dense and typed element reads (`PropertyFrame::index_get_host`).
+    IndexGetHost { base: W, key: W },
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes.
@@ -288,8 +307,45 @@ impl<W, P> Operation<W, P> {
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
             Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary => return Self::decode_value(instruction),
+            Op::GetField | Op::Delete | Op::Binary => return Self::decode_property(instruction),
+            op if op.is_field_store() => return Self::decode_property(instruction),
             _ => return None,
         })
+    }
+
+    /// The property operations of `decode`: a plain named read, a named store, `delete` and
+    /// `in` of registers.
+    fn decode_property(instruction: WideInstruction) -> Option<Self> {
+        match instruction.op() {
+            Op::GetField => Self::decode_get_field(instruction),
+            Op::Delete => Some(Self::Delete { base: instruction.register_b(), key: instruction.register_c(),
+                strict: instruction.boolean_flag()? }),
+            Op::Binary => Self::decode_has_property(instruction),
+            op if op.is_field_store() => Some(Self::SetField { value: instruction.register_a(),
+                base: instruction.field_store_register(), atom: instruction.atom_index(),
+                site: instruction.cache_site_index() }),
+            _ => None,
+        }
+    }
+
+    /// A named read that completes no frame and writes no `this`; a nested lookup's base is the
+    /// tier's own (`FieldBase::NESTED`).
+    fn decode_get_field(instruction: WideInstruction) -> Option<Self> {
+        if instruction.result_flags() != 0 { return None; }
+        let lookup = instruction.field_lookup()?;
+        let base = match lookup {
+            FieldLookup::Atom { base, .. } => base,
+            FieldLookup::Site(_) => FieldBase(FieldBase::NESTED),
+        };
+        Some(Self::GetField { base, lookup })
+    }
+
+    /// `key in base` of two registers.
+    fn decode_has_property(instruction: WideInstruction) -> Option<Self> {
+        if instruction.result_flags() != 0
+            || instruction.binary_operator() != oxc_ast::ast::BinaryOperator::In as u32 { return None; }
+        Some(Self::HasProperty { key: instruction.operand_b().register_index()?,
+            base: instruction.operand_c().register_index()? })
     }
 
     /// The value-level operations of `decode`.
@@ -345,5 +401,7 @@ pub(crate) enum Step<W, C> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod property_tests;
 #[cfg(test)]
 mod coverage_tests;

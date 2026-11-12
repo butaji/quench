@@ -100,6 +100,18 @@ impl<W, P> Operation<W, P> {
             Self::IndexWrite { .. } | Self::TypedIndexWrite { .. } => Effects::writes(Region::Elements),
             Self::MakeObject { .. } | Self::MakeArray { .. } | Self::MakeConstArray { .. } | Self::MakeObjectPair { .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots), may_alloc: true, ..Effects::NONE },
+            _ => return self.property_effects(),
+        })
+    }
+
+    /// Effects of the property operations: a plan's reads and stores touch object slots and
+    /// shapes; a host callout may run guest code (a getter, a proxy trap) or reshape objects.
+    const fn property_effects(&self) -> Option<Effects> {
+        Some(match self {
+            Self::GetField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord),
+                may_call_js: true, may_throw: true, ..Effects::NONE },
+            Self::SetField { .. } | Self::FieldAdd { .. } | Self::Delete { .. } => Effects::ANY,
+            Self::FieldGetHost { .. } | Self::HasProperty { .. } | Self::IndexGetHost { .. } => Effects::ANY,
             _ => return None,
         })
     }

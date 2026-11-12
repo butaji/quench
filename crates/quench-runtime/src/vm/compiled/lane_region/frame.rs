@@ -390,6 +390,28 @@ pub(super) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
     value
 }
 
+impl crate::staged::PropertyFrame<Emit<'_, '_>> for EmitFrame<'_> {
+    type Plans = crate::staged::NoPlans;
+
+    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+
+    fn field_get_host(&mut self, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32, site: u16,
+        miss: ir::Block) -> Option<ir::Value> {
+        Some(calls::field_get_host(self, stage, object, atom, site, miss))
+    }
+
+    fn field_add(&mut self, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32, site: u16, value: ir::Value,
+        miss: ir::Block) -> Option<()> {
+        calls::field_add(self, stage, object, atom, site, value, miss);
+        Some(())
+    }
+
+    fn field_store_host(&mut self, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32, site: u16,
+        value: ir::Value, miss: ir::Block) -> Option<()> {
+        calls::field_store_miss(self, stage, object, atom, site, value, EmitProof::FieldStoreMiss { miss })
+    }
+}
+
 impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn int_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
         miss: ir::Block) -> ir::Value {

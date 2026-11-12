@@ -17,7 +17,7 @@ impl Lowering<'_, '_> {
         }
         for block in std::iter::once(general).chain(widens.iter().copied()) {
             self.builder.switch_to_block(block);
-            self.field_add(object_bits, atom, site, value, exit);
+            self.field_add(state, object_bits, atom, site, value, exit);
             self.ins().jump(done, &[]);
         }
         self.builder.switch_to_block(done);
@@ -26,13 +26,10 @@ impl Lowering<'_, '_> {
     }
 
     /// The store of `value` to `atom` of `object` by the VM's own, polymorphic and adding
-    /// entries (`compiled::lane_field_add`); a miss leaves through `exit`.
-    pub(super) fn field_add(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
-        let write = self.atom_site_word(atom, site);
-        let payload = self.payload;
-        let stored = self.helper_call(LaneHelper::FieldAdd, &[payload, object, write, value]);
+    /// entries (`compiled::lane_field_add`), as the staged host store; a miss leaves through `exit`.
+    pub(super) fn field_add(&mut self, state: &mut State, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
+        self.step(state, frame::Edges::ValueGuarded { miss: exit },
+            crate::staged::Operation::FieldAdd { object, atom, site, value });
         self.forget_append_rooms(self.at);
-        let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-        emit_js_guard(&mut self.builder, hit, exit);
     }
 }

@@ -4720,23 +4720,23 @@ impl Lowering<'_, '_> {
             };
             emit_narrow_read(&mut self.builder, narrow, table, done);
             self.builder.switch_to_block(slow);
-            let value = self.field_probe_unbound(object, read, exit);
+            let value = self.field_probe_unbound(state, object, read, exit);
             self.ins().jump(done, &[ir::BlockArg::Value(value)]);
             self.builder.switch_to_block(done);
             return result;
         }
-        self.field_probe_unbound(object, read, exit)
+        self.field_probe_unbound(state, object, read, exit)
     }
 
     /// The VM's own read of `read`'s atom through its cache site (`compiled::lane_field_get`),
-    /// whose miss leaves through `exit`.
-    fn field_probe_unbound(&mut self, object: ir::Value, read: (Atom, u16), exit: ir::Block) -> ir::Value {
+    /// whose miss leaves through `exit`: the staged host read.
+    fn field_probe_unbound(&mut self, state: &mut State, object: ir::Value, read: (Atom, u16), exit: ir::Block) -> ir::Value {
         let (atom, site) = read;
-        let packed = self.atom_site_word(atom, site);
-        let value = self.helper_call(LaneHelper::FieldGet, &[object, packed]);
-        let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-        emit_js_guard(&mut self.builder, hit, exit);
-        value
+        match self.step(state, frame::Edges::ValueGuarded { miss: exit },
+            crate::staged::Operation::FieldGetHost { object, atom, site }) {
+            crate::staged::Step::Value(value) => value,
+            _ => unreachable!("the lane's field read is a host call"),
+        }
     }
 
     fn set_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
@@ -4765,7 +4765,7 @@ impl Lowering<'_, '_> {
         // again.
         if self.generic.contains(&pc) && self.completion.status_and_pc() {
             let object = self.owner_bits(state, register);
-            self.field_add(object, instruction.atom_index(), instruction.cache_site_index(), value, exit);
+            self.field_add(state, object, instruction.atom_index(), instruction.cache_site_index(), value, exit);
             self.reshaped(state);
             self.reload_receiver();
             return Some(true);
