@@ -5,6 +5,7 @@
 
 use super::object::{arena_run, decode_narrow, inline_storage, plain_payload};
 use super::Stage;
+use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::vm::NATIVE_FIELD_CACHE_LAYOUT as ENTRY;
 
@@ -22,32 +23,32 @@ const _: () = assert!(ENTRY.receiver_complement == u32::MAX && ENTRY.slot_comple
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let stored_holder = stage.load_u32(entry, ENTRY.holder_offset as i32);
+    let stored_holder = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.holder_offset as i32);
     let holder = stage.eq_imm(stored_holder, u64::from(ENTRY.holder_complement ^ ENTRY.own_holder));
     stage.guard(holder, miss)?;
-    let exact = stage.load_u32(record, OBJECT.auxiliary_offset as i32);
-    let stored_shape = stage.load_u32(entry, ENTRY.receiver_offset as i32);
+    let exact = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
+    let stored_shape = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.receiver_offset as i32);
     let complement = stage.constant(u64::from(ENTRY.receiver_complement));
     let wanted = stage.sub(complement, exact);
     let difference = stage.sub(stored_shape, wanted);
     let same = stage.eq_imm(difference, 0u32);
     stage.guard(same, miss)?;
-    let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
-    let slot = stage.load_u32(entry, ENTRY.slot_offset as i32);
+    let slot = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.slot_offset as i32);
     let slot = stage.and_imm(slot, u64::from(u16::MAX));
     let inline = inline_storage(stage, record);
     Some(stage.choose(inline, |stage| {
         let half = stage.mul_imm(slot, std::mem::size_of::<u32>() as u64);
         let address = stage.add(record, half);
-        let narrow = stage.load_u32(address, OBJECT.payload_offset as i32);
+        let narrow = stage.load_u32(Region::Payload.mutable(), address, OBJECT.payload_offset as i32);
         decode_narrow(stage, narrow)
     }, |stage| {
         let run = arena_run(stage, payload);
         let offset = stage.mul_imm(slot, OBJECT.property_value_size as u64);
         let address = stage.add(run, offset);
-        stage.load_u64(address, 0)
+        stage.load_u64(Region::ObjectSlots.mutable(), address, 0)
     }))
 }
 
@@ -57,7 +58,7 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
-    stage.load_site(entry, offset)
+    stage.load_site(Region::LoopEntry.readonly(), entry, offset)
 }
 
 /// The dense backing of an array the loop entry recorded: its first value, at the per-site
@@ -69,8 +70,8 @@ pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm
 pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let address = stage.add_imm(entry, offset);
-    let values = stage.load_table(address);
-    let length = stage.load_u32(values, ARRAY.header_length_offset as i32 - ARRAY.header_values_offset as i32);
+    let values = stage.load_table(Region::LoopEntry.readonly(), address);
+    let length = stage.load_u32(Region::Elements.mutable(), values, ARRAY.header_length_offset as i32 - ARRAY.header_values_offset as i32);
     (values, length)
 }
 

@@ -6,23 +6,7 @@
 #![allow(dead_code)] // Stage v2 vocabulary; first consumers are the rows moving under `Concrete` next.
 
 use super::Operation;
-
-/// An alias region of memory: an access to one never aliases an access to another.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Region {
-    /// The activation's register and local slots.
-    Frame,
-    /// Property slots of objects.
-    ObjectSlots,
-    /// A shape word: written only by a shape change, so a load of it is read-only.
-    ShapeWord,
-    /// Dense and typed array elements.
-    Elements,
-    /// Heap bookkeeping: allocation runs, tables, collection state.
-    HeapMeta,
-    /// Per-site feedback counters.
-    MissCounters,
-}
+pub(crate) use super::region::Region;
 
 /// A set of regions, one bit each, so a fact's invalidation is a mask intersection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -94,12 +78,14 @@ impl<W, P> Operation<W, P> {
     /// Effects of the field, element and allocation operations.
     const fn memory_effects(&self) -> Option<Effects> {
         Some(match self {
-            Self::ReadField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord), ..Effects::NONE },
-            Self::WriteField { .. } => Effects::writes(Region::ObjectSlots),
+            Self::ReadField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord)
+                .with(Region::Records).with(Region::Payload), ..Effects::NONE },
+            Self::WriteField { .. } => Effects { writes: RegionSet::of(Region::ObjectSlots).with(Region::Payload), ..Effects::NONE },
             Self::IndexRead { .. } | Self::TypedIndexRead { .. } => Effects::reads(Region::Elements),
             Self::IndexWrite { .. } | Self::TypedIndexWrite { .. } => Effects::writes(Region::Elements),
             Self::MakeObject { .. } | Self::MakeArray { .. } | Self::MakeConstArray { .. } | Self::MakeObjectPair { .. } => Effects {
-                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots), may_alloc: true, ..Effects::NONE },
+                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Records)
+                .with(Region::Payload), may_alloc: true, ..Effects::NONE },
             _ => return None,
         })
     }

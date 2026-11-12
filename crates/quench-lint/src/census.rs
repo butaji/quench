@@ -109,6 +109,12 @@ const METRICS: &[Metric] = &[
         extract: Extract::Syntax(extract::entry_uses),
     },
     Metric {
+        name: "untagged_memory_accesses",
+        direction: Direction::Down,
+        sources: &[Source::Tree(COMPILED, &[])],
+        extract: Extract::Syntax(extract::untagged_memory_accesses),
+    },
+    Metric {
         name: "stencil_opcodes",
         direction: Direction::Up,
         sources: &[Source::File("crates/quench-runtime/src/vm/compiled/base_region/decode.rs")],

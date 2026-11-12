@@ -7,7 +7,7 @@
 use crate::staged::{Stage, Table};
 use crate::words::hole;
 use crate::typed_ir::Type;
-use crate::staged::effects::Region;
+use crate::staged::region::Access;
 
 unsafe extern "C" {
     fn UNSUPPORTED_store_gate(a: u64, b: u64) -> u64;
@@ -62,7 +62,7 @@ impl Stage for StencilStage {
         }
     }
     #[inline(always)]
-    fn load_site(&mut self, base: u64, offset: u64) -> u64 {
+    fn load_site(&mut self, _at: Access, base: u64, offset: u64) -> u64 {
         // SAFETY: the offset is a layout offset the site proved.
         unsafe { ((base.wrapping_add(offset)) as *const u64).read() }
     }
@@ -74,17 +74,17 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn constant(&mut self, bits: u64) -> u64 { bits }
     #[inline(always)]
-    fn load_u32(&mut self, base: u64, offset: i32) -> u64 {
+    fn load_u32(&mut self, _at: Access, base: u64, offset: i32) -> u64 {
         // SAFETY: a staged operation loads only from a live record or table at a layout offset.
         u64::from(unsafe { (base.wrapping_add(offset as i64 as u64) as *const u32).read() })
     }
     #[inline(always)]
-    fn load_u64(&mut self, base: u64, offset: i32) -> u64 {
+    fn load_u64(&mut self, _at: Access, base: u64, offset: i32) -> u64 {
         // SAFETY: as `load_u32`.
         unsafe { (base.wrapping_add(offset as i64 as u64) as *const u64).read() }
     }
     #[inline(always)]
-    fn load_table(&mut self, address: u64) -> u64 { self.load_u64(address, 0) }
+    fn load_table(&mut self, at: Access, address: u64) -> u64 { self.load_u64(at, address, 0) }
     #[inline(always)]
     fn add(&mut self, a: u64, b: u64) -> u64 { a.wrapping_add(b) }
     #[inline(always)]
@@ -116,12 +116,12 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn select(&mut self, cond: bool, then: u64, otherwise: u64) -> u64 { if cond { then } else { otherwise } }
     #[inline(always)]
-    fn store_u32(&mut self, base: u64, offset: i32, value: u64) {
+    fn store_u32(&mut self, _at: Access, base: u64, offset: i32, value: u64) {
         // SAFETY: a staged operation stores only into a live record or backing at a layout offset.
         unsafe { (base.wrapping_add(offset as i64 as u64) as *mut u32).write(value as u32) }
     }
     #[inline(always)]
-    fn store_u64(&mut self, base: u64, offset: i32, value: u64) {
+    fn store_u64(&mut self, _at: Access, base: u64, offset: i32, value: u64) {
         // SAFETY: as `store_u32`.
         unsafe { (base.wrapping_add(offset as i64 as u64) as *mut u64).write(value) }
     }
@@ -171,4 +171,4 @@ impl Stage for StencilStage {
     }
 }
 
-const _: fn(Region, Type) = |_, _| {};
+const _: fn(Access, Type) = |_, _| {};

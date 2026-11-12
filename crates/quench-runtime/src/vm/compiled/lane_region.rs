@@ -17,6 +17,7 @@
 //! that instruction's effects, with the register file holding the interpreter's state; the
 //! lane resumes there. Nothing in a run allocates, collects or calls guest code.
 use crate::bytecode::Class;
+use crate::vm::compiled::regions;
 
 use super::*;
 use super::super::specializer::Specializer;
@@ -803,7 +804,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn exit(&mut self, state: &mut State, pc: u32) {
         if self.vm.diagnostics && self.completion != Completion::Number {
             let line = self.builder.ins().iconst(types::I64, i64::from(std::panic::Location::caller().line()));
-            self.builder.ins().store(MemFlagsData::trusted(), line, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
+            self.builder.ins().store(regions::dispatch(), line, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
         }
         self.leave(state, pc);
     }
@@ -1499,7 +1500,7 @@ pub(super) fn lower(
     let result = rest.first().copied().unwrap_or(context);
     let payload = if numeric { builder.ins().iconst(types::I64, 0) } else { builder.ins().load(
         types::I64,
-        MemFlagsData::trusted(),
+        regions::dispatch(),
         context,
         std::mem::offset_of!(CallContext, adapter_payload) as i32,
     ) };
@@ -1757,7 +1758,7 @@ pub(super) fn lower(
         for register in 0..count {
             let bits = if !numeric && register < usize::from(lowering.unit.caller_registers)
                 && lowering.is_live(pc, register as Register) {
-                lowering.builder.ins().load(types::I64, MemFlagsData::trusted(), registers_base, register_offset(register as Register))
+                lowering.builder.ins().load(types::I64, regions::frame(), registers_base, register_offset(register as Register))
             } else {
                 undefined
             };
@@ -1775,7 +1776,7 @@ pub(super) fn lower(
         }
         if numeric {
             for register in 0..function.params {
-                let number = lowering.builder.ins().load(types::F64, MemFlagsData::trusted(),
+                let number = lowering.builder.ins().load(types::F64, regions::frame(),
                     registers_base, register_offset(register));
                 let variable = lowering.float_var(usize::from(register));
                 lowering.builder.def_var(variable, number);
@@ -1852,7 +1853,7 @@ pub(super) fn lower(
         let mut leaving = State { values, proofs: LocalProofs::default() };
         if lowering.vm.diagnostics {
             let line = lowering.builder.ins().iconst(types::I64, i64::from(line));
-            lowering.builder.ins().store(MemFlagsData::trusted(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
+            lowering.builder.ins().store(regions::dispatch(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
         }
         lowering.leave(&mut leaving, pc);
     }
@@ -1878,7 +1879,7 @@ pub(super) fn lower(
             .take_while(|register| *register < unit.caller_registers) {
             if !lowering.is_live(pc, register) { continue; }
             let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
-            lowering.builder.ins().store(MemFlagsData::trusted(), bits, lowering.registers_base, register_offset(register));
+            lowering.builder.ins().store(regions::frame(), bits, lowering.registers_base, register_offset(register));
         }
         let word = match unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
             super::lane_unit::Origin::Caller(record) => u64::from(record),
@@ -1895,7 +1896,7 @@ pub(super) fn lower(
                         } else {
                             lowering.builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64)
                         };
-                        lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch,
+                        lowering.builder.ins().store(regions::frame(), bits, scratch,
                             register_offset(register - unit.caller_registers));
                     }
                     // Ancestors are suspended at the next child's call; the innermost
@@ -1942,7 +1943,7 @@ pub(super) fn lower(
                     for register in inlined.base..inlined.base + inlined.registers {
                         if !lowering.is_live(pc, register) { continue; }
                         let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
-                        lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch, register_offset(register - unit.caller_registers));
+                        lowering.builder.ins().store(regions::frame(), bits, scratch, register_offset(register - unit.caller_registers));
                     }
                 }
                 LaneExit::Inlined { frame, pc: record }.word()
@@ -2171,7 +2172,7 @@ impl Lowering<'_, '_> {
                 (_, Representation::Tagged) => unreachable!("typed numeric return"),
             };
             let result = self.result;
-            self.ins().store(MemFlagsData::trusted(), value, result, 0);
+            self.ins().store(regions::dispatch(), value, result, 0);
             let success = self.ins().iconst(types::I32, 0);
             self.ins().return_(&[success]);
         }
@@ -2293,7 +2294,7 @@ impl Lowering<'_, '_> {
                         && let Some(root) = aliases[usize::from(call.callee_register)] {
                         let binding = (root, call.target);
                         if !admitted.contains(&binding) {
-                            let callee = self.builder.ins().load(types::I64, MemFlagsData::trusted(),
+                            let callee = self.builder.ins().load(types::I64, regions::frame(),
                                 self.registers_base, register_offset(root));
                             let matched = match call.target.callee {
                                 CalleeBinding::Function => self.function_binding(callee, call.target.function),
@@ -2311,7 +2312,7 @@ impl Lowering<'_, '_> {
                 for register in writes(instruction) { aliases[usize::from(register)] = root; }
             }
             for (root, recovery) in receivers {
-                let receiver = self.builder.ins().load(types::I64, MemFlagsData::trusted(),
+                let receiver = self.builder.ins().load(types::I64, regions::frame(),
                     self.registers_base, register_offset(root));
                 let matched = self.receiver_recovery(receiver, recovery);
                 let exit = *miss.get_or_insert_with(|| self.builder.create_block());
@@ -2466,7 +2467,7 @@ impl Lowering<'_, '_> {
                 };
                 // An unwritten register holds its entry value at either start, in the file.
                 let base = self.registers_base;
-                let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(owner as Register));
+                let bits = self.ins().load(types::I64, regions::frame(), base, register_offset(owner as Register));
                 ObjectRecord::prove(&mut self.builder, bits, records, None, exit)
             });
         }
@@ -2918,7 +2919,7 @@ impl Lowering<'_, '_> {
     /// A helper's result, read from the lane's register `destination` as the register's value.
     fn reload_result(&mut self, state: &mut State, destination: Register) {
         let base = self.registers_base;
-        let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));
+        let bits = self.ins().load(types::I64, regions::frame(), base, register_offset(destination));
         self.set_tagged(state, destination, bits);
     }
 
@@ -2931,7 +2932,7 @@ impl Lowering<'_, '_> {
             if !self.is_live(pc, register) { continue; }
             let bits = self.builder.use_var(self.registers.tagged[usize::from(register)]);
             let base = self.registers_base;
-            self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
+            self.ins().store(regions::frame(), bits, base, register_offset(register));
         }
     }
 
@@ -3409,7 +3410,7 @@ impl Lowering<'_, '_> {
         // result, which the call left in its register (`LaneExit::Returned`).
         if instruction.returns_from_frame() {
             let base = self.registers_base;
-            let value = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(instruction.result_register()));
+            let value = self.ins().load(types::I64, regions::frame(), base, register_offset(instruction.result_register()));
             self.return_value(call_pc, value);
             return false;
         }
@@ -3441,7 +3442,7 @@ impl Lowering<'_, '_> {
         self.finishes = true;
         let record = self.ins().iconst(types::I64, i64::from(record));
         let payload = self.payload;
-        self.ins().store(MemFlagsData::trusted(), record, payload,
+        self.ins().store(regions::dispatch(), record, payload,
             i32::try_from(std::mem::offset_of!(JsStepDispatch, returned_pc)).expect("dispatch offset fits i32"));
         let returned = self.ins().iconst(types::I32, i64::from(LANE_BODY_RETURNED));
         self.leave_with(returned, Some(value));
@@ -3457,7 +3458,7 @@ impl Lowering<'_, '_> {
         } else {
             if let Some(word) = word {
                 let result = self.result;
-                self.ins().store(MemFlagsData::trusted(), word, result, 0);
+                self.ins().store(regions::dispatch(), word, result, 0);
             }
             self.ins().jump(leave, &[status.into()]);
         }
@@ -3471,14 +3472,14 @@ impl Lowering<'_, '_> {
         let offset = i32::try_from(std::mem::offset_of!(super::JsStepDispatch, loop_entry))
             .expect("dispatch offset fits i32");
         let payload = self.payload;
-        let entry = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset);
+        let entry = self.ins().load(types::I64, regions::dispatch(), payload, offset);
         let zero = self.ins().icmp_imm_u(IntCC::Equal, entry, 0);
         let (skip, count) = (self.builder.create_block(), self.builder.create_block());
         self.ins().brif(zero, skip, &[], count, &[]);
         self.builder.switch_to_block(count);
-        let word = self.ins().load(types::I64, MemFlagsData::trusted(), entry, 0);
+        let word = self.ins().load(types::I64, regions::miss_counter(), entry, 0);
         let next = self.ins().iadd_imm_s(word, 1);
-        self.ins().store(MemFlagsData::trusted(), next, entry, 0);
+        self.ins().store(regions::miss_counter(), next, entry, 0);
         self.ins().jump(skip, &[]);
         self.builder.switch_to_block(skip);
     }
@@ -4122,7 +4123,7 @@ impl Lowering<'_, '_> {
             let offset = self.ins().uextend(types::I64, index);
             let offset = self.ins().imul_imm_s(offset, std::mem::size_of::<crate::Value>() as i64);
             let address = self.ins().iadd(values, offset);
-            let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+            let value = self.ins().load(types::I64, regions::elements(), address, 0);
             return self.set_tagged(state, destination, value);
         }
         if array.views == ElementViews::Dense {
@@ -4216,7 +4217,7 @@ impl Lowering<'_, '_> {
             std::mem::offset_of!(super::JsStepDispatch, loop_entry));
         let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
             * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
-        self.ins().load(types::I64, MemFlagsData::trusted(), entry, offset)
+        self.ins().load(types::I64, regions::loop_entry(), entry, offset)
     }
 
     /// The owner and name of a plain read of `instruction`'s lookup (no sink, no completion):
@@ -4688,10 +4689,10 @@ impl Lowering<'_, '_> {
             let result = self.builder.append_block_param(done, types::I64);
             let (address, _) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
                 JsFieldReceiver::Value(object), site, true, slow, Some(binding), header, Some(packed));
-            let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+            let value = self.ins().load(types::I64, regions::object_slots(), address, 0);
             self.ins().jump(done, &[ir::BlockArg::Value(value)]);
             self.builder.switch_to_block(packed);
-            let narrow = self.ins().load(types::I32, MemFlagsData::trusted(), packed_address, 0);
+            let narrow = self.ins().load(types::I32, regions::payload(), packed_address, 0);
             let table = match self.helpers {
                 #[cfg(feature = "aot")]
                 LaneHelpers::Bound(_, symbol) => NarrowTable::Linked(symbol),
@@ -4769,12 +4770,12 @@ impl Lowering<'_, '_> {
             // Ordinary JS own fields are not shared memory. Observation requires
             // a guest/host effect or poll; the backend must prove their absence
             // before deferring this numeric, barrier-free write to an exit.
-            let store = self.ins().store(MemFlagsData::trusted(), narrow, slot.address, 0);
+            let store = self.ins().store(regions::payload(), narrow, slot.address, 0);
             self.builder.func.private_stores.push(store);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(arena);
             // Verified integers neither widen an arena slot nor create a heap edge.
-            let store = self.ins().store(MemFlagsData::trusted(), value, slot.address, 0);
+            let store = self.ins().store(regions::object_slots(), value, slot.address, 0);
             self.builder.func.private_stores.push(store);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(done);
@@ -4802,7 +4803,7 @@ impl Lowering<'_, '_> {
         let present = self.ins().icmp_imm_u(IntCC::NotEqual, object, 0);
         self.ins().brif(present, found, &[], done, &[]);
         self.builder.switch_to_block(found);
-        let shape = self.ins().load(types::I32, MemFlagsData::trusted(), object, OBJECT.auxiliary_offset as i32);
+        let shape = self.ins().load(types::I32, regions::shape_word(), object, OBJECT.auxiliary_offset as i32);
         let inline = super::object_slots::inline_storage(&mut self.builder, object);
         self.builder.def_var(shape_var, shape);
         self.builder.def_var(inline_var, inline);
@@ -4966,12 +4967,12 @@ impl Lowering<'_, '_> {
         let (packed, arena) = (self.builder.create_block(), self.builder.create_block());
         self.ins().brif(inline, packed, &[], arena, &[]);
         self.builder.switch_to_block(packed);
-        let payload = self.ins().load(types::I64, MemFlagsData::trusted(), record, OBJECT.payload_offset as i32);
+        let payload = self.ins().load(types::I64, regions::payload(), record, OBJECT.payload_offset as i32);
         let plain = crate::staged::object::plain_payload(&mut super::object_slots::emit(&mut self.builder), payload);
         emit_js_guard(&mut self.builder, plain, general);
         let narrow = emit_narrow_store_value(&mut self.builder, value, ty, general);
         let offset = OBJECT.payload_offset + usize::from(slot) * std::mem::size_of::<u32>();
-        self.ins().store(MemFlagsData::trusted(), narrow, record, offset as i32);
+        self.ins().store(regions::payload(), narrow, record, offset as i32);
         self.ins().jump(done, &[]);
         self.builder.switch_to_block(arena);
     }
@@ -5013,7 +5014,7 @@ impl Lowering<'_, '_> {
             let (address, record) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
                 JsFieldReceiver::Value(object), site, false, slow, Some(binding), header, Some(packed));
             emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, ty, slow);
-            self.ins().store(MemFlagsData::trusted(), value, address, 0);
+            self.ins().store(regions::object_slots(), value, address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(packed);
             let narrow = emit_narrow_store_value(&mut self.builder, value, ty, slow);
@@ -5022,7 +5023,7 @@ impl Lowering<'_, '_> {
             let record = self.ins().ireduce(types::I32, object);
             let record = self.ins().uextend(types::I64, record);
             emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, ty, slow);
-            self.ins().store(MemFlagsData::trusted(), narrow, packed_address, 0);
+            self.ins().store(regions::payload(), narrow, packed_address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);
             self.store_helper_unbound(state, object, atom, site, value, exit);
@@ -5261,7 +5262,7 @@ impl Lowering<'_, '_> {
             // The activation's `Return` register holds it too, as the record it names reads.
             if let Some((_, register)) = terminal {
                 let base = self.registers_base;
-                self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
+                self.ins().store(regions::frame(), bits, base, register_offset(register));
             }
             self.return_value(terminal.map_or(own, |(record, _)| record), bits);
             self.native += 1;

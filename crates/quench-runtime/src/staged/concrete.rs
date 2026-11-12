@@ -1,6 +1,7 @@
 //! The interpreter's stage: every staged operation run on machine words of live memory.
 
 use super::{Stage, Table};
+use super::region::Access;
 
 /// The interpreter's stage: machine words, read from live memory. It knows every condition,
 /// so a guard never fails and each `choose` runs one arm.
@@ -35,7 +36,7 @@ impl Stage for Concrete {
     #[inline(always)]
     fn site(&mut self, v: u64) -> u64 { v }
     #[inline(always)]
-    fn load_site(&mut self, base: u64, offset: u64) -> u64 {
+    fn load_site(&mut self, _at: Access, base: u64, offset: u64) -> u64 {
         // SAFETY: as `load_u64`; the offset is a layout offset the site proved.
         unsafe { ((base as *const u8).offset(offset as isize) as *const u64).read() }
     }
@@ -45,17 +46,17 @@ impl Stage for Concrete {
     #[inline(always)]
     fn constant(&mut self, bits: u64) -> u64 { bits }
     #[inline(always)]
-    fn load_u32(&mut self, base: u64, offset: i32) -> u64 {
+    fn load_u32(&mut self, _at: Access, base: u64, offset: i32) -> u64 {
         // SAFETY: a staged operation loads only from a live record or table at a layout offset.
         u64::from(unsafe { ((base as *const u8).offset(offset as isize) as *const u32).read() })
     }
     #[inline(always)]
-    fn load_u64(&mut self, base: u64, offset: i32) -> u64 {
+    fn load_u64(&mut self, _at: Access, base: u64, offset: i32) -> u64 {
         // SAFETY: as `load_u32`; records and arena values are 8-byte aligned.
         unsafe { ((base as *const u8).offset(offset as isize) as *const u64).read() }
     }
     #[inline(always)]
-    fn load_table(&mut self, address: u64) -> u64 { self.load_u64(address, 0) }
+    fn load_table(&mut self, at: Access, address: u64) -> u64 { self.load_u64(at, address, 0) }
     #[inline(always)]
     fn add(&mut self, a: u64, b: u64) -> u64 { a.wrapping_add(b) }
     #[inline(always)]
@@ -87,12 +88,12 @@ impl Stage for Concrete {
     #[inline(always)]
     fn select(&mut self, cond: bool, then: u64, otherwise: u64) -> u64 { if cond { then } else { otherwise } }
     #[inline(always)]
-    fn store_u32(&mut self, base: u64, offset: i32, value: u64) {
+    fn store_u32(&mut self, _at: Access, base: u64, offset: i32, value: u64) {
         // SAFETY: a staged operation stores only into a live record or backing at a layout offset.
         unsafe { ((base as *mut u8).offset(offset as isize) as *mut u32).write(value as u32) }
     }
     #[inline(always)]
-    fn store_u64(&mut self, base: u64, offset: i32, value: u64) {
+    fn store_u64(&mut self, _at: Access, base: u64, offset: i32, value: u64) {
         // SAFETY: as `store_u32`; values and backings are 8-byte aligned.
         unsafe { ((base as *mut u8).offset(offset as isize) as *mut u64).write(value) }
     }

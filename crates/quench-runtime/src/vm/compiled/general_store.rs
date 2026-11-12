@@ -6,6 +6,7 @@
 //! helper (`lane_field_set`), which records the proof.
 use super::{emit_js_cached_field_slot, emit_js_guard, emit_js_payload_word, emit_lane_helper_call, emit_unlogged_property_store_guard, Host,
     JsFieldReceiver, JsStepDispatch, Vm};
+use crate::vm::compiled::regions;
 use super::super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 use crate::bytecode::Atom;
 use crate::value::ValueLayout;
@@ -108,12 +109,12 @@ pub(super) fn emit_store(builder: &mut FunctionBuilder<'_>, (arguments, payload)
     let (address, record) = emit_js_cached_field_slot(builder, arguments, payload, JsFieldReceiver::Value(receiver),
         site, false, helper, None, None, Some(packed));
     emit_unlogged_property_store_guard(builder, payload, record, value, crate::typed_ir::Type::ANY, helper);
-    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+    builder.ins().store(regions::object_slots(), value, address, 0);
     builder.ins().jump(done, &[]);
     builder.switch_to_block(packed);
     let narrow = emit_narrow(builder, value, classes, helper);
     emit_unlogged_property_store_guard(builder, payload, record, value, crate::typed_ir::Type::ANY, helper);
-    builder.ins().store(MemFlagsData::trusted(), narrow, packed_address, 0);
+    builder.ins().store(regions::payload(), narrow, packed_address, 0);
     builder.ins().jump(done, &[]);
 }
 

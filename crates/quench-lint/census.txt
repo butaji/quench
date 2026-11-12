@@ -6,4 +6,5 @@ frame_structs 10
 exit_mechanisms 11
 tier_policy_constants 50
 entry_kinds 26
+untagged_memory_accesses 56
 stencil_opcodes 14

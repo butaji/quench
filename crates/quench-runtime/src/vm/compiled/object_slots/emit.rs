@@ -1,7 +1,8 @@
 //! The specializer's Cranelift stage: `crate::staged` operations emitted as IR.
 
 use super::*;
-use crate::staged::{Domain, NumericStage, Stage, Table};
+use crate::staged::{Access, Domain, NumericStage, Stage, Table};
+use crate::vm::compiled::regions;
 use crate::vm::operations::{NumberArithmetic, NumberRelation};
 
 /// The specializer's stage (`crate::staged`): each operation emits its residual as Cranelift
@@ -39,22 +40,22 @@ impl Stage for Emit<'_, '_> {
     type Imm = EmitImm;
 
     fn site(&mut self, v: u64) -> EmitImm { EmitImm::Const(v) }
-    fn load_site(&mut self, base: ir::Value, offset: EmitImm) -> ir::Value {
+    fn load_site(&mut self, at: Access, base: ir::Value, offset: EmitImm) -> ir::Value {
         match offset {
-            EmitImm::Const(bits) => self.load_u64(base, bits as i32),
+            EmitImm::Const(bits) => self.load_u64(at, base, bits as i32),
         }
     }
     fn shape_in_site(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value { self.shape_in(shape, shapes) }
 
     fn constant(&mut self, bits: u64) -> ir::Value { self.builder.ins().iconst(types::I64, bits as i64) }
-    fn load_u32(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().uload32(MemFlagsData::trusted(), base, offset)
+    fn load_u32(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().uload32(regions::flags(at), base, offset)
     }
-    fn load_u64(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().load(types::I64, MemFlagsData::trusted(), base, offset)
+    fn load_u64(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().load(types::I64, regions::flags(at), base, offset)
     }
-    fn load_table(&mut self, address: ir::Value) -> ir::Value {
-        self.builder.ins().load(types::I64, MemFlagsData::trusted().with_readonly().with_can_move(), address, 0)
+    fn load_table(&mut self, at: Access, address: ir::Value) -> ir::Value {
+        self.load_u64(at, address, 0)
     }
     fn add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().iadd(a, b) }
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
@@ -95,11 +96,11 @@ impl Stage for Emit<'_, '_> {
     fn select(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
         self.builder.ins().select(cond, then, otherwise)
     }
-    fn store_u32(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
-        self.builder.ins().istore32(MemFlagsData::trusted(), value, base, offset);
+    fn store_u32(&mut self, at: Access, base: ir::Value, offset: i32, value: ir::Value) {
+        self.builder.ins().istore32(regions::flags(at), value, base, offset);
     }
-    fn store_u64(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
-        self.builder.ins().store(MemFlagsData::trusted(), value, base, offset);
+    fn store_u64(&mut self, at: Access, base: ir::Value, offset: i32, value: ir::Value) {
+        self.builder.ins().store(regions::flags(at), value, base, offset);
     }
     fn store_gate(&mut self, record_id: ir::Value, _value: ir::Value) -> ir::Value {
         // Native code keeps the helper for stores: an id is never below itself.

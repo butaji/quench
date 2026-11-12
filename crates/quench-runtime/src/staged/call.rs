@@ -12,6 +12,7 @@
 #![allow(dead_code)]
 
 use super::Stage;
+use super::region::Region;
 
 /// Words in one call record.
 pub(crate) const RECORD_WORDS: u64 = 9;
@@ -119,15 +120,15 @@ pub(crate) fn meta_wide<S: Stage>(stage: &mut S, meta: S::Word) -> S::Word {
 /// Saves a call at `top`, the first free word of the record stack; the new top is one record past.
 #[inline(always)]
 pub(crate) fn push_record<S: Stage>(stage: &mut S, top: S::Word, record: Record<S::Word>) -> S::Word {
-    stage.store_u64(top, SITE_AT, record.site);
-    stage.store_u64(top, BASE_AT, record.base);
-    stage.store_u64(top, REGISTERS_AT, record.registers);
-    stage.store_u64(top, THIS_AT, record.this);
-    stage.store_u64(top, ENV_AT, record.env);
-    stage.store_u64(top, CAPTURE_AT, record.capture);
-    stage.store_u64(top, CALLEE_AT, record.callee);
-    stage.store_u64(top, META_AT, record.meta);
-    stage.store_u64(top, WINDOW_AT, record.window);
+    stage.store_u64(Region::Frame.mutable(), top, SITE_AT, record.site);
+    stage.store_u64(Region::Frame.mutable(), top, BASE_AT, record.base);
+    stage.store_u64(Region::Frame.mutable(), top, REGISTERS_AT, record.registers);
+    stage.store_u64(Region::Frame.mutable(), top, THIS_AT, record.this);
+    stage.store_u64(Region::Frame.mutable(), top, ENV_AT, record.env);
+    stage.store_u64(Region::Frame.mutable(), top, CAPTURE_AT, record.capture);
+    stage.store_u64(Region::Frame.mutable(), top, CALLEE_AT, record.callee);
+    stage.store_u64(Region::Frame.mutable(), top, META_AT, record.meta);
+    stage.store_u64(Region::Frame.mutable(), top, WINDOW_AT, record.window);
     stage.add_imm(top, RECORD_BYTES)
 }
 
@@ -136,15 +137,15 @@ pub(crate) fn push_record<S: Stage>(stage: &mut S, top: S::Word, record: Record<
 #[inline(always)]
 pub(crate) fn load_record<S: Stage>(stage: &mut S, at: S::Word) -> Record<S::Word> {
     Record {
-        site: stage.load_u64(at, SITE_AT),
-        base: stage.load_u64(at, BASE_AT),
-        registers: stage.load_u64(at, REGISTERS_AT),
-        this: stage.load_u64(at, THIS_AT),
-        env: stage.load_u64(at, ENV_AT),
-        capture: stage.load_u64(at, CAPTURE_AT),
-        callee: stage.load_u64(at, CALLEE_AT),
-        meta: stage.load_u64(at, META_AT),
-        window: stage.load_u64(at, WINDOW_AT),
+        site: stage.load_u64(Region::Frame.mutable(), at, SITE_AT),
+        base: stage.load_u64(Region::Frame.mutable(), at, BASE_AT),
+        registers: stage.load_u64(Region::Frame.mutable(), at, REGISTERS_AT),
+        this: stage.load_u64(Region::Frame.mutable(), at, THIS_AT),
+        env: stage.load_u64(Region::Frame.mutable(), at, ENV_AT),
+        capture: stage.load_u64(Region::Frame.mutable(), at, CAPTURE_AT),
+        callee: stage.load_u64(Region::Frame.mutable(), at, CALLEE_AT),
+        meta: stage.load_u64(Region::Frame.mutable(), at, META_AT),
+        window: stage.load_u64(Region::Frame.mutable(), at, WINDOW_AT),
     }
 }
 
@@ -221,11 +222,11 @@ pub(crate) const ENTRY_ACTIVATES: u64 = 0;
 #[inline(always)]
 pub(crate) fn admit_native<S: Stage>(stage: &mut S, cell: S::Word, expected: S::Word, free: S::Word, miss: S::Miss)
     -> Option<S::Word> {
-    let validity = stage.load_u64(cell, CELL.validity_offset);
+    let validity = stage.load_u64(Region::EntryCell.mutable(), cell, CELL.validity_offset);
     let difference = stage.sub(validity, expected);
     let valid = stage.eq_imm(difference, 0u32);
     stage.guard(valid, miss)?;
-    let facts = stage.load_u64(cell, CELL.facts_offset);
+    let facts = stage.load_u64(Region::EntryCell.readonly(), cell, CELL.facts_offset);
     let room = stage.shr_imm(facts, ROOM_SHIFT);
     let room = stage.and_imm(room, u64::from(u16::MAX));
     let short = stage.ult(free, room);
@@ -247,11 +248,11 @@ pub(crate) struct Admitted<W> {
 #[inline(always)]
 pub(crate) fn admit_call<S: Stage>(stage: &mut S, cell: S::Word, expected: S::Word, argc: S::Word, free: S::Word,
     miss: S::Miss) -> Option<Admitted<S::Word>> {
-    let validity = stage.load_u64(cell, CELL.validity_offset);
+    let validity = stage.load_u64(Region::EntryCell.mutable(), cell, CELL.validity_offset);
     let difference = stage.sub(validity, expected);
     let valid = stage.eq_imm(difference, 0u32);
     stage.guard(valid, miss)?;
-    let facts = stage.load_u64(cell, CELL.facts_offset);
+    let facts = stage.load_u64(Region::EntryCell.readonly(), cell, CELL.facts_offset);
     let kind = stage.shr_imm(facts, ENTRY_SHIFT);
     let plain = stage.eq_imm(kind, ENTRY_ACTIVATES);
     stage.guard(plain, miss)?;

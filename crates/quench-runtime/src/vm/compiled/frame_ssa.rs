@@ -7,6 +7,7 @@
 //! so aliased parameters and references moved by GC are never cached across one.
 
 use super::*;
+use crate::vm::compiled::regions;
 use cranelift_codegen::entity::SecondaryMap;
 use cranelift_codegen::ir::InstBuilderBase;
 
@@ -91,7 +92,7 @@ impl FrameFlow {
         live: Option<&crate::compile::liveness::RegisterMasks>, pc: usize) {
         for register in 0..self.count {
             let value = if live.is_none_or(|live| live.is_live(pc, register)) {
-                builder.ins().load(types::I64, MemFlagsData::trusted(), self.registers, offset(register))
+                builder.ins().load(types::I64, regions::frame(), self.registers, offset(register))
             } else { builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64) };
             let ir::ValueDef::Result(instruction, _) = builder.func.dfg.value_def(value) else { unreachable!() };
             self.effects[instruction] = FrameEffect::root(register);
@@ -218,7 +219,7 @@ impl FrameFlow {
                         if residual.is_some_and(|frame| !frame.contains(register)) { continue; }
                         if pc.is_some_and(|pc| live.is_some_and(|live| !live.is_live(pc, register))) { continue; }
                         let value = builder.use_var(variables[usize::from(register)]);
-                        builder.ins().store(MemFlagsData::trusted(), value, self.registers, offset(register));
+                        builder.ins().store(regions::frame(), value, self.registers, offset(register));
                     }
                     match residual {
                         Some(frame) => current.subtract(frame),
@@ -247,7 +248,7 @@ impl FrameFlow {
                     // Canonical consumers may update homes, but cannot move
                     // or release this caller's buffers.
                     for register in frame.iter() {
-                        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), self.registers, offset(register));
+                        let value = builder.ins().load(types::I64, regions::frame(), self.registers, offset(register));
                         builder.def_var(variables[usize::from(register)], value);
                     }
                 }
@@ -386,6 +387,7 @@ mod tests {
             assert!(!effect.gates[0].1);
             assert!(native.layout.inst_block(effect.gates[0].0).is_some());
             assert_eq!(native.dfg.insts[effect.gates[0].0].opcode(), ir::Opcode::Brif);
+            crate::vm::compiled::regions::declare_regions(&mut native);
             let mut compiler = cranelift_codegen::Context::for_function(native);
             let compiled = compiler.compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
             let memory = CodeMemory::new(compiled.buffer.data()).unwrap();
