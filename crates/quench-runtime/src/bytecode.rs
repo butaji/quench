@@ -1725,8 +1725,8 @@ call_plan_bits!(
     reads_passed_arguments,
     registers_only,
     environment_activation,
-    generator_registers_only,
-    generator_environment,
+    suspended_registers,
+    suspended_environment,
 );
 
 #[derive(Clone, Copy, Debug)]
@@ -1776,16 +1776,17 @@ pub(crate) struct CallPlan {
     /// environment load, store or dead-zone opening of a selectively captured layout. A lane
     /// may run such a body without a frame (`CallEntry::Environment`).
     pub(crate) environment_activation: bool,
-    /// A synchronous generator laid out as its registers: no locals, `arguments`, closures,
-    /// dynamic scope or implicit bindings, so what its suspended frame holds is its registers,
-    /// receiver and closure environment. A lane resumes it as an activation whose window is the
-    /// frame's register file, and its `yield` suspends it back into that file.
-    pub(crate) generator_registers_only: bool,
-    /// A synchronous generator whose frame locals and environment ride a window past its
+    /// A function that suspends (a generator, an async function or an async generator) laid out
+    /// as its registers: no locals, `arguments`, closures, dynamic scope or implicit
+    /// bindings, so what its suspended frame holds is its registers, receiver and closure
+    /// environment. A lane resumes it as an activation whose window is the frame's register
+    /// file, and its `yield` or `await` suspends it back into that file.
+    pub(crate) suspended_registers: bool,
+    /// A function that suspends whose frame locals and environment ride a window past its
     /// registers (`locals_ride_window`), which a lane resumes as an activation over the
     /// frame's register file, binding the window from the record as a call binds a fresh one
-    /// (`GeneratorFrame::open_environment_window`) and storing it back at the `yield`.
-    pub(crate) generator_environment: bool,
+    /// (`GeneratorFrame::open_environment_window`) and storing it back at the suspension.
+    pub(crate) suspended_environment: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2265,9 +2266,17 @@ impl Function {
             .any(|instruction| instruction.op().suspends())
     }
 
+    /// Whether a suspension of the function parks its frame in a record a lane resumes from: a
+    /// generator or an async function, but for an arrow reading `this`, which is its
+    /// environment's and only a frame binds (`Vm::lexical_activation_this`).
+    fn suspends_in_record(&self) -> bool {
+        (self.is_generator || self.is_async)
+            && !(self.is_arrow && self.instructions().any(|instruction| instruction.op() == Op::LoadThis))
+    }
+
     /// Whether its locals and the environment its closures capture can live in a window past
     /// its registers: the layout an environment activation (`CallPlan::environment_activation`)
-    /// and a suspended generator's window (`CallPlan::generator_environment`) share. Each local
+    /// and a suspended generator's window (`CallPlan::suspended_environment`) share. Each local
     /// is a frame local (none promoted to a register), the captured ones owned by the
     /// environment, and every instruction that addresses one is a record the window's handlers
     /// read.
@@ -2376,8 +2385,8 @@ impl Function {
                         .all(|slot| Some(slot) == self.arguments_slot)
                 });
             let environment_activation = in_loop && self.parent.is_some() && self.locals_ride_window(tables);
-            let generator_registers_only = self.is_generator
-                && !self.is_async
+            let suspendable = self.suspends_in_record();
+            let suspended_registers = suspendable
                 && registers_layout_of_any_kind
                 && !self.body_binding_reads(tables)
                 && !self.rest
@@ -2387,17 +2396,16 @@ impl Function {
                 && !self.has_dynamic_scope_access();
             // Its locals and closures ride an environment window as an ordinary body's do; the
             // `arguments` and dynamic scope shapes the lane has no window for stay frames.
-            let generator_environment = self.is_generator
-                && !self.is_async
-                && !generator_registers_only
+            let suspended_environment = suspendable
+                && !suspended_registers
                 && self.parent.is_some()
                 && !self.parameter_eval_arguments_error
                 && self.arguments_slot.is_none()
                 && self.locals_ride_window(tables);
             CallPlan {
                 environment_activation,
-                generator_registers_only,
-                generator_environment,
+                suspended_registers,
+                suspended_environment,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 settles_in_loop,

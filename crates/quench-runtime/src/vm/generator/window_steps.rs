@@ -6,18 +6,25 @@ use super::super::activation::GeneratorFrame;
 
 impl<H: Host> Vm<H> {
     /// The frame of `generator` the lane resumes as an activation over its register file, which
-    /// `code`, the running program's, lays out as its registers (`CallPlan::generator_registers_only`)
-    /// or with an environment window after them (`CallPlan::generator_environment`, the `bool`):
-    /// a suspended generator of this realm and program that is not running or done.
+    /// `code`, the running program's, lays out as its registers or with an environment window
+    /// after them (`window_layout`, the `bool`): a suspended generator of this realm and
+    /// program that is not running or done.
     pub(in crate::vm) fn generator_window_frame(&self, generator: Value, code: &ResidualProgram) -> Option<(&GeneratorFrame, bool)> {
         let IteratorRecord { ext, .. } = self.heap.iterator(generator)?;
         let record = ext.generator.as_deref()?;
         let frame = &*record.suspended_continuation()?.frame;
+        let environment = self.window_layout(frame, code)?;
+        (record.realm == self.realm.globals).then_some((frame, environment))
+    }
+
+    /// Whether the lane resumes `frame`, suspended by a function of `code`, over its register
+    /// file, and whether its window carries an environment after the registers: a frame of the
+    /// active program whose function lays out as its registers or with an environment window
+    /// (`CallPlan::suspended_registers`, `CallPlan::suspended_environment`).
+    pub(in crate::vm) fn window_layout(&self, frame: &GeneratorFrame, code: &ResidualProgram) -> Option<bool> {
         let plan = code.function_get(frame.function as usize)?.call_plan(code);
-        (record.realm == self.realm.globals
-            && frame.program == self.active_program
-            && (plan.generator_registers_only || plan.generator_environment))
-            .then_some((frame, plan.generator_environment))
+        (frame.program == self.active_program && (plan.suspended_registers || plan.suspended_environment))
+            .then_some(plan.suspended_environment)
     }
 
     /// Starts a windowed run of `generator`, which `generator_window_frame` admitted: the
@@ -33,11 +40,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<*mut GeneratorFrame> {
         let (frame, resume_register) = self.generator_record_mut(generator)?.resume_windowed()?;
         // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
-        if let Some(register) = resume_register
-            && let Some(slot) = unsafe { &mut *frame }.registers.get_mut(usize::from(register))
-        {
-            *slot = sent;
-        }
+        unsafe { &mut *frame }.receive(resume_register, sent);
         // The frames the lane's activations become sit below the generator's.
         self.realm.promise.active_native.push(super::super::activation::NativeActivation {
             callable: method,
@@ -65,14 +68,19 @@ impl<H: Host> Vm<H> {
             .generator_record_mut(generator)
             .and_then(GeneratorRecord::take_windowed)
             .expect("a windowed yield belongs to a windowed generator");
-        frame.close_environment_window();
-        let (program, function) = (frame.program, frame.function);
-        let live_registers = self.release_dead_registers(program, function, pc, &mut frame.registers);
-        frame.suspend_at(pc, live_registers, self.lane_stack.drain_iterators(depth));
+        self.park_frame(&mut frame, pc, depth);
         let continuation = Continuation { frame, completion: Completion::Yield(value), resume_register: Some(destination), promise: Value::UNDEFINED };
         if let Some(record) = self.generator_record_mut(generator) {
             record.suspend(continuation);
         }
+    }
+
+    /// Suspends the frame of a windowed run at `pc`: the environment window closed, its dead
+    /// registers cleared, and the iterators the activation at `depth` pushed taken back.
+    pub(in crate::vm) fn park_frame(&mut self, frame: &mut GeneratorFrame, pc: usize, depth: usize) {
+        frame.close_environment_window();
+        let live_registers = self.release_dead_registers(frame.program, frame.function, pc, &mut frame.registers);
+        frame.suspend_at(pc, live_registers, self.lane_stack.drain_iterators(depth));
     }
 
     /// Ends the windowed run of `generator` at its return: it completes, dropping its frame.
@@ -91,10 +99,20 @@ impl<H: Host> Vm<H> {
         generator: Value,
         iterators: impl Iterator<Item = ActiveIterator>,
     ) {
-        let mut frame = self
+        let frame = self
             .generator_record_mut(generator)
             .and_then(GeneratorRecord::take_windowed)
             .expect("a windowed generator's activation materializes");
+        self.push_resumed_frame(frame, iterators);
+    }
+
+    /// The frame of a windowed run's record, made a VM frame on the frame stack with the
+    /// iterators the lane's loops pushed since the lane resumed it.
+    pub(in crate::vm) fn push_resumed_frame(
+        &mut self,
+        mut frame: Box<GeneratorFrame>,
+        iterators: impl Iterator<Item = ActiveIterator>,
+    ) {
         frame.close_environment_window();
         let mut frame = frame.into_frame(self.with_stack.len());
         frame.active_iterators.extend(iterators);
@@ -115,7 +133,7 @@ impl<H: Host> Vm<H> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use crate::test_host::TestHost;
     use crate::vm::{activation::frames_made, Vm};
     use crate::Engine;
@@ -123,7 +141,7 @@ mod tests {
     use std::rc::Rc;
 
     /// What running `source` prints, and how many frames its resumes made.
-    fn run(source: &str) -> (Vec<String>, usize) {
+    pub(in crate::vm) fn run(source: &str) -> (Vec<String>, usize) {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = Engine::specialize(source, "generator-windows.js").unwrap();
@@ -147,37 +165,47 @@ mod tests {
         )
     }
 
-    #[test]
-    fn only_generators_laid_out_as_their_registers_run_in_windows() {
-        let program = Engine::specialize(
-            "function* flat(n) { for (let i = 0; i < n; i++) yield i; }
-             function* closing(n) { for (let i = 0; i < n; i++) yield () => i; }
-             function* reading() { yield arguments.length; }
-             async function* asynchronous(n) { for (let i = 0; i < n; i++) yield i; }",
-            "generator-plans.js",
-        )
-        .unwrap();
-        let windowed: Vec<bool> = program
+    /// Per suspending function of `source`, whether its frame rides its register file, with an
+    /// environment window after the registers, or stays a frame.
+    fn layouts(source: &str) -> Vec<(bool, bool)> {
+        let program = Engine::specialize(source, "suspended-plans.js").unwrap();
+        program
             .functions
             .iter()
-            .filter(|function| function.is_generator)
-            .map(|function| function.call_plan(&program).generator_registers_only)
-            .collect();
-        assert_eq!(windowed, [true, false, false, false]);
+            .filter(|function| function.is_generator || function.is_async)
+            .map(|function| {
+                let plan = function.call_plan(&program);
+                (plan.suspended_registers, plan.suspended_environment)
+            })
+            .collect()
     }
 
     #[test]
-    fn generators_reading_arguments_or_async_ones_keep_their_frames() {
-        let program = Engine::specialize(
-            "function* reading() { yield arguments.length; }
-             async function* asynchronous(n) { for (let i = 0; i < n; i++) yield i; }",
-            "generator-frame-plans.js",
-        )
-        .unwrap();
-        for function in program.functions.iter().filter(|function| function.is_generator) {
-            let plan = function.call_plan(&program);
-            assert!(!plan.generator_registers_only && !plan.generator_environment);
-        }
+    fn suspending_functions_run_in_windows_unless_they_read_what_the_lane_has_no_window_for() {
+        let layouts = layouts(
+            "function* flat(n) { for (let i = 0; i < n; i++) yield i; }
+             function* closing(n) { for (let i = 0; i < n; i++) yield () => i; }
+             function* reading() { yield arguments.length; }
+             async function* asynchronous(n) { for (let i = 0; i < n; i++) { await i; yield i; } }
+             async function awaiting(n) { let sum = 0; for (let i = 0; i < n; i++) sum += await i; return sum; }
+             async function closing_over(n) { let sum = 0; const add = (k) => sum += k; await n; add(n); return sum; }
+             async function reading_arguments() { await 0; return arguments.length; }",
+        );
+        let registers: Vec<bool> = layouts.iter().map(|(registers, _)| *registers).collect();
+        assert_eq!(registers, [true, false, false, true, true, false, false]);
+        // `arguments` has no window in the lane, so those two keep their frames.
+        assert_eq!(layouts[2], (false, false));
+        assert_eq!(layouts[6], (false, false));
+    }
+
+    #[test]
+    fn a_generator_reading_arguments_keeps_its_frame_and_reads_them() {
+        let (lines, _) = run(
+            "function* reading() { yield arguments.length; yield arguments[1]; }
+             const it = reading(1, 2, 3);
+             print(JSON.stringify([it.next().value, it.next().value]));",
+        );
+        assert_eq!(lines, ["[3,2]"]);
     }
 
     #[test]

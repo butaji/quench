@@ -71,6 +71,14 @@ impl GeneratorFrame {
         Value::from_bits(self.prefix.this)
     }
 
+    /// The value the instruction the frame suspended at evaluates to, which a resume sends: it
+    /// goes to `register`, where the suspension left one.
+    pub(in crate::vm) fn receive(&mut self, register: Option<u16>, sent: Value) {
+        if let Some(slot) = register.and_then(|register| self.registers.get_mut(usize::from(register))) {
+            *slot = sent;
+        }
+    }
+
     /// The prefix words (`CALLEE`, `THIS`, `BODY`, `WINDOW`) a lane activation over the register
     /// file starts from: no native callee or body, and the window as the file's address.
     pub(in crate::vm) fn prefix(&self) -> ShadowFrame {
