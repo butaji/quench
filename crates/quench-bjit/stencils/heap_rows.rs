@@ -15,22 +15,26 @@
 //! chained site read (`ENTRY`) carries both entry offsets in hole 2. The rows of the activation's
 //! receiver (`THIS_SITE_ROW`, `THIS_STORE_ROW`) take it from the payload, so their hole 0 is the
 //! destination alone (a read) or unused (a store).
+//! The global object's slot rows (`GLOBAL_READ_ROW`, `GLOBAL_STORE_ROW`) take its record id in hole 1
+//! (the store: hole 0) and the slot's byte offset in hole 2; a constant row takes its word in hole 1
+//! and the realm proof (`REALM_ROW`) a VM field offset in hole 1 and the global object's word in hole 2.
 //! Every failed proof leaves through exit 0 with nothing written, so the interpreter runs the
 //! instruction.
 
 use crate::layout::{
-    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
+    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_VM, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
     JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_STRING_RECORD_BASE, PROPERTY_BUFFER_BASE,
 };
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word};
 use crate::places::{DEST, LEFT, Places, tagged_place};
 use crate::stage::StencilStage;
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+use crate::staged::object::{self, Layout, Slots};
 use crate::staged::{Stage, Step, elements, entry, environment, load_this, read_local, strings, value, write_local};
 
 pub(crate) use crate::codes::{
-    ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW,
+    ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, CONSTANT_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM,
+    REALM_ROW, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW, STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW,
 };
 
 unsafe extern "C" {
@@ -193,6 +197,68 @@ fn live_row(s: S) -> Out {
     if word_at(hole64::<HOLE_A>() as usize, 0) == 0 { Out::Next(s) } else { Out::Exit(s) }
 }
 
+/// The values of the global object's shape a row's layout proof counts: the one slot the row names,
+/// which the stage's per-site byte offset selects. The shape itself is held by a dependency (the
+/// global layout fact), so the row proves only the record's representation.
+const GLOBAL_SLOT_COUNT: usize = 1;
+
+/// The layout of the global object `id` names in the record table at the payload: `None` where the
+/// table is absent or the object's values are not behind its extras in the arena.
+#[inline(always)]
+fn global_layout(stage: &mut StencilStage, payload: usize, id: u64) -> Option<Layout<u64, bool>> {
+    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE) as u64;
+    if records == 0 {
+        return None;
+    }
+    let record = object::object_record_at(stage, records, id);
+    let inline = object::inline_storage(stage, record);
+    object::arena_extras_layout(stage, record, inline, GLOBAL_SLOT_COUNT, ())
+}
+
+/// The global object's slot (hole 2: its byte offset) read into the destination.
+#[inline(always)]
+fn global_read_row<const D: u8>(s: S, payload: usize) -> Out {
+    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
+    let mut stage = StencilStage::with_values(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE));
+    let layout = need!(s, global_layout(&mut stage, payload, hole::<HOLE_A>() as u64));
+    deliver::<D>(s, object::read_slot(&mut stage, layout, 0))
+}
+
+/// The first operand stored to the global object's slot (hole 0: the record id), through the store
+/// gate where `GATED`: a value that may be a heap reference joins the barrier's log, and a store
+/// the property arena observes (`slots_tracked`) is the VM's.
+#[inline(always)]
+fn global_store_row<const A: u8, const GATED: bool>(s: S, payload: usize) -> Out {
+    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
+    let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
+    let id = hole::<0>() as u64;
+    let value = tagged_place::<A, HOLE_A>(&s);
+    let layout = need!(s, global_layout(&mut stage, payload, id));
+    let Slots::Flat(base) = layout.slots else { return Out::Exit(s) };
+    if GATED {
+        let open = stage.store_gate(id, value);
+        need!(s, stage.guard(open, ()));
+    }
+    let offset = stage.site(0);
+    let address = stage.add_imm(base, offset);
+    stage.store_u64(address, 0, value);
+    Out::Next(s)
+}
+
+/// The destination takes the word of hole 1.
+#[inline(always)]
+fn constant_row<const D: u8>(s: S) -> Out {
+    deliver::<D>(s, hole64::<HOLE_A>())
+}
+
+/// Continues while the VM's active realm names the global object word of hole 2 (the realm field
+/// is at the byte offset of hole 1 behind the payload's VM), else leaves through the taken successor.
+#[inline(always)]
+fn realm_row(s: S, payload: usize) -> Out {
+    let vm = word_at(payload, JS_STEP_VM);
+    if word_at(vm as usize, hole::<HOLE_A>()) == hole64::<HOLE_B>() { Out::Next(s) } else { Out::Taken(s) }
+}
+
 /// The `length` of the array or string word at hole 1 (`strings::length_of`).
 #[inline(always)]
 fn length_row<const D: u8>(s: S, payload: usize) -> Out {
@@ -280,6 +346,10 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         THIS_STORE_ROW => site_store_row::<A>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
         HELD_ROW => held_row::<D>(s, payload, if ENTRY { word_at(payload, JS_STEP_RECEIVER) } else { register_object(&s) }),
         LIVE_ROW => live_row(s),
+        GLOBAL_READ_ROW => global_read_row::<D>(s, payload),
+        GLOBAL_STORE_ROW => global_store_row::<A, ENTRY>(s, payload),
+        CONSTANT_ROW => constant_row::<D>(s),
+        REALM_ROW => realm_row(s, payload),
         ARRAY_ROW => array_row(s),
         IDENTITY_ROW => identity_row(s),
         THIS_ROW => this_row::<D>(s),

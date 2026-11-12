@@ -73,6 +73,16 @@ pub const THIS_STORE_ROW: u8 = 14;
 pub const HELD_ROW: u8 = 15;
 /// Leaves unless the invalidation word at the address in hole 1 is zero.
 pub const LIVE_ROW: u8 = 16;
+/// The global object's slot, read into the destination (hole 1: the object's record id, hole 2: the
+/// slot's byte offset), or written from the first operand (hole 0: the record id, hole 2: the byte
+/// offset; the `entry` variant takes the store gate, for a value that may be a heap reference).
+pub const GLOBAL_READ_ROW: u8 = 17;
+pub const GLOBAL_STORE_ROW: u8 = 18;
+/// The destination takes the tagged word of hole 1.
+pub const CONSTANT_ROW: u8 = 19;
+/// Leaves through the taken successor unless the VM's active realm (the word at the byte offset of
+/// hole 1 behind the payload's VM) names the global object word of hole 2: the proof once at entry.
+pub const REALM_ROW: u8 = 20;
 /// Bits below the prototype link in a folded read's hole 1, which carries the receiver's exact shape beneath it.
 pub const HELD_LINK_AT: u32 = 32;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries

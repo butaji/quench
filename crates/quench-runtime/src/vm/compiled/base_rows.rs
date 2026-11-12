@@ -67,6 +67,18 @@ pub(super) enum Heap {
     /// Leaves unless the invalidation word at the address in hole 1 is zero (`code_dependencies::Invalidation`):
     /// the check before a row that holds a Stable fact where a call may have changed it.
     Live,
+    /// The global object's data slot (hole 2: its byte offset in the arena run behind its extras) read into the
+    /// destination, the object being the record id of hole 1: a Stable fact holds the object's layout.
+    GlobalRead,
+    /// The first operand stored to that slot (hole 0: the record id), where the row's `entry` variant takes the
+    /// store gate for an operand that may be a heap reference, and a Number operand needs none.
+    GlobalStore,
+    /// The tagged word of hole 1 into the destination: an immutable global, a folded `typeof` name, and
+    /// the `undefined` receiver of a name call.
+    Word,
+    /// The realm proof entry rows make once: the VM's active realm field (hole 1: its byte offset) names the
+    /// global object word of hole 2; a mismatch fails the entry.
+    Realm,
 }
 
 /// A heap row: its operation and where its operands and destination live.
@@ -102,20 +114,24 @@ impl Heap {
             Heap::Identity => library::IDENTITY_ROW,
             Heap::Held | Heap::ThisHeld => library::HELD_ROW,
             Heap::Live => library::LIVE_ROW,
+            Heap::GlobalRead => library::GLOBAL_READ_ROW,
+            Heap::GlobalStore => library::GLOBAL_STORE_ROW,
+            Heap::Word => library::CONSTANT_ROW,
+            Heap::Realm => library::REALM_ROW,
         }
     }
 
     /// Whether the row reads a snapshot of the heap the loop's entry took (the record's captures,
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
-    /// slots, which every run reads live.
+    /// slots, which every run reads live, and the rows that read no heap.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live)
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live | Heap::Word | Heap::Realm)
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value
     /// the activation holds, not a Number the region proved.
     pub(super) fn yields_tagged(self) -> bool {
-        matches!(self, Heap::This | Heap::LoadLocal(_))
+        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word)
     }
 }
 
