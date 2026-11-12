@@ -4623,22 +4623,15 @@ impl Lowering<'_, '_> {
     /// The slot `field` names in the prototype of the object record `record`: an object
     /// record of the exact shape `holder`, else `exit` (`Vm::record_field_entry_hit`).
     fn holder_read(&mut self, state: &mut State, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
-        let proto = crate::staged::object::proto_link(&mut super::object_slots::emit(&mut self.builder), record);
         // A prototype that is the one compiled against, unchanged since, holds the value it
         // held then: the read is that constant (`NativeFieldLoad::inherited`).
         if let Some(constant) = field.inherited.filter(|_| self.division().folds(BindingTime::Stable)) {
             self.hold_holder(state, exit, holder);
             // The receiver's link selects its prototype's value; one prototype's is a constant.
-            let ((first, value), rest) = constant.values().split_first()?;
-            let mut matched = self.ins().icmp_imm_u(IntCC::Equal, proto, i64::from(*first));
-            let mut read = self.ins().iconst(types::I64, value.to_bits() as i64);
-            for (prototype, value) in rest {
-                let same = self.ins().icmp_imm_u(IntCC::Equal, proto, i64::from(*prototype));
-                let candidate = self.ins().iconst(types::I64, value.to_bits() as i64);
-                read = self.ins().select(same, candidate, read);
-                matched = self.ins().bor(matched, same);
-            }
-            emit_js_guard(&mut self.builder, matched, exit);
+            let pairs: smallvec::SmallVec<[(u32, u64); 4]> = constant.values().iter().map(|(link, value)| (*link, value.to_bits())).collect();
+            let mut stage = super::object_slots::emit(&mut self.builder);
+            let read = crate::staged::ic::run(&mut stage, &[crate::staged::ic::IcOp::PrototypeConstants(&pairs)],
+                crate::staged::ic::Reached { record, shape: None, inline: None }, None, exit)?;
             return Some(read);
         }
         let records = match self.object_table() {
