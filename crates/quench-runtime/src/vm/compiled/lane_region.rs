@@ -57,9 +57,8 @@ use captures::RootedRead;
 #[path = "lane_region/field_reads.rs"] mod field_reads;
 #[path = "lane_region/number_domains.rs"] mod number_domains;
 #[path = "lane_region/loop_arrays.rs"] mod loop_arrays;
-#[path = "lane_region/direct_calls.rs"] mod direct_calls;
-#[path = "lane_region/direct_admission.rs"] mod direct_admission;
-#[path = "lane_region/direct_enter.rs"] mod direct_enter;
+#[path = "lane_region/call_frames.rs"] mod call_frames;
+use call_frames::{CallSite, Leave, ReturnSite, Site};
 #[path = "lane_region/call_outs.rs"] mod call_outs;
 #[path = "lane_region/register_rows.rs"] mod register_rows;
 use loop_arrays::{ArraySource, LoopArray};
@@ -720,28 +719,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
         self.builder.ins()
     }
 
-    // The word vocabulary of the native-call lowerings (`lane_region/direct_*.rs`).
-    fn word_load(&mut self, base: ir::Value, offset: i32) -> ir::Value { self.ins().load(types::I64, MemFlagsData::trusted(), base, offset) }
-    fn word_store(&mut self, value: ir::Value, base: ir::Value, offset: i32) { self.ins().store(MemFlagsData::trusted(), value, base, offset); }
     fn word_const(&mut self, bits: i64) -> ir::Value { self.int_const(types::I64, bits) }
     fn int_const(&mut self, ty: ir::Type, bits: i64) -> ir::Value { self.ins().iconst(ty, bits) }
-    fn word_add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().iadd(a, b) }
-    fn word_add_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().iadd_imm_u(a, imm) }
-    fn word_mul_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().imul_imm_u(a, imm) }
-    fn word_or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().bor(a, b) }
-    fn word_select(&mut self, test: ir::Value, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().select(test, a, b) }
-    fn word_cmp(&mut self, cc: IntCC, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().icmp(cc, a, b) }
-    fn word_cmp_imm(&mut self, cc: IntCC, a: ir::Value, imm: i64) -> ir::Value { self.ins().icmp_imm_u(cc, a, imm) }
-    fn word_brif(&mut self, test: ir::Value, then: ir::Block, then_args: &[ir::BlockArg], otherwise: ir::Block, otherwise_args: &[ir::BlockArg]) {
-        self.ins().brif(test, then, then_args, otherwise, otherwise_args);
-    }
-    fn word_jump(&mut self, block: ir::Block, args: &[ir::BlockArg]) { self.ins().jump(block, args); }
-    /// A call of a body, which returns its status and result word.
-    fn word_call_all(&mut self, signature: ir::SigRef, entry: ir::Value, args: &[ir::Value]) -> (ir::Value, ir::Value) {
-        let call = self.ins().call_indirect(signature, entry, args);
-        let results = self.builder.inst_results(call);
-        (results[0], results[1])
-    }
 
     fn tagged(&mut self, state: &mut State, register: Register) -> ir::Value {
         frame::register_tagged(&mut self.builder, &mut self.registers, state, register)
@@ -2605,7 +2584,7 @@ impl Lowering<'_, '_> {
             Class::Call if self.completion.status_and_pc()
                 && (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
-                && !instruction.parameter_eval() => Some(self.intrinsic_call(state, pc, instruction) || self.call(state, pc, instruction, LaneHelper::Call)),
+                && !instruction.parameter_eval() => Some(self.intrinsic_call(state, pc, instruction) || self.call(state, pc, instruction)),
             _ if self.is_register_row(instruction) => Some(self.register_step(state, pc, instruction)),
             Class::LoadName | Class::LoadNameCall if plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
             Class::Nop if plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
@@ -2829,21 +2808,6 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// The continuation of a lane helper's `status`: its completion continues at `completed`, a
-    /// miss leaves at `missed`, and a leave in a callee, or a termination, stops the body.
-    fn helper_status(&mut self, status: ir::Value, completed: ir::Block, missed: ir::Block) {
-        let other = self.builder.create_block();
-        let left = self.builder.create_block();
-        self.builder.set_cold_block(left);
-        let done = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_COMPLETED as i64);
-        self.ins().brif(done, completed, &[], other, &[]);
-        self.builder.switch_to_block(other);
-        let miss = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_MISSED as i64);
-        self.ins().brif(miss, missed, &[], left, &[]);
-        self.builder.switch_to_block(left);
-        self.stop_by_status(status);
-    }
-
     /// The end of a body whose helper neither completed nor missed: a termination stops with its
     /// status, and any other `status` is a leave in a callee.
     fn stop_by_status(&mut self, status: ir::Value) {
@@ -2858,13 +2822,6 @@ impl Lowering<'_, '_> {
         let word = self.ins().iconst(types::I64, LaneExit::Callee.word() as i64);
         let stop = self.stop;
         self.ins().jump(stop, &[word.into()]);
-    }
-
-    /// A lane helper of the record at `call_pc`, by the lane's context: its status word.
-    fn record_helper(&mut self, helper: LaneHelper, call_pc: u32) -> ir::Value {
-        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
-        let call_word = self.ins().iconst(types::I64, i64::from(call_pc));
-        self.helper_call(helper, &[context, call_word])
     }
 
     /// A helper's result, read from the lane's register `destination` as the register's value.
@@ -3006,20 +2963,20 @@ impl Lowering<'_, '_> {
     /// no step is left unresolved.
     fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>)
         -> crate::staged::Step<ir::Value, ()> {
-        self.step_with(state, edges, operation, None, None)
+        self.step_with(state, edges, operation, None, None, None)
     }
 
     /// `step` of a named field access: the frame holds the `plans` the sites proved and what
     /// the access already has (`HeldRead`), and the stage addresses the property arena.
     fn field_step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>,
         access: (&LanePlans<'_>, HeldRead)) -> crate::staged::Step<ir::Value, ()> {
-        self.step_with(state, edges, operation, Some(access), None)
+        self.step_with(state, edges, operation, Some(access), None, None)
     }
 
     /// `step` of an operation whose slow case calls the VM (`call_out`: the record and what its
-    /// helper needs), or of a field access (`access`).
+    /// helper needs), of a field access (`access`), or of a call or return (`site`).
     fn step_with(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>,
-        access: Option<(&LanePlans<'_>, HeldRead)>, call_out: Option<&frame::call_out::CallOutSite>)
+        access: Option<(&LanePlans<'_>, HeldRead)>, call_out: Option<&frame::call_out::CallOutSite>, site: Option<Site<'_>>)
         -> crate::staged::Step<ir::Value, ()> {
         let locals = self.completion != Completion::Number;
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
@@ -3030,7 +2987,7 @@ impl Lowering<'_, '_> {
             stable: StableHold { uses: &mut self.stable, online: self.vm.online, at: self.at } });
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
-            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls, fields, call_out };
+            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls, fields, call_out, site };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
@@ -3373,13 +3330,15 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// A call (or a construction, by `helper`) the body does not inline, by `helper`'s
-    /// protocol: the body's registers written back, then a direct call of a `Call`'s compiled
-    /// callee or the helper; its completion continues, a leave in the callee stops the body,
-    /// and a miss leaves at `pc`. The callee may allocate, which may move the property arena,
-    /// whose base and length the body reloads.
-    fn call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, helper: LaneHelper) -> bool {
-        let Some(super::lane_unit::Origin::Caller(call_pc)) = self.unit.origins.get(pc).copied() else {
+    /// A call or a construction the body does not inline, by the staged call (`staged::invoke`):
+    /// the body's registers written back, then a direct call of a compiled callee or the VM's
+    /// call; its completion continues, a leave in the callee stops the body, and a miss leaves
+    /// at `pc`. The callee may allocate, which may move the property arena, whose base and
+    /// length the body reloads.
+    fn call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        use crate::staged::{CallOperation, Operation};
+        let decoded = Operation::<ir::Value, EmitProof>::decode(instruction, |_| None);
+        let (Some(super::lane_unit::Origin::Caller(record)), Some(Operation::Call(CallOperation::Site(site)))) = (self.unit.origins.get(pc).copied(), decoded) else {
             self.exit(state, pc as u32);
             return false;
         };
@@ -3388,76 +3347,61 @@ impl Lowering<'_, '_> {
         self.spill_written(pc);
         let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
         self.reentries.push(completed);
-        let site = match crate::staged::Operation::<ir::Value, EmitProof>::decode(instruction, |_| None) {
-            Some(crate::staged::Operation::Call(crate::staged::CallOperation::Site(site))) => Some(site),
-            _ => None,
-        };
-        match (self.direct.get(&pc).copied(), site) {
-            // SAFETY: the body owns the callee for as long as its code runs.
-            (Some(callee), Some(site)) if site.receiver.is_some() => self.direct_call(state, site, unsafe { &*callee }, generic, completed),
-            (Some(callee), Some(site)) => self.direct_construct(state, site, unsafe { &*callee }, generic, completed),
-            _ => { self.ins().jump(generic, &[]); }
-        }
-        self.builder.switch_to_block(generic);
-        let status = self.record_helper(helper, call_pc);
-        self.helper_status(status, completed, missed);
-        self.builder.switch_to_block(completed);
+        // SAFETY: the body owns the callee for as long as its code runs.
+        let callee = self.direct.get(&pc).map(|callee| unsafe { &**callee });
+        let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, missed,
+            stop: self.call_out_stop(), leave: self.leave_site() };
+        self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), None, None, Some(Site::Call(call)));
         // A returning call's completion is its activation's: the lane completes it with the
         // result, which the call left in its register (`LaneExit::Returned`).
-        if instruction.returns_from_frame() {
-            let base = self.registers_base;
-            let value = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(instruction.result_register()));
-            self.return_value(call_pc, value);
-            return false;
+        if site.returns {
+            self.reload_result(state, site.result);
+            return self.return_register(state, record, site.result);
         }
         // The callee may have changed any object, and allocated, which may move the property
         // arena: proofs of their shapes and storage retire, and the arena's base reloads.
         state.call_effect();
         self.reload_property_arena();
-        self.reload_result(state, instruction.result_register());
+        self.reload_result(state, site.result);
         true
     }
 
-    /// The activation completes with `register`, which the record at `pc` names
-    /// (`LaneExit::Returned`). Only a caller record can: an inlined callee's `Return` is the
-    /// unit's move and jump.
+    /// The activation completes with `register`, by the staged return (`Frame::ret`) at the
+    /// record that completes it (`LaneExit::Returned`). Never falls through.
+    fn return_register(&mut self, state: &mut State, record: u32, register: Register) -> bool {
+        let site = Site::Return(ReturnSite { record, leave: self.leave_site() });
+        self.step_with(state, frame::Edges::Value, crate::staged::Operation::Return { source: register }, None, None, Some(site));
+        self.finishes = true;
+        false
+    }
+
+    /// The activation completes with `register`, which the record at `pc` names. Only a caller
+    /// record can: an inlined callee's `Return` is the unit's move and jump.
     fn complete(&mut self, state: &mut State, pc: usize, register: Register) -> bool {
         let Some(super::lane_unit::Origin::Caller(record)) = self.unit.origins.get(pc).copied() else {
             self.exit(state, pc as u32);
             return false;
         };
-        let bits = self.tagged(state, register);
-        self.return_value(record, bits);
         self.native += 1;
-        false
+        self.return_register(state, record, register)
     }
 
     /// Stops with the activation's completion: `value` in the result word, `record` the
     /// record that completes it (`LANE_BODY_RETURNED`).
     fn return_value(&mut self, record: u32, value: ir::Value) {
         self.finishes = true;
-        let record = self.ins().iconst(types::I64, i64::from(record));
-        let payload = self.payload;
-        self.ins().store(MemFlagsData::trusted(), record, payload,
-            i32::try_from(std::mem::offset_of!(JsStepDispatch, returned_pc)).expect("dispatch offset fits i32"));
-        let returned = self.ins().iconst(types::I32, i64::from(LANE_BODY_RETURNED));
-        self.leave_with(returned, Some(value));
+        let leave = self.leave_site();
+        ReturnSite { record, leave }.complete(&mut self.builder, self.payload, value);
     }
 
-    /// Leaves with `status`, and with `word` as the result word where a run publishes one: a
-    /// body returns it beside the status, a region stores it through its result pointer.
+    /// Where this run's completion goes (`Leave`).
+    fn leave_site(&self) -> Leave {
+        Leave { completion: self.completion, block: self.leave, result: self.result }
+    }
+
+    /// Leaves with `status`, and with `word` as the result word where a run publishes one.
     pub(super) fn leave_with(&mut self, status: ir::Value, word: Option<ir::Value>) {
-        let leave = self.leave;
-        if self.completion == Completion::Body {
-            let word = word.unwrap_or_else(|| self.ins().iconst(types::I64, 0));
-            self.ins().jump(leave, &[status.into(), word.into()]);
-        } else {
-            if let Some(word) = word {
-                let result = self.result;
-                self.ins().store(MemFlagsData::trusted(), word, result, 0);
-            }
-            self.ins().jump(leave, &[status.into()]);
-        }
+        self.leave_site().with(&mut self.builder, status, word);
     }
 
     /// Count a taken execution of the region's backward edge in the loop entry record

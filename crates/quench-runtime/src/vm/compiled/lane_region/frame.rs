@@ -44,6 +44,8 @@ pub(super) struct EmitFrame<'a> {
     pub(super) fields: Option<super::frame_fields::FieldFacts<'a>>,
     /// The record a call-out calls for, where the lowering made one (`call_outs`).
     pub(super) call_out: Option<&'a call_out::CallOutSite>,
+    /// The call or return a step of the call family runs for (`call_frames`).
+    pub(super) site: Option<super::call_frames::Site<'a>>,
 }
 
 impl EmitFrame<'_> {
@@ -127,6 +129,12 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
             binding: BindingTime::Static, proof: Proof::Static, projection: Projection::Exact })
             .expect("constant's canonical semantic type");
         (value, fact)
+    }
+
+    /// The activation completes with `value`, at the record the lowering made a site for.
+    #[inline(always)]
+    fn ret(&mut self, stage: &mut Emit<'_, '_>, value: ir::Value) -> Option<()> {
+        super::call_frames::complete_activation(self, stage, value)
     }
 
     /// A row's slow case: the lane's own helper makes the VM's operation in place (`call_out::vm_step`).

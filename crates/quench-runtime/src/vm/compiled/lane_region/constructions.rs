@@ -14,7 +14,7 @@ impl Lowering<'_, '_> {
             && matches!(self.unit.origins.get(pc), Some(super::super::lane_unit::Origin::Caller(_)))
             && window.base + window.count <= self.unit.caller_registers
             && matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER) {
-            return Some(self.call(state, pc, instruction, LaneHelper::ConstructCall));
+            return Some(self.call(state, pc, instruction));
         }
         let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
             (false, _) if instruction.result_flags() == 0 => None,

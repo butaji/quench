@@ -43,12 +43,12 @@ impl Lowering<'_, '_> {
         let site = frame::call_out::CallOutSite { record, stop: self.call_out_stop(), registers: self.registers_base,
             properties: self.entry.as_ref().expect("entry facts").receiver.properties, spill: self.spilled(pc) };
         if !matches!(row, crate::staged::Operation::ForInNext { .. }) {
-            self.step_with(state, frame::Edges::ValueGuarded { miss }, row, None, Some(&site));
+            self.step_with(state, frame::Edges::ValueGuarded { miss }, row, None, Some(&site), None);
             state.call_effect();
             return true;
         }
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
-        self.step_with(state, frame::Edges::Branch { target: taken, following: fall, miss }, row, None, Some(&site));
+        self.step_with(state, frame::Edges::Branch { target: taken, following: fall, miss }, row, None, Some(&site), None);
         state.call_effect();
         self.continue_branch(state, pc, instruction.jump_target() as usize, taken, fall);
         false
@@ -56,7 +56,7 @@ impl Lowering<'_, '_> {
 
     /// The block the call-outs' statuses of a leave in a callee, or a termination, reach with the
     /// status: made at the first, filled once at the region's end (`fill_call_out_stop`).
-    fn call_out_stop(&mut self) -> ir::Block {
+    pub(super) fn call_out_stop(&mut self) -> ir::Block {
         let builder = &mut self.builder;
         *self.call_out_stop.get_or_insert_with(|| {
             let block = builder.create_block();
