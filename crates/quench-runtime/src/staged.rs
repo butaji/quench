@@ -453,3 +453,5 @@ mod coverage_tests;
 mod generic_tests;
 #[cfg(test)]
 mod element_tests;
+#[cfg(test)]
+mod primitive_tests;

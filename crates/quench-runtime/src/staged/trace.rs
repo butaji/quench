@@ -76,6 +76,20 @@ impl Stage for Trace {
     fn select(&mut self, cond: u32, then: u32, otherwise: u32) -> u32 { self.word(format!("select w{cond} w{then} w{otherwise}")) }
     fn store_u32(&mut self, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u32 w{base}+{offset} w{value}")); }
     fn store_u64(&mut self, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u64 w{base}+{offset} w{value}")); }
+    fn load_u8(&mut self, base: u32, offset: i32) -> u32 { self.word(format!("load_u8 w{base}+{offset}")) }
+    fn load_i8(&mut self, base: u32, offset: i32) -> u32 { self.word(format!("load_i8 w{base}+{offset}")) }
+    fn load_u16(&mut self, base: u32, offset: i32) -> u32 { self.word(format!("load_u16 w{base}+{offset}")) }
+    fn load_i16(&mut self, base: u32, offset: i32) -> u32 { self.word(format!("load_i16 w{base}+{offset}")) }
+    fn load_i32(&mut self, base: u32, offset: i32) -> u32 { self.word(format!("load_i32 w{base}+{offset}")) }
+    fn load_f32(&mut self, base: u32, offset: i32) -> u32 { self.word(format!("load_f32 w{base}+{offset}")) }
+    fn load_f64(&mut self, base: u32, offset: i32) -> u32 { self.word(format!("load_f64 w{base}+{offset}")) }
+    fn store_u8(&mut self, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u8 w{base}+{offset} w{value}")); }
+    fn store_u16(&mut self, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u16 w{base}+{offset} w{value}")); }
+    fn store_f32(&mut self, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_f32 w{base}+{offset} w{value}")); }
+    fn store_f64(&mut self, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_f64 w{base}+{offset} w{value}")); }
+    fn f32_to_f64(&mut self, a: u32) -> u32 { self.word(format!("f32_to_f64 w{a}")) }
+    fn f64_to_f32(&mut self, a: u32) -> u32 { self.word(format!("f64_to_f32 w{a}")) }
+    fn clamp_u8(&mut self, a: u32) -> u32 { self.word(format!("clamp_u8 w{a}")) }
     fn not(&mut self, cond: u32) -> u32 { self.word(format!("not w{cond}")) }
     fn any(&mut self, a: u32, b: u32) -> u32 { self.word(format!("any w{a} w{b}")) }
     fn pick(&mut self, cond: u32, then: u32, otherwise: u32) -> u32 { self.word(format!("pick w{cond} w{then} w{otherwise}")) }

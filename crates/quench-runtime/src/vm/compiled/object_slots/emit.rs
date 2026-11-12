@@ -144,6 +144,51 @@ impl Stage for Emit<'_, '_> {
         let v = self.word(imm.into());
         self.builder.ins().icmp(IntCC::UnsignedGreaterThan, a, v)
     }
+    fn load_u8(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().uload8(types::I32, MemFlagsData::new(), base, offset)
+    }
+    fn load_i8(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().sload8(types::I32, MemFlagsData::new(), base, offset)
+    }
+    fn load_u16(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().uload16(types::I32, MemFlagsData::new(), base, offset)
+    }
+    fn load_i16(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().sload16(types::I32, MemFlagsData::new(), base, offset)
+    }
+    fn load_i32(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().load(types::I32, MemFlagsData::new(), base, offset)
+    }
+    fn load_f32(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().load(types::F32, MemFlagsData::new(), base, offset)
+    }
+    fn load_f64(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().load(types::F64, MemFlagsData::new(), base, offset)
+    }
+    fn store_u8(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
+        self.builder.ins().istore8(MemFlagsData::new(), value, base, offset);
+    }
+    fn store_u16(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
+        self.builder.ins().istore16(MemFlagsData::new(), value, base, offset);
+    }
+    fn store_f32(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
+        self.builder.ins().store(MemFlagsData::new(), value, base, offset);
+    }
+    fn store_f64(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
+        self.builder.ins().store(MemFlagsData::new(), value, base, offset);
+    }
+    fn f32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fpromote(types::F64, a) }
+    fn f64_to_f32(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fdemote(types::F32, a) }
+    /// NaN is zero, the rest clamps and rounds half to even (`nearest`) before the saturating conversion.
+    fn clamp_u8(&mut self, a: ir::Value) -> ir::Value {
+        let (zero, max) = (self.builder.ins().f64const(f64::from(u8::MIN)), self.builder.ins().f64const(f64::from(u8::MAX)));
+        let unordered = self.builder.ins().fcmp(FloatCC::Unordered, a, a);
+        let above = self.builder.ins().fmax(a, zero);
+        let clamped = self.builder.ins().fmin(above, max);
+        let rounded = self.builder.ins().nearest(clamped);
+        let number = self.builder.ins().select(unordered, zero, rounded);
+        self.builder.ins().fcvt_to_uint_sat(types::I32, number)
+    }
     fn not(&mut self, cond: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, cond, 0) }
     fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
     fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
@@ -208,6 +253,10 @@ impl NumericStage for Emit<'_, '_> {
     }
     fn i32_constant(&mut self, value: i32) -> ir::Value { self.builder.ins().iconst(types::I32, i64::from(value)) }
     fn i32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fcvt_from_sint(types::F64, a) }
+    fn u32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fcvt_from_uint(types::F64, a) }
+    fn to_int32(&mut self, number: ir::Value, miss: ir::Block) -> Option<ir::Value> {
+        Some(emit_number_to_int32(self.builder, number, miss))
+    }
     fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, 0) }
     fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, a, 0) }
     fn both(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().band(a, b) }
