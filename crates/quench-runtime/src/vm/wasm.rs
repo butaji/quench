@@ -399,11 +399,8 @@ impl<H: Host> Vm<H> {
         let bytes = match guarded {
             Some(bytes) => bytes,
             None => {
-                let mut bytes = Vec::new();
-                bytes
-                    .try_reserve_exact(length)
-                    .map_err(|_| JsError::validation("Wasm memory allocation failed".into()))?;
-                bytes.resize(length, 0);
+                let bytes = super::array_buffer::zeroed_byte_vec(length)
+                    .ok_or_else(|| JsError::validation("Wasm memory allocation failed".into()))?;
                 crate::wasm::memory::LinearBytes::heap(bytes)
             }
         };

@@ -135,11 +135,7 @@ impl SharedBacking {
         if length > maximum || (!growable && length != maximum) {
             return Err(AccessError::Maximum);
         }
-        let mut bytes = Vec::new();
-        bytes
-            .try_reserve_exact(length)
-            .map_err(|_| AccessError::Maximum)?;
-        bytes.resize(length, 0);
+        let bytes = crate::vm::array_buffer::zeroed_byte_vec(length).ok_or(AccessError::Maximum)?;
         Ok(Arc::new(Self {
             state: Arc::new(Mutex::new(State {
                 bytes: crate::wasm::memory::LinearBytes::heap(bytes),

@@ -110,7 +110,7 @@ pub(crate) mod activation;
 mod agent;
 mod arguments;
 mod array;
-mod array_buffer;
+pub(crate) mod array_buffer;
 mod array_builtins;
 mod array_copy;
 mod array_flatten;

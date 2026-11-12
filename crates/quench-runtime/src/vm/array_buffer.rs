@@ -546,12 +546,8 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         length: usize,
     ) -> Result<Vec<u8>, JsError> {
-        let mut bytes = Vec::new();
-        bytes
-            .try_reserve_exact(length)
-            .map_err(|_| self.range_error(p, "ArrayBuffer length is too large".into()))?;
-        bytes.resize(length, 0);
-        Ok(bytes)
+        zeroed_byte_vec(length)
+            .ok_or_else(|| self.range_error(p, "ArrayBuffer length is too large".into()))
     }
 
     fn array_buffer_intrinsic_prototype(&self, shared: bool) -> Value {
@@ -1001,5 +997,20 @@ impl<H: Host> Vm<H> {
         length: usize,
     ) -> Result<usize, JsError> {
         Ok(crate::units::relative_index(self.to_number(p, value)?, length))
+    }
+}
+
+/// Zeroed bytes straight from the allocator (`calloc`/`mmap` for large sizes), so pages that are
+/// never written stay unmapped instead of being touched by a fill.
+pub(crate) fn zeroed_byte_vec(length: usize) -> Option<Vec<u8>> {
+    if length == 0 {
+        return Some(Vec::new());
+    }
+    let layout = std::alloc::Layout::array::<u8>(length).ok()?;
+    // SAFETY: `layout` is non-zero-sized; a non-null result is `length` zeroed bytes allocated
+    // with the global allocator and `u8` layout, exactly what `Vec<u8>` owns.
+    unsafe {
+        let ptr = std::alloc::alloc_zeroed(layout);
+        (!ptr.is_null()).then(|| Vec::from_raw_parts(ptr, length, length))
     }
 }
