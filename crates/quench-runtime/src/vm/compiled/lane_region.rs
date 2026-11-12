@@ -41,7 +41,7 @@ mod polls;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
-#[path = "lane_region/relocs.rs"] mod relocs;
+#[path = "lane_region/relocs.rs"] pub(super) mod relocs;
 use relocs::RelocKind; pub(super) use relocs::{helper_symbol, numeric_symbol};
 use captures::RootedRead;
 #[path = "lane_region/constructions.rs"] mod constructions;
@@ -2210,11 +2210,11 @@ impl Lowering<'_, '_> {
     fn entry_facts(&mut self, instructions: &[WideInstruction], _loops: &[(usize, usize)], _leaders: &CompoundBitSet) -> Entry {
         let this_bits = match self.helpers {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
-            LaneHelpers::Process(_) => self.entry_receiver_bits(),
             #[cfg(feature = "aot")]
             LaneHelpers::Bound(..) => self.fixed_this(),
             #[cfg(feature = "aot")]
             LaneHelpers::Linked(..) => unreachable!("helper table bound before entry facts"),
+            _ => self.entry_receiver_bits(),
         };
         let accesses_fields = self.accesses_fields(instructions);
         let receiver = if accesses_fields { emit_lane_receiver(&mut self.builder, self.payload, this_bits) } else { self.absent_receiver() };

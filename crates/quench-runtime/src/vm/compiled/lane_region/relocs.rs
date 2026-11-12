@@ -28,6 +28,12 @@ pub(in crate::vm::compiled) fn numeric_symbol(namespace: u32, key: u32) -> Optio
         .then_some(super::super::lane_interrupt_owner as *const () as usize as u64)
 }
 
+/// The helper number a symbol `(namespace, key)` names, if it names one.
+#[cfg(test)]
+pub(in crate::vm::compiled) fn helper_key(namespace: u32, key: u32) -> Option<usize> {
+    (namespace == RelocKind::Helper as u32).then_some(key as usize)
+}
+
 /// The address of `helper` as the symbol a frameless Number region's loader resolves.
 pub(in crate::vm::compiled) fn helper_symbol(builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
     crate::vm::jit_backend::symbol_address(builder, types::I64, RelocKind::Helper as u32, helper as u32)

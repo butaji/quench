@@ -78,6 +78,10 @@ impl NumericImage {
 }
 
 #[cfg(test)]
+#[path = "numeric_image/ahead.rs"]
+mod ahead;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use super::super::direct_call::direct_call;

@@ -1953,6 +1953,11 @@ pub(super) enum LaneHelpers {
     /// owner) named by a symbol (`RelocKind::Helper`) that its loader resolves.
     Numeric,
     Process(&'static [*const (); LaneHelper::COUNT]),
+    /// The compile target "ahead": a lane region whose helpers, and every run-time address
+    /// `RelocKind` names, are symbols a loader resolves (`Process`, the target "live", embeds
+    /// them). It differs from `Numeric` only in having the VM helper capability.
+    #[cfg(test)]
+    Ahead,
     #[cfg(feature = "aot")]
     Linked(u32, u32),
     #[cfg(feature = "aot")]
@@ -1985,14 +1990,26 @@ impl LaneHelpers {
     /// the table's entry (`table_address`). A symbol per helper use costs lane bodies compile
     /// time and run Ir (raytrace compile +17.5%, run-only +0.6%), so they embed it as it is now.
     fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
-        if self.is_numeric() { return lane_region::helper_symbol(builder, helper); }
+        if self.names_symbols() { return lane_region::helper_symbol(builder, helper); }
         self.table_address(builder.ins(), helper)
+    }
+
+    /// Whether helpers are symbols a loader resolves, not table entries.
+    fn names_symbols(self) -> bool {
+        match self {
+            Self::Numeric => true,
+            #[cfg(test)]
+            Self::Ahead => true,
+            _ => false,
+        }
     }
 
     /// The address of `helper` in this process's table, embedded, or loaded from the bound one.
     fn table_address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
         match self {
             Self::Numeric => unreachable!("a frameless Number region names its helper by symbol"),
+            #[cfg(test)]
+            Self::Ahead => unreachable!("an ahead region names its helper by symbol"),
             Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
             #[cfg(feature = "aot")]
             Self::Bound(table, _) => {
