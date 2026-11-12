@@ -38,6 +38,7 @@ mod stable;
 mod polls;
 #[path = "lane_region/literals.rs"] mod literals;
 #[path = "lane_region/edges.rs"] mod edges;
+#[path = "lane_region/catches.rs"] mod catches;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
@@ -562,6 +563,8 @@ struct Lowering<'a, 'f> {
     leave: ir::Block,
     /// The stop at a record: it writes its result word parameter and leaves stopped.
     stop: ir::Block,
+    /// The throws native code catches itself, by unit PC (`catches::catch_edges`).
+    catches: BTreeMap<usize, catches::Catch>,
 }
 
 enum Liveness<'a> {
@@ -1539,6 +1542,9 @@ pub(super) fn lower(
     for alternative in unit.frames.iter().filter_map(|frame| frame.alternative) {
         if alternative < unit.instructions.len() { leaders.insert(alternative); }
     }
+    // A handler's block is entered by the throws it catches, edges no jump names.
+    let catches = catches::catch_edges(function, unit, coverage, completion);
+    for catch in catches.values() { leaders.insert(catch.target); }
     let blocks: Vec<_> = (0..unit.instructions.len()).map(|pc| leaders.contains(pc).then(|| builder.create_block())).collect();
     let (leave, stop) = (builder.create_block(), builder.create_block());
     completion.leave_params().iter().for_each(|&ty| { builder.append_block_param(leave, ty); });
@@ -1609,6 +1615,7 @@ pub(super) fn lower(
         finishes: false,
         leave,
         stop,
+        catches,
     };
     let instructions = unit.instructions.clone();
     for instruction in &instructions {
@@ -1728,6 +1735,12 @@ pub(super) fn lower(
             matches!(unit.origins[read.pc], super::lane_unit::Origin::Inlined { .. })));
     }
     (lowering.forward, lowering.sealable) = edges::leader_edges(&instructions, &leaders, entry_pc);
+    // No forward edge of the bytecode's enters a handler's block: its proofs are none, and it
+    // seals once the region ends.
+    for catch in lowering.catches.values() {
+        lowering.forward[catch.target] = None;
+        lowering.sealable.remove(catch.target);
+    }
     lowering.entered.insert(entry_pc);
     lowering.stable.start = entry_pc;
     {
@@ -2588,6 +2601,7 @@ impl Lowering<'_, '_> {
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op().class() {
+            Class::Throw => self.caught_throw(state, pc, instruction),
             // A static typed region's canonical code completes its activation.
             Class::Return if plain && self.completion.status_and_pc() && instruction.register_a() < self.unit.registers => {
                 Some(self.complete(state, pc, instruction.register_a()))
