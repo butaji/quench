@@ -32,6 +32,7 @@ mod packed_ranges;
 #[path = "lane_region/global_reads.rs"]
 mod global_reads;
 #[path = "lane_region/native_calls.rs"] mod native_calls;
+pub(in crate::vm::compiled) use native_calls::{emit_float_extreme, emit_float_unary};
 #[path = "lane_region/stable.rs"]
 mod stable;
 #[path = "lane_region/polls.rs"]

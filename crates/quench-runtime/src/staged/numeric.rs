@@ -44,6 +44,10 @@ pub(crate) trait NumericStage: Stage {
     /// The truncated remainder of two int32 words, `right` nonzero: the dividend's sign, and
     /// `i32::MIN % -1` is zero rather than a trap.
     fn int_remainder(&mut self, left: Self::Word, right: Self::Word) -> Self::Word;
+    /// `operation` of a binary64 word (`staged::math::float_unary`).
+    fn float_unary(&mut self, operation: super::math::FloatUnary, value: Self::Word) -> Self::Word;
+    /// `Math.max` (`maximum`) or `Math.min` of two binary64 words (`staged::math::float_extreme`).
+    fn float_extreme(&mut self, maximum: bool, left: Self::Word, right: Self::Word) -> Self::Word;
     /// The int32 word holding `value`.
     fn i32_constant(&mut self, value: i32) -> Self::Word;
     fn i32_to_f64(&mut self, value: Self::Word) -> Self::Word;
@@ -337,6 +341,12 @@ impl NumericStage for super::Concrete {
     }
     fn int_remainder(&mut self, left: u64, right: u64) -> u64 {
         u64::from(int32(left).wrapping_rem(int32(right)) as u32)
+    }
+    fn float_unary(&mut self, operation: super::math::FloatUnary, value: u64) -> u64 {
+        super::math::float_unary(operation, f64::from_bits(value)).to_bits()
+    }
+    fn float_extreme(&mut self, maximum: bool, left: u64, right: u64) -> u64 {
+        super::math::float_extreme(maximum, f64::from_bits(left), f64::from_bits(right)).to_bits()
     }
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
     fn i32_to_f64(&mut self, value: u64) -> u64 { f64::from(int32(value)).to_bits() }

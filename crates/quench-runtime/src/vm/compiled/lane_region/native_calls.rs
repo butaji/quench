@@ -10,74 +10,84 @@
 //! no guest code and allocates nothing.
 
 use super::*;
+use crate::staged::math::FloatUnary;
 use crate::vm::Native;
 use crate::vm::global_facts::GlobalRead;
 
-/// A Math function of Numbers a call runs inline: the machine operation the native's own
-/// definition (`number::math_unary_operation`, `number::math_numbers`) applies.
+/// A Math function of Numbers a call runs inline: the wrapping product of two arguments'
+/// ToInt32 (`Math.imul`), or the machine operation the native's own definition applies
+/// (`staged::math`).
 #[derive(Clone, Copy)]
 pub(super) enum Inline {
-    /// The wrapping product of two arguments' ToInt32.
     Imul,
-    Floor, Ceil, Trunc, Abs, Sqrt,
-    /// The nearest binary32, as a double.
-    Fround,
-    /// The larger or smaller of two Numbers: NaN if either is, and `-0` below `+0`.
-    Max, Min,
-    /// The nearest integer, halves toward `+Infinity`, `-0` for a negative that rounds to zero.
-    Round,
+    Unary(FloatUnary),
+    /// `Math.max` (true) or `Math.min` of two Numbers.
+    Extreme(bool),
 }
 
-/// The fraction at which `Math.round` rounds up.
-const ROUND_HALF: f64 = 0.5;
 /// The argument counts of the inline operations.
 const UNARY: u16 = 1;
 const BINARY: u16 = 2;
+
+/// `operation` of the binary64 value, as machine code (`staged::math::float_unary`).
+pub(in crate::vm::compiled) fn emit_float_unary(builder: &mut FunctionBuilder<'_>, operation: FloatUnary, value: ir::Value) -> ir::Value {
+    let mut ins = |build: &dyn for<'a, 'b> Fn(cranelift_frontend::FuncInstBuilder<'a, 'b>) -> ir::Value| build(builder.ins());
+    match operation {
+        FloatUnary::Floor => ins(&|i| i.floor(value)),
+        FloatUnary::Ceil => ins(&|i| i.ceil(value)),
+        FloatUnary::Trunc => ins(&|i| i.trunc(value)),
+        FloatUnary::Abs => ins(&|i| i.fabs(value)),
+        FloatUnary::Sqrt => ins(&|i| i.sqrt(value)),
+        FloatUnary::Fround => { let single = ins(&|i| i.fdemote(types::F32, value)); ins(&|i| i.fpromote(types::F64, single)) }
+        FloatUnary::Round => {
+            let floor = ins(&|i| i.floor(value));
+            let excess = ins(&|i| i.fsub(value, floor));
+            let half = ins(&|i| i.f64const(crate::staged::math::ROUND_HALF));
+            let up = ins(&|i| i.fcmp(FloatCC::GreaterThanOrEqual, excess, half));
+            let one = ins(&|i| i.f64const(1.0));
+            let zero = ins(&|i| i.f64const(0.0));
+            let step = ins(&|i| i.select(up, one, zero));
+            let rounded = ins(&|i| i.fadd(floor, step));
+            // A negative that rounds to zero is `-0`.
+            let is_zero = ins(&|i| i.fcmp(FloatCC::Equal, rounded, zero));
+            let negative = ins(&|i| i.fcmp(FloatCC::LessThan, value, zero));
+            let negative_zero = ins(&|i| i.band(is_zero, negative));
+            let minus_zero = ins(&|i| i.f64const(-0.0));
+            ins(&|i| i.select(negative_zero, minus_zero, rounded))
+        }
+    }
+}
+
+/// The larger (`maximum`) or smaller of two binary64 values (`staged::math::float_extreme`).
+pub(in crate::vm::compiled) fn emit_float_extreme(builder: &mut FunctionBuilder<'_>, maximum: bool, left: ir::Value, right: ir::Value) -> ir::Value {
+    let ins = builder.ins();
+    if maximum { ins.fmax(left, right) } else { ins.fmin(left, right) }
+}
 
 impl Inline {
     /// The operation `native` runs inline, if any.
     fn of(native: Native) -> Option<Self> {
         const INLINE: [(Native, Inline); 10] = [
-            (Native::MathImul, Inline::Imul), (Native::MathFloor, Inline::Floor), (Native::MathCeil, Inline::Ceil),
-            (Native::MathTrunc, Inline::Trunc), (Native::MathAbs, Inline::Abs), (Native::MathSqrt, Inline::Sqrt),
-            (Native::MathFround, Inline::Fround), (Native::MathMax, Inline::Max), (Native::MathMin, Inline::Min),
-            (Native::MathRound, Inline::Round),
+            (Native::MathImul, Inline::Imul), (Native::MathFloor, Inline::Unary(FloatUnary::Floor)),
+            (Native::MathCeil, Inline::Unary(FloatUnary::Ceil)), (Native::MathTrunc, Inline::Unary(FloatUnary::Trunc)),
+            (Native::MathAbs, Inline::Unary(FloatUnary::Abs)), (Native::MathSqrt, Inline::Unary(FloatUnary::Sqrt)),
+            (Native::MathFround, Inline::Unary(FloatUnary::Fround)), (Native::MathMax, Inline::Extreme(true)),
+            (Native::MathMin, Inline::Extreme(false)), (Native::MathRound, Inline::Unary(FloatUnary::Round)),
         ];
         INLINE.iter().find(|(known, _)| *known == native).map(|(_, inline)| *inline)
     }
 
     /// The arguments the inline operation reads; a call passing another count takes the native.
     const fn arguments(self) -> u16 {
-        match self { Self::Imul | Self::Max | Self::Min => BINARY, _ => UNARY }
+        match self { Self::Imul | Self::Extreme(_) => BINARY, Self::Unary(_) => UNARY }
     }
 
-    /// The operation on `numbers`: a Float64 value, or for `Imul` an Int32 one.
+    /// The operation on `numbers`: a Float64 value; `Imul` is lowered by the caller.
     fn emit(self, builder: &mut FunctionBuilder<'_>, numbers: &[ir::Value]) -> ir::Value {
+        let mut stage = super::super::object_slots::Emit { builder, property_values: None };
         match (self, numbers) {
-            (Self::Max, &[left, right]) => builder.ins().fmax(left, right),
-            (Self::Min, &[left, right]) => builder.ins().fmin(left, right),
-            (Self::Floor, &[value]) => builder.ins().floor(value),
-            (Self::Ceil, &[value]) => builder.ins().ceil(value),
-            (Self::Trunc, &[value]) => builder.ins().trunc(value),
-            (Self::Abs, &[value]) => builder.ins().fabs(value),
-            (Self::Sqrt, &[value]) => builder.ins().sqrt(value),
-            (Self::Fround, &[value]) => { let single = builder.ins().fdemote(types::F32, value); builder.ins().fpromote(types::F64, single) }
-            (Self::Round, &[value]) => {
-                let floor = builder.ins().floor(value);
-                let excess = builder.ins().fsub(value, floor);
-                let half = builder.ins().f64const(ROUND_HALF);
-                let up = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, excess, half);
-                let one = builder.ins().f64const(1.0);
-                let zero = builder.ins().f64const(0.0);
-                let step = builder.ins().select(up, one, zero);
-                let rounded = builder.ins().fadd(floor, step);
-                // A negative that rounds to zero is `-0`.
-                let is_zero = builder.ins().fcmp(FloatCC::Equal, rounded, zero);
-                let negative = builder.ins().fcmp(FloatCC::LessThan, value, zero);
-                let negative_zero = builder.ins().band(is_zero, negative);
-                let minus_zero = builder.ins().f64const(-0.0);
-                builder.ins().select(negative_zero, minus_zero, rounded)
-            }
+            (Self::Unary(operation), &[value]) => crate::staged::math::unary(&mut stage, operation, value),
+            (Self::Extreme(maximum), &[left, right]) => crate::staged::math::extreme(&mut stage, maximum, left, right),
             _ => unreachable!("an inline operation reads its own argument count"),
         }
     }
