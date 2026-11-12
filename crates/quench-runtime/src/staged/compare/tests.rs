@@ -151,6 +151,9 @@ fn jump_binary_false_decodes_to_a_jump_where_the_comparison_fails() {
         assert_eq!(comparison, Comparison::Equality { strict, negated });
         assert_eq!(comparison.operator(), Some(operator as u32), "the VM decides it by its own operator");
     }
+    let Some(Operation::CompareJump { comparison, .. }) = decode(BinaryOperator::Instanceof)
+        else { panic!("a comparison jump decodes") };
+    assert_eq!((comparison, comparison.operator()), (Comparison::Instanceof, Some(BinaryOperator::Instanceof as u32)));
     let Some(Operation::CompareJump { comparison, .. }) = decode(BinaryOperator::In)
         else { panic!("a comparison jump decodes") };
     assert_eq!(comparison, Comparison::Operator(BinaryOperator::In as u32));
@@ -342,4 +345,27 @@ fn a_bitwise_operator_decodes_to_the_bits_test() {
         assert_eq!(comparison, Comparison::Bitwise(operation));
         assert_eq!(comparison.operator(), None);
     }
+}
+
+/// `instanceof` is the VM's decision of its two registers by its own operator: the jump takes the
+/// edge the answer names, a frame with no VM leaves the row, and an operand that is no register
+/// has no decision to ask for.
+#[test]
+fn an_instanceof_jump_is_the_vms_decision() {
+    for answer in [true, false] {
+        let mut frame = Probe::of(&[Value::UNDEFINED, Value::NULL]);
+        frame.answer = Some(answer);
+        let step = run(&mut frame, Comparison::Instanceof, true);
+        assert!(matches!(step, Step::Control(edge) if edge == if answer { Edge::Following } else { Edge::Target }));
+        assert_eq!(frame.calls, [CallOut::Decide { left: 0, right: 1, operator: BinaryOperator::Instanceof as u32 }]);
+    }
+    let mut frame = Probe::of(&[Value::UNDEFINED, Value::NULL]);
+    assert!(matches!(run(&mut frame, Comparison::Instanceof, true), Step::Unresolved), "no VM leaves the row");
+    let mut stage = Concrete::new(std::ptr::null());
+    let operation = Operation::CompareJump { comparison: Comparison::Instanceof, left: Operand::register(0),
+        right: Operand::constant(0).expect("a constant operand"), negate: true };
+    frame.answer = Some(true);
+    frame.calls.clear();
+    assert!(matches!(crate::staged::step(&mut stage, &mut frame, operation), Step::Unresolved));
+    assert!(frame.calls.is_empty(), "a constant operand is no register the VM can read");
 }

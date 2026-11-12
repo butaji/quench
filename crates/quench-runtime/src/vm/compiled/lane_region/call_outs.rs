@@ -57,20 +57,18 @@ impl Lowering<'_, '_> {
 
     /// The site of the call-out record at `pc`: where the helper decodes it, the registers the body
     /// wrote, and where a status other than completion or a miss ends the body.
-    fn call_out_site(&mut self, pc: usize, record: u32) -> frame::call_out::CallOutSite {
+    pub(super) fn call_out_site(&mut self, pc: usize, record: u32) -> frame::call_out::CallOutSite {
         frame::call_out::CallOutSite { record, stop: self.call_out_stop(), registers: self.registers_base,
             properties: self.entry.as_ref().expect("entry facts").receiver.properties, spill: self.spilled(pc) }
     }
 
-    /// The site of the comparison jump `row` at `pc` where the VM can decide it in place: a body
-    /// with the helper, a record of its own, and registers of the unit for operands. A comparison
-    /// with no such site leaves at the jump where its words do not decide it.
-    pub(super) fn decide_site(&mut self, pc: usize, row: &crate::staged::Operation<ir::Value, EmitProof>)
-        -> Option<frame::call_out::CallOutSite> {
-        let (call, _) = row.call_out()?;
+    /// The record of the comparison jump at `pc` where the VM can decide it in place: a body with
+    /// the helper, a record of its own, and registers of the unit for operands.
+    pub(super) fn decide_record(&self, pc: usize, operands: [Operand; 2]) -> Option<u32> {
         let Some(Origin::Caller(record)) = self.unit.origins.get(pc).copied() else { return None };
-        (self.completion.status_and_pc() && call.operands().into_iter().flatten().all(|register| register < self.unit.registers))
-            .then(|| self.call_out_site(pc, record))
+        (self.completion.status_and_pc() && operands.iter()
+            .all(|operand| operand.register_index().is_some_and(|register| register < self.unit.registers)))
+            .then_some(record)
     }
 
     /// The block the call-outs' statuses of a leave in a callee, or a termination, reach with the

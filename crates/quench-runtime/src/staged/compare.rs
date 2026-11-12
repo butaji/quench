@@ -34,6 +34,9 @@ impl Nullish {
     }
 }
 
+/// The `instanceof` operator.
+const INSTANCEOF_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::Instanceof as u32;
+
 /// What a `CompareJump` compares.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Comparison {
@@ -50,8 +53,11 @@ pub(crate) enum Comparison {
     /// The truth of a bitwise operator's result of two Numbers (`if (flags & MASK)`): its int32
     /// bits are nonzero, so the Number the operator would make is never made.
     Bitwise(NumberBitwise),
-    /// Any other operator (`instanceof`, `in`): no Number relation names it, so a tier decides it
-    /// by the operator, and the step is `Unresolved` for the interpreter's exact path.
+    /// `value instanceof constructor` of two registers: its prototype-chain walk is no word test,
+    /// so the VM decides it (`CallOut::Decide`), guest code (`@@hasInstance`, a proxy) included.
+    Instanceof,
+    /// Any other operator (`in`): no Number relation names it, so a tier decides it by the
+    /// operator, and the step is `Unresolved` for the interpreter's exact path.
     Operator(u32),
 }
 
@@ -62,6 +68,7 @@ impl Comparison {
         match self {
             Self::Relation { .. } | Self::Nullish { .. } | Self::Bitwise(_) => None,
             Self::Equality { strict, negated } => Some(equality_binary_operator(strict, negated)),
+            Self::Instanceof => Some(INSTANCEOF_OPERATOR),
             Self::Operator(operator) => Some(operator),
         }
     }
@@ -83,6 +90,7 @@ impl<W, P> Operation<W, P> {
             .or_else(|| NumberRelation::from_operator(operator)
                 .map(|relation| Comparison::Relation { relation, domain: Domain::Float64 }))
             .or_else(|| NumberBitwise::from_operator(operator).map(Comparison::Bitwise))
+            .or_else(|| (operator == INSTANCEOF_OPERATOR).then_some(Comparison::Instanceof))
             .unwrap_or(Comparison::Operator(operator));
         Self::CompareJump { comparison, left: instruction.operand_b(), right: instruction.operand_c(), negate: true }
     }
@@ -113,6 +121,7 @@ fn outcome<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, co
             nullish(stage, frame, left, (expected, strict), equal_edge)
         }
         Comparison::Bitwise(operation) => bitwise(stage, frame, [left, right], operation),
+        Comparison::Instanceof => instanceof(stage, frame, [left, right]),
         Comparison::Operator(_) => None,
     }
 }
@@ -139,6 +148,16 @@ fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [
         }
     };
     Some(stage.eq_imm(value, Value::TRUE.to_bits()))
+}
+
+/// Whether `value instanceof constructor` holds, as the VM decides it; `None` where an operand is
+/// no register (the VM reads registers) or the frame has no VM to ask.
+#[inline(always)]
+fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [value, constructor]: [Operand; 2])
+    -> Option<S::Cond> {
+    let call = CallOut::Decide { left: value.register_index()?, right: constructor.register_index()?, operator: INSTANCEOF_OPERATOR };
+    let (decision, _) = frame.vm_step(stage, call, None)?;
+    Some(stage.eq_imm(decision, Value::TRUE.to_bits()))
 }
 
 /// Whether the bits `operation` makes of the operands' ToInt32 are nonzero (`if (flags & MASK)`).

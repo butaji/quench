@@ -1,7 +1,7 @@
 //! The conditional jump on two values (`Operation::CompareJump`, the `JumpBinaryFalse` row),
 //! lowered by its comparison and by what the facts prove of its operands: a test against `null`
-//! or `undefined`, a bitwise test, an ordering or an equality by the staged step (whose answer
-//! picks the edge through `Frame::branch`), and any other by the lane's own relation.
+//! or `undefined`, a bitwise test, an ordering, an equality or `instanceof` by the staged step
+//! (whose answer picks the edge through `Frame::branch`), and any other by the lane's own relation.
 use super::*;
 use crate::staged::{Comparison, Domain, Nullish, Operation};
 use crate::vm::operations::NumberRelation;
@@ -69,17 +69,20 @@ impl Lowering<'_, '_> {
 
     /// The comparison the facts and the operands settle on for the staged step: an ordering of
     /// operands proved Numbers in the domain they prove, an equality of operands both typed Numbers
-    /// as that relation, any other equality as it is. `None` where the lane's own relation
-    /// lowers it (operands only their tags type, any other operator).
-    fn specialized(&self, state: &State, comparison: Comparison, [left, right]: [Operand; 2]) -> Option<Comparison> {
+    /// as that relation, a bitwise test of Numbers, and an equality or `instanceof` of registers
+    /// where the VM can decide a pair the words leave. `None` where the lane's own relation lowers
+    /// it (operands only their tags type, a region with no VM helper, any other operator).
+    fn specialized(&self, state: &State, pc: usize, comparison: Comparison, operands: [Operand; 2]) -> Option<Comparison> {
+        let [left, right] = operands;
         if !(self.operand_supported(left) && self.operand_supported(right)) { return None; }
         let domain = self.number_domain(state, left, right);
+        let by_vm = self.decide_record(pc, operands).is_some();
         match comparison {
             Comparison::Relation { relation, .. } if self.numbers_supported(left, right) =>
                 domain.map(|domain| Comparison::Relation { relation, domain }),
             Comparison::Equality { negated, .. } if self.numbers_typed(state, left, right) => domain.map(|domain|
                 Comparison::Relation { relation: if negated { NumberRelation::NotEqual } else { NumberRelation::Equal }, domain }),
-            Comparison::Equality { .. } => Some(comparison),
+            Comparison::Equality { .. } | Comparison::Instanceof if by_vm => Some(comparison),
             Comparison::Bitwise(_) if self.numbers_supported(left, right) => Some(comparison),
             _ => None,
         }
@@ -95,7 +98,7 @@ impl Lowering<'_, '_> {
     /// own relation (`Lowering::relation`). Whether it lowered.
     fn relation_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, comparison: Comparison) -> bool {
         let (left, right) = (instruction.operand_b(), instruction.operand_c());
-        if let Some(comparison) = self.specialized(state, comparison, [left, right]) {
+        if let Some(comparison) = self.specialized(state, pc, comparison, [left, right]) {
             self.staged_jump(state, pc, instruction, comparison, [left, right]);
             return true;
         }
@@ -116,7 +119,8 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc32);
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
         let row = Operation::CompareJump { comparison, left, right, negate: true };
-        let site = self.decide_site(pc, &row);
+        let site = self.decide_record(pc, [left, right]).filter(|_| comparison.operator().is_some())
+            .map(|record| self.call_out_site(pc, record));
         let sites = frame::Sites { call_out: site.as_ref(), ..frame::Sites::default() };
         self.step_with(state, frame::Edges::Branch { target: taken, following: fall, miss: exit }, row, None, sites);
         if comparison.runs_guest_code() { state.call_effect(); }
