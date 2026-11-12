@@ -10,6 +10,7 @@
 //! jump when an interrupt is requested so the interpreter's safepoint runs, and an entry guard
 //! that finds a register that is no Number returns `LaneExit::Entry`.
 
+use super::lane_unit::{Frame as InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
 use crate::bytecode::{Class, FieldLookup, OperandKind, Register, WideInstruction};
 use crate::value::Value;
@@ -28,13 +29,17 @@ pub(in crate::vm::compiled) mod function;
 mod link;
 mod plan;
 mod repr;
+mod span;
 mod steps;
+mod stitch;
 mod webs;
 use decode::*;
 use link::*;
 use plan::*;
 use repr::*;
+use span::*;
 use steps::*;
+use stitch::*;
 use webs::*;
 
 /// Bytes of a register slot in the activation's register file.
@@ -90,7 +95,7 @@ fn note_inlined() {
     INLINED_SITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-fn inlined_sites() -> u64 {
+pub(in crate::vm::compiled) fn inlined_sites() -> u64 {
     INLINED_SITES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
@@ -186,14 +191,14 @@ pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [
 }
 
 /// The webs of `decoded`, their representations and homes, and the rows renamed to webs.
-fn analyze(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
+fn analyze(span: &Span, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged = Bits::default();
     loop {
-        let (webs, renamed) = Webs::split(region, decoded, &merged);
-        let reprs = representations(region, &renamed, widened, seen, &webs);
-        let homes = Homes::of(&ranked(&renamed, &reprs, Repr::Int), &ranked(&renamed, &reprs, Repr::Double), webs.orig.clone(), &webs.clashes(region, &renamed));
+        let (webs, renamed) = Webs::split(span, decoded, &merged);
+        let reprs = representations(span, &renamed, widened, seen, &webs);
+        let homes = Homes::of(&ranked(&renamed, &reprs, Repr::Int), &ranked(&renamed, &reprs, Repr::Double), webs.orig.clone(), &webs.clashes(span, &renamed));
         let split: Vec<Register> = homes.slots.iter().map(|web| webs.orig[usize::from(*web)]).filter(|register| webs.count(*register) > 1).collect();
         if split.is_empty() {
             return (reprs, homes, webs, renamed);
@@ -213,8 +218,9 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     let facts = Facts::Entry { dense };
     let mut decoded: Vec<Decoded> = instructions.iter().enumerate().map(|(k, instruction)| decode(region, facts, header + k as u32, *instruction, helpers)).collect();
     settle(&mut decoded);
-    let (reprs, homes, webs, decoded) = analyze(region, &decoded, widened, seen);
-    let layout = Layout { header, backedge, homes, webs, region, ending: Ending::Region, callees: &[] };
+    let span = Span::of(region);
+    let (reprs, homes, webs, decoded) = analyze(&span, &decoded, widened, seen);
+    let layout = Layout { span, homes, webs, ending: Ending::Region, callees: &[], origins: &[] };
     let body = decoded.iter().enumerate().map(|(k, row)| plan(row, &layout, header + k as u32, is_general(row, &reprs), helpers)).collect::<Result<Vec<_>, _>>()?;
     let bare = decoded.iter().all(|row| row.heap.is_none() && row.step != Some(Step::Helper));
     Ok((link(&layout, &body)?, bare))

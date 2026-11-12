@@ -109,8 +109,8 @@ fn chained(parts: Vec<CallPart>, spills: usize, owned: Option<Box<quench_bjit::c
     Ok(row)
 }
 
-/// The plan of a step at `pc`: the leave row, the helper chain, the completion of the activation
-/// or the call's chain.
+/// The plan of a step at row `pc`: the leave row, the helper chain, the completion of the
+/// activation or the call's chain.
 pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     match decoded.step.ok_or("plan_step: no step")? {
         Step::Leave => Ok(Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, Some(pc))),
@@ -119,25 +119,25 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
             let slot = operand(&layout.homes, decoded.a).1;
             Ok(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) })
         }
-        Step::Call(shape) => plan_call(layout, shape, helpers),
+        Step::Call(shape) => plan_call(layout, shape, pc, helpers),
     }
 }
 
-/// The chain of a helper step at `pc`.
+/// The chain of a helper step at row `pc`, which names the caller's record it makes.
 fn plan_helper(layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     let address = call_plan::helper_address(helpers, LaneHelper::Step).ok_or("step: no helper address")?;
-    let (spills, reloads) = (layout.spills(pc), layout.spills(pc + 1));
-    let mut row = chained(call_plan::plan_step(pc, address, &spills, &reloads)?, spills.len(), None)?;
+    let (spills, reloads, record) = (layout.spills(pc), layout.spills(pc + 1), layout.record(pc));
+    let mut row = chained(call_plan::plan_step(record, address, &spills, &reloads)?, spills.len(), None)?;
     // The step helper answers completed or missed: its (status, word) exit is the leave at the record too.
-    row.exits = vec![Exit::At(pc); row.exits.len()];
+    row.exits = vec![Exit::At(record); row.exits.len()];
     Ok(row)
 }
 
-/// The chain of the call `shape` names: spills, the direct row where the site's target is stable,
-/// the helper row, reloads. The direct row's record is the row's `owned`.
-fn plan_call(layout: &Layout, shape: CallShape, helpers: LaneHelpers) -> Result<Planned, String> {
+/// The chain of the call `shape` names at row `pc`: spills, the direct row where the site's target
+/// is stable, the helper row, reloads. The direct row's record is the row's `owned`.
+fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     let helper = call_plan::helper_address(helpers, LaneHelper::Call).ok_or("call: no helper address")?;
-    let (spills, reloads) = (layout.spills(shape.call_pc), layout.spills(shape.call_pc + 1));
+    let (spills, reloads) = (layout.spills(pc), layout.spills(pc + 1));
     let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads };
     let CallChain { parts, record, choice } = call_plan::plan_call(&plan)?;
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });

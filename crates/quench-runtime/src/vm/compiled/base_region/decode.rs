@@ -52,14 +52,11 @@ pub(super) struct Decoded {
     /// A `ToNumeric` copy: its operand is no Number until the row proves it (a loop's entry guards
     /// prove the registers it names; a function's registers are not proved).
     pub(super) checked: bool,
-    /// The callee register and function word a row stands on where it replaces the call of that
-    /// function (`function::inlined_call`): the row proves the register holds it.
-    pub(super) identity: Option<(Register, u64)>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, step: None, checked: false, identity: None }
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, step: None, checked: false }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -72,7 +69,7 @@ impl Decoded {
 
     /// The registers the row names.
     pub(super) fn registers(&self) -> impl Iterator<Item = Register> {
-        [self.dst, self.a.and_then(register_of), self.b.and_then(register_of), self.base, self.identity.map(|(register, _)| register)].into_iter().flatten()
+        [self.dst, self.a.and_then(register_of), self.b.and_then(register_of), self.base].into_iter().flatten()
     }
 }
 

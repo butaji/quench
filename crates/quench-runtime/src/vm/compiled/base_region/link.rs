@@ -76,24 +76,52 @@ pub(super) fn leave_chain(spills: &[(Place, Register)], tail: &str, leave: [u64;
     Ok(code)
 }
 
-/// What the linker needs of the region: its span, the registers live at a PC, and the entry
+/// What the linker needs of the region: its span, the registers live at a row, and the entry
 /// loads.
 pub(super) struct Layout<'a> {
-    pub(super) header: u32,
-    pub(super) backedge: u32,
+    pub(super) span: Span<'a>,
     pub(super) homes: Homes,
     pub(super) webs: Webs,
-    pub(super) region: &'a LoopRegion,
     pub(super) ending: Ending,
-    /// Per PC, what the call there recorded of its callee: a whole function's call sites (a loop
-    /// region has none, its calls being leaves).
+    /// Per caller PC, what the call there recorded of its callee: a whole function's call sites (a
+    /// loop region has none, its calls being leaves).
     pub(super) callees: &'a [Option<DirectFacts>],
+    /// Per row of a stitched program, where the interpreter resumes if the row leaves; none for a
+    /// loop region, whose rows are its PCs.
+    pub(super) origins: &'a [Origin],
 }
 
 impl Layout<'_> {
-    /// What the call at `pc` recorded of its callee.
+    /// What the call at caller PC `pc` recorded of its callee.
     pub(super) fn callee(&self, pc: u32) -> Option<&DirectFacts> {
         self.callees.get(pc as usize)?.as_ref()
+    }
+
+    fn origin(&self, row: u32) -> Option<Origin> {
+        self.origins.get(row as usize).copied()
+    }
+
+    /// The word a leave at `row` returns: the caller's PC, or the callee's inside its inlined frame.
+    pub(super) fn exit_word(&self, row: u32) -> u64 {
+        match self.origin(row) {
+            Some(Origin::Caller(pc)) => u64::from(pc),
+            Some(Origin::Inlined { frame, pc }) => super::super::LaneExit::Inlined { frame, pc }.word(),
+            None => u64::from(row),
+        }
+    }
+
+    /// The caller's record the instruction of `row` is: where a helper row names it and a
+    /// completion records it.
+    pub(super) fn record(&self, row: u32) -> u32 {
+        match self.origin(row) {
+            Some(Origin::Caller(pc)) => pc,
+            _ => row,
+        }
+    }
+
+    /// Whether a leave at `row` is inside an inlined callee.
+    fn inlined(&self, row: u32) -> bool {
+        matches!(self.origin(row), Some(Origin::Inlined { .. }))
     }
 
     /// The pinned registers live at `pc`: the ones a stub there writes back.
@@ -107,7 +135,7 @@ impl Layout<'_> {
 
     /// The pins of `homes` whose web is live at `pc`, each with the register it writes back to.
     fn live_homes(&self, homes: &[Pin], pc: u32) -> Vec<Pin> {
-        let live = self.webs.live_at(self.region, pc);
+        let live = self.webs.live_at(&self.span, pc);
         homes.iter().filter(|(_, web)| live.contains(&usize::from(*web))).map(|(pin, web)| (*pin, self.homes.orig[usize::from(*web)])).collect()
     }
 
@@ -127,14 +155,13 @@ impl Layout<'_> {
 /// checked (or, dead there, tagged), and each other Number register live there is checked, so a
 /// loop whose values are no Numbers is never entered.
 pub(super) fn entry_rows(layout: &Layout) -> Result<Vec<(&'static Stencil, [u64; HOLES])>, String> {
-    let region = layout.region;
     let guard = |kind, dst, offset: u64| {
         numeric::stencil(numeric::Row { kind, dst, a: Place::Mem, b: Place::Mem, speculate: true }).map(|stencil| {
             (stencil, if kind == Kind::TagInit { [offset, 0, 0] } else { [0, offset, 0] })
         })
     };
     let mut rows = Vec::new();
-    let entered = layout.webs.entry_live(region);
+    let entered = layout.webs.entry_live(&layout.span);
     let slot = |web: Register| u64::from(layout.homes.orig[usize::from(web)]) * SLOT;
     for (pin, web) in layout.homes.pins.iter().filter(|(_, web)| entered.contains(&usize::from(*web))) {
         rows.push(guard(Kind::Guard, Place::Pin(*pin as u8), slot(*web))?);
@@ -147,7 +174,7 @@ pub(super) fn entry_rows(layout: &Layout) -> Result<Vec<(&'static Stencil, [u64;
         rows.push(guard(if live { Kind::Guard } else { Kind::TagInit }, Place::MemInt, slot(*web))?);
     }
     for web in entered.iter().map(|web| *web as Register) {
-        let number = region.number_registers().contains(&layout.homes.orig[usize::from(web)]);
+        let number = layout.span.number_registers().contains(&layout.homes.orig[usize::from(web)]);
         if number && layout.homes.place(web) == Place::Mem {
             rows.push(guard(Kind::Guard, Place::Mem, slot(web))?);
         }
@@ -186,7 +213,7 @@ impl Leaves {
     fn open(layout: &Layout) -> Result<(Self, usize), String> {
         let mut leaves = Self(Vec::new());
         if layout.ending == Ending::Region {
-            leaves.index(layout, Leave::Pc(layout.backedge + 1))?;
+            leaves.index(layout, Leave::Pc(layout.span.backedge + 1))?;
         }
         let failed = leaves.index(layout, Leave::Word(super::super::LaneExit::Entry.word()))?;
         Ok((leaves, failed))
@@ -199,12 +226,12 @@ impl Leaves {
         }
         let ending = layout.ending;
         let stencil = match leave {
-            Leave::Pc(pc) => leave_row(leave_chain(&layout.spills(pc), ending.tails().0, ending.holes(u64::from(pc)))?),
+            Leave::Pc(pc) => leave_row(leave_chain(&layout.spills(pc), ending.tails().0, ending.holes(layout.exit_word(pc)))?),
             Leave::Word(word) => leave_row(leave_chain(&[], ending.tails().0, ending.holes(word))?),
             Leave::Status => routine(call::LEAVE_STATUS)?,
             Leave::Return { pc, slot } => {
                 let status = u64::from(super::super::LANE_BODY_RETURNED);
-                leave_row(leave_chain(&layout.spills(pc), "leave_returned", [slot, status, u64::from(pc)])?)
+                leave_row(leave_chain(&layout.spills(pc), "leave_returned", [slot, status, u64::from(layout.record(pc))])?)
             }
         };
         self.0.push((leave, stencil));
@@ -238,7 +265,8 @@ fn exit_targets(layout: &Layout, body: &[&Planned], leaves: &mut Leaves, leaf_ba
         let mut row_targets = Vec::with_capacity(row.exits.len());
         for exit in &row.exits {
             row_targets.push(match *exit {
-                Exit::Spilling(pc) => Target::Stub { pc, routine: routine_index(layout, &mut routines, pc)? },
+                Exit::Spilling(pc) if layout.inlined(pc) => Target::Row(leaf_base + leaves.index(layout, Leave::Pc(pc))?),
+                Exit::Spilling(pc) => Target::Stub { pc: layout.record(pc), routine: routine_index(layout, &mut routines, pc)? },
                 Exit::At(pc) => Target::Row(leaf_base + leaves.index(layout, Leave::Word(u64::from(pc)))?),
                 Exit::Status => Target::Row(leaf_base + leaves.index(layout, Leave::Status)?),
             });
@@ -268,7 +296,7 @@ type Part<'a> = (&'a Planned, usize);
 /// stop is its leave row, a branch inside the region its row, a branch out of it a leave row,
 /// and a part of the row's own run the part.
 fn branch_target(layout: &Layout, leaves: &mut Leaves, starts: &[usize], (row, run): Part, parts: usize, entry: usize) -> Result<Option<usize>, String> {
-    let (header, backedge) = (layout.header, layout.backedge);
+    let (header, backedge) = (layout.span.header, layout.span.backedge);
     let leave = match (row.stop, row.branch) {
         (Some(stop), _) => stop.leave(),
         (None, Some(Branch::Part(part))) => return Ok(Some(entry + run + part)),

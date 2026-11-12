@@ -179,9 +179,9 @@ fn this_truthiness_and_negation_print_what_the_interpreter_prints() {
     assert!(runs > 100, "the body ran {runs} times");
 }
 
-/// A call of a small callee runs as the callee's one row in the caller's body. A guard that fails
-/// inside it (an operand that is no Number) leaves at the call, where the interpreter makes the
-/// whole call, so the output is the interpreter's for every kind of operand.
+/// A call of a small callee runs as the callee's rows in the caller's body. A guard that fails
+/// inside it (an operand that is no Number) leaves the body, so the output is the interpreter's
+/// for every kind of operand.
 #[test]
 fn a_guard_failing_inside_an_inlined_callee_prints_what_the_interpreter_prints() {
     let (interpreted, compiled, [runs, _]) = run_both(
@@ -210,4 +210,22 @@ fn a_redefined_callee_is_not_run_as_the_inlined_one() {
          print(f(6));",
     );
     assert_eq!(interpreted, compiled);
+}
+
+/// A callee with window registers, a loop and two returns runs as rows of the caller's body: its
+/// jumps are the site's own, each return moves to the call's result and jumps past the site, and
+/// no call row is planned (the site is counted). The output is the interpreter's for every kind
+/// of argument.
+#[test]
+fn a_callee_with_a_loop_and_two_returns_runs_inlined() {
+    let before = super::super::base_region::inlined_sites();
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function tri(n) { var s = 0, i = 0; while (i < n) { s = s + i; i = i + 1; } if (s > 1000) return 1000; return s; }
+         function f(k) { var t = 0; for (var j = 0; j < 4; j++) t = t + tri(k + j); return t; }
+         var t = 0; for (var k = 0; k < 300; k++) t = (t + f(k % 9)) | 0;
+         print(t); print(f(70)); print(f(2.5)); print(f('3')); print(f(-4));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+    assert!(super::super::base_region::inlined_sites() > before, "the callee's site was inlined");
 }

@@ -26,11 +26,14 @@ pub(in crate::vm) struct Stitch {
     /// The callee bytecodes one stitch inlines in all, so a hot loop's code stays a few call
     /// bodies' worth.
     pub(in crate::vm) max_total_instructions: usize,
+    /// The frame slots above the caller's registers the inlined callees' windows may take: the room
+    /// a body's recovery reserves past its activation (`LaneRecoverySpace`).
+    pub(in crate::vm) window_registers: u32,
     /// The inline depth: activations a leave inside inlined code materializes, the caller's
     /// included.
     pub(in crate::vm) max_depth: usize,
-    /// The opcode classes a callee body may hold: the numeric rows of the stencil library, and the
-    /// `Return` that becomes a jump to the continuation.
+    /// The opcode classes a callee body may hold: the numeric rows of the stencil library, its jumps
+    /// (the site's own rows), and the `Return` that becomes a move and a jump to the continuation.
     pub(in crate::vm) classes: &'static [Class],
 }
 
@@ -278,10 +281,11 @@ const MEASURED: Tiers = Tiers {
     stitch: Stitch {
         max_instructions: 24,
         max_total_instructions: 96,
+        window_registers: 32,
         max_depth: 3,
         classes: &[
             Class::Move, Class::ToNumeric, Class::LoadConst, Class::Binary, Class::NumericAdd, Class::NumericMultiply,
-            Class::IncDec, Class::JumpBinaryFalse, Class::Jump, Class::Return,
+            Class::IncDec, Class::Unary, Class::JumpBinaryFalse, Class::JumpTrue, Class::JumpFalse, Class::Jump, Class::Return,
         ],
     },
     priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },

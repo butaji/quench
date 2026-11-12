@@ -1,10 +1,11 @@
 //! A whole function as one stitched body: every instruction is a row the base-region decode
 //! covers (the numeric rows, the heap rows read through the heap's own tables: an array
 //! word's record, a field's cache entry, the activation's captures, a helper step, a `Call`
-//! the call planner chains, or a `Return` of a register) or a leave row at its PC, where the
-//! interpreter resumes exactly. The rows, webs and homes are the loop regions' (`analyze`,
-//! `plan`, `link`); the body is entered and left as a lane body is (`Ending::Body`), and polls
-//! the interrupt flag at every branch back (`Ending::poll`).
+//! the call planner chains, a call stitched in as its callee's rows, or a `Return` of a register)
+//! or a leave row at its PC, where the interpreter resumes exactly. The rows are laid out as one
+//! flat program (`stitch`), whose rows the webs, homes and exits are keyed by; they are the loop
+//! regions' (`analyze`, `plan`, `link`); the body is entered and left as a lane body is
+//! (`Ending::Body`), and polls the interrupt flag at every branch back (`Ending::poll`).
 use super::*;
 use super::call_plan::inline::Context;
 use super::call_plan::{CallShape, DirectFacts};
@@ -23,6 +24,8 @@ pub(in crate::vm::compiled) struct Body {
     pub(in crate::vm::compiled) loops: bool,
     /// The records its direct call rows read, which its code must not outlive.
     pub(in crate::vm::compiled) records: Vec<Box<CallRecord>>,
+    /// The calls it runs as their callees' rows, by frame.
+    pub(in crate::vm::compiled) frames: Vec<InlinedCall>,
 }
 
 /// What a body decides its call sites by: the callees they recorded and the stitch's budget.
@@ -33,33 +36,35 @@ struct Sites<'a> {
     registers: u16,
 }
 
-/// The row of the instruction at `pc`: a `Return` of a register, a call the stitch inlines as the
-/// callee's one row or the call planner's chain, else what the loop regions' decode covers (a
-/// leave where nothing does).
-fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
+/// The row of the instruction at `pc`: a `Return` of a register, a call the stitch inlines as its
+/// callee's rows or the call planner's chain, else what the loop regions' decode covers (a leave
+/// where nothing does).
+fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction, helpers: LaneHelpers) -> What {
     let plain = instruction.result_flags() == 0;
     match instruction.op().class() {
         Class::Return if plain && instruction.register_a() < sites.registers => {
-            Decoded { a: Some(Source::Register(instruction.register_a())), ..Decoded::step(Step::Return, None) }
+            What::Row(Decoded { a: Some(Source::Register(instruction.register_a())), ..Decoded::step(Step::Return, None) })
         }
         Class::Call if chains(instruction) => {
             let shape = CallShape::of(pc, instruction);
-            sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape, sites.registers)
-                .unwrap_or_else(|| Decoded::step(Step::Call(shape), Some(shape.result)))
+            match sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape) {
+                Some(site) => What::Site(site),
+                None => What::Row(Decoded::step(Step::Call(shape), Some(shape.result))),
+            }
         }
-        _ => decode(region, Facts::Site, pc, instruction, helpers),
+        _ => What::Row(decode(region, Facts::Site, pc, instruction, helpers)),
     }
 }
 
-/// Which rows control reaches from PC 0; an error where one falls off the function's end.
-fn reachable(region: &LoopRegion, decoded: &[Decoded]) -> Result<Vec<bool>, String> {
+/// Which rows control reaches from row 0; an error where one falls off the program's end.
+fn reachable(span: &Span, decoded: &[Decoded]) -> Result<Vec<bool>, String> {
     let count = decoded.len();
     let (mut reached, mut pending) = (vec![false; count], vec![0]);
     while let Some(k) = pending.pop() {
         if std::mem::replace(&mut reached[k], true) {
             continue;
         }
-        for next in decoded[k].successors(k, count, region) {
+        for next in decoded[k].successors(k, count, span) {
             match next {
                 Next::Row(row) => pending.push(row),
                 Next::Leave(_) => return Err("a row falls off the function".to_string()),
@@ -80,31 +85,19 @@ fn number_guard(pc: u32, slot: u64) -> Result<Planned, String> {
     Ok(Planned { stop: Some(Stop { pc, returns: None }), ..Planned::single(control(Kind::Guard)?, [0, slot, 0], None, None) })
 }
 
-/// A row that leaves at `pc` unless the register's frame slot holds exactly the function `word`
-/// (`Heap::Identity`): the proof that a call the row replaces calls the function it was stitched for.
-fn identity_guard(homes: &Homes, pc: u32, register: Register, word: u64) -> Result<Planned, String> {
-    let slot = u64::from(homes.orig[usize::from(register)]) * SLOT;
-    let row = HeapRow { heap: Heap::Identity, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
-    Ok(Planned::single(base_rows::stencil(row)?, [0, slot, word], None, Some(pc)))
-}
-
 /// A row that leaves at `pc` when an interrupt is requested, and continues.
 fn poll_row(pc: u32) -> Result<Planned, String> {
     let interrupt = std::mem::offset_of!(super::super::CallContext, interrupt) as u64;
     Ok(Planned::single(control(Kind::Poll)?, [interrupt, 0, 0], None, Some(pc)))
 }
 
-/// The rows that run before the row at `pc`, at the same PC: the proof that an inlined call's callee
-/// is the one stitched, the proof a `ToNumeric` operand
-/// held in a frame slot is a Number (a loop's entry guards prove its registers; a function's are
-/// not proved), and the poll a conditional branch back takes (an unconditional one is its own
+/// The rows that run before the row `pc`, at the same row: the proof a `ToNumeric` operand held in
+/// a frame slot is a Number (a loop's entry guards prove its registers; a function's are not
+/// proved), and the poll a conditional branch back takes (an unconditional one is its own
 /// `JumpWatch`), so no loop a function runs goes unwatched.
 fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, String> {
     let (place, slot) = operand(&layout.homes, row.a);
     let mut before = Vec::new();
-    if let Some((register, word)) = row.identity {
-        before.push(identity_guard(&layout.homes, pc, register, word)?);
-    }
     if row.checked && place == Place::Mem {
         before.push(number_guard(pc, slot)?);
     }
@@ -114,16 +107,16 @@ fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, Str
     Ok(before)
 }
 
-/// Whether the register a heap row reads its array or object through is held in its frame slot,
-/// where the row reads it: a pinned register holds a Number, never one of those, and its slot is
-/// not kept current.
+/// Whether the register a heap row reads its array, object or callee through is held in its frame
+/// slot, where the row reads it: a pinned register holds a Number, never one of those, and its
+/// slot is not kept current.
 fn framed(homes: &Homes, row: &Decoded) -> bool {
     let through = match row.heap {
         Some(Heap::Store) => row.base,
-        Some(Heap::Index | Heap::Array | Heap::Site) => row.a.and_then(register_of),
+        Some(Heap::Index | Heap::Array | Heap::Site | Heap::Identity) => row.a.and_then(register_of),
         _ => None,
     };
-    through.into_iter().chain(row.identity.map(|(register, _)| register)).all(|register| homes.place(register) == Place::Mem)
+    through.into_iter().all(|register| homes.place(register) == Place::Mem)
 }
 
 /// Whether the row leaves the body: a leave step, or a heap row whose array is not in its frame slot.
@@ -131,8 +124,8 @@ fn leaves(layout: &Layout, row: &Decoded) -> bool {
     row.step == Some(Step::Leave) || !framed(&layout.homes, row)
 }
 
-/// The plan of a row at `pc`: nothing where control never reaches it, a leave row, or the row
-/// with the rows before it its kind needs.
+/// The plan of row `pc`: nothing where control never reaches it, a leave row, or the row with the
+/// rows before it its kind needs.
 fn plan_row(layout: &Layout, reprs: &Reprs, reached: bool, pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
     if !reached {
         return Ok(skipped());
@@ -143,18 +136,26 @@ fn plan_row(layout: &Layout, reprs: &Reprs, reached: bool, pc: u32, row: &Decode
     Ok(Planned { pre: preludes(layout, row, pc)?, ..plan(row, layout, pc, is_general(row, reprs), helpers)? })
 }
 
-/// The body of the function `function` that `region` spans, over the registers observed at its
-/// entry (`seen`: the ints and the doubles; `widened`: the PCs whose int32 speculation failed),
-/// and the callees its call sites recorded, counted under the trace. An error where its first
-/// instruction leaves at once: such a body is pure entry cost.
+/// What a body is built for: its function and registers, the rows whose int32 speculation failed
+/// (`widened`, by caller PC), and the registers its entry held as ints and doubles (`seen`).
+pub(in crate::vm::compiled) struct BodySpec<'a> {
+    pub(in crate::vm::compiled) function: u32,
+    pub(in crate::vm::compiled) registers: u16,
+    pub(in crate::vm::compiled) widened: &'a [usize],
+    pub(in crate::vm::compiled) seen: [&'a [Register]; SEEN],
+}
+
+/// The body of the function `spec` names that `region` spans, over the callees its call sites
+/// recorded, counted under the trace. An error where its first row leaves at once: such a body is
+/// pure entry cost.
 ///
 /// # Safety
 /// Each of `callees` names its function's live entry cell (`Callees::facts`).
-pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, function: u32, registers: u16, widened: &[usize], seen: [&[Register]; SEEN], callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
+pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, spec: &BodySpec, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
     let facts = unsafe { callees.facts() };
-    let sites = Sites { callees, facts: &facts, context: Context::root(function, registers), registers };
-    let built = assemble_body(region, widened, seen, sites, helpers);
+    let sites = Sites { callees, facts: &facts, context: Context::root(spec.function, spec.registers), registers: spec.registers };
+    let built = assemble_body(region, spec, sites, helpers);
     note(|totals, rejects| match &built {
         Ok(body) => {
             totals.bodies += 1;
@@ -166,21 +167,34 @@ pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, function: 
     built
 }
 
-fn assemble_body(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEEN], mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {
-    let covers: Vec<Decoded> = region.instructions().iter().enumerate().map(|(pc, instruction)| cover(region, pc as u32, &mut sites, *instruction, helpers)).collect();
-    let reached = reachable(region, &covers)?;
-    if covers[0].step == Some(Step::Leave) {
+/// The rows whose int32 speculation failed: those of the caller's instructions at the `widened` PCs.
+fn widened_rows(origins: &[Origin], widened: &[usize]) -> Vec<usize> {
+    let widens = |origin: &Origin| matches!(origin, Origin::Caller(pc) if widened.contains(&(*pc as usize)));
+    origins.iter().enumerate().filter(|(_, origin)| widens(origin)).map(|(k, _)| k).collect()
+}
+
+/// Every caller instruction as its part: its row, or its call's site.
+fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Part> {
+    let instructions = region.instructions().iter().enumerate();
+    instructions.map(|(pc, instruction)| Part { pc: pc as u32, what: cover(region, pc as u32, sites, *instruction, helpers) }).collect()
+}
+
+fn assemble_body(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {
+    let stitched = stitch(region, parts(region, &mut sites, helpers), spec.registers);
+    let span = Span::stitched(region, stitched.rows.len(), &stitched.live);
+    let reached = reachable(&span, &stitched.rows)?;
+    if stitched.rows[0].step == Some(Step::Leave) {
         return Err("first instruction leaves".to_string());
     }
-    let unreached = |k: usize| !reached[k];
-    let decoded: Vec<Decoded> = covers.into_iter().enumerate().map(|(k, row)| if unreached(k) { Decoded::step(Step::Leave, None) } else { row }).collect();
-    let (reprs, homes, webs, decoded) = analyze(region, &decoded, widened, seen);
-    let layout = Layout { header: region.header, backedge: region.backedge, homes, webs, region, ending: Ending::Body, callees: sites.facts };
+    let unreached = |row: Decoded, reached: &bool| if *reached { row } else { Decoded::step(Step::Leave, None) };
+    let rows: Vec<Decoded> = stitched.rows.into_iter().zip(&reached).map(|(row, reached)| unreached(row, reached)).collect();
+    let (reprs, homes, webs, decoded) = analyze(&span, &rows, &widened_rows(&stitched.origins, spec.widened), spec.seen);
+    let layout = Layout { span, homes, webs, ending: Ending::Body, callees: sites.facts, origins: &stitched.origins };
     let mut planned = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, &reprs, reached[k], k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let code = link(&layout, &planned)?;
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached[*k] && leaves(&layout, row)).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.iter().filter(|reached| **reached).count() - exits;
     let records = planned.iter_mut().filter_map(|row| row.owned.take()).collect();
-    Ok(Body { code, covered, exits, loops, records })
+    Ok(Body { code, covered, exits, loops, records, frames: stitched.frames })
 }

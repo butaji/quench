@@ -7,7 +7,7 @@
 
 use super::*;
 use super::base_region::callees::{Callees, InlineBody};
-use super::base_region::function::{build_body, Body};
+use super::base_region::function::{build_body, Body, BodySpec};
 use super::lane_facts::bind_callees;
 use crate::bytecode::Register;
 use crate::compile::liveness::RegisterMasks;
@@ -29,15 +29,17 @@ impl LaneMethod {
     /// no shapes, slots or Stable facts, so it depends on nothing but its own entry guards and the
     /// callees it calls by their entries (`direct`, which it owns, and whose records it keeps).
     fn of_base_body(body: Body, function: u32, registers: u16, direct: Box<[DirectCallee]>, closed: bool) -> Option<Self> {
+        // Each inlined callee's registers are the frame slots from the caller's end (`Frame::base`).
+        let scratch_width = body.frames.iter().map(|frame| usize::from(frame.base - registers) + usize::from(frame.registers)).max().unwrap_or(0);
         let memory = super::code_heap::publishing("b-jit-body", function as usize, || CodeMemory::new(&body.code))?;
         // SAFETY: `base_region::function` links its code behind `entry_body`, of the lane body ABI.
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         Some(Self {
             dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: Default::default(), invalidation: Default::default(), _code: memory, entry,
-            recovery_space: Default::default(), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
-            names_shapes: !direct.is_empty(), inlined: Vec::new(), scratch_width: 0,
+            recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
+            names_shapes: !direct.is_empty(), scratch_width, framed: true,
             caller_registers: registers, amortizes: body.loops || body.covered >= TIERS.lane_body.min_instructions || !direct.is_empty(),
-            direct, closed, _records: body.records,
+            direct, closed, _records: body.records, inlined: body.frames,
         })
     }
 }
@@ -54,10 +56,13 @@ impl<H: Host> Vm<H> {
         let code: Vec<_> = body.instructions().collect();
         let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let (ints, doubles) = observed(parameters);
-        let callees = Callees::of(&code, &direct(self), &|callee| program.function_get(callee as usize).map(InlineBody::of));
+        let inline_body = |callee: u32| program.function_get(callee as usize).and_then(|function| InlineBody::of(function, program.shared_register_root_masks(callee)));
+        let callees = Callees::of(&code, &direct(self), &inline_body);
         let helpers = super::process_lane_helpers::<H>();
+        let speculated = widened(generic);
+        let spec = BodySpec { function, registers: body.registers, widened: &speculated, seen: [&ints, &doubles] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
-        let Ok(built) = (unsafe { build_body(&region, function, body.registers, &widened(generic), [&ints, &doubles], &callees, helpers) }) else { return LaneBodyOutcome::Declined };
+        let Ok(built) = (unsafe { build_body(&region, &spec, &callees, helpers) }) else { return LaneBodyOutcome::Declined };
         let closed = callees.closed(&code);
         let Some(method) = LaneMethod::of_base_body(built, function, body.registers, callees.owned, closed) else { return LaneBodyOutcome::Declined };
         if !method.amortizes_entry() { return LaneBodyOutcome::Short }

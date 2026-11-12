@@ -6636,6 +6636,10 @@ pub(super) struct LaneMethod {
     /// The scratch registers a leave inside an inlined call fills (`LaneFrame::scratch`): one
     /// per register of the inlined callees, the unit's past the caller's.
     scratch_width: usize,
+    /// Whether its inlined frames' registers live in the activation's register file past the
+    /// caller's (a stitched body's) and not in the scratch window its code fills: a leave inside
+    /// one adopts them from the file (`Vm::lane_adopt_window`).
+    framed: bool,
     caller_registers: u16,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,

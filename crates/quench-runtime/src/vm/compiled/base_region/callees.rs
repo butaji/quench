@@ -1,33 +1,37 @@
 //! The callees a whole function's body calls by their entries, and which of its call sites the
 //! stitcher inlines (`call_plan::inline`) instead of chaining a call.
 //!
-//! A call whose callee is one row over the caller's own registers (`InlineSite::collapsed`) is
-//! decoded as that row, which proves the callee register holds the function the site recorded
-//! (`Decoded::identity`) and otherwise leaves at the call, where the interpreter makes the whole
-//! call. The callee's body is not named by the code, but its identity is: the site's descriptor
-//! stays among the method's direct callees, so a collection that frees the callee retires the
-//! body (`ProgramStore::retire_dead_native_calls`), and the identity a word names is never a
-//! reused one.
+//! A call whose callee is small and monomorphic is planned as the callee's rows over registers of
+//! the caller and its window (`InlineSite`), which the stitch splices in place of the call
+//! (`stitch::stitch`) behind a row that proves the callee register holds the function the site
+//! recorded. The callee's body is not named by the code, but its identity is: the site's
+//! descriptor stays among the method's direct callees, so a collection that frees the callee
+//! retires the body (`ProgramStore::retire_dead_native_calls`), and the identity a word names is
+//! never a reused one.
 
 use super::*;
 use super::call_plan::inline::{Callee, Context, InlineSite};
 use super::call_plan::{CallShape, DirectFacts};
 use super::super::{DirectCallee, DirectCandidates};
 use crate::bytecode::Function;
+use crate::compile::liveness::RegisterMasks;
+use std::rc::Rc;
 
-/// A function a site may inline: its instructions, registers and the register each parameter
-/// is passed to.
+/// A function a site may inline: its instructions, registers, the register each parameter is
+/// passed to and the registers live before each instruction.
 pub(in crate::vm::compiled) struct InlineBody {
     code: Vec<WideInstruction>,
     registers: u16,
     homes: Vec<(u16, Register)>,
+    live: Rc<RegisterMasks>,
 }
 
 impl InlineBody {
-    pub(in crate::vm::compiled) fn of(function: &Function) -> Self {
+    /// The body of `function`, whose liveness is `live`; none where liveness does not cover it.
+    pub(in crate::vm::compiled) fn of(function: &Function, live: Option<&Rc<RegisterMasks>>) -> Option<Self> {
         let home = |argument: u16| function.parameter_registers.map(|base| base + argument).or_else(|| function.promoted_register(argument));
         let homes = (0..function.params).filter_map(|argument| home(argument).map(|home| (argument, home))).collect();
-        Self { code: function.instructions().collect(), registers: function.registers, homes }
+        Some(Self { code: function.instructions().collect(), registers: function.registers, homes, live: live?.clone() })
     }
 }
 
@@ -73,17 +77,17 @@ impl Callees {
         self.at.iter().map(|callee| callee.map(|at| unsafe { DirectFacts::of(&self.owned[at]) })).collect()
     }
 
-    /// The row the call `shape` decodes as where its callee is one row over the caller's
-    /// `registers` (`facts`: what each site recorded), planned in `context`, which it spends from.
-    pub(super) fn inlined_call(&self, facts: &[Option<DirectFacts>], region: &LoopRegion, context: &mut Context, shape: &CallShape, registers: u16) -> Option<Decoded> {
+    /// The call `shape` planned as its callee's rows (`facts`: what each site recorded), in
+    /// `context`, which it spends from; none where the callee stays a call.
+    pub(super) fn inlined_call(&self, facts: &[Option<DirectFacts>], region: &LoopRegion, context: &mut Context, shape: &CallShape) -> Option<InlineSite> {
         let at = (*self.at.get(shape.call_pc as usize)?)?;
         let (callee, body) = (&self.owned[at], self.bodies[at].as_ref()?);
         let numbers = |index: usize| region.number_constant(index);
-        let inlinable = Callee { function: callee.target.function, identity: callee.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers };
+        let inlinable = Callee { function: callee.target.function, identity: callee.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live };
         let mut trial = context.clone();
-        let row = InlineSite::plan(shape, facts[shape.call_pc as usize].as_ref()?, &inlinable, &mut trial).ok()?.collapsed(shape, registers)?;
+        let site = InlineSite::plan(shape, facts[shape.call_pc as usize].as_ref()?, &inlinable, &mut trial).ok()?;
         *context = trial;
         note_inlined();
-        Some(Decoded { identity: Some((shape.callee, callee.callee.to_bits())), ..row })
+        Some(site)
     }
 }
