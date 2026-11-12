@@ -39,13 +39,10 @@ impl ElementFacts {
     /// The array has held sparse elements (`Heap::sparse_set`), so its length may exceed its
     /// dense elements'. An array without extras has its dense length.
     pub(crate) const SPARSE_ELEMENTS: u8 = 1 << 3;
-    /// A folded property value names this object (`Heap::mark_value_dependents`): a write to
-    /// it advances `Heap::value_epoch`, which retires the fold.
-    pub(crate) const VALUE_DEPENDENTS: u8 = 1 << 4;
     /// The facts that keep elements from being ordinary and dense.
     pub(crate) const NOT_ORDINARY: u8 = Self::INDEXED_DESCRIPTORS | Self::LENGTH_DESCRIPTOR | Self::SPARSE_ELEMENTS;
     /// Every defined bit.
-    pub(crate) const ALL: u8 = Self::NOT_ORDINARY | Self::SIDE_DESCRIPTORS | Self::VALUE_DEPENDENTS;
+    pub(crate) const ALL: u8 = Self::NOT_ORDINARY | Self::SIDE_DESCRIPTORS;
 
     #[inline(always)]
     pub(crate) fn has(self, bit: u8) -> bool {

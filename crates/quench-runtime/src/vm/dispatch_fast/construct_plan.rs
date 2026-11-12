@@ -173,22 +173,23 @@ impl ConstructPlan {
         heap.alloc_object_from_run_header(self.header, self.prototype, &values, fields)
     }
 
-    /// This plan extended by the field `store` adds, `None` once it names all it can.
-    /// Marks the binding object whose captured field this plan folded (`VALUE_DEPENDENTS`) and
-    /// records the heap's value epoch, which any property write to it advances (`fold_holds`).
+    /// Extends the plan's watch (`watch_construct_plan`) to the objects its folded captured
+    /// fields read: a write to any of them retires the plan, and the body runs its read. A
+    /// capture the environment walk does not answer leaves the plan unheld.
     pub(super) fn cache_fold<H: Host>(&self, vm: &mut Vm<H>, index: usize) {
-        if self.captured == 0 { return; }
-        let (slot, _, _) = self.captured_fields[self.captured.trailing_zeros() as usize];
-        let marked = construction_environment(vm, self.callee)
-            .and_then(|environment| vm.environment_capture(environment, slot))
-            .inspect(|&object| vm.heap.mark_value_dependents(object));
-        vm.lane_stack.plan_value_epoch[index] = marked.map_or(u64::MAX, |_| vm.heap.value_epoch());
-    }
-
-    /// Whether this plan's folded values still hold: no property write has reached the object
-    /// its captured field names since it recorded the heap's value epoch.
-    pub(super) fn fold_holds<H: Host>(&self, vm: &Vm<H>, index: usize) -> bool {
-        self.captured == 0 || vm.lane_stack.plan_value_epoch[index] == vm.heap.value_epoch()
+        let mut captured = self.captured;
+        while captured != 0 {
+            let field = captured.trailing_zeros() as usize;
+            captured &= captured - 1;
+            let (slot, _, _) = self.captured_fields[field];
+            let object = construction_environment(vm, self.callee)
+                .and_then(|environment| vm.environment_capture(environment, slot));
+            let Some(object) = object else {
+                vm.lane_stack.construct_watches[index] = None;
+                return;
+            };
+            watch_construct_plan(vm, index, false, &[object]);
+        }
     }
 
     pub(super) fn with_field(mut self, store: &crate::bytecode::InitializerStore, value: Value) -> Option<Self> {
@@ -437,7 +438,7 @@ fn initializer_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, cal
 fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
     // A copy: a plan reads no field of the VM to compute its values.
     let plan = vm.lane_stack.construct_plans[index];
-    if plan.kind == ConstructPlanKind::Forwarding || !plan.fold_holds(vm, index) {
+    if plan.kind == ConstructPlanKind::Forwarding {
         return None;
     }
     let values = plan.values(vm, code, argument)?;

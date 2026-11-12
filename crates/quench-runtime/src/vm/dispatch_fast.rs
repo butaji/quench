@@ -1795,7 +1795,6 @@ pub(super) struct LaneStack {
     cross_function_targets: Box<[ScriptCallTarget; FUNCTION_TARGETS]>,
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
-    plan_value_epoch: [u64; CONSTRUCT_PLANS],
     /// Per plan, the one dependency its proof is (`watch_construct_plan`): published while
     /// every object the plan read keeps its values and layout.
     construct_watches: [Option<crate::heap::PrototypeValueWatch>; CONSTRUCT_PLANS],
@@ -1856,7 +1855,6 @@ impl Default for LaneStack {
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
-            plan_value_epoch: [0; CONSTRUCT_PLANS],
             construct_watches: [const { None }; CONSTRUCT_PLANS],
             read_memos: Vec::new(),
             forwarders: Vec::new(),
@@ -14011,7 +14009,7 @@ fn lane_construct_keeping_activation<H: Host>(
 fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, _code: &ResidualProgram, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // A copy: a plan reads no field of the VM to compute its values.
-    let plan = vm.lane_stack.construct_plans[index]; if !plan.fold_holds(vm, index) { return None; }
+    let plan = vm.lane_stack.construct_plans[index];
     plan.forwarded?.initializer?;
     let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS]; plan.fill_values(vm, &mut values, argument)?;
     Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
@@ -15838,8 +15836,8 @@ fn lane_initialize_fields<H: Host>(
     {
         plan.callee_layout = layout;
         plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
-        plan.cache_fold(vm, index); vm.lane_stack.construct_plans[index] = plan.finish();
-        watch_construct_plan(vm, index, true, &[callee, plan.prototype]);
+        let plan = plan.finish(); vm.lane_stack.construct_plans[index] = plan;
+        watch_construct_plan(vm, index, true, &[callee, plan.prototype]); plan.cache_fold(vm, index);
     }
     Some((this, true))
 }

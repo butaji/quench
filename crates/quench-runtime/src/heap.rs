@@ -643,9 +643,6 @@ pub(crate) struct Heap {
     collect_at: usize,
     total_allocations: u64,
     collections: u64,
-    /// Advances on every property write to an object a folded construct value names
-    /// (`ElementFacts::VALUE_DEPENDENTS`), which retires the folds (`Heap::value_epoch`).
-    value_epoch: u64,
     /// The prototypes `mark_prototype` marked last, most recent first, which keep their
     /// mark for life: an allocation with one of them needs no lookup. A collection may free
     /// one and reuse its handle, so each one forgets them.
@@ -1748,7 +1745,6 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) {
-        self.note_value_dependents(owner);
         // An array's payload holds its element backing, so its properties live in the arena.
         let inline = !self
             .object(owner)

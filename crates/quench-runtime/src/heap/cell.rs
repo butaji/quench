@@ -12,7 +12,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod global_values;
-mod modes; mod value_dependents;
+mod modes;
 mod prototype_values;
 mod shape_id;
 mod snapshot;
