@@ -835,6 +835,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                 });
                 break;
             }
+            option if option.starts_with("--") && option.ends_with("-jit") => return Ok(cli_usage_error(&format!("unknown JIT flag {option}: use --no-jit, --b-jit or --u-jit"))),
             option if option.starts_with('-') => {
                 exec_argv.push(args[index].clone());
             }

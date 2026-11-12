@@ -51,6 +51,8 @@ fn the_jit_mode_flags_select_one_mode_and_the_old_flag_is_gone() {
     assert!(!run_flags(&["--no-jit", "--b-jit"]).0, "two modes are an error");
     assert!(!run_flags(&["--b-jit", "--u-jit"]).0, "two modes are an error");
     assert!(!run_flags(&["--jit"]).0, "--jit is removed");
+    let (ok, stderr) = run_flags(&["--zz-jit"]);
+    assert!(!ok && stderr.contains("unknown JIT flag --zz-jit"), "any other --*-jit flag is an unknown-flag error: {stderr}");
     assert!(compiles(&["--b-jit"]) > 0, "--b-jit: the hot number loop runs from stencils");
     assert!(compiles(&["--q-jit"]) > 0, "--q-jit: the hot loop runs quick-compiled code");
     assert!(compiles(&["--u-jit"]) > 0, "--u-jit: the hot loop runs compiled code");
