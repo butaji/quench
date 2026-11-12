@@ -10,6 +10,7 @@
 #![allow(incomplete_features, non_upper_case_globals, dead_code, unused_imports)]
 extern crate core as std;
 
+mod call_rows;
 mod codes;
 mod entry;
 mod facade;

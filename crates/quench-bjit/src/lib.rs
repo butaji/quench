@@ -7,6 +7,8 @@
 
 mod patch;
 pub mod numeric;
+pub mod call;
+pub mod call_record;
 pub use patch::{HOLES, Imm32};
 
 /// Pinned int registers a stencil takes, and the double registers (xmm0 to xmm7) after them.

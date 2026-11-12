@@ -215,6 +215,26 @@ const PARAMS_SHIFT: u32 = 2 * FACT_BITS;
 const ENTRY_SHIFT: u32 = 3 * FACT_BITS;
 pub(crate) const ENTRY_ACTIVATES: u64 = 0;
 
+/// The facts word as fields: what a publish writes and a planner reads back (the packing above,
+/// once).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CellFacts {
+    pub(crate) registers: u16,
+    pub(crate) room: u16,
+    pub(crate) params: u16,
+    pub(crate) entry: u8,
+}
+
+impl CellFacts {
+    pub(crate) const fn word(self) -> u64 {
+        self.registers as u64 | (self.room as u64) << ROOM_SHIFT | (self.params as u64) << PARAMS_SHIFT | (self.entry as u64) << ENTRY_SHIFT
+    }
+
+    pub(crate) const fn of_word(word: u64) -> Self {
+        Self { registers: word as u16, room: (word >> ROOM_SHIFT) as u16, params: (word >> PARAMS_SHIFT) as u16, entry: (word >> ENTRY_SHIFT) as u8 }
+    }
+}
+
 /// Admits a native call: leaving at `miss` unless the cell's validity word is `expected` (one
 /// compare) and `free` holds `room` words. Entry kind and argc are decided at site admission or
 /// publish, so only the interpreter's `admit_call` checks them per call.
