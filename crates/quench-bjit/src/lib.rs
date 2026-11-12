@@ -135,9 +135,30 @@ pub mod rustc {
 
     include!(concat!(env!("OUT_DIR"), "/rustc_stencils.rs"));
 
+    /// Whether this CPU runs the x86-64-v3 build: its AVX2 and BMI2 baseline with the rest of the
+    /// level (AVX, BMI1, F16C, FMA, LZCNT, MOVBE). Other targets have only the baseline table.
+    fn runs_v3() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            use std::arch::is_x86_feature_detected as has;
+            has!("avx") && has!("avx2") && has!("bmi1") && has!("bmi2") && has!("f16c") && has!("fma") && has!("lzcnt") && has!("movbe")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
+
+    /// The table this process's stencils come from, chosen once at first use.
+    fn table() -> &'static [RawStencil] {
+        static CHOSEN: std::sync::OnceLock<&'static [RawStencil]> = std::sync::OnceLock::new();
+        CHOSEN.get_or_init(|| if runs_v3() { V3 } else { BASELINE })
+    }
+
     /// The stencil of the row function `name`, if the object has it.
     pub fn stencil(name: &str) -> Option<Stencil> {
-        let raw = &RAW[RAW.binary_search_by(|raw| raw.name.cmp(name)).ok()?];
+        let rows = table();
+        let raw = &rows[rows.binary_search_by(|raw| raw.name.cmp(name)).ok()?];
         let (mut relocs, mut imm32) = (Vec::new(), Vec::new());
         for &(offset, class, index, addend) in raw.relocs {
             let (offset, index) = (u32::from(offset), u32::from(index));

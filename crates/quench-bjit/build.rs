@@ -1,6 +1,7 @@
 //! Compiles `stencils/rows.rs` (and the Number rows `stencils/library.rs` lists, generated into
-//! `OUT_DIR/instances.rs`) with the toolchain's own rustc into an object, reads its functions and
-//! relocations with a minimal ELF64 reader, and writes them as static tables
+//! `OUT_DIR/instances.rs`) with the toolchain's own rustc into one object per CPU variant (the
+//! x86-64-v2 baseline and x86-64-v3, which the runtime picks once at startup), reads their
+//! functions and relocations with a minimal ELF64 reader, and writes them as static tables
 //! (`OUT_DIR/rustc_stencils.rs`). A row that contains a `ret` is a build error: rows chain by
 //! `become` only, and only the `leave_*` rows return. A relocated `call` is a build error; the
 //! one call a row may make is `call reg` through an address `movabs`-loaded from a value hole,
@@ -11,6 +12,15 @@ mod library;
 use std::{env, fs, path::PathBuf, process::Command};
 
 const SOURCE: &str = "stencils/rows.rs";
+/// The stencil libraries: the table's name and the `-C target-cpu` it is built for.
+const VARIANTS: [(&str, &str); 2] = [("BASELINE", "x86-64-v2"), ("V3", "x86-64-v3")];
+/// The flags every stencil object is built with: optimized, no panic or overflow machinery, no
+/// frame pointer or unwind tables (a row has no frame), one codegen unit so LLVM sees every row
+/// at once, and absolute relocations for the holes.
+const RUSTC_FLAGS: &[&str] = &[
+    "--edition", "2024", "--crate-type=lib", "--crate-name=quench_stencil_rows", "--emit=obj", "-C", "opt-level=3", "-C", "panic=abort", "-C", "relocation-model=static",
+    "-C", "codegen-units=1", "-C", "debuginfo=0", "-C", "debug-assertions=off", "-C", "overflow-checks=off", "-C", "force-frame-pointers=no", "-C", "force-unwind-tables=no",
+];
 const R_X86_64_64: u32 = 1;
 const R_X86_64_PC32: u32 = 2;
 const R_X86_64_PLT32: u32 = 4;
@@ -163,20 +173,22 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let table = out.join("rustc_stencils.rs");
     if env::var("CARGO_CFG_TARGET_ARCH").as_deref() != Ok("x86_64") || env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
-        fs::write(&table, "pub(crate) static RAW: &[RawStencil] = &[];\n").unwrap();
+        fs::write(&table, VARIANTS.map(|(name, _)| format!("pub(crate) static {name}: &[RawStencil] = &[];\n")).concat()).unwrap();
         return;
     }
     let instances: String = library::library().into_iter().map(|c| format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4)).collect();
     let heap: String = library::heap_library().into_iter().map(|c| format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4)).collect();
     fs::write(out.join("instances.rs"), instances + &heap).unwrap();
-    let object = compile(&out);
-    fs::write(&table, stencil_table(&fs::read(&object).unwrap())).unwrap();
+    let tables: String = VARIANTS.iter().map(|(name, cpu)| stencil_table(name, &fs::read(compile(&out, cpu)).unwrap())).collect();
+    fs::write(&table, tables).unwrap();
 }
 
-fn compile(out: &std::path::Path) -> PathBuf {
-    let object = out.join("rows.o");
+fn compile(out: &std::path::Path, cpu: &str) -> PathBuf {
+    let object = out.join(format!("rows_{cpu}.o"));
     let status = Command::new(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
-        .args(["--edition", "2024", "--crate-type=lib", "--crate-name=quench_stencil_rows", "--emit=obj", "-C", "opt-level=3", "-C", "panic=abort", "-C", "relocation-model=static", "-C", "codegen-units=8", "-C", "debuginfo=0"])
+        .args(RUSTC_FLAGS)
+        .arg("-C")
+        .arg(format!("target-cpu={cpu}"))
         .arg("-o")
         .arg(&object)
         .arg(SOURCE)
@@ -186,8 +198,8 @@ fn compile(out: &std::path::Path) -> PathBuf {
     object
 }
 
-/// The rows of an object as the static table `RAW`, sorted by name.
-fn stencil_table(data: &[u8]) -> String {
+/// The rows of an object as the static table `name`, sorted by name.
+fn stencil_table(table: &str, data: &[u8]) -> String {
     let elf = Elf::parse(data);
     let symbols = elf.symbols();
     let mut rows: Vec<(String, String)> = Vec::new();
@@ -203,7 +215,7 @@ fn stencil_table(data: &[u8]) -> String {
     }
     rows.sort();
     let body: String = rows.into_iter().map(|(_, row)| row).collect();
-    format!("pub(crate) static RAW: &[RawStencil] = &[\n{body}];\n")
+    format!("pub(crate) static {table}: &[RawStencil] = &[\n{body}];\n")
 }
 
 /// The relocations of one row as (offset, class, index, addend).
