@@ -25,7 +25,7 @@ pub(crate) fn is_direct_object<S: Stage>(stage: &mut S, bits: S::Word) -> S::Con
 }
 
 /// Whether `bits` is a direct string reference (`Value::as_direct_string`).
-// Read by the u-jit and f-jit projections of GetField on string receivers (threads 13 and 7).
+// Read by the u-jit and b-jit projections of GetField on string receivers (threads 13 and 7).
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn is_direct_string<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {

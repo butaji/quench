@@ -45,12 +45,14 @@ fn run_flags(arguments: &[&str]) -> (bool, String) {
 
 #[test]
 fn the_jit_mode_flags_select_one_mode_and_the_old_flag_is_gone() {
-    for flag in ["--no-jit", "--f-jit", "--u-jit"] {
+    for flag in ["--no-jit", "--b-jit", "--u-jit"] {
         assert!(run_flags(&[flag]).0, "{flag} runs");
     }
-    assert!(!run_flags(&["--no-jit", "--f-jit"]).0, "two modes are an error");
-    assert!(!run_flags(&["--f-jit", "--u-jit"]).0, "two modes are an error");
+    assert!(!run_flags(&["--no-jit", "--b-jit"]).0, "two modes are an error");
+    assert!(!run_flags(&["--b-jit", "--u-jit"]).0, "two modes are an error");
     assert!(!run_flags(&["--jit"]).0, "--jit is removed");
-    assert_eq!(compiles(&["--f-jit"]), 0, "--f-jit has no tier of its own yet, so it compiles nothing");
+    assert!(!run_flags(&["--q-jit"]).0, "--q-jit is reserved until quick mode lands");
+    assert!(!run_flags(&["--f-jit"]).0, "--f-jit is the old stencil flag and is gone");
+    assert_eq!(compiles(&["--b-jit"]), 0, "--b-jit has no stencil tier of its own yet, so it compiles nothing");
     assert!(compiles(&["--u-jit"]) > 0, "--u-jit: the hot loop runs compiled code");
 }
