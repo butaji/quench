@@ -603,6 +603,7 @@ const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 mod closure_targets;
 mod getters;
 mod lane_stack_growth;
+mod native_frames;
 use super::lane_values::LaneValues;
 use super::lane_activations::LaneActivations;
 mod this_binding;
@@ -1266,8 +1267,9 @@ const LANE_STACK_ACTIVATIONS: usize = 1 << 16;
 #[derive(Clone, Copy)]
 #[repr(C, align(128))]
 pub(in crate::vm) struct Activation {
-    /// The native prefix: a direct call's frame, which a leave inside it links in place
-    /// (`lane_materialize_frames`); empty for an activation the lane made.
+    /// The native prefix: the callee's descriptor, receiver, body and window, which emitted
+    /// code writes for a direct call's frame (`ActivationKind::Native`) and which stays through
+    /// its link (`NativeFrames`); only `window` for an activation the lane made.
     pub(in crate::vm) native: super::compiled::ShadowFrame,
     function: u32,
     call: Ip,
@@ -1280,21 +1282,40 @@ pub(in crate::vm) struct Activation {
     kind: ActivationKind,
 }
 
+/// The tags of `ActivationKind`: the discriminants, which emitted code writes as the first
+/// word of the kind (`NATIVE_TAG`) and the lane reads to tell a native frame from an activation.
+pub(in crate::vm) const KIND_NATIVE: u8 = 0;
+/// Where the kind's tag lies in an activation.
+pub(in crate::vm) const KIND_OFFSET: usize = std::mem::offset_of!(Activation, kind);
+const KIND_SCRIPT: u8 = 1;
+const KIND_WASM: u8 = 2;
+
 /// What an activation keeps beyond its registers, by the kind of function it runs.
 #[derive(Clone, Copy)]
+#[repr(C, u8)]
 enum ActivationKind {
-    Script(ScriptActivation),
+    /// A native direct call's frame as emitted code wrote it: only the prefix words
+    /// (`Activation::native`, the callee's descriptor, receiver, body and window) and this
+    /// tag, no link state. `NativeFrames::link` makes it a `Script` activation when the lane
+    /// first observes it; the prefix stays, as the descriptor of the frame above it.
+    Native = KIND_NATIVE,
+    Script(ScriptActivation) = KIND_SCRIPT,
     /// A Wasm activation keeps its caller's memory for the return and its requested
     /// register payload for guest-stack accounting, excluding admission padding.
-    Wasm { memory: MemoryView, frame_storage_bytes: usize },
+    Wasm { memory: MemoryView, frame_storage_bytes: usize } = KIND_WASM,
 }
 
+const _: () = {
+    assert!(KIND_OFFSET % std::mem::size_of::<u64>() == 0);
+};
+
 impl Activation {
-    /// The frame state of a JavaScript activation; `None` for Wasm.
+    /// The frame state of a JavaScript activation; `None` for Wasm and for a native frame
+    /// the lane has not linked (`NativeFrames`), which no lane code observes.
     #[inline] fn script(&self) -> Option<&ScriptActivation> {
         match &self.kind {
             ActivationKind::Script(script) => Some(script),
-            ActivationKind::Wasm { .. } => None,
+            ActivationKind::Native | ActivationKind::Wasm { .. } => None,
         }
     }
 
@@ -1302,14 +1323,14 @@ impl Activation {
     /// whose view carries the context (`MemoryView::script`).
     fn caller_memory<H: Host>(&self, cx: *mut LaneContext<H>) -> MemoryView {
         match self.kind {
-            ActivationKind::Script(_) => MemoryView::script(cx),
+            ActivationKind::Native | ActivationKind::Script(_) => MemoryView::script(cx),
             ActivationKind::Wasm { memory, .. } => memory,
         }
     }
 
     #[inline] fn frame_storage_bytes(&self) -> usize {
         match self.kind {
-            ActivationKind::Script(_) => 0,
+            ActivationKind::Native | ActivationKind::Script(_) => 0,
             ActivationKind::Wasm { frame_storage_bytes, .. } => frame_storage_bytes,
         }
     }
@@ -1902,6 +1923,15 @@ pub(super) struct LaneStack {
     body_boundary: Option<usize>,
     /// The frames the boundary's caller activations became, once a materialization made them.
     boundary_frames: Option<usize>,
+}
+
+/// The addresses a lane run's direct calls push onto (`Vm::lane_stack_words`).
+#[derive(Clone, Copy)]
+pub(in crate::vm) struct LaneStackWords {
+    pub(in crate::vm) values_top: usize,
+    pub(in crate::vm) values_end: usize,
+    pub(in crate::vm) activations_top: usize,
+    pub(in crate::vm) frames_end: usize,
 }
 
 /// A generation no lane runs under: an empty target entry never matches.
@@ -5302,12 +5332,6 @@ pub(super) unsafe fn lane_context_captures<H: Host>(context: usize) -> Option<(*
         // SAFETY: the context's slots stay live while the lane runs, which collects nothing.
         crate::heap::EnvironmentSlots::native_storage_view(capture_reads((*cx).capture))
     }
-}
-
-/// The environment a running lane body's captures resolve in when it runs as a direct
-/// callee (`Vm::innermost_direct_callee`): its closure's, which no lane activation holds.
-fn lane_body_callee_env<H: Host>() -> Option<Value> {
-    Vm::<H>::innermost_direct_callee().map(|callee| callee.target.env)
 }
 
 script_handler! {
@@ -11094,6 +11118,7 @@ impl<H: Host> Vm<H> {
 
     fn materialize_lane_activations(&mut self, cx: *mut LaneContext<H>) {
         debug_assert!(unsafe { (*cx).leaf.call }.is_null(), "a running leaf materializes at the lane's exit");
+        self.link_natives(cx);
         if self.lane_stack.activations.is_empty() {
             return;
         }
@@ -11190,8 +11215,10 @@ impl<H: Host> Vm<H> {
                         // The construction's skipped forwarding constructor becomes the frame
                         // it would have been, pending at its forwarding call, whose dead
                         // registers hold `undefined`; the method's frame runs inside it.
-                        let forwarder = forwarders
-                            .next()
+                        // A native frame's is its descriptor's (`NativeFrames`), which no entry holds.
+                        // SAFETY: a native frame's callee outlives the run.
+                        let forwarder = unsafe { activation.native.callee.as_ref() }
+                            .map_or_else(|| forwarders.next(), |callee| callee.forwarder)
                             .expect("each forwarder activation has its skipped constructor");
                         let constructor_registers = vec![
                             Value::UNDEFINED;
@@ -11283,6 +11310,7 @@ impl<H: Host> Vm<H> {
                     // takes the guest-call guard its push would have.
                     crate::stack::GuestCallGuard::enter().ok()
                 }
+                ActivationKind::Native => unreachable!("native frames link before the activations become frames"),
                 ActivationKind::Wasm { .. } => {
                     // The lane reserved this payload while it was frameless; its materialized
                     // frame holds the same weighted guard until the call returns.
@@ -11709,15 +11737,23 @@ impl<H: Host> Vm<H> {
         self.execution_mode.allows_dynamic_execution() && self.specialized_operations_enabled(program)
     }
 
-    /// The lane stack's free values, its next and the end of its capacity, where a lane
-    /// body's direct calls place their callees' registers (`compiled::DirectCallee`); and the
-    /// activations it may still take past one, which those calls' frames may become.
-    pub(super) fn lane_stack_spare(&mut self) -> (*mut Value, *mut Value, usize, *mut Activation) {
+    /// The words a lane run's direct calls push onto (`compiled::DirectCallee`): the addresses
+    /// of the values' and the activations' tops, each owned here and bumped through its
+    /// address by emitted code; the end of the values' capacity; and the end of the `frames`
+    /// activations the run may nest above the activations' top, bounded by what the lane may
+    /// still make of them.
+    pub(super) fn lane_stack_words(&mut self, frames: usize) -> LaneStackWords {
         let stack = &mut self.lane_stack;
-        let activations = stack.activation_limit.get().saturating_sub(stack.activations.len() + 1);
-        let values = &mut stack.values;
-        // SAFETY: both bound the vector's own allocation.
-        unsafe { (values.as_mut_ptr().add(values.len()), values.as_mut_ptr().add(values.capacity()), activations, stack.activations.top_ptr()) }
+        let frames = frames.min(stack.activation_limit.get().saturating_sub(stack.activations.len() + 1));
+        let frames_end = stack.activations.top_ptr().wrapping_add(frames).addr();
+        // SAFETY: the values' capacity bounds the vector's own allocation.
+        let values_end = unsafe { stack.values.as_mut_ptr().add(stack.values.capacity()) }.addr();
+        LaneStackWords {
+            values_top: stack.values.top_word().addr(),
+            values_end,
+            activations_top: stack.activations.top_word().addr(),
+            frames_end,
+        }
     }
 
     /// The lane view a hot loop of `function` runs with (`Vm::note_back_edge`), or null.
@@ -15142,37 +15178,6 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     assert!(leaf_code.upgrade().is_none());
 }
 
-/// Pushes the activations of the native frames a run of a lane body left inside
-/// (`compiled::ShadowFrame`), outermost first, each over its window, which the stack's
-/// values then cover; the innermost's view and body, where the run's leave applies. The
-/// direct calls proved the values and activations they take.
-fn lane_materialize_frames<H: Host>(
-    cx: *mut LaneContext<H>,
-    frames: super::compiled::ShadowFrames,
-    _root: &super::compiled::LaneMethod,
-) -> Option<(&'static LaneView, &'static super::compiled::LaneMethod)> {
-    let mut innermost = None;
-    for index in 0..frames.count {
-        let frame = frames.get(index);
-        // SAFETY: the caller's body owns the callee it named, and the callee's view and body
-        // outlive the run; the frame's window starts at the stack's values' end.
-        let callee = unsafe { &*frame.callee };
-        let vm = unsafe { vm(cx) };
-        let registers = frame.window as *mut Value;
-        unsafe { vm.lane_stack.values.set_top(registers.add(usize::from(callee.registers))) };
-        let call = callee.call as Ip;
-        let argc = ImmediateLayout::argument_count(unsafe { (*call).imm() });
-        let caller = unsafe { (*cx).registers };
-        lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), argc, Value::from_bits(frame.this), false, callee.forwarder);
-        // The body the call ran is the cell's at that moment, not the descriptor's.
-        let method = frame.body as *const super::compiled::LaneMethod;
-        // SAFETY: the active caller's code lease pins a named callee body through recovery, and
-        // the view pins every body it published, even once its publication retired.
-        innermost = Some(unsafe { (&*callee.target.view, &*method) });
-    }
-    innermost
-}
-
 /// Whether a run of `own`'s specialized body may start: the one thing per run it cannot
 /// prove at specialization, that the lane can make the activation of a call it inlines
 /// should it leave inside one (`lane_body_inlined_activation`).
@@ -15294,7 +15299,7 @@ pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: 
     if !crate::DYNAMIC_EXECUTION_ENABLED { return Value::DELETED.to_bits(); }
     let cx = context as usize as *mut LaneContext<H>;
     let (depth, slot) = ((packed >> u16::BITS) as u16, packed as u16);
-    let value = match lane_body_callee_env::<H>() {
+    let value = match native_frames::innermost_callee_env(cx) {
         Some(env) => {
             let vm = unsafe { vm(cx) };
             // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
@@ -15319,7 +15324,7 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
     if !crate::DYNAMIC_EXECUTION_ENABLED { return 0; }
     let cx = context as usize as *mut LaneContext<H>;
     let (depth, slot, value) = ((packed >> u16::BITS) as u16, packed as u16, Value::from_bits(value));
-    let stored = match lane_body_callee_env::<H>() {
+    let stored = match native_frames::innermost_callee_env(cx) {
         Some(env) => {
             // SAFETY: the context's program outlives the lane run.
             let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
@@ -15330,40 +15335,30 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
     u64::from(stored)
 }
 
-/// The registers and call record a lane helper's `call_pc` names: the running activation's, or,
-/// where the body runs as a native callee, its window and its function's own record.
-///
-/// # Safety
-/// As `lane_body_call`; `call_pc` is a record of the running body's function.
-unsafe fn lane_body_record<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> (Registers, Ip) {
-    match Vm::<H>::innermost_shadow_frame() {
-        None => unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) },
-        Some(frame) => {
-            // SAFETY: a pushed frame names the caller-owned callee, whose view outlives the run.
-            let view = unsafe { &*(*frame.callee).target.view };
-            (Registers(frame.window as *mut Value), unsafe { view.records().add(call_pc as usize) })
-        }
-    }
-}
-
 pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // Static regions recover ordinary calls through their linked semantic operation.
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
+    native_frames::in_innermost_frame(cx, || unsafe { lane_body_call_in(cx, call_pc) })
+}
+
+/// `lane_body_call` with the context of the running body, which a native callee's frame made
+/// the innermost (`native_frames::in_innermost_frame`).
+///
+/// # Safety
+/// As `lane_body_call`; `call_pc` is a record of the running body's function.
+unsafe fn lane_body_call_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
     let vm = unsafe { vm(cx) };
-    let (r, ip) = unsafe { lane_body_record(cx, call_pc) };
+    let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
     let i = unsafe { &*ip };
     let callee = r.get(i.b);
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-    let shadowed = Vm::<H>::lane_shadow_active();
     if !unsafe { (*cx).script_calls } { return lane_body_stats::miss(lane_body_stats::Miss::CallNoScriptCalls); }
     if lane_constructing(vm, callee) { return lane_body_stats::miss(lane_body_stats::Miss::CallConstructing); }
     if vm.with_scope_entered { return lane_body_stats::miss(lane_body_stats::Miss::CallWithScope); }
     if returns && !lane_returning_call_admitted(cx) { return lane_body_stats::miss(lane_body_stats::Miss::CallReturningNotAdmitted); }
     let Some(target) = lane_body_call_target(cx, vm, callee, &i.call_link) else {
-        // A native may run guest code above the native windows below: the body leaves instead.
-        if shadowed { return lane_body_stats::miss(lane_body_stats::Miss::CallShadowActive); }
         return native_calls::lane_body_native_call(cx, r, i, callee);
     };
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
@@ -15372,8 +15367,6 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else { return lane_body_stats::miss(lane_body_stats::Miss::CallReceiver) };
     // SAFETY: as `lane_call_read`.
     if target.entry.answered_by_read() { return unsafe { lane_body_read_call(cx, r, ip, target, argc, this) }; }
-    // An activation above native windows would need shadow frames beneath it on a leave.
-    if shadowed { return lane_body_stats::miss(lane_body_stats::Miss::CallShadowActive); }
     let Some(how) = lane_call_activation(target, argc, ImmediateLayout::call_window_base(i.imm())) else {
         return lane_body_stats::miss(lane_body_stats::Miss::CallEntryNotActivation);
     };
@@ -15406,10 +15399,18 @@ unsafe fn lane_body_read_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip
 pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // As `lane_body_call`: static regions recover constructions through their semantic operation.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
-    use super::compiled::LANE_CALL_COMPLETED;
     let cx = context as usize as *mut LaneContext<H>;
+    native_frames::in_innermost_frame(cx, || unsafe { lane_body_construct_in(cx, call_pc) })
+}
+
+/// `lane_body_construct` with the context of the running body (`lane_body_call_in`).
+///
+/// # Safety
+/// As `lane_body_call_in`.
+unsafe fn lane_body_construct_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+    use super::compiled::LANE_CALL_COMPLETED;
     let vm = unsafe { vm(cx) };
-    let (r, ip) = unsafe { lane_body_record(cx, call_pc) };
+    let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
     let i = unsafe { &*ip };
     let callee = r.get(i.b);
     if !unsafe { (*cx).script_calls && (*cx).script_constructs } { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoScriptConstructs); }
@@ -15439,8 +15440,6 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     let Some(target) = lane_construct_target(cx, vm, callee) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
     // A forwarding constructor is built by its forwarded initializer's plan or not at all here.
     if target.forwards() { return lane_body_forwarded(vm, callee, r, i); }
-    // The rest activates the constructor, which native windows below would need shadow frames for.
-    if Vm::<H>::lane_shadow_active() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructShadowActive); }
     if !target.constructs { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructor); }
     // The activation of the lane's own construction (`lane_script_construct`): a target that
     // keeps or gathers values, or is passed more than it has parameters, by the keeping form.
@@ -15650,15 +15649,19 @@ fn lane_body_left<H: Host>(
     }
     if exit == super::compiled::LaneExit::Terminated {
         // A fault can bypass the native exit's register snapshots. Discard its
-        // shadow chain instead of materializing stale homes for guest execution.
-        Vm::<H>::take_shadow_frames();
+        // native frames instead of materializing stale homes for guest execution.
+        native_frames::discard_frames(cx);
         return (LaneBodyLeft::Terminated, exit);
     }
-    let (feedback, frames) = (method.feedback(exit, unsafe { &*(*cx).code }), Vm::<H>::take_shadow_frames());
-    let (r, own, method) = match lane_materialize_frames(cx, frames, method) {
-        // SAFETY: the materialization made the innermost frame the running activation.
-        Some((own, method)) => (unsafe { (*cx).registers }, own, method),
-        None => (r, own, method),
+    let feedback = method.feedback(exit, unsafe { &*(*cx).code });
+    // A leave into a callee's activation already linked the frames and went on in it.
+    let (r, own, method) = match exit {
+        super::compiled::LaneExit::Callee => (r, own, method),
+        _ => match native_frames::advance_into_frames(cx) {
+            // SAFETY: the advance made the innermost frame the running activation.
+            Some((own, method)) => (unsafe { (*cx).registers }, own, method),
+            None => (r, own, method),
+        },
     };
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
@@ -16658,7 +16661,8 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             value = setters::completed_value(vm, &activation, script.completion, this, value);
             if script.completion == Completion::Forwarder {
                 value = this;
-                vm.lane_stack.forwarders.pop();
+                // A native frame's skipped constructor is its descriptor's, which no entry holds.
+                if activation.native.callee.is_null() { vm.lane_stack.forwarders.pop(); }
             }
             if script.completion == Completion::SettlesPromise {
                 value = lane_settle_promise(cx, value, then);

@@ -1,7 +1,8 @@
 //! The lane stack's activations: one allocation whose top is an address, as the values' top
 //! is (`LaneValues`), so a push or a pop moves one word and no length becomes a division.
 
-use super::dispatch_fast::Activation;
+use super::compiled::ShadowFrame;
+use super::dispatch_fast::{Activation, KIND_NATIVE, KIND_OFFSET};
 
 /// The activations of a lane stack, `base..top`, in an allocation of room up to `end`. An
 /// activation holds no drop glue, so truncation only moves the top.
@@ -43,6 +44,55 @@ impl LaneActivations {
     pub(super) fn is_empty(&self) -> bool { self.top == self.base }
     #[inline(always)]
     pub(super) fn is_full(&self) -> bool { self.top == self.end }
+
+    /// The address of the top word, which emitted code bumps through a pointer as the lane does.
+    #[inline(always)]
+    pub(super) fn top_word(&mut self) -> *mut *mut Activation { &raw mut self.top }
+
+    /// The tag of the kind of `slot`'s activation, read without a reference to the activation:
+    /// a native frame has written only its prefix and this tag.
+    ///
+    /// # Safety
+    /// `slot` is below `top`.
+    #[inline(always)]
+    unsafe fn tag(slot: *const Activation) -> u8 { unsafe { slot.cast::<u8>().add(KIND_OFFSET).read() } }
+
+    /// Whether the innermost activation is a native frame the lane has not linked
+    /// (`ActivationKind::Native`): the one test a helper makes before it observes the stack.
+    #[inline(always)]
+    pub(super) fn top_is_native(&self) -> bool {
+        // SAFETY: a non-empty region's slot below `top` holds at least its tag.
+        !self.is_empty() && unsafe { Self::tag(self.top.sub(1)) } == KIND_NATIVE
+    }
+
+    /// How many native frames on top are unlinked, which a link walks outermost first.
+    pub(super) fn unlinked(&self) -> usize {
+        let mut slot = self.top;
+        // SAFETY: each slot below `top` holds at least its tag.
+        while slot != self.base && unsafe { Self::tag(slot.sub(1)) } == KIND_NATIVE { slot = unsafe { slot.sub(1) }; }
+        Self::distance(slot, self.top)
+    }
+
+    /// How many frames on top belong to a running native body, linked or not: those whose
+    /// prefix names a callee, which the lane clears when it continues in them.
+    pub(super) fn native_depth(&self) -> usize {
+        let mut slot = self.top;
+        // SAFETY: each slot below `top` holds at least its prefix.
+        while slot != self.base && !unsafe { (*slot.sub(1)).native.callee.is_null() } { slot = unsafe { slot.sub(1) }; }
+        Self::distance(slot, self.top)
+    }
+
+    /// The prefix of the innermost frame while it is a native body's, linked or not.
+    #[inline(always)]
+    pub(super) fn top_native(&self) -> Option<ShadowFrame> {
+        // SAFETY: a non-empty region's slot below `top` holds at least its prefix.
+        (!self.is_empty()).then(|| unsafe { (*self.top.sub(1)).native }).filter(|frame| !frame.callee.is_null())
+    }
+
+    /// The slot of the activation `depth` above the base, which holds at least its prefix
+    /// below `top`: written whole once linked.
+    #[inline(always)]
+    pub(super) fn slot(&mut self, depth: usize) -> *mut Activation { self.base.wrapping_add(depth) }
 
     /// The innermost activation, read from the top address: no length is derived.
     #[inline(always)]
