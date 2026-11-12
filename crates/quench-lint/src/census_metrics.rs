@@ -1,6 +1,6 @@
 //! The census's extraction functions: each reads one parsed source file and counts one thing.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use proc_macro2::{TokenStream, TokenTree};
 use syn::{Item, visit::Visit};
@@ -9,6 +9,10 @@ use crate::shape::is_test;
 
 const OPCODE_OWNERS: &[&str] = &["Op", "Class"];
 const BYTECODE_OWNER: &[&str] = &["Op"];
+const CLASS_OWNER: &[&str] = &["Class"];
+const CLASS_TABLE_MACRO: &str = "class_of";
+/// The token trees of a class table arm: the opcode, `=`, `>`, and the braced class.
+const CLASS_ARM_TREES: usize = 4;
 const OPCODE_TABLE_MACRO: &str = "opcodes";
 const STAGED_OPERATION: &str = "Operation";
 const LANE_EXIT: &str = "LaneExit";
@@ -187,11 +191,42 @@ pub fn entry_uses(file: &syn::File) -> usize {
     uses.0
 }
 
-/// The distinct row kinds (`Op::X` paths) a stencil library names.
-pub fn stencil_kinds(file: &syn::File) -> usize {
-    let mut found = PatternPaths(BYTECODE_OWNER, Vec::new());
-    found.visit_file(file);
-    found.1.into_iter().collect::<BTreeSet<_>>().len()
+/// The classes a match arm of the file names, outside tests.
+fn class_patterns(file: &syn::File) -> BTreeSet<String> {
+    let mut arms = Arms::new(CLASS_OWNER);
+    arms.visit_file(file);
+    arms.variants
+}
+
+/// How many opcodes each class has in the `class_of!` table of the file, if it holds one: an arm
+/// `(Op) => { Class::X };` of the macro's definition.
+fn class_sizes(file: &syn::File) -> BTreeMap<String, usize> {
+    let mut sizes = BTreeMap::new();
+    for item in &file.items {
+        let Item::Macro(table) = item else { continue };
+        if !table.ident.as_ref().is_some_and(|name| name == CLASS_TABLE_MACRO) {
+            continue;
+        }
+        let trees: Vec<TokenTree> = table.mac.tokens.clone().into_iter().collect();
+        for pair in trees.windows(CLASS_ARM_TREES) {
+            if let [TokenTree::Group(_), TokenTree::Punct(arrow), TokenTree::Punct(_), TokenTree::Group(class)] = pair
+                && arrow.as_char() == '='
+                && let Some(TokenTree::Ident(name)) = class.stream().into_iter().last()
+            {
+                *sizes.entry(name.to_string()).or_default() += 1;
+            }
+        }
+    }
+    sizes
+}
+
+/// The opcodes the b-jit decode lowers to a row that is not a leave: those of the classes its
+/// decode table names in match arms (the files that hold the decode), by the opcode catalog's
+/// class table (the file that holds it).
+pub fn stencil_opcodes(files: &[syn::File]) -> usize {
+    let sizes: BTreeMap<String, usize> = files.iter().flat_map(class_sizes).collect();
+    let named: BTreeSet<String> = files.iter().flat_map(class_patterns).collect();
+    named.iter().filter_map(|class| sizes.get(class)).sum()
 }
 
 #[cfg(test)]
@@ -257,7 +292,10 @@ mod tests {
     }
 
     #[test]
-    fn stencil_kinds_are_distinct_op_paths() {
-        assert_eq!(stencil_kinds(&parse("const R: &[Op] = &[Op::Add, Op::Sub, Op::Add];")), 2);
+    fn stencil_opcodes_are_the_catalog_opcodes_of_the_classes_the_decode_names() {
+        let catalog = parse("macro_rules! class_of { (Add) => { Class::Numeric }; (Sub) => { Class::Numeric }; (Move) => { Class::Move }; (Throw) => { Class::Throw }; }");
+        let decode = parse("fn row(i: I) { match i.op().class() { Class::Numeric if i.plain() => 1, Class::Move | Class::Missing => 2, _ => 3 } }
+             #[cfg(test)] mod tests { fn g() { match x { Class::Throw => 1, _ => 2 } } }");
+        assert_eq!(stencil_opcodes(&[catalog, decode]), 3);
     }
 }
