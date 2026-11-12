@@ -62,9 +62,18 @@ pub const STORE_LOCAL_ROW: u8 = 8;
 /// The frame slot at hole 1 holds exactly the word at hole 2: the proof a call's callee is the one
 /// a site was stitched for.
 pub const IDENTITY_ROW: u8 = 9;
+pub const LENGTH_ROW: u8 = 10;
+pub const CAPTURE_SET_ROW: u8 = 11;
+pub const SITE_STORE_ROW: u8 = 12;
+/// The site rows of the activation's receiver (`this`), which the payload holds.
+pub const THIS_SITE_ROW: u8 = 13;
+pub const THIS_STORE_ROW: u8 = 14;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries
 /// the destination's frame offset beneath it.
 pub const SITE_OBJECT_AT: u32 = 32;
+/// Bits below the second cache entry's byte offset in a chained site read's hole 2, which carries
+/// the first entry's offset beneath it.
+pub const CHAIN_SECOND_AT: u32 = 32;
 
 /// The kind families the library is built from.
 pub const fn is_copy(kind: u8) -> bool {

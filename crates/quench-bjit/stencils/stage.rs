@@ -4,6 +4,10 @@
 //! patches into the instruction that uses it. An operation with no stencil form calls an
 //! `UNSUPPORTED_*` symbol, which `build.rs` rejects, so a row cannot silently use one.
 
+use crate::layout::{
+    words::{HEAP_TAG, TAG_MASK},
+    JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_SLOTS_TRACKED, NATIVE_OBJECT_LAYOUT as OBJECT,
+};
 use crate::staged::{Stage, Table};
 use crate::typed_ir::Type;
 use crate::staged::effects::Region;
@@ -12,39 +16,47 @@ unsafe extern "C" {
     static HOLE_V0: u8;
     static HOLE_V1: u8;
     static HOLE_V2: u8;
-    fn UNSUPPORTED_store_gate(a: u64, b: u64) -> u64;
     fn UNSUPPORTED_assumption(a: u64) -> u64;
     fn UNSUPPORTED_number_operator(a: u64, b: u64, c: u64) -> u64;
     fn UNSUPPORTED_shape_in(a: u64) -> u64;
     fn UNSUPPORTED_site(a: u64) -> u64;
 }
 
-/// The stencil stage; `sites` is the number of the next value hole a `site` call names, and
-/// `values` the property arena's value base a row that reads object storage was given.
+/// The stencil stage; `sites` is the number of the next value hole a `site` call names,
+/// `values` the property arena's value base a row that reads object storage was given, and
+/// `payload` the dispatch payload a row that stores was given, whose barrier words
+/// `store_gate` reads.
 #[derive(Clone, Copy)]
 pub(crate) struct StencilStage {
     sites: u8,
     values: u64,
+    payload: usize,
 }
 
 impl StencilStage {
     /// A stage whose first `site` is hole `first`.
     #[inline(always)]
     pub(crate) fn from_hole(first: u8) -> Self {
-        Self { sites: first, values: 0 }
+        Self { sites: first, values: 0, payload: 0 }
     }
 
     /// As `from_hole`, with the property arena's value base (`Table::PropertyValues`).
     #[inline(always)]
     pub(crate) fn with_values(first: u8, values: u64) -> Self {
-        Self { sites: first, values }
+        Self { sites: first, values, payload: 0 }
+    }
+
+    /// As `with_values`, for a row that stores through the dispatch payload at `payload`.
+    #[inline(always)]
+    pub(crate) fn storing(first: u8, values: u64, payload: usize) -> Self {
+        Self { sites: first, values, payload }
     }
 
     /// The runtime's `Concrete::new`, which the shared rows' interpreter wrappers call; those
     /// wrappers are never used here.
     #[inline(always)]
     pub(crate) fn new(_property_values: *const crate::Value) -> Self {
-        Self { sites: 0, values: 0 }
+        Self { sites: 0, values: 0, payload: 0 }
     }
 }
 
@@ -133,8 +145,27 @@ impl Stage for StencilStage {
     }
     #[inline(always)]
     fn store_gate(&mut self, record_id: u64, value: u64) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_store_gate(record_id, value) != 0 }
+        let word = |offset: usize| {
+            // SAFETY: a payload word at a layout offset; a row that stores was given the live payload.
+            unsafe { ((self.payload + offset) as *const u64).read() }
+        };
+        if word(JS_STEP_SLOTS_TRACKED) != 0 {
+            return false;
+        }
+        // A value that names no heap record joins no barrier log (`RecordSpace::store_logs`).
+        if value & TAG_MASK != HEAP_TAG {
+            return true;
+        }
+        let block = record_id >> OBJECT.mark_records_per_block.trailing_zeros();
+        if block >= word(JS_STEP_OBJECT_MARK_BLOCK_COUNT) {
+            return false;
+        }
+        let within = record_id & (OBJECT.mark_records_per_block as u64 - 1);
+        let words = within / OBJECT.mark_word_bits as u64 * core::mem::size_of::<u64>() as u64;
+        let marks = word(JS_STEP_OBJECT_MARK_BLOCKS) + block * OBJECT.mark_block_size as u64 + words + OBJECT.mark_offset as u64;
+        // SAFETY: the record's block lies below the block count, and its marks are a word of that block.
+        let marked = unsafe { (marks as *const u64).read() } >> (within % OBJECT.mark_word_bits as u64) & 1;
+        marked == 0
     }
     #[inline(always)]
     fn assumption(&mut self, watch: u64) -> bool {

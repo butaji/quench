@@ -70,6 +70,25 @@ pub(crate) fn writable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word
     stage.guard(plain, miss)
 }
 
+/// The `length` of the direct array `base` as the int32 word it reads as: its dense backing's
+/// count, which an array without extras (an arguments object, sparse elements) has as its
+/// length. `None` (leaving at `miss`) for any other value, an array with extras, or a length
+/// past int32.
+// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<S::Word> {
+    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
+    let backing = array_backing(stage, record_base, base, miss)?;
+    let payload = stage.load_u64(backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
+    let plain = super::object::plain_payload(stage, payload);
+    stage.guard(plain, miss)?;
+    let beyond = stage.ugt_imm(backing.length, i32::MAX as u64);
+    let within = stage.not(beyond);
+    stage.guard(within, miss)?;
+    Some(stage.or_imm(backing.length, crate::value::ValueLayout::INT_TAG))
+}
+
 /// Replaces the present element at `address` of the dense backing at `values`, which held
 /// `old`, with `value`: the backing's count of values that are no int32 (its others) follows
 /// the write, and a count native code made unknown (`OTHERS_UNKNOWN`) stays unknown. The

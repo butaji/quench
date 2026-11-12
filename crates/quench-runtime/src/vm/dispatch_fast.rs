@@ -2337,7 +2337,7 @@ const NO_OUTER_WALK: OuterWalk = OuterWalk { env: Value::DELETED, depth: 0, slot
 /// its environment admits every direct store (`Vm::admits_every_direct_store`) and is in the
 /// remembered set already, so a write needs no barrier until the next collection, which
 /// retires the target that tagged it.
-const CAPTURE_STORES: usize = 1;
+pub(super) const CAPTURE_STORES: usize = 1;
 const _: () = assert!(std::mem::align_of::<usize>() > CAPTURE_STORES);
 
 /// The slots a `LaneContext::capture` reads, its tag cleared.
@@ -14786,8 +14786,8 @@ script_handler! {
         // one stays `DELETED`, at which the body's `LoadThis` leaves for the general path.
         // SAFETY: the activation just set the context to its own receiver and frame.
         let receiver = if i.b != 0 { unsafe { lane_this(cx) }.unwrap_or(Value::DELETED) } else { Value::DELETED };
-        // SAFETY: the activation just set the context to its own captures.
-        let captures = capture_reads(unsafe { (*cx).capture });
+        // SAFETY: the activation just set the context to its own captures, tagged where they admit stores.
+        let captures = unsafe { (*cx).capture };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
@@ -15600,7 +15600,7 @@ fn lane_body_activate<H: Host>(
     };
     let receiver = if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this };
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
-    let captures = capture_reads(unsafe { (*cx).capture });
+    let captures = unsafe { (*cx).capture };
     let exit = vm.run_nested_lane_method(&method, program, code, registers.0, receiver, captures, cx.cast());
     let (resumed, feedback) = lane_body_left(cx, registers, own, &method, exit);
     drop(method);

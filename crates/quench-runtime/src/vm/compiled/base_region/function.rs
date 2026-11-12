@@ -23,14 +23,19 @@ pub(in crate::vm::compiled) struct Body {
     pub(in crate::vm::compiled) loops: bool,
     /// The records its direct call rows read, which its code must not outlive.
     pub(in crate::vm::compiled) records: Vec<Box<CallRecord>>,
+    /// The atoms its stores run in place for, held unnamed by method caches (a Stable fact): a
+    /// cache naming one retires the body (`StableFacts::atoms`).
+    pub(in crate::vm::compiled) atoms: Box<[Atom]>,
 }
 
-/// What a body decides its call sites by: the callees they recorded and the stitch's budget.
+/// What a body decides its call sites by: the callees they recorded and the stitch's budget, and
+/// the program facts its rows read.
 struct Sites<'a> {
     callees: &'a Callees,
     facts: &'a [Option<DirectFacts>],
     context: Context,
     registers: u16,
+    known: Known<'a>,
 }
 
 /// The row of the instruction at `pc`: a `Return` of a register, a call the stitch inlines as the
@@ -47,7 +52,7 @@ fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstr
             sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape, sites.registers)
                 .unwrap_or_else(|| Decoded::step(Step::Call(shape), Some(shape.result)))
         }
-        _ => decode(region, Facts::Site, pc, instruction, helpers),
+        _ => decode(region, (Facts::Site, sites.known), pc, instruction, helpers),
     }
 }
 
@@ -119,8 +124,8 @@ fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, Str
 /// not kept current.
 fn framed(homes: &Homes, row: &Decoded) -> bool {
     let through = match row.heap {
-        Some(Heap::Store) => row.base,
-        Some(Heap::Index | Heap::Array | Heap::Site) => row.a.and_then(register_of),
+        Some(Heap::Store | Heap::SiteStore) => row.base,
+        Some(Heap::Index | Heap::Array | Heap::Site | Heap::SiteChain | Heap::Length) => row.a.and_then(register_of),
         _ => None,
     };
     through.into_iter().chain(row.identity.map(|(register, _)| register)).all(|register| homes.place(register) == Place::Mem)
@@ -150,10 +155,10 @@ fn plan_row(layout: &Layout, reprs: &Reprs, reached: bool, pc: u32, row: &Decode
 ///
 /// # Safety
 /// Each of `callees` names its function's live entry cell (`Callees::facts`).
-pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, function: u32, registers: u16, widened: &[usize], seen: [&[Register]; SEEN], callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
+pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, (function, registers): (u32, u16), known: Known, widened: &[usize], seen: [&[Register]; SEEN], callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
     let facts = unsafe { callees.facts() };
-    let sites = Sites { callees, facts: &facts, context: Context::root(function, registers), registers };
+    let sites = Sites { callees, facts: &facts, context: Context::root(function, registers), registers, known };
     let built = assemble_body(region, widened, seen, sites, helpers);
     note(|totals, rejects| match &built {
         Ok(body) => {
@@ -182,5 +187,8 @@ fn assemble_body(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEE
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.iter().filter(|reached| **reached).count() - exits;
     let records = planned.iter_mut().filter_map(|row| row.owned.take()).collect();
-    Ok(Body { code, covered, exits, loops, records })
+    let mut atoms: Vec<Atom> = decoded.iter().filter_map(|row| row.atom).collect();
+    atoms.sort_unstable();
+    atoms.dedup();
+    Ok(Body { code, covered, exits, loops, records, atoms: atoms.into() })
 }

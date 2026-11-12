@@ -4,13 +4,12 @@
 use super::{Concrete, Stage};
 use crate::value::ValueLayout;
 
-/// Value `slot` of the dense run of `len` environment values at `values`: its ordinary
-/// value, or `None` (leaving at `miss`) past the run or where the slot holds an internal
-/// marker (`Value::is_internal_marker`: a shared slot or an uninitialized binding), which
-/// the caller resolves the long way.
+/// The address and value of `slot` of the dense run of `len` environment values at `values`:
+/// `None` (leaving at `miss`) past the run or where the slot holds an internal marker
+/// (`Value::is_internal_marker`: a shared slot or an uninitialized binding), which the caller
+/// resolves the long way.
 #[inline(always)]
-pub(crate) fn dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16,
-    miss: S::Miss) -> Option<S::Word> {
+fn dense_slot<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16, miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let slot = u64::from(slot);
     // The slot is a per-site operand: one hole for the bounds test, one for the address.
     let bound = stage.site(slot);
@@ -22,7 +21,32 @@ pub(crate) fn dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Wo
     let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
     let ordinary = stage.ne_imm(tag, ValueLayout::INTERNAL_TAG);
     stage.guard(ordinary, miss)?;
-    Some(value)
+    Some((address, value))
+}
+
+/// Value `slot` of the dense run of `len` environment values at `values`: its ordinary
+/// value, or `None` (leaving at `miss`) past the run or at an internal marker.
+#[inline(always)]
+pub(crate) fn dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16,
+    miss: S::Miss) -> Option<S::Word> {
+    dense_slot(stage, values, len, slot, miss).map(|(_, value)| value)
+}
+
+/// Stores `value` into the initialized slot `slot` of the dense run of `len` values at `values`
+/// of an environment that admits every direct store (`admitted`, nonzero: the run's tag,
+/// `dispatch_fast::CAPTURE_STORES`), whose barrier its admission took once. `None` (leaving at
+/// `miss`) where it does not, past the run, or at an uninitialized binding, which the caller
+/// resolves the long way, nothing written.
+// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn dense_capture_store<S: Stage>(stage: &mut S, (values, len, admitted): (S::Word, S::Word, S::Word), slot: u16,
+    value: S::Word, miss: S::Miss) -> Option<()> {
+    let direct = stage.ne_imm(admitted, 0u32);
+    stage.guard(direct, miss)?;
+    let (address, _) = dense_slot(stage, values, len, slot, miss)?;
+    stage.store_u64(address, 0, value);
+    Some(())
 }
 
 /// The interpreter's reading of `dense_capture` over a run whose elements start at `values`.

@@ -11,7 +11,7 @@
 //! that finds a register that is no Number returns `LaneExit::Entry`.
 
 use super::osr_loop::LoopRegion;
-use crate::bytecode::{Class, FieldLookup, OperandKind, Register, WideInstruction};
+use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::value::Value;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
@@ -36,6 +36,29 @@ use plan::*;
 use repr::*;
 use steps::*;
 use webs::*;
+
+/// What a row reads of the running program rather than of the registers: the names its
+/// instructions' atoms are, and whether a store may run in place.
+#[derive(Clone, Copy)]
+pub(in crate::vm::compiled) struct Known<'a> {
+    pub(in crate::vm::compiled) program: &'a ResidualProgram,
+    /// The names method caches hold now, where the VM and the program run specialized, so a
+    /// store of an unnamed atom may run in place; `None` where none may. Code that stores holds
+    /// each such atom unnamed as a Stable fact (`Body::atoms`), which a cache naming it retires.
+    pub(in crate::vm::compiled) stores: Option<&'a crate::vm::method_cache::AtomBits>,
+}
+
+impl Known<'_> {
+    /// Whether a store of `atom` may run in place: no method cache names it.
+    fn stores_in_place(&self, atom: Atom) -> bool {
+        self.stores.is_some_and(|names| !names.contains(atom as usize))
+    }
+
+    /// Whether `atom` names `length`.
+    fn names_length(&self, atom: Atom) -> bool {
+        super::names_length(self.program, atom)
+    }
+}
 
 /// Bytes of a register slot in the activation's register file.
 const SLOT: u64 = std::mem::size_of::<Value>() as u64;
@@ -166,9 +189,9 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 
 /// The machine code of `region`, entered at the shared native entry ABI, or the stencil it lacks.
 /// `seen` are the registers that held an int32 and a double as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows.
-pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<(Vec<u8>, bool), String> {
+pub(super) fn build(region: &LoopRegion, dense: bool, known: Known, widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<(Vec<u8>, bool), String> {
     let started = std::time::Instant::now();
-    let built = assemble(region, dense, widened, seen, helpers);
+    let built = assemble(region, (Facts::Entry { dense }, known), widened, seen, helpers);
     let nanos = started.elapsed().as_nanos() as u64;
     note(|totals, rejects| match &built {
         Ok((code, _)) => {
@@ -206,11 +229,10 @@ fn analyze(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&
 
 /// The code, and whether it reads no heap row and makes no step: such a region needs from its
 /// payload only the entry record's address (`Crossing::Bare`).
-fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<(Vec<u8>, bool), String> {
+fn assemble(region: &LoopRegion, facts: (Facts, Known), widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<(Vec<u8>, bool), String> {
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
-    let facts = Facts::Entry { dense };
     let mut decoded: Vec<Decoded> = instructions.iter().enumerate().map(|(k, instruction)| decode(region, facts, header + k as u32, *instruction, helpers)).collect();
     settle(&mut decoded);
     let (reprs, homes, webs, decoded) = analyze(region, &decoded, widened, seen);

@@ -7,19 +7,30 @@
 //! (a field row's entry-record byte offset in 1); a capture's two per-site operands (the slot,
 //! and the slot's byte offset) are holes 1 and 2. A site field read (`SITE_ROW`) packs the
 //! object register's frame offset above the destination's in hole 0, takes the process's narrow
-//! upper-word table as hole 1 and its cache entry's byte offset as hole 2. Every failed proof
-//! leaves through exit 0 with nothing written, so the interpreter runs the instruction.
+//! upper-word table as hole 1 and its cache entry's byte offset as hole 2. An array length read
+//! (`LENGTH_ROW`) takes the destination in hole 0 and the array word's frame offset in hole 1. A
+//! capture store (`CAPTURE_SET_ROW`) takes its value operand in hole 0 and the slot and its byte
+//! offset in holes 1 and 2. A field store (`SITE_STORE_ROW`) takes the object register's frame
+//! offset in hole 0, its value operand in hole 1 and the cache entry's byte offset in hole 2. A
+//! chained site read (`ENTRY`) carries both entry offsets in hole 2. The rows of the activation's
+//! receiver (`THIS_SITE_ROW`, `THIS_STORE_ROW`) take it from the payload, so their hole 0 is the
+//! destination alone (a read) or unused (a store).
+//! Every failed proof leaves through exit 0 with nothing written, so the interpreter runs the
+//! instruction.
 
 use crate::layout::{
-    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
-    JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE,
+    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
+    JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, PROPERTY_BUFFER_BASE,
 };
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word};
-use crate::places::{DEST, LEFT, Places};
+use crate::places::{DEST, LEFT, Places, tagged_place};
 use crate::stage::StencilStage;
 use crate::staged::{Step, elements, entry, environment, load_this, read_local, value, write_local};
 
-pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, STORE_LOCAL_ROW, STORE_ROW, THIS_ROW};
+pub(crate) use crate::codes::{
+    ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
+    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW,
+};
 
 unsafe extern "C" {
     static HOLE_V0: u8;
@@ -92,6 +103,16 @@ fn capture_row<const D: u8>(s: S, payload: usize) -> Out {
     deliver::<D>(s, word)
 }
 
+/// A store of the value operand (hole 0) into the same capture slot (holes 1 and 2), where the
+/// run's slots admit every direct store (`environment::dense_capture_store`).
+#[inline(always)]
+fn capture_set_row<const A: u8>(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::from_hole(HOLE_A);
+    let slots = (word_at(payload, JS_STEP_CAPTURE_VALUES), word_at(payload, JS_STEP_CAPTURE_LEN), word_at(payload, JS_STEP_CAPTURE_STORES));
+    need!(s, environment::dense_capture_store(&mut stage, slots, 0, tagged_place::<A, 0>(&s), ()));
+    Out::Next(s)
+}
+
 #[inline(always)]
 fn field_row<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
@@ -100,16 +121,49 @@ fn field_row<const D: u8>(s: S, payload: usize) -> Out {
     deliver::<D>(s, entry::entry_word(&mut stage, record, offset))
 }
 
-/// A field read through the site's cache entry (`entry::site_read`): the object is the register
-/// whose frame offset hole 0 carries above the destination's.
+/// A field read through the site's cache entry (`entry::site_read`), or with `CHAIN` through two
+/// (`entry::site_chain`, whose first and second entry offsets are hole 2's low and high halves):
+/// `object` is the receiver the row names.
 #[inline(always)]
-fn site_row<const D: u8>(s: S, payload: usize) -> Out {
-    let object = word_at(s.frame, (hole64::<0>() >> SITE_OBJECT_AT) as usize);
+fn site_row<const D: u8, const CHAIN: bool>(s: S, payload: usize, object: u64) -> Out {
     let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
     let mut stage = StencilStage::with_values(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE));
-    let (entries, records) = (word_at(payload, JS_STEP_FIELD_ENTRIES), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
+    let tables = (word_at(payload, JS_STEP_FIELD_ENTRIES), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
+    let word = if CHAIN {
+        let offsets = hole64::<HOLE_B>();
+        entry::site_chain(&mut stage, tables, object, (offsets & u64::from(u32::MAX), offsets >> CHAIN_SECOND_AT), ())
+    } else {
+        let offset = stage_site(&mut stage);
+        entry::site_read(&mut stage, tables, object, offset, ())
+    };
+    deliver::<D>(s, need!(s, word))
+}
+
+/// A store of the value operand (hole 1) through the site's cache entry (hole 2) into the object
+/// `object` names (`entry::site_store`): a leave writes nothing.
+#[inline(always)]
+fn site_store_row<const A: u8>(s: S, payload: usize, object: u64) -> Out {
+    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
+    let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
+    let tables = (word_at(payload, JS_STEP_FIELD_ENTRIES), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
     let offset = stage_site(&mut stage);
-    deliver::<D>(s, need!(s, entry::site_read(&mut stage, (entries, records), object, offset, ())))
+    need!(s, entry::site_store(&mut stage, tables, object, offset, tagged_place::<A, HOLE_A>(&s), ()));
+    Out::Next(s)
+}
+
+/// The object register a site row names: its frame offset sits above the destination's in hole 0.
+#[inline(always)]
+fn register_object(s: &S) -> u64 {
+    word_at(s.frame, (hole64::<0>() >> SITE_OBJECT_AT) as usize)
+}
+
+/// The `length` of the array word at hole 1 (`elements::array_length`).
+#[inline(always)]
+fn length_row<const D: u8>(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::from_hole(0);
+    let base = array_word::<HOLE_A>(&s);
+    let records = word_at(payload, JS_STEP_ARRAY_RECORD_BASE);
+    deliver::<D>(s, need!(s, elements::array_length(&mut stage, records, base, ())))
 }
 
 /// Whether the row's staged work was done and fit its place: it continues, else it leaves.
@@ -182,13 +236,18 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
     let payload = payload(&s);
     match KIND {
         CAPTURE_ROW => capture_row::<D>(s, payload),
+        CAPTURE_SET_ROW => capture_set_row::<A>(s, payload),
         FIELD_ROW => field_row::<D>(s, payload),
-        SITE_ROW => site_row::<D>(s, payload),
+        SITE_ROW => site_row::<D, ENTRY>(s, payload, register_object(&s)),
+        SITE_STORE_ROW => site_store_row::<A>(s, payload, word_at(s.frame, hole::<0>())),
+        THIS_SITE_ROW => site_row::<D, ENTRY>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
+        THIS_STORE_ROW => site_store_row::<A>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
         ARRAY_ROW => array_row(s),
         IDENTITY_ROW => identity_row(s),
         THIS_ROW => this_row::<D>(s),
         LOAD_LOCAL_ROW => load_local_row::<D>(s),
         STORE_LOCAL_ROW => store_local_row::<A>(s),
+        LENGTH_ROW => length_row::<D>(s, payload),
         INDEX_ROW => index_row::<ENTRY, D, B>(s, payload),
         _ => store_row::<ENTRY, A, B>(s, payload),
     }

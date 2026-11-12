@@ -49,6 +49,8 @@ pub(super) struct Decoded {
     pub(super) hole: u64,
     /// How an instruction no row takes runs (`steps`), in place of the numeric `kind`.
     pub(super) step: Option<Step>,
+    /// The atom a field store holds unnamed by method caches (`Known::stores`), a Stable fact.
+    pub(super) atom: Option<Atom>,
     /// A `ToNumeric` copy: its operand is no Number until the row proves it (a loop's entry guards
     /// prove the registers it names; a function's registers are not proved).
     pub(super) checked: bool,
@@ -59,7 +61,7 @@ pub(super) struct Decoded {
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, step: None, checked: false, identity: None }
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, atom: None, step: None, checked: false, identity: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -150,29 +152,99 @@ fn entry_array(region: &LoopRegion, facts: Facts, register: Register) -> u64 {
     }
 }
 
-/// The row of a field read: the value the loop's entry recorded, or the site's cache entry
-/// (a named field of a register, not of `this`, whose receiver arrives outside the registers).
-fn field_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
-    let result = Some(instruction.result_register());
-    if matches!(facts, Facts::Site) {
-        let FieldLookup::Atom { base, cache_site, .. } = instruction.field_lookup()? else { return None };
-        let site = u64::from(cache_site) * crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
-        return Some(Decoded { hole: site, ..Decoded::heap(Heap::Site, result, Some(Source::Register(base.register_index()?)), None) });
-    }
-    let index = *region.field_reads().get(&(pc - region.header))?;
-    let word = super::super::osr_loop::field_word(region, index);
-    let row = Decoded::heap(Heap::Field, result, None, None);
-    (!region.is_dynamic_field(index) && u32::try_from(word as u64 * SLOT).is_ok()).then_some(Decoded { hole: word as u64 * SLOT, ..row })
+/// The byte offset of the field cache entry of `site` in the program's table.
+fn entry_offset(site: u16) -> u64 {
+    u64::from(site) * crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64
 }
 
-/// The heap instructions: a capture, a dense element read or store, a recorded or cached field,
-/// the proof that a base is an array, the activation's `this` and its local slots.
-pub(super) fn heap_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
-    let register = |register| Some(Source::Register(register));
+/// The row of a named field read of a register (or of the receiver, `this`, which the payload
+/// holds) through the site's cache entry, or a nested lookup's two (`FieldSite`: `base.first.second`,
+/// with no sink field).
+fn site_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
+    let (base, first, second) = match instruction.field_lookup()? {
+        FieldLookup::Atom { base, cache_site, .. } => (base, cache_site, None),
+        FieldLookup::Site(index) => {
+            let site = known.program.field_sites.get(index).filter(|site| site.sink.is_none())?;
+            (site.base, site.first.1, site.second.map(|(_, cache_site)| cache_site))
+        }
+    };
+    let receiver = base == FieldBase::THIS;
+    let object = if receiver { None } else { Some(Source::Register(base.register_index()?)) };
+    let heap = match (receiver, second.is_some()) {
+        (false, false) => Heap::Site,
+        (false, true) => Heap::SiteChain,
+        (true, false) => Heap::ThisSite,
+        (true, true) => Heap::ThisChain,
+    };
+    let hole = entry_offset(first) | second.map_or(0, |second| entry_offset(second) << numeric::library::CHAIN_SECOND_AT);
+    Some(Decoded { hole, ..Decoded::heap(heap, Some(instruction.result_register()), object, None) })
+}
+
+/// The row of a field the loop's entry recorded: its value, which the loop does not write (`Facts::Entry`).
+fn recorded_field(region: &LoopRegion, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    let index = *region.field_reads().get(&(pc - region.header))?;
+    let hole = super::super::osr_loop::field_word(region, index) as u64 * SLOT;
+    let row = Decoded::heap(Heap::Field, Some(instruction.result_register()), None, None);
+    (!region.is_dynamic_field(index) && u32::try_from(hole).is_ok()).then_some(Decoded { hole, ..row })
+}
+
+/// The row of a field read: an array's `length`, the value a loop's entry recorded, or the site's
+/// cache entry (`site_row`), which also answers a loop's read its entry did not record, or that
+/// reads through a register the loop redefines.
+fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    if let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
+        && known.names_length(atom)
+    {
+        let array = Some(Source::Register(base.register_index()?));
+        return Some(Decoded::heap(Heap::Length, Some(instruction.result_register()), array, None));
+    }
+    match facts {
+        Facts::Entry { .. } => recorded_field(region, pc, instruction).or_else(|| site_row(known, instruction)),
+        Facts::Site => site_row(known, instruction),
+    }
+}
+
+/// The row of a named field store to a register's object, or to `this`, through the site's cache
+/// entry (`entry::site_store`): a function's, where the store may run in place
+/// (`Known::stores_in_place`). A loop region's reads may be entry snapshots of a field its stores
+/// write, so it has none.
+fn field_store_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
+    let atom = instruction.atom_index();
+    if !known.stores_in_place(atom) || instruction.returns_from_frame() || instruction.writes_current_this() {
+        return None;
+    }
+    let (heap, base) = match instruction.field_store_register() {
+        Some(register) => (Heap::SiteStore, Some(register)),
+        None => (Heap::ThisStore, None),
+    };
+    let value = Some(Source::Register(instruction.register_a()));
+    Some(Decoded { base, hole: entry_offset(instruction.cache_site_index()), atom: Some(atom), ..Decoded::heap(heap, None, value, None) })
+}
+
+/// Whether `instruction` stores to a depth-0 capture and nothing else (`general_capture::lower_capture`'s
+/// conditions): it completes no activation, sets no `this`, and is no numeric local's update.
+fn own_capture_store(instruction: WideInstruction) -> bool {
+    instruction.capture_depth() == 0 && !instruction.returns_from_frame() && !instruction.writes_current_this() && instruction.numeric_local_target().is_none()
+}
+
+/// The row of a depth-0 capture access: a read, or a function's store (a loop region's payload
+/// never admits direct capture stores).
+fn capture_row(facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
     match instruction.op().class() {
         Class::LoadCapture if instruction.capture_depth() == 0 => {
             Some(Decoded::heap(Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None, None))
         }
+        Class::StoreCapture if matches!(facts, Facts::Site) && own_capture_store(instruction) => {
+            Some(Decoded::heap(Heap::CaptureSet(instruction.capture_slot()), None, Some(Source::Register(instruction.register_a())), None))
+        }
+        _ => None,
+    }
+}
+
+/// The row of a dense element read or store, or of the proof that a base is an array.
+fn array_row(region: &LoopRegion, facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
+    let register = |register| Some(Source::Register(register));
+    match instruction.op().class() {
         Class::GetIndex if !instruction.returns_from_frame() => {
             let base = instruction.operand_b().register_index()?;
             let index = source(&|index| region.number_constant(index), instruction.operand_c()).ok()?;
@@ -185,6 +257,14 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: 
             Some(Decoded { base: Some(instruction.register_b()), hole: entry_array(region, facts, instruction.register_b()), ..row })
         }
         Class::RequireObjectCoercible => Some(Decoded::heap(Heap::Array, None, register(instruction.register_b()), None)),
+        _ => None,
+    }
+}
+
+/// The row of the activation's `this` and its local slots, which every run reads live.
+fn activation_row(instruction: WideInstruction) -> Option<Decoded> {
+    let register = |register| Some(Source::Register(register));
+    match instruction.op().class() {
         Class::LoadThis if !instruction.writes_current_this() => Some(Decoded::heap(Heap::This, Some(instruction.result_register()), None, None)),
         Class::LoadLocalPlain => {
             let slot = u16::try_from(instruction.local_slot()).ok()?;
@@ -195,17 +275,29 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: 
             let slot = u16::try_from(instruction.local_slot()).ok()?;
             Some(Decoded::heap(Heap::StoreLocal(slot), None, register(instruction.register_a()), None))
         }
-        Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, pc, instruction),
+        _ => None,
+    }
+}
+
+/// The heap instructions: a capture, a dense element read or store, a recorded or cached field
+/// read or store, the proof that a base is an array, the activation's `this` and its local slots.
+pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    match instruction.op().class() {
+        Class::LoadCapture | Class::StoreCapture => capture_row(facts, instruction),
+        Class::GetIndex | Class::SetIndex | Class::RequireObjectCoercible => array_row(region, facts, instruction),
+        Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
+        Class::LoadThis | Class::LoadLocalPlain | Class::StoreLocalPlain => activation_row(instruction),
+        _ if instruction.op().is_field_store() && matches!(facts, Facts::Site) => field_store_row(known, instruction),
         _ => None,
     }
 }
 
 /// The row of `instruction` at `pc`: a numeric or heap row where one takes it, else the step the
 /// interpreter's own operation makes (`steps`), so no instruction is refused.
-pub(super) fn decode(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
+pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     numeric_row(&|index| region.number_constant(index), instruction)
         .flatten()
-        .or_else(|| heap_row(region, facts, pc, instruction).filter(|_| instruction.result_flags() == 0))
+        .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0))
         .unwrap_or_else(|| decode_step(pc, instruction, helpers))
 }
 

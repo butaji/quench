@@ -110,23 +110,42 @@ impl Planned {
     }
 }
 
-/// The plan of a heap row, given its (place, hole) of destination, first and second operand.
-fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
-    // An array the entry record holds is named by its record offset (`decoded.hole`), else by its slot.
-    let entry = decoded.hole != 0 && matches!(heap, Heap::Store | Heap::Index);
+/// Whether a heap row is the variant its decode's `hole` selects: an array the entry record holds
+/// is named by its record offset, else by its slot; a site read is a chain of two reads.
+fn heap_variant(heap: Heap, hole: u64) -> bool {
+    match heap {
+        Heap::Store | Heap::Index => hole != 0,
+        Heap::SiteChain | Heap::ThisChain => true,
+        _ => false,
+    }
+}
+
+/// The hole values of a heap row of `decoded`, given its holes of destination, first and second operand.
+fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, [dst_hole, a_hole, b_hole]: [u64; 3]) -> [u64; HOLES] {
+    let upper = crate::value::NarrowLayout::upper_words() as u64;
     let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
-    let holes = match heap {
+    match heap {
         Heap::Store => [base, a_hole, b_hole],
+        Heap::SiteStore => [base, a_hole, decoded.hole],
+        Heap::ThisStore => [0, a_hole, decoded.hole],
+        Heap::ThisSite | Heap::ThisChain => [dst_hole, upper, decoded.hole],
+        Heap::This => [dst_hole, 0, 0],
         Heap::Index if entry => [dst_hole, decoded.hole, b_hole],
         Heap::Field => [dst_hole, decoded.hole, 0],
-        Heap::Site => [dst_hole | a_hole << numeric::library::SITE_OBJECT_AT, crate::value::NarrowLayout::upper_words() as u64, decoded.hole],
+        Heap::Site | Heap::SiteChain => [dst_hole | a_hole << numeric::library::SITE_OBJECT_AT, upper, decoded.hole],
         Heap::Capture(slot) => [dst_hole, u64::from(slot), u64::from(slot) * SLOT],
-        Heap::This => [dst_hole, 0, 0],
         Heap::LoadLocal(slot) => [dst_hole, u64::from(slot), 0],
         Heap::StoreLocal(slot) => [0, a_hole, u64::from(slot)],
         Heap::Identity => [0, a_hole, decoded.hole],
+        Heap::CaptureSet(slot) => [a_hole, u64::from(slot), u64::from(slot) * SLOT],
         _ => [dst_hole, a_hole, b_hole],
-    };
+    }
+}
+
+/// The plan of a heap row, given its (place, hole) of destination, first and second operand.
+fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
+    let entry = heap_variant(heap, decoded.hole);
+    let holes = heap_holes(decoded, homes, heap, entry, [dst_hole, a_hole, b_hole]);
     // The row's stencil reads pinned operands and delivers a pinned result itself.
     Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
 }
