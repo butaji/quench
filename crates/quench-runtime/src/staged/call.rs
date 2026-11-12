@@ -215,6 +215,28 @@ const PARAMS_SHIFT: u32 = 2 * FACT_BITS;
 const ENTRY_SHIFT: u32 = 3 * FACT_BITS;
 pub(crate) const ENTRY_ACTIVATES: u64 = 0;
 
+/// Whether `needed` fits within `limit`, both unsigned (equal fits): the one compare every
+/// admission is made of (parameters against arguments, stack words against a window).
+#[inline(always)]
+pub(crate) fn fits<S: Stage>(stage: &mut S, limit: S::Word, needed: S::Word) -> S::Cond {
+    let over = stage.ult(limit, needed);
+    stage.not(over)
+}
+
+/// Continues where `needed` fits within `limit` (`fits`); leaves at `miss` otherwise.
+#[inline(always)]
+pub(crate) fn admit_room<S: Stage>(stage: &mut S, limit: S::Word, needed: S::Word, miss: S::Miss) -> Option<()> {
+    let holds = fits(stage, limit, needed);
+    stage.guard(holds, miss)
+}
+
+/// `fits` on machine words, for the interpreter's own admission of a call: the same row the
+/// native tiers emit.
+#[inline(always)]
+pub(crate) fn concrete_fits(limit: u64, needed: u64) -> bool {
+    admit_room(&mut super::Concrete::new(std::ptr::null()), limit, needed, ()).is_some()
+}
+
 /// Admits a native call: leaving at `miss` unless the cell's validity word is `expected` (one
 /// compare) and `free` holds `room` words. Entry kind and argc are decided at site admission or
 /// publish, so only the interpreter's `admit_call` checks them per call.
@@ -228,9 +250,7 @@ pub(crate) fn admit_native<S: Stage>(stage: &mut S, cell: S::Word, expected: S::
     let facts = stage.load_u64(cell, CELL.facts_offset);
     let room = stage.shr_imm(facts, ROOM_SHIFT);
     let room = stage.and_imm(room, u64::from(u16::MAX));
-    let short = stage.ult(free, room);
-    let roomy = stage.not(short);
-    stage.guard(roomy, miss)?;
+    admit_room(stage, free, room, miss)?;
     Some(room)
 }
 
@@ -257,14 +277,10 @@ pub(crate) fn admit_call<S: Stage>(stage: &mut S, cell: S::Word, expected: S::Wo
     stage.guard(plain, miss)?;
     let params = stage.shr_imm(facts, PARAMS_SHIFT);
     let params = stage.and_imm(params, u64::from(u16::MAX));
-    let over = stage.ult(params, argc);
-    let fits = stage.not(over);
-    stage.guard(fits, miss)?;
+    admit_room(stage, params, argc, miss)?;
     let room = stage.shr_imm(facts, ROOM_SHIFT);
     let room = stage.and_imm(room, u64::from(u16::MAX));
-    let short = stage.ult(free, room);
-    let roomy = stage.not(short);
-    stage.guard(roomy, miss)?;
+    admit_room(stage, free, room, miss)?;
     let registers = stage.and_imm(facts, u64::from(u16::MAX));
     Some(Admitted { registers, room })
 }
