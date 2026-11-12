@@ -269,6 +269,11 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         Some(result)
     }
 
+    /// The VM's element read past a hole or an index past the backing (`frame_elements::index_get`).
+    fn index_get_host(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, key: ir::Value, miss: ir::Block) -> Option<ir::Value> {
+        Some(super::frame_elements::index_get(self, stage, (base, key), miss))
+    }
+
     /// The fast read, and for a miss of it the VM's probe, which starts from the proofs that
     /// held before the read, joined (`retire_fast_proofs`).
     fn probed(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, (atom, site): (u32, u16),

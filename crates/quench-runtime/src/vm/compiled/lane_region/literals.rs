@@ -102,15 +102,6 @@ impl Lowering<'_, '_> {
         self.guard_heap_primitive(state, register, ty, exit)
     }
 
-    /// An element store (`Lowering::set_index`); one keyed by a string names a property, which
-    /// the element store (`compiled::lane_index_set`) never makes: it leaves for the interpreter.
-    pub(super) fn element_store(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> bool {
-        let key = state.values[usize::from(instruction.register_c())].value.ty;
-        if key == Type::NEVER || !key.is_subtype(Type::language(crate::ValueType::String)) { return self.set_index(state, pc, instruction); }
-        self.exit(state, pc);
-        false
-    }
-
     /// Guards a string or BigInt fact an edge does not prove (`Lowering::conform`) by the VM's
     /// own `typeof` test (`compiled::lane_typeof_is`); `false` for any other fact.
     pub(super) fn guard_heap_primitive(&mut self, state: &mut State, register: Register, ty: Type, exit: ir::Block) -> bool {

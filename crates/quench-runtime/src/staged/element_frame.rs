@@ -2,7 +2,7 @@
 //! proofs of an array (its kept view, its record table, its key's int32) and the VM's own steps
 //! behind the dense arm. Every default declines, leaving the row to the host path.
 
-use super::element_rows::ElementView;
+use super::elements::ElementView;
 use super::{value, PropertyFrame, Stage};
 use crate::bytecode::Operand;
 

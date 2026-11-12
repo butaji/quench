@@ -21,6 +21,42 @@ pub(crate) fn dense_element<S: Stage>(stage: &mut S, values: S::Word, length: S:
     Some((address, value))
 }
 
+/// A dense array's backing as an access reads it, once proved: its first value and its length,
+/// in one width.
+#[derive(Clone, Copy)]
+pub(crate) struct ElementView<W> {
+    pub(crate) values: W,
+    pub(crate) length: W,
+}
+
+/// The view of the direct array `base` among the array records at `records`, writable where
+/// `writable`: `None` (leaving at `miss`) for any other value.
+#[inline(always)]
+pub(crate) fn prove_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Word, writable: bool,
+    miss: S::Miss) -> Option<ElementView<S::Word>> {
+    let backing = array_backing(stage, records, base, miss)?;
+    if writable { writable_backing(stage, backing, miss)?; }
+    Some(ElementView { values: backing.values, length: backing.length })
+}
+
+/// The present element `index` of `view`: `None` (leaving at `miss`) past the backing or at a hole.
+#[inline(always)]
+pub(crate) fn read_element<S: Stage>(stage: &mut S, view: ElementView<S::Word>, index: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    dense_element(stage, view.values, view.length, index, miss).map(|(_, value)| value)
+}
+
+/// Replaces the present element `index` of `view` with `value`, which the caller proved needs
+/// no barrier log; `None` (leaving at `miss`) past the backing or at a hole, where the store
+/// would add an element.
+#[inline(always)]
+pub(crate) fn replace_present<S: Stage>(stage: &mut S, view: ElementView<S::Word>, index: S::Word, value: S::Word,
+    miss: S::Miss) -> Option<()> {
+    let (address, old) = dense_element(stage, view.values, view.length, index, miss)?;
+    replace_element(stage, view.values, address, old, value);
+    Some(())
+}
+
 /// A dense array's backing as an access reaches it from the array value: the record, the
 /// backing's header, its first value and its length.
 #[derive(Clone, Copy)]

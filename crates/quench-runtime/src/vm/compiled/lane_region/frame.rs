@@ -136,14 +136,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         call_out::vm_step(self, stage, result)
     }
 
-    /// A dense element under the view proof; a hole or an index past the view continues at
-    /// the proof's cold block, exactly as the lowering's cold path did.
-    #[inline(always)]
-    fn index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::Index { view, absent } = proof else { return None };
-        Some(super::super::emit_dense_element(stage.builder, view, index, absent).1)
-    }
-
     #[inline(always)]
     fn index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
         proof: EmitProof) -> Option<()> {

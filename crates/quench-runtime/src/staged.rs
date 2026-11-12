@@ -117,11 +117,6 @@ pub(crate) trait Frame<S: Stage> {
     /// `register`'s value from `constant`, with the fact the stage keeps of it.
     fn constant(&mut self, stage: &mut S, constant: Constant) -> (S::Word, Self::Fact);
 
-    /// The dense array element at `index`, under the proof; a hole, a miss or an index past
-    /// the view leaves `None` to the caller's cold path.
-    #[inline(always)]
-    fn index_read(&mut self, _stage: &mut S, _index: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
-
     /// Store `value` at the dense array element `index`, under the proof.
     #[inline(always)]
     fn index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
@@ -255,8 +250,6 @@ pub(crate) enum Operation<W, P> {
     RequireObjectCoercible { register: Register },
     /// Define `destination` with the logical negation of register `source`'s truthiness.
     LogicalNot { destination: Register, source: Register },
-    /// A dense array element at `index`, under `proof`; a hole or miss leaves `Unresolved`.
-    IndexRead { index: W, proof: P },
     /// Store `value` at dense array element `index`, under `proof`.
     IndexWrite { index: W, value: W, proof: P },
     /// A typed array element at `index`, as a Number word, under `proof`.

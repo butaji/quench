@@ -10,19 +10,11 @@
 //! The interpreter's reads and replacements of a record array are the same rows without a
 //! frame (`concrete_record_element`, `concrete_record_replace`).
 
-use super::elements::{array_backing, dense_element, replace_element, writable_backing};
+use super::elements::{prove_view, read_element, replace_present, ElementView};
 use super::property::Owner;
 use super::{Concrete, ElementFrame, Frame, NumericFrame, NumericStage, Operation, PropertyFrame, Stage, Step};
 use crate::bytecode::{Op, Operand, Register, WideInstruction};
 use crate::typed_ir::Type;
-
-/// A dense array's backing as an access reads it, once proved: its first value and its length,
-/// in one width.
-#[derive(Clone, Copy)]
-pub(crate) struct ElementView<W> {
-    pub(crate) values: W,
-    pub(crate) length: W,
-}
 
 impl<W, P> Operation<W, P> {
     /// The element rows of `decode`: `GetIndex` of a register base and a register or immediate
@@ -37,34 +29,6 @@ impl<W, P> Operation<W, P> {
             _ => return None,
         })
     }
-}
-
-/// The view of the direct array `base` among the array records at `records`, writable where
-/// `writable`: `None` (leaving at `miss`) for any other value.
-#[inline(always)]
-pub(crate) fn prove_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Word, writable: bool,
-    miss: S::Miss) -> Option<ElementView<S::Word>> {
-    let backing = array_backing(stage, records, base, miss)?;
-    if writable { writable_backing(stage, backing, miss)?; }
-    Some(ElementView { values: backing.values, length: backing.length })
-}
-
-/// The present element `index` of `view`: `None` (leaving at `miss`) past the backing or at a hole.
-#[inline(always)]
-pub(crate) fn read_element<S: Stage>(stage: &mut S, view: ElementView<S::Word>, index: S::Word,
-    miss: S::Miss) -> Option<S::Word> {
-    dense_element(stage, view.values, view.length, index, miss).map(|(_, value)| value)
-}
-
-/// Replaces the present element `index` of `view` with `value`, which the caller proved needs
-/// no barrier log; `None` (leaving at `miss`) past the backing or at a hole, where the store
-/// would add an element.
-#[inline(always)]
-pub(crate) fn replace_present<S: Stage>(stage: &mut S, view: ElementView<S::Word>, index: S::Word, value: S::Word,
-    miss: S::Miss) -> Option<()> {
-    let (address, old) = dense_element(stage, view.values, view.length, index, miss)?;
-    replace_element(stage, view.values, address, old, value);
-    Some(())
 }
 
 /// The view of `base` the frame kept of an earlier access, else the one this access proves and
@@ -107,18 +71,18 @@ fn write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (val
     let fact = frame.value_fact(value);
     let (word, object) = (frame.tagged(stage, value), frame.tagged(stage, base));
     let key = Operand::register(key);
+    // Every operand's tagged word is made before the paths split, so the join sees only words
+    // both paths dominate.
+    let tagged_key = frame.key_word(stage, key)?;
     frame.stored(stage, Owner::Register(base), miss,
         |stage, frame, general| {
+            if !fact.is_subtype(Type::IMMEDIATE) { frame.array_store_gate(stage, object, word, general)?; }
             let view = proved_view(stage, frame, object, true, general)?;
             let index = frame.index_key(stage, key, general)?;
             let index = stage.uextend32(index);
-            if !fact.is_subtype(Type::IMMEDIATE) { frame.array_store_gate(stage, object, word, general)?; }
             replace_present(stage, view, index, word, general)
         },
-        |stage, frame, miss| {
-            let key = frame.key_word(stage, key)?;
-            frame.index_set_host(stage, object, key, word, miss)
-        })?;
+        |stage, frame, miss| frame.index_set_host(stage, object, tagged_key, word, miss))?;
     Some(word)
 }
 

@@ -50,6 +50,7 @@ use captures::RootedRead;
 #[path = "lane_region/bindings.rs"] mod bindings;
 #[path = "lane_region/frame.rs"] mod frame;
 #[path = "lane_region/frame_fields.rs"] mod frame_fields;
+#[path = "lane_region/frame_elements.rs"] mod frame_elements;
 #[path = "lane_region/frame_stores.rs"] mod frame_stores;
 #[path = "lane_region/field_plans.rs"] mod field_plans;
 #[path = "lane_region/headers.rs"] mod headers;
@@ -62,6 +63,7 @@ use captures::RootedRead;
 #[path = "lane_region/direct_enter.rs"] mod direct_enter;
 #[path = "lane_region/call_outs.rs"] mod call_outs;
 #[path = "lane_region/register_rows.rs"] mod register_rows;
+#[path = "lane_region/element_rows.rs"] mod element_rows;
 use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
@@ -1111,14 +1113,14 @@ fn stores_own(instruction: WideInstruction) -> bool {
 }
 
 /// Whether `instruction` is an element store natively: into a record array, whose elements
-/// no named field read, capture or object shape observes (`Lowering::set_index`); anything
+/// no named field read, capture or object shape observes (`Lowering::element_write`); anything
 /// else leaves first.
 fn stores_element(instruction: WideInstruction) -> bool {
     instruction.op().class().eq(Class::SetIndex) && !instruction.returns_from_frame()
 }
 
 /// Whether an array view (`LocalProofs::arrays`) survives `instruction`: it reads no heap
-/// value but an element, or replaces one in place (`Lowering::set_index` retires the views
+/// value but an element, or replaces one in place (`Lowering::element_write` retires the views
 /// itself on its general path), so no array's storage changes.
 fn retains_array_views(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> bool {
     match instruction.op().class() {
@@ -2652,32 +2654,7 @@ impl Lowering<'_, '_> {
                 Some(true)
             }
             _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
-            _ if instruction.op().is_get_index() && plain && [instruction.operand_b(), instruction.operand_c()].into_iter().all(|operand| self.operand_supported(operand)) => {
-                // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
-                // of an int32 key, proved once.
-                let exit = self.guard_exit(state, pc32);
-                let base = self.operand_tagged(state, instruction.operand_b());
-                let index = self.operand_int(state, instruction.operand_c(), exit);
-                base.zip(index).map(|(base, index)| {
-                    match self.loop_array(pc, instruction.operand_b().register_index()) {
-                        Some(array) => self.loop_element_read(state, array, index, (pc, instruction.result_register()), exit),
-                        None => {
-                            let view = self.array_view(state, base, false, exit);
-                            let value = self.dense_element(state, base, view, index, exit);
-                            self.set_tagged(state, instruction.result_register(), value);
-                        }
-                    }
-                    // The element an observation typed (`number_reads`), proved here.
-                    match self.observed.at(pc) {
-                        Some(ty) if ty == Type::INT32 => { self.int(state, instruction.result_register(), exit); }
-                        Some(_) => { self.number(state, instruction.result_register(), exit); }
-                        None => {}
-                    }
-                    true
-                })
-            }
-            Class::SetIndex if [instruction.register_a(), instruction.register_b(), instruction.register_c()]
-                .iter().all(|register| *register < self.unit.registers) => Some(self.element_store(state, pc32, instruction)),
+            _ if self.is_element_row(instruction) => Some(self.element_step(state, pc, instruction)),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
             _ if instruction.op().js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.operator(state, pc, instruction).or_else(|| self.binary_call_out(state, pc, instruction))
@@ -4002,68 +3979,6 @@ impl Lowering<'_, '_> {
             kind: builder.declare_var(types::I64),
             room: builder.declare_var(types::I32),
         })
-    }
-
-    /// The view of the dense array `base` holds, proved once until a storage change retires
-    /// it; a `writable` request upgrades a read view.
-    fn array_view(&mut self, state: &mut State, base: ir::Value, writable: bool, exit: ir::Block) -> super::DenseArrayView {
-        if let Some((_, view)) = state.proofs.arrays.iter().find(|(known, view)| *known == base && (view.writable || !writable)) {
-            return *view;
-        }
-        let view = super::emit_dense_array_view(&mut self.builder, self.payload, base, writable, exit);
-        state.proofs.arrays.retain(|(known, _)| *known != base);
-        state.proofs.arrays.push((base, view));
-        view
-    }
-
-    /// An element store. A Number replacing a present element of a writable array is
-    /// native, through the array's view; anything else takes the
-    /// lane's helper (`lane_index_set`), which may also add the element and so retires the
-    /// views, and leaves at the store when that misses too. Every operand's tagged view is
-    /// made before the paths split, so the join sees only values both paths dominate.
-    pub(super) fn set_index(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> bool {
-        let exit = self.guard_exit(state, pc);
-        let number = state.values[usize::from(instruction.register_a())].value.ty.is_subtype(Type::NUMBER);
-        if let Some(array) = self.loop_array(pc as usize, Some(instruction.register_b())).filter(|array| number && array.writable) {
-            self.loop_element_write(state, array, pc, instruction, exit);
-            state.proofs.arrays.clear();
-            state.proofs.fields.clear();
-            state.proofs.stable = false;
-            return true;
-        }
-        let value = self.tagged(state, instruction.register_a());
-        let base = self.tagged(state, instruction.register_b());
-        let key = self.tagged(state, instruction.register_c());
-        let general = |lowering: &mut Self| {
-            let stored = lowering.helper_call(LaneHelper::IndexSet, &[base, key, value]);
-            let hit = lowering.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-            emit_js_guard(&mut lowering.builder, hit, exit);
-        };
-        if state.values[usize::from(instruction.register_a())].value.ty.is_subtype(Type::NUMBER) {
-            // The helper stores only at an int32 key; any other leaves at the store either way.
-            let index = self.int(state, instruction.register_c(), exit);
-            let slow = self.builder.create_block();
-            self.builder.set_cold_block(slow);
-            let done = self.builder.create_block();
-            let view = self.array_view(state, base, true, slow);
-            self.index_write(state, index, value, view, slow);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(slow);
-            self.builder.seal_block(slow);
-            general(self);
-            self.reload_dense_arrays(pc as usize);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(done);
-            self.builder.seal_block(done);
-        } else {
-            general(self);
-            self.reload_dense_arrays(pc as usize);
-        }
-        state.proofs.arrays.clear();
-        state.proofs.fields.clear();
-        // The helper may write a prototype's element or mapped argument.
-        state.proofs.stable = false;
-        true
     }
 
     /// After the element store's helper, which may grow any record array's backing, through
