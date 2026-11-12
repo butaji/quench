@@ -8419,10 +8419,7 @@ fn lane_loop_run<H: Host>(
         // the interpreter.
         // A miss at the header of a loop over arrays counts as a leave there: the next compilation drops a
         // counted loop's entry check (`counted_loops`), which an array that grows misses at every entry.
-        LoopOutcome::NotEntered => {
-            if !region.arrays.is_empty() { site.tier.borrow_mut().left_at(site.header, false); }
-            LoopContinuation::Jump
-        }
+        LoopOutcome::NotEntered => { if !region.arrays.is_empty() { site.tier.borrow_mut().left_at(site.header, false); } LoopContinuation::Jump }
         // A run pays for its entry with the iterations it completed, wherever it leaves.
         LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
         LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
