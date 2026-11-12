@@ -133,12 +133,13 @@ impl LaneView {
         self.retired.borrow_mut().push(method);
     }
 
-    /// The level its next compile runs at: the mode's where it fixes one, else Quick until the
-    /// body has repaid an Optimized compile (`LaneBodyHistory::promoted`).
+    /// The level its next compile runs at: the mode's where it fixes one. The default mode starts
+    /// every body Optimized: Quick first, promoted on completions, measured slower than that on
+    /// deltablue, crypto, regexp and fib (`ab-quick-first-promote-vs-tip`), until the evidence that
+    /// promotes a natively called body exists (`LaneBodyHistory::promoted`).
     pub(in crate::vm) fn compile_level(&self) -> super::jit_backend::CompileLevel {
         use super::jit_backend::CompileLevel;
-        if crate::jit_mode::quick_only() || !crate::jit_mode::tier_allowed(crate::jit_mode::Tier::Quick) { return CompileLevel::run_default(); }
-        if self.history.get().promoted { CompileLevel::Optimized } else { CompileLevel::Quick }
+        if CompileLevel::run_default() == CompileLevel::Quick && !self.history.get().promoted { CompileLevel::Quick } else { CompileLevel::Optimized }
     }
 
     /// The entries before its next body specializes: the warm-up, doubled per dropped body.
@@ -298,7 +299,7 @@ impl LaneView {
         }
         LaneBody::Specialized { method, tier_prologue, completions: Cell::new(0), exits: Cell::new(0),
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck,
-            promote_at: if self.compile_level() == super::jit_backend::CompileLevel::Quick { super::compiled::promotion_completions() } else { 0 } }
+            promote_at: if self.compile_level() == super::jit_backend::CompileLevel::Quick && !crate::jit_mode::quick_only() { super::compiled::promotion_completions() } else { 0 } }
     }
 
     /// `--b-jit` compiles no function body: the view's body is declined, once.
