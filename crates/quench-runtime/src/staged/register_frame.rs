@@ -216,6 +216,29 @@ pub(crate) fn write_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, s
     frame.store_local(stage, slot, value, miss).then_some(value)
 }
 
+/// `destination` defined from local slot `slot` where its binding is initialized (not the deleted
+/// marker, which a binding in its temporal dead zone holds); `None` where the frame cannot read the
+/// slot, and `miss` where the binding is uninitialized: the host's read raises the `ReferenceError`.
+#[inline(always)]
+pub(crate) fn read_initialized_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let (value, fact) = frame.load_local(stage, slot, Some(miss))?;
+    let initialized = stage.ne_imm(value, crate::Value::DELETED.to_bits());
+    stage.guard(initialized, miss)?;
+    frame.write(stage, destination, value, fact);
+    Some(value)
+}
+
+/// `source`'s tagged word written to local slot `slot` where its binding is initialized: an assignment
+/// that is no initialization (`let x; x = 1`) of a binding still in its temporal dead zone is the
+/// host's `ReferenceError`, which `miss` leaves to.
+#[inline(always)]
+pub(crate) fn write_initialized_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, source: Register, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let (current, _) = frame.load_local(stage, slot, Some(miss))?;
+    let initialized = stage.ne_imm(current, crate::Value::DELETED.to_bits());
+    stage.guard(initialized, miss)?;
+    write_local(stage, frame, source, slot, Some(miss))
+}
+
 /// A staged instruction's outcome: the word it produced, or where control goes.
 pub(crate) enum Step<W, C> {
     /// The operation produced `W`; control falls through.

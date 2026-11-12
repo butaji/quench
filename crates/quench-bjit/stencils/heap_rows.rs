@@ -27,11 +27,11 @@ use crate::places::{DEST, LEFT, Places, Rep, tagged_place};
 use crate::stage::StencilStage;
 use crate::value::ValueLayout;
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-use crate::staged::{Frame, Stage, Step, elements, entry, environment, iteration, load_this, read_local, strings, value, write_local};
+use crate::staged::{Frame, Stage, Step, elements, entry, environment, iteration, load_this, read_initialized_local, read_local, strings, value, write_initialized_local, write_local};
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW,
+    STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW,
 };
 
 unsafe extern "C" {
@@ -292,6 +292,24 @@ fn store_local_row<const A: u8>(s: S) -> Out {
     finish(frame, done)
 }
 
+/// A fast arm's local slot read that leaves into the helper step for a binding in its temporal dead zone:
+/// the slot number is hole 1 (`staged::read_initialized_local`).
+#[inline(always)]
+fn load_checked_row<const D: u8>(s: S) -> Out {
+    let mut frame = Places::<D, MEM, MEM>::new(s);
+    let done = read_initialized_local(&mut StencilStage::from_hole(0), &mut frame, DEST, hole::<HOLE_A>() as u16, ()).is_some();
+    finish_fast(frame, done)
+}
+
+/// A fast arm's local slot write of the first operand to an initialized binding: the slot number is
+/// hole 2 (`staged::write_initialized_local`).
+#[inline(always)]
+fn store_checked_row<const A: u8>(s: S) -> Out {
+    let mut frame = Places::<MEM, A, MEM>::new(s);
+    let done = write_initialized_local(&mut StencilStage::from_hole(0), &mut frame, LEFT, hole::<HOLE_B>() as u16, ()).is_some();
+    finish_fast(frame, done)
+}
+
 /// The register at frame offset hole 1 holds exactly the word of hole 2.
 #[inline(always)]
 fn identity_row(s: S) -> Out {
@@ -350,6 +368,8 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         THIS_ROW => this_row::<D>(s),
         LOAD_LOCAL_ROW => load_local_row::<D>(s),
         STORE_LOCAL_ROW => store_local_row::<A>(s),
+        LOAD_CHECKED_ROW => load_checked_row::<D>(s),
+        STORE_CHECKED_ROW => store_checked_row::<A>(s),
         LENGTH_ROW => length_row::<D>(s, payload),
         INDEX_ROW => index_row::<ENTRY, D, B>(s, payload),
         _ => store_row::<ENTRY, A, B>(s, payload),

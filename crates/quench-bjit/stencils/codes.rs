@@ -87,6 +87,12 @@ pub const KEY_ROW: u8 = 18;
 pub const TYPEOF_INDEX_ROW: u8 = 19;
 pub const TYPEOF_IS_ROW: u8 = 20;
 pub const TYPEOF_ISNOT_ROW: u8 = 21;
+/// A local slot read (`LOAD_CHECKED_ROW`) or an assignment that is no initialization (`STORE_CHECKED_ROW`)
+/// whose binding may be in its temporal dead zone: the slot holds the deleted marker, which leaves through
+/// EXIT0 into the helper step after the row, whose read raises the `ReferenceError`; a hit continues at
+/// TAKEN. The slot number is hole 1 (a read) or hole 2 (the store, whose first operand is the value).
+pub const LOAD_CHECKED_ROW: u8 = 22;
+pub const STORE_CHECKED_ROW: u8 = 23;
 /// Bits below the prototype link in a folded read's hole 1, which carries the receiver's exact shape beneath it.
 pub const HELD_LINK_AT: u32 = 32;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries

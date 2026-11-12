@@ -53,7 +53,7 @@ mod stage;
 pub(crate) use stage::{Stage, Table};
 
 mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, jump_if, load_this, logical_not, read_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Step, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]

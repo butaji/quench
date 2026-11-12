@@ -89,6 +89,7 @@ const FAMILIES: &[(&str, &str)] = &[
     ("in-operator-variants", "var sy = Symbol.iterator; acc += ('p' in o) + (1 in arr) + ('length' in arr) + ('zz' in o) + (i in arr) + (sy in arr);"),
     ("in-operator-throws", "try { acc += 'p' in i; } catch (e) { acc += e instanceof TypeError ? 1 : 0; }"),
     ("block-scopes-with-closures", "var fs = []; for (let j = 0; j < 3; j++) { let c = j * i; fs.push(function () { return c + j; }); } acc += fs[0]() + fs[1]() + fs[2]();"),
+    ("local-tdz-read-and-assign", "var rd = 0; try { rd = zz; } catch (e) { rd = 1; } try { zz = 2; } catch (e) { rd += 2; } let zz = i; zz = zz + rd; acc += zz;"),
     ("block-scope-shadow-and-tdz", "{ let a = i; { let a = 2; acc += a; } acc += a; } try { acc += zz; let zz = 1; } catch (e) { acc += 1; }"),
     ("class-construction-and-super", "class E extends C { constructor() { super(); this.w = 5; } m() { return super.get() + this.w; } } t = new E(); acc += t.w + t.get() + t.m();"),
     ("class-heritage-check", "try { class Bad extends 5 {} } catch (e) { acc += 1; } class Ok extends (i & 1 ? C : Object) {} acc += new Ok() instanceof Object ? 1 : 0;"),

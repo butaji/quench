@@ -55,6 +55,13 @@ pub(super) enum Heap {
     LoadLocal(u16),
     /// The first operand written to the activation's local slot `slot`, whose number is hole 2.
     StoreLocal(u16),
+    /// The fast arm of a `LoadLocal` of a frame-owned slot (`staged::read_initialized_local`): slot `slot`
+    /// (hole 1) into the register at hole 0 where its binding is initialized, else the row leaves into the
+    /// helper step after it, which raises.
+    LoadChecked(u16),
+    /// The fast arm of a `StoreLocal` that does not initialize its binding (`staged::write_initialized_local`):
+    /// the first operand to slot `slot` (hole 2) where the binding is initialized.
+    StoreChecked(u16),
     /// The register at the frame offset of hole 1 holds exactly the word of hole 2.
     Identity,
     /// A prototype-held field folded to the value its holder held when the code was compiled (hole 2):
@@ -112,6 +119,8 @@ impl Heap {
             Heap::This => library::THIS_ROW,
             Heap::LoadLocal(_) => library::LOAD_LOCAL_ROW,
             Heap::StoreLocal(_) => library::STORE_LOCAL_ROW,
+            Heap::LoadChecked(_) => library::LOAD_CHECKED_ROW,
+            Heap::StoreChecked(_) => library::STORE_CHECKED_ROW,
             Heap::Identity => library::IDENTITY_ROW,
             Heap::Held | Heap::ThisHeld => library::HELD_ROW,
             Heap::Live => library::LIVE_ROW,
@@ -127,7 +136,7 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key | Heap::TypeofIndex | Heap::TypeofIs { .. })
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key | Heap::TypeofIndex | Heap::TypeofIs { .. })
     }
 
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),

@@ -86,3 +86,7 @@ impl<H: Host> Vm<H> {
 #[cfg(test)]
 #[path = "base_body/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "base_body/forms.rs"]
+mod forms;

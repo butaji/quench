@@ -14,7 +14,9 @@
 //! * `InitializeTdz` writes the uninitialized marker (`Value::DELETED`) to the slot: a store of a constant.
 //! * `StoreLocal` that initializes its binding (a declaration's own store: no temporal dead zone to
 //!   check) and defines no register beside it writes the slot: a store of the register. One that does not
-//!   initialize must read the slot first (the binding may be uninitialized), so the helper step makes it.
+//!   initialize reads the slot first (`staged::write_initialized_local`): a binding in its temporal dead
+//!   zone holds the deleted marker, and the row leaves into the helper step, which raises.
+//! * `LoadLocal` is the read that leaves for the same marker (`staged::read_initialized_local`).
 use super::*;
 use crate::bytecode::{Function, InstructionField};
 
@@ -27,7 +29,14 @@ fn frame_owned(function: &Function, id: u32, slot: usize) -> bool {
 pub(super) fn fast_row(function: &Function, id: u32, instruction: WideInstruction) -> Option<Decoded> {
     let owned = |slot: usize| u16::try_from(slot).ok().filter(|_| frame_owned(function, id, slot));
     let store = |slot: u16, value: Source| Decoded { a: Some(value), ..Decoded::step(Step::Fast(Heap::StoreLocal(slot)), None) };
+    let checked = |slot: u16, value: Source| Decoded { a: Some(value), ..Decoded::step(Step::Fast(Heap::StoreChecked(slot)), None) };
     match instruction.op().class() {
+        Class::LoadLocal if !instruction.writes_numeric_local() => {
+            owned(instruction.local_slot()).map(|slot| Decoded::step(Step::Fast(Heap::LoadChecked(slot)), Some(instruction.result_register())))
+        }
+        Class::StoreLocal if instruction.optional_register_b().is_none() && instruction.boolean_field(InstructionField::C) == Some(false) => {
+            owned(instruction.local_slot()).map(|slot| checked(slot, Source::Register(instruction.register_a())))
+        }
         Class::InitializeTdz => owned(instruction.local_slot()).map(|slot| store(slot, Source::Value(Value::DELETED.to_bits()))),
         Class::StoreLocal if instruction.optional_register_b().is_none() && instruction.boolean_field(InstructionField::C) == Some(true) => {
             owned(instruction.local_slot()).map(|slot| store(slot, Source::Register(instruction.register_a())))
