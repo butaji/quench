@@ -12,6 +12,7 @@
 //! encoding; their per-stub tables are not built from an `ExitTable` (documented adapter).
 
 use super::{lane_unit, LaneExit, LoopOutcome, LoopRegion, JS_GENERAL_RETURN_STATUS_BASE, LANE_BODY_RETURNED, NATIVE_JS_STOPPED, TERMINATED_STATUS};
+use super::entry_cell::LANE_BODY_NOT_ENTERED;
 use crate::value::Value;
 
 /// What a leave is, which a leave word holds in its top two bits.
@@ -53,7 +54,7 @@ impl LaneExit {
             Self::Inlined { frame, pc } => ExitKind::Inlined.word((frame as u64) << ExitKind::FRAME_SHIFT | u64::from(pc)),
             Self::Callee => ExitKind::Callee.word(0),
             Self::Entry => ExitKind::Entry.word(0),
-            Self::Returned { .. } | Self::Terminated => unreachable!("a completion is a status, not a leave word"),
+            Self::Returned { .. } | Self::Terminated | Self::Stub => unreachable!("a completion or an unentered call is a status, not a leave word"),
         }
     }
 
@@ -74,6 +75,7 @@ impl LaneExit {
             _ if i64::from(status) == TERMINATED_STATUS => Self::Terminated,
             LANE_BODY_RETURNED => Self::Returned { pc: returned_pc(), value: Value::from_bits(word) },
             NATIVE_JS_STOPPED => Self::decode(word),
+            LANE_BODY_NOT_ENTERED => Self::Stub,
             _ if status >= JS_GENERAL_RETURN_STATUS_BASE => Self::At((status - JS_GENERAL_RETURN_STATUS_BASE) as usize),
             // Dispatch reaches an invalid PC only before any instruction ran.
             _ => Self::At(0),
@@ -102,7 +104,7 @@ impl LoopOutcome {
                 let latch = region.inlining.as_ref().map_or(region.backedge, |inlining| inlining.latch);
                 if exit.inside(region.header..=latch) { Self::Exit(pc as u32) } else { Self::Resume(pc as u32) }
             }
-            LaneExit::Entry => Self::NotEntered,
+            LaneExit::Entry | LaneExit::Stub => Self::NotEntered,
             LaneExit::Terminated => Self::Terminated,
             LaneExit::Callee => Self::Callee,
             LaneExit::Inlined { frame, pc } => Self::Inlined { frame, pc },

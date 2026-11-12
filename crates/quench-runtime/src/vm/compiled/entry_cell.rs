@@ -77,7 +77,6 @@ impl EntryCell {
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires.
     pub(in crate::vm) fn publish(&self, method: &PublishedLaneMethod) {
         let Some(body) = method.lease() else { return };
-        reserve_lane_scratch(body.scratch_width);
         self.recovery.set(std::ptr::addr_of!(body.recovery_space).addr());
         self.body.set(Rc::as_ptr(&body).addr());
         self.entry.set(body.entry_address());
@@ -127,9 +126,8 @@ pub(in crate::vm) fn capture_word(values: *const Value, len: usize) -> u64 {
     values.addr() as u64 | (len as u64) << CAPTURE_ADDRESS_BITS
 }
 
-/// Grows the scratch window to `width` registers for a body native code may call: an
-/// inlined leave inside it fills its window, which the run that entered the outermost
-/// body sized for that body alone.
+/// Grows the scratch window to `width` registers for a body a run may enter: an inlined leave
+/// inside it fills its window. A run finds the window sized by its body's publication.
 pub(super) fn reserve_lane_scratch(width: usize) {
     let frame = super::lane_frame();
     // SAFETY: as `lane_frame`; native code reads the window's address from the dispatch

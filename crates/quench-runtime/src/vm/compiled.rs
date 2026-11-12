@@ -140,6 +140,8 @@ mod direct_callee;
 pub(super) use direct_callee::{DirectCallee, DirectCandidates, ShadowFrame};
 #[path = "compiled/lane_storage.rs"]
 mod lane_storage;
+mod lane_body_run;
+pub(in crate::vm) use lane_body_run::{BodyRun, CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 #[path = "compiled/general_call.rs"]
 mod general_call;
 #[path = "compiled/general_capture.rs"]
@@ -4439,6 +4441,11 @@ impl CallContext {
         self.stack_limit = native_stack_limit();
         self.interrupt = interrupt;
         self.adapter_payload = payload;
+        self.bind_poll_page(poll_page);
+    }
+
+    /// The poll page whose fault ends the entry as terminated (`guard_fault`), or none.
+    fn bind_poll_page(&mut self, poll_page: Option<(usize, usize)>) {
         self.poll_start = poll_page.map_or(0, |(start, _)| start);
         self.poll_end = poll_page.map_or(0, |(start, bytes)| start + bytes);
     }
@@ -6698,6 +6705,13 @@ impl LaneMethod {
     pub(super) fn calls_only_natively(&self) -> bool {
         self.closed
     }
+
+    /// Sizes this thread's scratch window for it (`LaneFrame::scratch`): the one event that
+    /// grows the window, so a run never checks it. Its publication does it
+    /// (`ProgramStore::publish_lane_method`), on the thread that runs it.
+    pub(super) fn reserve_scratch(&self) {
+        entry_cell::reserve_lane_scratch(self.scratch_width);
+    }
 }
 
 /// Publication owns future entry; active runs and direct callers own code leases.
@@ -6720,6 +6734,10 @@ pub(super) enum LaneExit {
     /// The entry's proof of its inputs failed before any instruction ran: the activation
     /// resumes at its first record, and a plan again proves no input contract.
     Entry,
+    /// The call went through an entry cell that held the stub, so no body ran: the caller
+    /// takes its general path at its own first record (`LANE_BODY_NOT_ENTERED`). Not a leave of
+    /// any body: a loop or OSR root, whose entry proves its own inputs, never reads it as one.
+    Stub,
 }
 
 /// The status of a lane body whose activation completes: its result word holds the value,
@@ -6748,17 +6766,29 @@ impl LaneExit {
     }
     #[cfg(test)]
     pub(super) fn caller_pc(self) -> Option<usize> {
-        match self { Self::At(pc) | Self::Returned { pc, .. } => Some(pc), Self::Entry => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
+        match self { Self::At(pc) | Self::Returned { pc, .. } => Some(pc), Self::Entry | Self::Stub => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
     }
     /// Where the activation resumes: an entry leave at its first record.
     pub(super) fn resumed(self) -> Self {
-        if self == Self::Entry { Self::At(0) } else { self }
+        if matches!(self, Self::Entry | Self::Stub) { Self::At(0) } else { self }
     }
 }
 
 /// Lane bodies compiled by this process, for tests that a lane activation ran natively.
 #[cfg(test)]
 pub(super) static LANE_METHODS_COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Entries `Vm::run_lane_body` made on this thread and the runs they bound
+/// (`LaneFrame::bind_run` writing its words), for the crossing-cost test.
+#[cfg(test)]
+thread_local! { pub(super) static LANE_ENTRIES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) }; }
+/// Entries on this thread that changed a word of their run (`LaneFrame::run_words`): no more than
+/// the runs they bound.
+#[cfg(test)]
+thread_local! { pub(super) static LANE_RUN_REWRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+/// Calls of lane bodies made through their entry cells before any activation
+/// (`dispatch_fast::lane_enter_cell_body`) on this thread, for the crossing test.
+#[cfg(test)]
+thread_local! { pub(super) static LANE_CELL_CROSSINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 /// Calls lane bodies compiled by this process inline, for tests that inlining happened.
 #[cfg(test)]
 pub(super) static LANE_CALLS_INLINED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -7138,60 +7168,22 @@ impl<H: Host> Vm<H> {
         captures: *const usize,
         lane_context: *mut (),
     ) -> LaneExit {
-        let frame = lane_frame();
-        // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
-        let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(captures) }
-            .unwrap_or((std::ptr::null(), 0));
-        // SAFETY: the frame lives for the thread and is never moved once made; no reference
-        // into it is held across the body's run, which may enter it again
-        // (`run_nested_lane_method`).
-        let context = unsafe {
-            if (*frame).scratch.len() < method.scratch_width {
-                (*frame).scratch.resize(method.scratch_width, Value::UNDEFINED);
-            }
-            let dispatch = &raw mut (*frame).dispatch;
-            LaneEntry {
-                program_id: program,
-                field_entries: self.program_field_entries(program).unwrap_or(0),
-                lane_context: lane_context.addr(),
-                native_registers: registers,
-                residual: residual as *const ResidualProgram as usize,
-            }
-            .install(&mut *dispatch);
-            (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
-            (*dispatch).refresh_object_bases_at_entry(self);
-            (*dispatch).stores_specialized = usize::from(self.specialized && residual.specialized);
-            let vm = self as *mut Self;
-            (*dispatch).bind_lane_storage(vm);
-            // A run starts with no native frames; its direct calls place their callees past
-            // the stack's values.
-            let (top, end, activations, shadow) = self.lane_stack_spare();
-            ((*dispatch).native_top, (*dispatch).native_end) = (top.addr(), end.addr());
-            // A run whose lane may not make the frames' activations makes no direct call.
-            let frames = if direct_calls { SHADOW_FRAMES.min(activations) } else { 0 };
-            (*dispatch).shadow_base = shadow.addr();
-            ((*dispatch).shadow_top, (*dispatch).shadow_end) = (shadow.addr(), shadow.add(frames).addr());
-            let context = &raw mut (*frame).context;
-            (*context).adapter_payload = dispatch.cast();
-            (*context).interrupt = self.execution_interrupt.attention_flag() as *const _;
-            (*context).interrupt_owner = &self.execution_interrupt;
-            context
-        };
-        // SAFETY: the body was compiled for this function, never allocates or collects, and
-        // reads only the registers, constants and heap bases set above.
-        let BodyReturn { status, value: word } = if method.fault_poll {
-            let poll = native_poll_page(&self.execution_interrupt);
-            // SAFETY: this entry owns the TLS binding until it returns. Reentrant
-            // entries checkpoint it in `run_nested_lane_method`.
-            let context = unsafe { &mut *context };
-            context.bind_native_adapter(context.adapter_payload,
-                self.execution_interrupt.attention_flag() as *const _, poll);
-            unsafe { enter_body(context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast(), method.entry) }
-        } else {
-            unsafe { (method.entry)(&mut *context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast()) }
-        };
-        // SAFETY: as above; a completing body wrote the record before it returned.
-        LaneExit::read(status, word, || unsafe { (*frame).dispatch.returned_pc })
+        self.run_lane_body(&BodyRun {
+            method, direct_calls, program, residual, registers, receiver, captures, lane_context,
+            pending: NO_PENDING_ACTIVATIONS,
+        })
+    }
+
+    /// Points the lane frame's field cache entries at the table's current mapping, where the
+    /// frame is this VM's: its payload word is what generated code reads, and it was bound
+    /// before the table moved (`Vm::field_caches_moved`).
+    pub(super) fn rebind_lane_field_entries(&self) {
+        // SAFETY: the frame is reached only through this pointer, on its thread; the table
+        // moves in the VM's own code, never inside a payload access.
+        let frame = unsafe { &mut *LANE_FRAME.with(std::cell::UnsafeCell::get) };
+        if let Some(frame) = frame.as_mut().filter(|frame| frame.dispatch.vm == std::ptr::from_ref(self).addr()) {
+            frame.dispatch.field_entries = self.program_field_entries(frame.dispatch.program_id).unwrap_or(0);
+        }
     }
 
     /// The native frames the last run left inside, outermost first, which the lane now
@@ -7254,6 +7246,7 @@ impl<H: Host> Vm<H> {
         let frame = lane_frame();
         // SAFETY: as `run_lane_method`; the caller's entry made the frame.
         let saved = unsafe { LaneEntry::of(&(*frame).dispatch) };
+        let moved_from = self.field_entries_epoch;
         // Reentrant entries lend the same TLS context. Preserve the outer
         // recovery landing and its binding before the inner entry overwrites them.
         let binding = unsafe {
@@ -7262,13 +7255,13 @@ impl<H: Host> Vm<H> {
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
         let exit = self.run_lane_method(method, true, program, residual, registers, receiver, captures, lane_context);
-        // SAFETY: as above; the callee's run may have grown the scratch window.
+        // SAFETY: as above.
         unsafe {
             saved.install(&mut (*frame).dispatch);
+            if self.field_entries_epoch != moved_from { self.rebind_lane_field_entries(); }
             let context = &mut (*frame).context;
             (context.stack_limit, context.entry_stack, context.interrupt,
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner) = binding;
-            (*frame).dispatch.inlined = (*frame).scratch.as_mut_ptr().addr();
         }
         exit
     }
@@ -7343,6 +7336,26 @@ impl LaneEntry {
     }
 }
 
+/// The words of the dispatch payload and context that stay as they are for every entry of one
+/// lane run: its VM, program, residual, lane context and store specialization, and what follows
+/// from them, the program's field cache entries (`LaneFrame::bind_run`). An entry writes them
+/// only where its run is not the one that bound them; the words it writes per entry are its
+/// registers and the stack's room.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct LaneRun {
+    vm: usize,
+    program_id: ProgramId,
+    lane_context: usize,
+    residual: usize,
+    stores_specialized: usize,
+}
+
+impl LaneRun {
+    fn of(dispatch: &JsStepDispatch) -> Self {
+        Self { vm: dispatch.vm, program_id: dispatch.program_id, lane_context: dispatch.lane_context, residual: dispatch.residual, stores_specialized: dispatch.stores_specialized }
+    }
+}
+
 /// The context and payload every lane body on this thread runs with
 /// (`Vm::run_lane_method`). Thread facts are set once; each entry writes its own.
 struct LaneFrame {
@@ -7353,6 +7366,44 @@ struct LaneFrame {
 }
 
 impl LaneFrame {
+    /// The words `bind_run` writes, for the test that an entry of a run rewrites none of them.
+    #[cfg(test)]
+    fn run_words(&self) -> [usize; 8] {
+        let dispatch = &self.dispatch;
+        [dispatch.vm, dispatch.program_id.raw() as usize, dispatch.lane_context, dispatch.residual,
+            dispatch.stores_specialized, dispatch.field_entries, self.context.stack_limit, self.context.adapter_payload.addr()]
+    }
+
+    /// Binds the payload and context to `run`'s words, written once per run: a nested entry
+    /// of the same run (`Vm::run_nested_lane_method`) and each next entry of the lane's calls
+    /// find them standing. `field_entries` derives the program's field cache entries, which
+    /// stand until the table moves (`Vm::rebind_lane_field_entries`). The run's VM is bound
+    /// after it (`JsStepDispatch::bind_lane_storage`), so a VM that is not the last entry's
+    /// makes a new run. The native stack's limit is anchored where the run binds: the lane
+    /// run's frame is at one depth for all its entries (its calls are activations, not native
+    /// frames), a deeper run (a native callback's) has its own context and so binds its own,
+    /// and the nested entries of one run (`Vm::run_nested_lane_method`) spend the run's budget.
+    /// The interrupt and the payload, whose address is the frame's, bind once per interrupt owner.
+    #[inline(always)]
+    fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) {
+        let owner = std::ptr::from_ref(interrupt);
+        if LaneRun::of(&self.dispatch) != run {
+            #[cfg(test)]
+            LANE_ENTRIES.with(|counts| counts.set((counts.get().0, counts.get().1 + 1)));
+            self.dispatch.field_entries = field_entries();
+            self.context.stack_limit = native_stack_limit();
+            self.dispatch.program_id = run.program_id;
+            self.dispatch.lane_context = run.lane_context;
+            self.dispatch.residual = run.residual;
+            self.dispatch.stores_specialized = run.stores_specialized;
+        }
+        if self.context.interrupt_owner != owner {
+            self.context.interrupt = interrupt.atomic_flag() as *const _;
+            self.context.interrupt_owner = owner;
+            self.context.adapter_payload = (&raw mut self.dispatch).cast();
+        }
+    }
+
     fn new() -> Self {
         let mut context = CallContext::native_adapter(std::ptr::null_mut(), std::ptr::null(), None);
         context.callout = lane_method_exit as unsafe extern "C" fn(u64, u64, u64, u64) -> i64 as usize;

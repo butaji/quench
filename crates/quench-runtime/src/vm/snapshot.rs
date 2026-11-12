@@ -323,6 +323,7 @@ impl<H: Host> Vm<H> {
             active_layout: _,
             active_constants: _,
             active_field_entries: _,
+            field_entries_epoch: _,
             active_program: _,
             profile: _,
             shapes,

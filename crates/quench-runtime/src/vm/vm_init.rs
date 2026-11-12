@@ -107,6 +107,7 @@ impl<H: Host> Vm<H> {
             active_layout: Default::default(),
             active_constants: &[],
             active_field_entries: std::ptr::null(),
+            field_entries_epoch: 0,
             active_program: ProgramId::MAIN,
             profile: Default::default(),
             shape_slot_memo: Default::default(),

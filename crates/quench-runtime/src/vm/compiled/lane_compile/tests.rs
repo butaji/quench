@@ -17,6 +17,23 @@ fn an_entry_leave_round_trips_and_resumes_at_the_first_record() {
     assert_eq!(LaneExit::At(3).resumed(), LaneExit::At(3));
 }
 
+/// A call through an entry cell that holds the stub enters no body: its status is its own
+/// exit kind, which no loop or OSR root reads as a leave of its body, and the call resumes at
+/// the first record.
+#[test]
+fn a_stub_entry_is_its_own_exit_kind_and_resumes_at_the_first_record() {
+    use super::{entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED}, BodyEntry, LaneExit};
+    let stub: BodyEntry = unsafe { std::mem::transmute::<usize, BodyEntry>(EntryCell::stub()) };
+    // SAFETY: the stub reads none of its arguments.
+    let returned = unsafe { stub(std::ptr::null_mut(), 0, 0, std::ptr::null()) };
+    assert_eq!(returned.status, LANE_BODY_NOT_ENTERED);
+    let exit = LaneExit::read(returned.status, returned.value, || unreachable!("a stub does not complete"));
+    assert_eq!(exit, LaneExit::Stub);
+    assert_ne!(exit, LaneExit::Entry);
+    assert_ne!(exit, LaneExit::At(0));
+    assert_eq!(exit.resumed(), LaneExit::At(0));
+}
+
 /// A receiver leaving its shape keeps a lane body's code (its field reads guard the
 /// shape at each use); a holder leaving its shape retires it (its layout is read unguarded).
 #[test]

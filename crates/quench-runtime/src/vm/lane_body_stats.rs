@@ -107,7 +107,7 @@ impl End {
         use super::super::compiled::LaneExit;
         match exit {
             LaneExit::Returned { .. } => Self::Completed,
-            LaneExit::At(_) | LaneExit::Entry => Self::LeftAt,
+            LaneExit::At(_) | LaneExit::Entry | LaneExit::Stub => Self::LeftAt,
             LaneExit::Inlined { .. } => Self::LeftInlined,
             LaneExit::Callee => Self::LeftInCallee,
             LaneExit::Terminated => Self::Terminated,

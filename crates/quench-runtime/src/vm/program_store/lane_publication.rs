@@ -57,6 +57,7 @@ impl ProgramStore {
     pub(in crate::vm) fn publish_lane_method(&self, mut method: LaneMethod, heap: &mut crate::heap::Heap,
         method_atoms: &mut crate::code_dependencies::CodeReaders) -> Option<Rc<PublishedLaneMethod>> {
         let calls = !method.inlined.is_empty() || !method.direct.is_empty();
+        method.reserve_scratch();
         let invalidation = method.invalidation.clone();
         let roots = std::mem::take(&mut method.stable.roots);
         let published = Rc::new(PublishedLaneMethod::with_invalidation(method, invalidation));
