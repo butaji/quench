@@ -5,13 +5,12 @@ use super::*;
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
 /// that prototype alone determine, ends at `shape`, its fields the arguments for
 /// `parameters[..fields]` in order, a defaulted one's fallback in place of a falsy argument.
-/// While the prototype layout keeps `epoch` (`prototype_layout_epoch`), which every
-/// collection advances, those adds would hit again with the same transitions, so the object
-/// can be allocated finished.
+/// While its watch holds (`watch_construct_plan`), which the objects the proof read retire on
+/// any value or layout change, those adds would hit again with the same transitions, so the
+/// object can be allocated finished.
 #[derive(Clone, Copy)]
 pub(super) struct ConstructPlan {
     pub(super) callee: Value,
-    pub(super) epoch: u64,
     /// The callee's own layout that fixes where its `prototype` lives
     /// (`Vm::function_prototype_layout`), which a construct reads it through.
     pub(super) callee_layout: (u32, usize),
@@ -66,13 +65,10 @@ pub(super) enum ConstructPlanKind {
 }
 
 impl ConstructPlan {
-    /// This plan, holding from the current prototype layout epoch, with its receiver
-    /// header derived from its prototype and shape.
+    /// This plan with its receiver header derived from its prototype and shape; the watch
+    /// that keeps it (`watch_construct_plan`) starts after.
     pub(super) fn finish(self) -> Self {
-        Self {
-            epoch: crate::heap::prototype_layout_epoch(),
-            ..self.derive_header()
-        }
+        self.derive_header()
     }
 
     /// This plan with the header its receiver starts with, of its prototype and shape: inline
@@ -235,7 +231,6 @@ impl ConstructPlan {
 
 pub(super) const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     callee: Value::UNDEFINED,
-    epoch: NO_CONSTRUCT_PLAN_EPOCH,
     callee_layout: (0, 0),
     prototype: Value::UNDEFINED,
     shape: 0,
@@ -356,9 +351,10 @@ pub(super) fn lane_add_initializer_fields<H: Host>(
 }
 
 /// `lane_initialize_fields` while `callee`'s plan holds: the finished receiver, its fields
-/// the arguments the plan's parameters name. A plan holds while its callee's layout and
-/// `prototype` do: the receiver's template is derived from those alone, and the epoch keeps
-/// the adds it planned free of setters. Apart from the planning, whose frame is larger.
+/// the arguments the plan's parameters name. A plan holds while its watch does
+/// (`watch_construct_plan`): the receiver's template is derived from the objects it read, and
+/// a value or layout change to any of them retires it. Apart from the planning, whose frame
+/// is larger.
 #[inline(always)]
 pub(super) fn lane_planned_construction<H: Host>(
     vm: &mut Vm<H>,
@@ -461,9 +457,9 @@ pub(super) fn lane_construct_argument(r: Registers, i: &LaneInstruction) -> impl
     callee.heap_index().map(|index| index as usize & (CONSTRUCT_PLANS - 1))
 }
 
-/// `callee`'s construct plan while it holds: the entry names `callee`, the prototype
-/// layout keeps the plan's epoch and `callee`'s own layout still yields the planned
-/// `prototype`, from which the receiver's template is derived.
+/// `callee`'s construct plan while it holds: the entry names `callee` and the plan's watch
+/// (`watch_construct_plan`) is still published, so the objects it read keep their values and
+/// layouts and the receiver's template is still derived from them.
 #[inline(always)]
 pub(super) fn holding_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Option<ConstructPlan> {
     holding_construct_plan_index(vm, callee).map(|index| vm.lane_stack.construct_plans[index])
@@ -473,14 +469,7 @@ pub(super) fn holding_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Opti
 #[inline(always)]
 pub(super) fn holding_construct_plan_index<H: Host>(vm: &Vm<H>, callee: Value) -> Option<usize> {
     let index = construct_plan_index(callee)?;
-    let plan = &vm.lane_stack.construct_plans[index];
-    (plan.callee == callee
-        // A global-field plan's atoms and cache sites name the program that made it, so it
-        // holds only while that program runs; another program's construction runs the body.
-        && (plan.captured == 0 || vm.same_realm_user_target(callee).is_some_and(|(program, _, _)| program == vm.active_program))
-        && plan.epoch == crate::heap::prototype_layout_epoch()
-        && vm.function_prototype_in_layout(callee, plan.callee_layout) == Some(plan.prototype)
-        && (plan.super_parent.is_undefined()
-            || vm.object_data(callee).is_some_and(|class| class.proto() == plan.super_parent)))
+    (vm.lane_stack.construct_plans[index].callee == callee
+        && vm.lane_stack.construct_watches[index].as_ref().is_some_and(|watch| watch.is_published()))
     .then_some(index)
 }

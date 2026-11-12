@@ -577,6 +577,7 @@ mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan;
+mod construct_watch; use construct_watch::{record_forwarded_resolution, watch_construct_plan};
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_add_initializer_fields, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
@@ -1735,17 +1736,14 @@ const FUNCTION_TARGETS: usize = 64;
 const _: () = assert!(FUNCTION_TARGETS.is_power_of_two());
 
 /// Where a forwarding constructor's reads of `this.<method>` and its `apply` resolved under
-/// a construct plan (`ConstructPlan::forwarded`). While the plan holds, the prototype layout
-/// epoch is unchanged, so the plan's prototype keeps the method's data slot and the method's
-/// prototype keeps `apply`'s, and the receiver template lacks the method. The values are
-/// read again on every construction, and a method whose own shape or prototype differs
-/// from the one recorded, which could shadow `apply`, resolves afresh.
+/// a construct plan (`ConstructPlan::forwarded`). The plan's watch keeps the plan's prototype,
+/// the method (its shape and prototype, which could shadow `apply`) and the holder of
+/// `apply`, so while the plan holds `method` is what the forwarding reads and `apply` is the
+/// intrinsic: a use reads them from here.
 #[derive(Clone, Copy)]
 struct ForwardedResolution {
-    method_slot: u16,
-    method_shape: u32,
+    method: Value,
     apply_holder: Value,
-    apply_slot: u16,
     /// The forwarded method's function whose initializer stores the plan's fields record
     /// (`lane_record_forwarded_fields`), when it has fields: the method this resolution
     /// reads must still be of it.
@@ -1763,8 +1761,6 @@ const _: () = assert!(CONSTRUCT_PLAN_FIELDS <= u8::BITS as usize);
 const CONSTRUCT_PLANS: usize = 64;
 const _: () = assert!(CONSTRUCT_PLANS.is_power_of_two());
 
-/// A `ConstructPlan::epoch` no epoch reaches: the entry plans nothing.
-const NO_CONSTRUCT_PLAN_EPOCH: u64 = u64::MAX;
 
 /// Activations a lane runs without VM frames, innermost last, over the
 /// bottom VM frame of the lane run. They exist only while the lane runs:
@@ -1800,6 +1796,9 @@ pub(super) struct LaneStack {
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
     plan_value_epoch: [u64; CONSTRUCT_PLANS],
+    /// Per plan, the one dependency its proof is (`watch_construct_plan`): published while
+    /// every object the plan read keeps its values and layout.
+    construct_watches: [Option<crate::heap::PrototypeValueWatch>; CONSTRUCT_PLANS],
     /// The reads call sites answered (`ReadMemo`), each in the slot its record names
     /// (`CallOperand::memo`).
     read_memos: Vec<ReadMemo>,
@@ -1858,6 +1857,7 @@ impl Default for LaneStack {
             cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             plan_value_epoch: [0; CONSTRUCT_PLANS],
+            construct_watches: [const { None }; CONSTRUCT_PLANS],
             read_memos: Vec::new(),
             forwarders: Vec::new(),
             settling: Vec::new(),
@@ -14012,12 +14012,7 @@ fn lane_forwarded_fields<H: Host>(vm: &mut Vm<H>, _code: &ResidualProgram, calle
     let index = holding_construct_plan_index(vm, callee)?;
     // A copy: a plan reads no field of the VM to compute its values.
     let plan = vm.lane_stack.construct_plans[index]; if !plan.fold_holds(vm, index) { return None; }
-    let (program, function) = plan.forwarded?.initializer?;
-    let method = resolved_forwarded_method(vm, callee, &plan)?;
-    if !matches!(vm.heap.function(method), Some(FunctionRecord { kind: FunctionKind::User(p, f), .. }) if *p == program && *f == function)
-    {
-        return None;
-    }
+    plan.forwarded?.initializer?;
     let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS]; plan.fill_values(vm, &mut values, argument)?;
     Some(vm.lane_stack.construct_plans[index].allocate_values(&mut vm.heap, &values))
 }
@@ -14111,7 +14106,7 @@ fn lane_forwarded_construction<H: Host>(
     let forwarded = lane_script_target(cx, function)?;
     if let Some(resolution) = forwarded_resolution(vm, constructor.callee, method, function, apply) {
         let index = construct_plan_index(constructor.callee)?;
-        vm.lane_stack.construct_plans[index].forwarded = Some(resolution);
+        record_forwarded_resolution(vm, index, function, resolution);
     }
     Some(forwarded)
 }
@@ -14153,16 +14148,14 @@ fn forwarded_resolution<H: Host>(
     if found != function || vm.shape_slot(object.shape(), method.apply.0).is_some() {
         return None;
     }
-    let (method_shape, apply_holder) = (object.shape(), object.proto());
+    let apply_holder = object.proto();
     let (apply_slot, found) = data_slot(vm.heap.object(apply_holder)?, method.apply.0)?;
     (found == apply
         && data(plan.prototype, method.method.0, usize::from(method_slot))
         && data(apply_holder, method.apply.0, usize::from(apply_slot)))
     .then_some(ForwardedResolution {
-        method_slot,
-        method_shape,
+        method: function,
         apply_holder,
-        apply_slot,
         initializer: None,
     })
 }
@@ -14176,34 +14169,16 @@ fn lane_resolved_forwarding<H: Host>(
     callee: Value,
     plan: Option<&ConstructPlan>,
 ) -> Option<ScriptCallTarget> {
-    let function = resolved_forwarded_method(unsafe { vm(cx) }, callee, plan?)?;
+    let function = resolved_forwarded_method(callee, plan?)?;
     lane_script_target(cx, function)
 }
 
-/// The method `callee`'s forwarding reads under `plan`, its holding plan, from the plan's
-/// recorded resolution (`ConstructPlan::forwarded`): the value in the recorded slot, still of
-/// the recorded shape and prototype, whose `apply` is still the intrinsic, and not `callee`.
+/// The method `callee`'s forwarding reads under `plan`, its holding plan: the recorded
+/// resolution's (`ConstructPlan::forwarded`), which the plan's watch keeps, unless it is
+/// `callee`.
 #[inline(always)]
-fn resolved_forwarded_method<H: Host>(vm: &Vm<H>, callee: Value, plan: &ConstructPlan) -> Option<Value> {
-    let resolution = plan.forwarded?;
-    let prototype = vm.heap.object_record(plan.prototype)?;
-    // SAFETY: the plan's proof keeps the prototype's shape, which holds the slot.
-    let function = unsafe { vm.heap.property_get_shaped(prototype, usize::from(resolution.method_slot)) }?;
-    let FunctionRecord { object, .. } = vm.heap.function(function)?;
-    if object.shape() != resolution.method_shape || object.proto() != resolution.apply_holder {
-        return None;
-    }
-    let holder = vm.heap.object(resolution.apply_holder)?;
-    // SAFETY: the epoch the plan holds under keeps the holder's shape, which holds the slot.
-    let apply = unsafe { vm.heap.property_get_shaped(holder, usize::from(resolution.apply_slot)) }?;
-    (matches!(
-        vm.heap.function(apply),
-        Some(FunctionRecord {
-            kind: FunctionKind::Native(Native::FunctionApply),
-            ..
-        })
-    ) && function != callee)
-        .then_some(function)
+fn resolved_forwarded_method(callee: Value, plan: &ConstructPlan) -> Option<Value> {
+    plan.forwarded.map(|resolution| resolution.method).filter(|&method| method != callee)
 }
 
 script_handler! {
@@ -15846,7 +15821,6 @@ fn lane_initialize_fields<H: Host>(
     let this = vm.heap.alloc_object(template);
     let mut planned = Some(ConstructPlan {
         callee,
-        epoch: NO_CONSTRUCT_PLAN_EPOCH,
         callee_layout: (0, 0),
         prototype,
         shape: source_shape,
@@ -15865,6 +15839,7 @@ fn lane_initialize_fields<H: Host>(
         plan.callee_layout = layout;
         plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
         plan.cache_fold(vm, index); vm.lane_stack.construct_plans[index] = plan.finish();
+        watch_construct_plan(vm, index, true, &[callee, plan.prototype]);
     }
     Some((this, true))
 }
@@ -15888,7 +15863,7 @@ fn lane_planned_receiver<H: Host>(
     if let Some(index) = construct_plan_index(callee)
         && let Some(callee_layout) = vm.function_prototype_layout(callee)
     {
-        vm.lane_stack.construct_plans[index] = ConstructPlan {
+        let plan = ConstructPlan {
             callee,
             callee_layout,
             prototype,
@@ -15897,6 +15872,8 @@ fn lane_planned_receiver<H: Host>(
             ..EMPTY_CONSTRUCT_PLAN
         }
         .finish();
+        vm.lane_stack.construct_plans[index] = plan;
+        watch_construct_plan(vm, index, true, &[callee, prototype]);
     }
     Some(this)
 }
