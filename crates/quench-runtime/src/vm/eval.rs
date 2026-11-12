@@ -231,7 +231,7 @@ impl<H: Host> Vm<H> {
             _ if let Some(value) = self.heap.string(source)  => value.clone(),
             _ => return Ok(source),
         };
-        let cache_source = (!self.direct_eval).then(|| eval_source::EvalSource::of(&self.heap, source, &source_text));
+        let cache_source = Some(eval_source::EvalSource::of(&self.heap, source, &source_text));
         let host_text = source_text.host_string();
         let text = if self.host.allows_natives_syntax() {
             strip_v8_optimization_intrinsics(host_text)
@@ -306,9 +306,6 @@ impl<H: Host> Vm<H> {
             return self.run_global_eval_instance(p, id, cache_source);
         }
         self.require_source_compilation(p)?;
-        if let Some(program) = cache_source.as_ref().and_then(|source| self.programs.cached_global_eval(source)) {
-            return self.run_global_eval_program(p, program);
-        }
         let context = self.direct_eval_context(p).unwrap_or_default();
         let private_names = if self.direct_eval {
             self.direct_eval_private_names(p)
@@ -317,7 +314,28 @@ impl<H: Host> Vm<H> {
             Vec::new()
         };
         let caller_has_global_variables = self.frames.is_empty() || self.running_global_code();
-        let annex_b_forbidden_names = self.annex_b_forbidden_names(caller_has_global_variables);
+        // Annex B only concerns function declarations, which the text then names.
+        let annex_b_forbidden_names = if source.contains("function") {
+            self.annex_b_forbidden_names(caller_has_global_variables)
+        } else {
+            Vec::new()
+        };
+        let direct_key = self.direct_eval.then(|| {
+            cache_source.clone().map(|source| eval_source::DirectEvalKey {
+                source,
+                strict,
+                context,
+                private_names: private_names.clone(),
+                annex_b_forbidden_names: annex_b_forbidden_names.clone(),
+            })
+        }).flatten();
+        let cached = match &direct_key {
+            Some(key) => self.programs.cached_direct_eval(key),
+            None => cache_source.as_ref().and_then(|source| self.programs.cached_global_eval(source)),
+        };
+        if let Some(program) = cached {
+            return self.run_global_eval_program(p, program);
+        }
         // A host script compiles from its text alone: it is no direct eval, so it has no
         // caller context, private names or Annex B restrictions.
         let kept = host_script
@@ -355,10 +373,10 @@ impl<H: Host> Vm<H> {
                 .expect_err("dynamic eval syntax errors must throw")
         })?;
         eval_source::keep_shared_text(&mut residual, shared_text);
-        let cache_source = cache_source.filter(|_| {
-            residual.functions.first().is_some_and(|root| !root.strict)
-                && residual.replay.as_ref().map_or_else(|| !crate::Engine::eval_has_tagged_template(source), |replay| replay.template_sites == 0)
-        });
+        let cacheable = residual.functions.first().is_some_and(|root| !root.strict)
+            && residual.replay.as_ref().map_or_else(|| !crate::Engine::eval_has_tagged_template(source), |replay| replay.template_sites == 0);
+        let cache_source = cache_source.filter(|_| cacheable && direct_key.is_none());
+        let direct_key = direct_key.filter(|_| cacheable);
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
@@ -367,6 +385,9 @@ impl<H: Host> Vm<H> {
             && let Some(bytes) = self.encode_cached_program(&program)
         {
             self.host.keep_compiled_program(source_name, &[mode, source], &bytes);
+        }
+        if let Some(key) = direct_key {
+            self.programs.cache_direct_eval(key, program_id);
         }
         self.run_global_eval_instance(p, program_id, cache_source)
     }

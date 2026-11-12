@@ -70,3 +70,14 @@ impl std::hash::Hash for EvalSource {
         state.write_u32(self.hash);
     }
 }
+
+/// Everything besides its text that a direct eval's compilation reads of its caller: two
+/// direct evals of one text with equal scopes compile to the same program.
+#[derive(PartialEq, Eq, Hash)]
+pub(crate) struct DirectEvalKey {
+    pub(crate) source: EvalSource,
+    pub(crate) strict: bool,
+    pub(crate) context: crate::compile::EvalContext,
+    pub(crate) private_names: Vec<(String, String)>,
+    pub(crate) annex_b_forbidden_names: Vec<String>,
+}

@@ -895,6 +895,8 @@ pub(crate) struct ProgramStore {
     programs: Vec<Option<Box<ProgramEntry>>>,
     /// Weak compiled-script identities for global eval; contexts are supplied per call.
     global_eval_programs: FxHashMap<super::eval::eval_source::EvalSource, ProgramId>,
+    /// Compiled direct evals by text and the caller facts the compilation reads.
+    direct_eval_programs: FxHashMap<super::eval::eval_source::DirectEvalKey, ProgramId>,
     owned_scripts: FxHashMap<ProgramId, OwnedScript>,
     /// Completed reclamation passes; see `reclaim_unreferenced`.
     reclaim_passes: u64,
@@ -954,6 +956,7 @@ impl Default for ProgramStore {
             lane_compiles: Default::default(),
             programs: Vec::new(),
             global_eval_programs: FxHashMap::default(),
+            direct_eval_programs: FxHashMap::default(),
             owned_scripts: FxHashMap::default(),
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
@@ -1019,6 +1022,15 @@ impl ProgramStore {
 
     pub(super) fn cache_global_eval(&mut self, source: super::eval::eval_source::EvalSource, program: ProgramId) {
         self.global_eval_programs.insert(source, program);
+    }
+
+    pub(super) fn cached_direct_eval(&self, key: &super::eval::eval_source::DirectEvalKey) -> Option<ProgramId> {
+        let program = *self.direct_eval_programs.get(key)?;
+        self.entry(program).map(|_| program)
+    }
+
+    pub(super) fn cache_direct_eval(&mut self, key: super::eval::eval_source::DirectEvalKey, program: ProgramId) {
+        self.direct_eval_programs.insert(key, program);
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -1207,6 +1219,8 @@ impl ProgramStore {
             let programs = &self.programs;
             self.global_eval_programs
                 .retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
+            self.direct_eval_programs
+                .retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
             self.owned_scripts
                 .retain(|source, _| programs.get(source.index()).is_some_and(Option::is_some));
         }
@@ -1215,6 +1229,7 @@ impl ProgramStore {
 
     pub(crate) fn reset(&mut self, main: Rc<ResidualProgram>) -> ProgramId {
         self.global_eval_programs.clear();
+        self.direct_eval_programs.clear();
         self.owned_scripts.clear();
         self.programs.clear();
         self.unchecked_reclaimable = 0;
