@@ -12,6 +12,7 @@ pub mod host;
 mod io_transient;
 pub mod modules;
 mod allocator_policy;
+pub mod qimg;
 pub mod shared_run;
 
 pub use host::{NodeHost, NodeOutputSink};

@@ -140,6 +140,44 @@ impl AheadImages {
     }
 }
 
+/// The images of each program stored while recording (`start_recording`); the entry may run
+/// on a worker thread, so this is process-wide.
+static RECORDED: std::sync::Mutex<Option<Vec<AheadImages>>> = std::sync::Mutex::new(None);
+
+fn recorded() -> std::sync::MutexGuard<'static, Option<Vec<AheadImages>>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
+
+impl AheadImages {
+    /// Starts collecting the images of every program this thread stores (`finish_recording`).
+    pub fn start_recording() { *recorded() = Some(Vec::new()); }
+
+    /// Adds `program`'s images while recording; a program with none adds none.
+    pub(in crate::vm) fn record(program: &ResidualProgram) {
+        if recorded().is_none() { return; }
+        let images = Self::compile(program);
+        if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images); } }
+    }
+
+    /// What was recorded since `start_recording`, which stops.
+    pub fn finish_recording() -> Vec<AheadImages> { recorded().take().unwrap_or_default() }
+
+    /// A file of several programs' images: each as `to_bytes` wrote it, after its length.
+    pub fn bundle(all: &[AheadImages]) -> Vec<u8> {
+        let mut out = (all.len() as u32).to_le_bytes().to_vec();
+        for images in all {
+            let bytes = images.to_bytes();
+            out.extend((bytes.len() as u32).to_le_bytes());
+            out.extend(bytes);
+        }
+        out
+    }
+
+    /// The images `bundle` wrote.
+    pub fn unbundle(file: &[u8]) -> Result<Vec<AheadImages>, String> {
+        let mut words = Words(file);
+        (0..words.half()?).map(|_| { let length = words.half()? as usize; Self::from_bytes(words.bytes(length)?) }).collect()
+    }
+}
+
 /// A reader of the file's numbers.
 struct Words<'a>(&'a [u8]);
 
