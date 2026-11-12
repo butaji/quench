@@ -64,7 +64,7 @@ impl LaneView {
     pub(super) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool) {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        let LaneBody::Specialized { exits, leaves_at, completed, completions, recompiles, tier_prologue, stuck, .. } = body else { return };
+        let LaneBody::Specialized { exits, leaves_at, completed, completions, recompiles, stuck, .. } = body else { return };
         if completed_region || matches!(exit, LaneExit::Returned { .. }) {
             completed.set(true);
             completions.set(completions.get().saturating_add(1));
@@ -72,8 +72,11 @@ impl LaneView {
         }
         exits.set(exits.get().saturating_add(1));
         leaves_at.set(leaves_at.get().with(exit));
-        // Leaves past the first `reoptimize_exits` that exceed `reoptimize_share` percent of the runs.
-        let (leaves, runs) = (u64::from(exits.get()), u64::from(exits.get()) + u64::from(completions.get()));
+        // Runs its native callers completed count too: they never end through here. Leaves past
+        // the first `reoptimize_exits` that exceed `reoptimize_share` percent of the runs.
+        let native = self.entry.completions.get();
+        completed.set(completed.get() || native > 0);
+        let (leaves, runs) = (u64::from(exits.get()), u64::from(exits.get()) + u64::from(completions.get()) + native);
         if exits.get() < TIERS.lane_body.reoptimize_exits || leaves * PERCENT <= runs * u64::from(TIERS.lane_body.reoptimize_share) {
             return;
         }
@@ -82,16 +85,19 @@ impl LaneView {
             // run, gains nothing from its entry: its function runs in the lane again.
             let costly = runs >= u64::from(TIERS.lane_body.retire_after_runs) && leaves * PERCENT > runs * u64::from(TIERS.lane_body.retire_share);
             if !completed.get() || costly {
-                // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
-                unsafe { (*self.prologue.get()).handler = *tier_prologue };
-                let LaneBody::Specialized { method, .. } = std::mem::replace(body, LaneBody::Declined) else { unreachable!() };
-                self.entry.withdraw();
-                self.retired.borrow_mut().push(method);
+                self.retire_body(body, LaneBody::Declined);
                 self.release_from_tier();
             }
             return;
         };
         let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck };
+        self.retire_body(body, next);
+    }
+
+    /// Replaces the specialized `body` with `next`: its entry's handler runs no more, its entry
+    /// cell takes the stub, and its code waits for the callers that still name it.
+    fn retire_body(&self, body: &mut LaneBody, next: LaneBody) {
+        let LaneBody::Specialized { tier_prologue, .. } = body else { unreachable!() };
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };

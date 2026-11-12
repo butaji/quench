@@ -7249,9 +7249,11 @@ impl<H: Host> Vm<H> {
             (context.stack_limit, context.entry_stack, context.interrupt,
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
+        let native = unsafe { ((*frame).dispatch.shadow_base, (*frame).dispatch.shadow_top, (*frame).dispatch.shadow_end) };
         let exit = self.run_lane_method(method, true, program, residual, registers, receiver, captures, lane_context);
         // SAFETY: as above; the callee's run may have grown the scratch window.
         unsafe {
+            ((*frame).dispatch.shadow_base, (*frame).dispatch.shadow_top, (*frame).dispatch.shadow_end) = native;
             saved.install(&mut (*frame).dispatch);
             let context = &mut (*frame).context;
             (context.stack_limit, context.entry_stack, context.interrupt,
