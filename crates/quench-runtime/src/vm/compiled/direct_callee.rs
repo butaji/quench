@@ -51,6 +51,6 @@ pub(in crate::vm) struct ShadowFrame {
 }
 
 impl ShadowFrame {
-    pub(super) const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, body: 0, window: 0 };
+    pub(in crate::vm) const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, body: 0, window: 0 };
 }
 

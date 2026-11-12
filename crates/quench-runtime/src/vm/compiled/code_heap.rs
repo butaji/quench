@@ -311,6 +311,10 @@ fn record_publication(pointer: *mut u8, length: usize, site: &std::panic::Locati
     if let Ok(mut map) = std::fs::OpenOptions::new().create(true).append(true).open(format!("/tmp/perf-{}.map", std::process::id())) {
         let _ = writeln!(map, "{:x} {length:x} {tier}{function}@{file}:{}", pointer as usize, site.line());
     }
+    // The code itself, for disassembly at its address next to an instruction-level profile.
+    // SAFETY: `length` bytes of the body just published, readable through its executable mapping.
+    let bytes = unsafe { std::slice::from_raw_parts(pointer, length) };
+    let _ = std::fs::write(format!("/tmp/quench-jit-{}-{:x}.bin", std::process::id(), pointer as usize), bytes);
 }
 
 /// A compiled body's executable memory in the code zone.
