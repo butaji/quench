@@ -37,6 +37,9 @@ mod span;
 mod steps;
 mod stitch;
 mod webs;
+#[cfg(test)]
+#[path = "base_region/region_tests.rs"]
+mod region_tests;
 use decode::*;
 use link::*;
 use plan::*;

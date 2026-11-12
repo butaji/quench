@@ -6038,6 +6038,30 @@ thread_local! {
     pub(super) static LANE_OSR_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Runs of lane bodies in this test thread, and those that completed their activation.
     pub(super) static LANE_BODY_RUNS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
+    /// What the lane-ABI OSR runs in this test thread did (`OsrRunKinds`).
+    pub(super) static LANE_OSR_KINDS: std::cell::Cell<OsrRunKinds> = const { std::cell::Cell::new(OsrRunKinds { lent: 0, left: 0, inlined: 0 }) };
+}
+
+/// The runs of lane-ABI OSR regions that ran on the lane frame's payload (a direct row), that left
+/// inside their loop (an exit, a leave inside a callee), and that left inside an inlined callee.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct OsrRunKinds {
+    pub(super) lent: usize,
+    pub(super) left: usize,
+    pub(super) inlined: usize,
+}
+
+#[cfg(test)]
+impl OsrRunKinds {
+    /// Counts a run that ended in `outcome`, `lent` the payload.
+    fn note(outcome: &LoopOutcome, lent: bool) {
+        let left = matches!(outcome, LoopOutcome::Exit(_) | LoopOutcome::Inlined { .. } | LoopOutcome::Left { .. } | LoopOutcome::Callee);
+        LANE_OSR_KINDS.with(|kinds| {
+            let now = kinds.get();
+            kinds.set(Self { lent: now.lent + usize::from(lent), left: now.left + usize::from(left), inlined: now.inlined + usize::from(matches!(outcome, LoopOutcome::Inlined { .. })) });
+        });
+    }
 }
 
 /// A native OSR region published by the shared compiler. Its lowerer is private to this
@@ -6192,6 +6216,8 @@ impl CompiledOsrRegion {
             };
         }) };
         if ran.is_none() { return LoopOutcome::Terminated; }
+        #[cfg(test)]
+        OsrRunKinds::note(&outcome, self.calls.enters_callees());
         outcome
     }
 
