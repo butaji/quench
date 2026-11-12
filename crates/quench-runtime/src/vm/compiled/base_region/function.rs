@@ -159,7 +159,10 @@ fn plan_row(layout: &Layout, reprs: &Reprs, reached: bool, pc: u32, row: &Decode
     if leaves(layout, row) {
         return plan_step(&Decoded::step(Step::Leave, None), layout, pc, helpers);
     }
-    Ok(Planned { pre: preludes(layout, row, pc)?, ..plan(row, layout, pc, is_general(row, reprs), helpers)? })
+    let mut planned = plan(row, layout, pc, is_general(row, reprs), helpers)?;
+    // The preludes come before the row's own run (a chain's spills): their leaves write the pinned registers back themselves.
+    planned.pre.splice(0..0, preludes(layout, row, pc)?);
+    Ok(planned)
 }
 
 /// The body of the function `function` that `region` spans, over the registers observed at its

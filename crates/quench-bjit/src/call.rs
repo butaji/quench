@@ -12,8 +12,8 @@ use std::sync::{Mutex, OnceLock};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CallRow {
     /// The helper call: value holes 0 (the call pc) and 1 (the helper's address); successors
-    /// NEXT (completed), EXIT0 (missed: leave at the pc, no spill), EXIT1 (leave with
-    /// (status, word) in the first two pinned ints: `LEAVE_STATUS`).
+    /// NEXT (completed), TAKEN (a step that branched), EXIT0 (missed: leave at the pc, no spill),
+    /// EXIT1 (leave with (status, word) in the first two pinned ints: `LEAVE_STATUS`).
     Helper,
     /// The direct call of `argc` arguments (at most `MAX_DIRECT_ARGC`) through an entry cell:
     /// value hole 0 is the `CallRecord`'s address; successors NEXT (refused: the helper row),
@@ -79,7 +79,7 @@ mod tests {
             let values: Vec<u32> = stencil.relocs.iter().filter(|r| !r.pc_relative).map(|r| r.index).collect();
             match row {
                 CallRow::Helper => {
-                    assert!([NEXT, EXIT, EXIT + 1].iter().all(|s| successors.contains(s)), "{successors:?}");
+                    assert!([NEXT, TAKEN, EXIT, EXIT + 1].iter().all(|s| successors.contains(s)), "{successors:?}");
                     assert!(values.contains(&0) && values.contains(&1), "{values:?}");
                 }
                 CallRow::Here => {

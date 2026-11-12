@@ -17,7 +17,9 @@
 //! the helper's address (`lane_body_call`); vm, residual and lane context come from the
 //! dispatch payload behind the context. Successors: COMPLETED continues at NEXT; MISSED
 //! (nothing ran) leaves at the call's pc through EXIT0 (a leave that does not spill); LEFT and
-//! TERMINATED leave through EXIT1 with the (status, word) in r14, r15 (`leave_status`).
+//! TERMINATED leave through EXIT1 with the (status, word) in r14, r15 (`leave_status`); BRANCHED
+//! (a step that took its conditional jump) continues at TAKEN, the reloads of the registers live
+//! at the jump's target.
 //!
 //! Direct row `call_direct_a<N>_<strict|sloppy>`: hole V0 = the address of the site's
 //! `CallRecord`. It checks the callee word and (sloppy) the receiver, admits the call with the
@@ -36,7 +38,7 @@
 
 #[path = "../src/call_record.rs"]
 mod call_record;
-use self::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_STATUS};
+use self::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_STATUS};
 use crate::codes::{LAST_INT_PIN, PIN, PINF};
 use crate::heap_rows::{payload, word_at};
 use crate::layout::{CELL_BODY_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_CONTEXT, JS_STEP_NATIVE_END, JS_STEP_NATIVE_TOP, JS_STEP_RESIDUAL, JS_STEP_SHADOW_END, JS_STEP_SHADOW_TOP, JS_STEP_VM, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
@@ -133,6 +135,7 @@ pub unsafe extern "rust-preserve-none" fn call_helper(frame: usize, ctx: usize, 
         let status = helper(word_at(payload, JS_STEP_VM), word_at(payload, JS_STEP_RESIDUAL), word_at(payload, JS_STEP_LANE_CONTEXT), hole64::<HOLE_CALL_PC>());
         match status {
             LANE_CALL_COMPLETED => go!(HOLE_NEXT, dead(&s)),
+            LANE_CALL_BRANCHED => go!(HOLE_TAKEN, dead(&s)),
             LANE_CALL_MISSED => {
                 core::hint::cold_path();
                 go!(HOLE_EXIT0, dead(&s))

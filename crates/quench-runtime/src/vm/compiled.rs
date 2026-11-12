@@ -6726,6 +6726,9 @@ pub(super) const LANE_CALL_MISSED: u64 = 1;
 pub(super) const LANE_CALL_LEFT: u64 = 2;
 /// Termination is terminal: the outer native body must not reconstruct or replay a call.
 pub(super) const LANE_CALL_TERMINATED: u64 = 3;
+/// A step the body's helper made in place that took its conditional jump (`ForInNext` at its
+/// end): the body continues at the jump's target, not the next record.
+pub(super) const LANE_CALL_BRANCHED: u64 = 4;
 
 impl LaneExit {
     /// The caller PC a leave or completion is at, with a completion's value written to the

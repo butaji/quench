@@ -46,11 +46,13 @@ unsafe fn lane_body_value_step_record<H: Host>(_vm: u64, _residual: u64, context
     LANE_CALL_LEFT
 }
 
-/// The record at `call_pc`, an instruction whose general step only continues or throws
+/// The record at `call_pc`, an instruction whose general step only continues, jumps or throws
 /// (`lane_steps_in_place`), made by that step on the running frame as `lane_general_step` makes
-/// it: `LANE_CALL_COMPLETED` with its effects in the frame, or `LANE_CALL_MISSED` where it raised
+/// it: `LANE_CALL_COMPLETED` with its effects in the frame, `LANE_CALL_BRANCHED` where it also took
+/// its conditional jump (`ForInNext` past its last key), or `LANE_CALL_MISSED` where it raised
 /// (the error stashed for the general path to raise at the record) or where the record is no
-/// in-place step or runs in a frameless activation, which has no frame; nothing ran then.
+/// in-place step or runs where it has no frame of its own (frameless activations, a native callee's
+/// shadow frames, whose registers and function are not the running frame's); nothing ran then.
 /// `lane_body_step_record`, then the heap bases the body's rows read through the payload reloaded
 /// (`Vm::refresh_body_bases`): the step may have allocated or run guest code.
 ///
@@ -64,18 +66,26 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_step<H: Host>(vm: u64, residual
 }
 
 unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
+    use super::super::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
-    if !vm.lane_stack.activations.is_empty() { return LANE_CALL_MISSED; }
+    if !vm.lane_stack.activations.is_empty() || Vm::<H>::lane_shadow_active() { return LANE_CALL_MISSED; }
     // SAFETY: the context's program outlives the lane run, and `call_pc` is a record of the running frame's function.
     let (code, frame, ip) = unsafe { (&*(*cx).code, (*cx).frame, (*cx).base.add(call_pc as usize)) };
     let function = code.function(vm.frames[frame].function as usize);
     let instruction = decoded_instruction(function, function.code[call_pc as usize]);
     if !lane_steps_in_place(instruction.op()) { return LANE_CALL_MISSED; }
-    let stepped = lane_in_place(cx, ip, |vm, code| {
-        let mut next = call_pc as usize + 1;
-        vm.step(code, frame, instruction, &mut next, false).map(|result| debug_assert!(matches!(result, StepResult::Continue), "an in-place step only continues"))
+    let following = call_pc as usize + 1;
+    let branched = lane_in_place(cx, ip, |vm, code| {
+        let mut next = following;
+        vm.step(code, frame, instruction, &mut next, false).map(|result| {
+            debug_assert!(matches!(result, StepResult::Continue), "an in-place step only continues");
+            next != following
+        })
     });
-    if stepped.is_some() { LANE_CALL_COMPLETED } else { LANE_CALL_MISSED }
+    match branched {
+        Some(true) => LANE_CALL_BRANCHED,
+        Some(false) => LANE_CALL_COMPLETED,
+        None => LANE_CALL_MISSED,
+    }
 }
