@@ -139,12 +139,7 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
     // A failed entry contract resumes at the loop's header, not at the function's first record.
     let resume = if exit == LaneExit::Entry { LaneExit::At(site.header as usize) } else { exit };
     let (resumed, _) = lane_body_left(cx, r, own, &method, resume);
-    let inside = match resume {
-        LaneExit::At(pc) => (site.header..=site.backedge).contains(&(pc as u32)),
-        LaneExit::Returned { .. } | LaneExit::Terminated => false,
-        _ => true,
-    };
-    if inside { site.body.borrow_mut().note_leave(exit); }
+    if resume.inside(site.header..=site.backedge) { site.body.borrow_mut().note_leave(exit); }
     drop(method);
     Some(match resumed {
         LaneBodyLeft::Terminated => LoopAttempt::Leave(super::exit(ip)),
