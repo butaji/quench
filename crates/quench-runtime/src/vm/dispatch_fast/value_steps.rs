@@ -44,8 +44,9 @@ unsafe fn lane_body_value_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64
     let body = unsafe { &*(*cx).code }.function(function as usize);
     // A returning record (`return a + b`) is made as the step that writes its result register: the body's own
     // `Return` row completes the activation with it.
-    let instruction = decoded_instruction(body, body.code[call_pc as usize]).without_return();
-    if !super::super::dispatch::is_value_step(instruction) { return LANE_CALL_MISSED; }
+    let record = decoded_instruction(body, body.code[call_pc as usize]);
+    let instruction = record.without_return();
+    if !super::super::dispatch::is_value_step(instruction) { return unsafe { lane_frames_step_in(cx, call_pc, record) }; }
     let Some([a, b]) = value_step_values(cx, r, instruction) else { return LANE_CALL_MISSED };
     let Some(value) = lane_in_place(cx, ip, |vm, code| vm.value_step(code, instruction, a, b)) else { return LANE_CALL_MISSED };
     // Guest code the step ran may have made the activations frames, whose registers these are.
@@ -55,6 +56,40 @@ unsafe fn lane_body_value_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64
     }
     if after.0 == r.0 { return LANE_CALL_COMPLETED; }
     unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
+    LANE_CALL_LEFT
+}
+
+/// The record `record` at `call_pc`, a step that needs the frame its function runs in (`Op::steps_in_body`: the scope,
+/// name, field, literal and class steps, and a call form that binds `this` or runs `eval`), of an activation that has
+/// none (a native callee, a lane callee): the lane's activations become the frames the interpreter would have run
+/// (`Vm::materialize_deferred_lane`), the step is made on the innermost as the general loop makes it, and the body
+/// leaves for the general path past the record (`LANE_CALL_LEFT`), which resumes in those frames. A record that returned
+/// its result is returned from its frame there (`lane_frame_return`), and an error the step raised is stashed for
+/// the general path to raise at the record (`lane_in_place`). `LANE_CALL_MISSED` where the record is no such step.
+///
+/// # Safety
+/// As `lane_body_step`; `record` is the record at `call_pc` of the innermost activation's function.
+unsafe fn lane_frames_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: WideInstruction) -> u64 {
+    use super::super::compiled::{LANE_CALL_LEFT, LANE_CALL_MISSED};
+    let instruction = record.without_return();
+    if !(instruction.op().steps_in_body() || instruction.op().makes_script_call()) { return LANE_CALL_MISSED; }
+    let (base, pc) = unsafe { ((*cx).base, call_pc as usize) };
+    let ip = unsafe { base.add(pc) };
+    let made = lane_in_place(cx, ip, |vm, code| {
+        vm.materialize_deferred_lane();
+        let frame = vm.frames.len() - 1;
+        vm.frames[frame].pc = pc;
+        vm.frames[frame].pc_is_resume = false;
+        let mut next = pc + 1;
+        vm.step(code, frame, instruction, &mut next, false)?;
+        Ok((next, record.returns_from_frame().then(|| vm.read(frame, instruction.result_register()))))
+    });
+    let resume = match made {
+        Some((_, Some(value))) => lane_frame_return(unsafe { vm(cx) }, ip, value),
+        Some((next, None)) => exit(unsafe { base.add(next) }),
+        None => exit(ip),
+    };
+    unsafe { (*cx).callee_resume = resume; (*cx).callee_acc = Value::UNDEFINED; }
     LANE_CALL_LEFT
 }
 
@@ -77,9 +112,9 @@ fn value_step_values<H: Host>(cx: *mut LaneContext<H>, r: Registers, instruction
 /// `lane_general_step` makes it: `LANE_CALL_COMPLETED` with its effects in the frame,
 /// `LANE_CALL_BRANCHED` where it also took its conditional jump (`ForInNext` past its last key),
 /// or `LANE_CALL_MISSED` where it raised (the error stashed for the general path to raise at the
-/// record, which is how a body's `throw` ends it) or where the record is no such step or runs
-/// where it has no frame of its own (frameless activations, a native callee's shadow frames,
-/// whose registers and function are not the running frame's); nothing ran then. The step may have
+/// record, which is how a body's `throw` ends it) or where the record is no such step; nothing ran
+/// then. Where the body has no frame of its own (a native callee's activation) a step that needs
+/// one makes the activations frames and leaves past it (`lane_frames_step_in`, `LANE_CALL_LEFT`). The step may have
 /// replaced the frame's environment, so the lane's capture caches, which name the old one, are
 /// dropped after it (`lane_clone_env`).
 /// `lane_body_step_record`, then the heap bases the body's rows read through the payload reloaded
@@ -102,7 +137,8 @@ unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64,
 /// `lane_body_step` with the context of the running body, which a native callee's frame made the
 /// innermost (`native_frames::in_innermost_frame`). Where the body runs as lane activations (a native
 /// callee, a lane callee) the steps that have no frame to run in take the value step's form, which
-/// reads the operands from the activation's registers (`lane_body_value_step_in`).
+/// reads the operands from the activation's registers, and the steps that need one the frames step's, which
+/// makes the activations frames (`lane_body_value_step_in`, `lane_frames_step_in`).
 ///
 /// # Safety
 /// As `lane_body_step`.

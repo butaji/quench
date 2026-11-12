@@ -239,15 +239,14 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
     }
 }
 
-/// The step helper's chain at `pc`: the spills, the helper row and the `reloads` after it. The
-/// helper answers completed, branched or missed, so its (status, word) exit is the leave at the
-/// record too.
+/// The step helper's chain at `pc`: the spills, the helper row and the `reloads` after it. The helper answers
+/// completed, branched or missed (nothing ran: the leave at the record), or left, where the step ran in frames it made
+/// of the lane's activations (a frame-needing step of a native callee) and the body leaves past it: the row's
+/// (status, word) exit.
 fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], helpers: LaneHelpers) -> Result<Planned, String> {
     let address = call_plan::helper_address(helpers, LaneHelper::Step).ok_or("step: no helper address")?;
     let spills = layout.spills(pc);
-    let mut row = chained(call_plan::plan_step(pc, address, &spills, reloads)?, spills.len(), None)?;
-    row.exits = vec![Exit::At(pc); row.exits.len()];
-    Ok(row)
+    chained(call_plan::plan_step(pc, address, &spills, reloads)?, spills.len(), None)
 }
 
 /// The pinned registers a row at `pc` reloads before it continues: those live at the next
