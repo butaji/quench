@@ -73,3 +73,17 @@ fn a_hoisted_store_calls_no_helper_in_its_loop_until_its_site_has_missed() {
     let missed = region(FILL, false, true);
     assert!(index_set_calls(&missed, &loop_body(&missed)) > 0, "a recorded miss plans the helper arm: {missed}");
 }
+
+/// Whether `body` loads a record table base as a read-only, movable word.
+fn hoistable_loads(function: &ir::Function, body: &[ir::Inst]) -> usize {
+    body.iter().filter(|&&inst| matches!(function.dfg.insts[inst],
+        ir::InstructionData::Load { flags, .. } if flags.readonly() && flags.can_move())).count()
+}
+
+#[test]
+fn a_numeric_loop_over_an_array_loads_the_record_base_read_only_and_movable() {
+    let numeric = region("function sum(a) { var s = 0; for (var i = 0; i < 100; i++) { s += a[i]; } return s; }", true, false);
+    assert!(hoistable_loads(&numeric, &loop_body(&numeric)) > 0, "the record base is hoisted out of the loop: {numeric}");
+    let storing = region(FILL, false, false);
+    assert_eq!(hoistable_loads(&storing, &loop_body(&storing)), 0, "a loop that stores moves arrays: {storing}");
+}

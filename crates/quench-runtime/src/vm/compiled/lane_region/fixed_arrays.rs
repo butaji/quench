@@ -10,12 +10,23 @@ use super::*;
 use crate::staged::{Constant, Operation};
 
 impl Lowering<'_, '_> {
-    /// Whether every instruction of the unit is a staged operation that cannot move arrays; an
-    /// instruction with no staged operation may.
-    pub(super) fn arrays_stay_put(&self) -> bool {
-        self.unit.instructions.iter().all(|instruction| {
-            Operation::<ir::Value, EmitProof>::decode(*instruction, |_| Some(Constant::untyped(Value::UNDEFINED)))
-                .is_some_and(|operation| !operation.moves_arrays())
+    /// Whether no instruction of the unit may move arrays: each is a staged operation that cannot,
+    /// or a return, or a `Binary` or equality whose operands the facts prove Numbers, which the lane
+    /// lowers inline (a residual with no call-out); any other instruction may.
+    pub(super) fn arrays_stay_put(&self, leaders: &CompoundBitSet, writes: &dyn Fn(WideInstruction) -> Vec<Register>) -> bool {
+        let instructions = &self.unit.instructions;
+        let number = |pc: usize, register: Register| self.facts.before(pc, register, instructions, leaders,
+            &self.program.constants, writes, self.native_calls).is_subtype(Type::NUMBER);
+        instructions.iter().enumerate().all(|(pc, instruction)| {
+            if instruction.op().is_return() { return true; }
+            let decoded = Operation::<ir::Value, EmitProof>::decode(*instruction,
+                |_| Some(Constant::untyped(Value::UNDEFINED)));
+            match decoded {
+                Some(Operation::Binary { left, right, .. } | Operation::Equality { left, right, .. }) =>
+                    number(pc, left) && number(pc, right),
+                Some(operation) => !operation.moves_arrays(),
+                None => false,
+            }
         })
     }
 }
