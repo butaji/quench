@@ -5,7 +5,7 @@
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
 use super::*;
 use super::generator_windows::{open_window_locals, window_environments};
-use super::super::activation::{FrameRecord, JobRoot};
+use super::super::activation::{FrameRecord, JobResume, JobRoot};
 use super::super::dispatch_frame::{ExecutingProgram, LaneExit};
 
 /// The frame index of no frame: reads that look a frame up find none, and any other is a state
@@ -120,8 +120,9 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Runs `context`'s lane from the record `start` enters, until a handler exits, then makes
-    /// the activations frames the general path runs, and restores the lane that was running
+    /// Runs `context`'s lane from the record `start` enters, until a handler exits (a start that
+    /// is itself an exit leaves at once, as a raise at the entry does), then makes the
+    /// activations frames the general path runs, and restores the lane that was running
     /// (`entered`, the floor it raised, was made by `enter_lane_floor`). The record it exited at.
     pub(super) fn drive_lane(
         &mut self,
@@ -134,7 +135,8 @@ impl<H: Host> Vm<H> {
         let cx: *mut LaneContext<H> = context;
         let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
         let _proofs = crate::heap::LaneProofScope::enter();
-        let ip = lane_dispatch(cx, start(cx));
+        let (first, left) = exited(start(cx));
+        let ip = if left { first } else { lane_dispatch(cx, first) };
         #[cfg(feature = "profile-lane-exits")]
         self.record_lane_exit(cx, ip);
         self.materialize_lane_exit(cx);
@@ -210,13 +212,20 @@ impl<H: Host> Vm<H> {
     }
 
     /// Resumes the activation `job` names, an async function's or an async generator's that
-    /// awaited in the lane or a frame, as the root of a lane run over its frame's register
-    /// file, which stays in its owner (`Vm::resume_job_window`): `sent` is the value its
-    /// `await` evaluates to. `code` is the program of its function, the active one, and the
-    /// realm is the one that awaited. `None`, changing nothing, where the lane does not admit
-    /// it (`admit_job`).
-    pub(in crate::vm) fn run_lane_job(&mut self, code: &ResidualProgram, job: JobRoot, sent: Value) -> Option<JobEnd> {
-        let window = self.admit_job(code, job, sent)?;
+    /// awaited in the lane or a frame, or a generator's, as the root of a lane run over its
+    /// frame's register file, which stays in its owner (`Vm::resume_job_window`): `resume` is
+    /// the value its `await` or `yield` evaluates to, or the error it raises there, which a
+    /// handler of its function catches or which ends it in its owner (`JobEnd::Threw`). `code`
+    /// is the program of its function, the active one, and the realm is the one that resumed
+    /// it. `resume` back, changing nothing, where the lane does not admit it (`admit_job`).
+    pub(in crate::vm) fn run_lane_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> Result<JobEnd, JobResume> {
+        let sent = match &resume {
+            JobResume::Sends(sent) => *sent,
+            JobResume::Throws(_) => Value::UNDEFINED,
+        };
+        let Some(window) = self.admit_job(code, job, sent) else {
+            return Err(resume);
+        };
         let mut pending = self.pending_call_stacks.pop().unwrap_or_default();
         let mut executing = ExecutingProgram { id: window.entry.program, retained: None };
         let caller_registers = self.active_registers;
@@ -238,12 +247,15 @@ impl<H: Host> Vm<H> {
             floor: entered.cell,
         };
         let mut context = self.lane_context(start);
-        let ip = self.drive_lane(&mut context, entered, |cx| window.enter(cx));
+        let ip = self.drive_lane(&mut context, entered, |cx| match resume {
+            JobResume::Sends(_) => window.enter(cx),
+            JobResume::Throws(error) => window.enter_raising(cx, error),
+        });
         let end = self.job_end(code, job, &context, ip, &mut pending, executing);
         pending.clear();
         self.pending_call_stacks.push(pending);
         self.active_registers = caller_registers;
-        Some(end)
+        Ok(end)
     }
 
     /// The window `job`'s activation runs over, once the lane admits the run, and the frame's
@@ -346,6 +358,21 @@ impl JobWindow {
             stack.restore_with_objects(0, &mut (*self.frame).with_objects);
             lane_enter_suspended(cx, &self.entry, self.registers, self.pc)
         }
+    }
+
+    /// Enters the window as `enter` does, to raise `error` at the instruction the frame
+    /// suspended at, the one before its resume point: a handler of its function covering that
+    /// record catches the error, else the activation ends in its owner (`lane_raised_exit`).
+    /// The record the lane exits at.
+    fn enter_raising<H: Host>(&self, cx: *mut LaneContext<H>, error: JsError) -> Ip {
+        self.enter(cx);
+        let suspended = self.pc.saturating_sub(1);
+        // SAFETY: the running lane's context.
+        let vm = unsafe { vm(cx) };
+        vm.lane_raised = Some(error);
+        vm.lane_raise_site = super::super::compiled::raise_site(self.entry.function, suspended as u32);
+        // SAFETY: the suspended instruction's record lies in its function's view, which `base` starts.
+        lane_raised_exit(cx, unsafe { self.base.add(suspended) })
     }
 }
 

@@ -2582,6 +2582,12 @@ fn exit(ip: Ip) -> Ip {
     ip.map_addr(|address| address | EXIT_TAG)
 }
 
+/// The record a handler's result names, and whether the result leaves the lane there (`exit`).
+#[inline(always)]
+fn exited(ip: Ip) -> (Ip, bool) {
+    (ip.map_addr(|address| address & !EXIT_TAG), ip.addr() & EXIT_TAG != 0)
+}
+
 /// SAFETY: the context outlives the lane run and no other reference to the
 /// VM is live while a handler runs.
 #[inline(always)]
@@ -22184,8 +22190,8 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
             crate::value::IntegerEncoding::TAG,
             acc,
         );
-        let ip_next = next.map_addr(|address| address & !EXIT_TAG);
-        if next.addr() & EXIT_TAG != 0 {
+        let (ip_next, left) = exited(next);
+        if left {
             return ip_next;
         }
         ip = ip_next;

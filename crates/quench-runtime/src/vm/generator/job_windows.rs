@@ -11,20 +11,19 @@ use crate::heap::AwaitState;
 
 impl<H: Host> Vm<H> {
     /// Resumes the activation `job` names with `resume`, which its owner keeps suspended
-    /// (`job_frame`): in the lane over its frame's register file where the lane admits a
-    /// resumption with a value (`run_lane_job`), else as the frame its owner gives up, which the
+    /// (`job_frame`): in the lane over its frame's register file where the lane admits the
+    /// run (`run_lane_job`), a throw included, else as the frame its owner gives up, which the
     /// general loop runs from the resume point, or, for a throw, from the handler the suspended
     /// `await` or `yield` selects. How the run ended.
     pub(in crate::vm) fn run_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> JobEnd {
+        let resume = match self.run_lane_job(code, job, resume) {
+            Ok(end) => return end,
+            Err(refused) => refused,
+        };
         let (sent, error) = match resume {
             JobResume::Sends(sent) => (sent, None),
             JobResume::Throws(error) => (Value::UNDEFINED, Some(error)),
         };
-        if error.is_none()
-            && let Some(end) = self.run_lane_job(code, job, sent)
-        {
-            return end;
-        }
         self.resume_job_window(job, sent).expect("a job's owner keeps the frame its suspension parked");
         self.push_job_window_frame(job, std::iter::empty(), std::iter::empty());
         let frame = self.frames.len() - 1;

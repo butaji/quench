@@ -1,8 +1,8 @@
 //! An async generator awaiting inside its body parks its frame in its record, so the await's
 //! reaction holds the generator and no continuation of its own; an async activation a promise
-//! job resumes runs in the lane over its frame's register file (`Vm::run_lane_job`); a rejection,
-//! a request of an async generator and a run the lane does not admit resume through the owner of
-//! the frame all the same (`Vm::run_job`).
+//! job resumes runs in the lane over its frame's register file (`Vm::run_lane_job`), a rejection
+//! raising at its await there; a request of an async generator and a run the lane does not admit
+//! resume through the owner of the frame all the same (`Vm::run_job`).
 use super::window_steps::tests::{agree, run};
 use crate::test_host::TestHost;
 use crate::vm::Vm;
@@ -50,8 +50,8 @@ fn an_async_function_awaiting_in_a_loop_resumes_in_the_lane_without_frames() {
 
 #[test]
 fn async_functions_resumed_in_the_lane_reject_and_unwind_through_try_finally() {
-    // A rejection resumes the frame at the await, a throw leaves the lane for the frames the
-    // activation becomes, and the handlers are those of its bytecode either way.
+    // A rejection raises at the await in the lane, which a handler of the function covering it
+    // catches, as a throw in its body does: the handlers are those of its bytecode either way.
     let (lines, _) = run(
         r#"
         const out = [];
@@ -127,4 +127,32 @@ fn async_generator_requests_resume_through_the_record_and_agree_with_the_interpr
         "#,
     );
     assert_eq!(lines, [r#"closed {"value":1,"done":false} {"value":11,"done":false} {"value":20,"done":true} {"done":true}"#]);
+}
+
+#[test]
+fn a_rejection_no_handler_covers_settles_the_async_job_without_a_frame() {
+    // The raise at the await ends the activation in its owner (`JobEnd::Threw`): the promise
+    // rejects and no frame is made for it.
+    let (lines, made) = run(
+        r#"
+        async function fails(promise) { await 1; await promise; return "unreachable"; }
+        fails(Promise.reject("boom")).catch((e) => print("rejected " + e));
+        "#,
+    );
+    assert_eq!(lines, ["rejected boom"]);
+    assert_eq!(made, 0, "the rejection made a frame");
+}
+
+#[test]
+fn a_throw_no_handler_covers_ends_a_generator_step_without_a_frame() {
+    let (lines, made) = run(
+        r#"
+        function* g() { yield 1; yield 2; }
+        const it = g();
+        it.next();
+        try { it.throw("stop"); } catch (e) { print("raised " + e + " " + JSON.stringify(it.next())); }
+        "#,
+    );
+    assert_eq!(lines, [r#"raised stop {"done":true}"#]);
+    assert_eq!(made, 0, "the throw made a frame");
 }
