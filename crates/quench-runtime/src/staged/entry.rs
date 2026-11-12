@@ -17,9 +17,6 @@ const _: () = assert!(ENTRY.receiver_complement == u32::MAX && ENTRY.slot_comple
 /// names a prototype holder (or is empty), or the record's values are not plain. The entry
 /// stores each of its words complemented against the empty entry, so a holder of zero and a
 /// shape equal to the record's shape complemented are the guards.
-// Read by the b-jit stencil generator (thread 7) once it derives GetField from this row; the
-// tests run it on `Concrete` meanwhile.
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     let stored_holder = stage.load_u32(entry, ENTRY.holder_offset as i32);
@@ -56,9 +53,9 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
 /// names in the record table at `records`: the own data value the entry holds, or `None`
 /// (leaving at `miss`) where either table is absent, the word is no direct object, or the entry
 /// is not an own entry for the record's shape (`own_read_entry`). The offset is the row's only
-/// per-site operand, so a site is read as the interpreter's cached read reads it.
-// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
-#[allow(dead_code)]
+/// per-site operand, so a site is read as the interpreter's cached read reads it
+/// (`ic::concrete_site_read` runs this row on `Concrete`; the stencil build runs it on
+/// `StencilStage`).
 #[inline(always)]
 pub(crate) fn site_read<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
     for base in [entries, records] {

@@ -138,6 +138,21 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     load_slot(&mut stage, &at, slot, Form::Either, usize::from(slot) + 1, ()).map(crate::Value::from_bits)
 }
 
+/// The own data value the field cache entry of the site `offset` bytes into `entries` (the
+/// running program's table, `Vm::active_field_entries`) names in `object`, which the object
+/// record table at `records` holds: the interpreter's primary read of a site, `site_read` through
+/// `Concrete`, the row the stencil build compiles from the same definition. `None` where it misses.
+///
+/// # Safety
+/// `entries` is the table of the running program and `offset` a site's byte offset in it,
+/// `records` the object record reservation and `property_values` the base of the arena that
+/// holds the record's run; none outlives the call.
+#[inline(always)]
+pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
+    let mut stage = super::Concrete::new(property_values);
+    super::entry::site_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::Value::from_bits)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1510,12 +1510,12 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Option<Value> {
         debug_assert!(self.specialized_operations_enabled(p));
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        let cache = self.field_cache_entry(site);
-        if cache.holder != NO_FIELD_HOLDER {
-            return None;
-        }
-        let value = self.own_field_entry_hit(cache, receiver)?;
+        debug_assert!(self.field_cache_index(site) < self.field_caches.len());
+        let (entries, records) = (self.active_field_entries as u64, self.heap.object_record_base()? as u64);
+        let offset = usize::from(site) as u64 * super::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
+        // SAFETY: `active_field_entries` is the running program's table (`field_cache_entry`), the
+        // site one of its sites, and the record table and arena the heap's own; the read ends here.
+        let value = unsafe { crate::staged::concrete_site_read(self.heap.arena_values_base(), (entries, records), object, offset) }?;
         #[cfg(feature = "profile-field-primitives")]
         self.profile.field_primitives.hit(crate::profile::field_primitives::Path::PrimaryOwnRead);
         self.profile.field_cache_hit(0, 0);
