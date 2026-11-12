@@ -361,7 +361,7 @@ mod tests {
     /// no fast arm a register's word, a shape or a backing the row can read decides, so the helper
     /// is their whole operation, not a slow arm.
     const RESIDUAL: [Op; 18] = [
-        // The define adds a property: a shape transition and a storage append the object's barrier and shape readers observe (`Object::append_plain`).
+        // The define adds a property. Its staged row (`staged::add`) runs in the interpreter; a stencil needs the site's transition at decode (`Known`), which no planner supplies yet.
         Op::DefineField,
         // The key is converted (guest code) and the property defined through the shape's slow path.
         Op::DefineComputedField,
