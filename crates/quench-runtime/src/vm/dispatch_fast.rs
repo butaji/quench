@@ -12646,15 +12646,78 @@ script_handler! {
             sibling!(lane_load_undefined_global::<H, KIND>, r, ip, Carried::script(cx))
         }
         if global {
-            requicken::<H>(ip, lane_load_global_name::<H, KIND>);
-            sibling!(lane_load_global_name::<H, KIND>, r, ip, Carried::script(cx))
+            requicken::<H>(ip, lane_load_global_name::<H, KIND, false>);
+            sibling!(lane_load_global_name::<H, KIND, false>, r, ip, Carried::script(cx))
         }
         if crate::bytecode::is_intrinsic_name(vm.atom_name(i.imm())) {
             requicken::<H>(ip, lane_load_intrinsic_name::<H, KIND>);
             sibling!(lane_load_intrinsic_name::<H, KIND>, r, ip, Carried::script(cx))
         }
+        // Any other name's scope is a runtime fact, which the general path's read settles
+        // (`lane_load_name_probe`).
+        if !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL) {
+            requicken::<H>(ip, lane_load_name_probe::<H, KIND>);
+            sibling!(lane_load_name_probe::<H, KIND>, r, ip, Carried::script(cx))
+        }
         requicken::<H>(ip, lane_exit::<H>);
         exit(ip)
+    }
+}
+
+/// The by-name read a lane record handed to the general path to settle
+/// (`Vm::settle_name_probe`): where it is, in the running activation's frame.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct NameProbe {
+    program: ProgramId,
+    function: u32,
+    pc: u32,
+}
+
+script_handler! {
+    /// A `LoadName` whose scope the compiler left open (an eval's code, which runs in its
+    /// caller's scope, or a function with an eval of its own): the lane cannot search the
+    /// scope from an activation without a frame, so the read exits to the general path, which
+    /// decides whether the name lands on the global object and quickens the record
+    /// accordingly (`Vm::settle_name_probe`).
+    #[inline(never)]
+    fn lane_load_name_probe<KIND: u8>(cx, r, ip, i, view) {
+        lane_materialize_running_leaf(cx);
+        let vm = unsafe { vm(cx) };
+        vm.name_probe = Some(NameProbe {
+            program: unsafe { (*cx).program },
+            function: lane_running_function(cx),
+            pc: unsafe { ip.offset_from((*cx).base) } as u32,
+        });
+        exit(ip)
+    }
+}
+
+impl<H: Host> Vm<H> {
+    /// The general path's by-name read of `atom` at `pc` of the running frame, when the lane
+    /// left it as a probe: if the name lands on the global object (`name_lands_on_global_object`)
+    /// the record becomes a hinted global read, which an event that could move the name retires
+    /// (`note_dynamic_scope_name`); else the record exits. The probe's record is the one that
+    /// still holds the probe handler; any other read drops it, the record probing again.
+    pub(super) fn settle_name_probe(&mut self, p: &ResidualProgram, pc: usize, atom: Atom, op: Op) {
+        let Some(probe) = self.name_probe.take() else { return };
+        let Some(frame) = self.frames.last() else { return };
+        if (probe.program, probe.function, probe.pc as usize) != (frame.program, frame.function, pc) {
+            return;
+        }
+        let lands = self.name_lands_on_global_object(p, atom);
+        let Some(view) = self.programs.lane_views(probe.program)
+            .and_then(|views| views.get(probe.function as usize))
+            .and_then(|cell| super::program_store::derived_lane_view(cell)) else { return };
+        let (probing, scoped) = match op {
+            Op::LoadName => (lane_load_name_probe::<H, LOAD_NAME> as Handler, lane_load_global_name::<H, LOAD_NAME, true> as Handler),
+            Op::LoadNameCall => (lane_load_name_probe::<H, LOAD_NAME_CALL> as Handler, lane_load_global_name::<H, LOAD_NAME_CALL, true> as Handler),
+            _ => (lane_load_name_probe::<H, LOAD_NAME_TYPEOF> as Handler, lane_load_global_name::<H, LOAD_NAME_TYPEOF, true> as Handler),
+        };
+        // SAFETY: `pc` is a record of the view, whose records live while its program does.
+        let record = unsafe { view.records().add(pc) };
+        if unsafe { (*record).handler } == probing as *const () {
+            requicken::<H>(record, if lands { scoped } else { lane_exit::<H> });
+        }
     }
 }
 
@@ -12787,10 +12850,10 @@ script_handler! {
     /// and the global object's deletes, redefinitions and storage changes change its exact
     /// shape. Any other read takes `lane_load_global_name_refresh`. A `LoadNameCall`
     /// (`LOAD_NAME_CALL`) also writes the call's receiver, `undefined` for a global binding.
-    fn lane_load_global_name<KIND: u8>(cx, r, ip, i, view) {
+    fn lane_load_global_name<KIND: u8, SCOPED: bool>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(value) = vm.record_field_entry_hit(i.field_hint(), vm.realm.globals) else {
-            sibling!(lane_load_global_name_refresh::<H, KIND>, r, ip, Carried::script(cx))
+            sibling!(lane_load_global_name_refresh::<H, KIND, SCOPED>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         if KIND == LOAD_NAME_CALL {
@@ -12808,11 +12871,17 @@ script_handler! {
     /// path for an uninitialized binding. `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as
     /// `undefined`.
     #[inline(never)]
-    fn lane_load_global_name_refresh<KIND: u8>(cx, r, ip, i, view) {
+    fn lane_load_global_name_refresh<KIND: u8, SCOPED: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let atom = i.imm();
+        // A read the general path found past a scope that could declare the name holds only
+        // until some scope does (`Vm::note_dynamic_scope_name`).
+        if SCOPED && vm.dynamic_scope_atoms.contains(atom as usize) {
+            requicken::<H>(ip, lane_exit::<H>);
+            return exit(ip);
+        }
         let value = match vm.global_name_read(code, atom, i.c) {
             super::field_cache::GlobalNameRead::Value(value, hint) => {
                 if let Some(hint) = hint { set_field_hint(ip, hint); }

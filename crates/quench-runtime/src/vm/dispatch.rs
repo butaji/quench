@@ -706,6 +706,9 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_a()),
             )?,
             Op::LoadName => {
+                if self.name_probe.is_some() {
+                    with_binding_site_pc!(self, f, *pc, self.settle_name_probe(p, *pc - 1, i.atom_index(), Op::LoadName));
+                }
                 let v = with_binding_site_pc!(
                     self,
                     f,
@@ -715,6 +718,9 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::LoadNameCall => {
+                if self.name_probe.is_some() {
+                    with_binding_site_pc!(self, f, *pc, self.settle_name_probe(p, *pc - 1, i.atom_index(), Op::LoadNameCall));
+                }
                 let (callee, this) = with_binding_site_pc!(
                     self,
                     f,
@@ -725,6 +731,9 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.register_b(), this);
             }
             Op::LoadNameTypeof => {
+                if self.name_probe.is_some() {
+                    with_binding_site_pc!(self, f, *pc, self.settle_name_probe(p, *pc - 1, i.atom_index(), Op::LoadNameTypeof));
+                }
                 let v = with_binding_site_pc!(
                     self,
                     f,

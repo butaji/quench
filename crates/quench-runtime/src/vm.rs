@@ -1999,6 +1999,13 @@ pub(crate) struct Vm<H> {
     /// the only source of with objects, so until it runs no environment
     /// carries any.
     with_scope_entered: bool,
+    /// The names a scope declared dynamically at any time (`Vm::note_dynamic_scope_name`).
+    dynamic_scope_atoms: crate::bitset::BitSet,
+    /// The names whose by-name reads landed on the global object past a scope that could
+    /// have declared them (`Vm::name_lands_on_global_object`).
+    scoped_name_atoms: crate::bitset::BitSet,
+    /// The by-name read the lane left for the general path to settle (`Vm::settle_name_probe`).
+    name_probe: Option<dispatch_fast::NameProbe>,
     test262_agent: Test262AgentState,
     shared_async_waiters:Vec<atomics::SharedAsyncWaiter>,
     programs: ProgramStore,

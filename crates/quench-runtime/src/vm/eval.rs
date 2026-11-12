@@ -1187,6 +1187,9 @@ impl<H: Host> Vm<H> {
             })
             .map(|atom| (atom, Value::UNDEFINED))
             .collect::<Vec<_>>();
+        for &(atom, _) in &additions {
+            self.note_dynamic_scope_name(atom);
+        }
         if let Some(bindings) = self.own_dynamic_bindings_mut(frame_index) {
             bindings.append(&mut additions);
         }
