@@ -434,7 +434,7 @@ fn a_global_name_read_is_the_host_callout_boundary() {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = ConcreteFrame { registers: vec![0], heap: None };
     let step = step(&mut stage, &mut frame,
-        Operation::GlobalRead { destination: 0, atom: 0, site: 0, binding: GlobalBinding::Dynamic, proof: () });
+        Operation::LoadName { destination: 0, atom: 0, site: 0, receiver: None, proof: () });
     assert!(matches!(step, Step::Unresolved));
 }
 
@@ -459,7 +459,7 @@ fn every_host_callout_operation_has_a_concrete_reading() {
         Operation::MakeArray { destination: 0, length: 0, elements: 0, proof: () },
         Operation::Allocate { destination: 0, allocation: Allocation::Closure { function: 0 }, proof: () },
         Operation::IndexSetHelper { base: 0, key: 1, value: 2, proof: () },
-        Operation::GlobalRead { destination: 0, atom: 0, site: 0, binding: GlobalBinding::Dynamic, proof: () },
+        Operation::LoadName { destination: 0, atom: 0, site: 0, receiver: None, proof: () },
         Operation::FieldStoreMiss { object: 0, atom: 0, site: 0, value: 1, proof: () },
     ];
     for operation in declines {

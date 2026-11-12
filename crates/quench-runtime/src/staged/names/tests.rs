@@ -1,7 +1,7 @@
 //! The name, environment and iteration rows on the interpreter's stage (`Concrete`).
 use crate::bytecode::{Op, Operand, Register, WideInstruction};
 use crate::heap::EnvironmentSlots;
-use crate::staged::{step, CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, Operation, PropertyFrame, Protocol, Step};
+use crate::staged::{step, CallOut, Concrete, Constant, Edge, Frame, GlobalBinding, GlobalFrame, NoPlans, NumericFrame, Operation, PropertyFrame, Protocol, Step};
 use crate::Value;
 use crate::staged::Operation as Row;
 
@@ -15,6 +15,8 @@ struct Probe {
     keys: Vec<u64>,
     calls: Vec<(CallOut, Option<Register>)>,
     global_writes: Vec<(u32, u16, u64, bool)>,
+    /// The immutable global a read of this frame resolves, if any.
+    constant: Option<Value>,
 }
 
 impl Probe {
@@ -61,6 +63,13 @@ impl Frame<Concrete> for Probe {
 }
 
 impl GlobalFrame<Concrete> for Probe {
+    fn global_binding(&mut self, _proof: ()) -> GlobalBinding {
+        self.constant.map_or(GlobalBinding::Dynamic, GlobalBinding::Constant)
+    }
+    fn global_constant(&mut self, _stage: &mut Concrete, destination: Register, value: Value) -> Option<()> {
+        self.registers[usize::from(destination)] = value.to_bits();
+        Some(())
+    }
     fn global_write(&mut self, _stage: &mut Concrete, atom: u32, site: u16, value: u64, initialize: bool) -> Option<()> {
         self.answers().then(|| self.global_writes.push((atom, site, value, initialize)))
     }
@@ -235,4 +244,35 @@ fn a_delete_the_frame_does_not_answer_is_the_vms_and_defines_its_result() {
     assert_eq!(CallOut::Delete { base: 1, key: 2, strict: true }.operands(), [Some(1), Some(2)]);
     frame.declines = true;
     assert!(matches!(run(&mut frame, delete), Step::Unresolved));
+}
+
+#[test]
+fn a_name_read_the_frame_does_not_resolve_is_the_vms_and_a_call_receiver_is_the_interpreters() {
+    let mut frame = Probe::new(2);
+    let read = Row::LoadName { destination: 0, atom: 8, site: 3, receiver: None, proof: () };
+    assert!(matches!(run(&mut frame, read), Step::Value(_)));
+    assert_eq!(frame.calls, [(CallOut::LoadName { atom: 8, site: 3 }, Some(0))]);
+    let call = Row::LoadName { destination: 0, atom: 8, site: 3, receiver: Some(1), proof: () };
+    assert!(matches!(run(&mut frame, call), Step::Unresolved), "a `with` object may be the receiver");
+    assert_eq!(frame.calls.len(), 1, "no call-out was made for it");
+}
+
+#[test]
+fn a_resolved_global_defines_the_name_and_a_calls_receiver_as_undefined() {
+    let mut frame = Probe::new(2);
+    frame.constant = Some(Value::number(5.0));
+    frame.registers[1] = Value::number(1.0).to_bits();
+    let call = Row::LoadName { destination: 0, atom: 8, site: 3, receiver: Some(1), proof: () };
+    assert!(matches!(run(&mut frame, call), Step::Value(_)));
+    assert_eq!(Value::from_bits(frame.registers[0]), Value::number(5.0));
+    assert_eq!(Value::from_bits(frame.registers[1]), Value::UNDEFINED);
+    assert!(frame.calls.is_empty(), "the frame's fact answered it");
+}
+
+#[test]
+fn the_name_reads_decode_with_the_tiers_proof() {
+    let decode = |op| Row::<u64, u8>::decode_load_name(WideInstruction::new(op, 1, 2, 0, 4), 7);
+    assert!(matches!(decode(Op::LoadName), Some(Row::LoadName { destination: 1, atom: 4, receiver: None, proof: 7, .. })));
+    assert!(matches!(decode(Op::LoadNameCall), Some(Row::LoadName { destination: 1, receiver: Some(2), .. })));
+    assert!(decode(Op::Move).is_none());
 }

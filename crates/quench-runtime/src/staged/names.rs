@@ -4,7 +4,8 @@
 //! binding rules (the generic iterator protocol, a store's TDZ and constant checks) is a
 //! `Frame` callout the frame answers or declines (`Frame::vm_step`).
 use super::callout::calling;
-use super::{CallOut, Operation, NumericFrame, NumericStage, Register, Step};
+use super::{CallOut, Constant, GlobalBinding, Operation, NumericFrame, NumericStage, Register, Step};
+use crate::typed_ir::Type;
 use crate::bytecode::{Op, WideInstruction};
 use crate::Value;
 
@@ -42,6 +43,20 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
         Op::ForInNext => Operation::ForInNext { destination: destination(), state: instruction.register_b() },
         _ => return decode_protocol(instruction),
     })
+}
+
+impl<W, P> Operation<W, P> {
+    /// The name read `instruction` (`LoadName`, or a call's `LoadNameCall`) denotes under the
+    /// tier's `proof` of the global it names; `None` for any other opcode.
+    pub(crate) fn decode_load_name(instruction: WideInstruction, proof: P) -> Option<Self> {
+        let receiver = match instruction.op() {
+            Op::LoadName => None,
+            Op::LoadNameCall => Some(instruction.register_b()),
+            _ => return None,
+        };
+        Some(Self::LoadName { destination: instruction.result_register(), atom: instruction.atom_index(),
+            site: instruction.cache_site_index(), receiver, proof })
+    }
 }
 
 /// The iteration and spread steps of `decode`, with the registers `Vm::call_out` reads.
@@ -82,10 +97,43 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
                 None => calling(stage, frame, CallOut::GlobalWrite { source, atom, site, initialize }, None),
             }
         }
+        Operation::LoadName { destination, atom, site, receiver, proof } =>
+            load_name(stage, frame, (destination, receiver), (atom, site), proof),
         Operation::Protocol { step, destination, operands } =>
             calling(stage, frame, CallOut::Protocol { step, operands }, destination),
         Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),
         _ => Step::Unresolved,
+    }
+}
+
+/// The global-name read, by what the frame's binding time leaves known of it.
+#[inline(always)]
+fn global_row<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+    (atom, site): (u32, u16), proof: S::Proof) -> Option<()> {
+    match frame.global_binding(proof) {
+        GlobalBinding::Constant(value) => frame.global_constant(stage, destination, value),
+        GlobalBinding::Held { value, ty } => frame.global_held(stage, destination, value, ty),
+        GlobalBinding::Frozen { value, ty } => frame.global_frozen(stage, destination, atom, site, value, ty, proof),
+        GlobalBinding::Dynamic => frame.global_read(stage, destination, atom, site, proof),
+    }
+}
+
+/// `LoadName`: the global the frame resolves, whose call receiver is `undefined`; else the VM's
+/// read, which a call's receiver (a `with` object) leaves to the interpreter.
+#[inline(always)]
+fn load_name<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    (destination, receiver): (Register, Option<Register>), (atom, site): (u32, u16), proof: S::Proof) -> Step<S::Word, F::Control> {
+    match (global_row(stage, frame, destination, (atom, site), proof), receiver) {
+        (None, None) => calling(stage, frame, CallOut::LoadName { atom, site }, Some(destination)),
+        (None, Some(_)) => Step::Unresolved,
+        (Some(()), receiver) => {
+            if let Some(receiver) = receiver {
+                let undefined = Value::UNDEFINED;
+                let (word, fact) = frame.constant(stage, Constant { value: undefined, ty: Type::immediate(undefined) });
+                frame.write(stage, receiver, word, fact);
+            }
+            Step::Value(stage.constant(0))
+        }
     }
 }
 

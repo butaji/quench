@@ -63,6 +63,8 @@ impl<H: Host> Vm<H> {
             }
             CallOut::GlobalTypeof { atom, site } =>
                 self.at_binding_site(frame, resume, |vm| vm.load_name_typeof(p, atom, site)).map(Some),
+            CallOut::LoadName { atom, site } =>
+                self.at_binding_site(frame, resume, |vm| vm.load_name(p, atom, Some(site))).map(Some),
             _ => unreachable!("{operation:?} is no name step"),
         }
     }
@@ -139,10 +141,22 @@ impl<H: Host> Vm<H> {
     }
 
     /// The call-out row `i` (`ToPropertyKey`, `GetIterator`, `ForInStart`, `IteratorClose`,
-    /// `AppendArray`) at `site`, by its staged row on the interpreter's stage: the words
+    /// `AppendArray`, `Delete`) at `site`, by its staged row on the interpreter's stage: the words
     /// decide a string key, and the VM makes every other step.
     pub(super) fn staged_value_step(&mut self, p: &ResidualProgram, site: CallSite, i: WideInstruction) -> Result<(), JsError> {
         let row = Operation::<u64, ()>::decode(i, |_| None).expect("a value step decodes");
+        self.staged_row(p, site, row)
+    }
+
+    /// The name read `i` (`LoadName`) at `site`, by its staged row on the interpreter's stage: the
+    /// interpreter proves nothing of a global, so the VM's binding rules read it.
+    pub(super) fn staged_load_name(&mut self, p: &ResidualProgram, site: CallSite, i: WideInstruction) -> Result<(), JsError> {
+        let row = Operation::<u64, ()>::decode_load_name(i, ()).expect("a name read decodes");
+        self.staged_row(p, site, row)
+    }
+
+    /// `row` on the interpreter's stage over the running frame: an error the VM raised is thrown.
+    fn staged_row(&mut self, p: &ResidualProgram, site: CallSite, row: Operation<u64, ()>) -> Result<(), JsError> {
         let mut frame = HostFrame { vm: self, program: p, site, raised: None };
         match crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut frame, row) {
             Step::Unresolved => Err(frame.raised.expect("a step left to the VM raised")),

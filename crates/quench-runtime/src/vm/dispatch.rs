@@ -646,13 +646,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_a()),
             )?,
             Op::LoadName => {
-                let v = with_binding_site_pc!(
-                    self,
-                    f,
-                    *pc,
-                    self.load_name(p, i.atom_index(), Some(i.cache_site_index()))
-                )?;
-                self.write(f, i.result_register(), v);
+                self.staged_load_name(p, super::call_out::CallSite { frame: f, function: self.frames[f].function, resume: *pc }, i)?;
             }
             Op::LoadNameCall => {
                 let (callee, this) = with_binding_site_pc!(

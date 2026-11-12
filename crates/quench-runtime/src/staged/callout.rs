@@ -18,6 +18,7 @@ pub(crate) const TAG_GLOBAL_WRITE: u8 = 8;
 pub(crate) const TAG_GLOBAL_TYPEOF: u8 = 9;
 pub(crate) const TAG_TYPEOF: u8 = 10;
 pub(crate) const TAG_DELETE: u8 = 11;
+pub(crate) const TAG_LOAD_NAME: u8 = 12;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -55,6 +56,9 @@ pub(crate) enum CallOut {
     /// `delete base[key]` by the VM's `delete_reference_property_mode`, which throws on a
     /// refusal where `strict` or the running function is strict.
     Delete { base: Register, key: Register, strict: bool } = TAG_DELETE,
+    /// The value of the name `atom` through cache `site`, by the binding rules of the running
+    /// frame (`Vm::load_name`: a `with` scope, a global, an uninitialized binding).
+    LoadName { atom: u32, site: u16 } = TAG_LOAD_NAME,
 }
 
 impl CallOut {
@@ -65,7 +69,7 @@ impl CallOut {
             Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::Delete { base: left, key: right, .. } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::Typeof { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
-            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } => [None, None],
+            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. } => [None, None],
             Self::Protocol { operands, .. } => operands,
         }
     }

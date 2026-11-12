@@ -9,7 +9,6 @@ impl Lowering<'_, '_> {
     /// Stable fact while the realm compiled against is the active one (`hold_global`); else
     /// the lane's own read, which leaves where it misses.
     pub(super) fn global_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        let register = instruction.result_register();
         let (binding, held, exit) = match self.global_reads[&pc] {
             GlobalRead::Constant(value) => (GlobalBinding::Constant(value), None, None),
             GlobalRead::Stable { value, ty, fact, global, realm_offset } if self.division().folds(BindingTime::Stable) =>
@@ -21,21 +20,11 @@ impl Lowering<'_, '_> {
         if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
             self.hold_global(state, exit, fact, (global, realm_offset));
         }
-        let proof = super::EmitProof::GlobalRead { miss: exit };
+        let proof = super::EmitProof::GlobalRead { miss: exit, binding };
         let edges = exit.map_or(frame::Edges::Value, |miss| frame::Edges::ValueGuarded { miss });
-        self.step(state, edges, crate::staged::Operation::GlobalRead { destination: register,
-            atom: instruction.atom_index(), site: instruction.cache_site_index(), binding, proof });
-        // A call's receiver is `undefined` for a binding of the global scope.
-        if instruction.op().is_load_name_call() {
-            self.define_immediate(state, instruction.register_b(), Value::UNDEFINED);
-        }
+        let row = crate::staged::Operation::decode_load_name(instruction, proof).expect("a global read is a name read");
+        self.step(state, edges, row);
         true
-    }
-
-    /// Defines `register` as the immediate `value`, of its own type.
-    fn define_immediate(&mut self, state: &mut State, register: Register, value: Value) {
-        let bits = self.ins().iconst(types::I64, value.to_bits() as i64);
-        self.define(state, register, bits, RegisterFact::definition(Type::immediate(value), Representation::Tagged));
     }
 
     /// Before loop `header`, the proofs its blocks would otherwise make each iteration: the

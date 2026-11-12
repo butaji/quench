@@ -155,7 +155,7 @@ fn guard_word(stage: &mut Emit<'_, '_>, word: ir::Value, cc: IntCC, value: Value
 /// value is the destination's tagged word.
 fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     atom: u32, site: u16, proof: EmitProof) -> Option<()> {
-    let EmitProof::GlobalRead { miss: Some(miss) } = proof else { return None };
+    let EmitProof::GlobalRead { miss: Some(miss), .. } = proof else { return None };
     let value = global_word(frame, stage, atom, site);
     guard_word(stage, value, IntCC::NotEqual, Value::DELETED, miss);
     <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
@@ -196,13 +196,19 @@ fn global_held(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination:
 /// A whole-program value the read checks: a changed binding leaves, then the checked constant is held.
 fn global_frozen(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     (atom, site): (u32, u16), (value, ty): (Value, Type), proof: EmitProof) -> Option<()> {
-    let EmitProof::GlobalRead { miss: Some(miss) } = proof else { return None };
+    let EmitProof::GlobalRead { miss: Some(miss), .. } = proof else { return None };
     let actual = global_word(frame, stage, atom, site);
     guard_word(stage, actual, IntCC::Equal, value, miss);
     global_held(frame, stage, destination, value, ty)
 }
 
 impl crate::staged::GlobalFrame<Emit<'_, '_>> for EmitFrame<'_> {
+    fn global_binding(&mut self, proof: EmitProof) -> crate::staged::GlobalBinding {
+        match proof {
+            EmitProof::GlobalRead { binding, .. } => binding,
+            _ => crate::staged::GlobalBinding::Dynamic,
+        }
+    }
     fn global_constant(&mut self, stage: &mut Emit<'_, '_>, destination: Register, value: Value) -> Option<()> { global_constant(self, stage, destination, value) }
     fn global_held(&mut self, stage: &mut Emit<'_, '_>, destination: Register, value: Value, ty: Type) -> Option<()> { global_held(self, stage, destination, value, ty) }
     fn global_frozen(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, value: Value, ty: Type, proof: EmitProof) -> Option<()> {

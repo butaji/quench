@@ -288,9 +288,11 @@ pub(crate) enum Operation<W, P> {
     /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
     /// miss edge takes a failed store.
     IndexSetHelper { base: W, key: W, value: W, proof: P },
-    /// The global-name read of `atom` through cache `site`, defined into `destination` as
-    /// `binding` says; a miss leaves at the proof's edge.
-    GlobalRead { destination: Register, atom: u32, site: u16, binding: GlobalBinding, proof: P },
+    /// The name read of `atom` through cache `site` into `destination`, and `undefined` into
+    /// `receiver` where it is a call's: the frame's facts about the global (`GlobalFrame::global_binding`)
+    /// decide it, else the VM's read (`CallOut::LoadName`). A call's receiver is the VM's where
+    /// a `with` scope may bind the name, so a read the frame does not resolve leaves.
+    LoadName { destination: Register, atom: u32, site: u16, receiver: Option<Register>, proof: P },
     /// Define `destination` as `undefined` (`void`).
     Void { destination: Register },
     /// Define `destination` with the index in `bytecode::TYPEOF_NAMES` of the name `typeof
