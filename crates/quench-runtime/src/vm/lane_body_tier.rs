@@ -110,14 +110,21 @@ impl LaneView {
         TIERS.lane_body.warmup_entries << self.history.get().lifetimes.min(7)
     }
 
-    /// Whether a function entered rarely has still been entered at least `RECURRENT_ENTRIES` times
+    /// Whether a closed loop of the function runs in a region that still enters native code:
+    /// its calls pay that region's entry, which the function's own body would not.
+    pub(in crate::vm) fn enters_region(&self) -> bool {
+        self.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters())
+    }
+
+    /// Whether a function entered rarely, whose loops run no region that enters native code (its
+    /// work is already native), has still been entered at least `RECURRENT_ENTRIES` times
     /// over `RECURRENT_TICKS` warming entries of the program: an entry that runs long (a driver whose callees
     /// are hot) costs more than the many cheap entries the warm-up counts, and its callees'
     /// bodies run from the lane until it specializes and inlines them. Read every
     /// `RECURRENT_ENTRIES`th entry.
     fn recurrent(&self, entries: u16) -> bool {
         entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && self.history.get().lifetimes == 0
-            && warm_clock().wrapping_sub(self.warm_since.get()) >= RECURRENT_TICKS
+            && warm_clock().wrapping_sub(self.warm_since.get()) >= RECURRENT_TICKS && !self.enters_region()
     }
 
     /// Whether `entries` is a count at which its function weighs a compile: the warm-up, then
@@ -367,17 +374,10 @@ pub(super) fn site_targets<'a, H: super::Host>(vm: &'a super::Vm<H>, view: &Lane
 }
 
 
-/// What a first compile of `view` comes to before any planning. Entry warm-up leaves closed
-/// loops to their admitted regions while those still enter native code (a region that leaves
-/// for calls still lets a lane body inline those callees into its typed unit). A function
-/// whose callees still compile waits for their bodies, which it then calls by their entries
+/// What a first compile of `view` comes to before any planning. A function whose callees still compile waits for their bodies, which it then calls by their entries
 /// (`compiled::DirectCallee`).
 pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, body: Option<&crate::bytecode::Function>) -> Option<super::super::compiled::LaneBodyOutcome> {
     use super::super::compiled::LaneBodyOutcome;
-    if view.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters()) {
-        super::dispatch_fast::lane_body_stats::decline("start-gate: closed loop left to its admitted region");
-        return Some(LaneBodyOutcome::Declined);
-    }
     let body = body?;
     let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {
         super::decoded_instruction(body, *packed).op().is_call()
