@@ -1790,7 +1790,7 @@ pub(crate) struct CallPlan {
     /// frame's register file, binding the window from the record as a call binds a fresh one
     /// (`FrameRecord::open_environment_window`) and storing it back at the suspension. Its
     /// names may resolve through `with` objects and dynamic bindings, which its record carries
-    /// and its window's handlers read (`holds_scope`, `scoped_names`).
+    /// and its window's handlers read (`scoped_names`).
     pub(crate) suspended_environment: bool,
 }
 
@@ -2294,15 +2294,14 @@ impl Function {
     /// environment, and every instruction that addresses one is a record the window's handlers
     /// read. A function's own name binding is a local too, which the entry initializes with the
     /// callee and whose stores leave the lane (`specialize_environment_window`).
-    fn locals_ride_window(&self, tables: &impl FactTables, scoped: bool) -> bool {
+    fn locals_ride_window(&self, tables: &impl FactTables) -> bool {
         self.arguments_own_their_slots(|atom| tables.atom_name(atom))
             && self.local_registers.is_empty()
             && (self.arguments_slot.is_none() || self.reads_passed_arguments_only() || self.arguments_ride_window())
             && self.initial_register == InitialRegister::Undefined
-            && (self.names_resolve_in_window() || scoped && self.holds_scope())
             // The implicit bindings `activation_binding_reads` names, but for clones, are a frame's:
             // a suspended function's record keeps them (and gives them to the environment its
-            // window makes, `Vm::promote_record_environment`), and the opcodes that read them
+            // window makes, `window_environment`), and the opcodes that read them
             // exit the lane to the frame it becomes.
             && (!self.body_binding_reads_beside_clones(tables) || self.suspends_in_record())
             && self.instructions().all(|instruction| {
@@ -2328,29 +2327,6 @@ impl Function {
                         // The window keeps every value passed, which these answer.
                         || op.reads_arguments())
             })
-    }
-
-    /// Whether the function reaches no scope at run time and lays its locals out selectively:
-    /// the shapes whose every name an environment window answers by slot. An activation that
-    /// consults `with` objects, binding sites or dynamic bindings (`has_dynamic_scope_access`)
-    /// reads them through its activation, which only a function that suspends in a record has
-    /// (`holds_scope`).
-    fn names_resolve_in_window(&self) -> bool {
-        !self.inherited_with_scope
-            && self.binding_sites.is_empty()
-            && self.selective_capture_slots.is_some()
-            && !self.has_dynamic_scope_access()
-    }
-
-    /// Whether a function may lay out an environment window though it resolves names through
-    /// `with` objects, binding sites or dynamic bindings, which its activation's scope chain and,
-    /// for a function that suspends, its record carry (`FrameRecord::with_objects`,
-    /// `FrameRecord::dynamic_bindings`): one that makes no iteration copy of its environment
-    /// (`CloneEnv`), which would have to share them (`Vm::iteration_environment`). An ordinary
-    /// function has no record to keep implicit bindings, so `locals_ride_window` admits it only
-    /// where it reads none.
-    pub(crate) fn holds_scope(&self) -> bool {
-        !self.instructions().any(|instruction| instruction.op() == Op::CloneEnv)
     }
 
     /// Whether the `arguments` object a suspending function made on entry rides its window as
@@ -2430,7 +2406,7 @@ impl Function {
                         .addressed_local_slots()
                         .all(|slot| Some(slot) == self.arguments_slot)
                 });
-            let environment_activation = in_loop && self.parent.is_some() && self.locals_ride_window(tables, true);
+            let environment_activation = in_loop && self.parent.is_some() && self.locals_ride_window(tables);
             let suspendable = self.suspends_in_record();
             let suspended_registers = suspendable
                 && registers_layout_of_any_kind
@@ -2445,7 +2421,7 @@ impl Function {
             let suspended_environment = suspendable
                 && !suspended_registers
                 && self.parent.is_some()
-                && self.locals_ride_window(tables, true);
+                && self.locals_ride_window(tables);
             CallPlan {
                 environment_activation,
                 suspended_registers,

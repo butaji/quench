@@ -82,3 +82,20 @@ fn a_named_function_expression_binds_its_own_name_in_its_window() {
     );
     assert_eq!(lines, ["720|function3|TypeError2|function,4|6|60000"]);
 }
+
+#[test]
+fn iteration_copies_of_a_window_environment_share_its_dynamic_scope() {
+    // A loop's per-iteration environment copy under a `with` statement, in an ordinary function
+    // and a generator, whose closures read the object's binding and their own iteration's.
+    let lines = agree(
+        r#"
+        function ordinary(o) { const fs = []; with (o) { for (let i = 0; i < 3; i++) fs.push(() => i + x); } return fs.map((f) => f()).join(); }
+        function* generating(o) { const fs = []; with (o) { for (let i = 0; i < 3; i++) { fs.push(() => i + x); yield i; } } yield fs.map((f) => f()).join(); }
+        const o = { x: 10 };
+        let last;
+        for (const v of generating(o)) last = v;
+        print([ordinary(o), last].join("|"));
+        "#,
+    );
+    assert_eq!(lines, ["10,11,12|10,11,12"]);
+}
