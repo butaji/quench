@@ -63,7 +63,7 @@ fn entry_view(b: &mut StencilBuilder, payload: ir::Value, hole: u32, writable: b
     let entry = emit_js_payload_word(b.b, payload, std::mem::offset_of!(JsStepDispatch, loop_entry));
     let at = b.operand(Operand::Hole(hole), Ty::I64);
     let (values, length) = staged::entry::entry_backing(&mut super::object_slots::emit(b.b), entry, EmitImm::Value(at));
-    DenseArrayView { values, length, writable, uncounted: false }
+    DenseArrayView { values, length, writable, uncounted: false, bounded: false }
 }
 
 fn element(b: &mut StencilBuilder, payload: ir::Value, row: HeapRow, miss: ir::Block) -> ir::Value {
