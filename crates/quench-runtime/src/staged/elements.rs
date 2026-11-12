@@ -178,6 +178,21 @@ pub(crate) unsafe fn concrete_replace_element(values: *mut crate::Value, index: 
     replace_element(&mut stage, values as u64, address as u64, old.to_bits(), value.to_bits());
 }
 
+/// The interpreter's reading of `append_in_room`: `value` appended to the direct array `array` among
+/// the array records at `record_base` where its backing is writable and has room; false (changing
+/// nothing) leaves the append to the VM, which grows the backing. A reference passes the write
+/// barrier and a hole is no element, so neither is a word the row appends.
+#[inline(always)]
+pub(crate) fn concrete_append_in_room(record_base: *const crate::heap::ArrayObject, array: crate::Value, value: crate::Value) -> bool {
+    if value.heap_index().is_some() || value.is_deleted() {
+        return false;
+    }
+    let mut stage = Concrete::new(std::ptr::null());
+    array_backing(&mut stage, record_base as u64, array.to_bits(), ()).is_some_and(|backing| {
+        writable_backing(&mut stage, backing, ()).is_some() && append_in_room(&mut stage, backing, value.to_bits(), ()).is_some()
+    })
+}
+
 /// The interpreter's reading of `other`.
 #[inline(always)]
 pub(crate) fn concrete_other(value: crate::Value) -> u32 {
@@ -290,5 +305,26 @@ mod tests {
         assert_eq!(elements.len(), elements.capacity());
         assert_eq!(append_in_room_of(elements, Value::integer(0)), None, "a full backing leaves for the VM to grow it");
         assert_eq!(elements.len(), elements.capacity(), "the leave wrote nothing");
+    }
+
+    #[test]
+    fn the_interpreter_appends_in_room_and_leaves_references_holes_and_full_backings() {
+        use crate::heap::{ArrayElements, ArrayObject, Cell, Heap};
+        let mut heap = Heap::new();
+        let mut backing = ArrayElements::from_slice(&[Value::integer(1)]);
+        backing.make_mut().reserve(2);
+        let array = heap.alloc(Cell::Array { object: ArrayObject::fresh(Value::NULL, backing) });
+        let records = heap.array_record_base().expect("an array record");
+        assert!(concrete_append_in_room(records, array, Value::number(2.5)));
+        assert!(!concrete_append_in_room(records, array, array), "a reference passes the write barrier");
+        assert!(!concrete_append_in_room(records, array, Value::DELETED), "a hole is no element");
+        assert!(!concrete_append_in_room(records, Value::NULL, Value::integer(1)), "no array");
+        let mut length = 2;
+        while concrete_append_in_room(records, array, Value::integer(0)) {
+            length += 1;
+            assert!(length < 64, "the room is the capacity word's");
+        }
+        let elements = heap.array(array).expect("the array").elements();
+        assert_eq!((elements.len(), elements.as_slice()[1]), (length, Value::number(2.5)));
     }
 }
