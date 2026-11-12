@@ -137,3 +137,23 @@ fn a_dead_parameter_is_not_guarded_at_entry() {
          print(t);",
     );
 }
+
+/// An array's `length` is read from its record in the body, at each test of the loop; the
+/// interpreter's answer for an array with extras (an arguments object) or a non-array base is
+/// the instruction's own, which a row leaves for.
+#[test]
+fn array_length_runs_in_a_body() {
+    assert_bodies_never_leave(
+        "function sum(a) { let s = 0; for (let i = 0; i < a.length; i++) s = s + a[i]; return s; }
+         const xs = [1, 2, 3, 4, 5, 6, 7, 8]; let t = 0;
+         for (let k = 0; k < 300; k++) t = (t + sum(xs)) | 0;
+         print(t); print(sum([])); print(sum([5]));",
+    );
+    let (interpreted, compiled, _) = run_both(
+        "function n(a) { return a.length; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + n([k, 2])) | 0;
+         print(t); print(n('hello')); print(n({ length: 4 })); print(n(function (a, b) {}));
+         print((function () { return n(arguments); })(1, 2, 3));",
+    );
+    assert_eq!(interpreted, compiled);
+}

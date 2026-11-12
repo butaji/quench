@@ -31,6 +31,8 @@ pub(super) enum Heap {
     /// The own data field the site's field cache entry names, read from the object register
     /// whose frame offset sits above the destination's in hole 0 (hole 2: the entry's byte offset).
     Site,
+    /// The `length` of the direct array at hole 1, an int32 (what the array's record counts).
+    Length,
 }
 
 /// A heap row: its operation and where its operands and destination live.
@@ -54,6 +56,7 @@ impl Heap {
             Heap::Field => library::FIELD_ROW,
             Heap::Array => library::ARRAY_ROW,
             Heap::Site => library::SITE_ROW,
+            Heap::Length => library::LENGTH_ROW,
         }
     }
 }

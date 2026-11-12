@@ -153,10 +153,16 @@ fn entry_array(region: &LoopRegion, facts: Facts, register: Register) -> u64 {
     }
 }
 
-/// The row of a field read: the value the loop's entry recorded, or the site's cache entry
-/// (a named field of a register, not of `this`, whose receiver arrives outside the registers).
-fn field_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+/// The row of a field read: an array's `length`, the value the loop's entry recorded, or the
+/// site's cache entry (a named field of a register, not of `this`, whose receiver arrives outside
+/// the registers).
+fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     let result = Some(instruction.result_register());
+    if let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
+        && known.names_length(atom)
+    {
+        return Some(Decoded::heap(Heap::Length, result, Some(Source::Register(base.register_index()?)), None));
+    }
     if matches!(facts, Facts::Site) {
         let FieldLookup::Atom { base, cache_site, .. } = instruction.field_lookup()? else { return None };
         let site = u64::from(cache_site) * crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
@@ -170,7 +176,7 @@ fn field_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstru
 
 /// The heap instructions: a capture, a dense element read or store, a recorded or cached field,
 /// the proof that a base is an array.
-pub(super) fn heap_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     let register = |register| Some(Source::Register(register));
     match instruction.op().class() {
         Class::LoadCapture if instruction.capture_depth() == 0 => {
@@ -188,15 +194,15 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: 
             Some(Decoded { base: Some(instruction.register_b()), hole: entry_array(region, facts, instruction.register_b()), ..row })
         }
         Class::RequireObjectCoercible => Some(Decoded::heap(Heap::Array, None, register(instruction.register_b()), None)),
-        Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, pc, instruction),
+        Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
         _ => None,
     }
 }
 
-pub(super) fn decode(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction) -> Result<Decoded, String> {
+pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u32, instruction: WideInstruction) -> Result<Decoded, String> {
     let decoded = match numeric_row(region, instruction) {
         Some(decoded) => decoded,
-        None => heap_row(region, facts, pc, instruction).filter(|_| instruction.result_flags() == 0),
+        None => heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0),
     };
     decoded.ok_or_else(|| reject(region, instruction))
 }

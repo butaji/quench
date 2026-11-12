@@ -48,6 +48,7 @@ pub const STORE_ROW: u8 = 2;
 pub const FIELD_ROW: u8 = 3;
 pub const ARRAY_ROW: u8 = 4;
 pub const SITE_ROW: u8 = 5;
+pub const LENGTH_ROW: u8 = 6;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries
 /// the destination's frame offset beneath it.
 pub const SITE_OBJECT_AT: u32 = 32;

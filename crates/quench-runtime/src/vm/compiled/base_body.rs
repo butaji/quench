@@ -6,6 +6,7 @@
 
 use super::*;
 use super::base_region::function::{build_body, Body};
+use super::base_region::Known;
 use crate::bytecode::Register;
 use crate::compile::liveness::RegisterMasks;
 
@@ -46,7 +47,7 @@ impl<H: Host> Vm<H> {
         let masks: Option<&std::rc::Rc<RegisterMasks>> = program.shared_register_root_masks(function);
         let Some(region) = LoopRegion::of_function(body.instructions().collect(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let (ints, doubles) = observed(parameters);
-        let Ok(built) = build_body(&region, body.registers, &widened(generic), [&ints, &doubles]) else { return LaneBodyOutcome::Declined };
+        let Ok(built) = build_body(&region, Known { program }, body.registers, &widened(generic), [&ints, &doubles]) else { return LaneBodyOutcome::Declined };
         let Some(method) = LaneMethod::of_base_body(&built, function, body.registers) else { return LaneBodyOutcome::Declined };
         if !method.amortizes_entry() { return LaneBodyOutcome::Short }
         self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()).map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)

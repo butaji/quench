@@ -20,11 +20,11 @@ pub(in crate::vm::compiled) struct Body {
 
 /// The row of the instruction at `pc`: what the loop regions' decode covers (a heap row from the
 /// heap's tables), a `Return` of a register, or an exit.
-fn cover(region: &LoopRegion, pc: u32, registers: u16, instruction: WideInstruction) -> Decoded {
+fn cover(region: &LoopRegion, known: Known, pc: u32, registers: u16, instruction: WideInstruction) -> Decoded {
     let plain = instruction.result_flags() == 0;
     let row = match instruction.op().class() {
         Class::Return if plain && instruction.register_a() < registers => Some(Decoded::ending(End::Return, Some(Source::Register(instruction.register_a())))),
-        _ => numeric_row(region, instruction).unwrap_or_else(|| heap_row(region, Facts::Site, pc, instruction).filter(|_| plain)),
+        _ => numeric_row(region, instruction).unwrap_or_else(|| heap_row(region, Facts::Site, known, pc, instruction).filter(|_| plain)),
     };
     row.unwrap_or_else(|| Decoded::ending(End::Exit, None))
 }
@@ -97,7 +97,7 @@ fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, Str
 fn framed(homes: &Homes, row: &Decoded) -> bool {
     let through = match row.heap {
         Some(Heap::Store) => row.base,
-        Some(Heap::Index | Heap::Array | Heap::Site) => row.a.and_then(register_of),
+        Some(Heap::Index | Heap::Array | Heap::Site | Heap::Length) => row.a.and_then(register_of),
         _ => None,
     };
     through.is_none_or(|register| homes.place(register) == Place::Mem)
@@ -117,8 +117,8 @@ fn plan_row(layout: &Layout, reprs: &Reprs, reached: bool, pc: u32, row: &Decode
 /// The body of the function `region` spans, over the registers observed at its entry (`seen`:
 /// the ints and the doubles; `widened`: the PCs whose int32 speculation failed), counted under
 /// the trace. An error where its first instruction leaves at once: such a body is pure entry cost.
-pub(in crate::vm::compiled) fn build_body(region: &LoopRegion, registers: u16, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<Body, String> {
-    let built = assemble_body(region, registers, widened, seen);
+pub(in crate::vm::compiled) fn build_body(region: &LoopRegion, known: Known, registers: u16, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<Body, String> {
+    let built = assemble_body(region, known, registers, widened, seen);
     note(|totals, rejects| match &built {
         Ok(body) => {
             totals.bodies += 1;
@@ -130,8 +130,8 @@ pub(in crate::vm::compiled) fn build_body(region: &LoopRegion, registers: u16, w
     built
 }
 
-fn assemble_body(region: &LoopRegion, registers: u16, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<Body, String> {
-    let covers: Vec<Decoded> = region.instructions().iter().enumerate().map(|(pc, instruction)| cover(region, pc as u32, registers, *instruction)).collect();
+fn assemble_body(region: &LoopRegion, known: Known, registers: u16, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<Body, String> {
+    let covers: Vec<Decoded> = region.instructions().iter().enumerate().map(|(pc, instruction)| cover(region, known, pc as u32, registers, *instruction)).collect();
     let reached = reachable(region, &covers)?;
     if covers[0].end == Some(End::Exit) {
         return Err("first instruction leaves".to_string());
