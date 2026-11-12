@@ -863,10 +863,6 @@ enum LaneBody {
         /// Its runs a native caller's leave ended inside it (`LaneView::note_native_leave`): the
         /// runs `note_lane_body_end` never sees, as no handler entered them.
         native_leaves: std::cell::Cell<u32>,
-        /// Its runs that returned inside a native caller's completed run, as many as that caller
-        /// completed: a bound, as the caller's path may not reach the call
-        /// (`LaneView::note_native_completion`).
-        native_completions: std::cell::Cell<u32>,
         recompiles: u8,
         /// Its predecessor's few leaves, where it left only there.
         stuck: LaneLeaves,
