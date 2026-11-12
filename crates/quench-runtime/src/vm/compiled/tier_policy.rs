@@ -22,21 +22,26 @@ pub(in crate::vm) const PER_MILLE: u64 = 1000;
 pub(in crate::vm) struct Priors {
     /// Nanoseconds an interpreted lane bytecode takes.
     pub(in crate::vm) interpreter_ns: u64,
-    /// A body's per-bytecode time as a share of the interpreter's, in thousandths.
+    /// A u-jit body's per-bytecode time as a share of the interpreter's, in thousandths: bodies
+    /// run 2 to 5 times faster per entry than the interpreter once entered (inclusive timing).
     pub(in crate::vm) body_share: u64,
-    /// Nanoseconds the second core takes to compile one IR instruction.
+    /// Nanoseconds the code generator takes to compile one IR instruction, until the process's
+    /// own compiles replace it (`tier_model::CompileCost`).
     pub(in crate::vm) compile_ns_per_ir: u64,
-    /// The same for a Quick compile, and the share of the interpreter's time its code still takes.
-    pub(in crate::vm) quick_compile_ns_per_ir: u64,
-    pub(in crate::vm) quick_body_share: u64,
     /// The part per thousand of a compile's time that waits on the running program: compiles run
     /// on the code generator's thread, so most of their time overlaps it (two cores).
     pub(in crate::vm) compile_wall_permille: u64,
-    /// Nanoseconds entering a loop region from the lane costs per call, and a body's entry.
+    /// Nanoseconds entering a loop region from the lane costs per call, and a body's entry
+    /// (measured about 300 ns: some 1,100 instructions at 0.3 ns).
     pub(in crate::vm) region_entry_ns: u64,
     pub(in crate::vm) body_entry_ns: u64,
-    /// The divisor of the entries so far that gives the credible lower bound of the entries to come.
+    /// The divisor of the entries so far that gives the credible lower bound of the entries to
+    /// come, where the decision (a compile) is irreversible.
     pub(in crate::vm) remaining_divisor: u64,
+    /// The forgetting factor of the compile-cost running ratio, per mille per compile, and the
+    /// weight of its prior in IR instructions (eight compiles of a hundred).
+    pub(in crate::vm) compile_forgetting_permille: u64,
+    pub(in crate::vm) compile_prior_ir: u64,
 }
 
 /// The loop tier (OSR regions at backward jumps).
@@ -60,12 +65,6 @@ pub(in crate::vm) struct Loops {
     /// Compilations a site may make: each after the first widens a value the last one held as
     /// an `i32`, and a region has few such values.
     pub(in crate::vm) max_compilations: u32,
-    /// The work, in interpreted-instruction units (`LaneBody::compile_cost_per_ir`), a loop
-    /// region's entry costs a call of its function: about 140 ns of entry and exit plumbing per
-    /// entry (V8-v7 Crypto's `am3`, 4.3M entries) at the 50 ns that constant counts an interpreted
-    /// instruction at. A function whose region enters weighs its body compile against that saving
-    /// alone (`pays_compile`): the region already runs the loop.
-    pub(in crate::vm) region_entry_work: u64,
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
@@ -111,14 +110,6 @@ pub(in crate::vm) struct LaneBody {
     /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
     /// most this many entries once ready.
     pub(in crate::vm) compile_poll_interval: u16,
-    /// What compiling one IR instruction of a body costs, in interpreted-instruction units: the
-    /// V8-v7 compiles took 7 us an IR instruction (`QUENCH_LANE_COMPILE`), an interpreted
-    /// instruction some 50 ns.
-    pub(in crate::vm) compile_cost_per_ir: u64,
-    /// The share of a function's interpreted work its compiled body saves, as a fraction.
-    pub(in crate::vm) saved_share: (u64, u64),
-    /// How many times the compile's cost the saved work must reach before the body compiles.
-    pub(in crate::vm) benefit_over_cost: u64,
 }
 
 /// The per-function JavaScript tiers: the numeric optimizing tier and the general
@@ -205,14 +196,14 @@ const FLOOR: Tiers = Tiers {
     lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
-    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
+    priors: MEASURED.priors,
 };
 
 /// The base a share in percent is a share of.
 pub(in crate::vm) const PERCENT: u64 = 100;
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8, region_entry_work: 3 },
+    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8 },
     lane_body: LaneBody {
         warmup_entries: 400,
         reoptimize_share: 1,
@@ -227,9 +218,6 @@ const MEASURED: Tiers = Tiers {
         late_call_calls: 4096,
         min_instructions: 40,
         compile_poll_interval: 64,
-        compile_cost_per_ir: 5,
-        saved_share: (1, 2),
-        benefit_over_cost: 1,
     },
     js_function: JsFunction {
         promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)],
@@ -241,7 +229,7 @@ const MEASURED: Tiers = Tiers {
         general_entry_overhead: 32,
     },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
-    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800 },
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)
