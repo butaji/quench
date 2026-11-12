@@ -97,6 +97,8 @@ pub struct Row {
 
 #[path = "../stencils/library.rs"]
 pub mod library;
+#[path = "../stencils/supernodes.rs"]
+pub mod supernodes;
 
 impl Place {
     /// The code of this place in `library` and the stencil rows.
@@ -133,4 +135,28 @@ pub fn stencil(row: Row) -> Result<&'static Stencil, String> {
     let stencil: &'static Stencil = Box::leak(Box::new(found));
     table.insert(code, stencil);
     Ok(stencil)
+}
+
+/// The stencil of the supernode row computing `nodes` (`supernodes.rs`), built at compile time by
+/// rustc and shared for the life of the process; `None` for a pair the library does not hold (the
+/// pair is then planned as single rows). Misses are remembered too.
+pub fn supernode_stencil(nodes: [supernodes::Node; supernodes::NODES]) -> Option<&'static Stencil> {
+    type Table = Mutex<HashMap<[supernodes::Node; supernodes::NODES], Option<&'static Stencil>>>;
+    static TABLE: OnceLock<Table> = OnceLock::new();
+    let mut table = TABLE.get_or_init(Default::default).lock().ok()?;
+    *table.entry(nodes).or_insert_with(|| crate::rustc::stencil(&supernodes::name(&nodes)).map(|found| &*Box::leak(Box::new(found))))
+}
+
+#[cfg(test)]
+mod supernode_tests {
+    use super::{supernode_stencil, supernodes};
+
+    /// Every supernode the library names was built, and has the successors a row chains by.
+    #[test]
+    fn the_supernodes_are_built() {
+        for nodes in supernodes::instances() {
+            let stencil = supernode_stencil(nodes).unwrap_or_else(|| panic!("{nodes:?}"));
+            assert!(stencil.relocs.iter().any(|reloc| reloc.pc_relative), "{nodes:?}");
+        }
+    }
 }

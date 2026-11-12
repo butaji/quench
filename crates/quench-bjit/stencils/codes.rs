@@ -58,3 +58,7 @@ pub const fn is_bitwise(kind: u8) -> bool {
 pub const fn is_compare(kind: u8) -> bool {
     LT <= kind && kind <= NE
 }
+
+/// What a supernode row runs first: a Number row or a heap row (`supernodes.rs`).
+pub const FIRST_NUMBER: u8 = 0;
+pub const FIRST_HEAP: u8 = 1;

@@ -23,6 +23,8 @@ mod library;
 mod macho;
 #[path = "stencils/shards.rs"]
 mod shards;
+#[path = "stencils/supernodes.rs"]
+mod supernodes;
 #[path = "build/transfer.rs"]
 mod transfer;
 
@@ -92,7 +94,8 @@ fn main() {
 fn instances() -> Vec<String> {
     let numbers = library::library().into_iter().map(|c| format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4));
     let heaps = library::heap_library().into_iter().map(|c| format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4));
-    numbers.chain(heaps).collect()
+    let supers = supernodes::instances().into_iter().map(|nodes| format!("supernode_row!({}, {});\n", supernodes::name(&nodes), supernodes::macro_args(&nodes)));
+    numbers.chain(heaps).chain(supers).collect()
 }
 
 fn instance_file(out: &Path, shard: usize) -> PathBuf {
