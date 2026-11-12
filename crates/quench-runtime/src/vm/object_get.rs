@@ -574,11 +574,8 @@ impl<H: Host> Vm<H> {
                 }
                 let value = self.heap.property_get(link, slot)?;
                 let slot = u32::try_from(slot).ok()?;
-                // An own slot's kind must follow from the shape the proof names; a holder's
-                // follows from the holder, which the proof names.
-                if depth == 0 && accessors {
-                    return Some(value);
-                }
+                // A non-dictionary shape fixes each slot's kind, so an own data slot is
+                // provable for the shape even where the shape has accessors elsewhere.
                 let answer = if depth == 0 {
                     SymbolLoadAnswer::Own(slot)
                 } else {
