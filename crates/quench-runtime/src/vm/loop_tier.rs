@@ -17,6 +17,9 @@ pub(super) struct LoopTier {
     pending: Option<Box<super::super::compiled::PendingOsrRegion>>,
     wait: u16,
     pub(super) compilations: u32,
+    /// Native runs of the region and the iterations they took: the loop's mean trip count.
+    runs: u32,
+    iterations: u64,
     /// Each operation the code left at, with its leaves so far; and those whose int32
     /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
     leaves: Vec<(u32, u16)>,
@@ -26,6 +29,16 @@ pub(super) struct LoopTier {
 }
 
 impl LoopTier {
+    pub(super) fn weigh_run(&mut self, backedges: u64) {
+        self.runs = self.runs.saturating_add(1);
+        self.iterations = self.iterations.saturating_add(backedges);
+    }
+
+    /// Iterations per native run, or `None` before the first run.
+    pub(super) fn mean_trip(&self) -> Option<u64> {
+        self.iterations.checked_div(u64::from(self.runs))
+    }
+
     pub(super) fn is_published(&self) -> bool {
         self.code.as_ref().is_some_and(|code| code.is_published())
     }
