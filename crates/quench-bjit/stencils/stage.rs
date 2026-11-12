@@ -169,6 +169,10 @@ impl Stage for StencilStage {
         // SAFETY: never run; the symbol fails the build.
         unsafe { UNSUPPORTED_table(table as u64) }
     }
+    #[inline(always)]
+    fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
+        crate::staged::object::walk_prototypes_loop(self, records, object, target, max_depth)
+    }
 }
 
 const _: fn(Region, Type) = |_, _| {};

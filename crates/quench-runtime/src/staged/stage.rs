@@ -102,6 +102,18 @@ pub(crate) trait Stage {
     /// The base of `table`.
     fn table(&mut self, table: Table) -> Self::Word;
 
+    /// Whether `target`, an encoded prototype link (`ProtoLink::bits`), lies on the prototype chain
+    /// of the object record `object`, as `(decided, holds)`: at most `max_depth` links past the
+    /// first are followed, in the object record table at `records`, and a link naming no object
+    /// record (a proxy, an array, a function) or a longer chain leaves it undecided, for the
+    /// caller's residual. The default unrolls the walk, one nested conditional per link, as a
+    /// specializer emits it; a stage that knows its words loops.
+    #[inline(always)]
+    fn walk_prototypes(&mut self, records: Self::Word, object: Self::Word, target: Self::Word, max_depth: u32)
+        -> (Self::Cond, Self::Cond) where Self: Sized {
+        super::object::walk_prototypes(self, records, object, target, max_depth)
+    }
+
     // Stage v2: additions with defaults, so a stage written before them is unchanged.
 
     /// `load_u64` from `region`, which a specializer tags on the access so a load survives

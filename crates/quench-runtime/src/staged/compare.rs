@@ -3,7 +3,8 @@
 //! control edge through the frame's `branch`, so the interpreter, the lane and every other tier
 //! jump on one definition. A pair the words do not decide is the VM's (`CallOut::Decide`).
 
-use super::value::{is_direct_array, is_direct_object};
+use super::object::object_record_at;
+use super::value::{is_direct_array, is_direct_object, is_direct_string};
 use super::{CallOut, Domain, Edge, NumericFrame, NumericStage, Operation, Step};
 use crate::bytecode::{Operand, WideInstruction};
 use crate::typed_ir::Type;
@@ -191,20 +192,66 @@ fn identity<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, t
     Some(if negated { stage.not(same) } else { same })
 }
 
+/// The VM's decision of `left operator right`: the call-out, whose operands are registers.
+fn decision_call([left, right]: [Operand; 2], operator: u32) -> Option<CallOut> {
+    Some(CallOut::Decide { left: left.register_index()?, right: right.register_index()?, operator })
+}
+
 /// Whether `left operator right` holds, as the VM decides it; `None` where an operand is no
 /// register (the call-out carries registers) or the frame has no VM to ask.
 #[inline(always)]
-fn decided_by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [left, right]: [Operand; 2],
+fn decided_by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operands: [Operand; 2],
     operator: u32) -> Option<S::Cond> {
-    let call = CallOut::Decide { left: left.register_index()?, right: right.register_index()?, operator };
-    let (decision, _) = frame.vm_step(stage, call, None)?;
+    let (decision, _) = frame.vm_step(stage, decision_call(operands, operator)?, None)?;
     Some(stage.eq_imm(decision, Value::TRUE.to_bits()))
 }
 
-/// Whether `value instanceof constructor` holds, as the VM decides it.
+/// The longest prototype chain a word walk follows: a longer one is the VM's decision.
+const PROTOTYPE_WALK_LINKS: u32 = 16;
+
+/// Whether `value instanceof constructor` holds. Where the frame holds the constructor's `prototype`
+/// as a Stable fact (`NumericFrame::stable_prototype`) the value's own words decide it by a walk
+/// of its prototype links (`walked_instanceof`), and the VM the pairs they leave; with no such
+/// fact, or no object record table to walk in, it is the VM's decision.
 #[inline(always)]
 fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operands: [Operand; 2]) -> Option<S::Cond> {
-    decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR)
+    let [value, constructor] = operands;
+    let target = constructor.register_index().and_then(|register| frame.stable_prototype(stage, register));
+    let Some(target) = target else { return decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR) };
+    let Some(records) = frame.object_records(stage) else { return decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR) };
+    let call = decision_call(operands, INSTANCEOF_OPERATOR)?;
+    let word = frame.operand_word(stage, value)?;
+    let answer = walked_instanceof(stage, (records, word), target);
+    let undecided = stage.eq_imm(answer, Value::DELETED.to_bits());
+    let decided = stage.not(undecided);
+    let decision = stage.choose_leaving(decided, |_| Some(answer),
+        |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?;
+    Some(stage.eq_imm(decision, Value::TRUE.to_bits()))
+}
+
+/// `value instanceof` a constructor whose `prototype` link is `target`, by the words: `TRUE` or
+/// `FALSE`, or `DELETED` where only the VM decides. A primitive (an immediate, a string) is no
+/// instance, as the algorithm decides before it reads `prototype`; a direct object's record is
+/// walked (`Stage::walk_prototypes`); any other cell (an array, a function, a proxy) is the VM's.
+#[inline(always)]
+fn walked_instanceof<S: NumericStage>(stage: &mut S, (records, value): (S::Word, S::Word), target: S::Word) -> S::Word {
+    let direct = is_direct_object(stage, value);
+    stage.choose(direct, |stage| {
+        let id = stage.and_imm(value, u64::from(u32::MAX));
+        let record = object_record_at(stage, records, id);
+        let (decided, holds) = stage.walk_prototypes(records, record, target, PROTOTYPE_WALK_LINKS);
+        let [yes, no, unknown] = [Value::TRUE, Value::FALSE, Value::DELETED].map(|each| stage.constant(each.to_bits()));
+        let answer = stage.select(holds, yes, no);
+        stage.select(decided, answer, unknown)
+    }, |stage| {
+        let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
+        let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
+        let immediate = stage.not(heap);
+        let string = is_direct_string(stage, value);
+        let primitive = stage.any(immediate, string);
+        let (no, unknown) = (stage.constant(Value::FALSE.to_bits()), stage.constant(Value::DELETED.to_bits()));
+        stage.select(primitive, no, unknown)
+    })
 }
 
 /// Whether the bits `operation` makes of the operands' ToInt32 are nonzero (`if (flags & MASK)`).

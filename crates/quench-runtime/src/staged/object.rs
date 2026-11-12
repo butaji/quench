@@ -100,18 +100,92 @@ pub(crate) fn proto_link<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
     stage.and_imm(meta, u64::from(OBJECT.proto_mask))
 }
 
-/// The id of the object record `link` names, or `miss` where it names none
-/// (`ProtoLink::object_record_id`). The range starts at a multiple of its power-of-two span,
-/// so a link in it is the base in its high bits, one mask and compare, and holds the id in
-/// its low bits, a mask that addresses the record without the subtracted base.
+/// The span of the object record range of prototype links. The range starts at a multiple of its
+/// power-of-two span, so a link in it is the base in its high bits, one mask and compare, and
+/// holds the id in its low bits, a mask that addresses the record without the subtracted base.
+const RECORD_LINKS: u32 = OBJECT.proto_record_end - OBJECT.proto_record_base;
+const _: () = assert!(RECORD_LINKS.is_power_of_two() && OBJECT.proto_record_base.is_multiple_of(RECORD_LINKS));
+
+/// The link of a `null` prototype: the all-ones link field (`ProtoLink::NULL`).
+const NULL_LINK: u32 = OBJECT.proto_mask;
+
+/// Whether `link` names an object record (`ProtoLink::object_record_id`).
+#[inline(always)]
+pub(crate) fn proto_names_record<S: Stage>(stage: &mut S, link: S::Word) -> S::Cond {
+    let high = stage.and_imm(link, !u64::from(RECORD_LINKS - 1));
+    stage.eq_imm(high, u64::from(OBJECT.proto_record_base))
+}
+
+/// The id of the object record `link` names, which `proto_names_record` proved it names.
+#[inline(always)]
+pub(crate) fn proto_record_id<S: Stage>(stage: &mut S, link: S::Word) -> S::Word {
+    stage.and_imm(link, u64::from(RECORD_LINKS - 1))
+}
+
+/// The id of the object record `link` names, or `miss` where it names none.
 #[inline(always)]
 pub(crate) fn proto_object_record_id<S: Stage>(stage: &mut S, link: S::Word, miss: S::Miss) -> Option<S::Word> {
-    const SPAN: u32 = OBJECT.proto_record_end - OBJECT.proto_record_base;
-    const _: () = assert!(SPAN.is_power_of_two() && OBJECT.proto_record_base.is_multiple_of(SPAN));
-    let high = stage.and_imm(link, !u64::from(SPAN - 1));
-    let inside = stage.eq_imm(high, u64::from(OBJECT.proto_record_base));
+    let inside = proto_names_record(stage, link);
     stage.guard(inside, miss)?;
-    Some(stage.and_imm(link, u64::from(SPAN - 1)))
+    Some(proto_record_id(stage, link))
+}
+
+/// A prototype walk's answer as a word: the target is not on the chain, is on it, or a link names
+/// no object record (a proxy, an array, a function) or the links ran out, which only the VM decides.
+const WALK_FAILS: u64 = 0;
+const WALK_HOLDS: u64 = 1;
+const WALK_UNDECIDED: u64 = 2;
+
+/// Whether `target`, an encoded prototype link (`ProtoLink::bits`), lies on the prototype chain of
+/// the object record `object` (`records` is the object record table's base), as `(decided, holds)`.
+/// At most `links` links past the first are followed, each a nested conditional, so a stage that
+/// knows its conditions runs the one arm taken and a specializer emits one block per link.
+#[inline(always)]
+pub(crate) fn walk_prototypes<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, target: S::Word,
+    links: u32) -> (S::Cond, S::Cond) {
+    let answer = walk_from(stage, records, object, target, links);
+    let undecided = stage.eq_imm(answer, WALK_UNDECIDED);
+    let decided = stage.not(undecided);
+    (decided, stage.eq_imm(answer, WALK_HOLDS))
+}
+
+/// The answer of the walk from `record`, with `links` more links to follow.
+fn walk_from<S: Stage>(stage: &mut S, records: S::Word, record: S::Word, target: S::Word, links: u32) -> S::Word {
+    let link = proto_link(stage, record);
+    let gap = stage.sub(link, target);
+    let reached = stage.eq_imm(gap, 0u64);
+    stage.choose(reached, |stage| stage.constant(WALK_HOLDS), |stage| {
+        let null = stage.eq_imm(link, u64::from(NULL_LINK));
+        stage.choose(null, |stage| stage.constant(WALK_FAILS), |stage| walk_on(stage, records, link, target, links))
+    })
+}
+
+/// The walk past `link`, which is neither the target nor `null`: into the object record it names.
+fn walk_on<S: Stage>(stage: &mut S, records: S::Word, link: S::Word, target: S::Word, links: u32) -> S::Word {
+    let Some(rest) = links.checked_sub(1) else { return stage.constant(WALK_UNDECIDED) };
+    let names = proto_names_record(stage, link);
+    stage.choose(names, |stage| {
+        let id = proto_record_id(stage, link);
+        let next = object_record_at(stage, records, id);
+        walk_from(stage, records, next, target, rest)
+    }, |stage| stage.constant(WALK_UNDECIDED))
+}
+
+/// `walk_prototypes` as a loop, for a stage whose words and conditions are the machine's own
+/// (the interpreter, a stencil).
+#[inline(always)]
+pub(crate) fn walk_prototypes_loop<S: Stage<Word = u64, Cond = bool>>(stage: &mut S, records: u64, object: u64,
+    target: u64, links: u32) -> (bool, bool) {
+    let mut record = object;
+    for _ in 0..=links {
+        let link = proto_link(stage, record);
+        if link == target { return (true, true); }
+        if link == u64::from(NULL_LINK) { return (true, false); }
+        if !proto_names_record(stage, link) { break; }
+        let id = proto_record_id(stage, link);
+        record = object_record_at(stage, records, id);
+    }
+    (false, false)
 }
 
 /// The address of object record `id` in the record table at `records`.
