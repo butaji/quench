@@ -24,9 +24,11 @@ mod global;
 mod names;
 mod callout;
 mod admission;
+mod decode;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::CallOut;
+pub(crate) use decode::DecodeContext;
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
@@ -334,18 +336,17 @@ pub(crate) enum Operation<W, P> {
     Return { source: Register },
 }
 impl<W, P> Operation<W, P> {
-    /// The staged operation `instruction` denotes, with the operands the catalog fixes.
-    /// `None` where the opcode has no staged operation, or where its constant is not
-    /// available to this tier: the caller then takes its own exact path. The heap
+    /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
+    /// tables of `context` its operands index. `None` where the opcode has no staged operation,
+    /// or where its constant or method site is not available to this tier: the caller then takes its own exact path. The heap
     /// operations are the frame's (`Frame::field_read`); a tier decodes those itself.
-    pub(crate) fn decode(instruction: WideInstruction,
-        constant: impl FnOnce(usize) -> Option<Constant>) -> Option<Self> {
+    pub(crate) fn decode(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         Some(match instruction.op() {
             Op::Move => Self::Move {
                 destination: instruction.result_register(), source: instruction.register_b() },
             Op::LoadConst => Self::LoadConst {
                 destination: instruction.result_register(),
-                constant: constant(instruction.constant_index())? },
+                constant: context.constant(instruction.constant_index())? },
             Op::LoadLocalPlain | Op::StoreLocalPlain => return Self::decode_local(instruction),
             Op::Jump => Self::Jump,
             Op::JumpFalse => Self::JumpIf {

@@ -15,7 +15,7 @@ impl Lowering<'_, '_> {
 
     /// The call or return row of `instruction` where the facts admit it.
     fn admitted_call(&self, instruction: WideInstruction) -> Option<Operation<ir::Value, EmitProof>> {
-        let row = Operation::decode(instruction, |_| None)?;
+        let row = Operation::decode(instruction, crate::staged::DecodeContext::of(self.program))?;
         row.admitted(self.call_facts())?.then_some(row)
     }
 

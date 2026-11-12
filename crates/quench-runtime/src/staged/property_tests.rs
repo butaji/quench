@@ -237,7 +237,7 @@ fn a_store_plan_chooses_the_adding_or_the_vm_store_and_stores_the_value_it_was_g
 #[test]
 fn the_property_instructions_decode_to_their_operations() {
     use crate::bytecode::{Op, WideInstruction};
-    let decode = |instruction| Operation::<u64, ()>::decode(instruction, |_| None);
+    let decode = |instruction| Operation::<u64, ()>::decode(instruction, crate::staged::DecodeContext::EMPTY);
     let get = decode(WideInstruction::new(Op::GetField, 1, 2, 3, 4)).expect("a register-based read decodes");
     assert!(matches!(get, Operation::GetField { base, lookup: FieldLookup::Atom { atom: 4, cache_site: 3, .. } } if base == FieldBase::register(2)));
     let set = decode(WideInstruction::new(Op::SetField, 1, 2, 3, 9)).expect("a store decodes");

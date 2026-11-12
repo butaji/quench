@@ -135,7 +135,7 @@ impl<H: Host> Vm<H> {
     /// `AppendArray`) at `site`, by its staged row on the interpreter's stage: the words
     /// decide a string key, and the VM makes every other step.
     pub(super) fn staged_value_step(&mut self, p: &ResidualProgram, site: CallSite, i: WideInstruction) -> Result<(), JsError> {
-        let row = Operation::<u64, ()>::decode(i, |_| None).expect("a value step decodes");
+        let row = Operation::<u64, ()>::decode(i, crate::staged::DecodeContext::of(p)).expect("a value step decodes");
         let mut frame = HostFrame { vm: self, program: p, site, raised: None };
         match crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut frame, row) {
             Step::Unresolved => Err(frame.raised.expect("a step left to the VM raised")),

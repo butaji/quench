@@ -7,7 +7,7 @@ impl Lowering<'_, '_> {
     /// The row of `instruction` where it is a plain row whose registers this unit holds, and
     /// this region has the locals it reads.
     fn register_row(&self, instruction: WideInstruction) -> Option<crate::staged::Operation<ir::Value, EmitProof>> {
-        let row = crate::staged::Operation::decode(instruction, |_| None)?;
+        let row = crate::staged::Operation::decode(instruction, crate::staged::DecodeContext::of(self.program))?;
         let registers = row.registers()?;
         (instruction.result_flags() == 0
             && registers.into_iter().flatten().all(|register| register < self.unit.registers)
@@ -28,7 +28,7 @@ impl Lowering<'_, '_> {
 
     /// Whether `instruction` is the unconditional jump row, whose block layout the lowering owns.
     pub(super) fn is_jump(&self, instruction: WideInstruction) -> bool {
-        matches!(crate::staged::Operation::<ir::Value, EmitProof>::decode(instruction, |_| None), Some(crate::staged::Operation::Jump))
+        matches!(crate::staged::Operation::<ir::Value, EmitProof>::decode(instruction, crate::staged::DecodeContext::of(self.program)), Some(crate::staged::Operation::Jump))
     }
 
     /// Whether `instruction` is a row `register_step` lowers.

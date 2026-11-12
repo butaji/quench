@@ -3332,7 +3332,7 @@ impl Lowering<'_, '_> {
     /// length the body reloads.
     fn call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         use crate::staged::{CallOperation, Operation};
-        let decoded = Operation::<ir::Value, EmitProof>::decode(instruction, |_| None);
+        let decoded = Operation::<ir::Value, EmitProof>::decode(instruction, crate::staged::DecodeContext::of(self.program));
         let (Some(super::lane_unit::Origin::Caller(record)), Some(Operation::Call(CallOperation::Site(site)))) = (self.unit.origins.get(pc).copied(), decoded) else {
             self.exit(state, pc as u32);
             return false;

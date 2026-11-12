@@ -208,7 +208,7 @@ fn an_equality_or_key_the_words_do_not_decide_calls_the_vm_and_a_decided_one_doe
 
 #[test]
 fn the_catalog_decodes_each_name_environment_and_iteration_opcode() {
-    let decode = |op, imm| Operation::<u64, ()>::decode(WideInstruction::new(op, 1, 1, 1, imm), |_| None);
+    let decode = |op, imm| Operation::<u64, ()>::decode(WideInstruction::new(op, 1, 1, 1, imm), crate::staged::DecodeContext::EMPTY);
     assert!(matches!(decode(Op::LoadEnvLocal, 2), Some(Row::LoadEnvLocal { destination: 1, slot: 2 })));
     assert!(matches!(decode(Op::StoreEnvLocal, 2), Some(Row::StoreEnvLocal { source: 1, slot: 2, .. })));
     assert!(matches!(decode(Op::ArgumentsLength, 2), Some(Row::ArgumentsLength { destination: 1, slot: 2 })));

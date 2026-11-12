@@ -335,7 +335,7 @@ mod tests {
         let construct = Invocation::of(call_instruction(Op::Construct, true)).expect("a construction decodes");
         assert_eq!((construct.callee, construct.receiver, construct.argc, construct.result), (5, None, 2, 4));
         assert_eq!(Invocation::of(call_instruction(Op::Move, false)), None);
-        let decoded = crate::staged::Operation::<u64, ()>::decode(call_instruction(Op::Call, false), |_| None);
+        let decoded = crate::staged::Operation::<u64, ()>::decode(call_instruction(Op::Call, false), crate::staged::DecodeContext::EMPTY);
         assert!(matches!(decoded, Some(crate::staged::Operation::Call(CallOperation::Site(site))) if site == call));
     }
 
