@@ -238,6 +238,14 @@ const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_
 // a sparse array whose elements fill as many slots as its length turns dense.
 const SPARSE_ENTRY_SLOTS: usize = size_of::<(usize, Value)>() / size_of::<Value>();
 
+/// Holes a write may leave below `index` in dense storage. Within the dense hole budget a
+/// gap this wide is bounded memory; past it a hole must cost no more than a sparse entry,
+/// else a strided write pattern (`a[i * 1000]`) would take dense storage of its whole length.
+pub(crate) fn dense_write_gap_limit(index: usize) -> usize {
+    const GAP_WITHIN_BUDGET: usize = 1024;
+    if index < MAX_DENSE_ARRAY_HOLE_LENGTH { GAP_WITHIN_BUDGET } else { SPARSE_ENTRY_SLOTS - 1 }
+}
+
 /// Whether `present` elements of an array of `length` fill as many dense slots as its
 /// length, so dense storage takes no more words than sparse entries would.
 fn dense_storage_fits(present: usize, length: usize) -> bool {
@@ -3547,8 +3555,11 @@ impl Heap {
         // in the dense prefix are not elements; counting them would promote an array whose
         // writes only grow its length, doubling its storage at every far write.
         let fills = |count: usize| dense_storage_fits(count.saturating_add(sparse_count), length);
+        // Counting the dense prefix's elements is linear, so it runs as the sparse count
+        // doubles: a promotion comes at most twice as late, and a write stays O(1) amortized.
         let dense = self.array_elements(array);
-        let dense_enough = fills(dense.map_or(0, |dense| dense.len()))
+        let dense_enough = sparse_count.is_power_of_two()
+            && fills(dense.map_or(0, |dense| dense.len()))
             && fills(dense.map_or(0, |dense| dense.iter().filter(|value| !value.is_deleted()).count()));
         if length <= MAX_DENSE_ARRAY_HOLE_LENGTH || dense_enough {
             self.materialize_sparse_array(array, length);

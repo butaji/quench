@@ -2,7 +2,6 @@ use super::*;
 mod element;
 mod keys;
 
-const MAX_DENSE_ARRAY_HOLE_GAP: usize = 1024;
 #[cfg(feature = "profile-aggregate")]
 const ARRAY_INDEX_GET_DENSE: usize = 0;
 #[cfg(feature = "profile-aggregate")]
@@ -632,7 +631,7 @@ impl<H: Host> Vm<H> {
         dense_length: usize,
     ) -> bool {
         self.heap.sparse_length(object).is_some()
-            || index.saturating_sub(dense_length) > MAX_DENSE_ARRAY_HOLE_GAP
+            || index.saturating_sub(dense_length) > crate::heap::dense_write_gap_limit(index)
     }
 
     pub(super) fn check_array_element_write(
