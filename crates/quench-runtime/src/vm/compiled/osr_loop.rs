@@ -1837,68 +1837,14 @@ fn admit_lifetime_roles(
         tagged_constants: BTreeMap::new(), live, inlining: None,
     };
     let values = webs(&flow);
-    // A temporary receiver may be copied from an entry array, but its backing view
-    // must never be captured from the unrelated value left in that slot at entry.
-    fn array_root(
-        flow: &LoopRegion, values: &Webs, pc: u32, register: Register,
-        visiting: &mut BTreeSet<(u32, Register)>,
-    ) -> Option<Register> {
-        if !visiting.insert((pc, register)) {
-            return None;
-        }
-        let definitions = values.reaching[(pc - flow.header) as usize].get(&register)?;
-        let mut root = None;
-        for definition in definitions {
-            let candidate = if let Some(entry) = flow.entry_register(*definition) {
-                if flow.instructions.iter().any(|instruction| instruction.defined_register() == Some(entry)) {
-                    return None;
-                }
-                entry
-            } else {
-                let offset = definition.checked_sub(flow.entry_count())?;
-                let instruction = *flow.instructions.get(offset)?;
-                if !instruction.op().is_move() || instruction.result_flags() != 0 {
-                    return None;
-                }
-                array_root(flow, values, flow.header + offset as u32, instruction.register_b(), visiting)?
-            };
-            if root.is_some_and(|root| root != candidate) {
-                return None;
-            }
-            root = Some(candidate);
-        }
-        visiting.remove(&(pc, register));
-        root
-    }
-    let mut canonical = flow.instructions.clone();
-    for (offset, instruction) in canonical.iter_mut().enumerate() {
-        // Field receivers rename as values do; only array accesses read through an entry
-        // array's root.
-        if !instruction.op().is_indexed_access() {
-            continue;
-        }
-        if let Some(receiver) = object_reads(*instruction) {
-            let root = match array_root(&flow, &values, header + offset as u32, receiver, &mut BTreeSet::new()) {
-                Some(root) => root,
-                None if instruction.op().is_get_index()
-                    && values.reaching[offset].get(&receiver).is_some_and(|definitions| {
-                        !definitions.is_empty() && definitions.iter().all(|definition| {
-                            definition.checked_sub(flow.entry_count())
-                                .and_then(|index| flow.instructions.get(index))
-                                .is_some_and(|definition| definition.op().is_get_index())
-                        })
-                    }) => continue,
-                None => return None,
-            };
-            let base = if instruction.op().is_get_index() { Operand::register(root).0 } else { root };
-            *instruction = WideInstruction::new(instruction.op(), instruction.a(), base, instruction.c(), instruction.imm());
-        }
-    }
+    let canonical = array_roots::canonical_receivers(&flow, &values)?;
     let roots: BTreeSet<Definition> = (0..values.parent.len()).map(|definition| values.find(definition)).collect();
     // Unused instruction definitions have no register and need no analysis identity.
     let roots: Vec<Definition> = roots.into_iter().filter(|definition| {
         *definition < flow.entry_count()
-            || number_definition(flow.instructions[*definition - flow.entry_count()]).is_some()
+            || slots::of(flow.entry_count(), *definition)
+                .filter(|slot| !slot.second)
+                .is_some_and(|slot| number_definition(flow.instructions[slot.offset]).is_some())
     }).collect();
     if roots.len() > MAX_REGION_REGISTERS {
         return None;
@@ -2635,16 +2581,18 @@ impl Webs {
     /// The register a web's definitions write: every definition reaching a common read
     /// writes the register read.
     fn register(&self, region: &LoopRegion, web: Definition) -> Register {
-        match region.entry_register(web) {
-            Some(register) => register,
-            None => number_definition(region.instructions[web - region.entry_count()])
-                .expect("a web's definitions write Number registers"),
+        if let Some(register) = region.entry_register(web) {
+            return register;
         }
+        let slot = slots::of(region.entry_count(), web).expect("a web names an instruction");
+        let instruction = region.instructions[slot.offset];
+        let definition = if slot.second { second_definition(instruction) } else { number_definition(instruction) };
+        definition.expect("a web's definitions write registers")
     }
 
     /// The web of the instruction at `pc`'s result.
     fn defined(&self, region: &LoopRegion, pc: u32) -> Definition {
-        self.find(region.entry_count() + (pc - region.header) as usize)
+        self.find(slots::result(region.entry_count(), (pc - region.header) as usize))
     }
 }
 
@@ -2713,6 +2661,13 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
     .then(|| instruction.result_register())
 }
 
+/// The second register an instruction defines: a by-name call's receiver (`undefined`),
+/// written by the loader beside its callee. No row has one yet.
+fn second_definition(instruction: WideInstruction) -> Option<Register> {
+    let _ = instruction;
+    None
+}
+
 /// The instructions this tier lowers to native code (`admit`, `Lowering::instruction`).
 /// Every other one leaves at its exact PC before its effects and the interpreter runs its own
 /// definition, so the tier covers every opcode; analysis and emission keep that boundary.
@@ -2769,7 +2724,7 @@ fn webs(region: &LoopRegion) -> Webs {
             let pc = region.header + offset as u32;
             let mut out = reaching[offset].clone();
             if let Some(register) = number_definition(region.instructions[offset]) {
-                out.insert(register, BTreeSet::from([entries + offset]));
+                out.insert(register, BTreeSet::from([slots::result(entries, offset)]));
             }
             for successor in successors(region, pc).into_iter().filter(|pc| inside(*pc)) {
                 let target = &mut reaching[(successor - region.header) as usize];
@@ -2787,7 +2742,7 @@ fn webs(region: &LoopRegion) -> Webs {
     }
     let mut webs = Webs {
         reachable,
-        parent: (0..entries + count).collect(),
+        parent: (0..entries + slots::SLOTS_PER_INSTRUCTION * count).collect(),
         reaching,
         leaves: BTreeMap::new(),
         entry_read: vec![false; entries],
@@ -2821,7 +2776,7 @@ fn webs(region: &LoopRegion) -> Webs {
         let leave = |webs: &mut Webs, at: u32, after: bool, reads: &mut Vec<Definition>| {
             for register in region.entry_registers().filter(|register| region.is_live(at, *register)) {
                 let mut definitions = if after && number_definition(instruction) == Some(register) {
-                    BTreeSet::from([entries + offset])
+                    BTreeSet::from([slots::result(entries, offset)])
                 } else {
                     webs.reaching[offset].get(&register).cloned().unwrap_or_default()
                 };
@@ -3105,7 +3060,7 @@ pub(super) fn verify_region<'a>(
                 _ => DefinitionObligation::None,
             };
             let joined = values[root].ty.join(result);
-            definition_types[region.entry_count() + offset] = result;
+            definition_types[slots::result(region.entry_count(), offset)] = result;
             changed |= joined != values[root].ty;
             values[root].ty = joined;
             if instruction.op().is_load_const() && definition_counts[root] == 1 {
@@ -6934,6 +6889,10 @@ mod globals;
 mod calls;
 #[path = "osr_loop/renames.rs"]
 mod renames;
+#[path = "osr_loop/slots.rs"]
+mod slots;
+#[path = "osr_loop/array_roots.rs"]
+mod array_roots;
 use globals::{capture_index, rewrite_entry_reads};
 
 #[cfg(test)]

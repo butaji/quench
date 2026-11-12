@@ -689,7 +689,7 @@ complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::i
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::proof 12
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::Resident::of 15
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::admit 50
-complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::admit_lifetime_roles 34
+complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::admit_lifetime_roles 26
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::admit_register_roles 61
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::counted_loop 74
 complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::definition 20
@@ -1454,7 +1454,7 @@ file-lines crates/quench-runtime/src/vm/compiled.rs 18953
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5454
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 860
-file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7469
+file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7428
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 570
 file-lines crates/quench-runtime/src/vm/construction.rs 1416
 file-lines crates/quench-runtime/src/vm/data_view.rs 648
@@ -2948,7 +2948,7 @@ function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Lowering<'a,'b>::unbox_float64 43
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::Resident::of 50
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::admit 192
-function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::admit_lifetime_roles 173
+function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::admit_lifetime_roles 119
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::admit_register_roles 372
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::counted_loop 279
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::definition 61
