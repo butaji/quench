@@ -39,6 +39,12 @@ impl<H: Host> Vm<H> {
         if self.shape_is_dictionary(receiver.shape()) {
             return;
         }
+        let index = presence_index(shape, atom);
+        let epoch = crate::heap::prototype_layout_epoch();
+        let current_answer = self.in_presences[index].is_some_and(|entry| (entry.atom, entry.shape, entry.link, entry.present, entry.epoch) == (atom, shape, link, present, epoch));
+        if current_answer {
+            return;
+        }
         let holder = self.heap.object_record(proto).map_or(shape, Object::exact_shape);
         let mut current = proto;
         while let Some(data) = self.heap.object_record(current) {
@@ -49,8 +55,9 @@ impl<H: Host> Vm<H> {
             self.heap.mark_prototype(current);
             current = next;
         }
+        // Marking a link a prototype may itself advance the epoch: the answer holds under the one after it.
         let epoch = crate::heap::prototype_layout_epoch();
-        self.in_presences[presence_index(shape, atom)] = Some(InPresence { atom, shape, link, present, holder, epoch });
+        self.in_presences[index] = Some(InPresence { atom, shape, link, present, holder, epoch });
     }
 
     /// What `key in object` answered for the key `atom` where exactly one receiver layout answered it and its answer
