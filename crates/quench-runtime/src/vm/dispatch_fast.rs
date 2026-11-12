@@ -12707,7 +12707,7 @@ script_handler! {
             requicken::<H>(ip, lane_load_intrinsic_name::<H, KIND>);
             sibling!(lane_load_intrinsic_name::<H, KIND>, r, ip, Carried::script(cx))
         }
-        if code.function_get(function as usize).is_some_and(|body| body.call_plan(code).suspended_environment) {
+        if code.function_get(function as usize).is_some_and(|body| body.call_plan(code).holds_window_scope()) {
             requicken::<H>(ip, scoped_names::scoped_load_name::<H, KIND>());
             sibling!(scoped_names::scoped_load_name::<H, KIND>(), r, ip, Carried::script(cx))
         }
@@ -12762,7 +12762,7 @@ script_handler! {
             requicken::<H>(ip, lane_store_global_name::<H>);
             sibling!(lane_store_global_name::<H>, r, ip, Carried::script(cx))
         }
-        if code.function_get(function as usize).is_some_and(|body| body.call_plan(code).suspended_environment) {
+        if code.function_get(function as usize).is_some_and(|body| body.call_plan(code).holds_window_scope()) {
             requicken::<H>(ip, scoped_names::scoped_store_name::<H>());
             sibling!(scoped_names::scoped_store_name::<H>(), r, ip, Carried::script(cx))
         }
@@ -20830,7 +20830,7 @@ fn specialize_environment_window<H: Host>(
     if u32::from(function.locals) > u64::BITS
         || (function.arguments_slot.is_some() && !function.reads_passed_arguments_only() && !function.arguments_ride_window())
         || !function.local_registers.is_empty()
-        || (function.selective_capture_slots.is_none() && !function.suspends_scoped())
+        || (function.selective_capture_slots.is_none() && !function.holds_scope())
     {
         return None;
     }

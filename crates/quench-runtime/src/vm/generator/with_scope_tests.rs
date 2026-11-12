@@ -118,3 +118,36 @@ fn a_var_eval_introduced_reads_after_a_yield_through_the_activation() {
     let (_, frames) = run(&source(30));
     assert_eq!(frames, 30, "only each first step, which evaluates, made a frame");
 }
+
+#[test]
+fn an_ordinary_function_with_locals_and_a_with_statement_runs_as_an_environment_activation() {
+    // It makes a closure over a local and resolves names through the `with` object, which its
+    // activation's chain holds (`LaneStack::with_objects`): the window needs no frame.
+    let source = r#"
+        function pick(o, k) { let total = 0; const add = (n) => total += n; with (o) { add(a); add(k); } return total; }
+        let sum = 0;
+        for (let i = 0; i < 300; i++) sum += pick({ a: i }, 2);
+        print(String(sum));
+    "#;
+    assert_eq!(agree(source), ["45450"]);
+    let program = crate::Engine::specialize(source, "scoped-activation.js").unwrap();
+    let pick = program
+        .functions
+        .iter()
+        .find(|function| function.name.is_some_and(|atom| program.atoms[atom as usize].to_string() == "pick"))
+        .expect("the function is in the program");
+    assert!(pick.call_plan(&program).environment_activation);
+}
+
+#[test]
+fn an_ordinary_function_reading_implicit_bindings_stays_a_frame() {
+    // A direct eval reads the activation's implicit bindings, which a frameless activation has
+    // no record to keep.
+    let program = crate::Engine::specialize("function f(o) { let t = 0; with (o) { t = eval('a'); } return () => t; }", "eval-frame.js").unwrap();
+    let f = program
+        .functions
+        .iter()
+        .find(|function| function.name.is_some_and(|atom| program.atoms[atom as usize].to_string() == "f"))
+        .expect("the function is in the program");
+    assert!(!f.call_plan(&program).environment_activation);
+}

@@ -1,6 +1,6 @@
 //! Names a window activation resolves through its scope: the `with` objects of its chain
-//! (`LaneStack::with_chain`) and the dynamic bindings of its record (`FrameRecord`). A
-//! suspending function that reaches names this way (`CallPlan::suspended_environment`) runs
+//! (`LaneStack::with_chain`) and the dynamic bindings of its record (`FrameRecord`), which only a
+//! suspended function has. A function that reaches names this way (`CallPlan::holds_window_scope`) runs
 //! its by-name loads and stores, local stores and closures here instead of in a frame, where
 //! `Vm::find_with_binding`, `Vm::load_name_call` and `Vm::closure_in_realm` make them. A lookup
 //! the shapes of the objects alone do not decide, or that no `with` object or dynamic binding of
@@ -21,20 +21,22 @@ struct WindowScope {
     /// closure's.
     env: Value,
     captured: bool,
+    /// The activation's record, null for an ordinary function's: it holds no dynamic bindings,
+    /// which only a frame's direct eval makes.
     record: *mut FrameRecord,
     /// The resume pc of the binding site the access is at (`Frame::binding_site_pc`), if it is
     /// at one.
     site: Option<u32>,
 }
 
-/// The scope of the innermost activation, when it is a window over a record: registers `r` and
+/// The scope of the innermost activation, when it is an environment window: registers `r` and
 /// the record at `ip` of its function are the access's. `at_site` where the access is an
 /// instruction a binding site scopes (`Frame::binding_site_pc`). `None` in a frame's run.
 fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, at_site: bool) -> Option<WindowScope> {
     let vm = unsafe { vm(cx) };
     let depth = vm.lane_stack.activations.len().checked_sub(1)?;
     let activation = vm.lane_stack.activations.last()?;
-    let script = activation.script().filter(|script| script.environment && !script.record.is_null())?;
+    let script = activation.script().filter(|script| script.environment)?;
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the running
     // function's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
@@ -51,6 +53,15 @@ fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, at_site:
     })
 }
 
+impl WindowScope {
+    /// The dynamic bindings the activation's record holds, until a closure's environment takes
+    /// them over (`captured`); none for an activation without a record.
+    fn record_bindings(&self) -> Option<&mut Vec<(Atom, Value)>> {
+        // SAFETY: the record is the running activation's own, which nothing else accesses.
+        (!self.captured && !self.record.is_null()).then(|| unsafe { &mut (*self.record).dynamic_bindings })
+    }
+}
+
 impl<H: Host> Vm<H> {
     /// The `with` objects that precede the binding of `atom` for the window activation `scope`
     /// (`with_objects_before_binding`), computed over a frame that stands for the activation:
@@ -63,10 +74,8 @@ impl<H: Host> Vm<H> {
         frame.env = scope.env;
         frame.captured = scope.captured;
         frame.binding_site_pc = scope.site;
-        if !scope.captured {
-            // SAFETY: the record is the running activation's own, which nothing else accesses
-            // while the frame lives.
-            frame.dynamic_bindings = std::mem::take(unsafe { &mut (*scope.record).dynamic_bindings });
+        if let Some(bindings) = scope.record_bindings() {
+            frame.dynamic_bindings = std::mem::take(bindings);
         }
         frame.with_base = self.with_stack.len();
         self.with_stack.extend_from_slice(chain);
@@ -74,9 +83,8 @@ impl<H: Host> Vm<H> {
         let objects = self.with_objects_before_binding(self.frames.len() - 1, atom);
         let mut frame = self.frames.pop().expect("the frame the lookup pushed");
         self.with_stack.truncate(frame.with_base);
-        if !scope.captured {
-            // SAFETY: as above.
-            unsafe { (*scope.record).dynamic_bindings = std::mem::take(&mut frame.dynamic_bindings) };
+        if let Some(bindings) = scope.record_bindings() {
+            *bindings = std::mem::take(&mut frame.dynamic_bindings);
         }
         self.pool_frame(frame);
         objects
@@ -100,11 +108,10 @@ impl<H: Host> Vm<H> {
     /// The value of the dynamic binding `atom` of the window activation `scope` holds itself (a
     /// direct eval's `var`): its environment's once a closure made one, else its record's.
     fn window_dynamic_binding(&self, scope: &WindowScope, atom: Atom) -> Option<Value> {
-        // SAFETY: the record is the running activation's own, which nothing else accesses.
         let bindings: &[(Atom, Value)] = if scope.captured {
             self.heap.environment_bindings(scope.env)?
         } else {
-            unsafe { &(*scope.record).dynamic_bindings }
+            scope.record_bindings().map_or(&[], |bindings| bindings.as_slice())
         };
         bindings.iter().rev().find(|(candidate, _)| *candidate == atom).map(|(_, value)| *value)
     }
@@ -247,8 +254,7 @@ fn lane_scoped_closure_value<H: Host>(
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     // The environment takes over the record's bindings, as a frame's promotion takes its own.
-    // SAFETY: the record is the running activation's own, which nothing else accesses.
-    let bindings = if scope.captured { Vec::new() } else { std::mem::take(unsafe { &mut (*scope.record).dynamic_bindings }) };
+    let bindings = scope.record_bindings().map(std::mem::take).unwrap_or_default();
     // SAFETY: the running window activation's entries start at `registers`, and its
     // environment's parent is the context's.
     let environment = unsafe {
