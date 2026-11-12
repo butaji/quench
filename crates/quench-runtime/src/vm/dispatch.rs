@@ -825,7 +825,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::MakeClosure => {
-                let env = with_binding_site_pc!(self, f, *pc, self.capture_binding_environment(f))?;
+                let env = with_binding_site_pc!(self, f, *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
                 let module_root = p.is_module()
                     && self.frames[f].function == super::ROOT_FUNCTION_ID
                     && self.programs.module_environment(self.frames[f].program) == Some(env);

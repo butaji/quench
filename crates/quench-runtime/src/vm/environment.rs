@@ -20,36 +20,6 @@ pub(super) enum RootRead {
 }
 
 impl<H: Host> Vm<H> {
-    pub(super) fn own_dynamic_bindings_mut(
-        &mut self,
-        frame: usize,
-    ) -> Option<&mut Vec<(Atom, Value)>> {
-        let activation = self.frames.get(frame)?;
-        if activation.captured {
-            self.heap.environment_bindings_mut(activation.env)
-        } else {
-            Some(&mut self.frames[frame].dynamic_bindings)
-        }
-    }
-
-    pub(super) fn store_own_dynamic_binding(
-        &mut self,
-        frame: usize,
-        atom: Atom,
-        value: Value,
-    ) -> bool {
-        let Some((_, binding)) = self.own_dynamic_bindings_mut(frame).and_then(|bindings| {
-            bindings
-                .iter_mut()
-                .rev()
-                .find(|(candidate, _)| *candidate == atom)
-        }) else {
-            return false;
-        };
-        *binding = value;
-        true
-    }
-
     pub(super) fn root_global_var_atom(
         &self,
         program: &ResidualProgram,
@@ -191,7 +161,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let atom = self.runtime_atoms.lexical_this;
         let owner = self.lexical_this_owner(self.frame_caller(frame), atom);
-        if !self.store_own_dynamic_binding(frame, atom, value)
+        if !self.store_owner_binding(VarOwner::Frame(frame), atom, value)
             && !self.store_outer_dynamic_binding(frame, atom, value)
         {
             return Err(self.reference_error(p, "this binding is unavailable".into()));
@@ -393,7 +363,7 @@ impl<H: Host> Vm<H> {
                 self.store_capture(p, frame, depth, slot, value)
             }
             crate::bytecode::EvalBindingLocation::Local(slot) => {
-                if self.store_activation_binding(frame, usize::from(slot), value) {
+                if self.store_owner_slot(VarOwner::Frame(frame), usize::from(slot), value) {
                     Ok(())
                 } else {
                     Err(JsError("invalid named binding".into()))
@@ -449,96 +419,58 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    pub(super) fn activation_binding_value(&self, frame: usize, atom: Atom) -> Option<Value> {
-        let slot = self.activation_binding_slot(self.frame_caller(frame), atom)?;
-        let frame = self.frames.get(frame)?;
-        let environment_owned = frame.captured
-            && self.programs.get(frame.program).is_none_or(|program| {
-                program
-                    .function_get(frame.function as usize)
-                    .is_none_or(|function| function.local_slot_uses_environment(slot))
-            });
-        if environment_owned {
-            self.heap.environment_slot(frame.env, slot)
-        } else {
-            frame.locals.get(slot).copied()
-        }
-    }
-
-    pub(super) fn store_activation_binding(
-        &mut self,
-        frame: usize,
-        slot: usize,
-        value: Value,
-    ) -> bool {
-        let (captured, env, program_id, function_id) = {
-            let activation = &self.frames[frame];
-            (
-                activation.captured,
-                activation.env,
-                activation.program,
-                activation.function,
-            )
-        };
-        let environment_owned = captured
-            && self.programs.get(program_id).is_none_or(|program| {
-                program
-                    .function_get(function_id as usize)
-                    .is_none_or(|function| function.local_slot_uses_environment(slot))
-            });
-        let binding = if environment_owned {
-            self.heap.environment_slot_mut(env, slot)
-        } else {
-            self.frames[frame].locals.get_mut(slot)
-        };
-        let Some(binding) = binding else {
-            return false;
-        };
-        *binding = value;
-        if let Some(program) = self.programs.get(self.frames[frame].program) {
-            self.mapped_argument_store(&program, frame, slot, value);
-        }
-        true
-    }
-
-    fn direct_eval_variable_caller(&self, frame: usize, atom: Atom) -> Option<usize> {
+    /// The owner of the variable environment the eval whose root runs in `frame` declares `atom`
+    /// in: its caller's, a frame's or, for an eval a lane activation called, that activation's
+    /// record. `None` where `frame` is no eval root running in its caller's scope, or its
+    /// program does not declare `atom`.
+    pub(super) fn direct_eval_variable_caller(&self, frame: usize, atom: Atom) -> Option<VarOwner> {
         let program_id = self.direct_eval_var_program?;
         let eval = self.frames.get(frame)?;
         if eval.program != program_id || eval.function != super::ROOT_FUNCTION_ID {
             return None;
         }
         let program = self.programs.get(program_id)?;
-        program.function(super::ROOT_FUNCTION_ID as usize)
-            .global_var_atoms()
-            .contains(&atom)
-            .then(|| frame.checked_sub(1))
-            .flatten()
-            .map(|caller| self.variable_environment_frame(caller))
-    }
-
-    /// The frame owning the variable environment `frame` runs in: itself, or,
-    /// for the root of a sloppy direct eval in its caller's scope, its caller's.
-    pub(super) fn variable_environment_frame(&self, mut frame: usize) -> usize {
-        while frame > 0
-            && self.frames[frame].function == super::ROOT_FUNCTION_ID
-            && self
-                .programs
-                .runs_in_caller_scope(self.frames[frame].program)
-        {
-            frame -= 1;
+        if !program.function(super::ROOT_FUNCTION_ID as usize).global_var_atoms().contains(&atom) {
+            return None;
         }
-        frame
+        Some(match self.eval_record_at(frame) {
+            Some(record) => VarOwner::Record(record),
+            None => self.variable_environment_owner(VarOwner::Frame(frame.checked_sub(1)?)),
+        })
     }
 
     fn direct_eval_catch_binding(
         &self,
         frame: usize,
         atom: Atom,
-    ) -> Option<(usize, crate::bytecode::EvalBinding)> {
+    ) -> Option<(VarOwner, crate::bytecode::EvalBinding)> {
         let caller = self.direct_eval_variable_caller(frame, atom)?;
-        let binding = self.name_binding(self.frame_caller(caller), atom)?;
+        let binding = self.name_binding(self.owner_view(caller), atom)?;
         (binding.declaration == crate::bytecode::EvalBindingDeclaration::CatchParameter)
             .then_some((caller, binding))
+    }
+
+    /// `value` stored to the catch parameter `binding` of the activation `owner` names, which
+    /// a direct eval's `var` of its name leaves visible to ordinary references (Annex B).
+    pub(super) fn store_catch_binding(
+        &mut self,
+        p: &ResidualProgram,
+        owner: VarOwner,
+        binding: crate::bytecode::EvalBinding,
+        value: Value,
+    ) -> Result<(), JsError> {
+        let invalid = || JsError("invalid catch binding".into());
+        match (owner, binding.location) {
+            (VarOwner::Frame(frame), _) => self.store_name_binding(p, frame, binding, value, false),
+            (VarOwner::Record(_), crate::bytecode::EvalBindingLocation::Local(slot)) => {
+                self.store_owner_slot(owner, usize::from(slot), value).then_some(()).ok_or_else(invalid)
+            }
+            (VarOwner::Record(_), crate::bytecode::EvalBindingLocation::Capture { depth, slot }) => {
+                let environment = self.owner_capture_env(owner, depth).ok_or_else(invalid)?;
+                *self.heap.environment_slot_mut(environment, usize::from(slot)).ok_or_else(invalid)? = value;
+                Ok(())
+            }
+        }
     }
 
     pub(super) fn direct_eval_var_binding(&self, frame: usize, slot: usize) -> Option<Value> {
@@ -552,24 +484,24 @@ impl<H: Host> Vm<H> {
         // Annex B leaves the catch binding visible to ordinary references,
         // while declaration instantiation creates the separate variable binding.
         if let Some((caller, binding)) = self.direct_eval_catch_binding(frame, atom) {
+            let view = self.owner_view(caller);
             let (environment, slot) = match binding.location {
                 crate::bytecode::EvalBindingLocation::Local(slot) => {
-                    let activation = &self.frames[caller];
-                    if !activation.captured {
-                        return activation.locals.get(usize::from(slot)).copied();
+                    if !view.owns_environment() {
+                        return self.owner_local(caller, usize::from(slot));
                     }
-                    (activation.env, slot)
+                    (view.environment(), slot)
                 }
                 crate::bytecode::EvalBindingLocation::Capture { depth, slot } => {
-                    (self.capture_env(caller, depth)?, slot)
+                    (self.owner_capture_env(caller, depth)?, slot)
                 }
             };
             return self.heap.environment_slot(environment, usize::from(slot));
         }
         (!self.parameter_eval)
-            .then(|| self.activation_binding_value(caller, atom))
+            .then(|| self.owner_binding_value(caller, atom))
             .flatten()
-            .or_else(|| self.dynamic_binding(self.frame_caller(caller), atom))
+            .or_else(|| self.dynamic_binding(self.owner_view(caller), atom))
     }
 
     pub(super) fn check_local_assignment_initialized(
@@ -1298,7 +1230,7 @@ impl<H: Host> Vm<H> {
             .iter()
             .rposition(|(candidate, _)| *candidate == atom)
         {
-            self.own_dynamic_bindings_mut(frame)?.remove(index);
+            self.owner_bindings_mut(VarOwner::Frame(frame))?.remove(index);
             return Some(true);
         }
         if self.name_binding(caller, atom).is_some() && self.dynamic_binding(caller, atom).is_none() {
@@ -2427,14 +2359,15 @@ impl<H: Host> Vm<H> {
             }
             if let Some(frame) = self.frames.len().checked_sub(1)
                 && let Some((caller, binding)) = self.direct_eval_catch_binding(frame, atom)
-                && let Some(program) = self.programs.get(self.frames[caller].program)
             {
-                return self.store_name_binding(&program, caller, binding, value, false);
+                return self.store_catch_binding(p, caller, binding, value);
             }
             if self.store_direct_eval_var_binding(atom, value) {
                 return Ok(());
             }
-            if self.store_own_dynamic_binding(self.frames.len().saturating_sub(1), atom, value) {
+            if let Some(frame) = self.frames.len().checked_sub(1)
+                && self.store_owner_binding(VarOwner::Frame(frame), atom, value)
+            {
                 return Ok(());
             }
             if let Some(frame_index) = self.frames.len().checked_sub(1)
@@ -2550,7 +2483,7 @@ impl<H: Host> Vm<H> {
             if !self.store_direct_eval_var_binding(atom, value) {
                 // Sloppy SetMutableBinding recreates a deleted eval variable
                 // in the selected VariableEnvironment, not the global object.
-                self.own_dynamic_bindings_mut(caller)
+                self.owner_bindings_mut(caller)
                     .ok_or_else(|| JsError("invalid eval variable environment".into()))?
                     .push((atom, value));
             }
@@ -2566,7 +2499,7 @@ impl<H: Host> Vm<H> {
             )?;
             return Ok(());
         }
-        if !self.store_activation_binding(frame, slot, value) {
+        if !self.store_owner_slot(VarOwner::Frame(frame), slot, value) {
             return Err(JsError("invalid variable binding".into()));
         }
         Ok(())
@@ -2576,16 +2509,16 @@ impl<H: Host> Vm<H> {
         let Some(frame) = self.frames.len().checked_sub(1) else {
             return false;
         };
-        let Some(caller_index) = self.direct_eval_variable_caller(frame, atom) else {
+        let Some(owner) = self.direct_eval_variable_caller(frame, atom) else {
             return false;
         };
         let slot = (!self.parameter_eval)
-            .then(|| self.activation_binding_slot(self.frame_caller(caller_index), atom))
+            .then(|| self.activation_binding_slot(self.owner_view(owner), atom))
             .flatten();
         if let Some(slot) = slot {
-            return self.store_activation_binding(caller_index, slot, value);
+            return self.store_owner_slot(owner, slot, value);
         }
-        self.store_own_dynamic_binding(caller_index, atom, value)
+        self.store_owner_binding(owner, atom, value)
     }
 
     fn store_global_var_binding(

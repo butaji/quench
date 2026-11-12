@@ -142,6 +142,7 @@ mod provenance;
 mod inspection;
 mod caller_view;
 mod environment;
+mod var_owner;
 mod handler_entry;
 mod equality;
 mod error;
@@ -214,6 +215,7 @@ pub(crate) use regexp::RegExpFlags;
 use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
+use var_owner::{EvalCaller, VarOwner};
 pub(crate) mod operations;
 #[cfg(all(test, feature = "bench-primitives"))]
 mod primitive_bench;
@@ -2248,6 +2250,8 @@ pub(crate) struct Vm<H> {
     default_collation: Option<std::rc::Rc<intl_collator::Collation>>,
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
+    /// The direct evals running above lane activations (`var_owner::EvalCaller`), innermost last.
+    eval_callers: Vec<EvalCaller>,
     direct_eval_var_program: Option<ProgramId>,
     /// The Function-constructor programs this VM may still offer the host's compile cache
     /// (`DYNAMIC_FUNCTIONS_KEPT`).

@@ -879,10 +879,9 @@ impl<H: Host> Vm<H> {
                 self.prepare_direct_eval_var_bindings(root_function.global_var_atoms());
             }
             let parent = if direct_eval {
-                if let Some(frame) = self.frames.len().checked_sub(1) {
-                    self.capture_binding_environment(frame)?
-                } else {
-                    Value::NULL
+                match self.eval_owner() {
+                    Some(owner) => self.capture_binding_environment(owner)?,
+                    None => Value::NULL,
                 }
             } else {
                 Value::NULL
@@ -928,12 +927,12 @@ impl<H: Host> Vm<H> {
         result
     }
 
-    pub(super) fn capture_binding_environment(&mut self, frame: usize) -> Result<Value, JsError> {
-        let caller = self.frame_caller(frame);
+    pub(super) fn capture_binding_environment(&mut self, owner: VarOwner) -> Result<Value, JsError> {
+        let caller = self.owner_view(owner);
         let site = caller
             .binding_site()
             .filter(|pc| self.site_has_bindings(caller.program(), caller.function(), *pc));
-        let environment = self.promote_frame_environment(frame);
+        let environment = self.promote_owner_environment(owner);
         self.site_environment(environment, site)
     }
 
@@ -1173,15 +1172,10 @@ impl<H: Host> Vm<H> {
     }
 
     fn prepare_direct_eval_var_bindings(&mut self, atoms: &[Atom]) {
-        let Some(frame_index) = self
-            .frames
-            .len()
-            .checked_sub(1)
-            .map(|frame| self.variable_environment_frame(frame))
-        else {
+        let Some(owner) = self.eval_owner().map(|activation| self.variable_environment_owner(activation)) else {
             return;
         };
-        let caller = self.frame_caller(frame_index);
+        let caller = self.owner_view(owner);
         let Some(bindings) = self.own_dynamic_bindings(caller) else {
             return;
         };
@@ -1194,7 +1188,7 @@ impl<H: Host> Vm<H> {
             })
             .map(|atom| (atom, Value::UNDEFINED))
             .collect::<Vec<_>>();
-        if let Some(bindings) = self.own_dynamic_bindings_mut(frame_index) {
+        if let Some(bindings) = self.owner_bindings_mut(owner) {
             bindings.append(&mut additions);
         }
     }

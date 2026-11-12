@@ -24,6 +24,8 @@ struct WindowScope {
     /// The activation's record, null for an ordinary function's: it holds no dynamic bindings,
     /// which only a frame's direct eval makes.
     record: *mut FrameRecord,
+    /// The function the activation runs: its record's, else its call's own.
+    callee: Option<Value>,
     /// The resume pc of the binding site the access is at (`Frame::binding_site_pc`), if it is
     /// at one.
     site: Option<u32>,
@@ -52,6 +54,8 @@ fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, at_site:
         env: if captured { own } else { unsafe { (*cx).env } },
         captured,
         record: script.record,
+        // SAFETY: a record outlives the activation that runs over it.
+        callee: unsafe { script.record.as_ref() }.map_or(Some(script.callee), |record| record.context.callable()),
         site: at_site.then_some(pc as u32 + 1),
         chain: if vm.with_scope_entered { vm.lane_stack.with_chain(depth).collect() } else { Vec::new() },
     })
@@ -97,6 +101,14 @@ impl CallerView for WindowScope {
 
     fn scope_chain<'a>(&'a self, _entered: &'a [Value]) -> &'a [Value] {
         &self.chain
+    }
+
+    fn callee(&self) -> Option<Value> {
+        self.callee
+    }
+
+    fn var_owner(&self, _frame: usize) -> Option<VarOwner> {
+        (!self.record.is_null()).then_some(VarOwner::Record(self.record))
     }
 }
 

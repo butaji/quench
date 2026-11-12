@@ -195,6 +195,7 @@ impl<H: Host> Vm<H> {
             default_collation: None,
             wasm_js: Default::default(),
             direct_eval: false,
+            eval_callers: Vec::new(),
             direct_eval_var_program: None,
             dynamic_functions_to_keep: super::error::DYNAMIC_FUNCTIONS_KEPT,
             parameter_eval: false,

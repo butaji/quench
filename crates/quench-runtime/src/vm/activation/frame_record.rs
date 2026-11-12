@@ -51,6 +51,9 @@ pub(crate) struct FrameRecord {
     /// activation runs the frame (`open_environment_window`): the locals and environment
     /// live there until the run ends (`close_environment_window`).
     environment_window: bool,
+    /// The resume pc of the binding site the direct eval the activation is running was called
+    /// at (`CallerView::binding_site`).
+    pub(in crate::vm) binding_site_pc: Option<u32>,
 }
 
 #[cfg(test)]
@@ -171,6 +174,7 @@ impl FrameRecord {
             prefix, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
             live_registers: None, js_jit_skip_entry_once, environment_window: false,
+            binding_site_pc: None,
         };
         record.bind_window();
         Box::new(record)
@@ -185,7 +189,7 @@ impl FrameRecord {
         let Self {
             prefix: _, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: _, js_jit_skip_entry_once, environment_window: _,
+            live_registers: _, js_jit_skip_entry_once, environment_window: _, binding_site_pc: _,
         } = *self;
         Box::new(Frame {
             context, reflected_parameters, original_arguments, program, function, pc,
@@ -260,6 +264,7 @@ impl Clone for FrameRecord {
             live_registers: self.live_registers,
             js_jit_skip_entry_once: self.js_jit_skip_entry_once,
             environment_window: false,
+            binding_site_pc: None,
         };
         copy.bind_window();
         copy
@@ -305,6 +310,7 @@ impl Snap for FrameRecord {
             live_registers: None,
             js_jit_skip_entry_once: false,
             environment_window: false,
+            binding_site_pc: None,
         };
         record.bind_window();
         Ok(record)
