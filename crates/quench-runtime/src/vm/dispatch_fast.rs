@@ -8175,17 +8175,17 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
                 super::compiled::LaneBodyWork::Start { generic, shrinks, observed, called, caller, arrays: &arrays },
             poll => poll,
         };
-        // `--b-jit` stitches its body at once: it calls nothing directly and waits for no callee.
+        let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
+        // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         if crate::jit_mode::base_only() {
             let super::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };
-            return vm.base_body_work(code, function, generic, parameters);
+            return vm.base_body_work(code, function, generic, parameters, own, &direct);
         }
         if matches!(work, super::compiled::LaneBodyWork::Start { .. })
             && let Some(outcome) = lane_body_tier::start_gate(vm, own, code.function_get(function as usize))
         {
             return outcome;
         }
-        let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
         let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), &direct, work, None);
         if diagnostics && let super::compiled::LaneBodyOutcome::Published(method) = &outcome {
             if let Some(method) = method.lease() { own.body_stats.compiled(function, &method.inlined); }
@@ -13288,7 +13288,7 @@ mod in_place_natives;
 mod native_calls; mod generator_yields; use generator_yields::yield_handler;
 mod array_steps;
 mod value_steps;
-pub(in crate::vm) use value_steps::lane_body_value_step;
+pub(in crate::vm) use value_steps::{lane_body_step, lane_body_value_step};
 use array_steps::*;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
 mod wasm_gc;

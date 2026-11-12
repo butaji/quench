@@ -64,7 +64,7 @@ impl Decoded {
 
     /// Where control goes after row `k` of `count`.
     pub(super) fn successors(&self, k: usize, count: usize, region: &LoopRegion) -> impl Iterator<Item = Next> {
-        let fall = (self.kind != Kind::Jump).then(|| if k + 1 < count { Next::Row(k + 1) } else { Next::Leave(region.backedge + 1) });
+        let fall = (self.kind != Kind::Jump && self.step.is_none_or(Step::falls)).then(|| if k + 1 < count { Next::Row(k + 1) } else { Next::Leave(region.backedge + 1) });
         let branch = self.target.map(|target| row_at(region, target).map_or(Next::Leave(target), Next::Row));
         fall.into_iter().chain(branch)
     }
@@ -209,6 +209,29 @@ impl Flow {
         }
     }
 
+    /// Propagates the states of the rows in `work` to their successors until nothing grows.
+    fn run(&mut self, region: &LoopRegion, decoded: &[Decoded], defs: &Defs, work: &mut Vec<usize>) {
+        let mut out = vec![0; self.width];
+        while let Some(k) = work.pop() {
+            out.copy_from_slice(self.row(k));
+            if let Some(def) = defs.written[k] {
+                out[defs.words[def.column]..defs.words[def.column + 1]].fill(0);
+                out[defs.words[def.column] + def.local / WORD] |= 1 << (def.local % WORD);
+            }
+            for next in decoded[k].successors(k, decoded.len(), region) {
+                self.deliver(next, &out, work);
+            }
+        }
+    }
+
+    /// The first row no definition reaches: every row control reaches holds the entry definition
+    /// of each named register, so an empty state is a row control never reaches.
+    fn unreached(&self, count: usize) -> Option<usize> {
+        (self.width > 0).then(|| (0..count).find(|k| self.row(*k).iter().all(|word| *word == 0))).flatten()
+    }
+
+    /// A row control never reaches (it follows a jump, or an instruction that is a leave) is taken
+    /// as entered with the region's entry values: its webs are never run, but they must exist.
     fn of(region: &LoopRegion, decoded: &[Decoded], defs: &Defs) -> Self {
         let (count, width) = (decoded.len(), defs.width());
         let leaf_pcs = leave_targets(region, decoded);
@@ -217,18 +240,14 @@ impl Flow {
         for column in 0..defs.columns() {
             flow.at[defs.words[column]] |= 1;
         }
-        let (mut work, mut out) = (vec![0], vec![0; width]);
-        while let Some(k) = work.pop() {
-            out.copy_from_slice(flow.row(k));
-            if let Some(def) = defs.written[k] {
-                out[defs.words[def.column]..defs.words[def.column + 1]].fill(0);
-                out[defs.words[def.column] + def.local / WORD] |= 1 << (def.local % WORD);
-            }
-            for next in decoded[k].successors(k, count, region) {
-                flow.deliver(next, &out, &mut work);
-            }
+        let entry = flow.row(0).to_vec();
+        let mut work = vec![0];
+        loop {
+            flow.run(region, decoded, defs, &mut work);
+            let Some(k) = flow.unreached(count) else { return flow };
+            flow.at[k * width..(k + 1) * width].copy_from_slice(&entry);
+            work.push(k);
         }
-        flow
     }
 }
 

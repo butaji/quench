@@ -431,7 +431,7 @@ impl LanePlan {
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, inlined: self.unit.frames,
             scratch_width, caller_registers,
-            amortizes, direct: self.direct, closed: self.closed,
+            amortizes, direct: self.direct, closed: self.closed, _records: Vec::new(),
         })
     }
 }
@@ -473,7 +473,7 @@ pub(in crate::vm) struct LaneDependencies {
 }
 
 impl LaneDependencies {
-    fn of(loads: impl Iterator<Item = NativeFieldLoad> + Clone, direct: &[DirectCallee]) -> Self {
+    pub(super) fn of(loads: impl Iterator<Item = NativeFieldLoad> + Clone, direct: &[DirectCallee]) -> Self {
         let mut slots: Vec<_> = loads.clone().filter_map(NativeFieldLoad::slot_dependency)
             .chain(direct.iter().filter_map(|callee| callee.body.as_ref()).flat_map(|body| body.dependencies.slots.iter().copied())).collect();
         slots.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));

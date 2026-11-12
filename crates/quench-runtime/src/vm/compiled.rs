@@ -1820,6 +1820,8 @@ lane_helper_inventory! { H;
     TypedArrayView => lane_typed_array_view::<H>,
     /// A value step the interpreter defines (`dispatch_fast::lane_body_value_step`).
     ValueStep => super::dispatch_fast::lane_body_value_step::<H>,
+    /// An instruction whose general step runs in place (`dispatch_fast::lane_body_step`).
+    Step => super::dispatch_fast::lane_body_step::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
 }
@@ -6643,6 +6645,8 @@ pub(super) struct LaneMethod {
     /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
     /// a body is called directly.
     closed: bool,
+    /// The call records its code reads (`CallRecord`), by address: the code must not outlive them.
+    _records: Vec<Box<quench_bjit::call_record::CallRecord>>,
 }
 
 impl LaneMethod {
