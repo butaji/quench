@@ -262,7 +262,7 @@ impl<H: Host> Vm<H> {
         let capture = self.target_capture(code, program, parent);
         let frame = self.resume_job_window(job, sent)?;
         if let Some(locals) = locals {
-            open_window_locals(self, frame, env, &locals);
+            open_window_locals(self, frame, locals);
         }
         // SAFETY: the owner keeps the frame, and so its registers, until the run ends.
         let (prefix, registers, size) = unsafe { ((*frame).prefix(), (*frame).registers.as_mut_ptr(), (*frame).registers.len()) };

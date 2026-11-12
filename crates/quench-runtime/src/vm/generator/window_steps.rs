@@ -27,6 +27,18 @@ impl<H: Host> Vm<H> {
             .then_some(plan.suspended_environment)
     }
 
+    /// The environment a record's window runs under when its frame holds implicit bindings
+    /// (`dynamic_bindings`: `new.target`, `super`'s home) that closures made in the window
+    /// observe: the environment promotion makes of the frame (`promoted_environment`), which owns
+    /// the captured locals and takes the bindings over. Its slot storage.
+    pub(in crate::vm) fn promote_record_environment(&mut self, frame: &mut GeneratorFrame) -> *const crate::heap::EnvironmentSlots {
+        let bindings = std::mem::take(&mut frame.dynamic_bindings);
+        let (env, slots) = self.promoted_environment(frame.env, frame.program, frame.function, &mut frame.locals, bindings);
+        frame.env = env;
+        frame.captured = true;
+        slots
+    }
+
     /// Starts a windowed run of `generator`, which `generator_window_frame` admitted: the
     /// frame stays in its record, `sent` is the value the suspending `yield` evaluates to, and
     /// the native activation roots the generator while the run lasts. The frame's address, which

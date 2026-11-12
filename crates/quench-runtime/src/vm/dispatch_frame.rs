@@ -1253,52 +1253,48 @@ impl<H: Host> Vm<H> {
         if self.frames[frame].captured {
             return self.frames[frame].env;
         }
-        let parent = self.frames[frame].env;
-        // The environment copies the slots it captures out of the frame's locals, whose
-        // buffer stays with the frame for its next activation; captured slots read as
-        // deleted in the frame from now on.
-        let program = self.programs.get(self.frames[frame].program);
         let state = &mut *self.frames[frame];
-        let selective = program
+        let (mut locals, bindings) = (std::mem::take(&mut state.locals), std::mem::take(&mut state.dynamic_bindings));
+        let (program, function, parent) = (state.program, state.function, state.env);
+        let (env, _) = self.promoted_environment(parent, program, function, &mut locals, bindings);
+        // The locals' buffer stays with the frame for its next activation.
+        let state = &mut *self.frames[frame];
+        state.locals = locals;
+        state.env = env;
+        state.captured = true;
+        env
+    }
+
+    /// The environment under `parent` an activation of `function` of `program` makes of its
+    /// `locals` when a closure first captures them, with its slot storage: it copies the slots it
+    /// captures out of the locals, which read as deleted from now on, and takes over the
+    /// activation's implicit `bindings`.
+    pub(super) fn promoted_environment(
+        &mut self,
+        parent: Value,
+        program: ProgramId,
+        function: u32,
+        locals: &mut Vec<Value>,
+        bindings: Vec<(Atom, Value)>,
+    ) -> (Value, *const crate::heap::EnvironmentSlots) {
+        let code = self.programs.get(program);
+        let selective = code
             .as_ref()
-            .and_then(|program| program.function_get(state.function as usize))
+            .and_then(|code| code.function_get(function as usize))
             .and_then(|function| function.selective_capture_slots.as_deref());
-        let slots = match selective {
-            // `captured` is sorted, so one merge pass over the locals finds its slots.
-            Some(captured) => {
-                let mut pending = captured.iter().copied().peekable();
-                crate::heap::EnvironmentSlots::from_values(state.locals.iter_mut().enumerate().map(
-                    |(slot, value)| {
-                        while pending.next_if(|captured| usize::from(*captured) < slot).is_some() {}
-                        if pending.next_if(|captured| usize::from(*captured) == slot).is_some() {
-                            std::mem::replace(value, Value::DELETED)
-                        } else {
-                            Value::DELETED
-                        }
-                    },
-                ))
-            }
-            None => {
-                let slots = crate::heap::EnvironmentSlots::from_values(state.locals.iter().copied());
-                state.locals.clear();
-                slots
-            }
-        };
-        let env = self.heap.alloc(Cell::Environment {
+        let slots = captured_slots(locals, selective);
+        self.heap.alloc_environment(
             parent,
-            function: self.frames[frame].function,
+            function,
             slots,
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
-                program: Some(self.frames[frame].program.raw()),
+            crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                program: Some(program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
-                dynamic_bindings: std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
+                dynamic_bindings: bindings.into(),
                 with_objects: Box::default(),
             }),
-        });
-        self.frames[frame].env = env;
-        self.frames[frame].captured = true;
-        env
+        )
     }
 
     pub(super) fn clone_frame_environment(
@@ -3021,4 +3017,25 @@ impl<H: Host> Vm<H> {
                 .get_unchecked_mut(slot) = value;
         }
     }
+}
+
+/// The slots of the environment a promotion makes of `locals`: those the `selective` capture list
+/// names, moved out and left deleted behind, or, with no list, all of them, which leave the locals
+/// empty.
+fn captured_slots(locals: &mut Vec<Value>, selective: Option<&[u16]>) -> crate::heap::EnvironmentSlots {
+    let Some(captured) = selective else {
+        let slots = crate::heap::EnvironmentSlots::from_values(locals.iter().copied());
+        locals.clear();
+        return slots;
+    };
+    // `captured` is sorted, so one merge pass over the locals finds its slots.
+    let mut pending = captured.iter().copied().peekable();
+    crate::heap::EnvironmentSlots::from_values(locals.iter_mut().enumerate().map(|(slot, value)| {
+        while pending.next_if(|captured| usize::from(*captured) < slot).is_some() {}
+        if pending.next_if(|captured| usize::from(*captured) == slot).is_some() {
+            std::mem::replace(value, Value::DELETED)
+        } else {
+            Value::DELETED
+        }
+    }))
 }

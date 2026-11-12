@@ -2275,13 +2275,6 @@ impl Function {
             && !(self.is_arrow && self.instructions().any(|instruction| instruction.op() == Op::LoadThis))
     }
 
-    /// Whether some instruction makes a closure or copies the environment for an iteration: the
-    /// function then makes an environment its closures capture, which a lane window builds
-    /// without the implicit bindings a frame holds.
-    fn makes_environments(&self) -> bool {
-        self.instructions().any(|instruction| matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv))
-    }
-
     /// Whether its locals and the environment its closures capture can live in a window past
     /// its registers: the layout an environment activation (`CallPlan::environment_activation`)
     /// and a suspended generator's window (`CallPlan::suspended_environment`) share. Each local
@@ -2299,9 +2292,10 @@ impl Function {
             && self.initial_register == InitialRegister::Undefined
             && !self.has_dynamic_scope_access()
             // The implicit bindings `activation_binding_reads` names, but for clones, are a frame's:
-            // a suspended function's record keeps them, and the opcodes that read them exit the
-            // lane to the frame it becomes, unless a closure would capture them in the window.
-            && (!self.body_binding_reads_beside_clones(tables) || (self.suspends_in_record() && !self.makes_environments()))
+            // a suspended function's record keeps them (and gives them to the environment its
+            // window makes, `Vm::promote_record_environment`), and the opcodes that read them
+            // exit the lane to the frame it becomes.
+            && (!self.body_binding_reads_beside_clones(tables) || self.suspends_in_record())
             && self.instructions().all(|instruction| {
                 let op = instruction.op();
                 // An iteration's `CloneEnv` copies the window's environment, once a closure
@@ -2413,7 +2407,6 @@ impl Function {
             let suspendable = self.suspends_in_record();
             let suspended_registers = suspendable
                 && registers_layout_of_any_kind
-                && !self.makes_environments()
                 && !self.rest
                 && self.arguments_slot.is_none()
                 && self.initial_register == InitialRegister::Undefined
