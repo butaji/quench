@@ -100,8 +100,7 @@ impl LaneView {
         if completed_region || matches!(exit, LaneExit::Returned { .. }) {
             completed.set(true);
             completions.set(completions.get().saturating_add(1));
-            if completions.get() % evidence::NATIVE_CREDIT_RUNS == 0 { evidence::consider_native_callees(method); }
-            self.consider_promotion(body);
+            if completions.get() % evidence::NATIVE_CREDIT_RUNS == 0 { evidence::consider_native_callees(method); self.consider_promotion(body); }
             return;
         }
         exits.set(exits.get().saturating_add(1));
