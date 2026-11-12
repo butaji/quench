@@ -145,6 +145,9 @@ mod guard_aarch64;
 #[cfg(feature = "aot")]
 #[path = "compiled/ahead_entry.rs"]
 mod ahead_entry;
+#[cfg(all(test, feature = "aot"))]
+#[path = "compiled/ahead_entry_tests.rs"]
+mod ahead_entry_tests;
 #[cfg(feature = "aot")]
 pub(super) use ahead_entry::{lower_ahead_entry, AheadTargets};
 #[cfg(feature = "aot")]
@@ -13228,7 +13231,7 @@ mod tests {
     }
 
     #[cfg(feature = "aot")]
-    fn semantic_vm(source: &str) -> Vm<crate::test_host::TestHost> {
+    pub(super) fn semantic_vm(source: &str) -> Vm<crate::test_host::TestHost> {
         let program = crate::Engine::specialize(source, "semantic-entry.js").unwrap();
         semantic_program(program)
     }
