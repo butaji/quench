@@ -3,6 +3,15 @@
 
 use super::*;
 
+/// The machine view a block entry keeps a register of fact type `ty` in: the unboxed view of
+/// a Number type, tagged bits for any other. Entry states and edges both take it from the
+/// target's fact (`facts.at`), so an edge conforms to exactly what its target reads.
+pub(super) fn target_representation(ty: Type) -> Representation {
+    if ty == Type::INT32 { Representation::Int32 }
+    else if ty == Type::NUMBER { Representation::Float64 }
+    else { Representation::Tagged }
+}
+
 impl Lowering<'_, '_> {
     /// Whether every operand is proved int32: a register by its type, a constant by its value.
     pub(super) fn proved_int(&self, state: &State, operands: [Operand; 2]) -> bool {
