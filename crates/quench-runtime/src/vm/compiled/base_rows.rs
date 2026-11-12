@@ -221,6 +221,7 @@ mod tests {
     #[test]
     fn cache_rows_are_in_the_library() {
         use super::{stencil, Heap, HeapRow};
+        use quench_bjit::numeric::Place;
         for heap in [Heap::CacheGet, Heap::CacheHolderGet, Heap::CacheSet, Heap::CacheSetInt] {
             for entry in [false, true] {
                 let row = HeapRow { heap, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry };

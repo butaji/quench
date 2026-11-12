@@ -2354,7 +2354,7 @@ impl ProgramStore {
         attempts % JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL == 0
     }
 
-    #[cfg(all(test, not(quench_profiled)))]
+    #[cfg(all(test, feature = "aot", not(quench_profiled)))]
     pub(super) fn js_jit_call_site_counts(
         &self,
         id: ProgramId,

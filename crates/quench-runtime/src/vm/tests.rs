@@ -23717,10 +23717,7 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
     ))
     .unwrap();
     let artifact = super::js_compiled::compile(&program, 1).expect("numeric loop artifact");
-    assert!(matches!(
-        artifact.result,
-        super::js_compiled::JsJitResultKind::SharedNumberEntry(_)
-    ));
+    assert_eq!(artifact.params, 1, "the numeric loop takes its one parameter through the lane body ABI");
     let compiled = super::compiled::CompiledJsFunction::from_artifact(artifact)
         .expect("shared executable mapping");
     let interrupt = crate::ExecutionInterrupt::default();
@@ -23802,6 +23799,7 @@ fn lane_builtin_rows_keep_builtin_semantics() {
     let program = Engine::specialize(source, "lane_builtin_rows_keep_builtin_semantics.js").unwrap();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"3268350|104|104|"h"|"h"|97|a|101|8364|"e"|"€"|98|b|32|55296|" "|"\ud800"|99|c|NaN|NaN|""|""|NaN||NaN|NaN|""|""|NaN||101|8364|"e"|"€"|98|b|104|104|"h"|"h"|97|a|108|108|"l"|"l"|99|c|104|104|"h"|"h"|97|a|104|104|"h"|"h"|97|a|101|8364|"e"|"€"|98|b|NaN|NaN|""|""|NaN||NaN|NaN|""|""|NaN||NaN|NaN|""|""|NaN||104|104|"h"|"h"|97|a|152|0|6|47|49|c|5|3|2|102|297||||-0|TypeError|TypeError|TypeError|TypeError|4|4|false|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|15|4.5|string|3|4|9|3|1,2,3|5|5|5|3|7|2|2|true|true|true|false|false|false|false|true|true|true|true|false|false|false|false|false|false|TypeError|object receiver|mine1|98|1"#]);
+}
 
 /// What `lane_entry_counts` measured of a run.
 struct LaneEntryCounts {
@@ -23832,7 +23830,7 @@ fn lane_entry_counts(source: &str, mode: crate::ExecutionMode) -> LaneEntryCount
     LaneEntryCounts {
         answer, entries, binds,
         crossings: super::compiled::LANE_CELL_CROSSINGS.with(std::cell::Cell::get),
-        compiles: super::compiled::js_function_tiers_compile(vm.memory_policy()),
+        compiles: super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY),
     }
 }
 

@@ -57,7 +57,7 @@ fn entries_of_one_lane_run_rewrite_no_word_of_the_run() {
     vm.execute(&program).unwrap();
     let (entries, binds) = super::compiled::LANE_ENTRIES.with(std::cell::Cell::get);
     let rewrites = super::compiled::LANE_RUN_REWRITES.with(std::cell::Cell::get);
-    if super::compiled::js_function_tiers_compile(vm.memory_policy()) {
+    if super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
         assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
         assert!(rewrites <= binds, "{rewrites} entries rewrote words of their run, {binds} bound one");
         assert!(binds * 200 < entries, "{binds} runs bound for {entries} entries");

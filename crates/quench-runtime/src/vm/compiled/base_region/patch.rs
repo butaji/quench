@@ -150,7 +150,7 @@ impl CacheSites {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quench_bjit::Stencil;
+    use quench_bjit::{Stencil, HOLES};
 
     const PC: u32 = 9;
     const ROW_START: usize = 40;
@@ -166,7 +166,7 @@ mod tests {
         let imm32 = vec![field(3, CACHE_ENTRY_HOLE as u32), field(7, 0), field(11, CACHE_ENTRY_HOLE as u32 + 1)];
         let stencil = Box::leak(Box::new(Stencil { code: vec![0; 32], relocs: Vec::new(), imm32, next_jump: None, tail_len: 0, raw_len: 32 }));
         let patch = SiteEntry::of(PC, false, &load(5, 0), 1);
-        Planned { stencil, holes: [0; HOLES], target: None, exit_pc: Some(PC), pre: Vec::new(), post: Vec::new(), patch }
+        Planned { stencil, node: None, holes: [0; HOLES], target: None, exit_pc: Some(PC), pre: Vec::new(), post: Vec::new(), patch }
     }
 
     fn sites() -> CacheSites {

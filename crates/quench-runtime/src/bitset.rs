@@ -119,6 +119,26 @@ impl BitSet {
         self.words.fill(0);
     }
 
+    /// Adds every member of `other`; whether this set grew.
+    #[cfg(test)]
+    pub(crate) fn union_with(&mut self, other: &Self) -> bool {
+        let mut grew = false;
+        for (word, other) in self.words.iter_mut().zip(&other.words) {
+            let next = *word | other;
+            grew |= next != *word;
+            *word = next;
+        }
+        grew
+    }
+
+    /// Removes every member of `other`.
+    #[cfg(test)]
+    pub(crate) fn subtract(&mut self, other: &Self) {
+        for (word, other) in self.words.iter_mut().zip(&other.words) {
+            *word &= !other;
+        }
+    }
+
     /// The members, ascending.
     pub(crate) fn iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.words.iter().enumerate().flat_map(|(index, &word)| {

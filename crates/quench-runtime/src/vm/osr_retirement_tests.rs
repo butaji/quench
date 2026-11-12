@@ -418,7 +418,7 @@ fn repatch_leaves(changes: i32) -> Vec<(u64, u64)> {
     let mut vm = test_vm();
     vm.execute(&program).unwrap();
     let (sum, anchor, list) = sum_and_objects(&mut vm);
-    let mut call = |vm: &mut Vm<TestHost>| {
+    let call = |vm: &mut Vm<TestHost>| {
         assert_eq!(vm.call_value(&program, sum, Value::UNDEFINED, &[list, Value::number(3000.0)]).unwrap(), Value::number(3000.0));
         let site = osr_site(vm, function_id);
         (site.exits, site.native_region_runs)

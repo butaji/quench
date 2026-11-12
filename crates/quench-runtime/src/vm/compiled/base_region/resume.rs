@@ -126,7 +126,7 @@ mod tests {
             (instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.jump_target() as usize) <= pc)
                 .then(|| (instruction.jump_target(), pc as u32))
         }).expect("the function has a loop");
-        super::super::osr_loop::region(function, &decoded, &[], &[], None, header, backedge, super::super::osr_loop::MethodCalls::Inliner).expect("the loop is admitted")
+        super::super::super::osr_loop::region(function, &decoded, &[], &[], None, header, backedge, super::super::super::osr_loop::MethodCalls::Inliner).expect("the loop is admitted")
     }
 
     /// A region's code has a stub at each of its PCs, in order, inside the code and behind its
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn a_built_region_has_a_stub_at_each_pc() {
         let region = loop_region("function f(n){let s=0;for(let i=0;i<n;i++){s=s+i;}return s;} f(4);", "f");
-        let built = build(&region, true, &[], [&[], &[]]).expect("the loop has a row for each instruction");
+        let built = build(&region, true, &[], [&[], &[]], &[], &[]).expect("the loop has a row for each instruction");
         let (code, table) = (&built.code, &built.resumes);
         assert_eq!(table.pcs(), (region.header..=region.backedge).collect::<Vec<_>>());
         let offsets: Vec<usize> = table.pcs().iter().map(|pc| table.stub(*pc).unwrap()).collect();

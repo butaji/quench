@@ -4543,16 +4543,16 @@ impl LaneExit {
 /// Lane bodies compiled by this process, for tests that a lane activation ran natively.
 #[cfg(test)]
 pub(super) static LANE_METHODS_COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-/// Entries `Vm::run_lane_body` made on this thread and the runs they bound
-/// (`LaneFrame::bind_run` writing its words), for the crossing-cost test.
+// Entries `Vm::run_lane_body` made on this thread and the runs they bound
+// (`LaneFrame::bind_run` writing its words), for the crossing-cost test.
 #[cfg(test)]
 thread_local! { pub(super) static LANE_ENTRIES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) }; }
-/// Entries on this thread that changed a word of their run (`LaneFrame::run_words`): no more than
-/// the runs they bound.
+// Entries on this thread that changed a word of their run (`LaneFrame::run_words`): no more than
+// the runs they bound.
 #[cfg(test)]
 thread_local! { pub(super) static LANE_RUN_REWRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-/// Calls of lane bodies made through their entry cells before any activation
-/// (`dispatch_fast::lane_enter_cell_body`) on this thread, for the crossing test.
+// Calls of lane bodies made through their entry cells before any activation
+// (`dispatch_fast::lane_enter_cell_body`) on this thread, for the crossing test.
 #[cfg(test)]
 thread_local! { pub(super) static LANE_CELL_CROSSINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 /// Calls lane bodies compiled by this process inline, for tests that inlining happened.

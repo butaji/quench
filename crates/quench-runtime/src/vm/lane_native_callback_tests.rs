@@ -45,10 +45,6 @@ const ITERATION_SOURCE: &str = r#"
     print(result);
 "#;
 
-fn run_in(mode: crate::ExecutionMode) -> (Vec<String>, Vm<TestHost>) {
-    run_source(mode, CALLBACK_SOURCE)
-}
-
 fn run_source(mode: crate::ExecutionMode, source: &str) -> (Vec<String>, Vm<TestHost>) {
     let program = Engine::specialize(&format!("(function(){{{source}}})();"), "lane-native-callbacks.js").unwrap();
     let output = Rc::new(RefCell::new(Vec::new()));
