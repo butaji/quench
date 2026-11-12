@@ -240,10 +240,7 @@ impl<H: Host> Vm<H> {
         };
         let text = text.as_ref();
         let inherited_strict = self.direct_eval
-            && (self.in_class_initializer(p)
-                || self.frames.last()
-                    .and_then(|frame| p.function_get(frame.function as usize))
-                    .is_some_and(|function| function.strict));
+            && (self.in_class_initializer(p) || self.eval_caller_function(p).is_some_and(|function| function.strict));
         self.validate_eval_arguments_context(p, text)?;
         if only_trivia(text) {
             return Ok(Value::UNDEFINED);
@@ -316,7 +313,7 @@ impl<H: Host> Vm<H> {
         } else {
             Vec::new()
         };
-        let caller_has_global_variables = self.frames.is_empty() || self.running_global_code();
+        let caller_has_global_variables = self.eval_caller().is_none() || self.running_global_code();
         let annex_b_forbidden_names = self.annex_b_forbidden_names(caller_has_global_variables);
         // A host script compiles from its text alone: it is no direct eval, so it has no
         // caller context, private names or Annex B restrictions.
@@ -744,9 +741,9 @@ impl<H: Host> Vm<H> {
     /// sloppy direct eval called from such code. The root of a direct eval
     /// running in a function's or module's scope is not.
     fn running_global_code(&self) -> bool {
-        self.frames.last().is_some_and(|frame| {
-            frame.function == super::ROOT_FUNCTION_ID
-                && self.programs.declares_global_variables(frame.program)
+        self.eval_caller().is_some_and(|caller| {
+            caller.function() == super::ROOT_FUNCTION_ID
+                && self.programs.declares_global_variables(caller.program())
         })
     }
 
@@ -813,9 +810,7 @@ impl<H: Host> Vm<H> {
                     if caller_scope
                         && self.parameter_eval
                         && self
-                            .frames
-                            .last()
-                            .and_then(|frame| p.function_get(frame.function as usize))
+                            .eval_caller_function(p)
                             .is_some_and(|function| function.parameter_atoms.contains(&atom))
                     {
                         return self.syntax_error_result(
@@ -898,9 +893,7 @@ impl<H: Host> Vm<H> {
                         (self.runtime_atoms.new_target, Value::UNDEFINED),
                         (
                             self.runtime_atoms.lexical_this,
-                            self.frames
-                                .last()
-                                .map_or(self.realm.globals, |frame| frame.this),
+                            self.eval_caller().map_or(self.realm.globals, |caller| caller.this()),
                         ),
                     ]
                 } else {
@@ -922,9 +915,7 @@ impl<H: Host> Vm<H> {
                 parent
             };
             let this = if direct_eval {
-                self.frames
-                    .last()
-                    .map_or(self.realm.globals, |frame| frame.this)
+                self.eval_caller().map_or(self.realm.globals, |caller| caller.this())
             } else {
                 self.realm.globals
             };
@@ -938,10 +929,10 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn capture_binding_environment(&mut self, frame: usize) -> Result<Value, JsError> {
-        let (program, function) = (self.frames[frame].program, self.frames[frame].function);
-        let site = self.frames[frame]
-            .binding_site_pc
-            .filter(|pc| self.site_has_bindings(program, function, *pc));
+        let caller = self.frame_caller(frame);
+        let site = caller
+            .binding_site()
+            .filter(|pc| self.site_has_bindings(caller.program(), caller.function(), *pc));
         let environment = self.promote_frame_environment(frame);
         self.site_environment(environment, site)
     }
@@ -1024,14 +1015,11 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn in_class_initializer(&mut self, p: &ResidualProgram) -> bool {
-        self.frames
-            .last()
-            .and_then(|frame| p.function_get(frame.function as usize))
-            .is_some_and(|function| function.class_initializer)
+    fn in_class_initializer(&self, p: &ResidualProgram) -> bool {
+        self.eval_caller_function(p).is_some_and(|function| function.class_initializer)
     }
 
-    fn direct_eval_function_context(&mut self, p: &ResidualProgram) -> bool {
+    fn direct_eval_function_context(&self, p: &ResidualProgram) -> bool {
         if !self.direct_eval {
             return false;
         }
@@ -1039,10 +1027,7 @@ impl<H: Host> Vm<H> {
             return true;
         }
         let new_target = self.runtime_atoms.new_target;
-        self.frames
-            .len()
-            .checked_sub(1)
-            .is_some_and(|frame| self.dynamic_binding(frame, new_target).is_some())
+        self.eval_caller().is_some_and(|caller| self.dynamic_binding(caller, new_target).is_some())
     }
 
     fn check_global_eval_declaration(
@@ -1106,15 +1091,16 @@ impl<H: Host> Vm<H> {
 
     fn direct_eval_private_names(&mut self, p: &ResidualProgram) -> Option<(Value, Vec<(String, String)>)> {
         let frame = self.frames.len().checked_sub(1)?;
+        let caller = self.frame_caller(frame);
         let mut atoms = Vec::new();
-        let metadata = p.function_get(self.frames[frame].function as usize)?;
-        if let Some(pc) = self.frames[frame].binding_site_pc
+        let metadata = p.function_get(caller.function() as usize)?;
+        if let Some(pc) = caller.binding_site()
             && let Ok(index) = metadata.binding_sites.binary_search_by_key(&pc, |site| site.resume_pc)
         {
             atoms.extend(metadata.binding_sites[index].bindings.iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
         }
         atoms.extend(metadata.name_bindings.resolved().into_iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
-        let mut environment = self.captured_parent_environment(frame);
+        let mut environment = self.captured_parent_environment(caller);
         while let Some(Cell::Environment { parent, function, scope, .. }) = self.heap.get(environment) {
             if let Some(owner) = scope.program().and_then(|program| self.programs.get(ProgramId::from_raw(program)))
                 && let Some(metadata) = owner.function_get(*function as usize)
@@ -1124,7 +1110,7 @@ impl<H: Host> Vm<H> {
             environment = *parent;
         }
         atoms.sort_unstable();atoms.dedup();
-        let mut bindings = atoms.into_iter().filter_map(|atom| self.name_binding(frame, atom)).filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).collect::<Vec<_>>();
+        let mut bindings = atoms.into_iter().filter_map(|atom| self.name_binding(caller, atom)).filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).collect::<Vec<_>>();
         bindings.sort_by_key(|binding| match binding.location { crate::bytecode::EvalBindingLocation::Local(_) => 0, crate::bytecode::EvalBindingLocation::Capture { depth, .. } => u32::from(depth)+1 });
         let mut names = Vec::new();
         let mut first_home = None;
@@ -1146,20 +1132,18 @@ impl<H: Host> Vm<H> {
         (!names.is_empty()).then_some((home, names))
     }
 
-    fn direct_eval_context(&mut self, p: &ResidualProgram) -> Option<crate::compile::EvalContext> {
+    fn direct_eval_context(&self, p: &ResidualProgram) -> Option<crate::compile::EvalContext> {
         if !self.direct_eval {
             return None;
         }
-        let frame = self.frames.len().checked_sub(1)?;
-        let home_atom = p
-            .function_get(self.frames[frame].function as usize)?
-            .super_home_atom;
+        let caller = self.eval_caller()?;
+        let home_atom = p.function_get(caller.function() as usize)?.super_home_atom;
         let class_initializer = self.in_class_initializer(p);
         let atom = self.runtime_atoms.lexical_this;
         let super_calls = home_atom.is_some()
             && !class_initializer
             && self
-                .lexical_this_owner(frame, atom)
+                .lexical_this_owner(caller, atom)
                 .and_then(|(program, function, _)| {
                     self.programs.get(program).and_then(|program| {
                         program
@@ -1177,7 +1161,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn eval_home_binding(&mut self, p: &ResidualProgram) -> Option<Value> {
-        let function = self.frames.last()?.function;
+        let function = self.eval_caller()?.function();
         let home_atom = p.function_get(function as usize)?.super_home_atom?;
         // Use the same binding operation as compiled super access. Its retained
         // metadata resolves captures across both scope views and eval programs.
@@ -1185,7 +1169,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn direct_eval_binding(&self, atom: Atom) -> Option<crate::bytecode::EvalBinding> {
-        self.name_binding(self.frames.len().checked_sub(1)?, atom)
+        self.name_binding(self.eval_caller()?, atom)
     }
 
     fn prepare_direct_eval_var_bindings(&mut self, atoms: &[Atom]) {
@@ -1197,14 +1181,15 @@ impl<H: Host> Vm<H> {
         else {
             return;
         };
-        let Some(bindings) = self.own_dynamic_bindings(frame_index) else {
+        let caller = self.frame_caller(frame_index);
+        let Some(bindings) = self.own_dynamic_bindings(caller) else {
             return;
         };
         let mut additions = atoms
             .iter()
             .copied()
             .filter(|atom| {
-                (self.parameter_eval || self.activation_binding_slot(frame_index, *atom).is_none())
+                (self.parameter_eval || self.activation_binding_slot(caller, *atom).is_none())
                     && !bindings.iter().any(|(candidate, _)| candidate == atom)
             })
             .map(|atom| (atom, Value::UNDEFINED))

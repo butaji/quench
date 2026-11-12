@@ -7,16 +7,16 @@
 //! the activation answers, leaves the instruction to the general path before any effect.
 use super::*;
 use super::super::activation::FrameRecord;
+use super::super::caller_view::CallerView;
 use crate::bytecode::Atom;
 
-/// What a name lookup reads of the window activation making it, in the terms of the frame
-/// it stands for (`Vm::with_window_frame`).
-#[derive(Clone, Copy)]
+/// What a name lookup reads of the window activation making it, which it reads as it reads a
+/// frame (`CallerView`).
 struct WindowScope {
-    /// The activation's index on the lane stack.
-    depth: usize,
     function: u32,
     program: ProgramId,
+    /// The activation's receiver as the lane holds it.
+    this: Value,
     /// The activation's environment: its own once a closure made one (`captured`), else the
     /// closure's.
     env: Value,
@@ -27,6 +27,9 @@ struct WindowScope {
     /// The resume pc of the binding site the access is at (`Frame::binding_site_pc`), if it is
     /// at one.
     site: Option<u32>,
+    /// The `with` objects of the activation's scope chain (`LaneStack::with_chain`), outermost
+    /// first, which no `with` statement has entered while none is (`Vm::with_scope_entered`).
+    chain: Vec<Value>,
 }
 
 /// The scope of the innermost activation, when it is an environment window: registers `r` and
@@ -43,13 +46,14 @@ fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, at_site:
     let own = r.get(code.function(activation.function as usize).registers + WINDOW_ENVIRONMENT);
     let captured = !own.is_deleted();
     Some(WindowScope {
-        depth,
         function: activation.function,
         program: unsafe { (*cx).program },
+        this: unsafe { (*cx).this },
         env: if captured { own } else { unsafe { (*cx).env } },
         captured,
         record: script.record,
         site: at_site.then_some(pc as u32 + 1),
+        chain: if vm.with_scope_entered { vm.lane_stack.with_chain(depth).collect() } else { Vec::new() },
     })
 }
 
@@ -62,58 +66,61 @@ impl WindowScope {
     }
 }
 
-impl<H: Host> Vm<H> {
-    /// The `with` objects that precede the binding of `atom` for the window activation `scope`
-    /// (`with_objects_before_binding`), computed over a frame that stands for the activation:
-    /// the lookup reads the program, function, environment, binding site, dynamic bindings
-    /// and scope chain of its frame, and runs no guest code, so the frame lives for it alone.
-    fn with_window_frame(&mut self, scope: &WindowScope, chain: &[Value], atom: Atom) -> Vec<Value> {
-        let mut frame = self.pooled_frame();
-        frame.program = scope.program;
-        frame.function = scope.function;
-        frame.env = scope.env;
-        frame.captured = scope.captured;
-        frame.binding_site_pc = scope.site;
-        if let Some(bindings) = scope.record_bindings() {
-            frame.dynamic_bindings = std::mem::take(bindings);
-        }
-        frame.with_base = self.with_stack.len();
-        self.with_stack.extend_from_slice(chain);
-        self.frames.push(frame);
-        let objects = self.with_objects_before_binding(self.frames.len() - 1, atom);
-        let mut frame = self.frames.pop().expect("the frame the lookup pushed");
-        self.with_stack.truncate(frame.with_base);
-        if let Some(bindings) = scope.record_bindings() {
-            *bindings = std::mem::take(&mut frame.dynamic_bindings);
-        }
-        self.pool_frame(frame);
-        objects
+impl CallerView for WindowScope {
+    fn program(&self) -> ProgramId {
+        self.program
     }
 
+    fn function(&self) -> u32 {
+        self.function
+    }
+
+    fn this(&self) -> Value {
+        self.this
+    }
+
+    fn environment(&self) -> Value {
+        self.env
+    }
+
+    fn owns_environment(&self) -> bool {
+        self.captured
+    }
+
+    fn binding_site(&self) -> Option<u32> {
+        self.site
+    }
+
+    fn held_bindings(&self) -> &[(Atom, Value)] {
+        self.record_bindings().map_or(&[], |bindings| bindings.as_slice())
+    }
+
+    fn scope_chain<'a>(&'a self, _entered: &'a [Value]) -> &'a [Value] {
+        &self.chain
+    }
+}
+
+impl<H: Host> Vm<H> {
     /// The innermost object of `scope`'s chain that has `atom`, with its value there, as
     /// `find_with_binding` finds it for a frame: `Some(None)` where none does, `None` where the
-    /// objects' shapes alone do not decide.
-    fn window_with_binding(&mut self, scope: &WindowScope, atom: Atom) -> Option<Option<(Value, Value)>> {
-        if !self.with_scope_entered || self.atom_class(atom).contains(AtomClass::INTERNAL) {
+    /// objects' shapes alone do not decide. The lookup reads the scope as a frame's and runs
+    /// no guest code.
+    fn window_with_binding(&self, scope: &WindowScope, atom: Atom) -> Option<Option<(Value, Value)>> {
+        if scope.chain.is_empty() || self.atom_class(atom).contains(AtomClass::INTERNAL) {
             return Some(None);
         }
-        let chain: Vec<Value> = self.lane_stack.with_chain(scope.depth).collect();
-        if chain.is_empty() {
-            return Some(None);
-        }
-        let objects = self.with_window_frame(scope, &chain, atom);
+        let objects = self.with_objects_before_binding(scope, atom);
         self.plain_first_with_binding(&objects, atom)
     }
 
     /// The value of the dynamic binding `atom` of the window activation `scope` holds itself (a
     /// direct eval's `var`): its environment's once a closure made one, else its record's.
     fn window_dynamic_binding(&self, scope: &WindowScope, atom: Atom) -> Option<Value> {
-        let bindings: &[(Atom, Value)] = if scope.captured {
-            self.heap.environment_bindings(scope.env)?
-        } else {
-            scope.record_bindings().map_or(&[], |bindings| bindings.as_slice())
-        };
-        bindings.iter().rev().find(|(candidate, _)| *candidate == atom).map(|(_, value)| *value)
+        self.own_dynamic_bindings(scope)?
+            .iter()
+            .rev()
+            .find(|(candidate, _)| *candidate == atom)
+            .map(|(_, value)| *value)
     }
 }
 
@@ -261,10 +268,9 @@ fn lane_scoped_closure_value<H: Host>(
         window_environment(vm, code, r.0.add(usize::from(registers)), scope.function, (*cx).env, scope.program, (*cx).this, bindings)
     };
     let site = scope.site.filter(|pc| vm.site_has_bindings(scope.program, scope.function, *pc));
-    let chain: Vec<Value> = vm.lane_stack.with_chain(scope.depth).collect();
     let value = vm
         .site_environment(environment, site)
-        .and_then(|environment| vm.closure_over_scope(code, function, environment, vm.realm.globals, &chain))
+        .and_then(|environment| vm.closure_over_scope(code, function, environment, vm.realm.globals, &scope.chain))
         .ok();
     note_allocation(vm);
     value

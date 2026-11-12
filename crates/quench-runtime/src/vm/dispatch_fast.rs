@@ -7052,7 +7052,7 @@ fn lane_private_site<H: Host>(cx: *mut LaneContext<H>) -> Option<(Value, u32, bo
         None => {
             // The running frame is the top one, whose home `Vm::private_name_home` finds.
             let frame = vm.frames.len().checked_sub(1)?;
-            (vm.captured_parent_environment(frame), vm.frames[frame].function, true)
+            (vm.captured_parent_environment(vm.frame_caller(frame)), vm.frames[frame].function, true)
         }
         // SAFETY: the context outlives the lane run.
         Some(activation) => (unsafe { (*cx).env }, activation.script().map(|_| activation.function)?, false),

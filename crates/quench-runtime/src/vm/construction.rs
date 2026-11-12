@@ -1235,7 +1235,7 @@ impl<H: Host> Vm<H> {
             .frames
             .len()
             .checked_sub(1)
-            .and_then(|frame| self.dynamic_binding(frame, new_target_atom))
+            .and_then(|frame| self.dynamic_binding(self.frame_caller(frame), new_target_atom))
             .filter(|value| !value.is_undefined())
             .ok_or_else(|| {
                 self.reference_error(p, "new.target is unavailable for super()".into())
