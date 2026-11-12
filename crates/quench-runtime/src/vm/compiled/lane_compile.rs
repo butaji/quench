@@ -275,10 +275,13 @@ impl<H: Host> Vm<H> {
         let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
             function, osr: entry.is_some(), unit: plan.unit.instructions.len(), ir: native.dfg.num_insts(), key: key.3,
             generic: generic.len(), direct: plan.direct.len(), budget, observed, closed: plan.closed });
+        let ir = native.dfg.num_insts();
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
             let code = lane_code(native, super::jit_backend::CompileLevel::run_default());
-            if let Some(census) = census { eprintln!("{}", census.report(started.elapsed(), code.as_ref().map_or(0, |code| code.len()))); }
+            let took = started.elapsed();
+            super::tier_model::note_compile(took, ir);
+            if let Some(census) = census { eprintln!("{}", census.report(took, code.as_ref().map_or(0, |code| code.len()))); }
             code
         });
         self.programs.note_pending_native_calls(&watch, plan.callees());
