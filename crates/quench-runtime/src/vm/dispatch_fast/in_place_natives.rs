@@ -58,8 +58,7 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
         _ if let Some(kind) = super::super::object_keys::EnumerableOwnPropertyKind::of(native) =>
             vm.plain_enumerable_own_properties(argument, kind),
         Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
-        Native::StringToString | Native::StringValueOf if vm.heap.is_string(receiver) => Some(receiver),
-        Native::FunctionToString if vm.is_function(receiver) => vm.function_source_value(receiver),
+
         Native::ObjectPrototypeToString => object_to_string_in_place(vm, code, receiver),
         // The registry lookup of a string key, which ToString leaves as it is.
         Native::SymbolFor if args.first().is_some_and(|key| vm.heap.is_string(*key)) =>
@@ -118,7 +117,8 @@ fn collection_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Nat
     }
 }
 
-/// Natives that read the receiver's own record or the realm's state: a Map's iterators
+/// Natives that read the receiver's own record or the realm's state: a string's or function's text
+/// (`String.prototype.toString`, `Function.prototype.toString`), a Map's iterators
 /// (`Vm::collection_iterator` of a Map, which allocates the iterator), an iterator's close where
 /// it has no `return` (`Vm::iterator_close_in_place`), and a legacy `RegExp` static getter
 /// (`Vm::regexp_legacy_getter_in_place`). Any other receiver leaves the native to throw.
@@ -129,6 +129,8 @@ fn internal_slot_value<H: Host>(vm: &mut Vm<H>, native: Native, callee: Value, r
         Native::MapValues => IteratorKind::MapValues,
         Native::MapEntries => IteratorKind::MapEntries,
         Native::IteratorClose => return vm.iterator_close_in_place(receiver),
+        Native::StringToString | Native::StringValueOf => return vm.heap.is_string(receiver).then_some(receiver),
+        Native::FunctionToString => return vm.is_function(receiver).then(|| vm.function_source_value(receiver)).flatten(),
         Native::RegExpLegacyGetter => return vm.regexp_legacy_getter_in_place(callee, receiver),
         _ => return None,
     };

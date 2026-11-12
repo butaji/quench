@@ -3452,8 +3452,9 @@ fn lane_in_place<H: Host, T>(
 /// Instructions whose general step reads and writes only the frame, its registers and heap
 /// values, runs guest code only through nested calls, and continues (a backward jump in the
 /// general path) or throws: no call, return, `this` binding or environment change the lane caches.
+/// A for-in step jumps out of its loop, which its own handler makes (`for_in_steps`).
 const fn lane_steps_in_place(op: Op) -> bool {
-    op.traits().has(crate::bytecode::Traits::LANE_IN_PLACE)
+    op.traits().has(crate::bytecode::Traits::LANE_IN_PLACE) && !matches!(op, Op::ForInNext)
 }
 
 script_handler! {
@@ -17967,6 +17968,7 @@ const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) 
         Class::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
         Class::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
         Class::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
+        _ if matches!(opcode, Op::ForInNext) => Some(for_in_steps::for_in_next_handler::<H, BACKWARD>()),
         Class::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
         Class::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
         _ => wasm_gc_handler::<H>(opcode),
@@ -18010,7 +18012,6 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::DefineField => Some(lane_define_field::<H>),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
         Class::CopyDataProperties => Some(lane_copy_data_properties::<H>),
-        Class::ForInNext => Some(for_in_steps::for_in_next_handler::<H, BACKWARD>()),
         _ if lane_steps_in_place(opcode) => Some(lane_general_step::<H>),
         Class::IncDec => Some(lane_inc_dec::<H, false>),
         _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),

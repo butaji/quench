@@ -81,16 +81,10 @@ fn chain_stores<H: Host>(
         return None;
     }
     let (program, code) = (*program, vm.programs.residual(*program)?);
-    if code.kind == crate::bytecode::ProgramKind::Wasm {
-        return None;
-    }
-    let body = code.function_get(*function as usize)?;
+    let body = code.function_get(*function as usize).filter(|_| code.kind != crate::bytecode::ProgramKind::Wasm)?;
     if !body.derived_constructor {
-        if !Vm::<H>::inline_constructible(body) {
-            return None;
-        }
-        let own = body.initializer_stores(&code.constants).or_else(|| body.only_returns_undefined(&code.constants).then_some(&[]))?;
-        return append(stores, program, own, passed).map(|()| class);
+        let own = body.initializer_stores(&code.constants).or_else(|| body.only_returns_undefined(&code.constants).then_some(&[]));
+        return append(stores, program, own.filter(|_| Vm::<H>::inline_constructible(body))?, passed).map(|()| class);
     }
     let parent = vm.object_data(class)?.proto();
     if body.super_forwarding(&code.atoms, &code.constants) == Some(SuperForwarded::Passed) {

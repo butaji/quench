@@ -3402,7 +3402,6 @@ function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::install_regexp_sym
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_compile_native 55
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_exec_result 57
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_from_meta 42
-function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_legacy_getter_native 52
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_literal_of 61
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_proven_symbol_method 46
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_replace_with_literal 68
