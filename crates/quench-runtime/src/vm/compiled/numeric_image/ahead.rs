@@ -122,3 +122,27 @@ fn a_lane_image_written_out_is_linked_and_run_by_a_fresh_process() {
     assert!(child.status.success(), "{stdout}{}", String::from_utf8_lossy(&child.stderr));
     assert!(stdout.contains("ahead image ran in") && !stdout.contains(&format!("ran in {}", std::process::id())), "{stdout}");
 }
+
+/// What each of these names ahead, from static facts alone: field reads, calls and global
+/// reads lower to helper calls, so their images carry helper symbols and nothing else.
+const WIDER: [&str; 3] = ["function f(o){return o.x+1;}",
+    "function g(a){return a+1;} function f(x){return g(x)+g(2);}", "var k=3; function f(x){return x+k;}"];
+
+#[test]
+fn field_reads_calls_and_global_reads_compile_ahead_to_helper_symbols_only() {
+    for source in WIDER {
+        let program = crate::Engine::specialize(source, "ahead-wider.js").unwrap();
+        let id = program.function_count() - 1;
+        let unit = lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
+        let isa = crate::vm::jit_backend::target_isa().unwrap();
+        let region = lower(&program, id as u32, &unit, LaneHelpers::Ahead, &BTreeMap::new(), &Default::default(),
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[],
+            Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).expect(source);
+        let image = crate::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
+            RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
+        }).expect(source);
+        assert!(!image.relocations.is_empty(), "{source}: a helper call is a symbol");
+        assert!(image.relocations.iter().all(|relocation| relocs::helper_key(relocation.namespace, relocation.key).is_some()), "{source}: {:?}", image.relocations);
+        link_here(&image);
+    }
+}
