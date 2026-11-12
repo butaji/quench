@@ -8983,7 +8983,7 @@ lane_handler! {
             ) else {
                 return exit(ip);
             };
-            operator.apply(f64::from_bits(left), f64::from_bits(right))
+            operator.evaluate(f64::from_bits(left), f64::from_bits(right))
         } else {
             let (Some(left), Some(right), Some(operator)) = (
                 left.as_int(),
@@ -8992,7 +8992,7 @@ lane_handler! {
             ) else {
                 return exit(ip);
             };
-            operator.apply(f32::from_bits(left as u32), f32::from_bits(right as u32))
+            operator.evaluate(f32::from_bits(left as u32), f32::from_bits(right as u32))
         };
         let Some(value) = lane_encode(view, value) else {
             return exit(ip);
@@ -9430,14 +9430,14 @@ lane_handler! {
             else {
                 return exit(ip);
             };
-            operator.apply(f64::from_bits(input))
+            operator.evaluate(f64::from_bits(input))
         } else {
             let (Some(input), Some(operator)) =
                 (input.as_int(), F32UnaryOperator::from_tag(i.imm()))
             else {
                 return exit(ip);
             };
-            operator.apply(f32::from_bits(input as u32))
+            operator.evaluate(f32::from_bits(input as u32))
         };
         let Some(value) = lane_encode(view, value) else {
             return exit(ip);
@@ -9492,7 +9492,7 @@ lane_handler! {
         else {
             return exit(ip);
         };
-        let Ok(value) = operator.apply(input) else {
+        let Ok(value) = operator.evaluate(input) else {
             return exit(ip);
         };
         let Some(value) = lane_encode(view, value) else {

@@ -2,6 +2,9 @@
 
 use super::WasmValue;
 use super::numeric::{NumericResult, selectors};
+use crate::staged::ConcreteWasm;
+use crate::staged::wasm::WasmStage;
+use crate::staged::wasm_float::{Float, float_binary, is_float_comparison};
 
 macro_rules! binary_family {
     ($enum:ident, $float:ty, $bits:ty, $variant:ident,
@@ -26,6 +29,12 @@ macro_rules! float_binary_operators {
     ($aliases:tt, $arguments:tt; $($name:ident, $f32:ident, $f64:ident => $body:expr;)+) => {
         binary_family!(F32BinaryOperator, f32, u32, F32, $aliases, $arguments; $($name, $f32 => $body;)+);
         binary_family!(F64BinaryOperator, f64, u64, F64, $aliases, $arguments; $($name, $f64 => $body;)+);
+        impl F32BinaryOperator {
+            /// The f64 operator of the same name: the f64 selectors extend the f32 ones.
+            pub(crate) const fn widen(self) -> F64BinaryOperator {
+                match self { $(Self::$name => F64BinaryOperator::$name,)+ }
+            }
+        }
     };
 }
 
@@ -74,6 +83,12 @@ macro_rules! float_unary_operators {
     ($aliases:tt, $argument:ident; $($name:ident, $f32:ident, $f64:ident => $body:expr;)+) => {
         unary_family!(F32UnaryOperator, f32, u32, F32, $aliases, $argument; $($name, $f32 => $body;)+);
         unary_family!(F64UnaryOperator, f64, u64, F64, $aliases, $argument; $($name, $f64 => $body;)+);
+        impl F32UnaryOperator {
+            /// The f64 operator of the same name: the f64 selectors extend the f32 ones.
+            pub(crate) const fn widen(self) -> F64UnaryOperator {
+                match self { $(Self::$name => F64UnaryOperator::$name,)+ }
+            }
+        }
     };
 }
 
@@ -111,3 +126,55 @@ float_unary_operators! { (Float, Bits, SIGN_MASK), value;
     Nearest, F32Nearest, F64Nearest => value.round_ties_even();
     SquareRoot, F32Sqrt, F64Sqrt => value.sqrt();
 }
+
+impl F64BinaryOperator {
+    pub(crate) const fn widen(self) -> Self {
+        self
+    }
+}
+
+impl F64UnaryOperator {
+    pub(crate) const fn widen(self) -> Self {
+        self
+    }
+}
+
+/// The interpreter's execution of the operators of one float width, through the staged rules
+/// (`staged::wasm_float`); `apply` stays the declaration the tests compare them to.
+macro_rules! float_evaluation {
+    ($binary:ident, $unary:ident, $float:ty, $bits:ty, $variant:ident, $width:ident) => {
+        impl $binary {
+            #[inline(always)]
+            pub(crate) fn evaluate(self, left: $float, right: $float) -> WasmValue {
+                let operator = self.widen();
+                let word = float_binary(
+                    &mut ConcreteWasm,
+                    operator,
+                    Float::$width,
+                    left.to_bits() as u64,
+                    right.to_bits() as u64,
+                );
+                if is_float_comparison(operator) {
+                    WasmValue::I32(word as i32)
+                } else {
+                    WasmValue::$variant(word as $bits)
+                }
+            }
+        }
+
+        impl $unary {
+            #[inline(always)]
+            pub(crate) fn evaluate(self, value: $float) -> WasmValue {
+                let word = ConcreteWasm.operate_float_unary(
+                    self.widen(),
+                    Float::$width,
+                    value.to_bits() as u64,
+                );
+                WasmValue::$variant(word as $bits)
+            }
+        }
+    };
+}
+
+float_evaluation!(F32BinaryOperator, F32UnaryOperator, f32, u32, F32, F32);
+float_evaluation!(F64BinaryOperator, F64UnaryOperator, f64, u64, F64, F64);

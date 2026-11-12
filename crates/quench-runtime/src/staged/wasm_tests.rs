@@ -3,8 +3,11 @@
 
 use super::ConcreteWasm;
 use super::wasm::{WasmStage, Width, binary_result, integer_binary, is_comparison};
+use super::wasm_float::{Float, Truncation};
 use super::wasm_operation::{Form, WasmOperation};
 use crate::bytecode::Op;
+use crate::wasm::conversion::ScalarConversionOperator as Conversion;
+use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{
     I32BinaryOperator, I32UnaryOperator, I64BinaryOperator as Binary, I64UnaryOperator as Unary,
 };
@@ -112,8 +115,8 @@ fn a_comparison_is_what_the_declaration_says_yields_an_i32() {
 
 /// Records what a rule asks of its stage, in order.
 #[derive(Default)]
-struct Probe {
-    log: Vec<String>,
+pub(super) struct Probe {
+    pub(super) log: Vec<String>,
 }
 
 impl Probe {
@@ -137,6 +140,34 @@ impl WasmStage for Probe {
 
     fn operate_unary(&mut self, operator: Unary, width: Width, _: usize) -> usize {
         self.record(format!("{operator:?} {width:?}"))
+    }
+
+    fn operate_float(&mut self, operator: FloatBinary, float: Float, _: usize, _: usize) -> usize {
+        self.record(format!("{operator:?} {float:?}"))
+    }
+
+    fn operate_float_unary(&mut self, operator: FloatUnary, float: Float, _: usize) -> usize {
+        self.record(format!("{operator:?} {float:?}"))
+    }
+
+    fn float_unordered(&mut self, float: Float, _: usize, _: usize) -> usize {
+        self.record(format!("Unordered {float:?}"))
+    }
+
+    fn float_constant(&mut self, float: Float, bits: u64) -> usize {
+        self.record(format!("constant {float:?} {bits:#x}"))
+    }
+
+    fn select(&mut self, _: usize, _: usize, _: usize) -> usize {
+        self.record("select".into())
+    }
+
+    fn truncation_overflows(&mut self, truncation: Truncation, _: usize) -> usize {
+        self.record(format!("overflows {truncation:?}"))
+    }
+
+    fn convert(&mut self, operator: Conversion, _: usize) -> usize {
+        self.record(format!("{operator:?}"))
     }
 
     fn trap_when(&mut self, _: usize, trap: WasmTrap) -> Result<(), WasmTrap> {

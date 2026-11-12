@@ -616,8 +616,6 @@ complexity crates/quench-runtime/src/vm/compiled.rs::Analysis<'_,H>::plan 17
 complexity crates/quench-runtime/src/vm/compiled.rs::Analysis<'_,H>::transfer 93
 complexity crates/quench-runtime/src/vm/compiled.rs::Analysis<'a,H>::build_function 23
 complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::call_reference 12
-complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::convert 12
-complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::float_binary 13
 complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::instruction 59
 complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::simd 17
 complexity crates/quench-runtime/src/vm/compiled.rs::Vm<H>::call_import 15
@@ -2805,7 +2803,6 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::CompiledProgram::drop 1
 function-lines crates/quench-runtime/src/vm/compiled.rs::CompiledProgram::profiled_indirect_targets 47
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::call_reference 314
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::callout_function 78
-function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::convert 45
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::instruction 407
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::simd 72
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::simd_kernel 80

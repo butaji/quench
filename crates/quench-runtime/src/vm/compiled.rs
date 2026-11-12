@@ -30,10 +30,6 @@ use crate::bytecode::{Class, Traits,
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
     RETURN_REGISTER, WideInstruction,
 };
-use crate::wasm::conversion::ScalarConversionOperator;
-use crate::wasm::float::{
-    F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator,
-};
 use crate::staged::wasm_operation::WasmOperation;
 use crate::wasm::integer::I32BinaryOperator;
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
@@ -3915,30 +3911,6 @@ fn counterpart(ty: crate::WasmType) -> crate::WasmType {
         crate::WasmType::F32 => crate::WasmType::I32,
         crate::WasmType::F64 => crate::WasmType::I64,
         _ => unreachable!("compiled values are numeric scalars"),
-    }
-}
-
-/// A float operator and its operand type; both widths share one declaration
-/// (`crate::wasm::float`), so tags agree.
-fn float_binary_operator(op: Op, tag: u32) -> Option<(F64BinaryOperator, crate::WasmType)> {
-    match op.class() {
-        Class::WasmFloatBinary32 => Some((
-            F64BinaryOperator::from_tag(F32BinaryOperator::from_tag(tag)? as u32)?,
-            crate::WasmType::F32,
-        )),
-        Class::WasmFloatBinary64 => Some((F64BinaryOperator::from_tag(tag)?, crate::WasmType::F64)),
-        _ => None,
-    }
-}
-
-fn float_unary_operator(op: Op, tag: u32) -> Option<(F64UnaryOperator, crate::WasmType)> {
-    match op.class() {
-        Class::WasmFloatUnary32 => Some((
-            F64UnaryOperator::from_tag(F32UnaryOperator::from_tag(tag)? as u32)?,
-            crate::WasmType::F32,
-        )),
-        Class::WasmFloatUnary64 => Some((F64UnaryOperator::from_tag(tag)?, crate::WasmType::F64)),
-        _ => None,
     }
 }
 
@@ -8818,7 +8790,7 @@ impl<H: Host> Analysis<'_, H> {
             return None;
         }
         if let Some(operation) = WasmOperation::of(op, instruction.imm()) {
-            return wasm_stage::integer_transfer(
+            return wasm_stage::transfer(
                 state,
                 function.registers,
                 instruction,
@@ -8848,29 +8820,7 @@ impl<H: Host> Analysis<'_, H> {
             i32_value(state, instruction.c())?;
             return (value(state, instruction.a())? == Kind::of(store.value_type())?).then_some(());
         }
-        // Result widths are read off the operators' own semantics:
-        // comparisons produce an i32.
-        if let Some((operator, ty)) = float_binary_operator(op, instruction.imm()) {
-            let kind = Kind::of(ty)?;
-            (value(state, instruction.b())? == kind).then_some(())?;
-            (value(state, instruction.c())? == kind).then_some(())?;
-            let comparison = operator.apply(0.0, 0.0).ty() == crate::WasmType::I32;
-            let result = if comparison { Kind::I32 } else { kind };
-            return set(state, instruction.a(), Slot::Value(result));
-        }
-        if let Some((_, ty)) = float_unary_operator(op, instruction.imm()) {
-            let kind = Kind::of(ty)?;
-            (value(state, instruction.b())? == kind).then_some(())?;
-            return set(state, instruction.a(), Slot::Value(kind));
-        }
         match op.class() {
-            Class::WasmScalarConvert => {
-                let operator = ScalarConversionOperator::from_tag(instruction.imm())?;
-                (value(state, instruction.b())? == Kind::of(operator.source_type())?)
-                    .then_some(())?;
-                let result = Kind::of(operator.result_type())?;
-                set(state, instruction.a(), Slot::Value(result))
-            }
             Class::Move => match state.get(instruction.b(), function.registers)? {
                 slot @ (Slot::Vector | Slot::Memory32Address) => {
                     set(state, instruction.a(), slot)
@@ -9913,154 +9863,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
     }
 
-    /// The canonical NaN of float type `ty`, as `crate::wasm::float` produces.
-    fn canonical_nan(&mut self, ty: ir::Type) -> ir::Value {
-        use crate::wasm::numeric::canonical_nan_bits;
-        if ty == types::F32 {
-            let bits = canonical_nan_bits(f32::MANTISSA_DIGITS, u64::from(f32::INFINITY.to_bits()));
-            self.body.core.builder.ins().f32const(Ieee32::with_bits(bits as u32))
-        } else {
-            let bits = canonical_nan_bits(f64::MANTISSA_DIGITS, f64::INFINITY.to_bits());
-            self.body.core.builder.ins().f64const(Ieee64::with_bits(bits))
-        }
-    }
-
-    /// A float operator at the operands' width.
-    fn float_binary(
-        &mut self,
-        operator: F64BinaryOperator,
-        left: ir::Value,
-        right: ir::Value,
-    ) -> ir::Value {
-        use F64BinaryOperator as F;
-        let compare = |this: &mut Self, cc: FloatCC| {
-            let flag = this.body.core.builder.ins().fcmp(cc, left, right);
-            this.body.core.builder.ins().uextend(types::I32, flag)
-        };
-        match operator {
-            F::Add => self.body.core.builder.ins().fadd(left, right),
-            F::Subtract => self.body.core.builder.ins().fsub(left, right),
-            F::Multiply => self.body.core.builder.ins().fmul(left, right),
-            F::Divide => self.body.core.builder.ins().fdiv(left, right),
-            F::Minimum | F::Maximum => {
-                // Signed zeros order as Wasm requires; a NaN operand gives
-                // the canonical NaN.
-                let extremum = if operator == F::Minimum {
-                    self.body.core.builder.ins().fmin(left, right)
-                } else {
-                    self.body.core.builder.ins().fmax(left, right)
-                };
-                let unordered = self.body.core.builder.ins().fcmp(FloatCC::Unordered, left, right);
-                let ty = self.body.core.builder.func.dfg.value_type(left);
-                let nan = self.canonical_nan(ty);
-                self.body.core.builder.ins().select(unordered, nan, extremum)
-            }
-            F::CopySign => self.body.core.builder.ins().fcopysign(left, right),
-            F::Equal => compare(self, FloatCC::Equal),
-            F::NotEqual => compare(self, FloatCC::NotEqual),
-            F::Less => compare(self, FloatCC::LessThan),
-            F::Greater => compare(self, FloatCC::GreaterThan),
-            F::LessEqual => compare(self, FloatCC::LessThanOrEqual),
-            F::GreaterEqual => compare(self, FloatCC::GreaterThanOrEqual),
-        }
-    }
-
-    /// A float unary operator at the operand's width. The machine rounding
-    /// and square root quiet a signaling NaN, as the operators do.
-    fn float_unary(&mut self, operator: F64UnaryOperator, value: ir::Value) -> ir::Value {
-        use F64UnaryOperator as U;
-        match operator {
-            U::Absolute => self.body.core.builder.ins().fabs(value),
-            U::Negate => self.body.core.builder.ins().fneg(value),
-            U::Ceiling => self.body.core.builder.ins().ceil(value),
-            U::Floor => self.body.core.builder.ins().floor(value),
-            U::Truncate => self.body.core.builder.ins().trunc(value),
-            U::Nearest => self.body.core.builder.ins().nearest(value),
-            U::SquareRoot => self.body.core.builder.ins().sqrt(value),
-        }
-    }
-
-    /// A scalar conversion of `value`, already viewed as the source type.
-    fn convert(&mut self, operator: ScalarConversionOperator, value: ir::Value) -> ir::Value {
-        use ScalarConversionOperator as C;
-        let result = scalar_ir(operator.result_type());
-        let source = operator.source_type();
-        match operator {
-            C::WrapI64 => self.body.core.builder.ins().ireduce(result, value),
-            C::ExtendI32Signed => self.body.core.builder.ins().sextend(result, value),
-            C::ExtendI32Unsigned => self.body.core.builder.ins().uextend(result, value),
-            C::TruncateF32SignedI32
-            | C::TruncateF64SignedI32
-            | C::TruncateF32SignedI64
-            | C::TruncateF64SignedI64 => self.truncate(value, source, result, true),
-            C::TruncateF32UnsignedI32
-            | C::TruncateF64UnsignedI32
-            | C::TruncateF32UnsignedI64
-            | C::TruncateF64UnsignedI64 => self.truncate(value, source, result, false),
-            C::SaturateF32SignedI32
-            | C::SaturateF64SignedI32
-            | C::SaturateF32SignedI64
-            | C::SaturateF64SignedI64 => self.body.core.builder.ins().fcvt_to_sint_sat(result, value),
-            C::SaturateF32UnsignedI32
-            | C::SaturateF64UnsignedI32
-            | C::SaturateF32UnsignedI64
-            | C::SaturateF64UnsignedI64 => self.body.core.builder.ins().fcvt_to_uint_sat(result, value),
-            C::ConvertI32SignedF32
-            | C::ConvertI64SignedF32
-            | C::ConvertI32SignedF64
-            | C::ConvertI64SignedF64 => self.body.core.builder.ins().fcvt_from_sint(result, value),
-            C::ConvertI32UnsignedF32
-            | C::ConvertI64UnsignedF32
-            | C::ConvertI32UnsignedF64
-            | C::ConvertI64UnsignedF64 => self.body.core.builder.ins().fcvt_from_uint(result, value),
-            C::PromoteF32 => self.body.core.builder.ins().fpromote(result, value),
-            C::DemoteF64 => self.body.core.builder.ins().fdemote(result, value),
-            C::ReinterpretF32I32
-            | C::ReinterpretF64I64
-            | C::ReinterpretI32F32
-            | C::ReinterpretI64F64 => {
-                self.body.core.builder
-                    .ins()
-                    .bitcast(result, MemFlagsData::new(), value)
-            }
-        }
-    }
-
-    /// A trapping truncation: NaN and out-of-range inputs trap, in the
-    /// order and bounds of `crate::wasm::conversion`; the machine conversion
-    /// then sees only representable values.
-    fn truncate(
-        &mut self,
-        value: ir::Value,
-        source: crate::WasmType,
-        result: ir::Type,
-        signed: bool,
-    ) -> ir::Value {
-        let wide = if source == crate::WasmType::F32 {
-            self.body.core.builder.ins().fpromote(types::F64, value)
-        } else {
-            value
-        };
-        let nan = self.body.core.builder.ins().fcmp(FloatCC::Unordered, wide, wide);
-        self.trap_if(nan, crate::WasmTrap::InvalidConversionToInteger);
-        let truncated = self.body.core.builder.ins().trunc(wide);
-        let (lower, limit) = crate::wasm::conversion::truncation_bounds(result.bits(), signed);
-        let lower = self.body.core.builder.ins().f64const(lower);
-        let limit = self.body.core.builder.ins().f64const(limit);
-        let below = self.body.core.builder.ins().fcmp(FloatCC::LessThan, truncated, lower);
-        let above = self
-            .body.core.builder
-            .ins()
-            .fcmp(FloatCC::GreaterThanOrEqual, truncated, limit);
-        let overflow = self.body.core.builder.ins().bor(below, above);
-        self.trap_if(overflow, crate::WasmTrap::IntegerOverflow);
-        if signed {
-            self.body.core.builder.ins().fcvt_to_sint_sat(result, truncated)
-        } else {
-            self.body.core.builder.ins().fcvt_to_uint_sat(result, truncated)
-        }
-    }
-
     /// The host address of a checked `width`-byte access at `address + offset`.
     fn address(&mut self, address: ir::Value, offset: u32, width: usize) -> ir::Value {
         let address = self.zero_extend(address);
@@ -11066,7 +10868,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             return done;
         }
         if let Some(operation) = WasmOperation::of(op, instruction.imm()) {
-            return self.integer_operation(pc, instruction, operation);
+            return self.operation(pc, instruction, operation);
         }
         if let Some(load) = MemoryLoad::from_direct_op(op) {
             let result = load_type(load).expect("planned");
@@ -11195,32 +10997,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 .call_indirect(signature, target, &[address, byte, length]);
             return true;
         }
-        if let Some((operator, ty)) = float_binary_operator(op, instruction.imm()) {
-            let left = self.read_typed(b, ty);
-            let right = self.read_typed(c, ty);
-            let value = self.float_binary(operator, left, right);
-            let result = if self.body.core.builder.func.dfg.value_type(value) == types::I32 {
-                crate::WasmType::I32
-            } else {
-                ty
-            };
-            self.write_typed(a, result, value);
-            return true;
-        }
-        if let Some((operator, ty)) = float_unary_operator(op, instruction.imm()) {
-            let input = self.read_typed(b, ty);
-            let value = self.float_unary(operator, input);
-            self.write_typed(a, ty, value);
-            return true;
-        }
         match op.class() {
-            Class::WasmScalarConvert => {
-                let operator =
-                    ScalarConversionOperator::from_tag(instruction.imm()).expect("planned");
-                let input = self.read_typed(b, operator.source_type());
-                let value = self.convert(operator, input);
-                self.write_typed(a, operator.result_type(), value);
-            }
             Class::Move => {
                 let kind = self.operand_kind(pc);
                 let value = self.read(b, kind);
@@ -18711,22 +18488,5 @@ mod tests {
             .set(0, 1, Slot::DEFAULT)
             .expect("register in range");
         assert_eq!(loop_state.get(0, 1), Some(Slot::DEFAULT));
-    }
-
-    /// Each f32 float operator widens to its f64 namesake.
-    #[test]
-    fn narrow_selectors_name_their_wide_namesakes() {
-        let mut tag = 0;
-        while let Some(operator) = F32BinaryOperator::from_tag(tag) {
-            let (wide, _) = float_binary_operator(Op::WasmF32Binary, tag).expect("f32 selector");
-            assert_eq!(format!("{operator:?}"), format!("{wide:?}"));
-            tag += 1;
-        }
-        let mut tag = 0;
-        while let Some(operator) = F32UnaryOperator::from_tag(tag) {
-            let (wide, _) = float_unary_operator(Op::WasmF32Unary, tag).expect("f32 selector");
-            assert_eq!(format!("{operator:?}"), format!("{wide:?}"));
-            tag += 1;
-        }
     }
 }

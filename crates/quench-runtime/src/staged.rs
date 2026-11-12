@@ -48,6 +48,7 @@ mod generic;
 pub(crate) use steps::step;
 pub(crate) mod effects;
 pub(crate) mod wasm;
+pub(crate) mod wasm_float;
 mod wasm_concrete;
 pub(crate) mod wasm_operation;
 pub(crate) use wasm_concrete::ConcreteWasm;
@@ -454,3 +455,5 @@ mod coverage_tests;
 mod generic_tests;
 #[cfg(test)]
 mod wasm_tests;
+#[cfg(test)]
+mod wasm_float_tests;

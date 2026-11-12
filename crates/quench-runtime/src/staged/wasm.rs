@@ -2,10 +2,14 @@
 //! the order in which it checks them. The interpreter runs them on machine words
 //! (`ConcreteWasm`), the Wasm tier on Cranelift values (`Emitter`, `vm/compiled/wasm_stage.rs`),
 //! so a native function traps exactly where the interpreter does. Everything a stage computes
-//! without a trap is its primitive set: `operate` and `operate_unary`.
+//! without a trap is its primitive set: `operate`, `operate_unary` and their float and
+//! conversion counterparts (`staged::wasm_float` holds the float rules).
 
-use crate::WasmTrap;
+use super::wasm_float::{Float, Truncation};
+use crate::wasm::conversion::ScalarConversionOperator;
+use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
+use crate::{WasmTrap, WasmType};
 
 /// The integer width an operation runs at; an i32 operator is its i64 namesake at `I32`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -19,6 +23,21 @@ impl Width {
         match self {
             Self::I32 => i32::BITS,
             Self::I64 => i64::BITS,
+        }
+    }
+
+    pub(crate) const fn of(ty: WasmType) -> Option<Self> {
+        match ty {
+            WasmType::I32 => Some(Self::I32),
+            WasmType::I64 => Some(Self::I64),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn ty(self) -> WasmType {
+        match self {
+            Self::I32 => WasmType::I32,
+            Self::I64 => WasmType::I64,
         }
     }
 
@@ -46,6 +65,33 @@ pub(crate) trait WasmStage {
         right: Self::Word,
     ) -> Self::Word;
     fn operate_unary(&mut self, operator: Unary, width: Width, value: Self::Word) -> Self::Word;
+    /// A `float` operator on `float` operands; a comparison yields a flag. The extrema are the
+    /// machine's (signed zeros ordered; a NaN operand's result is `float_binary`'s to replace).
+    fn operate_float(
+        &mut self,
+        operator: FloatBinary,
+        float: Float,
+        left: Self::Word,
+        right: Self::Word,
+    ) -> Self::Word;
+    /// A float unary operator; rounding and square root quiet a signaling NaN.
+    fn operate_float_unary(
+        &mut self,
+        operator: FloatUnary,
+        float: Float,
+        value: Self::Word,
+    ) -> Self::Word;
+    /// The flag that `left` or `right` is a NaN.
+    fn float_unordered(&mut self, float: Float, left: Self::Word, right: Self::Word) -> Self::Word;
+    /// The float with IEEE bits `bits`.
+    fn float_constant(&mut self, float: Float, bits: u64) -> Self::Word;
+    /// `taken` where `flag` is 1, `other` where it is 0.
+    fn select(&mut self, flag: Self::Word, taken: Self::Word, other: Self::Word) -> Self::Word;
+    /// The flag that the float `value` truncates outside the integers of `truncation`.
+    fn truncation_overflows(&mut self, truncation: Truncation, value: Self::Word) -> Self::Word;
+    /// `operator` on a source-typed `value`; a trapping truncation's operand is in range
+    /// (`convert` has trapped otherwise) and the machine truncates it.
+    fn convert(&mut self, operator: ScalarConversionOperator, value: Self::Word) -> Self::Word;
     /// Continues where `flag` is 0; traps where it is 1.
     fn trap_when(&mut self, flag: Self::Word, trap: WasmTrap) -> Result<(), Self::Exit>;
 }

@@ -1,6 +1,6 @@
 //! Shared typed numeric results and macro-derived selector views.
 
-use super::WasmValue;
+use super::{ScalarBits, WasmValue};
 
 pub(super) enum NumericResult<T> {
     Value(T),
@@ -12,6 +12,17 @@ impl<T> NumericResult<T> {
         match self {
             Self::Value(value) => integer(value),
             Self::Comparison(value) => WasmValue::I32(i32::from(value)),
+        }
+    }
+}
+
+impl WasmValue {
+    /// The word `from_bits` reads back: a 32-bit scalar's payload, zero-extended.
+    pub(crate) fn word(self) -> u64 {
+        match self.bits() {
+            Some(ScalarBits::Bits32(bits)) => u64::from(bits),
+            Some(ScalarBits::Bits64(bits)) => bits,
+            _ => unreachable!("numeric scalar"),
         }
     }
 }
@@ -39,7 +50,7 @@ pub(super) use selectors;
 
 const IEEE_IMPLICIT_SIGNIFICAND_BITS: u32 = 1;
 
-pub(super) const fn sign_mask(bit_width: u32) -> u64 {
+pub(crate) const fn sign_mask(bit_width: u32) -> u64 {
     1 << (bit_width - 1)
 }
 

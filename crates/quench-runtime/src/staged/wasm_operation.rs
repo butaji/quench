@@ -2,7 +2,14 @@
 //! operands and result go. Every tier reads this table; none names an integer opcode.
 
 use super::wasm::{Width, binary_result, unary_result};
+use super::wasm_float::{Float, is_float_comparison};
+use crate::WasmType;
 use crate::bytecode::{Class, Op, WideInstruction};
+use crate::wasm::conversion::ScalarConversionOperator;
+use crate::wasm::float::{
+    F32BinaryOperator, F32UnaryOperator, F64BinaryOperator as FloatBinary,
+    F64UnaryOperator as FloatUnary,
+};
 use crate::wasm::integer::{
     I32BinaryOperator, I32UnaryOperator, I64BinaryOperator as Binary, I64UnaryOperator as Unary,
 };
@@ -61,6 +68,20 @@ pub(crate) enum WasmOperation {
         operator: Unary,
         width: Width,
     },
+    /// `a = b op c` on floats; a comparison yields an i32 flag.
+    FloatBinary {
+        operator: FloatBinary,
+        float: Float,
+    },
+    /// `a = op b` on a float.
+    FloatUnary {
+        operator: FloatUnary,
+        float: Float,
+    },
+    /// `a = op b`, a conversion between scalar types.
+    Convert {
+        operator: ScalarConversionOperator,
+    },
 }
 
 impl WasmOperation {
@@ -86,9 +107,42 @@ impl WasmOperation {
                     .map(|operator| i32_binary(operator, Form::BranchImmediate))
             })
             .or_else(|| Self::selected(op.class(), tag))
+            .or_else(|| Self::floating(op.class(), tag))
     }
 
-    /// The operations whose operator is a selector operand.
+    /// The float and conversion operations, whose operator is a selector operand.
+    fn floating(class: Class, tag: u32) -> Option<Self> {
+        match class {
+            Class::WasmFloatBinary32 => {
+                F32BinaryOperator::from_tag(tag).map(|operator| Self::FloatBinary {
+                    operator: operator.widen(),
+                    float: Float::F32,
+                })
+            }
+            Class::WasmFloatBinary64 => {
+                FloatBinary::from_tag(tag).map(|operator| Self::FloatBinary {
+                    operator,
+                    float: Float::F64,
+                })
+            }
+            Class::WasmFloatUnary32 => {
+                F32UnaryOperator::from_tag(tag).map(|operator| Self::FloatUnary {
+                    operator: operator.widen(),
+                    float: Float::F32,
+                })
+            }
+            Class::WasmFloatUnary64 => FloatUnary::from_tag(tag).map(|operator| Self::FloatUnary {
+                operator,
+                float: Float::F64,
+            }),
+            Class::WasmScalarConvert => {
+                ScalarConversionOperator::from_tag(tag).map(|operator| Self::Convert { operator })
+            }
+            _ => None,
+        }
+    }
+
+    /// The integer operations whose operator is a selector operand.
     fn selected(class: Class, tag: u32) -> Option<Self> {
         match class {
             Class::WasmI64Binary => Binary::from_tag(tag).map(|operator| Self::Binary {
@@ -112,22 +166,27 @@ impl WasmOperation {
         }
     }
 
-    /// The width its operands have.
-    pub(crate) const fn width(self) -> Width {
+    /// The type its operands have.
+    pub(crate) fn operand_type(self) -> WasmType {
         match self {
-            Self::Binary { width, .. } | Self::Unary { width, .. } => width,
-            Self::BitField | Self::AddBranch | Self::Test { .. } => Width::I32,
+            Self::Binary { width, .. } | Self::Unary { width, .. } => width.ty(),
+            Self::BitField | Self::AddBranch | Self::Test { .. } => WasmType::I32,
+            Self::FloatBinary { float, .. } | Self::FloatUnary { float, .. } => float.ty(),
+            Self::Convert { operator } => operator.source_type(),
         }
     }
 
-    /// The width of the value it computes.
-    pub(crate) const fn result_width(self) -> Width {
+    /// The type of the value it computes.
+    pub(crate) fn result_type(self) -> WasmType {
         match self {
             Self::Binary {
                 operator, width, ..
-            } => binary_result(operator, width),
-            Self::Unary { operator, width } => unary_result(operator, width),
-            Self::BitField | Self::AddBranch | Self::Test { .. } => Width::I32,
+            } => binary_result(operator, width).ty(),
+            Self::Unary { operator, width } => unary_result(operator, width).ty(),
+            Self::BitField | Self::AddBranch | Self::Test { .. } => WasmType::I32,
+            Self::FloatBinary { operator, .. } if is_float_comparison(operator) => WasmType::I32,
+            Self::FloatBinary { float, .. } | Self::FloatUnary { float, .. } => float.ty(),
+            Self::Convert { operator } => operator.result_type(),
         }
     }
 
@@ -138,6 +197,7 @@ impl WasmOperation {
                 Operand::Register(register) => (form.left(instruction), Some(register)),
                 Operand::Constant(_) => (form.left(instruction), None),
             },
+            Self::FloatBinary { .. } => (instruction.b(), Some(instruction.c())),
             Self::Test { .. } => (instruction.a(), None),
             _ => (instruction.b(), None),
         }
