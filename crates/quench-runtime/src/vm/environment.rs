@@ -898,6 +898,18 @@ impl<H: Host> Vm<H> {
             return Ok(None);
         }
         let objects = self.with_objects_before_binding(frame, atom);
+        self.first_with_binding(p, &objects, atom)
+    }
+
+    /// The innermost of the scope chain `objects` (outermost first) that has a binding for
+    /// `atom`, with the key it was found by: the one has-binding test over a chain, which a
+    /// frame's name lookups (`find_with_binding`) make.
+    pub(super) fn first_with_binding(
+        &mut self,
+        p: &ResidualProgram,
+        objects: &[Value],
+        atom: Atom,
+    ) -> Result<Option<(Value, Value)>, JsError> {
         if objects.is_empty() {
             return Ok(None);
         }
@@ -910,6 +922,41 @@ impl<H: Host> Vm<H> {
             }
             Ok(None)
         })
+    }
+
+    /// `first_with_binding` where no object's test can run guest code, which a window
+    /// activation's name lookup (`LaneStack::with_chain`) makes in place: the innermost of
+    /// `objects` that has `atom` and its value there, or `Some(None)` where none has it. `None`
+    /// before any effect, leaves a chain the shapes alone do not decide (a Proxy, an accessor,
+    /// an exotic object) to `first_with_binding`.
+    pub(super) fn plain_first_with_binding(&self, objects: &[Value], atom: Atom) -> Option<Option<(Value, Value)>> {
+        for object in objects.iter().rev().copied() {
+            if let Some(value) = self.plain_with_binding(object, atom)? {
+                return Some(Some((object, value)));
+            }
+        }
+        Some(None)
+    }
+
+    /// `with_binding` where neither the has test nor the `@@unscopables` read can run guest
+    /// code: the value `atom` has on `object`, `Some(None)` where it has no binding for it.
+    /// `None` leaves the object to `with_binding`.
+    fn plain_with_binding(&self, object: Value, atom: Atom) -> Option<Option<Value>> {
+        let key = PropertyKey::string(atom);
+        let Some(value) = self.plain_property_lookup(object, key)? else {
+            return Some(None);
+        };
+        let Some(unscopables) = self.well_known_symbols.get(WellKnownSymbol::Unscopables) else {
+            return Some(Some(value));
+        };
+        let Some(exclusions) = self.plain_property_lookup(object, PropertyKey::symbol(unscopables))? else {
+            return Some(Some(value));
+        };
+        if !self.is_object_like(exclusions) {
+            return Some(Some(value));
+        }
+        let excluded = self.plain_property_lookup(exclusions, key)?;
+        Some(excluded.is_none_or(|excluded| !self.truthy(excluded)).then_some(value))
     }
 
     pub(super) fn store_with_binding(

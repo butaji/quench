@@ -1358,6 +1358,10 @@ struct ScriptActivation {
     forwards: bool,
     /// Its environment and frame locals follow its registers (`CallEntry::Environment`).
     environment: bool,
+    /// The record of the suspended frame a windowed activation runs over (`generator_windows`,
+    /// `lane_roots`), which the lane's name lookups read the dynamic bindings of; null for any
+    /// other activation.
+    record: *mut super::activation::GeneratorFrame,
 }
 
 /// A JavaScript activation's own receiver and environment, which it does not store
@@ -3069,7 +3073,7 @@ fn lane_window_closure_value<H: Host>(
     // SAFETY: the running environment activation's window, whose function is the
     // innermost activation's and whose environment's parent is the context's.
     let environment = owner.map(|owner| unsafe {
-        window_environment(vm, &*(*cx).code, r.0.add(usize::from(registers)), owner, (*cx).env, (*cx).program, (*cx).this)
+        window_environment(vm, &*(*cx).code, r.0.add(usize::from(registers)), owner, (*cx).env, (*cx).program, (*cx).this, Vec::new())
     });
     // SAFETY: the context's program outlives the lane run.
     let value = environment.and_then(|environment| vm.closure(unsafe { &*(*cx).code }, function, environment).ok());
@@ -11351,6 +11355,7 @@ impl<H: Host> Vm<H> {
                                 state.env,
                                 program,
                                 state.this,
+                                Vec::new(),
                             )
                         };
                         let frame = self.frames.last_mut().expect("the activation pushed a frame");
@@ -12166,6 +12171,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
             completion: Completion::Plain,
             forwards: false,
             environment: false,
+            record: std::ptr::null_mut(),
         }),
     };
     // SAFETY: the call proved room for the activation (`lane_activation_room`).
@@ -12699,6 +12705,10 @@ script_handler! {
             requicken::<H>(ip, lane_load_intrinsic_name::<H, KIND>);
             sibling!(lane_load_intrinsic_name::<H, KIND>, r, ip, Carried::script(cx))
         }
+        if code.function_get(function as usize).is_some_and(|body| body.call_plan(code).suspended_environment) {
+            requicken::<H>(ip, scoped_names::scoped_load_name::<H, KIND>());
+            sibling!(scoped_names::scoped_load_name::<H, KIND>(), r, ip, Carried::script(cx))
+        }
         requicken::<H>(ip, lane_exit::<H>);
         exit(ip)
     }
@@ -12749,6 +12759,10 @@ script_handler! {
         if global {
             requicken::<H>(ip, lane_store_global_name::<H>);
             sibling!(lane_store_global_name::<H>, r, ip, Carried::script(cx))
+        }
+        if code.function_get(function as usize).is_some_and(|body| body.call_plan(code).suspended_environment) {
+            requicken::<H>(ip, scoped_names::scoped_store_name::<H>());
+            sibling!(scoped_names::scoped_store_name::<H>(), r, ip, Carried::script(cx))
         }
         requicken::<H>(ip, lane_exit::<H>);
         exit(ip)
@@ -13404,6 +13418,7 @@ mod in_place_natives;
 mod native_calls; mod generator_yields; use generator_yields::suspend_handler;
 mod lane_roots;
 mod with_scopes;
+mod scoped_names;
 use lane_roots::{LaneRoot, LaneStart};
 pub(in crate::vm) use lane_roots::JobEnd;
 mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step};
@@ -15900,6 +15915,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
             completion: if skipped.is_some() { Completion::Forwarder } else { Completion::of(constructs, cross, SETTLES) },
             forwards: false,
             environment: false,
+            record: std::ptr::null_mut(),
         }),
     };
     // SAFETY: the capacity check above leaves room for the activation.
@@ -16068,6 +16084,7 @@ fn lane_activate_environment<H: Host>(
             completion: Completion::of(false, cross, false),
             forwards: false,
             environment: true,
+            record: std::ptr::null_mut(),
         }),
     };
     // SAFETY: the capacity check above leaves room for the activation.
@@ -16094,7 +16111,10 @@ fn lane_activate_environment<H: Host>(
 /// captured ones from the locals, which then hold `DELETED` for them as a frame's do. The
 /// window reaches the new storage from then on. The environment binds the activation's
 /// `this`, where its closures' arrows find it (`Vm::captured_lexical_this`), as a frame's
-/// promotion carries its bindings; an arrow's own `this` is that same lexical value.
+/// promotion carries its bindings; an arrow's own `this` is that same lexical value. The
+/// environment of a window activation that resolves names at run time also takes over the
+/// activation's dynamic `bindings` (`GeneratorFrame::dynamic_bindings`), as a frame's promotion
+/// takes its own (`Vm::promote_frame_environment`); any other passes none.
 ///
 /// # Safety
 /// `entries` starts the entries of a live environment window (`lane_activate_environment`).
@@ -16106,6 +16126,7 @@ unsafe fn window_environment<H: Host>(
     parent: Value,
     program: ProgramId,
     this: Value,
+    mut bindings: Vec<(crate::bytecode::Atom, Value)>,
 ) -> Value {
     // SAFETY: as the caller guarantees.
     unsafe {
@@ -16133,16 +16154,19 @@ unsafe fn window_environment<H: Host>(
         // can observe its implicit bindings (`Function::activation_bindings_observable`);
         // any other scope names only its program, which needs no allocation.
         let body = code.function(function as usize);
-        let scope = if !body.is_arrow && body.activation_bindings_observable(code) {
+        if !body.is_arrow && body.activation_bindings_observable(code) {
+            bindings.insert(0, (vm.runtime_atoms.lexical_this, this));
+        }
+        let scope = if bindings.is_empty() {
+            crate::heap::EnvironmentScopeRef::of_program(program.raw())
+        } else {
             crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
-                dynamic_bindings: vec![(vm.runtime_atoms.lexical_this, this)].into(),
+                dynamic_bindings: bindings.into(),
                 with_objects: Box::default(),
             })
-        } else {
-            crate::heap::EnvironmentScopeRef::of_program(program.raw())
         };
         let (environment, storage) = vm.heap.alloc_environment(parent, function, slots, scope);
         entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
@@ -16330,6 +16354,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
             },
             forwards: keeps,
             environment: false,
+            record: std::ptr::null_mut(),
         }),
     };
     // SAFETY: the capacity check above leaves room for the activation.
@@ -20762,10 +20787,13 @@ fn specialize_environment_window<H: Host>(
     if u32::from(function.locals) > u64::BITS
         || (function.arguments_slot.is_some() && !function.reads_passed_arguments_only() && !function.arguments_ride_window())
         || !function.local_registers.is_empty()
-        || function.selective_capture_slots.is_none()
+        || (function.selective_capture_slots.is_none() && !function.suspends_scoped())
     {
         return None;
     }
+    // A function that resolves names at run time stores and makes closures through the scope
+    // its activation carries (`scoped_names`).
+    let scoped = function.has_dynamic_scope_access();
     let registers = function.registers;
     // The handlers derivation gives these records alone: a record any other pass gave a
     // handler, such as one carrying an accumulator to the next, keeps the function's.
@@ -20800,12 +20828,15 @@ fn specialize_environment_window<H: Host>(
         }
         let environment = !op.captures_environment() && function.local_slot_uses_environment(own as usize);
         let handler: Handler = match (op.class(), environment) {
+            (Class::MakeClosure, _) if scoped => scoped_names::scoped_closure::<H>(),
             (Class::MakeClosure, _) => lane_make_window_closure::<H>,
             (Class::CloneEnv, _) => lane_clone_window_env::<H>,
             (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, true) => lane_load_window_local::<H, true>,
             (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, false) => lane_load_window_local::<H, false>,
             (Class::InitializeTdz, true) => lane_initialize_window_tdz::<H, true>,
             (Class::InitializeTdz, false) => lane_initialize_window_tdz::<H, false>,
+            (Class::StoreEnvLocal, true) if scoped => scoped_names::scoped_store_local::<H, true>(),
+            (Class::StoreEnvLocal, false) if scoped => scoped_names::scoped_store_local::<H, false>(),
             (_, true) => lane_store_window_local::<H, true>,
             (_, false) => lane_store_window_local::<H, false>,
         };
@@ -21751,6 +21782,7 @@ impl PreparedShape {
                 completion: Completion::ReturnsToNative,
                 forwards: keeps,
                 environment: false,
+                record: std::ptr::null_mut(),
             }),
         };
         let room = usize::from(target.room).max(fill_room::<ACTIVATION_FILL_BLOCK>(size));

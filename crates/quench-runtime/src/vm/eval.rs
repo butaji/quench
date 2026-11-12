@@ -938,24 +938,39 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn capture_binding_environment(&mut self, frame: usize) -> Result<Value, JsError> {
-        let binding_site_pc = self.frames[frame].binding_site_pc.filter(|pc| {
-            self.programs
-                .get(self.frames[frame].program)
-                .is_some_and(|program| {
-                    program
-                        .function_get(self.frames[frame].function as usize)
-                        .and_then(|function| {
-                            function
-                                .binding_sites
-                                .binary_search_by_key(pc, |site| site.resume_pc)
-                                .ok()
-                                .map(|index| &function.binding_sites[index])
-                        })
-                        .is_some_and(|site| !site.bindings.is_empty())
-                })
-        });
+        let (program, function) = (self.frames[frame].program, self.frames[frame].function);
+        let site = self.frames[frame]
+            .binding_site_pc
+            .filter(|pc| self.site_has_bindings(program, function, *pc));
         let environment = self.promote_frame_environment(frame);
-        let Some(binding_site_pc) = binding_site_pc else {
+        self.site_environment(environment, site)
+    }
+
+    /// Whether the binding site resuming at `pc` of `function` of `program` records bindings,
+    /// which a closure made there captures with its environment.
+    pub(super) fn site_has_bindings(&self, program: ProgramId, function: u32, pc: u32) -> bool {
+        self.programs.get(program).is_some_and(|program| {
+            program
+                .function_get(function as usize)
+                .and_then(|function| {
+                    function
+                        .binding_sites
+                        .binary_search_by_key(&pc, |site| site.resume_pc)
+                        .ok()
+                        .map(|index| &function.binding_sites[index])
+                })
+                .is_some_and(|site| !site.bindings.is_empty())
+        })
+    }
+
+    /// `environment`, the captured environment of an activation making a closure at the binding
+    /// site resuming at `site`: a copy that names the site, sharing the activation's dynamic
+    /// bindings and slots, so the closure's by-name lookups find what the site scopes. The
+    /// environment itself where there is no such site. A frame's closure
+    /// (`capture_binding_environment`) and a window activation's (`lane_make_scoped_closure`)
+    /// make it the same way.
+    pub(super) fn site_environment(&mut self, environment: Value, site: Option<u32>) -> Result<Value, JsError> {
+        let Some(binding_site_pc) = site else {
             return Ok(environment);
         };
         let slots = self

@@ -147,7 +147,7 @@ fn lane_resume_generator<H: Host>(
     }
     // SAFETY: the record keeps the frame, and so its registers, until the activation ends.
     let (prefix, window) = unsafe { ((*frame).prefix(), (*frame).registers.as_mut_ptr()) };
-    let activation = generator_activation(cx, r, ip, GeneratorWindow { prefix, function, generator, completion, environment });
+    let activation = generator_activation(cx, r, ip, GeneratorWindow { prefix, function, generator, completion, environment, record: frame });
     // SAFETY: the limit check above leaves room for the activation, and the frame's loops and
     // scope chain resume as the new activation's (`LaneStack::iterators`, `LaneStack::with_objects`).
     unsafe {
@@ -175,14 +175,15 @@ pub(super) fn open_window_locals<H: Host>(vm: &mut Vm<H>, frame: *mut GeneratorF
 }
 
 /// What the activation of a resumed generator runs (`generator_activation`): its frame's
-/// prefix and function, the generator, how its caller takes the step, and whether its window
-/// carries an environment (`ScriptActivation::environment`).
+/// prefix and function, the generator, how its caller takes the step, whether its window
+/// carries an environment (`ScriptActivation::environment`) and the record it runs over.
 struct GeneratorWindow {
     prefix: crate::vm::compiled::ShadowFrame,
     function: u32,
     generator: Value,
     completion: Completion,
     environment: bool,
+    record: *mut GeneratorFrame,
 }
 
 /// The activation of `window`'s generator for the call record at `ip`, made by the running
@@ -205,6 +206,7 @@ fn generator_activation<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
             completion: window.completion,
             forwards: false,
             environment: window.environment,
+            record: window.record,
         }),
     }
 }

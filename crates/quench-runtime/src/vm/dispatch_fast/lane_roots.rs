@@ -248,7 +248,6 @@ impl<H: Host> Vm<H> {
         if !self.execution_mode.allows_dynamic_execution()
             || !self.lane_stack.activations.is_empty()
             || self.lane_deferred.is_some()
-            || self.with_scope_entered
             || self.direct_eval
             || self.parameter_eval
             || code.kind == crate::bytecode::ProgramKind::Wasm
@@ -272,7 +271,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: the program store keeps a derived view alive with its program.
         let base = unsafe { (*view).records() };
         let entry = PreparedEntry { view, env: parent, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
-        let activation = job_activation(&entry, base, registers, job, prefix, environment);
+        let activation = job_activation(&entry, base, registers, job, prefix, environment, frame);
         Some(JobWindow { frame, registers, base, pc, entry, activation, _stack: stack })
     }
 
@@ -349,6 +348,7 @@ fn job_activation(
     job: JobRoot,
     prefix: crate::vm::compiled::ShadowFrame,
     environment: bool,
+    record: *mut GeneratorFrame,
 ) -> Activation {
     Activation {
         native: prefix,
@@ -366,6 +366,7 @@ fn job_activation(
             completion: Completion::ResumesJob,
             forwards: false,
             environment,
+            record,
         }),
     }
 }

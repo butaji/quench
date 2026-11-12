@@ -2327,6 +2327,15 @@ impl Function {
             })
     }
 
+    /// Whether a function that suspends in a record may lay out an environment window though it
+    /// resolves names through `with` objects, binding sites or dynamic bindings, which its record
+    /// and its activation's scope chain carry (`GeneratorFrame::with_objects`,
+    /// `GeneratorFrame::dynamic_bindings`): one that makes no iteration copy of its environment
+    /// (`CloneEnv`), which would have to share them (`Vm::iteration_environment`).
+    pub(crate) fn suspends_scoped(&self) -> bool {
+        self.suspends_in_record() && !self.instructions().any(|instruction| instruction.op() == Op::CloneEnv)
+    }
+
     /// Whether the `arguments` object a suspending function made on entry rides its window as
     /// the local it was stored in, which the lane reads in place (`lane_frame_arguments`): no
     /// closure captures the binding, and a mapped object (`arguments_alias_parameters`) aliases
