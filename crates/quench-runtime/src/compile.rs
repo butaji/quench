@@ -58,6 +58,7 @@ mod class;
 mod early;
 mod frame_registers;
 mod lazy_bodies;
+mod semantic_stats;
 pub(crate) use lazy_bodies::release_warm_arena;
 #[cfg(feature = "verify-replay")]
 mod free_names;
@@ -1397,7 +1398,7 @@ impl Engine {
 
 /// OXC's semantic analysis of `program`, its early errors as diagnostics of `name`.
 fn checked_semantic<'a>(program: &'a Program<'a>, name: &str) -> Result<oxc_semantic::SemanticBuilderReturn<'a>, Vec<Diagnostic>> {
-    let semantic = oxc_semantic::SemanticBuilder::new().with_check_syntax_error(true).build(program);
+    let semantic = semantic_stats::builder(program).with_check_syntax_error(true).build(program);
     if semantic.diagnostics.is_empty() {
         return Ok(semantic);
     }

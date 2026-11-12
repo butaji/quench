@@ -189,7 +189,7 @@ impl Drop for GuestCallGuard {
     }
 }
 
-#[inline(never)]
+#[inline(always)]
 fn current_stack_pointer() -> usize {
     let marker = 0_u8;
     std::hint::black_box(&marker as *const u8 as usize)

@@ -69,7 +69,7 @@ impl<'f> FreeNameCheck<'f> {
 
     /// Adds the free names of `body`, as the parser releases it.
     pub(in crate::compile) fn check(&mut self, body: oxc_parser::LazyBody<'_, '_>) {
-        let built = oxc_semantic::SemanticBuilder::new().build(body.program);
+        let built = crate::compile::semantic_stats::builder(body.program).build(body.program);
         if let Some((start, names)) = free_names(body.program, built.semantic.scoping()) {
             self.found.insert(start.wrapping_add(self.delta), names);
         }
