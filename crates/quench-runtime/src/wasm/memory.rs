@@ -359,67 +359,59 @@ pub(crate) fn checked_range(
     Ok(start..end)
 }
 
+/// The loads of the scalar rows run `staged::wasm_memory`'s access (`Access::of_load`); the
+/// vector rows, whose widening and splatting are SIMD semantics, decode their own bytes.
 macro_rules! loads {
-    ($value:ident; $($name:ident, $word:ty => $result:expr;)+) => {
+    ($value:ident; scalar { $($scalar:ident, $swidth:ty;)+ } vector { $($name:ident, $word:ty => $result:expr;)+ }) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u32)]
-        pub(crate) enum MemoryLoad { $($name,)+ }
+        pub(crate) enum MemoryLoad { $($scalar,)+ $($name,)+ }
         impl MemoryLoad {
-            const ALL: &'static [Self] = &[$(Self::$name,)+];
+            const ALL: &'static [Self] = &[$(Self::$scalar,)+ $(Self::$name,)+];
             pub(crate) fn from_tag(tag: u32) -> Option<Self> { Self::ALL.get(tag as usize).copied() }
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, wasmparser::MemArg)> {
-                match op { $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
+                match op { $(wasmparser::Operator::$scalar { memarg } => Some((Self::$scalar, *memarg)),)+ $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
             }
-            pub(crate) const fn width(self) -> usize { match self { $(Self::$name => std::mem::size_of::<$word>(),)+ } }
-            #[inline(always)]
-            pub(crate) fn read(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
-                let range = checked_range(address, self.width(), bytes.len())?;
-                // SAFETY: the range is `width` bytes inside `bytes`.
-                Ok(unsafe { self.read_at(bytes.as_ptr().add(range.start)) })
-            }
-            /// The value at `at`, unchecked.
+            pub(crate) const fn width(self) -> usize { match self { $(Self::$scalar => std::mem::size_of::<$swidth>(),)+ $(Self::$name => std::mem::size_of::<$word>(),)+ } }
+            /// The value of a vector load at `at`, unchecked.
             ///
             /// # Safety
             /// `width` bytes from `at` must be readable.
             #[inline(always)]
-            pub(crate) unsafe fn read_at(self, at: *const u8) -> WasmValue {
-                match self { $(Self::$name => {
-                    // SAFETY: the caller keeps the word's bytes readable.
-                    let $value = <$word>::from_le_bytes(unsafe { at.cast::<[u8; std::mem::size_of::<$word>()]>().read() });
-                    $result
-                },)+ }
+            pub(crate) unsafe fn read_vector_at(self, at: *const u8) -> WasmValue {
+                match self {
+                    $(Self::$scalar)|+ => unreachable!("a scalar load has an access"),
+                    $(Self::$name => {
+                        // SAFETY: the caller keeps the word's bytes readable.
+                        let $value = <$word>::from_le_bytes(unsafe { at.cast::<[u8; std::mem::size_of::<$word>()]>().read() });
+                        $result
+                    },)+
+                }
             }
         }
     }
 }
 loads! { word;
-    I32Load, i32 => WasmValue::I32(word as i32);
-    I64Load, i64 => WasmValue::I64(word as i64);
-    F32Load, u32 => WasmValue::F32(word as u32);
-    F64Load, u64 => WasmValue::F64(word as u64);
-    I32Load8S, i8 => WasmValue::I32(word as i32);
-    I32Load8U, u8 => WasmValue::I32(word as i32);
-    I32Load16S, i16 => WasmValue::I32(word as i32);
-    I32Load16U, u16 => WasmValue::I32(word as i32);
-    I64Load8S, i8 => WasmValue::I64(word as i64);
-    I64Load8U, u8 => WasmValue::I64(word as i64);
-    I64Load16S, i16 => WasmValue::I64(word as i64);
-    I64Load16U, u16 => WasmValue::I64(word as i64);
-    I64Load32S, i32 => WasmValue::I64(word as i64);
-    I64Load32U, u32 => WasmValue::I64(word as i64);
-    V128Load, u128 => WasmValue::V128(word as u128);
-    V128Load8x8S, u64 => super::simd::SimdOperator::I16x8ExtendLowI8x16S.apply(WasmValue::V128(u128::from(word)), None, 0);
-    V128Load8x8U, u64 => super::simd::SimdOperator::I16x8ExtendLowI8x16U.apply(WasmValue::V128(u128::from(word)), None, 0);
-    V128Load16x4S, u64 => super::simd::SimdOperator::I32x4ExtendLowI16x8S.apply(WasmValue::V128(u128::from(word)), None, 0);
-    V128Load16x4U, u64 => super::simd::SimdOperator::I32x4ExtendLowI16x8U.apply(WasmValue::V128(u128::from(word)), None, 0);
-    V128Load32x2S, u64 => super::simd::SimdOperator::I64x2ExtendLowI32x4S.apply(WasmValue::V128(u128::from(word)), None, 0);
-    V128Load32x2U, u64 => super::simd::SimdOperator::I64x2ExtendLowI32x4U.apply(WasmValue::V128(u128::from(word)), None, 0);
-    V128Load8Splat, u8 => super::simd::SimdOperator::I8x16Splat.apply(WasmValue::I32(word as i32), None, 0);
-    V128Load16Splat, u16 => super::simd::SimdOperator::I16x8Splat.apply(WasmValue::I32(word as i32), None, 0);
-    V128Load32Splat, u32 => super::simd::SimdOperator::I32x4Splat.apply(WasmValue::I32(word as i32), None, 0);
-    V128Load64Splat, u64 => super::simd::SimdOperator::I64x2Splat.apply(WasmValue::I64(word as i64), None, 0);
-    V128Load32Zero, u32 => WasmValue::V128(u128::from(word));
-    V128Load64Zero, u64 => WasmValue::V128(u128::from(word));
+    scalar {
+        I32Load, i32; I64Load, i64; F32Load, u32; F64Load, u64;
+        I32Load8S, i8; I32Load8U, u8; I32Load16S, i16; I32Load16U, u16;
+        I64Load8S, i8; I64Load8U, u8; I64Load16S, i16; I64Load16U, u16; I64Load32S, i32; I64Load32U, u32;
+    }
+    vector {
+        V128Load, u128 => WasmValue::V128(word as u128);
+        V128Load8x8S, u64 => super::simd::SimdOperator::I16x8ExtendLowI8x16S.apply(WasmValue::V128(u128::from(word)), None, 0);
+        V128Load8x8U, u64 => super::simd::SimdOperator::I16x8ExtendLowI8x16U.apply(WasmValue::V128(u128::from(word)), None, 0);
+        V128Load16x4S, u64 => super::simd::SimdOperator::I32x4ExtendLowI16x8S.apply(WasmValue::V128(u128::from(word)), None, 0);
+        V128Load16x4U, u64 => super::simd::SimdOperator::I32x4ExtendLowI16x8U.apply(WasmValue::V128(u128::from(word)), None, 0);
+        V128Load32x2S, u64 => super::simd::SimdOperator::I64x2ExtendLowI32x4S.apply(WasmValue::V128(u128::from(word)), None, 0);
+        V128Load32x2U, u64 => super::simd::SimdOperator::I64x2ExtendLowI32x4U.apply(WasmValue::V128(u128::from(word)), None, 0);
+        V128Load8Splat, u8 => super::simd::SimdOperator::I8x16Splat.apply(WasmValue::I32(word as i32), None, 0);
+        V128Load16Splat, u16 => super::simd::SimdOperator::I16x8Splat.apply(WasmValue::I32(word as i32), None, 0);
+        V128Load32Splat, u32 => super::simd::SimdOperator::I32x4Splat.apply(WasmValue::I32(word as i32), None, 0);
+        V128Load64Splat, u64 => super::simd::SimdOperator::I64x2Splat.apply(WasmValue::I64(word as i64), None, 0);
+        V128Load32Zero, u32 => WasmValue::V128(u128::from(word));
+        V128Load64Zero, u64 => WasmValue::V128(u128::from(word));
+    }
 }
 
 impl MemoryLoad {
@@ -431,54 +423,45 @@ impl MemoryLoad {
     }
 }
 
+/// The stores of the scalar rows run `staged::wasm_memory`'s access (`Access::of_store`); the
+/// vector row writes its own bytes.
 macro_rules! stores {
-    ($($name:ident, $word:ty, $variant:ident;)+) => {
+    (scalar { $($scalar:ident, $swidth:ty, $variant:ident;)+ } vector { $($name:ident, $word:ty;)+ }) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u32)]
-        pub(crate) enum MemoryStore { $($name,)+ }
+        pub(crate) enum MemoryStore { $($scalar,)+ $($name,)+ }
         impl MemoryStore {
-            const ALL: &'static [Self] = &[$(Self::$name,)+];
+            const ALL: &'static [Self] = &[$(Self::$scalar,)+ $(Self::$name,)+];
             pub(crate) fn from_tag(tag: u32) -> Option<Self> { Self::ALL.get(tag as usize).copied() }
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, wasmparser::MemArg)> {
-                match op { $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
+                match op { $(wasmparser::Operator::$scalar { memarg } => Some((Self::$scalar, *memarg)),)+ $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
             }
-            pub(crate) fn value_type(self) -> WasmType {
-                match self { $(Self::$name => WasmType::$variant,)+ }
-            }
-            pub(crate) const fn width(self) -> usize { match self { $(Self::$name => std::mem::size_of::<$word>(),)+ } }
-            #[inline(always)]
-            pub(crate) fn write(self, bytes: &mut [u8], address: u64, value: WasmValue) -> Result<(), WasmTrap> {
-                let range = checked_range(address, self.width(), bytes.len())?;
-                // SAFETY: the range is `width` bytes inside `bytes`.
-                unsafe { self.write_at(bytes.as_mut_ptr().add(range.start), value) };
-                Ok(())
-            }
-            /// Write `value` at `at`, unchecked.
+            pub(crate) fn value_type(self) -> WasmType { match self { $(Self::$scalar => WasmType::$variant,)+ $(Self::$name => WasmType::V128,)+ } }
+            pub(crate) const fn width(self) -> usize { match self { $(Self::$scalar => std::mem::size_of::<$swidth>(),)+ $(Self::$name => std::mem::size_of::<$word>(),)+ } }
+            /// Write the vector `value` at `at`, unchecked.
             ///
             /// # Safety
             /// `width` bytes from `at` must be writable.
             #[inline(always)]
-            pub(crate) unsafe fn write_at(self, at: *mut u8, value: WasmValue) {
-                match self { $(Self::$name => {
-                    let WasmValue::$variant(word) = value else { unreachable!("decoded store type") };
-                    // SAFETY: the caller keeps the word's bytes writable.
-                    unsafe { at.cast::<[u8; std::mem::size_of::<$word>()]>().write((word as $word).to_le_bytes()) };
-                },)+ }
+            pub(crate) unsafe fn write_vector_at(self, at: *mut u8, value: WasmValue) {
+                match self {
+                    $(Self::$scalar)|+ => unreachable!("a scalar store has an access"),
+                    $(Self::$name => {
+                        let WasmValue::V128(word) = value else { unreachable!("decoded store type") };
+                        // SAFETY: the caller keeps the word's bytes writable.
+                        unsafe { at.cast::<[u8; std::mem::size_of::<$word>()]>().write((word as $word).to_le_bytes()) };
+                    },)+
+                }
             }
         }
     }
 }
 stores! {
-    I32Store, i32, I32;
-    I64Store, i64, I64;
-    F32Store, u32, F32;
-    F64Store, u64, F64;
-    I32Store8, i8, I32;
-    I32Store16, i16, I32;
-    I64Store8, i8, I64;
-    I64Store16, i16, I64;
-    I64Store32, i32, I64;
-    V128Store, u128, V128;
+    scalar {
+        I32Store, i32, I32; I64Store, i64, I64; F32Store, u32, F32; F64Store, u64, F64;
+        I32Store8, i8, I32; I32Store16, i16, I32; I64Store8, i8, I64; I64Store16, i16, I64; I64Store32, i32, I64;
+    }
+    vector { V128Store, u128; }
 }
 
 // Scalar memory32 accesses with a static offset have one opcode each. The

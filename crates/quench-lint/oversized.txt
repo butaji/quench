@@ -1524,7 +1524,7 @@ file-lines crates/quench-runtime/src/wasm/constant.rs 980
 file-lines crates/quench-runtime/src/wasm/control.rs 1087
 file-lines crates/quench-runtime/src/wasm/gc.rs 676
 file-lines crates/quench-runtime/src/wasm/inline.rs 694
-file-lines crates/quench-runtime/src/wasm/memory.rs 835
+file-lines crates/quench-runtime/src/wasm/memory.rs 818
 file-lines crates/quench-runtime/src/wasm/scalar.rs 777
 file-lines crates/quench-runtime/src/wasm/simd.rs 935
 file-lines crates/quench-test262/src/bin/compare-runs.rs 525

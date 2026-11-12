@@ -3,7 +3,9 @@
 //! a bulk operation's checks on a probe stage, and the opcode table.
 
 use super::wasm_machine::ConcreteInstance;
-use super::wasm_memory::{Access, Memory, WasmMemory, copy, fill, load, size, store};
+use super::wasm_memory::{
+    Access, Memory, WasmMemory, WasmMemoryWrite, copy, fill, load, size, store,
+};
 use super::wasm_step::Step;
 use super::wasm_tests::Probe;
 use crate::bytecode::Op;
@@ -165,7 +167,9 @@ impl WasmMemory for Probe {
     fn memory_load(&mut self, _: Access, _: usize, _: u32) -> usize {
         self.trace("load")
     }
+}
 
+impl WasmMemoryWrite for Probe {
     fn memory_store(&mut self, _: Access, _: usize, _: u32, _: usize) {
         self.trace("store");
     }
@@ -289,4 +293,35 @@ fn a_trap_is_out_of_bounds_memory() {
         load(&mut stage, access, index, 0, false),
         Err(WasmTrap::OutOfBoundsMemory)
     );
+}
+
+#[test]
+fn a_narrow_load_extends_its_little_endian_bytes() {
+    let bytes = [0x80, 0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
+    let read = |load: MemoryLoad| load.read(&bytes, 0);
+    assert_eq!(read(MemoryLoad::I32Load8S), Ok(WasmValue::I32(-0x80)));
+    assert_eq!(read(MemoryLoad::I32Load8U), Ok(WasmValue::I32(0x80)));
+    assert_eq!(read(MemoryLoad::I32Load16S), Ok(WasmValue::I32(-0x80)));
+    assert_eq!(read(MemoryLoad::I64Load32U), Ok(WasmValue::I64(0x0201_ff80)));
+    assert_eq!(read(MemoryLoad::I64Load32S), Ok(WasmValue::I64(0x0201_ff80)));
+    assert_eq!(
+        read(MemoryLoad::I64Load),
+        Ok(WasmValue::I64(0x0605_0403_0201_ff80))
+    );
+}
+
+#[test]
+fn an_address_that_wraps_the_word_is_out_of_bounds() {
+    let bytes = pattern();
+    let last = u64::MAX - 1;
+    assert_eq!(
+        MemoryLoad::I32Load.read(&bytes, last),
+        Err(WasmTrap::OutOfBoundsMemory)
+    );
+    let mut written = pattern();
+    assert_eq!(
+        MemoryStore::I32Store.write(&mut written, last, WasmValue::I32(1)),
+        Err(WasmTrap::OutOfBoundsMemory)
+    );
+    assert_eq!(written, bytes);
 }

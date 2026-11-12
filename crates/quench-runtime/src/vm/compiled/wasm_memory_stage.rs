@@ -9,7 +9,9 @@ use super::{
     compiled_memory_copy, compiled_memory_fill, scalar_ir,
 };
 use crate::bytecode::{Function, WideInstruction};
-use crate::staged::wasm_memory::{Access, Memory, WasmMemory, copy, fill, load, size, store};
+use crate::staged::wasm_memory::{
+    Access, Memory, WasmMemory, WasmMemoryWrite, copy, fill, load, size, store,
+};
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, types};
 
 /// The byte widths of the narrow accesses.
@@ -58,7 +60,9 @@ impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
             _ => ins.load(ty, flags, host, 0),
         }
     }
+}
 
+impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
     fn memory_store(&mut self, access: Access, index: ir::Value, offset: u32, value: ir::Value) {
         let host = self.host_address(index, offset);
         let flags = self.flags(Region::LinearMemory);
