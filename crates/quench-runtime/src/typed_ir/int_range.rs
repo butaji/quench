@@ -38,6 +38,12 @@ impl IntRange {
         Self::bounds(i64::from(self.min) - i64::from(other.max), i64::from(self.max) - i64::from(other.min))
     }
 
+    pub(crate) fn multiply(self, other: Self) -> Option<Self> {
+        let products = [self.min, self.max].map(|left| [other.min, other.max].map(|right| i64::from(left) * i64::from(right)));
+        let (min, max) = products.iter().flatten().fold((i64::MAX, i64::MIN), |(low, high), &product| (low.min(product), high.max(product)));
+        Self::bounds(min, max)
+    }
+
     /// Sign-extended N-bit operands remain sign-extended after &, | or ^.
     /// Unlike independent known bits, this retains the correlation of high
     /// bits with the sign even when the input interval crosses zero.
@@ -107,10 +113,14 @@ mod tests {
         assert_eq!(IntRange::FULL.add(IntRange::singleton(1)), None);
         assert_eq!(IntRange::FULL.subtract(IntRange::singleton(1)), None);
         assert_eq!(IntRange::singleton(i32::MIN).subtract(IntRange::singleton(i32::MIN)), Some(IntRange::singleton(0)));
+        assert_eq!(IntRange::FULL.multiply(IntRange::singleton(2)), None);
+        assert_eq!(IntRange::singleton(i32::MIN).multiply(IntRange::singleton(-1)), None);
+        assert_eq!(IntRange { min: -3, max: 2 }.multiply(IntRange { min: -4, max: 5 }), Some(IntRange { min: -15, max: 12 }));
         for a in -8..=8 { for b in a..=8 { for c in -8..=8 { for d in c..=8 {
             let left = IntRange { min: a, max: b };
             let right = IntRange { min: c, max: d };
             for x in a..=b { for y in c..=d {
+                assert!(left.multiply(right).unwrap().contains(IntRange::singleton(x * y)));
                 assert!(left.add(right).unwrap().contains(IntRange::singleton(x + y)));
                 assert!(left.subtract(right).unwrap().contains(IntRange::singleton(x - y)));
             }}

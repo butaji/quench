@@ -150,15 +150,15 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     /// the proof's cold block, exactly as the lowering's cold path did.
     #[inline(always)]
     fn index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::Index { view, absent } = proof else { return None };
-        Some(super::super::emit_dense_element(stage.builder, view, index, absent).1)
+        let EmitProof::Index { view, absent, in_bounds } = proof else { return None };
+        Some(super::super::emit_dense_element(stage.builder, view, index, absent, in_bounds).1)
     }
 
     #[inline(always)]
     fn index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
         proof: EmitProof) -> Option<()> {
-        let EmitProof::Index { view, absent } = proof else { return None };
-        let (address, old) = super::super::emit_dense_element(stage.builder, view, index, absent);
+        let EmitProof::Index { view, absent, in_bounds } = proof else { return None };
+        let (address, old) = super::super::emit_dense_element(stage.builder, view, index, absent, in_bounds);
         super::super::emit_dense_element_replace(stage.builder, view, address, old, value);
         Some(())
     }

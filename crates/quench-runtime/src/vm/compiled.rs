@@ -916,7 +916,8 @@ pub(super) struct DenseArrayView {
 #[derive(Clone, Copy)]
 pub(in crate::vm::compiled) enum EmitProof {
     Field(object_slots::CheckedObject),
-    Index { view: DenseArrayView, absent: ir::Block },
+    /// `in_bounds`: the index is proved below the view's length, so only a hole leaves at `absent`.
+    Index { view: DenseArrayView, absent: ir::Block, in_bounds: bool },
     TypedIndex { values: ir::Value, length: ir::Value, kind: ir::Value, absent: ir::Block }, Allocation { miss: ir::Block },
     Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block> }, FieldStoreMiss { miss: ir::Block },
 }
@@ -968,10 +969,15 @@ pub(super) fn emit_dense_element(
     view: DenseArrayView,
     index: ir::Value,
     fallback: ir::Block,
+    in_bounds: bool,
 ) -> (ir::Value, ir::Value) {
     let mut stage = object_slots::Emit { builder, property_values: None };
-    crate::staged::elements::dense_element(&mut stage, view.values, view.length, index, fallback)
-        .expect("the emit stage continues past its guards")
+    let element = if in_bounds {
+        crate::staged::elements::present_element(&mut stage, view.values, index, fallback)
+    } else {
+        crate::staged::elements::dense_element(&mut stage, view.values, view.length, index, fallback)
+    };
+    element.expect("the emit stage continues past its guards")
 }
 
 /// Replace the present element at `address`, whose value was `old`, with the non-heap
@@ -1016,7 +1022,7 @@ pub(super) fn emit_dense_element_read(
     fallback: ir::Block,
 ) -> ir::Value {
     let view = emit_dense_array_view(builder, payload, base, false, fallback);
-    emit_dense_element(builder, view, index, fallback).1
+    emit_dense_element(builder, view, index, fallback, false).1
 }
 
 /// Lower a present dense own-array read. The receiver and key come from the
