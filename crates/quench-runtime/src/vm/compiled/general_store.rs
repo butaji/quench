@@ -48,6 +48,22 @@ impl StoreClass {
     }
 }
 
+/// Whether any of `flags` holds.
+fn emit_any(builder: &mut FunctionBuilder<'_>, flags: impl IntoIterator<Item = ir::Value>) -> ir::Value {
+    let none = builder.ins().iconst(types::I8, 0);
+    flags.into_iter().fold(none, |held, flag| builder.ins().bor(held, flag))
+}
+
+/// Whether `bits` is a direct object or a nullish alternative of `slot`, a type that holds a
+/// direct object of any shape (`Type::is_any_object_slot`): a store of it widens nothing.
+pub(super) fn emit_holds_object_slot(builder: &mut FunctionBuilder<'_>, bits: ir::Value, slot: crate::typed_ir::Type) -> ir::Value {
+    use crate::{typed_ir::Type, ValueType};
+    let classes = [(StoreClass::DirectObject, Type::DIRECT_OBJECT_FAMILY), (StoreClass::Null, Type::language(ValueType::Null)),
+        (StoreClass::Undefined, Type::language(ValueType::Undefined))];
+    let holds: Vec<ir::Value> = classes.into_iter().filter(|(_, held)| held.is_subtype(slot)).map(|(class, _)| class.emit_holds(builder, bits)).collect();
+    emit_any(builder, holds)
+}
+
 /// Records on `site`'s entry the class of `value`, which a native-preserving helper store just
 /// wrote through it without widening its slot's representation, where the class proves
 /// every later store of it (`StoreClass`).
@@ -81,12 +97,11 @@ pub(super) fn emit_store(builder: &mut FunctionBuilder<'_>, (arguments, payload)
         i32::try_from(entry).expect("field entry offset fits i32"));
     let recorded = builder.ins().ushr_imm_u(word, i64::from(StoreClass::SHIFT));
     let classes = StoreClass::ALL.map(|class| (class, class.emit_holds(builder, value)));
-    let mut proved = builder.ins().iconst(types::I8, 0);
-    for (class, holds) in classes {
+    let both: Vec<ir::Value> = classes.iter().map(|&(class, holds)| {
         let named = builder.ins().icmp_imm_u(IntCC::Equal, recorded, i64::from(class as u32));
-        let both = builder.ins().band(named, holds);
-        proved = builder.ins().bor(proved, both);
-    }
+        builder.ins().band(named, holds)
+    }).collect();
+    let proved = emit_any(builder, both);
     emit_js_guard(builder, proved, helper);
     let packed = builder.create_block();
     let packed_address = builder.append_block_param(packed, types::I64);

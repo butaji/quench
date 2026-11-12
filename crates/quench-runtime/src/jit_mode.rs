@@ -47,44 +47,14 @@ impl JitMode {
         }
     }
 
-    /// The execution mode the runtime is set to: `--f-jit` runs the compiled lane with its loop
-    /// regions built from FastJIT stencils only (`fast_only`).
+    /// The execution mode the runtime is set to. FastJIT has no tier of its own yet, so
+    /// `--f-jit` runs the interpreter until it lands.
     pub fn execution_mode(self) -> ExecutionMode {
         match self.tiers_enabled() {
-            (false, false) => ExecutionMode::Interpreted,
-            _ => ExecutionMode::Compiled,
+            (_, true) => ExecutionMode::Compiled,
+            (_, false) => ExecutionMode::Interpreted,
         }
     }
-
-    /// Makes this the process's mode, which `fast_only` and `fast_regions` report.
-    pub fn set_process_mode(self) {
-        PROCESS_MODE.store(self as u8, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// Whether the Cranelift function tiers (lane bodies, their background compiles and entry-cell
-/// publication, the JavaScript function tiers) run: the one `tiers_enabled` fact of the process's mode,
-/// UltraJIT's half. `--f-jit` is the interpreter plus stencil regions.
-pub fn function_tiers() -> bool {
-    let mode = [JitMode::Interp, JitMode::FastOnly, JitMode::UltraOnly, JitMode::Full]
-        .into_iter()
-        .find(|mode| *mode as u8 == PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed))
-        .unwrap_or_default();
-    mode.tiers_enabled().1
-}
-
-static PROCESS_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(JitMode::Full as u8);
-
-/// Whether the process runs `--f-jit`: loop regions that FastJIT declines are not compiled by
-/// UltraJIT either.
-pub fn fast_only() -> bool {
-    PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed) == JitMode::FastOnly as u8
-}
-
-/// Whether loop regions are built from FastJIT stencils: `--f-jit`, or `QUENCH_DEV=fastjit`
-/// while the tier is an experiment in the default mode.
-pub fn fast_regions() -> bool {
-    fast_only() || crate::trace::Dev::FastJit.on()
 }
 
 #[cfg(test)]

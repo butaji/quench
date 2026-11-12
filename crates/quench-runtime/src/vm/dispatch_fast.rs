@@ -880,6 +880,18 @@ impl LaneView {
         }
     }
 
+    /// Its body's state, the entries it counted, and whether the tier claimed its prologue and
+    /// is still warming, for the diagnostics report of a view that never compiled
+    /// (`QUENCH_LANE_STATE`).
+    pub(super) fn lane_body_detail(&self) -> (&'static str, Option<u16>, bool, bool) {
+        // SAFETY: as `lane_body`.
+        let entries = match unsafe { &*self.tier_lane.get() } {
+            LaneBody::Unspecialized { entries, .. } => Some(*entries),
+            _ => None,
+        };
+        (self.lane_body_state(), entries, self.start.get() == self.prologue.get().cast_const(), self.warming())
+    }
+
     /// The specialized frameless body, if there is one.
     fn lane_body(&self) -> Option<std::rc::Rc<super::compiled::LaneMethod>> {
         // SAFETY: this view is read on its VM's thread. Clone the code owner before
@@ -8040,13 +8052,12 @@ fn lane_loop_native<H: Host>(
     };
     // The tier's state is borrowed only here, so the dispatch below holds no borrow.
     let continuation = lane_loop_run(cx, r, site, region, &mut entry, views);
-    count_continuation(&continuation);
     site.declines.set(if matches!(continuation, LoopContinuation::Jump) { site.declines.get() + 1 } else { 0 });
     lane_loop_hold_header::<H>(header, site);
     match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => LoopAttempt::Declined,
         LoopContinuation::Resume(pc) => LoopAttempt::At(at(pc)),
-        LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc, region.header..=region.backedge); LoopAttempt::Leave(exit(at(pc))) }
+        LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc); LoopAttempt::Leave(exit(at(pc))) }
         LoopContinuation::Inlined { frame, pc } => { let frame = region.inlining.as_ref().expect("an inlining region").frames[frame];
             LoopAttempt::Leave(exit(lane_inlined_activation(cx, r, region, &entry, frame, at(frame.call), pc))) }
         LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
@@ -8063,19 +8074,15 @@ fn lane_loop_native<H: Host>(
 /// element store, whose append helper it can compile, or a capture read, whose root-held binding
 /// it can read by helper; a leave at any other guard (a shape, say) widens nothing.
 #[cold]
-fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32, region: std::ops::RangeInclusive<u32>) {
-    if !region.contains(&pc) { return; }
+fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     let machine = unsafe { vm(cx) };
     let counted = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
         let body = program.function(site.function() as usize);
         body.code.get(pc as usize).and_then(|packed| {
             let op = decoded_instruction(body, *packed).op();
-            super::compiled::fast_region::leave(site.function(), pc, op);
             (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
-                || matches!(op.class(), Class::LoadCapture)
-                // A FastJIT region also holds a loaded field as an int32 until it leaves there.
-                || (crate::jit_mode::fast_regions() && matches!(op.class(), Class::GetField))).then(|| op.is_get_index())
+                || matches!(op.class(), Class::LoadCapture)).then(|| op.is_get_index())
         })
     });
     if let Some(read) = counted { site.tier.borrow_mut().left_at(pc, read); }
@@ -8237,16 +8244,6 @@ enum LoopContinuation {
     Callee,
 }
 
-/// Counts what a loop run came to (`QUENCH_TRACE=js-jit`).
-fn count_continuation(continuation: &LoopContinuation) {
-    use super::compiled::fast_region::{count, Event};
-    count(match continuation {
-        LoopContinuation::Jump | LoopContinuation::Compiling => Event::Declined,
-        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Safepoint | LoopContinuation::Callee => Event::Left,
-        LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => Event::Entered,
-    });
-}
-
 /// Compiles `site`'s region if it has no current code, for the element `views` its entry
 /// proved, then runs it on `r` with `entry`. A representation an outcome shows wrong is
 /// widened, and the code dropped for the next compilation.
@@ -8273,7 +8270,7 @@ fn lane_loop_run<H: Host>(
         let int_entries = loop_tier::int_entries(r, region);
         let typed_captures = loop_tier::typed_capture_slots(cx);
         let int_captures = loop_tier::int_capture_slots(cx);
-        lane_loop_compile(cx, r, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
+        lane_loop_compile(cx, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }
@@ -8595,8 +8592,6 @@ fn lane_inlining_region<H: Host>(
     r: Registers,
     site: &LoopSite,
 ) -> Option<super::compiled::LoopRegion> {
-    // `--f-jit` runs no inlining regions, so it does not analyze them.
-    if crate::jit_mode::fast_only() { return None; }
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let program = unsafe { (*cx).program };
@@ -15778,7 +15773,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     };
     // SAFETY: the capacity check above leaves room for the activation.
     unsafe { stack.push_activation(activation) };
-    stack.forwarders.extend(skipped);
+    if let Some(skipped) = skipped { stack.forwarders.push(skipped); }
     // SAFETY: the program store keeps a derived view alive with its program.
     let base = unsafe { (*target.view).records() };
     unsafe {
@@ -16355,7 +16350,8 @@ fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Valu
     }
     let common = match completion {
         Some(Completion::ReturnsToNative) => lane_complete_native_callback(cx, value),
-        Some(Completion::Plain) => lane_complete_plain_chain(cx, value),
+        // `lane_complete_activation` begins with the same chain.
+        Some(Completion::Plain) => None,
         Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
         Some(Completion::Constructs) => lane_return_from::<H, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
         _ => None,
@@ -16509,6 +16505,11 @@ fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> 
         let ActivationKind::Script(script) = &activation.kind else {
             return None;
         };
+        // A body's callee (`Completion::ReturnsToBody`) ends the run its call started: it is
+        // the outermost, whatever its call's register.
+        if script.completion == Completion::ReturnsToBody {
+            break index;
+        }
         if script.completion != Completion::Plain {
             return None;
         }
@@ -16522,7 +16523,21 @@ fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> 
     debug_assert!(activations[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
     vm.lane_stack.activations.truncate(outermost + 1);
     vm.lane_stack.drop_iterators_from(outermost + 1);
+    if matches!(&vm.lane_stack.activations[outermost].kind, ActivationKind::Script(script) if script.completion == Completion::ReturnsToBody) {
+        return lane_end_body_callee(cx, value);
+    }
     lane_complete_plain_activation::<H, NOT_LEAF>(cx, value)
+}
+
+/// The end of the nested run of a body's callee, the innermost activation (`Completion::ReturnsToBody`),
+/// with `value`: its caller's state restored and the call's register set, as the general loop's
+/// completion of it does (`body_calls::ends_run`).
+#[inline(always)]
+fn lane_end_body_callee<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let activation = vm.lane_stack.pop_activation()?;
+    let (_, this) = lane_restore_caller(cx, &activation);
+    body_calls::ends_run(cx, &activation, Completion::ReturnsToBody, this, value)
 }
 
 /// `lane_complete_activation` of a native's callback (`Completion::ReturnsToNative`): the
@@ -19898,7 +19913,7 @@ fn install_loop_sites<'live, H: Host>(
                     widenings: std::cell::Cell::new(0),
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
-                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial()),
+                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::IDLE),
                 },
             )
         })

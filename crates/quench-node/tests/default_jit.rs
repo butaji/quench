@@ -51,51 +51,6 @@ fn the_jit_mode_flags_select_one_mode_and_the_old_flag_is_gone() {
     assert!(!run_flags(&["--no-jit", "--f-jit"]).0, "two modes are an error");
     assert!(!run_flags(&["--f-jit", "--u-jit"]).0, "two modes are an error");
     assert!(!run_flags(&["--jit"]).0, "--jit is removed");
-    assert!(compiles(&["--f-jit"]) > 0, "--f-jit: the hot number loop runs from stencils");
+    assert_eq!(compiles(&["--f-jit"]), 0, "--f-jit has no tier of its own yet, so it compiles nothing");
     assert!(compiles(&["--u-jit"]) > 0, "--u-jit: the hot loop runs compiled code");
-}
-
-/// Runs the fixture under `flag`; the exit status and stdout.
-fn run_fixture(flag: &str, fixture: &str) -> (bool, String) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(fixture);
-    let output = Command::new(env!("CARGO_BIN_EXE_quench-node")).arg(flag).arg(path).env_remove("NODE_OPTIONS").output().expect("run quench-node");
-    (output.status.success(), String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-/// Loops whose registers hold ints, then doubles, then ints, left at every guard (widening
-/// recompiles, element and tag exits) leave the lane exactly as the interpreter has it.
-#[test]
-fn f_jit_exits_leave_the_interpreters_state() {
-    for fixture in ["fast_jit_webs.js", "fast_jit_exit_state.js"] {
-        let expected = run_fixture("--no-jit", fixture);
-        assert!(expected.0, "{fixture} under --no-jit");
-        for _ in 0..3 {
-            assert_eq!(run_fixture("--f-jit", fixture), expected, "{fixture} under --f-jit");
-        }
-    }
-}
-
-/// The function-level compile attempts (before each function's `osr` section) and the loop-region runs of a run's statistics.
-fn function_attempts_and_region_runs(flag: &str) -> (u64, u64) {
-    let output = Command::new(env!("CARGO_BIN_EXE_quench-node"))
-        .args([flag, "-e", HOT_LOOP])
-        .env("QUENCH_TRACE", "js-jit")
-        .env_remove("NODE_OPTIONS")
-        .output()
-        .expect("run quench-node");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    let (mut attempts, mut runs) = (0, 0);
-    for json in String::from_utf8_lossy(&output.stderr).lines().filter_map(|line| line.strip_prefix("QUENCH_JS_JIT_STATS ")) {
-        let (function, osr) = json.split_once("\"osr\"").unwrap_or((json, ""));
-        attempts += count_after(function, "\"compile_attempts\":") + count_after(function, "\"general_dispatch_compile_attempts\":");
-        runs += count_after(osr, "\"native_region_runs\":");
-    }
-    (attempts, runs)
-}
-
-#[test]
-fn f_jit_compiles_no_function_and_runs_stencil_regions() {
-    let (attempts, runs) = function_attempts_and_region_runs("--f-jit");
-    assert_eq!(attempts, 0, "--f-jit: no Cranelift function compile is attempted");
-    assert!(runs > 0, "--f-jit: the hot loop runs its stencil region");
 }

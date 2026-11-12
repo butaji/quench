@@ -245,16 +245,6 @@ impl LaneView {
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
     }
 
-    /// `--f-jit` compiles no function body: the view's body is declined, once.
-    fn declined_by_mode(&self) -> bool {
-        let declined = !crate::jit_mode::function_tiers();
-        if declined {
-            // SAFETY: as `lane_body`.
-            unsafe { *self.tier_lane.get() = LaneBody::Declined };
-        }
-        declined
-    }
-
     /// Whether its body's code is compiling (`LaneBody::Compiling`).
     pub(super) fn compiling(&self) -> bool {
         // SAFETY: as `lane_body`.
@@ -266,9 +256,6 @@ impl LaneView {
     /// a fact of the view from then on: its prologue record enters it with `entry`, which
     /// tests nothing the specialization proved (`lane_body_entry`).
     pub(super) fn specialize_lane_body(&self, entry: Handler, work: impl FnOnce(super::super::compiled::LaneBodyWork) -> super::super::compiled::LaneBodyOutcome) -> bool {
-        if self.declined_by_mode() {
-            return false;
-        }
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is taken out
         // of the view while the VM works on it.
@@ -282,7 +269,6 @@ impl LaneView {
                     *body = LaneBody::Unspecialized { entries, recompiles, stuck };
                     return false;
                 }
-                super::super::compiled::fast_region::count(super::super::compiled::fast_region::Event::BodyCompile);
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
                 (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| u32::from(entries) + 1), called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
@@ -329,7 +315,11 @@ impl LaneView {
                 self.history.set(LaneBodyHistory { short: true, ..self.history.get() });
                 LaneBody::Declined
             }
-            super::super::compiled::LaneBodyOutcome::Declined => LaneBody::Declined,
+            super::super::compiled::LaneBodyOutcome::Declined => {
+                if self.history.get().lifetimes > 0 { super::dispatch_fast::lane_body_stats::decline("dropped bodies"); }
+                self.body_stats.declined.set(super::dispatch_fast::lane_body_stats::take_decline());
+                LaneBody::Declined
+            }
         }
     }
 
@@ -379,6 +369,7 @@ pub(super) fn site_targets<'a, H: super::Host>(vm: &'a super::Vm<H>, view: &Lane
 pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, body: Option<&crate::bytecode::Function>) -> Option<super::super::compiled::LaneBodyOutcome> {
     use super::super::compiled::LaneBodyOutcome;
     if view.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters()) {
+        super::dispatch_fast::lane_body_stats::decline("start-gate: closed loop left to its admitted region");
         return Some(LaneBodyOutcome::Declined);
     }
     let body = body?;

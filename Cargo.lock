@@ -1587,16 +1587,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quench-fastjit"
-version = "0.1.0"
-dependencies = [
- "cranelift-codegen",
- "cranelift-frontend",
- "cranelift-native",
- "libc",
-]
-
-[[package]]
 name = "quench-intl"
 version = "0.1.0"
 dependencies = [
@@ -1743,7 +1733,6 @@ dependencies = [
  "oxc_syntax",
  "phf 0.14.0",
  "quench-alloc",
- "quench-fastjit",
  "quench-intl",
  "quench-macros",
  "quench-regexp",
