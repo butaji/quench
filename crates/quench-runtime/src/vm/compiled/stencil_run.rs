@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 use super::LANE_OSR_RUNS;
-use super::{enter_native, lane_loop_outcome, CallContext, Entry, LoopEntry, LoopOutcome, LoopRegion, NativeEntryMode, Raised, TERMINATED_STATUS};
+use super::{enter_native, CallContext, Entry, LaneExit, LoopEntry, LoopOutcome, LoopRegion, NativeEntryMode, Raised};
 
 
 /// A bare run's payload is the entry record's address alone, where the dispatch holds it.
@@ -45,6 +45,6 @@ pub(super) unsafe fn run_bare(
     if let Some(Raised::Panic(panic)) = context.raised.take() {
         std::panic::resume_unwind(panic);
     }
-    if i64::from(status) == TERMINATED_STATUS { LoopOutcome::Terminated } else { lane_loop_outcome(word, region) }
+    LoopOutcome::of(LaneExit::read(status, word, || unreachable!("a bare region reads no heap row, so it completes no activation")), region)
 }
 

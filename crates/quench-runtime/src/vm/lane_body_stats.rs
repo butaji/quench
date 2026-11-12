@@ -36,7 +36,7 @@ impl LaneBodyStats {
     }
 
     /// `frames`, the body's inlined calls, name the function a leave inside one was in.
-    pub(in crate::vm) fn ended(&self, exit: super::super::compiled::LaneExit, frames: &[super::super::compiled::InlinedCall], line: u64) {
+    pub(in crate::vm) fn ended(&self, exit: super::super::compiled::LaneExit, exits: &super::super::compiled::ExitTable, frames: &[super::super::compiled::InlinedCall], line: u64) {
         let index = End::of(exit) as usize;
         self.ends[index].set(self.ends[index].get() + 1);
         // Prefixed by the compile that left there, the first being `c1`.
@@ -49,7 +49,7 @@ impl LaneBodyStats {
             super::super::compiled::LaneExit::At(pc) => format!("{compile} {pc}#{}@{pc}", self.function.get()),
             super::super::compiled::LaneExit::Entry => format!("{compile} entry#{}", self.function.get()),
             super::super::compiled::LaneExit::Inlined { frame, pc } => match frames.get(frame) {
-                Some(call) => format!("{compile} {frame}:{pc}#{}@{pc}", call.target.function),
+                Some(call) => format!("{compile} {frame}:{pc}{}#{}@{pc}", exits.describe(exit), call.target.function),
                 None => format!("{compile} {frame}:{pc}"),
             },
             _ => return,

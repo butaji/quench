@@ -1866,7 +1866,7 @@ pub(super) fn lower(
             lowering.builder.ins().store(MemFlagsData::trusted(), bits, lowering.registers_base, register_offset(register));
         }
         let word = match unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
-            super::lane_unit::Origin::Caller(record) => u64::from(record),
+            super::lane_unit::Origin::Caller(record) => LaneExit::At(record as usize).word(),
             super::lane_unit::Origin::Inlined { frame, pc: record } if lowering.completion == Completion::SourcePc => {
                 let (snapshot, descriptors) = recovery_slots.expect("materialized chain homes");
                 let scratch = lowering.builder.ins().stack_addr(types::I64, snapshot, 0);
@@ -1913,7 +1913,7 @@ pub(super) fn lower(
                     emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper,
                         &[lowering.payload, entries, count, scratch]);
                 }
-                lowering.return_at(u64::from(JS_INLINE_MATERIALIZED_PC));
+                lowering.return_at(LaneExit::At(JS_INLINE_MATERIALIZED_PC as usize).word());
                 continue;
             }
             super::lane_unit::Origin::Inlined { frame, pc: record } => {

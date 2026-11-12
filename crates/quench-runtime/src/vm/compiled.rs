@@ -52,6 +52,8 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+mod exit_protocol;
+pub(super) use exit_protocol::ExitTable;
 mod osr_compile; pub(in crate::vm) mod base_region; mod base_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
 pub(super) use lane_region::ElementViews;
@@ -6158,42 +6160,13 @@ impl CompiledOsrRegion {
             if let Some(Raised::Panic(panic)) = context.raised.take() {
                 std::panic::resume_unwind(panic);
             }
-            outcome = if i64::from(status) == TERMINATED_STATUS {
-                LoopOutcome::Terminated
-            } else if status == LANE_BODY_RETURNED {
-                // The region's Return completed the activation: the lane completes it as
-                // its own body would, with the value in the result word and the record
-                // that completes it in the payload. This is not an exit.
-                LoopOutcome::Returned { pc: native.dispatch.returned_pc as u32,
-                    value: crate::Value::from_bits(word) }
-            } else {
-                lane_loop_outcome(word, region)
-            };
+            let exit = LaneExit::read(status, word, || native.dispatch.returned_pc);
+            outcome = LoopOutcome::of(exit, region);
         }) };
         if ran.is_none() { return LoopOutcome::Terminated; }
         outcome
     }
 
-}
-
-/// The outcome of a lane OSR region's leave `word`. A leave outside the loop is the loop's
-/// normal continuation, which the lane resumes at that PC; a guard inside the loop is an
-/// exit. The word already names the caller's PC, and an inlining region's loop ends at the
-/// caller's latch, not at the region's last instruction. A leave inside an inlined callee
-/// names its frame and callee PC.
-fn lane_loop_outcome(word: u64, region: &LoopRegion) -> LoopOutcome {
-    match LaneExit::decode(word) {
-        LaneExit::At(pc) => {
-            let pc = pc as u32;
-            let latch = region.inlining.as_ref().map_or(region.backedge, |inlining| inlining.latch);
-            if (region.header..=latch).contains(&pc) { LoopOutcome::Exit(pc) } else { LoopOutcome::Resume(pc) }
-        }
-        LaneExit::Entry => LoopOutcome::NotEntered,
-        LaneExit::Terminated => LoopOutcome::Terminated,
-        LaneExit::Callee => LoopOutcome::Callee,
-        LaneExit::Inlined { frame, pc } => LoopOutcome::Inlined { frame, pc },
-        LaneExit::Returned { .. } => LoopOutcome::Exit(0),
-    }
 }
 
 /// Analyze a loop candidate whose calls run inlined (`osr_loop::inline_region`), each
@@ -6629,6 +6602,8 @@ pub(super) struct LaneMethod {
     pub(super) names_shapes: bool,
     /// The calls it runs inlined (`lane_unit::unit`), by frame.
     pub(super) inlined: Vec<InlinedCall>,
+    /// Its leaves, by place (`ExitTable`).
+    pub(super) exits: ExitTable,
     /// The scratch registers a leave inside an inlined call fills (`LaneFrame::scratch`): one
     /// per register of the inlined callees, the unit's past the caller's.
     scratch_width: usize,
@@ -6690,13 +6665,6 @@ pub(super) enum LaneExit {
     Entry,
 }
 
-/// The bit of a lane body's result word that marks a leave inside an inlined frame, whose
-/// index sits above the callee PC's word.
-const INLINED_EXIT: u64 = 1 << 63;
-/// The result word of a leave into a native call's callee activation.
-const CALLEE_EXIT: u64 = 1 << 62;
-/// The result word of a leave at the body's entry, whose proof of its inputs failed.
-const ENTRY_EXIT: u64 = 1 << 61;
 /// The status of a lane body whose activation completes: its result word holds the value,
 /// and `JsStepDispatch::returned_pc` the record that completes it (`LaneExit::Returned`). It
 /// sits below the general dispatch's return statuses and above every small status.
@@ -6728,28 +6696,6 @@ impl LaneExit {
     /// Where the activation resumes: an entry leave at its first record.
     pub(super) fn resumed(self) -> Self {
         if self == Self::Entry { Self::At(0) } else { self }
-    }
-    pub(super) fn word(self) -> u64 {
-        match self {
-            Self::At(pc) => pc as u64,
-            Self::Inlined { frame, pc } => INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc),
-            Self::Callee => CALLEE_EXIT,
-            Self::Entry => ENTRY_EXIT,
-            Self::Returned { .. } | Self::Terminated => unreachable!("a completion is a status, not a leave word"),
-        }
-    }
-
-    fn decode(word: u64) -> Self {
-        if word == CALLEE_EXIT {
-            return Self::Callee;
-        }
-        if word == ENTRY_EXIT {
-            return Self::Entry;
-        }
-        if word & INLINED_EXIT == 0 {
-            return Self::At(usize::try_from(word).unwrap_or(0));
-        }
-        Self::Inlined { frame: ((word & !INLINED_EXIT) >> u32::BITS) as usize, pc: word as u32 }
     }
 }
 
@@ -7180,12 +7126,8 @@ impl<H: Host> Vm<H> {
         } else {
             unsafe { (method.entry)(&mut *context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast()) }
         };
-        if status == LANE_BODY_RETURNED {
-            // SAFETY: as above; the body wrote the record before it returned.
-            let pc = unsafe { (*frame).dispatch.returned_pc };
-            return LaneExit::Returned { pc, value: Value::from_bits(word) };
-        }
-        Self::lane_method_exit(status, word)
+        // SAFETY: as above; a completing body wrote the record before it returned.
+        LaneExit::read(status, word, || unsafe { (*frame).dispatch.returned_pc })
     }
 
     /// The native frames the last run left inside, outermost first, which the lane now
@@ -7426,17 +7368,6 @@ fn lane_frame() -> *mut LaneFrame {
     unsafe { (*frame).get_or_insert_with(LaneFrame::new) as *mut LaneFrame }
 }
 
-impl<H: Host> Vm<H> {
-    fn lane_method_exit(status: u32, word: u64) -> LaneExit {
-        match status {
-            status if i64::from(status) == TERMINATED_STATUS => LaneExit::Terminated,
-            NATIVE_JS_STOPPED => LaneExit::decode(word),
-            status if status >= JS_GENERAL_RETURN_STATUS_BASE => LaneExit::At((status - JS_GENERAL_RETURN_STATUS_BASE) as usize),
-            // Dispatch reaches an invalid PC only before any instruction ran.
-            _ => LaneExit::At(0),
-        }
-    }
-}
 
 /// The frame/register/root and exception boundary shared by JIT and linked entries.
 fn run_js_native_entry<H: Host>(
