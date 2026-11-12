@@ -1780,6 +1780,8 @@ lane_helper_inventory! { H;
     FieldGet => lane_field_get::<H>,
     FieldSet => lane_field_set::<H>,
     Call => super::dispatch_fast::lane_body_call::<H>,
+    /// A loop region's call (`dispatch_fast::lane_region_call`).
+    RegionCall => super::dispatch_fast::lane_region_call::<H>,
     IndexSet => lane_index_set::<H>,
     /// Room for a loop's append to a dense array (`lane_array_append_room`).
     AppendRoom => lane_array_append_room::<H>,
@@ -6160,8 +6162,11 @@ impl CompiledOsrRegion {
             // A stencil region (`Lean`) takes the frame, whose window is the register file; Cranelift code takes the file.
             let mut shadow = ShadowFrame { window: registers as usize, ..ShadowFrame::EMPTY };
             let arguments = if self.crossing == Crossing::Lean { (&raw mut shadow).cast::<u64>().cast_const() } else { registers.cast::<u64>().cast_const() };
+            // The region's call rows reload its payload's heap bases after the callee ran (`lane_region_call`).
+            let outer = super::dispatch_fast::lane_region_payload::<H>(lane_context, (&raw mut native.dispatch).addr());
             let status = enter_native(&mut context, 0, 0, arguments,
                 &mut word, NativeEntryMode::Resumable, self.entry);
+            super::dispatch_fast::lane_region_payload::<H>(lane_context, outer);
 
             if let Some(Raised::Panic(panic)) = context.raised.take() {
                 std::panic::resume_unwind(panic);
@@ -6721,6 +6726,8 @@ pub(super) enum LaneExit {
 const INLINED_EXIT: u64 = 1 << 63;
 /// The result word of a leave into a native call's callee activation.
 const CALLEE_EXIT: u64 = 1 << 62;
+/// The result word of a call that ended in termination, where the entry returns no status (a loop region's).
+const TERMINATED_EXIT: u64 = 1 << 60;
 /// The result word of a leave at the body's entry, whose proof of its inputs failed.
 const ENTRY_EXIT: u64 = 1 << 61;
 /// The status of a lane body whose activation completes: its result word holds the value,
@@ -6761,7 +6768,8 @@ impl LaneExit {
             Self::Inlined { frame, pc } => INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc),
             Self::Callee => CALLEE_EXIT,
             Self::Entry => ENTRY_EXIT,
-            Self::Returned { .. } | Self::Terminated => unreachable!("a completion is a status, not a leave word"),
+            Self::Terminated => TERMINATED_EXIT,
+            Self::Returned { .. } => unreachable!("a completion is a status, not a leave word"),
         }
     }
 
@@ -6771,6 +6779,9 @@ impl LaneExit {
         }
         if word == ENTRY_EXIT {
             return Self::Entry;
+        }
+        if word == TERMINATED_EXIT {
+            return Self::Terminated;
         }
         if word & INLINED_EXIT == 0 {
             return Self::At(usize::try_from(word).unwrap_or(0));
@@ -7320,6 +7331,16 @@ impl<H: Host> Vm<H> {
         let frame = lane_frame();
         // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
         unsafe { (*frame).dispatch.refresh_object_bases(self) }
+    }
+
+    /// Reloads the heap bases of the payload of the native loop region the lane entered, whose address the
+    /// lane context holds (`dispatch_fast::lane_region_payload`; zero where none runs), as
+    /// `refresh_body_bases` does the body frame's.
+    pub(super) fn refresh_region_bases(&self, payload: usize) {
+        // SAFETY: a region's payload lives for its run, which the helper that calls this is made from.
+        if let Some(payload) = unsafe { (payload as *mut JsStepDispatch).as_mut() } {
+            payload.refresh_object_bases(self);
+        }
     }
 
     /// Hands `write` each of the `count` registers an inlined callee its lane body left

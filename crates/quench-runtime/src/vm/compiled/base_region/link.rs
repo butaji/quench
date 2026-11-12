@@ -1,5 +1,6 @@
 use super::*;
 use super::call_plan::DirectFacts;
+use super::super::LaneHelper;
 use quench_bjit::{call, HOLES};
 
 /// `push imm32` and `jmp rel32`: a row's exit stub, which names its PC and the routine that
@@ -23,6 +24,12 @@ impl Ending {
     /// The one place a poll row is chosen, so no body can reach the counting one.
     pub(super) fn poll(self) -> Kind {
         match self { Self::Region => Kind::JumpPoll, Self::Body => Kind::JumpWatch }
+    }
+
+    /// The helper a call row runs: a body's call is made on the activation its native frame runs
+    /// (`LaneHelper::Call`), a loop region's on the lane's own (`LaneHelper::RegionCall`).
+    pub(super) fn call_helper(self) -> LaneHelper {
+        match self { Self::Region => LaneHelper::RegionCall, Self::Body => LaneHelper::Call }
     }
 
     fn thunk(self) -> &'static str {

@@ -264,14 +264,15 @@ fn assemble(region: &LoopRegion, (dense, known): (bool, Known), widened: &[usize
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
     let writes = instructions.iter().any(|instruction| stores_field(known, *instruction));
-    let facts = (Facts::Entry { dense, writes }, known);
+    let calls = instructions.iter().any(|instruction| calls_in_place(*instruction, helpers));
+    let facts = (Facts::Entry { dense: dense && !calls, writes: writes || calls, calls }, known);
     let mut decoded: Vec<Decoded> = instructions.iter().enumerate().map(|(k, instruction)| decode(region, facts, header + k as u32, *instruction, helpers)).collect();
     settle(&mut decoded);
     let span = Span::of(region);
     let (reprs, homes, webs, decoded) = analyze(&span, &decoded, widened, seen);
     let layout = Layout { span, homes, webs, ending: Ending::Region, callees: &[], origins: &[], copies: &[], invalidation: None, realm: None };
     let body = decoded.iter().enumerate().map(|(k, row)| plan(row, &layout, header + k as u32, is_general(row, &reprs), helpers)).collect::<Result<Vec<_>, _>>()?;
-    let bare = decoded.iter().all(|row| row.heap.is_none() && row.step != Some(Step::Helper));
+    let bare = decoded.iter().all(|row| row.heap.is_none() && !row.makes_calls());
     Ok(Built { code: link(&layout, &body)?, bare, atoms: held_atoms(&decoded) })
 }
 

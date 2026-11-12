@@ -18,13 +18,18 @@
 //! `Return` completes the activation, and its `Call` is the call planner's chain
 //! (`call_plan::plan_call`): the direct entry-cell row where the site recorded a stable callee,
 //! the helper row otherwise, between the spills and reloads. A loop region makes no activation,
-//! so its calls and returns are leaves.
+//! so its returns (and its calls that return a result) are leaves; its plain calls are the chain
+//! with the helper row alone (`calls_in_place`, `LaneHelper::RegionCall`): a call that completes
+//! continues the region, one that missed leaves at the call, and one that left the lane in its
+//! callee's activation, or ended in termination, ends the run with the word that says so
+//! (`LaneExit::Callee`, `LaneExit::Terminated`), the registers already spilled.
 //!
 //! Which class an instruction is in follows from the opcode catalog's traits and layouts
 //! (`lowering`), never from a table of opcodes here.
 
 use super::*;
 use super::call_plan::{self, CallChain, CallPart, CallPlan, CallShape, Choice};
+use super::callees::chains;
 use super::super::{LaneHelper, LaneHelpers};
 use crate::bytecode::Traits;
 use quench_bjit::HOLES;
@@ -39,7 +44,7 @@ pub(super) enum Step {
     Leave,
     /// The activation completes with the register the row reads (a body's `Return`).
     Return,
-    /// A call, made by the call planner's chain (a body's `Call`).
+    /// A call, made by the call planner's chain (a body's `Call`, a loop region's plain call).
     Call(CallShape),
 }
 
@@ -55,6 +60,13 @@ fn steps_in_place(instruction: WideInstruction) -> bool {
     instruction.op().traits().has(Traits::LANE_IN_PLACE) && instruction.result_flags() == 0 && instruction.written_registers().count() <= 1
 }
 
+/// Whether a loop region makes `instruction` by its call row (`Step::Call`): a call a body's chain makes
+/// (`callees::chains`) that completes no activation, where the helper table has the region call
+/// helper's address. Any other call leaves, as the rest of the instructions no row takes.
+pub(super) fn calls_in_place(instruction: WideInstruction, helpers: LaneHelpers) -> bool {
+    chains(instruction) && instruction.result_flags() == 0 && call_plan::helper_address(helpers, LaneHelper::RegionCall).is_some()
+}
+
 /// The lowering of `instruction`, where helpers are `helpers`: a helper step where the helper
 /// table has the step helper's address, else the leave.
 pub(super) fn lowering(instruction: WideInstruction, helpers: LaneHelpers) -> Step {
@@ -67,6 +79,7 @@ pub(super) fn lowering(instruction: WideInstruction, helpers: LaneHelpers) -> St
 pub(super) fn decode_step(pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     match instruction.op().class() {
         Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
+        Class::Call if calls_in_place(instruction, helpers) => Decoded::step(Step::Call(CallShape::of(pc, instruction)), Some(instruction.result_register())),
         _ => {
             let step = lowering(instruction, helpers);
             let written = if step == Step::Helper { instruction.written_registers().next() } else { None };
@@ -136,7 +149,7 @@ fn plan_helper(layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned
 /// The chain of the call `shape` names at row `pc`: spills, the direct row where the site's target
 /// is stable, the helper row, reloads. The direct row's record is the row's `owned`.
 fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
-    let helper = call_plan::helper_address(helpers, LaneHelper::Call).ok_or("call: no helper address")?;
+    let helper = call_plan::helper_address(helpers, layout.ending.call_helper()).ok_or("call: no helper address")?;
     let (spills, reloads) = (layout.spills(pc), layout.spills(pc + 1));
     let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads };
     let CallChain { parts, record, choice } = call_plan::plan_call(&plan)?;

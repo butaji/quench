@@ -169,8 +169,11 @@ pub(super) fn inc_dec(instruction: WideInstruction) -> Result<Decoded, String> {
 pub(super) enum Facts {
     /// A loop region: `dense` where its arrays' views are the entry record's, `writes` where it
     /// stores a field through a row, which may stale a field value the entry record holds
-    /// (`stores_field`), so its field reads are the site's, live.
-    Entry { dense: bool, writes: bool },
+    /// (`stores_field`), so its field reads are the site's, live; `calls` where it makes a call by a
+    /// row (`calls_in_place`), whose callee may change anything the entry recorded: such a region
+    /// reads its arrays through their records, its fields through the site's entry, and leaves for
+    /// the captures its entry copied (the interpreter reads them live).
+    Entry { dense: bool, writes: bool, calls: bool },
     Site,
 }
 
@@ -306,9 +309,9 @@ fn own_capture_store(instruction: WideInstruction) -> bool {
 /// The row of a depth-0 capture access: a read, or a store, which the row makes where the run's
 /// slots admit every direct store (`JS_STEP_CAPTURE_STORES`) and leaves for the interpreter where
 /// they do not or the slot holds a marker (a loop's snapshot of a stored slot).
-fn capture_row(instruction: WideInstruction) -> Option<Decoded> {
+fn capture_row(facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
     match instruction.op().class() {
-        Class::LoadCapture if instruction.capture_depth() == 0 => {
+        Class::LoadCapture if instruction.capture_depth() == 0 && !matches!(facts, Facts::Entry { calls: true, .. }) => {
             Some(Decoded::heap(Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None, None))
         }
         Class::StoreCapture if own_capture_store(instruction) => {
@@ -360,7 +363,7 @@ fn activation_row(instruction: WideInstruction) -> Option<Decoded> {
 /// read or store, the proof that a base is an array, the activation's `this` and its local slots.
 pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     match instruction.op().class() {
-        Class::LoadCapture | Class::StoreCapture => capture_row(instruction),
+        Class::LoadCapture | Class::StoreCapture => capture_row(facts, instruction),
         Class::GetIndex | Class::SetIndex | Class::RequireObjectCoercible => array_row(region, facts, instruction),
         Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
         Class::LoadThis | Class::LoadLocalPlain | Class::StoreLocalPlain => activation_row(instruction),

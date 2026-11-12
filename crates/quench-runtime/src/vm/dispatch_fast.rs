@@ -2223,6 +2223,10 @@ struct LaneContext<H: Host> {
     /// The leaf call whose records run (`lane_script_call_leaf`), which holds what its
     /// activation would until its return or materialization; `NO_LEAF_CALL` for none.
     leaf: LeafCall,
+    /// The dispatch payload of the native loop region running on this activation, zero for none
+    /// (`lane_region_payload`): the heap bases a call it makes may move are reloaded there too
+    /// (`lane_region_call`).
+    region_payload: usize,
 }
 
 /// A running leaf call (`CallEntry::Leaf`): what its activation would hold that the context
@@ -15398,13 +15402,53 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(vm: u64, residual: u64, 
     status
 }
 
+/// Names `payload`, the dispatch of the native loop region that runs on the activation of the lane
+/// `context`, to the helpers its rows call (`lane_region_call`), and returns the one it replaces:
+/// a region's calls run lane code that may enter regions of its own.
+///
+/// # Safety
+/// `context` is the running lane's.
+pub(super) unsafe fn lane_region_payload<H: Host>(context: usize, payload: usize) -> usize {
+    // SAFETY: the caller's contract.
+    std::mem::replace(unsafe { &mut (*(context as *mut LaneContext<H>)).region_payload }, payload)
+}
+
+/// The helper a loop region's call row runs (`LaneHelper::RegionCall`): the call at `call_pc` of the
+/// activation the lane context names, whose registers the region runs on, as `lane_body_call`
+/// makes it, then the heap bases the region's payload holds reloaded (`LaneContext::region_payload`)
+/// besides the body frame's, which the callee's run or an allocation may have moved.
+///
+/// # Safety
+/// `context` is the running lane's, which the region entered (`lane_region_payload`), and `call_pc` a call record of its function.
+pub(super) unsafe extern "C" fn lane_region_call<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
+    let cx = context as usize as *mut LaneContext<H>;
+    // SAFETY: the caller's contract; the region runs on the lane's own activation.
+    let status = unsafe { lane_call_at(cx, (*cx).registers, (*cx).base.add(call_pc as usize)) };
+    let vm = unsafe { vm(cx) };
+    vm.refresh_body_bases();
+    // SAFETY: as above.
+    vm.refresh_region_bases(unsafe { (*cx).region_payload });
+    status
+}
+
 unsafe fn lane_body_call_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // Static regions recover ordinary calls through their linked semantic operation.
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
-    let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { lane_body_record(cx, call_pc) };
+    // SAFETY: the caller's contract; the record is the running body's.
+    unsafe { lane_call_at(cx, r, ip) }
+}
+
+/// The call the record `ip` of the activation with registers `r` makes, for a native caller of the
+/// lane (`lane_body_call`, `lane_region_call`): its status is `LANE_CALL_*`.
+///
+/// # Safety
+/// `ip` is a call record of the function whose registers `r` are, which the lane context's program holds.
+unsafe fn lane_call_at<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip) -> u64 {
+    let vm = unsafe { vm(cx) };
     let i = unsafe { &*ip };
     let callee = r.get(i.b);
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
@@ -21333,6 +21377,7 @@ impl<H: Host> Vm<H> {
             frame_storage: NO_FRAME_STORAGE,
             proofs: crate::heap::ArrayStorageProofs::new(),
             floor: entered.cell,
+            region_payload: 0,
         };
         let cx: *mut LaneContext<H> = &mut context;
         let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
