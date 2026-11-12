@@ -11,6 +11,12 @@ type NativeWaker = dyn Fn() + Send + Sync;
 #[derive(Default)]
 struct State {
     requested: AtomicBool,
+    /// Raised when a loop's tier-up body publishes (`request_tier_up`): the running regions
+    /// leave at their next backward jump, and the loop's header dispatch clears it.
+    tier_up: AtomicBool,
+    /// The byte compiled code polls: set while `requested` or `tier_up` is, so one read
+    /// serves both (`settle_attention`).
+    attention: AtomicBool,
     wakers: Mutex<Vec<Weak<NativeWaker>>>,
     /// The page compiled code reads at its interrupt checks, once code asks for it.
     poll: std::sync::OnceLock<Option<PollPage>>,
@@ -120,6 +126,7 @@ impl ExecutionInterrupt {
         }
         // Either this request sees the poll page or the page's creation sees the request.
         std::sync::atomic::fence(Ordering::SeqCst);
+        self.state.attention.store(true, Ordering::SeqCst);
         // Either the running lane sees the raised floor or its entry sees the request
         // (`dispatch_fast`'s `run_fast_lane`).
         self.state.lane_floor.store(LANE_FLOOR_RAISED, Ordering::SeqCst);
@@ -140,6 +147,29 @@ impl ExecutionInterrupt {
             wake();
         }
     }
+    /// Asks the running regions to leave at their next backward jump, so the loop headers
+    /// dispatch to the body that has published.
+    pub(crate) fn request_tier_up(&self) {
+        self.state.tier_up.store(true, Ordering::SeqCst);
+        self.state.attention.store(true, Ordering::SeqCst);
+    }
+
+    /// Clears a raised tier-up request at a loop header's dispatch.
+    pub(crate) fn clear_tier_up(&self) {
+        if self.state.tier_up.swap(false, Ordering::SeqCst) {
+            self.settle_attention();
+        }
+    }
+
+    /// Lowers the polled byte unless a request still holds it: a request that lands between the
+    /// store and the re-read sees the lowered byte and raises it again.
+    fn settle_attention(&self) {
+        self.state.attention.store(false, Ordering::SeqCst);
+        if self.state.requested.load(Ordering::SeqCst) || self.state.tier_up.load(Ordering::SeqCst) {
+            self.state.attention.store(true, Ordering::SeqCst);
+        }
+    }
+
     pub fn is_termination_requested(&self) -> bool {
         self.state.requested.load(Ordering::Acquire)
     }
@@ -161,8 +191,10 @@ impl ExecutionInterrupt {
             wake();
         }
     }
+    /// The byte compiled code polls at its backward jumps: nonzero for a termination or a
+    /// tier-up request, which the slow path tells apart (`is_termination_requested`).
     pub(crate) fn atomic_flag(&self) -> &AtomicBool {
-        &self.state.requested
+        &self.state.attention
     }
 
     /// The address of the poll page compiled code reads at its interrupt checks, and how many

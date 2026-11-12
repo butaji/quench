@@ -114,13 +114,32 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
     let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc),
         &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header));
     *body = LoopBody::after(outcome, stuck, attempts);
+    if matches!(*body, LoopBody::Ready { .. }) {
+        // The running regions leave at their next backward jump, and the header dispatch
+        // (`lane_loop_enter_body`) takes the body.
+        vm.execution_interrupt.request_tier_up();
+        if site.diagnostics { site.tier_ups.set(site.tier_ups.get().saturating_add(1)); }
+    }
+}
+
+/// The header dispatch rule, at a loop's backward jump and at its held header: a `Ready` body
+/// (leased) runs first, else the site's region (UltraJIT's before BaseJIT's), else the
+/// interpreter. A body is planned once the loop is hot, where function tiers run and the
+/// region is absent or BaseJIT's, so an UltraJIT body can pass a BaseJIT region.
+pub(super) fn lane_loop_enter_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
+    let vm = unsafe { vm(cx) };
+    vm.execution_interrupt.clear_tier_up();
+    if !vm.programs.js_jit_lane_methods_enabled() || site.taken.get() < TIERS.loops.threshold || site.tier.borrow().is_ultra() {
+        return None;
+    }
+    lane_loop_body::<H>(cx, r, ip, site)
 }
 
 /// Runs the lane body planned to start at `site`'s header, on the activation's registers
 /// `r`: a hot loop reaching its backward jump enters native code that inlines its calls as
 /// a lane body does, and the lane resumes where the body leaves. `None` where no body runs
 /// (still planning or compiling, or declined): the loop's other tiers take it.
-pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
+fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)?;
@@ -146,6 +165,7 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
     };
     if inside { site.body.borrow_mut().note_leave(exit); }
     drop(method);
+    if site.diagnostics { site.body_runs.set(site.body_runs.get().saturating_add(1)); }
     Some(match resumed {
         LaneBodyLeft::Terminated => LoopAttempt::Leave(super::exit(ip)),
         // A callee's run that left the lane for the general path leaves it at its record.

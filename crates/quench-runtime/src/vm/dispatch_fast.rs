@@ -260,6 +260,9 @@ pub(super) struct LoopSite {
     lane_backedge_count: std::cell::Cell<u64>,
     native_entry_attempts: std::cell::Cell<u64>,
     native_region_runs: std::cell::Cell<u64>,
+    /// Bodies published for this loop (`plan_loop_body`) and runs of them (`lane_loop_body`).
+    tier_ups: std::cell::Cell<u64>,
+    body_runs: std::cell::Cell<u64>,
     entry_guard_misses: std::cell::Cell<u64>,
     native_exits: std::cell::Cell<u64>,
     widenings: std::cell::Cell<u64>,
@@ -392,6 +395,8 @@ pub(super) struct OsrDiagnostics {
     pub(super) currently_compiled_sites: usize,
     pub(super) native_entry_attempts: u64,
     pub(super) native_region_runs: u64,
+    pub(super) tier_ups: u64,
+    pub(super) body_runs: u64,
     pub(super) entry_guard_misses: u64,
     pub(super) exits: u64,
     pub(super) widenings: u64,
@@ -538,6 +543,8 @@ impl LaneView {
                 .iter()
                 .map(|site| site.entry_guard_misses.get())
                 .sum(),
+            tier_ups: self.loops.iter().map(|site| site.tier_ups.get()).sum(),
+            body_runs: self.loops.iter().map(|site| site.body_runs.get()).sum(),
             exits: self.loops.iter().map(|site| site.native_exits.get()).sum(),
             widenings: self.loops.iter().map(|site| site.widenings.get()).sum(),
             analysis_rejections: self
@@ -2770,7 +2777,7 @@ lane_handler! {
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
 mod loop_body;
-use loop_body::{lane_loop_body, LoopBody};
+use loop_body::LoopBody;
 use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_require_object_coercible, staged_to_numeric};
 
 lane_handler! {
@@ -7946,27 +7953,13 @@ script_handler! {
             site.taken.set(site.taken.get() + 1);
             next!(cx, r, header, Carried::script(cx))
         }
-        // A loop its region takes whole (no call it leaves at) stays the region's, which hoists
-        // the typed element views a lane body does not yet.
-        // A loop with calls takes the shared OSR region with its callees inlined where that
-        // resolves (`lane_inlining_region`); the function's lane body only where inlining was
-        // declined, or where the region analysis failed for a reason other than a call.
-        let body_loop = unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
-            && if site.call_boundary_pcs.is_empty() { site.analysis_failure.is_some() }
-                else { site.inline_region.get().is_some_and(Option::is_none) };
-        if body_loop && let Some(attempt) = lane_loop_body::<H>(cx, r, ip, site)
-        {
-            match attempt {
-                LoopAttempt::Declined => {}
-                LoopAttempt::At(next) => next!(cx, r, next, Carried::script(cx)),
-                LoopAttempt::Leave(next) => return next,
-                LoopAttempt::Resumed(resumed) => resume!(cx, resumed),
-                LoopAttempt::Carry(registers, next, carried) => next!(cx, registers, next, carried),
-            }
+        // The header rule (`lane_loop_enter_body`): a ready body first, then the region.
+        if let Some(attempt) = loop_body::lane_loop_enter_body::<H>(cx, r, ip, site) {
+            lane_attempt!(cx, r, attempt);
         }
         // A loop whose body is still to come keeps its backward jump, which a loop no region
         // runs would otherwise retire before the body is planned.
-        if body_loop && site.body.borrow().pending() && site.region.get().is_none() {
+        if site.body.borrow().pending() && site.region.get().is_none() {
             next!(cx, r, header, Carried::script(cx))
         }
         // A loop no region runs takes its plain jump from now on.
@@ -8025,6 +8018,20 @@ macro_rules! lane_at_header {
     }};
 }
 use lane_at_header;
+
+/// Continues the lane as a loop site's attempt says, or falls through where it declined.
+macro_rules! lane_attempt {
+    ($cx:expr, $r:expr, $attempt:expr) => {
+        match $attempt {
+            LoopAttempt::Declined => {}
+            LoopAttempt::At(next) => next!($cx, $r, next, Carried::script($cx)),
+            LoopAttempt::Leave(next) => return next,
+            LoopAttempt::Resumed(resumed) => resume!($cx, resumed),
+            LoopAttempt::Carry(registers, next, carried) => next!($cx, registers, next, carried),
+        }
+    };
+}
+use lane_attempt;
 
 /// What a loop site's native attempt leaves the lane to do.
 enum LoopAttempt {
@@ -8142,6 +8149,11 @@ script_handler! {
     fn lane_loop_header<>(cx, r, ip, i, view) {
         // SAFETY: a record runs this handler only while a site holds it.
         let site = unsafe { &*lane_header_site(ip) };
+        if !script_below_floor(cx)
+            && let Some(attempt) = loop_body::lane_loop_enter_body::<H>(cx, r, ip, site)
+        {
+            lane_attempt!(cx, r, attempt);
+        }
         if !script_below_floor(cx)
             && site.enters()
             && let Some(region) = site.active_region()
@@ -19925,6 +19937,8 @@ fn install_loop_sites<'live, H: Host>(
                     lane_backedge_count: std::cell::Cell::new(0),
                     native_entry_attempts: std::cell::Cell::new(0),
                     native_region_runs: std::cell::Cell::new(0),
+                    tier_ups: std::cell::Cell::new(0),
+                    body_runs: std::cell::Cell::new(0),
                     entry_guard_misses: std::cell::Cell::new(0),
                     native_exits: std::cell::Cell::new(0),
                     widenings: std::cell::Cell::new(0),

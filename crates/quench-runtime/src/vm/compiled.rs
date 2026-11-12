@@ -6044,6 +6044,9 @@ pub(super) struct CompiledOsrRegion {
 }
 
 impl CompiledOsrRegion {
+    /// Whether Cranelift made the region (UltraJIT), not BaseJIT's stencils.
+    pub(super) fn is_ultra(&self) -> bool { self.crossing == Crossing::General }
+
     /// Runs the region on `registers` with `entry`'s record, through the native entry every
     /// compiled artifact shares (`enter_native`).
     ///

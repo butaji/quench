@@ -103,8 +103,24 @@ fn b_jit_compiles_no_function_and_runs_base_regions() {
     assert!(runs > 0, "--b-jit: the hot loop runs its stencil region");
 }
 
+/// Runs the fixture under `flag` with the JIT statistics on; the loop counters named by `keys`,
+/// summed over the run's `osr` totals (before each record's per-site list).
+fn fixture_osr_counts(flag: &str, fixture: &str, keys: [&str; 3]) -> [u64; 3] {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(fixture);
+    let output = Command::new(env!("CARGO_BIN_EXE_quench-node")).arg(flag).arg(path)
+        .env("QUENCH_TRACE", "js-jit").env_remove("NODE_OPTIONS").output().expect("run quench-node");
+    let mut counts = [0; 3];
+    for json in String::from_utf8_lossy(&output.stderr).lines().filter_map(|line| line.strip_prefix("QUENCH_JS_JIT_STATS ")) {
+        let osr = json.split_once("\"osr\"").map_or("", |(_, osr)| osr);
+        let totals = osr.split_once("\"sites\"").map_or(osr, |(totals, _)| totals);
+        for (count, key) in counts.iter_mut().zip(keys) { *count += count_after(totals, &format!("\"{key}\":")); }
+    }
+    counts
+}
+
 /// A hot loop entered by each tier, passed from one tier to the next while it runs, and left
-/// at guards prints what the interpreter prints: output identity across every JIT mode.
+/// at guards prints what the interpreter prints: output identity across every JIT mode, and
+/// the transitions happened (a region ran, and a loop body published and ran after it).
 #[test]
 fn osr_transitions_between_tiers_keep_the_output() {
     let expected = run_fixture("--no-jit", "osr_transitions.js");
@@ -113,4 +129,10 @@ fn osr_transitions_between_tiers_keep_the_output() {
     for flag in ["--b-jit", "--q-jit", "--u-jit", "--"] {
         assert_eq!(run_fixture(flag, "osr_transitions.js"), expected, "osr_transitions.js under {flag}");
     }
+    let keys = ["native_region_runs", "tier_ups", "body_runs"];
+    let [regions, published, ran] = fixture_osr_counts("--", "osr_transitions.js", keys);
+    assert!(regions > 0, "the default mode: the hot loop runs a region");
+    assert!(published > 0 && ran > 0, "the default mode: a loop body publishes ({published}) and runs ({ran})");
+    let [regions, published, _] = fixture_osr_counts("--b-jit", "osr_transitions.js", keys);
+    assert!(regions > 0 && published == 0, "--b-jit: stencil regions only ({regions} runs, {published} bodies)");
 }
