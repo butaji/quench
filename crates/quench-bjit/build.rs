@@ -222,10 +222,11 @@ fn stencil_table(table: &str, data: &[u8]) -> String {
         assert!(returns || !ends_with_ret(code), "stencil {name} ends with `ret`");
         check_call(name, code);
         let relocs = relocations(&elf, &symbols, data, name, *section, code);
-        let (code, relocs) = layout::fold_cold_trampolines(code, &relocs).unwrap_or((code.to_vec(), relocs));
+        let laid = if checks::is_row(name) { layout::reorder(code, &relocs) } else { None };
+        let (code, relocs, hot_len) = laid.map_or((code.to_vec(), relocs, code.len()), |l| (l.code, l.relocs, l.hot_len));
         framed += usize::from(checks::is_row(name) && checks::has_stack_frame(&code));
-        unchained += usize::from(checks::is_row(name) && !checks::ends_in_continuation(&code, &relocs));
-        rows.push((name.clone(), format!("    RawStencil {{ name: {name:?}, code: &{code:?}, relocs: &{relocs:?} }},\n")));
+        unchained += usize::from(checks::is_row(name) && !checks::ends_in_continuation(&code[..hot_len], &relocs));
+        rows.push((name.clone(), format!("    RawStencil {{ name: {name:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n")));
     }
     rows.sort();
     let body: String = rows.into_iter().map(|(_, row)| row).collect();

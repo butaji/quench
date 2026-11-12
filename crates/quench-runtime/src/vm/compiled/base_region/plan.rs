@@ -193,5 +193,5 @@ pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, general: bool, h
 
 /// A leave row: the stub that tags the pinned registers back and returns `word`.
 pub(super) fn leave_row(code: Vec<u8>) -> Stencil {
-    Stencil { raw_len: code.len(), code, relocs: Vec::new(), imm32: Vec::new(), next_jump: None, tail_len: 0 }
+    Stencil { raw_len: code.len(), hot_len: code.len(), code, relocs: Vec::new(), imm32: Vec::new(), next_jump: None, tail_len: 0 }
 }
