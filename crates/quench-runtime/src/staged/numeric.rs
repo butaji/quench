@@ -58,7 +58,7 @@ pub(crate) trait NumericStage: Stage {
 
 /// A frame whose operands a numeric operation proves in its representation and whose result
 /// it defines with that representation's fact.
-pub(crate) trait NumericFrame<S: Stage>: Frame<S> {
+pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> {
     fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> S::Word;
     fn number_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> S::Word;
     /// Continue where `register` holds a Number; `None` where it does not, so nothing runs

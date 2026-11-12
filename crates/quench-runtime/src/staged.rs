@@ -20,6 +20,8 @@ use crate::typed_ir::Type;
 mod concrete;
 pub(crate) mod numeric;
 mod heap;
+mod global;
+pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
@@ -309,10 +311,6 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn index_set_helper(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
 
-    /// The lane's own global-name read (`LaneHelper::GlobalGet`).
-    #[inline(always)]
-    fn global_read(&mut self, _stage: &mut S, _destination: Register, _atom: u32, _site: u16, _proof: S::Proof) -> Option<()> { None }
-
     /// The VM's field-store hit (`LaneHelper::FieldSet`).
     #[inline(always)]
     fn field_store_miss(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
@@ -412,9 +410,9 @@ pub(crate) enum Operation<W, P> {
     /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
     /// miss edge takes a failed store.
     IndexSetHelper { base: W, key: W, value: W, proof: P },
-    /// The global-name read of `atom` through cache `site`, defined into `destination`; a
-    /// miss leaves at the proof's edge.
-    GlobalRead { destination: Register, atom: u32, site: u16, proof: P },
+    /// The global-name read of `atom` through cache `site`, defined into `destination` as
+    /// `binding` says; a miss leaves at the proof's edge.
+    GlobalRead { destination: Register, atom: u32, site: u16, binding: GlobalBinding, proof: P },
     /// The VM field-store helper for `object.atom = value` through cache `site`.
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
 }
