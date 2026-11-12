@@ -668,6 +668,8 @@ pub(crate) struct Heap {
     /// mark plus the young budget pacing planned (`set_young_budget`).
     collect_at: usize,
     collections: u64,
+    /// A process-unique id of this heap's record layout, drawn again by a snapshot restore (which resets `collections` and the record blocks): part of `native_layout_epoch`, so equal values are never another heap's or an earlier layout.
+    layout_id: u64,
     /// The prototypes `mark_prototype` marked last, most recent first, which keep their
     /// mark for life: an allocation with one of them needs no lookup. A collection may free
     /// one and reuse its handle, so each one forgets them.
@@ -916,6 +918,7 @@ impl Heap {
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
             free_slots: 0,
+            layout_id: Self::next_layout_id(),
             collect_at: MemoryPolicy::default().pacing().minimum_young,
             max_threshold: MemoryPolicy::default().pacing().minimum_young,
             external_collection_budget: MemoryPolicy::default().pacing().minimum_external_budget,
@@ -1998,6 +2001,7 @@ impl Heap {
         self.live_weight_after_full = 0;
         self.old_live = 0;
         self.collections = 0;
+        self.layout_id = Self::next_layout_id();
         self.peak_live = 0;
         self.peak_survivors = 0;
         self.max_threshold = 0;
