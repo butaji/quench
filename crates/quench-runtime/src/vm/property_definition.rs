@@ -242,7 +242,7 @@ impl<H: Host> Vm<H> {
         let handler = self.heap.root(handler);
         let mut descriptor_root = None;
         let outcome = (|| {
-            let atom = self.intern_atom("defineProperty");
+            let atom = self.trap_atom(ProxyTrap::DefineProperty);
             let object = self.heap.root_value(handler).unwrap();
             let trap = self.get_property(p, object, atom)?;
             if trap.is_undefined() || trap.is_null() {

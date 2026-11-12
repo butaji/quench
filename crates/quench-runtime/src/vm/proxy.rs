@@ -1,6 +1,72 @@
 use super::*;
 
+/// The internal methods a Proxy handler's trap replaces, each named by its trap (ECMA-262
+/// 10.5): the one list the trap atoms (`Vm::trap_atom`) derive from.
+#[derive(Clone, Copy)]
+pub(super) enum ProxyTrap {
+    GetPrototypeOf,
+    SetPrototypeOf,
+    IsExtensible,
+    PreventExtensions,
+    GetOwnPropertyDescriptor,
+    DefineProperty,
+    Has,
+    DeleteProperty,
+    OwnKeys,
+    Apply,
+    Construct,
+}
+
+/// `ProxyTrap`'s names, in its order.
+pub(super) const PROXY_TRAP_NAMES: [&str; 11] = [
+    "getPrototypeOf",
+    "setPrototypeOf",
+    "isExtensible",
+    "preventExtensions",
+    "getOwnPropertyDescriptor",
+    "defineProperty",
+    "has",
+    "deleteProperty",
+    "ownKeys",
+    "apply",
+    "construct",
+];
+
+impl ProxyTrap {
+    pub(super) fn name(self) -> &'static str {
+        PROXY_TRAP_NAMES[self as usize]
+    }
+}
+
+pub(super) const PROXY_TRAP_COUNT: usize = PROXY_TRAP_NAMES.len();
+
 impl<H: Host> Vm<H> {
+    /// The atom naming `trap`, interned once.
+    pub(super) fn trap_atom(&self, trap: ProxyTrap) -> Atom {
+        self.runtime_atoms.proxy_traps[trap as usize]
+    }
+
+    /// `receiver` seen through the proxies whose handlers have neither a `getOwnPropertyDescriptor`
+    /// nor a `defineProperty` trap: the receiver's descriptor read and its data definition
+    /// (OrdinarySetWithOwnDescriptor, steps 2.c to 2.e) forward to the target unchanged.
+    pub(super) fn descriptor_forwarding_target(&self, mut receiver: Value) -> Value {
+        while let Some((target, handler)) = self.proxy_parts(receiver)
+            && self.handler_lacks_trap(handler, ProxyTrap::GetOwnPropertyDescriptor)
+            && self.handler_lacks_trap(handler, ProxyTrap::DefineProperty)
+        {
+            receiver = target;
+        }
+        receiver
+    }
+
+    /// Whether `handler` has no `trap`, read without running guest code: a handler of plain
+    /// data properties that names none. `false` leaves a lookup that may run guest code, or
+    /// finds a trap, to the general path.
+    pub(super) fn handler_lacks_trap(&self, handler: Value, trap: ProxyTrap) -> bool {
+        !handler.is_null()
+            && self.plain_property_lookup(handler, super::property_key::PropertyKey::string(self.trap_atom(trap))) == Some(None)
+    }
+
     pub(super) fn proxy_call(
         &mut self,
         p: &ResidualProgram,
@@ -23,7 +89,7 @@ impl<H: Host> Vm<H> {
                 if !vm.is_function(target) {
                     return Err(vm.type_error(p, super::call_printer::NOT_CALLABLE_MESSAGE.into()));
                 }
-                let trap_atom = vm.intern_atom("apply");
+                let trap_atom = vm.trap_atom(ProxyTrap::Apply);
                 let trap = vm.get_property(p, handler, trap_atom)?;
                 if !trap.is_undefined() && !trap.is_null() {
                     if !vm.is_function(trap) {
@@ -67,7 +133,7 @@ impl<H: Host> Vm<H> {
                 if !vm.is_constructable(new_target) {
                     return Err(vm.type_error(p, "newTarget is not a constructor".into()));
                 }
-                let trap_atom = vm.intern_atom("construct");
+                let trap_atom = vm.trap_atom(ProxyTrap::Construct);
                 let trap = vm.get_property(p, handler, trap_atom)?;
                 if !trap.is_undefined() && !trap.is_null() {
                     if !vm.is_function(trap) {

@@ -3518,7 +3518,7 @@ impl<H: Host> Vm<H> {
             }
         }
 
-        if let Some((owner, attributes)) = found {
+        if let Some((_, attributes)) = found {
             if attributes.accessor {
                 let Some(setter) = attributes.setter else {
                     return Ok(false);
@@ -3529,9 +3529,9 @@ impl<H: Host> Vm<H> {
             if !attributes.writable {
                 return Ok(false);
             }
-            let _ = owner;
         }
 
+        let receiver = self.descriptor_forwarding_target(receiver);
         if self
             .object_data(receiver)
             .is_some_and(Object::is_module_namespace)

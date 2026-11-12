@@ -95,16 +95,15 @@ struct RuntimeAtoms {
     iterator_return: Atom,
     /// A property descriptor object's other keys (`value` above), which
     /// `Object.getOwnPropertyDescriptor` writes on every call.
-    writable: Atom,
-    enumerable: Atom,
-    configurable: Atom,
-    get: Atom,
-    set: Atom,
+    writable: Atom, enumerable: Atom, configurable: Atom,
+    get: Atom, set: Atom,
     /// The internal keys a bound function's environment holds its parts under
     /// (`Vm::bound_function_parts`).
     bound_target: Atom,
     bound_this: Atom,
     bound_args: Atom,
+    /// The names of a Proxy handler's traps (`proxy::ProxyTrap`).
+    proxy_traps: [Atom; proxy::PROXY_TRAP_COUNT],
 }
 pub(crate) mod activation;
 mod agent;
@@ -221,7 +220,7 @@ mod promise_aggregate;
 mod promise_async;
 mod promise_jobs;
 mod promise_state;
-mod proxy;
+mod proxy; use proxy::ProxyTrap;
 mod reflect;
 mod regexp; mod regexp_native;
 mod shadow_realm;
@@ -3149,11 +3148,11 @@ impl<H: Host> Vm<H> {
             writable: self.intern_atom("writable"),
             enumerable: self.intern_atom("enumerable"),
             configurable: self.intern_atom("configurable"),
-            get: self.intern_atom("get"),
-            set: self.intern_atom("set"),
+            get: self.intern_atom("get"), set: self.intern_atom("set"),
             bound_target: self.intern_atom(BOUND_TARGET_KEY),
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
+            proxy_traps: proxy::PROXY_TRAP_NAMES.map(|name| self.intern_atom(name)),
         };
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.refresh_active_field_entries();

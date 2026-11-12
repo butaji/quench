@@ -104,3 +104,67 @@ o.push([...gen()].join());
 fn proxy_set_traps_match_node() {
     assert_eq!(printed(SET_SOURCE, "proxy-set.js"), ["4|4|10|string:a:0:true;string:a:1:true|4|TypeError,f,TypeError,f,TypeError,f|0,1,2|RangeError,f,RangeError,f|0,1,2|TypeError,f,TypeError,f|TypeError,f,TypeError,f|ok,f,ok,f|:4|11|1|TypeError|0,1,TypeError,3,TypeError,TypeError|0,1,2|99"]);
 }
+
+/// The stores `reflect_set_through_proxy_receivers_matches_node` runs.
+const RECEIVER_SOURCE: &str = r#"
+const o = [];
+const log = [];
+function show(x) { return typeof x === 'object' ? JSON.stringify(x) : String(x); }
+// trapless receiver
+const t1 = { a: 1 }; const p1 = new Proxy(t1, {});
+o.push(Reflect.set(t1, 'a', 5, p1), t1.a, Reflect.set(t1, 'b', 6, p1), show(t1));
+// receiver differs from target
+const other = { a: 0 }; const p2 = new Proxy(other, {});
+o.push(Reflect.set({ a: 1 }, 'a', 9, p2), show(other), Reflect.set({ x: 1 }, 'x', 9, p2), show(other));
+// receiver with gopd / defineProperty traps
+const p3 = new Proxy({ a: 1 }, { getOwnPropertyDescriptor(t, k) { log.push('gopd:' + k); return Reflect.getOwnPropertyDescriptor(t, k); }, defineProperty(t, k, d) { log.push('def:' + k + ':' + JSON.stringify(d)); return Reflect.defineProperty(t, k, d); } });
+o.push(Reflect.set({ a: 1 }, 'a', 7, p3), Reflect.set({}, 'n', 8, p3), log.join(';'));
+// only one of them
+const log2 = [];
+const p4 = new Proxy({ a: 1 }, { defineProperty(t, k, d) { log2.push('def:' + k); return Reflect.defineProperty(t, k, d); } });
+o.push(Reflect.set({}, 'a', 3, p4), log2.join(';'));
+const p5 = new Proxy({ a: 1 }, { getOwnPropertyDescriptor(t, k) { log2.push('gopd:' + k); return Reflect.getOwnPropertyDescriptor(t, k); } });
+o.push(Reflect.set({}, 'a', 4, p5), log2.join(';'));
+// nested trapless proxies, non-writable, accessor, frozen, non-extensible receiver targets
+const ro = {}; Object.defineProperty(ro, 'a', { value: 1, writable: false, configurable: true });
+const acc = { get a() { return 1; } };
+const fr = Object.freeze({ a: 1 }); const ne = Object.preventExtensions({ a: 1 });
+const nest = new Proxy(new Proxy({ a: 1 }, {}), {});
+o.push(Reflect.set({}, 'a', 2, new Proxy(ro, {})), Reflect.set({}, 'a', 2, new Proxy(acc, {})), Reflect.set({}, 'a', 2, new Proxy(fr, {})),
+  Reflect.set({}, 'z', 2, new Proxy(ne, {})), Reflect.set({}, 'a', 2, new Proxy(ne, {})), Reflect.set({}, 'a', 2, nest), show(nest));
+// array receiver, index and length
+const arr = [1, 2]; const pa = new Proxy(arr, {});
+o.push(Reflect.set([], 0, 'x', pa), Reflect.set([], 5, 'y', pa), Reflect.set([], 'length', 1, pa), show(arr));
+// symbol key, revoked, getter on receiver chain
+const sym = Symbol('s'); const ps = new Proxy({}, {});
+o.push(Reflect.set({}, sym, 1, ps), ps[sym]);
+const rv = Proxy.revocable({}, {}); rv.revoke();
+try { o.push(Reflect.set({ a: 1 }, 'a', 1, rv.proxy)); } catch (e) { o.push(e.constructor.name); }
+// handler trap added later / defined as getter / on handler prototype
+const h = {}; const p6 = new Proxy({ a: 1 }, h);
+const l3 = [];
+function again() { return Reflect.set({ a: 0 }, 'a', 1, p6); }
+o.push(again()); h.defineProperty = function (t, k, d) { l3.push('def'); return Reflect.defineProperty(t, k, d); }; o.push(again(), l3.join());
+const hp = Object.create({ getOwnPropertyDescriptor(t, k) { l3.push('protogopd'); return Reflect.getOwnPropertyDescriptor(t, k); } });
+const p7 = new Proxy({ a: 1 }, hp); o.push(Reflect.set({}, 'a', 1, p7), l3.join());
+const hg = { get defineProperty() { l3.push('getter'); return undefined; } };
+const p8 = new Proxy({ a: 1 }, hg); o.push(Reflect.set({}, 'a', 1, p8), l3.join());
+// set trap calling Reflect.set with receiver (Vue pattern) in a loop, stack depth
+const t9 = { n: 0 }; const p9 = new Proxy(t9, { set(t, k, v, r) { const old = t[k]; const ok = Reflect.set(t, k, v, r); if (ok && old !== v) log.push('trig'); return ok; }, get(t, k, r) { return Reflect.get(t, k, r); } });
+function loop(n) { 'use strict'; for (let i = 0; i < n; i++) p9.n = i; return p9.n; }
+o.push(loop(2000), log.filter(x => x === 'trig').length);
+const sub = Object.create(p9);
+function loop2(n) { 'use strict'; for (let i = 0; i < n; i++) sub.n = i; return sub.n + ':' + Object.keys(sub).join(); }
+o.push(loop2(10), t9.n);
+print(o.join('|'));
+"#;
+
+/// `Reflect.set` with a proxy receiver defines through the receiver's `getOwnPropertyDescriptor`
+/// and `defineProperty` traps wherever its handler has them, in plain, inherited and
+/// accessor-defined places, and forwards to the target where it has neither (nested proxies,
+/// read-only, accessor, frozen and non-extensible targets, indices, `length`, symbols and a
+/// revoked proxy included), also from a `set` trap running in the lane.
+#[test]
+fn reflect_set_through_proxy_receivers_matches_node() {
+    assert_eq!(printed(RECEIVER_SOURCE, "reflect-set-receiver.js"), ["true|5|true|{\"a\":5,\"b\":6}|true|{\"a\":9}|true|{\"a\":9,\"x\":9}|true|true|gopd:a;def:a:{\"value\":7};gopd:n;def:n:{\"value\":8,\"writable\":true,\"enumerable\":true,\"configurable\":true}|true|def:a|true|def:a;gopd:a|false|false|false|false|true|true|{\"a\":2}|true|true|true|[\"x\"]|true|1|TypeError|true|true|def|true|def,protogopd|true|def,protogopd,getter|1999|1999|9:n|1999"]);
+}

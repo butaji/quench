@@ -131,7 +131,7 @@ impl<H: Host> Vm<H> {
         let mut keys = Vec::new();
         let mut target_keys = Vec::new();
         let outcome = (|| {
-            let trap_atom = self.intern_atom("ownKeys");
+            let trap_atom = self.trap_atom(ProxyTrap::OwnKeys);
             let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), trap_atom)?;
             if trap.is_undefined() || trap.is_null() {
                 return self.object_own_key_values(p, self.heap.root_value(target).unwrap());
