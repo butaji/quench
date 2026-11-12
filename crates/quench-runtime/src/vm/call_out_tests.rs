@@ -140,3 +140,83 @@ fn global_names_environment_locals_and_arguments_match_the_interpreter() {
     "#);
     assert_eq!(output, ["804", "numberundefined"]);
 }
+
+/// The program's output in both modes, with the global-name call-outs the compiled run made and
+/// the direct global stores its bodies were emitted with.
+fn counted(source: &str) -> (Vec<String>, usize, usize) {
+    use super::call_out::counts::{take, DIRECT_GLOBAL_STORES, GLOBAL_CALL_OUTS};
+    take(&GLOBAL_CALL_OUTS);
+    take(&DIRECT_GLOBAL_STORES);
+    let output = in_both_modes(source);
+    (output, take(&GLOBAL_CALL_OUTS), take(&DIRECT_GLOBAL_STORES))
+}
+
+#[test]
+fn a_hot_global_counter_is_written_directly_and_not_by_call_outs() {
+    let (output, call_outs, direct) = counted(r#"
+      var counter = 0;
+      function bump(n) { for (var i = 0; i < n; i++) counter = counter + 1; return counter; }
+      let last = 0;
+      for (let repeat = 0; repeat < 400; repeat++) last = bump(250);
+      print(last);
+      print(typeof counter);
+    "#);
+    assert_eq!(output, ["100000", "number"]);
+    assert!(direct > 0, "the loop's store is emitted as a direct write");
+    assert!(call_outs < 10_000, "{call_outs} global call-outs of 100000 stores");
+}
+
+#[test]
+fn typeof_of_declared_and_undeclared_globals_follows_every_redefinition() {
+    let output = in_both_modes(r#"
+      globalThis.tracked = 1;
+      function probe() { let s = ""; for (let i = 0; i < 300; i++) s = typeof tracked + "," + typeof untracked; return s; }
+      const seen = [];
+      for (let round = 0; round < 3; round++) probe();
+      seen.push(probe());
+      globalThis.untracked = "text";
+      seen.push(probe());
+      globalThis.tracked = "now text";
+      seen.push(probe());
+      Object.defineProperty(globalThis, "tracked", { get() { return true; }, configurable: true });
+      seen.push(probe());
+      delete globalThis.tracked;
+      seen.push(probe());
+      print(seen.join(" "));
+    "#);
+    assert_eq!(output[0], "number,undefined number,string string,string boolean,string undefined,string");
+}
+
+#[test]
+fn a_global_redefined_as_an_accessor_mid_run_retires_the_direct_store() {
+    let output = in_both_modes(r#"
+      globalThis.target = 0;
+      var hits = 0;
+      function writer(n) { for (var i = 0; i < n; i++) target = i; return target; }
+      for (var round = 0; round < 300; round++) writer(100);
+      print(writer(100));
+      Object.defineProperty(globalThis, "target", { set(value) { hits += 1; }, get() { return 7; }, configurable: true });
+      print(writer(100));
+      print(hits);
+      Object.defineProperty(globalThis, "target", { value: 0, writable: true, enumerable: true, configurable: true });
+      print(writer(100));
+      Object.defineProperty(globalThis, "target", { writable: false });
+      print(writer(100));
+      delete globalThis.target;
+      print(typeof target);
+      print((function () { "use strict"; try { target = 1; } catch (error) { return error.constructor.name; } return "none"; })());
+    "#);
+    assert_eq!(output, ["99", "7", "100", "99", "99", "undefined", "ReferenceError"]);
+}
+
+#[test]
+fn arguments_length_in_a_compiled_function_matches_the_interpreter() {
+    let output = in_both_modes(r#"
+      function count() { return arguments.length; }
+      function forward() { return count.apply(null, arguments) + arguments.length; }
+      let total = 0;
+      for (let repeat = 0; repeat < 1000; repeat++) total += count(repeat, 1) + count() + count(1, 2, 3) + forward(1, 2);
+      print(total);
+    "#);
+    assert_eq!(output[0], "9000");
+}

@@ -85,6 +85,8 @@ pub(super) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, 
     if !ty.is_subtype(cell.ty) { return None; }
     let (layout, bits) = global_layout(frame, stage, cell, miss)?;
     let address = layout.arena_address(stage.builder, cell.slot, miss)?;
+    #[cfg(test)]
+    crate::vm::call_out::counts::bump(&crate::vm::call_out::counts::DIRECT_GLOBAL_STORES);
     if ty.is_subtype(Type::NUMBER) {
         stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
         return Some(());
