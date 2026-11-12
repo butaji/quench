@@ -569,6 +569,8 @@ struct Lowering<'a, 'f> {
     /// The block the call-outs' statuses of a leave in a callee, or a termination, reach with the
     /// status, made at the first and filled at the region's end (`call_outs`).
     call_out_stop: Option<ir::Block>,
+    /// Whether the call being lowered is one the lowering inlines, lent to its frame (`call_frames::InlineRequest`).
+    inline_request: call_frames::InlineRequest,
 }
 
 enum Liveness<'a> {
@@ -1572,6 +1574,7 @@ pub(super) fn lower(
         backedge: false,
         pending: Vec::new(),
         call_out_stop: None,
+        inline_request: call_frames::InlineRequest::default(),
         // A static typed region's calls are guarded leaves (`guarded_call_instruction`); here any call-like one is native.
         native_calls: completion.status_and_pc()
             && unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call),
@@ -2982,7 +2985,8 @@ impl Lowering<'_, '_> {
             stable: StableHold { uses: &mut self.stable, online: self.vm.online, at: self.at } });
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
-            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls, fields, call_out, site };
+            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls, fields, call_out, site,
+            inliner: Some(&mut self.inline_request) };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
@@ -3341,12 +3345,16 @@ impl Lowering<'_, '_> {
         self.canonicalize(state, pc);
         self.spill_written(pc);
         let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
-        self.reentries.push(completed);
+        self.inline_request = call_frames::InlineRequest { frame: self.unit.markers.iter().position(|marker| *marker == pc), taken: false };
         // SAFETY: the body owns the callee for as long as its code runs.
         let callee = self.direct.get(&pc).map(|callee| unsafe { &**callee });
         let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, missed,
             stop: self.call_out_stop(), leave: self.leave_site() };
         self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), None, None, Some(Site::Call(call)));
+        if let (true, Some(frame)) = (self.inline_request.taken, self.inline_request.frame) {
+            return self.inline_call(state, pc, frame);
+        }
+        self.reentries.push(completed);
         // A returning call's completion is its activation's: the lane completes it with the
         // result, which the call left in its register (`LaneExit::Returned`).
         if site.returns {
