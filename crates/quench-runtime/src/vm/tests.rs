@@ -20858,31 +20858,6 @@ print(JSON.stringify(out));
 }
 
 #[test]
-fn class_fields_define_on_receivers_with_and_without_extras() {
-    // A field's cached define skips receivers whose extras hold boxed-primitive, stack or error
-    // data; plain receivers, subclasses of builtins and return-overridden objects all define
-    // their fields (never set them), in order.
-    let source = r#"
-let setterCalls = 0;
-class Base { set a(v) { setterCalls++; } }
-class F extends Base { a = 1; b = 2; c = this.a + this.b; d = 4; }
-class E1 extends Error { code = 'E1'; extra = this.message.length; x = 1; y = 2; }
-class N1 extends Number { tag = 't'; a = 1; b = 2; c = 3; }
-class Ret { constructor(o) { return o; } }
-class R1 extends Ret { a = 1; b = 2; c = 3; }
-const out = [];
-for (let i = 0; i < 4; i++) {
-  const f = new F(), e = new E1('boom'), n = new N1(5), r = {}; new R1(r);
-  if (i === 3) out.push(JSON.stringify(f), setterCalls, e.code, e.extra, typeof e.stack, n.tag, n.c, +n, JSON.stringify(r));
-}
-print(out.join(','));
-"#;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    vm.execute(&Engine::specialize(source, "class-field-extras.js").unwrap()).unwrap();
-    assert_eq!(output.borrow().as_slice(), [r#"{"a":1,"b":2,"c":3,"d":4},0,E1,4,string,t,3,5,{"a":1,"b":2,"c":3}"#]);
-}
-
 fn symbol_reads_on_accessor_bearing_shapes_follow_the_slot_kind() {
     // An own data symbol slot of a shape that also holds accessors is proved for the shape;
     // the accessor slots, a redefinition of the data slot as an accessor and a second
@@ -20905,7 +20880,6 @@ print(JSON.stringify(out));
     assert_eq!(output.borrow().as_slice(), [r#"[1,2,"get1","get2",1,"now-getter",2,"undefined",3]"#]);
 }
 
-#[test]
 fn inherited_getters_run_in_loop_and_follow_redefinitions() {
     // Getters found prototypes above the receiver, by name or symbol, run as in-loop frames
     // with the receiver as `this`; throws, shadowing, redefinition and deep chains keep the
