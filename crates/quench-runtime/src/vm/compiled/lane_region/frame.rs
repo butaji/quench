@@ -39,6 +39,11 @@ pub(super) struct EmitFrame<'a> {
     pub(super) helpers: LaneHelpers,
     /// The poll instructions a fault-polling body records for later patching.
     pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
+    /// The running scope's dense capture run (values address, length), where the lowering
+    /// resolved it for a capture read (`Lowering::dense_captures`).
+    pub(super) captures: Option<(ir::Value, ir::Value)>,
+    /// The Number return edges of a numeric completion, joined at the end of the body.
+    pub(super) number_returns: &'a mut smallvec::SmallVec<[NumberReturn; 1]>,
 }
 
 impl EmitFrame<'_> {
@@ -256,6 +261,38 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let value = stage.builder.ins().select(holds, yes, no);
         (value, RegisterFact::definition(Type::language(crate::ValueType::Boolean),
             Representation::Tagged))
+    }
+
+    /// A depth-zero capture of the resolved run: the staged dense read, whose marker or
+    /// bounds miss leaves at `miss`.
+    #[inline(always)]
+    fn capture(&mut self, stage: &mut Emit<'_, '_>, depth: u16, slot: u16, miss: ir::Block) -> Option<ir::Value> {
+        let (values, len) = self.captures.filter(|_| depth == 0)?;
+        crate::staged::environment::dense_capture(stage, values, len, slot, miss)
+    }
+
+    /// A Number return: the register in the int32 or binary64 view its facts favor, jumped
+    /// to a block that `Lowering::finish_number_returns` completes with the joined format.
+    #[inline(always)]
+    fn ret(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<()> {
+        let Edges::ValueGuarded { miss } = self.edges else { return None };
+        let fact = self.state.values[usize::from(register)].value;
+        let value = if fact.ty.is_subtype(Type::INT32) || fact.representation == Representation::Int32 {
+            register_int_value(stage.builder, self.registers, self.state, register, miss)
+        } else {
+            register_number_value(stage.builder, self.registers, self.state, register, miss)
+        };
+        let fact = self.state.values[usize::from(register)].value;
+        let machine = match fact.representation {
+            Representation::Int32 => types::I32,
+            Representation::Float64 => types::F64,
+            Representation::Tagged => unreachable!("Number return has an unboxed view"),
+        };
+        let block = stage.builder.create_block();
+        stage.builder.append_block_param(block, machine);
+        stage.builder.ins().jump(block, &[value.into()]);
+        self.number_returns.push(NumberReturn { block, fact });
+        Some(())
     }
 
     #[inline(always)]

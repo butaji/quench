@@ -2146,6 +2146,8 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// A Number return of `register`: the staged return, after the interrupt check and the
+    /// type proof the lane keeps (a register not proved Number invalidates the region).
     fn return_number(&mut self, state: &mut State, register: Register, pc: u32) {
         self.finishes = true;
         if !state.values[usize::from(register)].value.ty.is_subtype(Type::NUMBER) {
@@ -2155,23 +2157,7 @@ impl Lowering<'_, '_> {
         }
         self.interrupt_check(state, pc);
         let exit = self.guard_exit(state, pc);
-        let index = usize::from(register);
-        let fact = state.values[index].value;
-        let value = if fact.ty.is_subtype(Type::INT32) || fact.representation == Representation::Int32 {
-            self.int(state, register, exit)
-        } else {
-            self.number(state, register, exit)
-        };
-        let fact = state.values[index].value;
-        let block = self.builder.create_block();
-        let machine = match fact.representation {
-            Representation::Int32 => types::I32,
-            Representation::Float64 => types::F64,
-            Representation::Tagged => unreachable!("Number return has an unboxed view"),
-        };
-        self.builder.append_block_param(block, machine);
-        self.ins().jump(block, &[value.into()]);
-        self.number_returns.push(NumberReturn { block, fact });
+        self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::Return { register });
     }
 
     /// The semantic join selects one ABI format for every successful return.
@@ -3058,11 +3044,18 @@ impl Lowering<'_, '_> {
     /// no step is left unresolved.
     fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>)
         -> crate::staged::Step<ir::Value, ()> {
+        self.step_with_captures(state, edges, None, operation)
+    }
+
+    /// `step` where the running scope's dense capture run is `captures` (`Frame::capture`).
+    fn step_with_captures(&mut self, state: &mut State, edges: frame::Edges, captures: Option<(ir::Value, ir::Value)>,
+        operation: crate::staged::Operation<ir::Value, EmitProof>) -> crate::staged::Step<ir::Value, ()> {
         let locals = self.completion != Completion::Number;
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
-            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls };
+            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls,
+            captures, number_returns: &mut self.number_returns };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
