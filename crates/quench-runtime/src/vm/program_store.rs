@@ -1312,21 +1312,6 @@ impl ProgramStore {
         }
     }
 
-    /// Clear call-site caches holding non-owning heap identities before swept
-    /// slots can be reused for a different function Value.
-    pub(super) fn clear_wasm_reference_caches(&self) {
-        for entry in self.programs.iter().flatten() {
-            if let Some(Some(compiled)) = &entry.compiled {
-                compiled.clear_indirect_call_caches();
-            }
-            for state in entry.jit_tiers.wasm_values() {
-                if let Some(compiled) = state.compiled() {
-                    compiled.clear_indirect_call_caches();
-                }
-            }
-        }
-    }
-
     pub(super) fn set_origin(&mut self, id: ProgramId, origin: CompilationOrigin) {
         if let Some(entry) = self.entry_mut(id) {
             entry.origin = origin;

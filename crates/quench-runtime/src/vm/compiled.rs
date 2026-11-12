@@ -45,7 +45,7 @@ use cranelift_codegen::ir::{
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
@@ -88,6 +88,7 @@ mod wasm_callable;
 mod wasm_stage;
 mod wasm_instance_stage;
 mod instance_context;
+mod indirect_profile;
 pub(crate) use instance_context::{InstanceContext, InstanceRecord, NativeRoots};
 #[cfg(test)]
 mod wasm_global_tests;
@@ -4792,17 +4793,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     let mut direct_target_root = None;
     let mut direct_status = None;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let (
-            callee,
-            params,
-            result_type,
-            same_program_function,
-            direct_entry,
-            cache_hit,
-            table,
-            table_slot,
-            signature_index,
-        ) = {
+        let (callee, params, result_type, same_program_function, direct_entry) = {
             // Do all heap/program inspection before entering native code. The
             // VM is re-entered through callouts, so no `&mut Vm` may live
             // across that boundary.
@@ -4815,88 +4806,53 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 .heap
                 .environment_slot(context.env, table_slot as usize)
                 .ok_or_else(|| JsError::validation("invalid Wasm table binding".into()))?;
-            let cached = usize::try_from(site).ok().and_then(|site| {
-                cached_direct_reference(
+            let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
+            let (params, result_type) = {
+                let signature = vm
+                    .programs
+                    .wasm_signatures(program)
+                    .and_then(|signatures| signatures.type_signature(signature_index))
+                    .ok_or_else(|| JsError::validation("invalid Wasm signature index".into()))?;
+                (
+                    signature
+                        .params
+                        .iter()
+                        .copied()
+                        .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
+                    signature.results.first().copied(),
+                )
+            };
+            let same_program_function = match vm.heap.function(callee) {
+                Some(FunctionRecord {
+                    kind: crate::heap::FunctionKind::User(target_program, function),
+                    env,
+                    ..
+                }) if *target_program == program => Some((*target_program, *function, *env)),
+                _ => None,
+            };
+            let same_instance_function = same_program_function
+                .filter(|(_, _, target_env)| *target_env == context.env)
+                .map(|(_, function, _)| function);
+            if let Some(function) = same_instance_function
+                && !context.compiled.is_null()
+                && let Ok(site) = usize::try_from(site)
+            {
+                // SAFETY: the running artifact outlives its own call.
+                unsafe { &*context.compiled }.note_indirect_target(site, function);
+            }
+            let direct_entry = same_instance_function.and_then(|function| {
+                let compiled =
+                    compiled_reference_target(vm, program, function as usize, context.compiled)?;
+                direct_reference_entry(
                     vm,
-                    context,
-                    table_slot,
-                    table,
-                    index,
-                    signature_index,
-                    site,
+                    compiled,
+                    function as usize,
+                    (context.env, program),
+                    context.memory,
+                    Some((&params, result_type)),
                 )
             });
-            if let Some((callee, direct_entry)) = cached {
-                (
-                    callee,
-                    smallvec::SmallVec::new(),
-                    None,
-                    None,
-                    Some(direct_entry),
-                    true,
-                    table,
-                    table_slot,
-                    signature_index,
-                )
-            } else {
-                let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
-                let (params, result_type) = {
-                    let signature = vm
-                        .programs
-                        .wasm_signatures(program)
-                        .and_then(|signatures| signatures.type_signature(signature_index))
-                        .ok_or_else(|| {
-                            JsError::validation("invalid Wasm signature index".into())
-                        })?;
-                    (
-                        signature
-                            .params
-                            .iter()
-                            .copied()
-                            .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
-                        signature.results.first().copied(),
-                    )
-                };
-                let same_program_function = match vm.heap.function(callee) {
-                    Some(FunctionRecord {
-                        kind: crate::heap::FunctionKind::User(target_program, function),
-                        env,
-                        ..
-                    }) if *target_program == program => Some((*target_program, *function, *env)),
-                    _ => None,
-                };
-                let direct_entry = same_program_function
-                    .filter(|(target_program, _, target_env)| {
-                        *target_program == program && *target_env == context.env
-                    })
-                    .and_then(|(_, function, _)| {
-                        let compiled = compiled_reference_target(
-                            vm,
-                            program,
-                            function as usize,
-                            context.compiled,
-                        )?;
-                        direct_reference_entry(
-                            vm,
-                            compiled,
-                            function as usize,
-                            (context.env, program),
-                            context.memory,
-                            Some((&params, result_type)),
-                        )
-                    });
-                (
-                    callee,
-                    params,
-                    result_type,
-                    same_program_function,
-                    direct_entry,
-                    false,
-                    table,
-                    table_slot,
-                    signature_index,
-                )
-            }
+            (callee, params, result_type, same_program_function, direct_entry)
         };
         if DIAGNOSTICS {
             reference_target_function = direct_entry.as_ref().map(|entry| entry.1).or_else(|| {
@@ -4918,31 +4874,6 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             // returns.
             let callee_root = unsafe { &mut *vm_pointer }.heap.root(callee);
             direct_target_root = Some(callee_root);
-            if !cache_hit
-                && let Ok(site) = usize::try_from(site)
-                && !context.compiled.is_null()
-            {
-                let target_weak = unsafe { &*vm_pointer }.heap.weak_handle(callee);
-                if let Some(target_weak) = target_weak {
-                    let caller = unsafe { &*context.compiled };
-                    caller.cache_indirect_call(
-                        site,
-                        IndirectCallCacheEntry {
-                            table_slot,
-                            table,
-                            index,
-                            signature_index,
-                            target: callee,
-                            target_weak,
-                            program,
-                            function: function as u32,
-                            env: context.env,
-                            compiled: Rc::downgrade(&compiled),
-                            hits: 0,
-                        },
-                    );
-                }
-            }
             let native_entry_should_sample = compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
             // SAFETY: the record belongs to the environment the target runs in.
@@ -5182,23 +5113,6 @@ pub(super) struct CompiledFunction {
     direct_reference_entries: std::cell::Cell<u64>,
 }
 
-/// A program's compiled functions, sharing one code mapping and one call
-/// table.
-#[derive(Clone)]
-struct IndirectCallCacheEntry {
-    table_slot: u32,
-    table: Value,
-    index: u64,
-    signature_index: u32,
-    target: Value,
-    target_weak: crate::heap::WeakHandle,
-    program: ProgramId,
-    function: u32,
-    env: Value,
-    compiled: Weak<CompiledProgram>,
-    hits: u64,
-}
-
 type DirectReferenceEntry = (
     Rc<CompiledProgram>,
     usize,
@@ -5275,80 +5189,7 @@ fn compiled_reference_target<H: Host>(
         })
 }
 
-/// Check the cache's guards without turning any miss into a Wasm trap. The
-/// ordinary resolver below remains authoritative for OOB, null, and mismatch
-/// cases, and for artifacts that cannot currently activate the cached target.
-fn cached_direct_reference<H: Host>(
-    vm: &mut Vm<H>,
-    context: &CallContext,
-    table_slot: u32,
-    table: Value,
-    index: u64,
-    signature_index: u32,
-    site: usize,
-) -> Option<(Value, DirectReferenceEntry)> {
-    if context.compiled.is_null() {
-        return None;
-    }
-    let caller = unsafe { &*context.compiled };
-    let cache = caller.indirect_call_cache(site)?;
-    if cache.table_slot != table_slot
-        || cache.table != table
-        || cache.index != index
-        || cache.signature_index != signature_index
-        || cache.program != context.program
-        || cache.env != context.env
-    {
-        return None;
-    }
-    let element = usize::try_from(index)
-        .ok()
-        .and_then(|index| vm.wasm_table_elements(table).ok()?.get(index).copied())?;
-    if element != cache.target || vm.heap.weak_value(cache.target_weak) != Some(element) {
-        return None;
-    }
-    match vm.heap.function(element) {
-        Some(FunctionRecord {
-            kind: crate::heap::FunctionKind::User(program, function),
-            env,
-            ..
-        }) if *program == cache.program && *function == cache.function && *env == cache.env => {}
-        _ => return None,
-    }
-    caller.note_indirect_cache_hit(site);
-    let compiled = cache.compiled.upgrade()?;
-    let direct = direct_reference_entry(
-        vm,
-        compiled,
-        cache.function as usize,
-        (context.env, context.program),
-        context.memory,
-        None,
-    )?;
-    #[cfg(test)]
-    caller
-        .reference_cache_hits
-        .set(caller.reference_cache_hits.get().saturating_add(1));
-    Some((element, direct))
-}
-
-fn reference_target_matches<H: Host>(
-    vm: &Vm<H>,
-    target: Value,
-    program: ProgramId,
-    function: u32,
-    env: Value,
-) -> bool {
-    matches!(
-        vm.heap.function(target),
-        Some(FunctionRecord {
-            kind: crate::heap::FunctionKind::User(target_program, target_function),
-            env: target_env,
-            ..
-        }) if *target_program == program && *target_function == function && *target_env == env
-    )
-}
-
+/// A program's compiled functions, sharing one code mapping and one call table.
 pub(super) struct CompiledProgram {
     _code: CodeMemory,
     table: Box<[usize]>,
@@ -5367,14 +5208,11 @@ pub(super) struct CompiledProgram {
     /// back to the interpreter.
     fixed_base: Option<i32>,
     diagnostics: Option<WasmJitDiagnostics>,
-    /// One optional monomorphic cache per actual compiled `call_indirect`
-    /// site. The vector is only pointers until a site becomes hot, and each
-    /// cache weakly references its callee artifact to avoid Rc cycles.
-    reference_call_caches: std::cell::RefCell<Vec<Option<Box<IndirectCallCacheEntry>>>>,
-    /// The owner and bytecode PC for each entry in `reference_call_caches`.
+    /// How often the VM's callout resolved each target at each actual compiled `call_indirect`
+    /// site.
+    indirect_hits: indirect_profile::SiteHits,
+    /// The owner, bytecode PC and table binding of each site `indirect_hits` counts.
     reference_cache_sites: Vec<(usize, usize, u32)>,
-    #[cfg(test)]
-    reference_cache_hits: std::cell::Cell<u64>,
 }
 
 /// Counters allocated only for opt-in benchmark diagnostics. These runs are
@@ -5519,91 +5357,6 @@ fn jit_diagnostics_enabled() -> bool {
 }
 
 impl CompiledProgram {
-    fn indirect_call_cache(&self, site: usize) -> Option<IndirectCallCacheEntry> {
-        self.reference_call_caches
-            .borrow()
-            .get(site)?
-            .as_deref()
-            .cloned()
-    }
-
-    fn cache_indirect_call(&self, site: usize, entry: IndirectCallCacheEntry) {
-        if let Some(slot) = self.reference_call_caches.borrow_mut().get_mut(site) {
-            *slot = Some(Box::new(entry));
-        }
-    }
-
-    fn note_indirect_cache_hit(&self, site: usize) {
-        if let Some(Some(entry)) = self.reference_call_caches.borrow_mut().get_mut(site) {
-            entry.hits = entry.hits.saturating_add(1);
-        }
-    }
-
-    /// Return recently observed targets for call sites in a selective root's
-    /// static closure, hottest first. The target cache already includes the
-    /// exact program and instance environment guards.
-    pub(super) fn profiled_indirect_targets<H: Host>(
-        &self,
-        vm: &Vm<H>,
-        program: ProgramId,
-        env: Value,
-        callers: &[bool],
-    ) -> Vec<usize> {
-        let caches = self.reference_call_caches.borrow();
-        let mut targets = self
-            .reference_cache_sites
-            .iter()
-            .enumerate()
-            .filter(|(_, (caller, _, _))| callers.get(*caller).copied().unwrap_or(false))
-            .filter_map(|(site, (_, _, table_slot))| {
-                let entry = caches.get(site)?.as_deref()?;
-                let current_table = vm.heap.environment_slot(env, *table_slot as usize)?;
-                (entry.table_slot == *table_slot
-                    && entry.program == program
-                    && entry.env == env
-                    && entry.table == current_table
-                    && vm.wasm_table_get(current_table, entry.index).ok() == Some(entry.target)
-                    && vm.heap.weak_value(entry.target_weak) == Some(entry.target)
-                    && reference_target_matches(
-                        vm,
-                        entry.target,
-                        entry.program,
-                        entry.function,
-                        entry.env,
-                    ))
-                .then_some((entry.function as usize, entry.hits))
-            })
-            .collect::<Vec<_>>();
-        targets.sort_unstable_by_key(|(_, hits)| std::cmp::Reverse(*hits));
-        let mut unique = Vec::new();
-        for (target, _) in targets {
-            if !unique.contains(&target) {
-                unique.push(target);
-                if unique.len() == MAX_JIT_PROFILED_INDIRECT_TARGETS {
-                    break;
-                }
-            }
-        }
-        unique
-    }
-
-    pub(super) fn clear_indirect_call_caches(&self) {
-        self.reference_call_caches
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|slot| *slot = None);
-    }
-
-    #[cfg(test)]
-    pub(super) fn reference_call_cache_target(&self, site: usize) -> Option<Value> {
-        self.indirect_call_cache(site).map(|entry| entry.target)
-    }
-
-    #[cfg(test)]
-    pub(super) fn reference_cache_hits(&self) -> u64 {
-        self.reference_cache_hits.get()
-    }
-
     #[cfg(test)]
     pub(super) fn emscripten_memcpy_fast_path_hits(&self) -> u64 {
         self.diagnostics
@@ -11774,14 +11527,8 @@ impl<H: Host> Vm<H> {
             guarded,
             fixed_base,
             diagnostics,
-            reference_call_caches: std::cell::RefCell::new(
-                std::iter::repeat_with(|| None)
-                    .take(reference_cache_count)
-                    .collect(),
-            ),
+            indirect_hits: indirect_profile::SiteHits::new(reference_cache_count),
             reference_cache_sites,
-            #[cfg(test)]
-            reference_cache_hits: std::cell::Cell::new(0),
         })
     }
 

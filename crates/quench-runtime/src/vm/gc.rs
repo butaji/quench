@@ -840,7 +840,6 @@ impl<H: Host> Vm<H> {
         // no cleanup allocation can yet reuse a dead function locator.
         unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
-        self.programs.clear_wasm_reference_caches();
         self.prune_function_values(full);
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
