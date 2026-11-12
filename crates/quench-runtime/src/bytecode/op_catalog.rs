@@ -93,6 +93,7 @@ pub(crate) enum Class {
     DefineField,
     DefinePrivateField,
     MarkPrivateName,
+    ForInNext,
     YieldStar,
     DefinePropertyRecord,
     Delete,
@@ -221,6 +222,7 @@ macro_rules! class_of {
     (CopyDataProperties) => { Class::CopyDataProperties };
     (CreateRegExpLiteral) => { Class::CreateRegExpLiteral };
     (DefineField) => { Class::DefineField };
+    (ForInNext) => { Class::ForInNext };
     (DefinePrivateField) => { Class::DefinePrivateField };
     (MarkPrivateName) => { Class::MarkPrivateName };
     (DefinePropertyRecord) => { Class::DefinePropertyRecord };

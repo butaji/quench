@@ -19,20 +19,20 @@
 //! instruction.
 
 use crate::layout::{
-    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
+    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_EPOCH, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
     JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_STRING_RECORD_BASE, PROPERTY_BUFFER_BASE,
 };
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word};
-use crate::places::{DEST, LEFT, Places, tagged_place};
+use crate::places::{DEST, LEFT, Places, Rep, tagged_place};
 use crate::stage::StencilStage;
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-use crate::staged::{Stage, Step, add, elements, entry, environment, iteration, load_this, object::Form, read_local, strings, value, write_local};
+use crate::staged::{Frame, Stage, Step, add, elements, entry, environment, iteration, load_this, object::Form, read_local, strings, value, write_local};
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
     STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW, APPEND_ROW,
     ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW,
-    THIS_ADD_PACKED_ROW,
+    THIS_ADD_PACKED_ROW, FOR_IN_ROW,
 };
 
 unsafe extern "C" {
@@ -238,6 +238,22 @@ fn key_row(s: S) -> Out {
     finish_fast(frame, done)
 }
 
+/// `ForInNext`'s fast arm: the for-in state (hole 1) yields its next key to the destination (hole 0)
+/// where the state's memo proves the snapshot current (`iteration::for_in_next`), which moves the state's
+/// cursor; a hit continues at TAKEN.
+#[inline(always)]
+fn for_in_row(s: S, payload: usize) -> Out {
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let mut stage = StencilStage::from_hole(0);
+    let state = frame.tagged(&mut stage, LEFT);
+    let tables = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
+    let key = iteration::for_in_next(&mut stage, tables, state, word_at(payload, JS_STEP_EPOCH), ());
+    if let Some(key) = key {
+        frame.write(&mut stage, DEST, key, Rep::Tagged);
+    }
+    finish_fast(frame, key.is_some())
+}
+
 /// The activation's `this` into the destination (`staged::load_this`).
 #[inline(always)]
 fn this_row<const D: u8>(s: S) -> Out {
@@ -352,6 +368,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         ARRAY_ROW => array_row(s),
         OBJECT_ROW => object_row(s),
         KEY_ROW => key_row(s),
+        FOR_IN_ROW => for_in_row(s),
         APPEND_ROW => append_row::<A>(s, payload),
         ADD_PACKED_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Packed),
         ADD_ARENA_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Arena),

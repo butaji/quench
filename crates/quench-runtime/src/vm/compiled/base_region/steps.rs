@@ -13,7 +13,7 @@
 //!    answers branched where the interpreter's step took it, which continues at the reloads of the
 //!    registers live at the target (`branching`).
 //!    Where the instruction's meaning has a fast arm that a register's own word decides
-//!    (`staged::iteration`: `RequireIteratorResult`, `ToPropertyKey`) or the backing's layout words
+//!    (`staged::iteration`: `RequireIteratorResult`, `ToPropertyKey`, `ForInNext` over its state's memo) or the backing's layout words
 //!    (`staged::elements::append_in_room`: a one-element `AppendArray`), the run is that arm's heap row
 //!    first (`Step::Fast`, `plan_fast`): its hit hops past the helper step to the next instruction,
 //!    and its miss enters the helper step laid out behind it, the slow arm, so the generic step is
@@ -116,6 +116,7 @@ fn fast_arm(instruction: WideInstruction) -> Option<Heap> {
         Class::RequireIteratorResult => Some(Heap::Object),
         Class::ToPropertyKey => Some(Heap::Key),
         Class::AppendArray => appends_one(instruction).then_some(Heap::Append),
+        Class::ForInNext => Some(Heap::ForIn),
         _ => None,
     }
 }
@@ -223,7 +224,7 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::Helper => plan_helper(layout, pc, decoded.target, helpers),
         Step::Fast(Heap::Add { .. }) => adds::plan(decoded, layout, pc, Some(plan_helper(layout, pc, None, helpers)?)),
         Step::Guard(Heap::Add { .. }) => adds::plan(decoded, layout, pc, None),
-        Step::Fast(fast) => plan_fast(decoded, fast, layout, pc, Some(plan_helper(layout, pc, None, helpers)?)),
+        Step::Fast(fast) => plan_fast(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded.target, helpers)?)),
         Step::Guard(fast) => plan_fast(decoded, fast, layout, pc, None),
         Step::Return => {
             let slot = operand(&layout.homes, decoded.a).1;
@@ -408,7 +409,7 @@ mod tests {
         Op::GetIterator,
         // Takes the key snapshot: allocates the state, memoized by VM-held for-in state.
         Op::ForInStart,
-        // The step's fast arm reads VM-held memo state (the snapshot's epoch and shape), not a layout fact.
+        // The fast arm (`staged::iteration::for_in_next`) steps a state whose memo proves the snapshot current; this helper is its slow arm, which takes any other step and the exhausted one's jump.
         Op::ForInNext,
         // Calls `return` on the iterator: guest code.
         Op::IteratorClose,

@@ -198,6 +198,9 @@ pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 152;
 pub(crate) const JS_STEP_OBJECT_MARK_BLOCKS: usize = 136;
 pub(crate) const JS_STEP_OBJECT_MARK_BLOCK_COUNT: usize = 144;
 pub(crate) const JS_STEP_SLOTS_TRACKED: usize = 528;
+/// The heap's collection epoch as of the last refresh (`JsStepDispatch::epoch`), which a for-in step
+/// compares to the epoch its state's snapshot was listed in (`staged::iteration::for_in_next`).
+pub(crate) const JS_STEP_EPOCH: usize = 472;
 /// The string record range's base, which a string `length` read finds the record from.
 pub(crate) const JS_STEP_STRING_RECORD_BASE: usize = JS_STEP_SLOTS_TRACKED + core::mem::size_of::<usize>();
 pub(crate) const JS_STEP_FIELD_ENTRIES: usize = 160;

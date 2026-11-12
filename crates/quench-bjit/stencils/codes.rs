@@ -94,6 +94,11 @@ pub const ADD_EITHER_ROW: u8 = 22;
 pub const THIS_ADD_PACKED_ROW: u8 = 23;
 pub const THIS_ADD_ARENA_ROW: u8 = 24;
 pub const THIS_ADD_EITHER_ROW: u8 = 25;
+/// `ForInNext`'s fast arm (`staged::iteration::for_in_next`): the for-in state in the frame slot of hole 1
+/// yields its next key to the slot of hole 0 where its memo proves the snapshot current. A hit continues
+/// at TAKEN, past the helper step laid out after the row, which also takes the exhausted step's jump; a
+/// miss leaves through EXIT0 into it.
+pub const FOR_IN_ROW: u8 = 26;
 /// Every add row's code.
 pub const ADD_ROWS: [u8; 6] = [ADD_PACKED_ROW, ADD_ARENA_ROW, ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW];
 /// Bits below the after-shape in an add row's hole 0, which carries the before-shape beneath it.
