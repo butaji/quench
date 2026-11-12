@@ -2686,7 +2686,7 @@ impl Lowering<'_, '_> {
                 .iter().all(|register| *register < self.unit.registers) => Some(self.element_store(state, pc32, instruction)),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
             _ if instruction.op().js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
-                self.operator(state, pc, instruction).or_else(|| self.equality_call_out(state, pc, instruction))
+                self.operator(state, pc, instruction).or_else(|| self.binary_call_out(state, pc, instruction))
             }
             Class::Unary if plain && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::LogicalNot as u32
                 && instruction.register_b() < self.unit.registers => {

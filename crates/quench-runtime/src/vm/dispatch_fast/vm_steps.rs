@@ -1,5 +1,5 @@
-//! A lane body's call-outs (`staged::CallOut`: `ToPropertyKey`, `GetIterator`, `ForInStart`,
-//! `ForInNext`, `IteratorClose`, `AppendArray`, the equality `Binary`), the one helper a row's slow
+//! A lane body's call-outs (`staged::CallOut`: the value steps, `ForInNext`, a `Binary`, the
+//! environment, arguments and global-name steps), the one helper a row's slow
 //! case calls: it makes the step by the interpreter's own definition (`Vm::call_out`), as
 //! `lane_step_beside_activations` does for a frameless activation, and continues, so no such
 //! record hands its body back.
@@ -25,7 +25,10 @@ pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(_vm: u64, _residual
     let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, |_| None)
         .and_then(|row| row.call_out()).expect("a call-out record decodes");
     let operands = operation.operands().map(|register| register.map(|register| r.get(register)));
-    let Some(value) = lane_in_place(cx, ip, |vm, code| vm.call_out(code, operation, operands)) else { return LANE_CALL_MISSED };
+    let Some(value) = lane_in_place(cx, ip, |vm, code| {
+        let site = super::super::call_out::CallSite { frame: vm.frames.len() - 1, resume: call_pc as usize + 1 };
+        vm.call_out(code, site, operation, operands)
+    }) else { return LANE_CALL_MISSED };
     // Guest code the step ran may have made the activations frames, whose registers these are.
     let after = unsafe { (*cx).registers };
     if let (Some(value), Some(register)) = (value, result) {

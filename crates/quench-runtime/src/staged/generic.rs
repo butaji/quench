@@ -11,24 +11,28 @@ use crate::vm::operations::equality_operator;
 use crate::Value;
 
 impl<W, P> Operation<W, P> {
-    /// The `Binary` equality and `ToPropertyKey` operations of `decode`; `None` where an
+    /// The `Binary` and `ToPropertyKey` operations of `decode`; `None` where an
     /// operand is no register or the instruction returns from the frame.
     pub(super) fn decode_generic(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::ToPropertyKey => Self::PropertyKey {
                 destination: instruction.result_register(), source: instruction.register_b() },
-            Op::Binary => return Self::decode_equality(instruction),
+            Op::Binary => return Self::decode_binary(instruction),
             _ => return None,
         })
     }
 
-    /// `Binary` of an equality operator over two registers.
-    fn decode_equality(instruction: WideInstruction) -> Option<Self> {
-        let (strict, negated) = equality_operator(instruction.binary_operator())?;
+    /// `Binary` over two registers: equality as its own row, any other operator the VM's.
+    fn decode_binary(instruction: WideInstruction) -> Option<Self> {
         let left = instruction.operand_b().register_index()?;
         let right = instruction.operand_c().register_index()?;
-        (instruction.result_flags() == 0).then_some(Self::Equality {
-            destination: instruction.result_register(), left, right, strict, negated })
+        if instruction.result_flags() != 0 { return None; }
+        let destination = instruction.result_register();
+        let operator = instruction.binary_operator();
+        Some(match equality_operator(operator) {
+            Some((strict, negated)) => Self::Equality { destination, left, right, strict, negated },
+            None => Self::Binary { destination, left, right, operator },
+        })
     }
 }
 
@@ -41,6 +45,8 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::PropertyKey { destination, source } => property_key(stage, frame, destination, source),
         Operation::Equality { destination, left, right, strict, negated } =>
             equality(stage, frame, destination, [left, right], (strict, negated)),
+        Operation::Binary { destination, left, right, operator } =>
+            super::callout::calling(stage, frame, CallOut::Binary { left, right, operator }, Some(destination)),
         _ => Step::Unresolved,
     }
 }

@@ -627,69 +627,8 @@ impl<H: Host> Vm<H> {
             }
             Op::StoreEnvLocal => {
                 let value = self.read(f, i.register_a());
-                let slot = i.local_slot();
-                let function = &p.function(self.frames[f].function as usize);
-                let atom = function.local_atoms.get(slot).copied();
-                if let Some(atom) = atom
-                    && self.store_with_binding(p, f, atom, value, function.strict)?
-                {
-                    if let Some(register) = i.optional_register_b() {
-                        self.write(f, register, value);
-                    }
-                    return Ok(StepResult::Continue);
-                }
-                self.check_local_assignment_initialized(
-                    p,
-                    f,
-                    slot,
-                    i.boolean_field(crate::bytecode::InstructionField::C)
-                        .unwrap_or(false),
-                )?;
-                if let Some(atom) = atom
-                    && function.declares_global_immutable(atom)
-                    && !i
-                        .boolean_field(crate::bytecode::InstructionField::C)
-                        .unwrap_or(false)
-                {
-                    return Err(self.type_error(p, "assignment to constant binding".into()));
-                }
-                if function.is_self_binding_slot(slot) {
-                    if function.strict {
-                        return Err(
-                            self.type_error(p, "assignment to function name binding".into())
-                        );
-                    }
-                    return Ok(StepResult::Continue);
-                }
-                let global_var = self.root_global_var_atom(
-                    p,
-                    self.frames[f].program,
-                    self.frames[f].function,
-                    slot,
-                );
-                if let Some(atom) = global_var {
-                    let written = self.set_property_with_receiver(
-                        p,
-                        self.realm.globals,
-                        atom,
-                        value,
-                        self.realm.globals,
-                    )?;
-                    if !written && p.function(self.frames[f].function as usize).strict {
-                        return Err(
-                            self.type_error(p, "cannot assign to read-only global binding".into())
-                        );
-                    }
-                    if let Some(register) = i.optional_register_b() {
-                        self.write(f, register, value);
-                    }
-                    return Ok(StepResult::Continue);
-                }
-                self.mirror_global_lexical_binding(p, f, slot, value);
-                *self
-                    .frame_binding_mut(p, f, slot)
-                    .ok_or_else(|| JsError("invalid local environment".into()))? = value;
-                self.mapped_argument_store(p, f, slot, value);
+                let initialize = i.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false);
+                self.store_env_local(p, f, i.local_slot(), value, initialize)?;
                 if let Some(register) = i.optional_register_b() {
                     self.write(f, register, value);
                 }
@@ -1052,7 +991,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_c()),
             )?,
             Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart => {
-                self.staged_value_step(p, f, i)?;
+                self.staged_value_step(p, super::call_out::CallSite { frame: f, resume: *pc }, i)?;
             }
             Op::RequireObjectCoercible => {
                 self.require_object_coercible(p, self.read(f, i.register_b()))?;

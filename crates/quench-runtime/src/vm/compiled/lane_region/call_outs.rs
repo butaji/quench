@@ -15,17 +15,17 @@ impl Lowering<'_, '_> {
             .then_some(row)
     }
 
-    /// Whether `instruction` calls out and nothing else lowers it: every call-out row but the
-    /// equality `Binary`, which `Lowering::operator` lowers natively first.
+    /// Whether `instruction` calls out and nothing else lowers it: every call-out row but a
+    /// `Binary`, which `Lowering::operator` lowers natively first.
     pub(super) fn is_call_out(&self, instruction: WideInstruction) -> bool {
-        self.call_out_row(instruction).is_some_and(|row| !matches!(row, crate::staged::Operation::Equality { .. }))
+        self.call_out_row(instruction).is_some_and(|row| !is_binary(&row))
     }
 
-    /// An equality `Binary` the native lowering (`Lowering::operator`) leaves: its row, whose slow
-    /// case is the VM's equality. `None` for any other instruction.
-    pub(super) fn equality_call_out(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        self.call_out_row(instruction).filter(|row| matches!(row, crate::staged::Operation::Equality { .. }))
-            .map(|_| self.call_out_step(state, pc, instruction))
+    /// A `Binary` the native lowering (`Lowering::operator`) leaves (a string or BigInt relation,
+    /// `instanceof`, `in`, an equality of other than numbers): its row, whose slow case is the
+    /// VM's operation. `None` for any other instruction.
+    pub(super) fn binary_call_out(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        self.call_out_row(instruction).filter(is_binary).map(|_| self.call_out_step(state, pc, instruction))
     }
 
     /// The call-out row at `pc`, stepped by its staged definition: the registers the body wrote
@@ -73,4 +73,9 @@ impl Lowering<'_, '_> {
         let status = self.builder.block_params(block)[0];
         self.stop_by_status(status);
     }
+}
+
+/// Whether `row` is a `Binary` of two registers, equality or any other operator.
+fn is_binary(row: &crate::staged::Operation<ir::Value, EmitProof>) -> bool {
+    matches!(row, crate::staged::Operation::Equality { .. } | crate::staged::Operation::Binary { .. })
 }

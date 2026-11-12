@@ -3,6 +3,7 @@
 //! spread steps. Each is one definition every tier runs; what runs guest code or the host's
 //! binding rules (the generic iterator protocol, a store's TDZ and constant checks) is a
 //! `Frame` callout the frame answers or declines (`Frame::vm_step`).
+use super::callout::calling;
 use super::{CallOut, Operation, NumericFrame, NumericStage, Register, Step};
 use crate::bytecode::{Op, WideInstruction};
 use crate::Value;
@@ -31,7 +32,8 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
     Some(match instruction.op() {
         Op::LoadEnvLocal => Operation::LoadEnvLocal { destination: destination(), slot: slot()? },
         Op::StoreEnvLocal => Operation::StoreEnvLocal { source: instruction.register_a(),
-            slot: slot()?, result: instruction.optional_register_b() },
+            slot: slot()?, result: instruction.optional_register_b(),
+            initialize: instruction.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false) },
         Op::ArgumentsLength => Operation::ArgumentsLength { destination: destination(), slot: slot()? },
         Op::LoadNameTypeof => Operation::GlobalTypeof { destination: destination(), atom: instruction.atom_index(), site: instruction.cache_site_index() },
         Op::StoreName => Operation::GlobalWrite { source: instruction.register_a(), atom: instruction.atom_index(),
@@ -57,41 +59,33 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
 }
 
 /// Run a name, environment or iteration `operation` on `frame`; `Unresolved` where the frame
-/// declines the callout or the read leaves at its miss edge.
+/// has neither the row's own reading nor a host for its callout.
 #[inline(always)]
 pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::LoadEnvLocal { destination, slot } => load_environment(stage, frame, destination, slot),
-        Operation::StoreEnvLocal { source, slot, result } => store_environment(stage, frame, (source, slot), result),
-        Operation::ArgumentsLength { destination, slot } => {
-            let length = frame.arguments_length(stage, slot);
-            defined(stage, frame, destination, length)
-        }
-        Operation::GlobalTypeof { destination, atom, site } => {
-            let typeof_name = frame.global_typeof(stage, destination, atom, site);
-            completed(stage, typeof_name)
-        }
+        Operation::StoreEnvLocal { source, slot, result, initialize } =>
+            store_environment(stage, frame, (source, slot, initialize), result),
+        Operation::ArgumentsLength { destination, slot } => match frame.arguments_length(stage, slot) {
+            Some(length) => defined(stage, frame, destination, Some(length)),
+            None => calling(stage, frame, CallOut::ArgumentsLength { slot }, Some(destination)),
+        },
+        Operation::GlobalTypeof { destination, atom, site } => match frame.global_typeof(stage, destination, atom, site) {
+            Some(()) => Step::Value(stage.constant(0)),
+            None => calling(stage, frame, CallOut::GlobalTypeof { atom, site }, Some(destination)),
+        },
         Operation::GlobalWrite { source, atom, site, initialize } => {
             let value = frame.tagged(stage, source);
             match frame.global_write(stage, atom, site, value, initialize) {
                 Some(()) => Step::Value(value),
-                None => Step::Unresolved,
+                None => calling(stage, frame, CallOut::GlobalWrite { source, atom, site, initialize }, None),
             }
         }
         Operation::Protocol { step, destination, operands } =>
-            protocol(stage, frame, CallOut::Protocol { step, operands }, destination),
+            calling(stage, frame, CallOut::Protocol { step, operands }, destination),
         Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),
         _ => Step::Unresolved,
-    }
-}
-
-/// A callout's outcome that defines no word: control falls through with a placeholder word.
-#[inline(always)]
-fn completed<S: NumericStage, C>(stage: &mut S, done: Option<()>) -> Step<S::Word, C> {
-    match done {
-        Some(()) => Step::Value(stage.constant(0)),
-        None => Step::Unresolved,
     }
 }
 
@@ -109,41 +103,32 @@ fn defined<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, de
 }
 
 /// `LoadEnvLocal`: the slot of the frame's dense environment storage, read once through the
-/// shared row (`environment::environment_slot`).
+/// shared row (`environment::environment_slot`); the VM's binding rules where the frame holds none.
 #[inline(always)]
 fn load_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
     slot: u16) -> Step<S::Word, F::Control> {
+    let Some((storage, fact)) = frame.environment(stage) else {
+        return calling(stage, frame, CallOut::LoadEnvLocal { slot }, Some(destination));
+    };
     let miss = frame.miss();
-    let read = frame.environment(stage)
-        .and_then(|(storage, fact)| super::environment::environment_slot(stage, storage, slot, miss).map(|value| (value, fact)));
+    let read = super::environment::environment_slot(stage, storage, slot, miss).map(|value| (value, fact));
     defined(stage, frame, destination, read)
 }
 
-/// `StoreEnvLocal`: `source` to the environment slot, and to `result` where the instruction has one.
+/// `StoreEnvLocal`: `source` to the environment slot, and to `result` where the instruction has
+/// one; the VM's binding rules where the frame cannot store.
 #[inline(always)]
-fn store_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (source, slot): (Register, u16),
-    result: Option<Register>) -> Step<S::Word, F::Control> {
+fn store_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    (source, slot, initialize): (Register, u16, bool), result: Option<Register>) -> Step<S::Word, F::Control> {
     let value = frame.tagged(stage, source);
-    if frame.environment_write(stage, slot, value).is_none() { return Step::Unresolved; }
+    if frame.environment_write(stage, slot, value).is_none() {
+        return calling(stage, frame, CallOut::StoreEnvLocal { source, slot, initialize }, result);
+    }
     if let Some(result) = result {
         let fact = frame.fact(source);
         frame.write(stage, result, value, fact);
     }
     Step::Value(value)
-}
-
-/// An iteration or spread step: the VM makes it, and the word it defines, if any, is
-/// `destination`'s.
-#[inline(always)]
-fn protocol<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, call: CallOut,
-    destination: Option<Register>) -> Step<S::Word, F::Control> {
-    match frame.vm_step(stage, call, destination) {
-        Some((value, fact)) => {
-            if let Some(destination) = destination { frame.write(stage, destination, value, fact); }
-            Step::Value(value)
-        }
-        None => Step::Unresolved,
-    }
 }
 
 /// `ForInNext`: the VM's next key, or `Value::DELETED` where none is left, which takes the jump.
