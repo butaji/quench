@@ -42,4 +42,16 @@ mod tests {
         assert_eq!(get_body.instructions().nth(pc).unwrap().op(), crate::bytecode::Op::GetField);
         assert_eq!(registers[0], receiver);
     }
+
+    #[test]
+    fn ahead_images_serve_only_the_program_they_were_compiled_from() {
+        let program = crate::Engine::specialize("function add(a,b){return a+b;}", "ahead-a.js").unwrap();
+        let other = crate::Engine::specialize("function add(a,b){return a-b;}", "ahead-b.js").unwrap();
+        let file = AheadImages::compile(&program).to_bytes();
+        for (served, expected) in [(&program, true), (&other, false)] {
+            let mut vm = Vm::new(TestHost::default());
+            vm.load_ahead_images(AheadImages::from_bytes(&file).unwrap());
+            assert_eq!(vm.install_ahead_body(served, 1, None, &[]).is_some(), expected);
+        }
+    }
 }

@@ -20,14 +20,15 @@ pub(in crate::vm) enum NativeCallBinding {
 pub(in crate::vm) type LaneKey = (u32, u32, Option<u32>, u64);
 
 impl ProgramStore {
-    /// The ahead-of-time bodies loaded for `program`.
-    pub(in crate::vm) fn ahead_images(&self, program: super::ProgramId) -> Option<Rc<crate::vm::compiled::AheadImages>> {
-        self.ahead.borrow().as_ref().filter(|(of, _)| *of == program).map(|(_, images)| images.clone())
+    /// The loaded ahead-of-time bodies of `id`, which is `program`.
+    pub(in crate::vm) fn ahead_images(&self, id: super::ProgramId, program: &crate::ResidualProgram) -> Option<Rc<crate::vm::compiled::AheadImages>> {
+        if self.ahead.borrow().is_empty() { return None; }
+        self.ahead.borrow().iter().find(|images| images.is_of(id.raw(), program)).cloned()
     }
 
-    /// Takes `images` as `program`'s ahead-of-time bodies.
-    pub(in crate::vm) fn set_ahead_images(&self, program: super::ProgramId, images: crate::vm::compiled::AheadImages) {
-        *self.ahead.borrow_mut() = Some((program, Rc::new(images)));
+    /// Takes `images` as the ahead-of-time bodies of the program they were compiled from.
+    pub(in crate::vm) fn add_ahead_images(&self, images: crate::vm::compiled::AheadImages) {
+        self.ahead.borrow_mut().push(Rc::new(images));
     }
 
     /// The published body of `key`, if one still holds.
