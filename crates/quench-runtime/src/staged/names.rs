@@ -77,7 +77,7 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         },
         Operation::GlobalWrite { source, atom, site, initialize } => {
             let value = frame.tagged(stage, source);
-            match frame.global_write(stage, atom, site, value, initialize) {
+            match frame.global_write(stage, source, atom, site, value, initialize) {
                 Some(()) => Step::Value(value),
                 None => calling(stage, frame, CallOut::GlobalWrite { source, atom, site, initialize }, None),
             }

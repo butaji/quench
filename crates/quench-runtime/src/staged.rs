@@ -49,7 +49,7 @@ pub(crate) mod trace;
 pub(crate) use effects::{CallTarget, Effects, Region, RegionSet};
 pub(crate) use ic::concrete_own_field_hit;
 pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
-    own_layout, read_slot};
+    arena_extras_layout, own_layout, read_slot};
 
 mod stage;
 pub(crate) use stage::{Stage, Table};
