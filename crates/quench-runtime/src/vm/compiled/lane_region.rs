@@ -2606,7 +2606,7 @@ impl Lowering<'_, '_> {
                 && (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval() => Some(self.intrinsic_call(state, pc, instruction) || self.call(state, pc, instruction, LaneHelper::Call)),
-            _ if self.is_register_row(instruction) => Some(self.register_step(state, pc32, instruction)),
+            _ if self.is_register_row(instruction) => Some(self.register_step(state, pc, instruction)),
             Class::LoadName | Class::LoadNameCall if plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
             Class::Nop if plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
@@ -2693,23 +2693,6 @@ impl Lowering<'_, '_> {
             Class::MakeObject | Class::MakeArray | Class::MakeConstArray | Class::MakeObject2 if self.literal_completes(instruction, pc) => Some(self.literal(state, pc, instruction)),
             Class::Construct if self.completion != Completion::Number && !instruction.is_super_construct()
                 && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
-            Class::IncDec if plain && instruction.numeric_local_target().is_none() => {
-                let decrement = instruction.boolean_flag();
-                decrement.map(|decrement| {
-                    let exit = self.guard_exit(state, pc32);
-                    let (source, destination) = (instruction.register_b(), instruction.result_register());
-                    // A loop counter its `<` test bounds never overflows, so its wrapping
-                    // result is exact and needs no exit.
-                    let overflow = if !decrement && self.bounded_increment(pc, source, destination) {
-                        crate::staged::Overflow::Wrap
-                    } else {
-                        crate::staged::Overflow::Exit
-                    };
-                    self.step(state, frame::Edges::ValueGuarded { miss: exit },
-                        crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { destination, source, decrement, overflow }));
-                    true
-                })
-            }
             Class::Jump if plain => {
                 let target = instruction.jump_target() as usize;
                 if target <= pc {

@@ -352,7 +352,7 @@ impl<W, P> Operation<W, P> {
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
             Op::Binary | Op::ToPropertyKey => return Self::decode_generic(instruction),
-            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary => return Self::decode_value(instruction),
+            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec => return Self::decode_value(instruction),
             Op::GetField | Op::Delete => return Self::decode_property(instruction),
             op if op.is_field_store() => return Self::decode_property(instruction),
             _ => return names::decode(instruction),
@@ -393,6 +393,9 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
                 destination: instruction.result_register(), source: instruction.register_b() }),
+            Op::IncDec if instruction.numeric_local_target().is_none() => Self::Number(NumberOperation::IncDec {
+                destination: instruction.result_register(), source: instruction.register_b(),
+                decrement: instruction.boolean_flag()?, overflow: Overflow::Exit }),
             Op::Unary if instruction.unary_operator()
                 == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot {
                     destination: instruction.result_register(), source: instruction.register_b() },

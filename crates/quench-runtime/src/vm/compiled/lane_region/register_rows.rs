@@ -15,15 +15,27 @@ impl Lowering<'_, '_> {
             .then_some(row)
     }
 
+    /// An increment of a loop counter its `<` test bounds never overflows, so its wrapping result
+    /// is exact and needs no exit (`bounded_increment`); any other row as it is.
+    fn bounded(&self, pc: usize, row: crate::staged::Operation<ir::Value, EmitProof>) -> crate::staged::Operation<ir::Value, EmitProof> {
+        use crate::staged::{NumberOperation::IncDec, Operation::Number, Overflow};
+        match row {
+            Number(IncDec { destination, source, decrement: false, .. }) if self.bounded_increment(pc, source, destination) =>
+                Number(IncDec { destination, source, decrement: false, overflow: Overflow::Wrap }),
+            other => other,
+        }
+    }
+
     /// Whether `instruction` is a row `register_step` lowers.
     pub(super) fn is_register_row(&self, instruction: WideInstruction) -> bool {
         self.register_row(instruction).is_some()
     }
 
     /// The row at `pc`, stepped by its staged definition, guarded at `pc` where it can leave.
-    pub(super) fn register_step(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> bool {
+    pub(super) fn register_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let row = self.register_row(instruction).expect("a register row decodes");
-        let edges = if row.leaves() { frame::Edges::ValueGuarded { miss: self.guard_exit(state, pc) } } else { frame::Edges::Value };
+        let row = self.bounded(pc, row);
+        let edges = if row.leaves() { frame::Edges::ValueGuarded { miss: self.guard_exit(state, pc as u32) } } else { frame::Edges::Value };
         self.step(state, edges, row);
         true
     }

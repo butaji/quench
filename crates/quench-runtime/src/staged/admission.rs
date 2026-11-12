@@ -10,7 +10,8 @@ impl<W, P> Operation<W, P> {
     pub(crate) const fn registers(&self) -> Option<[Option<Register>; 2]> {
         Some(match *self {
             Self::Move { destination, source } | Self::LogicalNot { destination, source }
-                | Self::Number(NumberOperation::ToNumeric { destination, source }) => [Some(destination), Some(source)],
+                | Self::Number(NumberOperation::ToNumeric { destination, source } | NumberOperation::IncDec { destination, source, .. }) =>
+                [Some(destination), Some(source)],
             Self::LoadLocalPlain { destination, .. } | Self::LoadThis { destination } | Self::Void { destination } =>
                 [Some(destination), None],
             Self::StoreLocalPlain { source, result, .. } => [Some(source), result],
@@ -52,6 +53,9 @@ mod tests {
         let numeric: Row = Operation::Number(NumberOperation::ToNumeric { destination: 6, source: 7 });
         assert_eq!(numeric.registers(), Some([Some(6), Some(7)]));
         assert!(numeric.leaves());
+        let step: Row = Operation::Number(NumberOperation::IncDec { destination: 8, source: 8, decrement: false,
+            overflow: super::super::Overflow::Exit });
+        assert_eq!(step.registers(), Some([Some(8), Some(8)]));
         assert_eq!(Row::Jump.registers(), None);
     }
 }
