@@ -201,6 +201,6 @@ pub fn heap_library() -> Vec<HeapCode> {
     for heap in [STORE_LOCAL_ROW, CAPTURE_SET_ROW, SITE_STORE_ROW, THIS_STORE_ROW] {
         rows.extend(srcs.iter().map(|&a| heap_canonical((heap, false, MEM, a, MEM))));
     }
-    rows.extend([ARRAY_ROW, IDENTITY_ROW, LIVE_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
+    rows.extend([ARRAY_ROW, IDENTITY_ROW, LIVE_ROW, OBJECT_ROW, KEY_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
     rows.into_iter().collect()
 }

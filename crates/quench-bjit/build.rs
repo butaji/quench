@@ -148,11 +148,11 @@ fn check_call(row: &str, code: &[u8]) {
 
 /// Every file whose change must recompile the stencils: the stencil sources and the runtime's
 /// staged rows they include, and nothing else.
-const SOURCES: [&str; 17] = [
+const SOURCES: [&str; 18] = [
     "stencils", "../quench-runtime/src/staged/stage.rs", "../quench-runtime/src/staged/value.rs",
     "../quench-runtime/src/staged/object.rs", "../quench-runtime/src/staged/elements.rs",
     "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "../quench-runtime/src/staged/frame.rs", "../quench-runtime/src/staged/call.rs",
-    "../quench-runtime/src/staged/numeric.rs", "../quench-runtime/src/staged/register_frame.rs", "../quench-runtime/src/staged/effects.rs", "../quench-runtime/src/staged/global.rs",
+    "../quench-runtime/src/staged/numeric.rs", "../quench-runtime/src/staged/iteration.rs", "../quench-runtime/src/staged/register_frame.rs", "../quench-runtime/src/staged/effects.rs", "../quench-runtime/src/staged/global.rs",
     "../quench-runtime/src/vm/operations/number_rows.rs", "build.rs", "src/numeric.rs", "src/call_record.rs",
 ];
 

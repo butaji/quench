@@ -26,11 +26,11 @@ use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, nu
 use crate::places::{DEST, LEFT, Places, tagged_place};
 use crate::stage::StencilStage;
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-use crate::staged::{Stage, Step, elements, entry, environment, load_this, read_local, strings, value, write_local};
+use crate::staged::{Stage, Step, elements, entry, environment, iteration, load_this, read_local, strings, value, write_local};
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW,
+    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW,
 };
 
 unsafe extern "C" {
@@ -208,6 +208,34 @@ fn finish<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out
     if frame.writes_fit(done) { Out::Next(frame.s) } else { Out::Exit(frame.s) }
 }
 
+/// A fast arm's row: where its proof held and its places fit it continues at TAKEN, past the
+/// helper step laid out after it, else it leaves into that step.
+#[inline(always)]
+fn finish_fast<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
+    match finish(frame, done) {
+        Out::Next(s) => Out::Taken(s),
+        left => left,
+    }
+}
+
+/// `RequireIteratorResult`'s fast arm: the operand (hole 1) is a direct object or array record
+/// (`iteration::require_iterator_result`).
+#[inline(always)]
+fn object_row(s: S) -> Out {
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let done = matches!(iteration::require_iterator_result(&mut StencilStage::from_hole(0), &mut frame, LEFT, ()), Step::Value(_));
+    finish_fast(frame, done)
+}
+
+/// `ToPropertyKey`'s fast arm: a direct string operand (hole 1) is copied to the destination
+/// (hole 0, `iteration::to_property_key`).
+#[inline(always)]
+fn key_row(s: S) -> Out {
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let done = matches!(iteration::to_property_key(&mut StencilStage::from_hole(0), &mut frame, DEST, LEFT, ()), Step::Value(_));
+    finish_fast(frame, done)
+}
+
 /// The activation's `this` into the destination (`staged::load_this`).
 #[inline(always)]
 fn this_row<const D: u8>(s: S) -> Out {
@@ -281,6 +309,8 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         HELD_ROW => held_row::<D>(s, payload, if ENTRY { word_at(payload, JS_STEP_RECEIVER) } else { register_object(&s) }),
         LIVE_ROW => live_row(s),
         ARRAY_ROW => array_row(s),
+        OBJECT_ROW => object_row(s),
+        KEY_ROW => key_row(s),
         IDENTITY_ROW => identity_row(s),
         THIS_ROW => this_row::<D>(s),
         LOAD_LOCAL_ROW => load_local_row::<D>(s),

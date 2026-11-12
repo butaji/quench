@@ -258,7 +258,7 @@ fn assemble(region: &LoopRegion, (dense, known): (bool, Known), widened: &[usize
     let (reprs, homes, webs, decoded) = analyze(region, &decoded, widened, seen);
     let layout = Layout { header, backedge, homes, webs, region, ending: Ending::Region, callees: &[], invalidation: None };
     let body = decoded.iter().enumerate().map(|(k, row)| plan(row, &layout, header + k as u32, is_general(row, &reprs), helpers)).collect::<Result<Vec<_>, _>>()?;
-    let bare = decoded.iter().all(|row| row.heap.is_none() && !matches!(row.step, Some(Step::Helper | Step::Throw)));
+    let bare = decoded.iter().all(|row| row.heap.is_none() && !row.step.is_some_and(Step::runs_helper));
     Ok(Built { code: link(&layout, &body)?, bare, atoms: held_atoms(&decoded) })
 }
 
