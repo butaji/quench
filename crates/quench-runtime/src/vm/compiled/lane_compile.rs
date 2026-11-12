@@ -254,8 +254,10 @@ impl<H: Host> Vm<H> {
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>, called: bool, caller: &super::super::dispatch_fast::LaneView,
         arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)]) -> Result<PendingLaneMethod, Unstarted> {
+        let plan_started = std::time::Instant::now();
         let (plan, native) = self.plan_lane_method_sized(program, function, targets, captures, direct, generic, budget, entry, arrays)
             .ok_or(Unstarted::Declined)?;
+        let plan_us = u64::try_from(plan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
@@ -273,7 +275,7 @@ impl<H: Host> Vm<H> {
         }
         let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
             function, osr: entry.is_some(), unit: plan.unit.instructions.len(), ir: native.dfg.num_insts(), key: key.3,
-            generic: generic.len(), direct: plan.direct.len(), budget, observed, closed: plan.closed });
+            generic: generic.len(), direct: plan.direct.len(), budget, observed, closed: plan.closed, plan_us });
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
             let code = lane_code(native, super::jit_backend::CompileLevel::run_default());

@@ -151,12 +151,15 @@ pub(super) fn bind_callees(direct: &[DirectCallee], caller: &super::super::dispa
 pub(super) struct Census {
     pub(super) function: u32, pub(super) osr: bool, pub(super) unit: usize, pub(super) ir: usize, pub(super) key: u64,
     pub(super) generic: usize, pub(super) direct: usize, pub(super) budget: usize, pub(super) observed: Option<u32>, pub(super) closed: bool,
+    /// The planning, proofs and lowering on the VM's own thread, which the background `us`
+    /// excludes and the measured window pays.
+    pub(super) plan_us: u64,
 }
 
 impl Census {
     pub(super) fn report(&self, took: std::time::Duration, bytes: usize) -> String {
-        let Self { function, osr, unit, ir, key, generic, direct, budget, observed, closed } = self;
-        format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"observed\":{},\"key\":\"{key:016x}\",\"us\":{},\"closed\":{closed},\"bytes\":{bytes}}}",
+        let Self { function, osr, unit, ir, key, generic, direct, budget, observed, closed, plan_us } = self;
+        format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"observed\":{},\"key\":\"{key:016x}\",\"us\":{},\"closed\":{closed},\"bytes\":{bytes},\"plan_us\":{plan_us}}}",
             observed.map_or(-1, i64::from), took.as_micros())
     }
 }
