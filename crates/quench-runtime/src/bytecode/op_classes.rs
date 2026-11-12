@@ -56,7 +56,7 @@ impl Op {
         self.traits().has(crate::bytecode::Traits::LANE_IN_PLACE) || matches!(
             self,
             Op::CloneEnv | Op::InitializeTdz | Op::LoadLocal | Op::StoreLocal | Op::LoadEnvLocal | Op::StoreEnvLocal | Op::StoreVarBinding
-                | Op::LoadConst | Op::Unary | Op::Binary | Op::JumpBinaryFalse
+                | Op::LoadConst | Op::Unary | Op::Binary | Op::JumpBinaryFalse | Op::Throw
                 | Op::LoadName | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName | Op::StoreName | Op::StoreResolvedName
                 | Op::LoadCallee | Op::LoadImportMeta | Op::LoadCapture | Op::StoreCapture
                 | Op::MakeClosure | Op::MakeArray | Op::MakeConstArray | Op::MakeObject | Op::MakeObject2 | Op::MakeObjectLiteral

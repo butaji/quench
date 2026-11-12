@@ -336,6 +336,47 @@ fn folded_prototype_reads_see_changes_a_call_in_the_body_makes() {
     assert_eq!(interpreted, compiled);
 }
 
+/// A `throw` a handler of the same function covers is the catch's jump in the body: the thrown
+/// value goes to the handler's register (or nowhere, for a catch with no binding) and control to
+/// its block, so every activation completes in the body, with the output the interpreter's.
+#[test]
+fn a_throw_a_handler_covers_is_a_jump_in_the_body() {
+    assert_bodies_never_leave(
+        "function f(n) { let s = 0; for (let i = 0; i < n; i++) { try { if (i % 3 === 0) throw i; s = s + 1; } catch (e) { s = s + e; } } return s; }
+         function g(n) { let s = 0; for (let i = 0; i < n; i++) { try { throw 1; } catch { s = s + 2; } } return s; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + f(k % 9) + g(3)) | 0;
+         print(t); print(f(20)); print(g(5));",
+    );
+}
+
+/// A `throw` of a non-Error value, nested handlers and a rethrow from a handler the same function
+/// covers all end in the handler the interpreter finds.
+#[test]
+fn nested_handlers_and_rethrows_print_what_the_interpreter_prints() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function f(n, v) { let s = 0; for (let i = 0; i < n; i++) { try { try { throw v; } catch (e) { s = s + 1; throw i; } } catch (g) { s = s + g; } } return s; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + f(k % 7, k % 2 ? 'a' : null)) | 0;
+         print(t); print(f(4, undefined)); print(f(3, { x: 1 }));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+}
+
+/// A `throw` no handler of its function covers ends the body at the `throw`, the exception stashed
+/// for the lane to raise there: the caller's handler gets the same value and message.
+#[test]
+fn a_throw_no_handler_covers_ends_the_body_and_reaches_the_caller() {
+    let (interpreted, compiled, _) = run_both(
+        "function pick(x) { if (x > 5) throw new RangeError('big ' + x); if (x > 3) throw x; return x; }
+         function f(n) { let s = 0; for (let i = 0; i < n; i++) { try { s = s + pick(i); } catch (e) { s = s + (typeof e === 'number' ? e : e.message.length); } } return s; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + f(k % 9)) | 0;
+         print(t);
+         try { pick(9); } catch (e) { print(e.name); print(e.message); }
+         try { pick(4); } catch (e) { print(e); }",
+    );
+    assert_eq!(interpreted, compiled);
+}
+
 /// `typeof`, `instanceof` and `in` are the interpreter's operations made in place by the step
 /// helper, for every kind of operand: the body completes and prints what the interpreter prints.
 #[test]

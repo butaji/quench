@@ -3,8 +3,8 @@
 //! leave) and in the interpreter, and the two must end identically. The interpreter is the
 //! semantic source, so a difference is a b-jit bug. The families are the opcode groups of the
 //! bytecode: numeric, relational and branch rows, element and field access, iteration, spread,
-//! classes and private names, closures and calls, exceptions, `typeof`, `instanceof` and `in`,
-//! block scopes, control flow, generators and
+//! classes and private names, closures and calls, exceptions (caught in the function, escaping it),
+//! `typeof`, `instanceof` and `in`, block scopes, control flow, generators and
 //! late type flips that make compiled code leave through its guards.
 
 use quench_runtime::{Engine, ExecutionMode, JitMode, Runtime, SystemHost};
@@ -72,6 +72,10 @@ const FAMILIES: &[(&str, &str)] = &[
     ("switch", "switch (i & 3) { case 0: acc += 1; break; case 1: acc += 2; case 2: acc += 3; break; default: acc += 4; }"),
     ("generator", "for (var g of gen(3)) acc += g;"),
     ("in-instanceof", "t = new C(); acc += ('p' in o) + (t instanceof C ? 1 : 0) + (arr instanceof Array ? 1 : 0);"),
+    ("throw-caught-with-and-without-binding", "try { if (i & 1) throw i; acc += 1; } catch (e) { acc += e; } try { throw 1; } catch { acc += 2; }"),
+    ("throw-nested-catch-rethrow", "try { try { throw i; } catch (e) { acc += e; throw e + 1; } } catch (f) { acc += f; }"),
+    ("throw-escaping-a-callee", "try { (function (x) { if (x & 1) throw { v: x }; return 0; })(i); } catch (e) { acc += e.v; }"),
+    ("throw-non-error-values", "try { throw i & 1 ? 'k' : null; } catch (e) { s = String(e); }"),
     ("typeof-variants", "s = typeof i + typeof s + typeof o + typeof null + typeof undefined + typeof arr + typeof C + typeof Symbol() + typeof 1n + typeof gen + typeof notDefinedAnywhere;"),
     ("typeof-compared", "acc += (typeof t === 'number' ? 1 : 0) + (typeof o === 'object' ? 2 : 0) + (typeof s !== 'string' ? 4 : 0);"),
     ("instanceof-variants", "t = new C(); var h = { [Symbol.hasInstance](v) { return v > 3; } }; acc += (t instanceof C) + (o instanceof C) + (C instanceof Function) + (arr instanceof Object) + (i instanceof h);"),

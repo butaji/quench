@@ -14,8 +14,14 @@
 //!    nothing or raised, leaves there for the interpreter. A step that jumps (`ForInNext`) has its
 //!    target as the row's branch: the helper answers branched where the interpreter's step took
 //!    it, which continues at the reloads of the registers live at the target (`branching`).
-//! 3. A leave (`CallRow::Here`): the region ends at the instruction and the interpreter runs it,
-//!    for every other instruction: `Throw`; the calls but `Call` (`CallArray`, `CallSpread`, `CallKnown`,
+//! 3. A throw: `Throw` is the helper step that always raises, whose row ends the run (`Step::Throw`):
+//!    the helper stashes the exception in `Vm::lane_raised` and misses, so the run leaves at the
+//!    `throw`, where the lane raises the stashed error at the record. A function's own handler that
+//!    covers it is the catch's jump instead (`throws::caught`, `Step::Catch`): the thrown value moves
+//!    to the handler's register and control goes to its block, as `Vm::exception_handler_target`
+//!    does, so the interpreter never re-executes the `throw` to find the handler.
+//! 4. A leave (`CallRow::Here`): the region ends at the instruction and the interpreter runs it,
+//!    for every other instruction: the calls but `Call` (`CallArray`, `CallSpread`, `CallKnown`,
 //!    `CallMethod`, `CallThisMethod`, `CallForwardingArguments`, `Construct`), which push the
 //!    frames the lane owns; `LoadNameCall` and `InitializeThis`, which write two registers or the
 //!    frame's `this` the body's rows read from its payload; `SuperConstArrayObject2`; the
@@ -52,12 +58,20 @@ pub(super) enum Step {
     Return,
     /// A call, made by the call planner's chain (a body's `Call`).
     Call(CallShape),
+    /// A `throw` no handler of the function takes natively: the helper stashes the exception and
+    /// the run leaves at the record (`plan_throw`).
+    Throw,
+    /// A `throw` a handler of the function covers (`throws::caught`): the thrown value goes to the
+    /// handler's register (the row's destination, from its operand) and control to its block (the
+    /// row's branch).
+    Catch,
 }
 
 impl Step {
-    /// Whether control continues at the next instruction: a leave and a return end the run.
+    /// Whether control continues at the next instruction: a leave, a return, a throw and a catch
+    /// end the run or go elsewhere.
     pub(super) fn falls(self) -> bool {
-        !matches!(self, Self::Leave | Self::Return)
+        !matches!(self, Self::Leave | Self::Return | Self::Throw | Self::Catch)
     }
 }
 
@@ -93,11 +107,20 @@ fn steps_in_place(instruction: WideInstruction) -> bool {
     instruction.op().steps_in_body() && instruction.result_flags() == 0 && instruction.written_registers().count() <= 1
 }
 
-/// The lowering of `instruction`, where helpers are `helpers`: a helper step where the helper
-/// table has the step helper's address, else the leave.
+/// The lowering of `instruction`, where helpers are `helpers`: where the helper table has the step
+/// helper's address, a `throw` is the raising step, and the other steps made in place are helper
+/// steps; every other instruction, and every one without the address, leaves.
 pub(super) fn lowering(instruction: WideInstruction, helpers: LaneHelpers) -> Step {
     let addressed = call_plan::helper_address(helpers, LaneHelper::Step).is_some();
-    if addressed && steps_in_place(instruction) { Step::Helper } else { Step::Leave }
+    if !addressed {
+        Step::Leave
+    } else if instruction.op().is_throw() {
+        Step::Throw
+    } else if steps_in_place(instruction) {
+        Step::Helper
+    } else {
+        Step::Leave
+    }
 }
 
 /// Whether `instruction` at `pc` may jump backward, which only a row that polls the interrupt flag
@@ -161,6 +184,8 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
     match decoded.step.ok_or("plan_step: no step")? {
         Step::Leave => Ok(Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, Some(pc))),
         Step::Helper => plan_helper(layout, pc, decoded.target, helpers),
+        Step::Throw => plan_throw(layout, pc, helpers),
+        Step::Catch => plan_catch(decoded, layout, pc, helpers),
         Step::Return => {
             let slot = operand(&layout.homes, decoded.a).1;
             Ok(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) })
@@ -187,6 +212,25 @@ fn plan_helper(layout: &Layout, pc: u32, target: Option<u32>, helpers: LaneHelpe
         Some(target) => branching(row, layout, (pc, target)),
         None => Ok(row),
     }
+}
+
+/// The chain of a `throw` at `pc`: the spills and the helper row, which raises, so nothing is live
+/// after it and no registers are reloaded; a helper that did not raise (it ran beside a native
+/// callee's frames, where it makes nothing) falls to the leave at the record, as every exit does.
+fn plan_throw(layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
+    let mut row = helper_chain(layout, pc, &[], helpers)?;
+    row.post.push(Planned { exits: vec![Exit::At(pc)], ..Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, None) });
+    Ok(row)
+}
+
+/// A catch at `pc`: the move of the thrown value to the handler's register, then the jump to the
+/// handler's block.
+fn plan_catch(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
+    let handler = decoded.target.ok_or("catch: no handler")?;
+    let moved = Decoded::number(Kind::Move, decoded.dst, decoded.a, None, None);
+    let mut row = plan(&moved, layout, pc, true, helpers)?;
+    row.post.push(jump_to(handler)?);
+    Ok(row)
 }
 
 /// The jump to `pc`, a part of a run whose NEXT is not where the run goes on.
@@ -297,6 +341,15 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A `throw` is the raising step, which with the catch ends the run; a helper step falls on.
+    #[test]
+    fn a_throw_is_the_raising_step_and_ends_the_run() {
+        let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+        assert_eq!(lowering(instruction(Op::Throw), process), Step::Throw);
+        assert_eq!(decode_step(0, instruction(Op::Throw), process).step, Some(Step::Throw));
+        assert!(!Step::Throw.falls() && !Step::Catch.falls() && !Step::Leave.falls() && Step::Helper.falls());
     }
 
     /// The scope, operator, constant and class steps `Op::steps_in_body` names are helper steps of

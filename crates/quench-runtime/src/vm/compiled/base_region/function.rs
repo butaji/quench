@@ -1,8 +1,9 @@
 //! A whole function as one stitched body: every instruction is a row the base-region decode
 //! covers (the numeric rows, the heap rows read through the heap's own tables: an array
 //! word's record, a field's cache entry, the activation's captures, a helper step, a `Call`
-//! the call planner chains, or a `Return` of a register) or a leave row at its PC, where the
-//! interpreter resumes exactly. The rows, webs and homes are the loop regions' (`analyze`,
+//! the call planner chains, a `Return` of a register, or a `throw`: the catch's jump where a handler
+//! of the function covers it, else the raising step) or a leave row at its PC, where the
+//! interpreter resumes exactly (`steps` lists which instructions are those). The rows, webs and homes are the loop regions' (`analyze`,
 //! `plan`, `link`); the body is entered and left as a lane body is (`Ending::Body`), and polls
 //! the interrupt flag at every branch back (`Ending::poll`).
 use super::*;
@@ -10,6 +11,7 @@ use super::call_plan::inline::Context;
 use super::call_plan::{CallShape, DirectFacts};
 use super::callees::{chains, Callees};
 use super::super::LaneHelpers;
+use crate::bytecode::Function;
 use quench_bjit::call_record::CallRecord;
 use quench_bjit::HOLES;
 
@@ -34,6 +36,7 @@ pub(in crate::vm::compiled) struct Body {
 /// What a body decides its call sites by: the callees they recorded and the stitch's budget, and
 /// the program facts its rows read.
 struct Sites<'a> {
+    function: &'a Function,
     callees: &'a Callees,
     facts: &'a [Option<DirectFacts>],
     context: Context,
@@ -41,11 +44,15 @@ struct Sites<'a> {
     known: Known<'a>,
 }
 
-/// The row of the instruction at `pc`: a `Return` of a register, a call the stitch inlines as the
+/// The row of the instruction at `pc`: a `Return` of a register, a `throw` a handler of the function
+/// catches natively (`throws::caught`), a call the stitch inlines as the
 /// callee's one row or the call planner's chain, else what the loop regions' decode covers (a
 /// leave where nothing does).
 fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     let plain = instruction.result_flags() == 0;
+    if instruction.op().is_throw() && let Some(caught) = throws::caught(sites.function, (pc, sites.registers), instruction) {
+        return caught;
+    }
     match instruction.op().class() {
         Class::Return if plain && instruction.register_a() < sites.registers => {
             Decoded { a: Some(Source::Register(instruction.register_a())), ..Decoded::step(Step::Return, None) }
@@ -175,7 +182,7 @@ fn plan_row(layout: &Layout, reprs: &Reprs, reached: bool, pc: u32, row: &Decode
 pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, (function, registers): (u32, u16), known: Known, widened: &[usize], seen: [&[Register]; SEEN], callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
     let facts = unsafe { callees.facts() };
-    let sites = Sites { callees, facts: &facts, context: Context::root(function, registers), registers, known };
+    let sites = Sites { function: known.program.function(function as usize), callees, facts: &facts, context: Context::root(function, registers), registers, known };
     let built = assemble_body(region, widened, seen, sites, helpers);
     note(|totals, rejects| match &built {
         Ok(body) => {
