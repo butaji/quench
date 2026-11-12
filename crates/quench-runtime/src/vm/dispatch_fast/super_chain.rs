@@ -191,4 +191,4 @@ pub(super) fn lane_super_construction<H: Host>(
 
 #[cfg(test)]
 #[path = "../super_chain_tests.rs"]
-mod tests;
+pub(in crate::vm) mod tests;

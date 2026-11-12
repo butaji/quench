@@ -168,3 +168,7 @@ fn default_locale_compare<H: Host>(vm: &Vm<H>, receiver: Value, args: &[Value]) 
 
 /// The radix `Number.prototype.toString` writes in place.
 const DECIMAL: f64 = 10.0;
+
+#[cfg(test)]
+#[path = "../lane_exit_tests.rs"]
+mod tests;

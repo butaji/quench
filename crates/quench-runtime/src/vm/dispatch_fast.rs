@@ -6789,7 +6789,8 @@ fn lane_cached_field_miss<H: Host>(
             .or_else(|| vm.probed_field_miss_value(object, atom, site)),
         super::object::FieldCacheProbe::Ineligible => vm
             .array_length_field(object, atom)
-            .or_else(|| vm.cached_string_field_hit(code, object, atom, site)),
+            .or_else(|| vm.cached_string_field_hit(code, object, atom, site))
+            .or_else(|| vm.cached_primitive_field_hit(object, atom)),
     }
     // A collection's `size` or a buffer view's field, which no cache records
     // (`AtomClass::VIRTUAL_FIELD`).

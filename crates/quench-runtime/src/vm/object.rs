@@ -2612,6 +2612,20 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// A number, boolean, symbol or bigint primitive's `GetField` where no lookup can run guest
+    /// code: the data its primitive prototype's chain holds under `atom`, or `undefined` for a
+    /// name the chain lacks (an absent feature test such as `value.isColor`), as
+    /// `get_property` finds it. An accessor, an exotic link and a name `primitive_read_holder`
+    /// answers with a builtin where the prototype holds none are left to the general read.
+    pub(super) fn cached_primitive_field_hit(&self, object: Value, atom: Atom) -> Option<Value> {
+        let prototype = self.primitive_prototype(object).filter(|_| !self.heap.is_string(object))?;
+        match self.plain_property_lookup(prototype, PropertyKey::string(atom))? {
+            Some(value) => Some(value),
+            None if matches!(self.atom_name(atom), "toString" | "valueOf" | "toFixed" | "toPrecision") => None,
+            None => Some(Value::UNDEFINED),
+        }
+    }
+
     /// Whether a string primitive's read of `atom` in `p` can take the `String.prototype`
     /// data property its site caches (`string_prototype_field_hit`): specialized code
     /// reading neither `length` nor an index, which the string itself answers, nor a name

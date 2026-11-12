@@ -12,7 +12,7 @@ function rep(f, n = 3000) { let r; for (let i = 0; i < n; i++) r = f(i); return 
 "#;
 
 /// What `source`, after the prelude, prints.
-fn printed(source: &str, file: &str) -> Vec<String> {
+pub(in crate::vm) fn printed(source: &str, file: &str) -> Vec<String> {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     let program = Engine::specialize(&format!("{PRELUDE}{source}"), file).unwrap();
