@@ -15148,11 +15148,12 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
 /// direct calls proved the values and activations they take.
 fn lane_materialize_frames<H: Host>(
     cx: *mut LaneContext<H>,
-    frames: &[super::compiled::ShadowFrame],
+    frames: super::compiled::ShadowFrames,
     _root: &super::compiled::LaneMethod,
 ) -> Option<(&'static LaneView, &'static super::compiled::LaneMethod)> {
     let mut innermost = None;
-    for frame in frames {
+    for index in 0..frames.count {
+        let frame = frames.get(index);
         // SAFETY: the caller's body owns the callee it named, and the callee's view and body
         // outlive the run; the frame's window starts at the stack's values' end.
         let callee = unsafe { &*frame.callee };
