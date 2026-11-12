@@ -441,6 +441,9 @@ impl LaneMethod {
     /// A leave at a construction inside an inlined frame is the same: a construction no plan
     /// makes is generic only at a caller record (`Lowering::construct`), so the callee that
     /// holds it keeps its own body.
+    /// The callees its code calls by their entries.
+    pub(in crate::vm) fn direct_callees(&self) -> &[DirectCallee] { &self.direct }
+
     pub(in crate::vm) fn feedback(&self, exit: LaneExit, program: &ResidualProgram) -> LaneExit {
         let LaneExit::Inlined { frame, pc } = exit else { return exit };
         let Some(inlined) = self.inlined.get(frame) else { return exit };
