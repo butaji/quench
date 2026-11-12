@@ -115,6 +115,7 @@ mod array_copy;
 mod array_flatten;
 mod array_group;
 mod array_indexed;
+mod array_view;
 mod array_modern;
 mod atom_keys;
 mod atomics;
@@ -208,6 +209,7 @@ pub(crate) use program_store::ProgramId;
 pub(crate) use regexp::RegExpFlags;
 use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
+use array_view::{Match, Search};
 use property_key::PropertyKey;
 pub(crate) mod operations;
 #[cfg(all(test, feature = "bench-primitives"))]

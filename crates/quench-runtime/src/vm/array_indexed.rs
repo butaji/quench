@@ -93,7 +93,13 @@ impl<H: Host> Vm<H> {
             return Ok(Value::number(-1.0));
         }
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
-        for index in (0..=from as usize).rev() {
+        let mut top = from as usize;
+        match self.search_dense(object, 0..top + 1, true, search, Match::Strict) {
+            Search::Found(index) => return Ok(Value::number(index as f64)),
+            Search::Missing => return Ok(Value::number(-1.0)),
+            Search::Resume(index) => top = index,
+        }
+        for index in (0..=top).rev() {
             let key = Value::number(index as f64);
             if self.has_property(p, object, key)? {
                 let value = self.get_index(p, object, key)?;
@@ -111,9 +117,6 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if let Some(found) = self.dense_index_of(this, args) {
-            return Ok(found);
-        }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {
@@ -130,6 +133,12 @@ impl<H: Host> Vm<H> {
             }
         };
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let mut start = start;
+        match self.search_dense(object, start..length, false, search, Match::Strict) {
+            Search::Found(index) => return Ok(Value::number(index as f64)),
+            Search::Missing => return Ok(Value::number(-1.0)),
+            Search::Resume(index) => start = index,
+        }
         for index in start..length {
             let key = Value::number(index as f64);
             if self.has_property(p, object, key)? {
@@ -140,50 +149,6 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok(Value::number(-1.0))
-    }
-
-    /// `Array.prototype.indexOf` of a dense array (`dense_array_length`) from an integer or
-    /// absent `fromIndex`: each element is its own data property, compared by strict
-    /// equality, and a hole no prototype holds (`inherited_index_absent`) is skipped, so no
-    /// guest code runs. `None` for any other receiver or start, or a hole a prototype holds.
-    pub(super) fn dense_index_of(&self, array: Value, args: &[Value]) -> Option<Value> {
-        let length = self.dense_array_length(array)?;
-        let start = match args.get(1) {
-            None => 0,
-            Some(from) => {
-                crate::units::relative_index(f64::from(from.as_int()?), length)
-            }
-        };
-        let search = args.first().copied().unwrap_or(Value::UNDEFINED);
-        // The search value's kind decides strict equality once: a Number compares numerically,
-        // a String or BigInt by contents, and anything else only by identity.
-        let by_contents = search.as_number().is_some()
-            || self.heap.string(search).is_some()
-            || matches!(self.heap.get(search), Some(Cell::BigInt(_)));
-        let elements = self.heap.array(array)?.elements();
-        let mut start = start;
-        if !by_contents {
-            // Identity: one word compare per element, as ai-astar's `openList.indexOf(node)`
-            // makes over a list of objects; a hole leaves the rest to the loop below.
-            let end = length.min(elements.len()).max(start);
-            match elements[start..end].iter().position(|value| *value == search || value.is_deleted()) {
-                Some(offset) if !elements[start + offset].is_deleted() => {
-                    return Some(Value::number((start + offset) as f64));
-                }
-                Some(offset) => start += offset,
-                None => return Some(Value::number(-1.0)),
-            }
-        }
-        for (index, value) in elements.iter().enumerate().take(length).skip(start) {
-            if value.is_deleted() {
-                if !self.inherited_index_absent(array, index) {
-                    return None;
-                }
-            } else if if by_contents { self.strict_equal(*value, search) } else { *value == search } {
-                return Some(Value::number(index as f64));
-            }
-        }
-        Some(Value::number(-1.0))
     }
 
     pub(super) fn array_copy_within_native(

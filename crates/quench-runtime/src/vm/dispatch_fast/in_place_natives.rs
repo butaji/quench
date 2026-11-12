@@ -115,12 +115,12 @@ fn collection_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Nat
     }
 }
 
-/// A dense array's `indexOf`, `splice`, `unshift` and `shift`, and an array iterator's step
+/// A dense array's `indexOf`, `includes`, `splice`, `unshift` and `shift`, and an array iterator's step
 /// over a plain array.
 fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, callee: Value, receiver: Value,
     args: &[Value]) -> Option<Value> {
     match native {
-        Native::ArrayIndexOf => vm.dense_index_of(receiver, args),
+        Native::ArrayIndexOf | Native::ArrayIncludes => vm.dense_search_call(native, receiver, args),
         Native::ArraySplice => vm.plain_array_splice(code, callee, receiver, args),
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),

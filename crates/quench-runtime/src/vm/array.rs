@@ -625,14 +625,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         range: std::ops::Range<usize>,
     ) -> Option<&[Value]> {
-        let object = self.heap.array(this)?;
-        if object.has_indexed_descriptors()
-            || object.is_arguments_object()
-            || self.heap.sparse_length(this).is_some()
-        {
-            return None;
-        }
-        let elements = object.elements().get(range)?;
+        let elements = self.array_read_view(this)?.get(range)?;
         elements.iter().all(|value| !value.is_deleted()).then_some(elements)
     }
 
@@ -1114,7 +1107,12 @@ impl<H: Host> Vm<H> {
             .map(|value| self.to_number(p, value))
             .transpose()?
             .unwrap_or(0.0);
-        let start = crate::units::relative_index(from, length);
+        let mut start = crate::units::relative_index(from, length);
+        match self.search_dense(object, start..length, false, search, Match::SameValueZero) {
+            Search::Found(_) => return Ok(Value::TRUE),
+            Search::Missing => return Ok(Value::FALSE),
+            Search::Resume(index) => start = index,
+        }
         for index in start..length {
             let value = self.get_index(p, object, Value::number(index as f64))?;
             if self.same_value_zero(value, search) {
@@ -1139,7 +1137,7 @@ impl<H: Host> Vm<H> {
                     Some(value) => vm.coerce_js_string(p, value)?,
                 };
                 let mut output = super::wtf16::JsStringBuilder::default();
-                for index in 0..length {
+                for index in vm.join_dense_prefix(object, length, &separator, &mut output)..length {
                     if index != 0 {
                         output.append(&separator);
                     }
