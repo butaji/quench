@@ -92,7 +92,8 @@ fn chain_stores<H: Host>(
     }
     let initializer = body.super_initializer(&code.atoms, &code.constants)?;
     let arguments = SuperArguments { values: &initializer.arguments, below: passed };
-    let root = chain_stores(vm, parent, Some(&arguments), stores, classes + 1)?;
+    let below = if initializer.forwards { passed } else { Some(&arguments) };
+    let root = chain_stores(vm, parent, below, stores, classes + 1)?;
     append(stores, program, &initializer.stores, passed).map(|()| root)
 }
 

@@ -13,6 +13,9 @@ use smallvec::SmallVec;
 pub(crate) struct SuperInitializer {
     pub(crate) arguments: SmallVec<[InitializerValue; 4]>,
     pub(crate) stores: SmallVec<[InitializerStore; 4]>,
+    /// Whether the body passes every argument it was given on to the parent
+    /// (`constructor(...args) { super(...args); this.f = 1; }`), whose `arguments` are then none.
+    pub(crate) forwards: bool,
 }
 
 /// Whether `call` reads the active function's parent: the `SUPER_BASE_BINDING` intrinsic
@@ -116,6 +119,15 @@ impl Function {
     /// (`super_base`), the `super(...)` construction of parameters and primitive constants,
     /// the receiver's binding, stores of such values to `this`, and the return of `undefined`.
     pub(crate) fn super_initializer(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperInitializer> {
+        if self.derived_constructor
+            && self.rest
+            && self.params == 1
+            && self.handlers.is_empty()
+            && self.arguments_slot.is_none()
+            && self.instance_initializer.is_none()
+        {
+            return self.rest_super_initializer(atoms, constants);
+        }
         if !self.constructs_parent_plainly() {
             return None;
         }
@@ -138,7 +150,42 @@ impl Function {
         }
         let arguments = (0..window.count).map(|index| temporaries.value(window.base + index)).collect::<Option<_>>()?;
         let stores = this_stores(&mut temporaries, &mut records)?;
-        Some(SuperInitializer { arguments, stores })
+        Some(SuperInitializer { arguments, stores, forwards: false })
+    }
+
+    /// The body of `constructor(...args) { super(...args); this.f = 1; }` as a
+    /// `SuperInitializer` that forwards every argument: the parent read (`super_base`), the
+    /// argument array made from the rest list, the construction spreading it, the receiver's
+    /// binding (after the check `super(...)` makes), and stores of primitive constants to
+    /// `this`. A store of the list itself, which a parameter names, is no constant, so it
+    /// declines.
+    fn rest_super_initializer(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperInitializer> {
+        let mut records = self.instructions();
+        let parent = super_base(&mut records, atoms, constants)?;
+        let [array, list, append, construct, check, binds] = [(); 6].map(|()| records.next());
+        let [array, list, append, construct, check, binds] = [array?, list?, append?, construct?, check?, binds?];
+        let spreads = array.op() == Op::MakeArray
+            && list.op() == Op::LoadLocalPlain
+            && list.local_slot() == 0
+            && append.op() == Op::AppendArray
+            && append.register_a() == array.result_register()
+            && append.optional_register_b() == Some(list.result_register())
+            && append.boolean_field(super::InstructionField::C) == Some(true)
+            && matches!(construct.construct_arguments(), ConstructArguments::Array(spread) if spread == array.result_register());
+        let constructs = spreads
+            && construct.op() == Op::Construct
+            && construct.is_super_construct()
+            && construct.result_flags() == 0
+            && construct.b() == parent
+            && check.op() == Op::SuperCallCheck
+            && binds.op() == Op::InitializeThis
+            && binds.a() == construct.result_register();
+        let mut temporaries = Temporaries { params: 0, constants, written: SmallVec::new() };
+        let stores: SmallVec<[InitializerStore; 4]> = this_stores(&mut temporaries, &mut records).filter(|_| constructs)?;
+        stores
+            .iter()
+            .all(|store| matches!(store.value, InitializerValue::Constant(_)))
+            .then(|| SuperInitializer { arguments: SmallVec::new(), stores, forwards: true })
     }
 }
 

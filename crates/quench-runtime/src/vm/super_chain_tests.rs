@@ -195,6 +195,30 @@ print(out.join(" | "));
     assert_eq!(printed(source, "array-subclass.js"), ["3 m 1 a true | RangeError | F false"]);
 }
 
+/// A constructor that spreads its rest list into `super(...)` and stores constants builds the
+/// chain's object (arguments passed on whole, the missing ones `undefined`); one that stores
+/// the list's own value, another `new.target` and a reparented parent keep their results.
+#[test]
+fn rest_forwarding_constructors_with_stores_join_the_chain() {
+    let source = r#"
+class P1 { constructor(a, b) { this.a = a; this.b = b; } }
+class RF extends P1 { constructor(...args) { super(...args); this.y = 1; } }
+class RF2 extends RF { constructor(...args) { super(...args); this.z = "k"; this.u = null; } }
+class RF3 extends P1 { constructor(...args) { super(...args); this.y = args.length; } }
+log(rep((i) => new RF(i, 2)), rep((i) => new RF2(i)), rep((i) => new RF3(i, 2, 3)), rep(() => new RF2()));
+function NT() {} NT.prototype = { mark: "nt" };
+log(Reflect.construct(RF2, [1, 2], NT).mark, Reflect.construct(RF2, [1, 2], NT) instanceof RF2);
+class Z9 { constructor(v) { this.z9 = v; } }
+Object.setPrototypeOf(RF, Z9);
+log(rep((i) => new RF2(i)));
+print(out.join(" | "));
+"#;
+    assert_eq!(
+        printed(source, "rest-forwarding.js"),
+        [r#"{"a":2999,"b":2,"y":1}:RF:a,b,y {"a":2999,"y":1,"z":"k","u":null}:RF2:a,b,y,z,u {"a":2999,"b":2,"y":3}:RF3:a,b,y {"y":1,"z":"k","u":null}:RF2:a,b,y,z,u | nt false | {"z9":2999,"y":1,"z":"k","u":null}:RF2:z9,y,z,u"#]
+    );
+}
+
 /// A chain whose classes belong to other programs than the one constructing builds the same
 /// objects, before and after a class in it is reparented.
 #[test]
