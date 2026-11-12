@@ -117,6 +117,8 @@ fn a_comparison_is_what_the_declaration_says_yields_an_i32() {
 #[derive(Default)]
 pub(super) struct Probe {
     pub(super) log: Vec<String>,
+    /// Whether the probed machine faults on an access past its memory by itself.
+    pub(super) guarded: bool,
 }
 
 impl Probe {

@@ -2,6 +2,7 @@
 //! analysis, the emitter, the loop and threading passes). No tier names a Wasm opcode.
 
 use super::wasm_instance::Instance;
+use super::wasm_memory::Memory;
 use super::wasm_operation::WasmOperation;
 use crate::bytecode::Op;
 
@@ -11,6 +12,8 @@ pub(crate) enum Step {
     Numeric(WasmOperation),
     /// Registers, constants, instance bindings and globals.
     Instance(Instance),
+    /// Linear-memory loads, stores, size and bulk operations.
+    Memory(Memory),
 }
 
 impl Step {
@@ -19,5 +22,11 @@ impl Step {
         WasmOperation::of(op, tag)
             .map(Self::Numeric)
             .or_else(|| Instance::of(op).map(Self::Instance))
+            .or_else(|| Memory::of(op).map(Self::Memory))
+    }
+
+    /// Whether the step reads the function's memory register, which no other step may.
+    pub(crate) const fn reads_memory(self) -> bool {
+        matches!(self, Self::Memory(_) | Self::Instance(Instance::Binding))
     }
 }

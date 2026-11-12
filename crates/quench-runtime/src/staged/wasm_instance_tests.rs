@@ -51,6 +51,7 @@ fn a_global_holds_the_i32_it_was_given() {
     let mut globals = [0u64; 2];
     let mut stage = ConcreteInstance {
         globals: &mut globals,
+        memory: &mut [],
     };
     stage.global_store(1, 0xffff_ffff_8000_0001);
     assert_eq!(stage.global_load(1), 0x8000_0001);
@@ -64,6 +65,7 @@ fn the_instance_stage_computes_what_the_scalar_stage_computes() {
     let mut globals = [0u64; 1];
     let mut instance = ConcreteInstance {
         globals: &mut globals,
+        memory: &mut [],
     };
     for operator in (0..).map_while(Binary::from_tag) {
         for (left, right) in operands

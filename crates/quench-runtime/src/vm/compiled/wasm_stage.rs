@@ -18,6 +18,11 @@ use cranelift_codegen::ir::{
 };
 use std::convert::Infallible;
 
+/// The value of a result a stage with no exit cannot fail.
+pub(super) fn infallible<T>(result: Result<T, Infallible>) -> T {
+    result.unwrap_or_else(|never| match never {})
+}
+
 const fn integer_type(width: Width) -> ir::Type {
     match width {
         Width::I32 => types::I32,

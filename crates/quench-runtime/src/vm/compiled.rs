@@ -33,7 +33,6 @@ use crate::bytecode::{Class, Traits,
 use crate::staged::wasm_instance::Instance;
 use crate::staged::wasm_step::Step;
 use crate::wasm::integer::I32BinaryOperator;
-use crate::wasm::memory::{MemoryLoad, MemoryStore};
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName,
     condcodes::{FloatCC, IntCC},
@@ -86,6 +85,7 @@ mod wasm_callable;
 #[path = "compiled/wasm_stage.rs"]
 mod wasm_stage;
 mod wasm_instance_stage;
+mod wasm_memory_stage;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
 pub(super) use lane_unit::static_call_targets;
@@ -8409,11 +8409,6 @@ impl Plan {
     }
 }
 
-/// The register a direct access of `instruction` reads its memory through.
-fn direct_access(op: Op) -> bool {
-    MemoryLoad::from_direct_op(op).is_some() || MemoryStore::from_direct_op(op).is_some()
-}
-
 fn successors(function: &Function, pc: usize, instruction: WideInstruction) -> Vec<usize> {
     let mut successors = Vec::with_capacity(2);
     crate::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
@@ -8781,8 +8776,8 @@ impl<H: Host> Analysis<'_, H> {
         };
         // The memory register is read only by direct accesses through it.
         if memory_register.is_some_and(|memory| {
-            !direct_access(op) && !op.traits().has(Traits::WASM_MEMORY)
-                && Instance::of(op) != Some(Instance::Binding)
+            !Step::of(op, instruction.imm()).is_some_and(Step::reads_memory)
+                && !op.traits().has(Traits::WASM_MEMORY)
                 && crate::bytecode::InstructionField::ALL.iter().any(|field| {
                     op.field_layout(*field).reads_register()
                         && instruction.field_value(*field) == memory
@@ -8810,29 +8805,16 @@ impl<H: Host> Analysis<'_, H> {
                     (memory_register, memory_slot),
                 );
             }
+            Some(Step::Memory(step)) => {
+                return self.transfer_memory(
+                    function,
+                    instruction,
+                    state,
+                    step,
+                    (memory_register, *memory_slot),
+                );
+            }
             None => {}
-        }
-        if let Some(load) = MemoryLoad::from_direct_op(op) {
-            if Some(instruction.b()) != memory_register
-                || state.get(instruction.b(), function.registers) != Some(Slot::Memory)
-            {
-                return None;
-            }
-            i32_value(state, instruction.c())?;
-            return set(
-                state,
-                instruction.a(),
-                Slot::Value(Kind::of(load_type(load)?)?),
-            );
-        }
-        if let Some(store) = MemoryStore::from_direct_op(op) {
-            if Some(instruction.b()) != memory_register
-                || state.get(instruction.b(), function.registers) != Some(Slot::Memory)
-            {
-                return None;
-            }
-            i32_value(state, instruction.c())?;
-            return (value(state, instruction.a())? == Kind::of(store.value_type())?).then_some(());
         }
         match op.class() {
             // A vector access's effective address: a 32-bit address plus the access's offset,
@@ -8899,43 +8881,6 @@ impl<H: Host> Analysis<'_, H> {
                 let kind = value(state, instruction.b())?;
                 (value(state, instruction.c())? == kind).then_some(())?;
                 set(state, instruction.a(), Slot::Value(kind))
-            }
-            Class::WasmMemorySize => {
-                let memory = instruction.b();
-                if Some(memory) != memory_register
-                    || state.get(memory, function.registers) != Some(Slot::Memory)
-                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
-                {
-                    return None;
-                }
-                set(state, instruction.a(), Slot::Value(Kind::I32))
-            }
-            Class::WasmMemoryFill => {
-                let memory = instruction.a();
-                let (destination, _) = instruction.register_pair();
-                if Some(memory) != memory_register
-                    || state.get(memory, function.registers) != Some(Slot::Memory)
-                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
-                {
-                    return None;
-                }
-                i32_value(state, instruction.b())?;
-                i32_value(state, instruction.c())?;
-                i32_value(state, destination)
-            }
-            // A copy within the function's one memory: both memory operands name it.
-            Class::WasmMemoryCopy => {
-                let (destination, source) = instruction.register_pair();
-                if Some(instruction.a()) != memory_register
-                    || Some(instruction.b()) != memory_register
-                    || state.get(instruction.a(), function.registers) != Some(Slot::Memory)
-                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
-                {
-                    return None;
-                }
-                i32_value(state, destination)?;
-                i32_value(state, source)?;
-                i32_value(state, instruction.c())
             }
             Class::WasmIndirectTarget if self.callouts => {
                 let Slot::Binding(table) = state.get(instruction.b(), function.registers)? else {
@@ -9024,49 +8969,6 @@ impl<H: Host> Analysis<'_, H> {
             },
             _ => None,
         }
-    }
-}
-
-/// The Wasm type a direct load produces.
-fn load_type(load: MemoryLoad) -> Option<crate::WasmType> {
-    Some(match load {
-        MemoryLoad::I32Load
-        | MemoryLoad::I32Load8S
-        | MemoryLoad::I32Load8U
-        | MemoryLoad::I32Load16S
-        | MemoryLoad::I32Load16U => crate::WasmType::I32,
-        MemoryLoad::F32Load => crate::WasmType::F32,
-        MemoryLoad::I64Load
-        | MemoryLoad::I64Load8S
-        | MemoryLoad::I64Load8U
-        | MemoryLoad::I64Load16S
-        | MemoryLoad::I64Load16U
-        | MemoryLoad::I64Load32S
-        | MemoryLoad::I64Load32U => crate::WasmType::I64,
-        MemoryLoad::F64Load => crate::WasmType::F64,
-        _ => return None,
-    })
-}
-
-/// Whether a direct load sign-extends its narrow word.
-fn load_signed(load: MemoryLoad) -> bool {
-    matches!(
-        load,
-        MemoryLoad::I32Load8S
-            | MemoryLoad::I32Load16S
-            | MemoryLoad::I64Load8S
-            | MemoryLoad::I64Load16S
-            | MemoryLoad::I64Load32S
-    )
-}
-
-/// The width in bytes a direct store writes.
-fn store_width(store: MemoryStore) -> usize {
-    match store {
-        MemoryStore::I32Store8 | MemoryStore::I64Store8 => 1,
-        MemoryStore::I32Store16 | MemoryStore::I64Store16 => 2,
-        MemoryStore::I32Store | MemoryStore::F32Store | MemoryStore::I64Store32 => 4,
-        _ => 8,
     }
 }
 
@@ -9825,42 +9727,6 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             self.body.core.builder.ins().return_(&values);
         }
-    }
-
-    /// The host address of a checked `width`-byte access at `address + offset`.
-    fn address(&mut self, address: ir::Value, offset: u32, width: usize) -> ir::Value {
-        let address = self.zero_extend(address);
-        if self.guarded {
-            // Index plus offset plus width stays inside the reservation; past
-            // the accessible prefix the access faults, and the fault handler
-            // raises the out-of-bounds trap (see `guard_fault`).
-            let host = self.body.core.builder.ins().iadd(self.base, address);
-            return self.body.core.builder.ins().iadd_imm_s(host, i64::from(offset));
-        }
-        let end = self
-            .body.core.builder
-            .ins()
-            .iadd_imm_s(address, i64::from(offset) + width as i64);
-        // A callout may grow the memory while its reserved base stays fixed.
-        // Read the refreshed length rather than the entry-time argument.
-        let length = if self.analysis.callouts {
-            self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            )
-        } else {
-            self.length.expect("unguarded accesses receive the length")
-        };
-        let out_of_bounds = self.body.core.builder.ins().icmp(
-            IntCC::UnsignedGreaterThan,
-            end,
-            length,
-        );
-        self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-        let host = self.body.core.builder.ins().iadd(self.base, address);
-        self.body.core.builder.ins().iadd_imm_s(host, i64::from(offset))
     }
 
     /// The address of the value of the global bound at `slot`.
@@ -10837,134 +10703,11 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.instance(pc, instruction, step);
                 return true;
             }
+            Some(Step::Memory(step)) => {
+                self.memory(instruction, step);
+                return true;
+            }
             None => {}
-        }
-        if let Some(load) = MemoryLoad::from_direct_op(op) {
-            let result = load_type(load).expect("planned");
-            let kind = Kind::of(result).expect("planned");
-            let address = self.read(c, Kind::I32);
-            let host = self.address(address, instruction.imm(), load.width());
-            let flags = self.flags(Region::LinearMemory);
-            let ty = kind.ir();
-            let value = match (load.width(), load_signed(load)) {
-                // A float loads straight into its view.
-                _ if result != kind.integer() => {
-                    self.body.core.builder.ins().load(scalar_ir(result), flags, host, 0)
-                }
-                (1, false) => self.body.core.builder.ins().uload8(ty, flags, host, 0),
-                (1, true) => self.body.core.builder.ins().sload8(ty, flags, host, 0),
-                (2, false) => self.body.core.builder.ins().uload16(ty, flags, host, 0),
-                (2, true) => self.body.core.builder.ins().sload16(ty, flags, host, 0),
-                (4, false) if kind == Kind::I64 => self.body.core.builder.ins().uload32(flags, host, 0),
-                (4, true) if kind == Kind::I64 => self.body.core.builder.ins().sload32(flags, host, 0),
-                _ => self.body.core.builder.ins().load(ty, flags, host, 0),
-            };
-            self.write_typed(a, result, value);
-            return true;
-        }
-        if let Some(store) = MemoryStore::from_direct_op(op) {
-            let kind = Kind::of(store.value_type()).expect("planned");
-            let value = self.read_typed(a, store.value_type());
-            let address = self.read(c, Kind::I32);
-            let width = store_width(store);
-            let host = self.address(address, instruction.imm(), width);
-            let flags = self.flags(Region::LinearMemory);
-            match width {
-                1 => self.body.core.builder.ins().istore8(flags, value, host, 0),
-                2 => self.body.core.builder.ins().istore16(flags, value, host, 0),
-                4 if kind == Kind::I64 => self.body.core.builder.ins().istore32(flags, value, host, 0),
-                _ => self.body.core.builder.ins().store(flags, value, host, 0),
-            };
-            return true;
-        }
-        if op.is_wasm_memory_size() {
-            let bytes = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
-            let pages = self.body.core.builder.ins().ushr_imm_u(bytes, 16);
-            let pages = self.body.core.builder.ins().ireduce(types::I32, pages);
-            self.write(a, Kind::I32, pages);
-            return true;
-        }
-        if op.is_wasm_memory_copy() {
-            let (destination, source) = instruction.register_pair();
-            let destination = self.read(destination, Kind::I32);
-            let destination = self.body.core.builder.ins().uextend(types::I64, destination);
-            let source = self.read(source, Kind::I32);
-            let source = self.body.core.builder.ins().uextend(types::I64, source);
-            let raw_length = self.read(c, Kind::I32);
-            let length = self.body.core.builder.ins().uextend(types::I64, raw_length);
-            let memory_length = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
-            // Both ranges are checked before any byte moves; 32-bit operands cannot overflow
-            // their 64-bit sums.
-            for start in [destination, source] {
-                let end = self.body.core.builder.ins().iadd(start, length);
-                let out_of_bounds =
-                    self.body.core.builder
-                        .ins()
-                        .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
-                self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-            }
-            let destination = self.body.core.builder.ins().iadd(self.base, destination);
-            let source = self.body.core.builder.ins().iadd(self.base, source);
-            let mut signature = Signature::new(self.call_conv);
-            for _ in 0..3 {
-                signature.params.push(AbiParam::new(types::I64));
-            }
-            signature.returns.push(AbiParam::new(types::I64));
-            let signature = self.body.core.builder.import_signature(signature);
-            let target = self.body.core.builder.ins().iconst(
-                types::I64,
-                compiled_memory_copy as *const () as usize as i64,
-            );
-            self.body.core.builder
-                .ins()
-                .call_indirect(signature, target, &[destination, source, length]);
-            return true;
-        }
-        if op.is_wasm_memory_fill() {
-            let (destination, _) = instruction.register_pair();
-            let destination = self.read(destination, Kind::I32);
-            let destination = self.body.core.builder.ins().uextend(types::I64, destination);
-            let raw_length = self.read(c, Kind::I32);
-            let length = self.body.core.builder.ins().uextend(types::I64, raw_length);
-            let end = self.body.core.builder.ins().iadd(destination, length);
-            let memory_length = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
-            let out_of_bounds =
-                self.body.core.builder
-                    .ins()
-                    .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
-            self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-            let address = self.body.core.builder.ins().iadd(self.base, destination);
-            let raw_byte = self.read(b, Kind::I32);
-            let byte = self.body.core.builder.ins().uextend(types::I64, raw_byte);
-            let mut signature = Signature::new(self.call_conv);
-            for _ in 0..3 {
-                signature.params.push(AbiParam::new(types::I64));
-            }
-            signature.returns.push(AbiParam::new(types::I64));
-            let signature = self.body.core.builder.import_signature(signature);
-            let target = self.body.core.builder.ins().iconst(
-                types::I64,
-                compiled_memory_fill as *const () as usize as i64,
-            );
-            self.body.core.builder
-                .ins()
-                .call_indirect(signature, target, &[address, byte, length]);
-            return true;
         }
         match op.class() {
             Class::Jump => {
