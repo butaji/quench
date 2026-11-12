@@ -1,12 +1,12 @@
 //! The Wasm tier's 64-bit and float globals: a loop over a global gives the interpreter's
-//! result and leaves the interpreter's global, in place and for payloads in the tag space,
-//! whose cells hold boxes.
+//! result and leaves the interpreter's global, for payloads in the tag space too, and its CLIF
+//! reads and writes the global's native slot with no callout.
 
 use super::*;
 use wasmparser::Operator;
 
 const ITERATIONS: i32 = 200;
-/// A payload whose bits are in the tag space: the cell holds a box for it.
+/// A payload whose bits are in the tag space: the interpreter's register boxes it, the slot holds it raw.
 const TAGGED_BITS: u64 = 0x7ffc_0000_0000_0001;
 const FLOAT_STEP_BITS: i64 = 0x3ff8_0000_0000_0000;
 
@@ -74,7 +74,7 @@ fn assert_tier_matches(ty: crate::WasmType, initial: crate::WasmValue, step: Vec
 }
 
 #[test]
-fn an_i64_global_loop_matches_the_interpreter_in_place_and_boxed() {
+fn an_i64_global_loop_matches_the_interpreter_in_and_beyond_the_tag_space() {
     let step = vec![Operator::I64Const { value: 3 }, Operator::I64Add];
     // The last one crosses into the tag space during the loop.
     for initial in [1, i64::MIN, TAGGED_BITS as i64 - 3 * i64::from(ITERATIONS) / 2] {
@@ -83,7 +83,7 @@ fn an_i64_global_loop_matches_the_interpreter_in_place_and_boxed() {
 }
 
 #[test]
-fn an_f64_global_loop_matches_the_interpreter_in_place_and_boxed() {
+fn an_f64_global_loop_matches_the_interpreter_in_and_beyond_the_tag_space() {
     let step = vec![
         Operator::I64Const { value: FLOAT_STEP_BITS },
         Operator::F64ReinterpretI64,
@@ -91,5 +91,36 @@ fn an_f64_global_loop_matches_the_interpreter_in_place_and_boxed() {
     ];
     for initial in [1.0f64.to_bits(), TAGGED_BITS, f64::NAN.to_bits()] {
         assert_tier_matches(crate::WasmType::F64, crate::WasmValue::F64(initial), step.clone());
+    }
+}
+
+/// The CLIF of the loop function over a global of type `ty`, as the tier built it.
+fn loop_clif(ty: crate::WasmType, initial: crate::WasmValue, step: Vec<Operator<'static>>) -> String {
+    BUILT_BODIES.with(|built| built.borrow_mut().clear());
+    run(true, ty, initial, loop_over_global(step));
+    BUILT_BODIES.with(|built| {
+        let built = built.borrow();
+        let (_, clif) = built.iter().find(|(index, _)| *index == 0).expect("the loop was built");
+        clif.clone()
+    })
+}
+
+#[test]
+fn a_64_bit_global_loop_has_no_callout_and_no_box() {
+    let integer = vec![Operator::I64Const { value: 3 }, Operator::I64Add];
+    let float = vec![
+        Operator::I64Const { value: FLOAT_STEP_BITS },
+        Operator::F64ReinterpretI64,
+        Operator::F64Add,
+    ];
+    for (ty, initial, step) in [
+        (crate::WasmType::I64, crate::WasmValue::I64(1), integer),
+        (crate::WasmType::F64, crate::WasmValue::F64(1.0f64.to_bits()), float),
+    ] {
+        let clif = loop_clif(ty, initial, step);
+        assert!(!clif.contains("call"), "{ty:?} reads its slot in place:\n{clif}");
+        assert!(clif.contains("store"), "{ty:?} stores its slot in place:\n{clif}");
+        let tag_tests = clif.matches("ushr_imm").count();
+        assert_eq!(tag_tests, 0, "{ty:?} tests no tag space:\n{clif}");
     }
 }

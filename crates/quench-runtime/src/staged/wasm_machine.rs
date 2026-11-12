@@ -28,10 +28,10 @@ pub(crate) struct ConcreteMemory<'a> {
     pub(crate) memory: &'a mut [u8],
 }
 
-/// A stage over an instance: the cells of its globals by environment slot and its linear
-/// memory.
+/// A stage over an instance: the native slots of its globals by environment slot and its
+/// linear memory.
 pub(crate) struct ConcreteInstance<'a> {
-    pub(crate) globals: &'a mut [Value],
+    pub(crate) globals: &'a mut [u64],
     pub(crate) memory: &'a mut [u8],
 }
 
@@ -103,33 +103,15 @@ impl WasmTable for ConcreteTable<'_> {
     }
 }
 
-/// The word a slot holds as `storage`: the 32-bit payload, or the whole slot.
-#[inline(always)]
-pub(crate) fn slot_word(storage: Storage, slot: Value) -> u64 {
-    match storage {
-        Storage::Bits32 => u64::from(slot.wasm_bits32()),
-        Storage::Bits64 | Storage::Handle => slot.to_bits(),
-    }
-}
-
-/// The slot that holds `word` as `storage`.
-#[inline(always)]
-pub(crate) fn slot_value(storage: Storage, word: u64) -> Value {
-    match storage {
-        Storage::Bits32 => Value::integer(word as u32 as i32),
-        Storage::Bits64 | Storage::Handle => Value::from_bits(word),
-    }
-}
-
 impl WasmInstance for ConcreteInstance<'_> {
     #[inline(always)]
     fn global_load(&mut self, slot: u32, storage: Storage) -> u64 {
-        slot_word(storage, self.globals[slot as usize])
+        storage.narrow(self.globals[slot as usize])
     }
 
     #[inline(always)]
     fn global_store(&mut self, slot: u32, storage: Storage, value: u64) {
-        self.globals[slot as usize] = slot_value(storage, value);
+        self.globals[slot as usize] = storage.narrow(value);
     }
 }
 

@@ -1,13 +1,14 @@
 //! The instance-binding and global steps of the Wasm interpreter and its lane handlers. A
-//! binding or a global's access is the staged rule (`staged::wasm_instance`) on
-//! `ConcreteInstance` over the cell, with the storage its type decides, so the interpreter,
-//! the lane and the tier move the same words.
+//! global's access is the staged rule (`staged::wasm_instance`) on `ConcreteInstance` over the
+//! global's native slot, which holds the raw payload of a number and the bits of a handle: the
+//! tier reads and writes the same slot in place, and the interpreter converts between the slot
+//! and its registers' encoding (`encode_bits64`) here, at the one boundary.
 
 use super::*;
 use crate::staged::wasm_instance::{Instance, Storage, WasmInstance};
-use crate::staged::wasm_machine::{ConcreteInstance, slot_value, slot_word};
+use crate::staged::wasm_machine::ConcreteInstance;
 
-/// The slot of the one cell a global access's stage holds.
+/// The slot of the one native slot a global access's stage holds.
 const CELL: u32 = 0;
 
 impl<H: Host> Vm<H> {
@@ -40,50 +41,90 @@ impl<H: Host> Vm<H> {
     /// The instance field at environment slot `slot` of `env`: a binding is a handle read from
     /// the environment's cell.
     pub(super) fn wasm_binding(&self, env: Value, slot: usize) -> Option<Value> {
-        let field = self.heap.environment_slot(env, slot)?;
-        Some(read_cell(field, Storage::Handle))
+        self.heap.environment_slot(env, slot)
     }
 
-    /// The value of the global bound to `binding`: its cell's word under its type's storage.
-    pub(super) fn wasm_global_load(&self, binding: Value) -> Result<Value, JsError> {
-        let Some(Cell::WasmGlobal { value, ty, .. }) = self.heap.get(binding) else {
+    /// The register encoding of the word a global's slot holds under `storage`.
+    fn wasm_slot_value(&mut self, storage: Storage, word: u64) -> Value {
+        match storage {
+            Storage::Bits32 => Value::integer(word as u32 as i32),
+            Storage::Bits64 => self.encode_bits64(word),
+            Storage::Handle => Value::from_bits(word),
+        }
+    }
+
+    /// The word a global's slot holds under `storage` for the register encoding `value`.
+    fn wasm_slot_word(&self, storage: Storage, value: Value) -> Option<u64> {
+        match storage {
+            Storage::Bits32 => Some(u64::from(value.wasm_bits32())),
+            Storage::Bits64 => self.decode_bits64(value),
+            Storage::Handle => Some(value.to_bits()),
+        }
+    }
+
+    /// The word of the global of type `ty` that the register encoding `value` stores.
+    pub(super) fn wasm_global_bits(&self, ty: crate::WasmType, value: Value) -> u64 {
+        self.wasm_slot_word(Storage::of(ty), value)
+            .expect("an encoded value of the global's type")
+    }
+
+    /// The value of the global bound to `binding`, as its register encoding: its slot's word
+    /// under its type's storage.
+    pub(super) fn wasm_global_load(&mut self, binding: Value) -> Result<Value, JsError> {
+        let Some(Cell::WasmGlobal { bits, ty, .. }) = self.heap.get(binding) else {
             return Err(JsError::validation("invalid Wasm global binding".into()));
         };
-        Ok(read_cell(*value, Storage::of(*ty)))
+        let (mut bits, storage) = (*bits, Storage::of(*ty));
+        let word = ConcreteInstance {
+            globals: std::slice::from_mut(&mut bits),
+            memory: &mut [],
+        }
+        .global_load(CELL, storage);
+        Ok(self.wasm_slot_value(storage, word))
     }
 
-    /// Stores `value` in the mutable global bound to `binding`, as its type's storage holds it.
+    /// The value of the global bound to `binding`.
+    pub(super) fn wasm_global_read(&self, binding: Value) -> Result<crate::WasmValue, JsError> {
+        let Some(Cell::WasmGlobal { bits, ty, header, .. }) = self.heap.get(binding) else {
+            return Err(JsError::validation("invalid Wasm global binding".into()));
+        };
+        match Storage::of(*ty) {
+            Storage::Handle => {
+                self.decode_wasm_value_in(Value::from_bits(*bits), *ty, Some(&header.declarations))
+            }
+            Storage::Bits32 | Storage::Bits64 => Ok(crate::WasmValue::from_bits(*ty, *bits)),
+        }
+    }
+
+    /// Stores `value`, a register encoding, in the mutable global bound to `binding`, as its
+    /// type's storage holds it.
     pub(super) fn wasm_global_store(
         &mut self,
         binding: Value,
         value: Value,
     ) -> Result<(), JsError> {
         let Some(Cell::WasmGlobal {
-            value: cell,
             ty,
             mutable: true,
             ..
-        }) = self.heap.get_mut(binding)
+        }) = self.heap.get(binding)
         else {
             return Err(JsError::validation(
                 "invalid or immutable Wasm global binding".into(),
             ));
         };
         let storage = Storage::of(*ty);
+        let word = self
+            .wasm_slot_word(storage, value)
+            .ok_or_else(|| JsError::validation("invalid Wasm global value".into()))?;
+        let Some(Cell::WasmGlobal { bits, .. }) = self.heap.get_mut(binding) else {
+            unreachable!("the binding was a global");
+        };
         ConcreteInstance {
-            globals: std::slice::from_mut(cell),
+            globals: std::slice::from_mut(bits),
             memory: &mut [],
         }
-        .global_store(CELL, storage, slot_word(storage, value));
+        .global_store(CELL, storage, word);
         Ok(())
     }
-}
-
-/// The slot a register takes from the cell `cell` read as `storage`.
-fn read_cell(mut cell: Value, storage: Storage) -> Value {
-    let mut stage = ConcreteInstance {
-        globals: std::slice::from_mut(&mut cell),
-        memory: &mut [],
-    };
-    slot_value(storage, stage.global_load(CELL, storage))
 }

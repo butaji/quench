@@ -155,7 +155,7 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// A global's load (`Vm::wasm_global_load`, the staged rule): the cell's word under its
+    /// A global's load (`Vm::wasm_global_load`, the staged rule): the slot's word under its
     /// type's storage. Anything but a global binding takes the general path.
     pub(super) fn lane_global_get<>(cx, r, ip, i, view) {
         let Ok(value) = unsafe { vm(cx) }.wasm_global_load(r.get(i.b)) else {

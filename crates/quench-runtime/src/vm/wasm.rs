@@ -450,12 +450,13 @@ impl<H: Host> Vm<H> {
         declarations: crate::WasmTypes,
         mutable: bool,
     ) -> Value {
+        let bits = self.wasm_global_bits(ty, value);
         self.heap.alloc(Cell::WasmGlobal {
             header: Box::new(crate::heap::WasmGlobalHeader {
                 object: Self::empty_object(self.wasm_js.global),
                 declarations,
             }),
-            value,
+            bits,
             ty,
             mutable,
         })
@@ -730,19 +731,9 @@ impl<H: Host> Vm<H> {
                                     "missing Wasm initializer global",
                                 )
                             })?;
-                        let Some(Cell::WasmGlobal {
-                            value, ty, header, ..
-                        }) = self.heap.get(binding)
-                        else {
-                            return Err(crate::Diagnostic::unsupported(
-                                name,
-                                "invalid Wasm initializer global binding",
-                            ));
-                        };
-                        self.decode_wasm_value_in(*value, *ty, Some(&header.declarations))
-                            .map_err(|error| {
-                                crate::Diagnostic::unsupported(name, error.to_string())
-                            })
+                        self.wasm_global_read(binding).map_err(|error| {
+                            crate::Diagnostic::unsupported(name, error.to_string())
+                        })
                     }
                 },
             )
@@ -930,14 +921,7 @@ impl<H: Host> Vm<H> {
         instance: &crate::WasmInstance,
         index: u32,
     ) -> Result<crate::WasmValue, JsError> {
-        let binding = self.wasm_global_binding(instance, index)?;
-        let Some(Cell::WasmGlobal {
-            value, ty, header, ..
-        }) = self.heap.get(binding)
-        else {
-            return Err(JsError::validation("invalid Wasm global binding".into()));
-        };
-        self.decode_wasm_value_in(*value, *ty, Some(&header.declarations))
+        self.wasm_global_read(self.wasm_global_binding(instance, index)?)
     }
 
     pub(crate) fn wasm_global_binding(

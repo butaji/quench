@@ -55,16 +55,16 @@ impl Instance {
     }
 }
 
-/// How a global's cell holds its value, decided once from the global's type: the static operand
-/// of every access. A cell is one encoded slot, the interpreter's register representation.
+/// How a global's native slot (`Cell::WasmGlobal::bits`) holds its value, decided once from the
+/// global's type: the static operand of every access. A slot is one raw word.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Storage {
-    /// An i32 or f32: the low 32 bits of the slot, under the integer tag.
+    /// An i32 or f32: the payload in the low 32 bits.
     Bits32,
-    /// An i64 or f64: the slot's 64 bits whole, in place or a handle to the box of a payload in
-    /// the tag space.
+    /// An i64 or f64: the payload whole.
     Bits64,
-    /// A reference or a v128: the slot whole, a handle to the object or the vector's box.
+    /// A reference or a v128: the bits of the handle to the object or the vector's box, which
+    /// the collector follows.
     Handle,
 }
 
@@ -76,12 +76,18 @@ impl Storage {
             _ => Self::Handle,
         }
     }
+
+    /// The word a slot holds for `word`: a 32-bit payload zero-extended, any other whole.
+    pub(crate) const fn narrow(self, word: u64) -> u64 {
+        match self {
+            Self::Bits32 => word as u32 as u64,
+            Self::Bits64 | Self::Handle => word,
+        }
+    }
 }
 
-/// The state of the instance a function runs in. A word is a global's value as the stage's
-/// registers hold it: a 32-bit payload zero-extended; a 64-bit one as the interpreter holds it
-/// (its cell's slot, in place or a box's handle) or as the tier computes with it (the payload,
-/// which the tier reads through the VM's box where the cell holds one); a handle whole.
+/// The state of the instance a function runs in. A word is a global's raw slot as the stage's
+/// registers hold it: a 32-bit payload zero-extended, a 64-bit payload whole, a handle's bits.
 pub(crate) trait WasmInstance: WasmStage {
     /// The word of the global bound at environment slot `slot`.
     fn global_load(&mut self, slot: u32, storage: Storage) -> Self::Word;

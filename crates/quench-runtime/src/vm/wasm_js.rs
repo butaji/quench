@@ -560,12 +560,13 @@ impl<H: Host> Vm<H> {
                 Ok(Value::number(length as f64))
             }
             Native::WasmGlobalValueGetter | Native::WasmGlobalValueOf => {
-                let (value, ty, _) = self.wasm_global_receiver(p, this)?;
+                let (ty, _) = self.wasm_global_receiver(p, this)?;
+                let value = self.wasm_global_load(this)?;
                 let declarations = self.wasm_global_declarations(this);
                 self.wasm_to_js(p, value, ty, declarations.as_ref())
             }
             Native::WasmGlobalValueSetter => {
-                let (_, ty, mutable) = self.wasm_global_receiver(p, this)?;
+                let (ty, mutable) = self.wasm_global_receiver(p, this)?;
                 if !mutable {
                     return Err(self.type_error(
                         p,
@@ -574,8 +575,9 @@ impl<H: Host> Vm<H> {
                 }
                 let declarations = self.wasm_global_declarations(this);
                 let value = self.js_to_wasm(p, arg(0), ty, declarations.as_ref())?;
-                if let Some(Cell::WasmGlobal { value: slot, .. }) = self.heap.get_mut(this) {
-                    *slot = value;
+                let word = self.wasm_global_bits(ty, value);
+                if let Some(Cell::WasmGlobal { bits, .. }) = self.heap.get_mut(this) {
+                    *bits = word;
                 }
                 Ok(Value::UNDEFINED)
             }
@@ -1897,11 +1899,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         this: Value,
-    ) -> Result<(Value, WasmType, bool), JsError> {
+    ) -> Result<(WasmType, bool), JsError> {
         match self.heap.get(this) {
-            Some(Cell::WasmGlobal {
-                value, ty, mutable, ..
-            }) => Ok((*value, *ty, *mutable)),
+            Some(Cell::WasmGlobal { ty, mutable, .. }) => Ok((*ty, *mutable)),
             _ => Err(self.type_error(p, "receiver is not a WebAssembly.Global".into())),
         }
     }

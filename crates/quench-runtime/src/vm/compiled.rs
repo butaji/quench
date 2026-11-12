@@ -4247,9 +4247,9 @@ pub(super) struct CallContext {
     guard_start: usize,
     guard_end: usize,
     /// Per global the program accesses (`CompiledProgram::globals`), the
-    /// address of the global's value in this instance. Heap cells never move,
-    /// so the addresses outlive callouts.
-    globals: *const *mut Value,
+    /// address of the global's native slot in this instance, read and written raw. Heap cells
+    /// never move, so the addresses outlive callouts.
+    globals: *const *mut u64,
     /// Per table an indirect call reads (`CompiledProgram::tables`), the words that publish its
     /// mirror (`TableWords`): the table's rows are read in place, its growth rewrites the words.
     table_words: *const *const crate::heap::TableWords,
@@ -5222,7 +5222,7 @@ type DirectReferenceEntry = (
 /// The addresses a context reads in place for an instance: its globals' cells
 /// (`CallContext::globals`) and its tables' published words (`CallContext::table_words`).
 type InstanceWords = (
-    smallvec::SmallVec<[*mut Value; 8]>,
+    smallvec::SmallVec<[*mut u64; 8]>,
     smallvec::SmallVec<[*const crate::heap::TableWords; 8]>,
 );
 
@@ -5236,7 +5236,7 @@ fn instance_words<H: Host>(
     for slot in &compiled.globals {
         let binding = vm.heap.environment_slot(env, *slot as usize)?;
         match vm.heap.get_mut(binding)? {
-            Cell::WasmGlobal { value, .. } => globals.push(value as *mut Value),
+            Cell::WasmGlobal { bits, .. } => globals.push(bits as *mut u64),
             _ => return None,
         }
     }
@@ -8706,6 +8706,13 @@ fn invariant() -> MemFlagsData {
     MemFlagsData::trusted().with_readonly().with_can_move()
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The CLIF of each Wasm body this thread built, by function index, for tests of what the
+    /// tier emits.
+    static BUILT_BODIES: std::cell::RefCell<Vec<(usize, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// The memory facts a compiled call passes after the context: the base
 /// unless the program fixes it as a constant, and the length unless the
 /// guard bounds accesses. One program's functions share them.
@@ -10174,6 +10181,8 @@ impl<'a, H: Host> Analysis<'a, H> {
         emitter.finish_traps();
         emitter.body.core.builder.seal_all_blocks();
         emitter.body.into_builder().finalize(isa.frontend_config());
+        #[cfg(test)]
+        BUILT_BODIES.with(|built| built.borrow_mut().push((index, func.display().to_string())));
         Some(func)
     }
 
@@ -12501,9 +12510,6 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 }
-
-/// The tag bits of an encoded i32, which a global's value carries.
-const INTEGER_TAG: u64 = crate::value::INTEGER_TAG_BITS;
 
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;

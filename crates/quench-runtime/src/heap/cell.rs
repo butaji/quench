@@ -3758,8 +3758,11 @@ pub(crate) enum Cell {
     /// A `WebAssembly.Module` or `WebAssembly.Instance`.
     WasmObject { object: Box<Object>, slot: WasmObjectSlot },
     /// A global, memory or table is also its `WebAssembly.Global`, `.Memory` or `.Table`
-    /// object, so every export of it is the same JavaScript object.
-    WasmGlobal { header: Box<WasmGlobalHeader>, value: Value, ty: crate::WasmType, mutable: bool },
+    /// object, so every export of it is the same JavaScript object. `bits` is its one native
+    /// slot, which compiled code reads and writes in place: the raw payload of an i32, i64, f32
+    /// or f64 (a 32-bit one zero-extended), else the bits of the reference or vector handle,
+    /// the only kind the collector follows (`Storage`).
+    WasmGlobal { header: Box<WasmGlobalHeader>, bits: u64, ty: crate::WasmType, mutable: bool },
     /// One memory identity owns its bytes and original optional maximum. `buffer` is the
     /// ArrayBuffer currently viewing the bytes, or undefined until one is requested; growth
     /// detaches it.

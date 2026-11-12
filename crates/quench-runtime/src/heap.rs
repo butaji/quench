@@ -4148,9 +4148,11 @@ impl Heap {
                 object(&function.object);
                 work.extend([function.env, function.realm]);
             }
-            Cell::WasmGlobal { header, value: global, .. } => {
+            Cell::WasmGlobal { header, bits, ty, .. } => {
                 object(&header.object);
-                work.push(*global);
+                if crate::staged::wasm_instance::Storage::of(*ty) == crate::staged::wasm_instance::Storage::Handle {
+                    work.push(Value::from_bits(*bits));
+                }
             }
             Cell::BindingReference { environment, .. } => work.push(*environment),
             Cell::Environment {

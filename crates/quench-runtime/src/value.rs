@@ -269,9 +269,6 @@ pub struct Value(u64);
 #[repr(transparent)]
 pub(crate) struct IntegerEncoding(u64);
 
-/// The tag bits an encoded i32 carries; compiled code encodes in place.
-pub(crate) const INTEGER_TAG_BITS: u64 = TAG_INT;
-
 /// The encoding facts compiled code tests and builds values with (`Value::number`,
 /// `Value::is_tagged`).
 pub(crate) struct ValueLayout;
