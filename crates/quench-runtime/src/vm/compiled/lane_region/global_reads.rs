@@ -54,7 +54,7 @@ impl Lowering<'_, '_> {
     fn global_get(&mut self, instruction: WideInstruction) -> ir::Value {
         let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));
         let site = self.ins().iconst(types::I64, i64::from(instruction.cache_site_index()));
-        let global_get = self.helpers.address(self.builder.ins(), LaneHelper::GlobalGet);
+        let global_get = self.helpers.address(&mut self.builder, LaneHelper::GlobalGet);
         emit_lane_helper_call(&mut self.builder, self.payload, global_get, &[atom, site])
     }
 

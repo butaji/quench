@@ -39,7 +39,7 @@ pub(super) fn index_set_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
     value: cranelift_codegen::ir::Value, proof: EmitProof) -> Option<()> {
     let EmitProof::IndexSetHelper { miss } = proof else { return None };
     let payload = frame.payload;
-    let address = frame.helpers.address(stage.builder.ins(), LaneHelper::IndexSet);
+    let address = frame.helpers.address(&mut stage.builder, LaneHelper::IndexSet);
     let stored = emit_lane_helper_call(stage.builder, payload, address, &[base, key, value]);
     let hit = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
     emit_js_guard(stage.builder, hit, miss);
@@ -65,7 +65,7 @@ pub(super) fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, d
     let payload = frame.payload;
     let atom = stage.builder.ins().iconst(types::I64, i64::from(atom));
     let site = stage.builder.ins().iconst(types::I64, i64::from(site));
-    let get = frame.helpers.address(stage.builder.ins(), LaneHelper::GlobalGet);
+    let get = frame.helpers.address(&mut stage.builder, LaneHelper::GlobalGet);
     let value = emit_lane_helper_call(stage.builder, payload, get, &[atom, site]);
     let hit = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
     emit_js_guard(stage.builder, hit, miss);
@@ -81,7 +81,7 @@ pub(super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
     let payload = frame.payload;
     let atom = stage.builder.ins().iconst(types::I64, i64::from(atom));
     let site = stage.builder.ins().iconst(types::I64, i64::from(site));
-    let set = frame.helpers.address(stage.builder.ins(), LaneHelper::FieldSet);
+    let set = frame.helpers.address(&mut stage.builder, LaneHelper::FieldSet);
     let stored = emit_lane_helper_call(stage.builder, payload, set, &[object, atom, site, value]);
     let ok = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
     emit_js_guard(stage.builder, ok, miss);

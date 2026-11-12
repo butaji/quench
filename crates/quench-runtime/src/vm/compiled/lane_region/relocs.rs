@@ -28,6 +28,11 @@ pub(in crate::vm::compiled) fn numeric_symbol(namespace: u32, key: u32) -> Optio
         .then_some(super::super::lane_interrupt_owner as *const () as usize as u64)
 }
 
+/// The address of `helper` as the symbol a frameless Number region's loader resolves.
+pub(in crate::vm::compiled) fn helper_symbol(builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
+    crate::vm::jit_backend::symbol_address(builder, types::I64, RelocKind::Helper as u32, helper as u32)
+}
+
 impl Lowering<'_, '_> {
     /// The address of `kind` for `key`, which is `live` now. A live lowering embeds `live`; a
     /// linking one emits the symbol the loader resolves to the same address.

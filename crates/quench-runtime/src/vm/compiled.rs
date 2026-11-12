@@ -1981,9 +1981,18 @@ impl LaneHelpers {
         !matches!(self, Self::Process(_))
     }
 
-    fn address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
+    /// The address of `helper`: a symbol a frameless Number region's loader resolves, else
+    /// the table's entry (`table_address`). A symbol per helper use costs lane bodies compile
+    /// time and run Ir (raytrace compile +17.5%, run-only +0.6%), so they embed it as it is now.
+    fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
+        if self.is_numeric() { return lane_region::helper_symbol(builder, helper); }
+        self.table_address(builder.ins(), helper)
+    }
+
+    /// The address of `helper` in this process's table, embedded, or loaded from the bound one.
+    fn table_address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
         match self {
-            Self::Numeric => unreachable!("a frameless Number region names its helper by symbol (`relocs::numeric_symbol`)"),
+            Self::Numeric => unreachable!("a frameless Number region names its helper by symbol"),
             Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
             #[cfg(feature = "aot")]
             Self::Bound(table, _) => {

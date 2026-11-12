@@ -39,7 +39,7 @@ fn interrupt_owner_address(cursor: &mut cranelift_codegen::cursor::FuncCursor<'_
     if matches!(helpers, LaneHelpers::Numeric) {
         return crate::vm::jit_backend::symbol_in(cursor, RelocKind::Helper as u32, LaneHelper::InterruptOwner as u32);
     }
-    helpers.address(cursor.ins(), LaneHelper::InterruptOwner)
+    helpers.table_address(cursor.ins(), LaneHelper::InterruptOwner)
 }
 
 /// Bind the current owner's proof once, after helper binding and before guest execution.
