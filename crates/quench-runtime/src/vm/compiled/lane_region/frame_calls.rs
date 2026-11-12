@@ -15,6 +15,13 @@ pub(super) fn safepoint(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, pro
     safepoint_parts(stage.builder, frame.polls, proof)
 }
 
+/// A depth-zero capture of the resolved run: the staged dense read, whose marker or bounds
+/// miss leaves at `miss`.
+pub(super) fn capture(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, depth: u16, slot: u16, miss: ir::Block) -> Option<ir::Value> {
+    let (values, len) = frame.captures.filter(|_| depth == 0)?;
+    crate::staged::environment::dense_capture(stage, values, len, slot, miss)
+}
+
 /// A Number return: the register in the int32 or binary64 view its facts favor, jumped to a
 /// block that `Lowering::finish_number_returns` completes with the joined format.
 pub(super) fn number_return(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, register: Register) -> Option<()> {
@@ -165,4 +172,17 @@ impl crate::staged::GlobalFrame<Emit<'_, '_>> for EmitFrame<'_> {
         global_frozen(self, stage, destination, (atom, site), (value, ty), proof)
     }
     fn global_read(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, proof: EmitProof) -> Option<()> { global_read(self, stage, destination, atom, site, proof) }
+}
+
+impl EmitFrame<'_> {
+    /// A literal's allocation by the lane's own `helper`, whose DELETED answer leaves at the proof's miss edge.
+    pub(super) fn allocate(&mut self, stage: &mut Emit<'_, '_>, helper: LaneHelper, destination: Register, arguments: &[ir::Value],
+        proof: EmitProof) -> Option<ir::Value> {
+        let EmitProof::Allocation { miss } = proof else { return None };
+        let payload = self.payload;
+        let address = self.helpers.address(&mut stage.builder, helper);
+        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[&[payload], arguments].concat());
+        finish_allocation(stage, self, destination, value, miss);
+        Some(value)
+    }
 }
