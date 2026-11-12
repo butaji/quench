@@ -2,7 +2,12 @@
 
 use super::*;
 use crate::bytecode::{Operand, Register};
-use crate::staged::{Concrete, Constant, Edge, Frame, NumberOperation, NumericFrame, Operation, Step};
+use crate::bytecode::RegisterWindow;
+use crate::staged::{Allocation, Concrete, Constant, Edge, Frame, NumberOperation, NumericFrame, Operation, Step};
+
+/// The maker of a frame's heap values: allocates in the lane context it is given and runs no
+/// guest code; `None` leaves the instruction to the general path.
+type AllocationMaker = unsafe fn(*mut (), Registers, Allocation) -> Option<Value>;
 
 /// The interpreter's frame: the live register file and the accumulator view a producer
 /// carries. `ACC` names the record's accumulator field (`read`).
@@ -14,19 +19,28 @@ struct LaneFrame<const ACC: u8> {
     this: Value,
     /// The activation's local slots and their count, for a staged local operation.
     locals: Option<(*mut Value, usize)>,
+    /// The lane context (type-erased, so the frame is one type for every host) and its maker,
+    /// for a staged allocation row.
+    allocator: Option<(*mut (), AllocationMaker)>,
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame for an operation that reads no `this`.
     #[inline(always)]
     fn new(registers: Registers, view: Carried) -> Self {
-        Self { registers, view, this: Value::DELETED, locals: None }
+        Self { registers, view, this: Value::DELETED, locals: None, allocator: None }
+    }
+
+    /// A frame whose allocation rows make their heap values in the lane context `cx`.
+    fn allocating<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
+        let make: AllocationMaker = lane_allocation::<H>;
+        Self { allocator: Some((cx.cast(), make)), ..Self::new(registers, view) }
     }
 
     /// A frame that may read and write the activation's local slots.
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
-        Self { registers, view, this, locals: Some((locals, len)) }
+        Self { registers, view, this, locals: Some((locals, len)), allocator: None }
     }
 }
 
@@ -90,6 +104,15 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             // SAFETY: `slot` is inside the activation's live local slots.
             (unsafe { *locals.add(usize::from(slot)) }.to_bits(), ())
         })
+    }
+
+    #[inline(always)]
+    fn allocate_value(&mut self, _stage: &mut Concrete, destination: Register, allocation: Allocation, _proof: ()) -> Option<u64> {
+        let (cx, make) = self.allocator?;
+        // SAFETY: the maker was made for the lane context this frame runs in.
+        let value = unsafe { make(cx, self.registers, allocation) }?;
+        self.registers.set(destination, value);
+        Some(value.to_bits())
     }
 
     #[inline(always)]
@@ -184,7 +207,7 @@ pub(super) fn staged_to_numeric(r: Registers, view: Carried, destination: u16, s
 #[inline(always)]
 pub(super) fn staged_load_this(r: Registers, view: Carried, this: Value, destination: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view, this, locals: None };
+    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view, this, locals: None, allocator: None };
     match crate::staged::step(&mut stage, &mut frame, Operation::LoadThis { destination }) {
         Step::Value(_) => true,
         Step::Unresolved => false,
@@ -250,4 +273,57 @@ lane_handler! {
             else { unreachable!("a constant produces a value") };
         next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
     }
+}
+
+/// The value `allocation` makes in the lane context `cx` (a `*mut LaneContext<H>`): it
+/// allocates and runs no guest code, so a frame's own run makes it as the general loop does;
+/// `None` where the general path must.
+///
+/// # Safety
+/// `cx` is the running lane's context and `r` its register file.
+unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Allocation) -> Option<Value> {
+    let cx = cx.cast::<LaneContext<H>>();
+    match allocation {
+        Allocation::ObjectLiteral { site, window } => Some(lane_object_literal_value(cx, r, site, window)),
+        Allocation::Closure { function } => lane_closure_value_of(cx, function),
+        Allocation::Template { template } => lane_template_value(cx, template),
+        Allocation::Concat { window } => lane_concat_value(cx, r, window),
+    }
+}
+
+/// The value of literal template `template` in a frame's own lane run (`Vm::literal_template`);
+/// `None` inside a lane activation, whose frame is not the context's, or where it fails.
+#[inline(never)]
+fn lane_template_value<H: Host>(cx: *mut LaneContext<H>, template: u32) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    if !vm.lane_stack.activations.is_empty() {
+        return None;
+    }
+    // SAFETY: the context's program outlives the lane run.
+    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame) };
+    let value = vm.literal_template(code, frame, template as usize).ok();
+    note_allocation(vm);
+    value
+}
+
+/// The string of the parts in `window`, each converted without guest code
+/// (`Vm::pure_string_concat`); `None` where any part needs the general path.
+#[inline(never)]
+fn lane_concat_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, window: RegisterWindow) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    let base = usize::from(window.base);
+    // SAFETY: the context's program outlives the lane run.
+    let value = vm.pure_string_concat(unsafe { &*(*cx).code }, usize::from(window.count),
+        |_: &Vm<H>, part: usize| r.get((base + part) as Register))?;
+    note_allocation(vm);
+    Some(value)
+}
+
+/// `allocation` into `destination` by the staged operation, in the lane context `cx`'s own run;
+/// false, writing nothing, where the general path must make it.
+#[inline(always)]
+pub(super) fn staged_allocate<H: Host>(cx: *mut LaneContext<H>, r: Registers, destination: u16, allocation: Allocation) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::allocating::<H>(r, Carried::script(cx), cx);
+    matches!(crate::staged::step(&mut stage, &mut frame, Operation::Allocate { destination, allocation, proof: () }), Step::Value(_))
 }
