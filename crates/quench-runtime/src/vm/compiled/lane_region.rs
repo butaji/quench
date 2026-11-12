@@ -2538,7 +2538,7 @@ impl Lowering<'_, '_> {
         let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let specialized = self.builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
         if let Some(held) = self.store_held_unnamed(atom, specialized) { return held; }
-        let free = super::general_store::emit_atom_unnamed(&mut self.builder, self.payload, atom);
+        let free = self.atom_unnamed(atom);
         self.builder.ins().band(specialized, free)
     }
 
@@ -4762,7 +4762,7 @@ impl Lowering<'_, '_> {
     /// whose miss leaves through `exit`.
     fn field_probe_unbound(&mut self, object: ir::Value, read: (Atom, u16), exit: ir::Block) -> ir::Value {
         let (atom, site) = read;
-        let packed = self.ins().iconst(types::I64, (u64::from(atom) << u16::BITS | u64::from(site)) as i64);
+        let packed = self.atom_site_word(atom, site);
         let value = self.helper_call(LaneHelper::FieldGet, &[object, packed]);
         let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, hit, exit);

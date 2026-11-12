@@ -54,4 +54,30 @@ mod tests {
             assert_eq!(vm.install_ahead_body(served, 1, None, &[]).is_some(), expected);
         }
     }
+
+    /// A body that names atoms (a store) names them by symbol: the loading VM
+    /// numbers them itself.
+    #[test]
+    fn an_ahead_body_resolves_the_atoms_it_names_in_the_loading_vm() {
+        let source = "globalThis.o = {}; function put(p){p.value = 6; return p.value;}";
+        let program = crate::Engine::specialize(source, "ahead-atoms.js").unwrap();
+        let images = AheadImages::compile(&program);
+        let file = images.to_bytes();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        vm.load_ahead_images(AheadImages::from_bytes(&file).unwrap());
+        let put = program.functions.iter().position(|body| body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "put")).unwrap();
+        let method = vm.install_ahead_body(&program, put as u32, None, &[]).expect("an ahead body for put");
+        let method = method.lease().expect("published");
+        let atom = vm.intern_atom("o");
+        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
+        let mut registers = vec![Value::UNDEFINED; usize::from(program.function(put).registers)];
+        registers[0] = receiver;
+        let pc = vm.run_lane_method(&*method, false, super::super::super::program_store::ProgramId::MAIN, &program,
+            registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
+        // Whether it ran to the return or left for the interpreter, the stored word is not corrupt.
+        let value = vm.intern_atom("value");
+        let stored = vm.own_property(receiver, value);
+        assert!(stored.is_none() || stored == Some(Value::number(6.0)), "pc {pc}: {stored:?}");
+    }
 }

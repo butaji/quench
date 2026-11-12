@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 struct Image {
     fault_poll: bool,
     code: RelocatableCode,
+    /// The text of each atom the code names, by the number it names it with.
+    atoms: Vec<(u32, String)>,
 }
 
 /// A program's ahead-of-time lane bodies by function.
@@ -26,16 +28,17 @@ pub struct AheadImages {
 
 const MAGIC: &[u8; 8] = b"QAHEAD\0\x02";
 
-/// What names a program: a hash of every function's registers and instructions, which an image
-/// is valid for and no other (it is a validity key, never a reason to treat a program specially).
+/// What names a program: a hash of its source text and every function's registers and opcodes
+/// (atom numbers are per VM, so no operand), which an image is valid for and no other (it is a validity key, never a reason to treat a program specially).
 fn fingerprint(program: &ResidualProgram) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-    let mut hash = FNV_OFFSET;
+    let mix = |hash: u64, bytes: &[u8]| bytes.iter().fold(hash, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME));
+    let mut hash = mix(FNV_OFFSET, program.source_text().unwrap_or_default().as_bytes());
     for index in 0..program.function_count() {
         let function = program.function(index);
-        let text = format!("{:?}{:?}", function.registers, function.instructions().collect::<Vec<_>>());
-        hash = text.bytes().fold(hash, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME));
+        hash = mix(hash, &function.registers.to_le_bytes());
+        hash = function.instructions().fold(hash, |hash, instruction| mix(hash, &(instruction.op() as u16).to_le_bytes()));
     }
     hash
 }
@@ -52,7 +55,9 @@ fn image(program: &ResidualProgram, function: u32) -> Option<Image> {
     let code = crate::vm::jit_backend::compile_function(native, &*isa, Some(lane_region::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
     }).ok()?;
-    Some(Image { fault_poll: lowered.region.fault_poll, code })
+    let atoms = code.relocations.iter().filter_map(|relocation| lane_region::relocs::atom_key(relocation.namespace, relocation.key))
+        .collect::<std::collections::BTreeSet<_>>().into_iter().map(|atom| (atom, program.atoms[atom as usize].to_string())).collect();
+    Some(Image { fault_poll: lowered.region.fault_poll, code, atoms })
 }
 
 impl AheadImages {
@@ -101,6 +106,12 @@ impl AheadImages {
                 out.extend(relocation.key.to_le_bytes());
                 out.extend(relocation.addend.to_le_bytes());
             }
+            out.extend((image.atoms.len() as u32).to_le_bytes());
+            for (atom, text) in &image.atoms {
+                out.extend(atom.to_le_bytes());
+                out.extend((text.len() as u32).to_le_bytes());
+                out.extend(text.as_bytes());
+            }
         }
         out
     }
@@ -117,7 +128,12 @@ impl AheadImages {
             let relocations = (0..words.half()?).map(|_| Ok(Relocation {
                 offset: words.half()? as usize, kind: cranelift_codegen::binemit::Reloc::Abs8,
                 namespace: words.half()?, key: words.half()?, addend: words.quad()? as i64 })).collect::<Result<_, String>>()?;
-            images.push((function, Image { fault_poll, code: RelocatableCode { code, relocations } }));
+            let atoms = (0..words.half()?).map(|_| {
+                let atom = words.half()?;
+                let length = words.half()? as usize;
+                Ok((atom, String::from_utf8(words.bytes(length)?.to_vec()).map_err(|_| "an atom is not text")?))
+            }).collect::<Result<_, String>>()?;
+            images.push((function, Image { fault_poll, code: RelocatableCode { code, relocations }, atoms }));
         }
         images.sort_by_key(|(function, _)| *function);
         Ok(Self { program, known: Default::default(), images })
@@ -149,7 +165,11 @@ impl<H: Host> Vm<H> {
         let body = program.function_get(function as usize)?;
         let unit = lane_unit::with_budget(program, function, body, 0, &|_, _| Vec::new(), &|callee| program.function_get(callee as usize))?;
         let table = LaneHelper::addresses::<H>();
-        let linked = image.code.link(0, |namespace, key| table.get(lane_region::relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64)).ok()?;
+        let atoms: Vec<(u32, u32)> = image.atoms.iter().map(|(atom, text)| (*atom, self.intern_atom(text))).collect();
+        let linked = image.code.link(0, |namespace, key| match lane_region::relocs::atom_key(namespace, key) {
+            Some(atom) => atoms.iter().find(|(named, _)| *named == atom).map(|(_, here)| u64::from(*here)),
+            None => table.get(lane_region::relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64),
+        }).ok()?;
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll: image.fault_poll, hoists_arrays: false, stable: Default::default() };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None }, fields: BTreeMap::new(),

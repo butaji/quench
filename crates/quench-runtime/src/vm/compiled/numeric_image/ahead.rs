@@ -46,7 +46,10 @@ fn run_pick(linked: &[u8], registers: usize) {
 /// The image linked against this process's helper table.
 fn link_here(image: &RelocatableCode) -> Vec<u8> {
     let table = LaneHelper::addresses::<crate::test_host::TestHost>();
-    image.link(0, |namespace, key| table.get(relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64)).unwrap()
+    image.link(0, |namespace, key| match relocs::atom_key(namespace, key) {
+        Some(atom) => Some(u64::from(atom)),
+        None => table.get(relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64),
+    }).unwrap()
 }
 
 /// The image as a file: code, then each relocation as offset, kind, namespace, key, addend.
@@ -142,7 +145,7 @@ fn field_reads_calls_and_global_reads_compile_ahead_to_helper_symbols_only() {
             RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
         }).expect(source);
         assert!(!image.relocations.is_empty(), "{source}: a helper call is a symbol");
-        assert!(image.relocations.iter().all(|relocation| relocs::helper_key(relocation.namespace, relocation.key).is_some()), "{source}: {:?}", image.relocations);
+        assert!(image.relocations.iter().all(|relocation| relocs::helper_key(relocation.namespace, relocation.key).is_some() || relocs::atom_key(relocation.namespace, relocation.key).is_some()), "{source}: {:?}", image.relocations);
         link_here(&image);
     }
 }
