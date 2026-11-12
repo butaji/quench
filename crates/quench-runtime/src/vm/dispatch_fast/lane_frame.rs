@@ -9,6 +9,19 @@ use crate::staged::{Allocation, Concrete, Constant, Edge, Frame, NumberOperation
 /// guest code; `None` leaves the instruction to the general path.
 type AllocationMaker = unsafe fn(*mut (), Registers, Allocation) -> Option<Value>;
 
+/// The deleter of a frame's own `delete base[key]` hit: the `true` of a deletion that runs no
+/// guest code; `None` leaves the instruction to the general path.
+type PropertyDeleter = unsafe fn(*mut (), Value, Value) -> Option<Value>;
+
+/// The lane context (type-erased, so the frame is one type for every host) and what it makes
+/// for a staged row: an allocation or a property deletion.
+#[derive(Clone, Copy)]
+struct LaneHost {
+    cx: *mut (),
+    allocate: AllocationMaker,
+    delete: PropertyDeleter,
+}
+
 /// The interpreter's frame: the live register file and the accumulator view a producer
 /// carries. `ACC` names the record's accumulator field (`read`).
 struct LaneFrame<const ACC: u8> {
@@ -19,28 +32,27 @@ struct LaneFrame<const ACC: u8> {
     this: Value,
     /// The activation's local slots and their count, for a staged local operation.
     locals: Option<(*mut Value, usize)>,
-    /// The lane context (type-erased, so the frame is one type for every host) and its maker,
-    /// for a staged allocation row.
-    allocator: Option<(*mut (), AllocationMaker)>,
+    /// The lane context and what it makes, for a staged allocation or deletion row.
+    host: Option<LaneHost>,
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame for an operation that reads no `this`.
     #[inline(always)]
     fn new(registers: Registers, view: Carried) -> Self {
-        Self { registers, view, this: Value::DELETED, locals: None, allocator: None }
+        Self { registers, view, this: Value::DELETED, locals: None, host: None }
     }
 
-    /// A frame whose allocation rows make their heap values in the lane context `cx`.
-    fn allocating<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
-        let make: AllocationMaker = lane_allocation::<H>;
-        Self { allocator: Some((cx.cast(), make)), ..Self::new(registers, view) }
+    /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
+    fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
+        let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, delete: lane_delete_value::<H> };
+        Self { host: Some(host), ..Self::new(registers, view) }
     }
 
     /// A frame that may read and write the activation's local slots.
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
-        Self { registers, view, this, locals: Some((locals, len)), allocator: None }
+        Self { registers, view, this, locals: Some((locals, len)), host: None }
     }
 }
 
@@ -108,9 +120,9 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn allocate_value(&mut self, _stage: &mut Concrete, destination: Register, allocation: Allocation, _proof: ()) -> Option<u64> {
-        let (cx, make) = self.allocator?;
+        let host = self.host?;
         // SAFETY: the maker was made for the lane context this frame runs in.
-        let value = unsafe { make(cx, self.registers, allocation) }?;
+        let value = unsafe { (host.allocate)(host.cx, self.registers, allocation) }?;
         self.registers.set(destination, value);
         Some(value.to_bits())
     }
@@ -131,6 +143,14 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     type Plans = crate::staged::NoPlans;
 
     fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+
+    #[inline(always)]
+    fn delete_property(&mut self, _stage: &mut Concrete, base: u64, key: u64, _strict: bool, _miss: ()) -> Option<(u64, ())> {
+        let host = self.host?;
+        // SAFETY: the deleter was made for the lane context this frame runs in.
+        let deleted = unsafe { (host.delete)(host.cx, Value::from_bits(base), Value::from_bits(key)) }?;
+        Some((deleted.to_bits(), ()))
+    }
 }
 
 impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
@@ -214,7 +234,7 @@ pub(super) fn staged_typeof(r: Registers, view: Carried, destination: u16, sourc
 #[inline(always)]
 pub(super) fn staged_load_this(r: Registers, view: Carried, this: Value, destination: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view, this, locals: None, allocator: None };
+    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view, this, locals: None, host: None };
     match crate::staged::step(&mut stage, &mut frame, Operation::LoadThis { destination }) {
         Step::Value(_) => true,
         Step::Unresolved => false,
@@ -298,6 +318,23 @@ unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Alloca
     }
 }
 
+/// The `true` of `delete base[key]` of a string key on an ordinary object, which runs no guest
+/// code. A refused deletion (a non-configurable property) has changed nothing and, like any
+/// other base or key, is the general path's: strict code makes it an error.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn lane_delete_value<H: Host>(cx: *mut (), base: Value, key: Value) -> Option<Value> {
+    let cx = cx.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let plain = base.direct_object_index().is_some()
+        && vm.heap.string(key).is_some()
+        && vm.object_data(base).is_some_and(|data| !data.is_module_namespace() && !data.is_arguments_object());
+    (plain && vm.object_delete_property(code, &[base, key]).is_ok_and(|deleted| deleted == Value::TRUE)).then_some(Value::TRUE)
+}
+
 /// The value of literal template `template` in a frame's own lane run (`Vm::literal_template`);
 /// `None` inside a lane activation, whose frame is not the context's, or where it fails.
 #[inline(never)]
@@ -331,6 +368,15 @@ fn lane_concat_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, window: Reg
 #[inline(always)]
 pub(super) fn staged_allocate<H: Host>(cx: *mut LaneContext<H>, r: Registers, destination: u16, allocation: Allocation) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::allocating::<H>(r, Carried::script(cx), cx);
+    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::Allocate { destination, allocation, proof: () }), Step::Value(_))
+}
+
+/// `delete base[key]` into `destination` by the staged operation, in the lane context `cx`'s own
+/// run; false, writing nothing, where the general path must make it.
+#[inline(always)]
+pub(super) fn staged_delete<H: Host>(cx: *mut LaneContext<H>, r: Registers, [destination, base, key]: [u16; 3], strict: bool) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
+    matches!(crate::staged::step(&mut stage, &mut frame, Operation::Delete { destination, base, key, strict }), Step::Value(_))
 }

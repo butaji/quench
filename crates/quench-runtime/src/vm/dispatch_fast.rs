@@ -3381,7 +3381,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
         .and_then(|row| row.call_out()).expect("a result step is a call-out row");
     let operands = operation.operands().map(|register| register.map(|register| r.get(register)));
     let Some(value) = lane_in_place(cx, ip, |vm, code| {
-        let site = super::call_out::CallSite { frame: vm.frames.len() - 1, resume: pc + 1 };
+        let site = super::call_out::CallSite { frame: vm.frames.len() - 1, function, resume: pc + 1 };
         vm.call_out(code, site, operation, operands)
     }) else {
         return Resumed::Exit(exit(ip));
@@ -4648,25 +4648,13 @@ script_handler! {
 }
 
 script_handler! {
-    /// `delete base[key]` of a string key on an ordinary object, which runs no guest code:
-    /// the deletion's `true`. A refused deletion (a non-configurable property) has changed
-    /// nothing and takes the general path, which strict code makes an error; so does any
-    /// other base or key.
+    /// `delete base[key]` by the staged row: a string key on an ordinary object runs no guest
+    /// code (`lane_delete_value`); any other deletion takes the general path.
     #[inline(never)]
     fn lane_delete<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let (base, key) = (r.get(i.b), r.get(i.c));
-        let plain = base.direct_object_index().is_some()
-            && vm.heap.string(key).is_some()
-            && vm
-                .object_data(base)
-                .is_some_and(|data| !data.is_module_namespace() && !data.is_arguments_object());
-        if !plain || !vm.object_delete_property(code, &[base, key]).is_ok_and(|deleted| deleted == Value::TRUE) {
+        if !lane_frame::staged_delete(cx, r, [i.a, i.b, i.c], i.imm() != 0) {
             return exit(ip);
         }
-        r.set(i.a, Value::TRUE);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }

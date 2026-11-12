@@ -4,13 +4,15 @@
 
 use super::*;
 use crate::bytecode::{Operand, Register, WideInstruction};
-use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NumericFrame, Operation, Protocol, Step};
+use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, Operation, PropertyFrame, Protocol, Step};
 
-/// Where a call-out runs: the running frame, and the PC after its instruction, which the
-/// binding rules of a name read for their error site.
+/// Where a call-out runs: the running frame, the function whose code holds the instruction (the
+/// strictness a refusal throws by), and the PC after its instruction, which the binding rules of
+/// a name read for their error site.
 #[derive(Clone, Copy)]
 pub(super) struct CallSite {
     pub(super) frame: usize,
+    pub(super) function: u32,
     pub(super) resume: usize,
 }
 
@@ -29,6 +31,10 @@ impl<H: Host> Vm<H> {
             }
             CallOut::Binary { operator, .. } =>
                 self.binary(p, operator, first.expect("a binary names its left operand"), operand).map(Some),
+            CallOut::Delete { strict, .. } => {
+                let strict = strict || p.function(site.function as usize).strict;
+                self.delete_reference_property_mode(p, first.expect("a delete names its base"), operand, strict).map(Some)
+            }
             CallOut::Typeof { .. } => Ok(Some(self.typeof_index_value(operand))),
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
             CallOut::Protocol { step, .. } => self.protocol_step(p, step, first, second),
@@ -40,7 +46,7 @@ impl<H: Host> Vm<H> {
     /// running frame; `value` is the operand a store takes.
     fn name_step(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut, value: Option<Value>)
         -> Result<Option<Value>, JsError> {
-        let CallSite { frame, resume } = site;
+        let CallSite { frame, resume, .. } = site;
         let value = value.unwrap_or(Value::UNDEFINED);
         match operation {
             CallOut::LoadEnvLocal { slot } => self.load_local_binding(p, frame, usize::from(slot), None).map(Some),
@@ -202,6 +208,12 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
 }
 
 impl<H: Host> GlobalFrame<Concrete> for HostFrame<'_, H> {}
+
+impl<H: Host> PropertyFrame<Concrete> for HostFrame<'_, H> {
+    type Plans = NoPlans;
+
+    fn plans(&self) -> NoPlans { NoPlans }
+}
 
 impl<H: Host> NumericFrame<Concrete> for HostFrame<'_, H> {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 {

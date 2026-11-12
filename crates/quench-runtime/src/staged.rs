@@ -25,6 +25,7 @@ mod names;
 mod callout;
 mod admission;
 mod type_name;
+mod delete;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::CallOut;
@@ -342,8 +343,9 @@ pub(crate) enum Operation<W, P> {
     FieldGetHost { object: W, atom: u32, site: u16 },
     /// The VM's adding store of `value` to `atom` of `object` (`PropertyFrame::field_add`).
     FieldAdd { object: W, atom: u32, site: u16, value: W },
-    /// `delete base[key]`, throwing on a refusal where `strict` (`PropertyFrame::delete_property`).
-    Delete { base: Register, key: Register, strict: bool },
+    /// `delete base[key]` into `destination`, throwing on a refusal where `strict`
+    /// (`PropertyFrame::delete_property`, else `CallOut::Delete`).
+    Delete { destination: Register, base: Register, key: Register, strict: bool },
     /// `base[key]` past the dense and typed element reads (`PropertyFrame::index_get_host`).
     IndexGetHost { base: W, key: W },
 }
@@ -378,8 +380,8 @@ impl<W, P> Operation<W, P> {
     fn decode_property(instruction: WideInstruction) -> Option<Self> {
         match instruction.op() {
             Op::GetField => Self::decode_get_field(instruction),
-            Op::Delete => Some(Self::Delete { base: instruction.register_b(), key: instruction.register_c(),
-                strict: instruction.boolean_flag()? }),
+            Op::Delete => Some(Self::Delete { destination: instruction.result_register(), base: instruction.register_b(),
+                key: instruction.register_c(), strict: instruction.boolean_flag()? }),
             op if op.is_field_store() => Some(Self::SetField { value: instruction.register_a(),
                 base: instruction.field_store_register(), atom: instruction.atom_index(),
                 site: instruction.cache_site_index() }),

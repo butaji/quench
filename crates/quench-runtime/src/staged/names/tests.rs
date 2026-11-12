@@ -1,7 +1,7 @@
 //! The name, environment and iteration rows on the interpreter's stage (`Concrete`).
 use crate::bytecode::{Op, Operand, Register, WideInstruction};
 use crate::heap::EnvironmentSlots;
-use crate::staged::{step, CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NumericFrame, Operation, Protocol, Step};
+use crate::staged::{step, CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, Operation, PropertyFrame, Protocol, Step};
 use crate::Value;
 use crate::staged::Operation as Row;
 
@@ -67,6 +67,12 @@ impl GlobalFrame<Concrete> for Probe {
     fn global_typeof(&mut self, _stage: &mut Concrete, destination: Register, _atom: u32, _site: u16) -> Option<()> {
         self.answers().then(|| self.registers[usize::from(destination)] = Value::number(1.0).to_bits())
     }
+}
+
+impl PropertyFrame<Concrete> for Probe {
+    type Plans = NoPlans;
+
+    fn plans(&self) -> NoPlans { NoPlans }
 }
 
 impl NumericFrame<Concrete> for Probe {
@@ -217,4 +223,16 @@ fn the_catalog_decodes_each_name_environment_and_iteration_opcode() {
         Some(Row::Protocol { step: Protocol::GetIterator, destination: Some(1), operands: [None, Some(1)] })));
     assert!(matches!(decode(Op::AppendArray, 2),
         Some(Row::Protocol { step: Protocol::AppendArray { length: 2, spread: true }, destination: None, .. })));
+}
+
+#[test]
+fn a_delete_the_frame_does_not_answer_is_the_vms_and_defines_its_result() {
+    let mut frame = Probe::new(3);
+    let delete = Row::Delete { destination: 0, base: 1, key: 2, strict: true };
+    assert!(matches!(run(&mut frame, delete), Step::Value(_)));
+    assert_eq!(frame.calls, [(CallOut::Delete { base: 1, key: 2, strict: true }, Some(0))]);
+    assert_eq!(Value::from_bits(frame.registers[0]), Value::number(9.0));
+    assert_eq!(CallOut::Delete { base: 1, key: 2, strict: true }.operands(), [Some(1), Some(2)]);
+    frame.declines = true;
+    assert!(matches!(run(&mut frame, delete), Step::Unresolved));
 }
