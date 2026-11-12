@@ -14771,7 +14771,7 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
-        lane_body_conclude!(cx, r, ip, own, method, exit)
+        lane_body_conclude!(cx, r, ip, own, method, exit, function)
     }
 }
 
@@ -14780,15 +14780,15 @@ script_handler! {
 /// the activation (no leave to resolve, no frame to materialize), any other leave resumes
 /// where it names (`lane_body_left`).
 macro_rules! lane_body_conclude {
-    ($cx:expr, $r:expr, $ip:expr, $own:expr, $method:expr, $exit:expr) => {{
-        let (cx, r, ip, own, method, exit) = ($cx, $r, $ip, $own, $method, $exit);
+    ($cx:expr, $r:expr, $ip:expr, $own:expr, $method:expr, $exit:expr, $function:expr) => {{
+        let (cx, r, ip, own, method, exit, function) = ($cx, $r, $ip, $own, $method, $exit, $function);
         let base = unsafe { (*cx).base };
         if let super::compiled::LaneExit::Returned { pc, value } = exit
             && !unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled()
         {
             // SAFETY: as `lane_leave_counts`; a completed run carries no warming callee.
             unsafe { (*cx).callee_warming = false };
-            own.note_lane_body_end(exit, false);
+            own.note_lane_body_end(exit, false, |_| {});
             drop(method);
             // SAFETY: the record that completes the activation is one of its function's.
             lane_return_value!(cx, unsafe { base.add(pc) }, value)
@@ -14798,7 +14798,7 @@ macro_rules! lane_body_conclude {
         drop(method);
         // Counted once nothing reads the body: a retirement or reoptimization moves it.
         if counts {
-            own.note_lane_body_end(feedback, false);
+            own.note_lane_body_end(feedback, false, |left| lane_note_leave(cx, function, left));
         }
         match resumed {
             LaneBodyLeft::Terminated => return self::exit(ip),
@@ -15585,7 +15585,7 @@ fn lane_body_activate<H: Host>(
     let (resumed, feedback) = lane_body_left(cx, registers, own, &method, exit);
     drop(method);
     if lane_leave_counts(cx, exit) {
-        own.note_lane_body_end(feedback, false);
+        own.note_lane_body_end(feedback, false, |left| lane_note_leave(cx, target.function, left));
     }
     match resumed {
         LaneBodyLeft::Terminated => LANE_CALL_TERMINATED,
@@ -22191,4 +22191,12 @@ mod leaf_call_tests {
             }
         }
     }
+}
+
+/// Counts a leave of a lane body at a place its body had not named before on the field sites of
+/// the instruction there (`Vm::note_field_leave`): a place counts once per body.
+fn lane_note_leave<H: Host>(cx: *mut LaneContext<H>, function: u32, (inlined, pc): (Option<u32>, usize)) {
+    let function = inlined.unwrap_or(function);
+    // SAFETY: the running lane's VM and program.
+    unsafe { vm(cx).note_field_leave(&*(*cx).code, function, pc) };
 }
