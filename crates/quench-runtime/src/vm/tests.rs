@@ -4714,7 +4714,7 @@ fn class_field_record_roots_release_after_each_completion() {
             let atom = vm.intern_atom("entry");
             let key = match phase {
                 "symbol" => PropertyKey::symbol(values[2]),
-                "private" => PropertyKey::private(atom),
+                "private" => PropertyKey::private(crate::heap::PrivateAtom::from_raw(atom)),
                 _ => PropertyKey::string(atom),
             };
             let value = vm

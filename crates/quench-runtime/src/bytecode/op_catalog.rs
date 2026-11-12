@@ -372,6 +372,7 @@ macro_rules! traits_of {
     (CheckPrivate) => { Traits::LANE_IN_PLACE };
     (PrivateIn) => { Traits::LANE_IN_PLACE };
     (MarkPrivateName) => { Traits::LANE_IN_PLACE };
+    (DeclarePrivateName) => { Traits::LANE_IN_PLACE };
     (SetFunctionName) => { Traits::LANE_IN_PLACE };
     (SetFunctionNameKey) => { Traits::LANE_IN_PLACE };
     (SetFunctionDebugName) => { Traits::LANE_IN_PLACE };

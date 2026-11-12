@@ -1059,10 +1059,11 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
         match key {
-            PropertyKey::String(atom) | PropertyKey::Private(atom) => {
+            PropertyKey::String(atom) => {
                 self.invalidate_method_caches_for_atom(atom);
             }
-            PropertyKey::Symbol(_) => {}
+            // Method caches name string atoms; a private atom is of its own space.
+            PropertyKey::Symbol(_) | PropertyKey::Private(_) => {}
         }
     }
     #[inline(always)]

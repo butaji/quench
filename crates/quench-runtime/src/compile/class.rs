@@ -181,6 +181,9 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
         }
+        // The names this class evaluation declares, each on the home that owns it, in atom order.
+        let mut private_declarations: Vec<_> = private_bindings.iter().map(|(name, home)| (*name, *home)).collect();
+        private_declarations.sort_unstable();
         let has_private_bindings = !private_bindings.is_empty();
         if has_private_bindings {
             self.push_private_bindings(private_bindings);
@@ -337,6 +340,12 @@ impl FunctionCompiler<'_, '_> {
         );
         self.define_class_method(prototype, class_value, None, Some("constructor"));
         self.store_atom(constructor_home_atom, prototype);
+        // Each private name of this evaluation gets a fresh private atom on its home: the class itself
+        // for a static name, the prototype for an instance one (`DeclarePrivateName`).
+        for (name, home) in private_declarations {
+            let home = if home == class_home_atom { class_value } else { prototype };
+            self.emit(Op::DeclarePrivateName, 0, home, 0, name);
+        }
 
         // Static methods/accessors exist before static fields execute. Data
         // fields acquire their brand only when their initializer completes;

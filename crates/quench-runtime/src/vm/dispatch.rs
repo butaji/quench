@@ -998,6 +998,9 @@ impl<H: Host> Vm<H> {
                     if result { Value::TRUE } else { Value::FALSE },
                 );
             }
+            Op::DeclarePrivateName => {
+                self.declare_private_name(self.read(f, i.register_b()), i.atom_index());
+            }
             Op::MarkPrivateName => {
                 self.mark_private_name(p, self.read(f, i.register_b()), self.read(f, i.register_c()), i.atom_index())?;
             }

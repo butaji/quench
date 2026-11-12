@@ -385,19 +385,21 @@ mod tests {
     /// The opcodes whose only lowering is the generic helper step, each for the reason beside it:
     /// no fast arm a register's word, a shape or a backing the row can read decides, so the helper
     /// is their whole operation, not a slow arm.
-    const RESIDUAL: [Op; 18] = [
+    const RESIDUAL: [Op; 19] = [
         // The define adds a property: where its site recorded the transition (`Known::adds`) its staged row (`staged::add`) is the fast arm (`adds`) and this helper its slow arm; with none recorded, the helper is the whole operation.
         Op::DefineField,
         // The key is converted (guest code) and the property defined through the shape's slow path.
         Op::DefineComputedField,
-        // The brand is the home's VM-held private-name table, not a shape or a register fact.
+        // The private atom is the running environment's home's (`Vm::private_name_atom`), resolved per environment and so no site fact; the add is then a shape transition.
         Op::DefinePrivateField,
-        // The brand check reads the home's VM-held private-name table.
+        // The brand check resolves the private atom through the environment, then asks the shape (`Vm::has_private_slot`).
         Op::CheckPrivate,
-        // The brand test reads the home's VM-held private-name table.
+        // The brand test resolves the private atom through the environment, then asks the shape.
         Op::PrivateIn,
-        // Writes the VM-held private-name table.
+        // Brands the object by a shape transition keyed by the home's private atom (`private_slots`); the home's declaration is VM state.
         Op::MarkPrivateName,
+        // Declares a fresh private atom in the home's private environment: VM state, no shape or register fact.
+        Op::DeclarePrivateName,
         // Names any function the site's recorded edge (`names`) does not: its general naming also records that edge.
         Op::SetFunctionName,
         // Builds the name string from a key and a prefix: allocates.

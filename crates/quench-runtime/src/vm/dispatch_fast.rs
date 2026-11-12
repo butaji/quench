@@ -6966,18 +6966,18 @@ fn lane_set_field_in_place<H: Host>(
     Resumed::At(r, following(ip), Carried::script(cx))
 }
 
-/// The brand of private name `atom` at the record `ip`, whose home follows the running
-/// function and the environment its frame would capture from: the lane's frame, or a
-/// frameless activation's function and closure environment (`Vm::site_private_brand`).
+/// The private atom of name `atom` at the record `ip`, which follows the running function and
+/// the environment its frame would capture from: the lane's frame, or a frameless activation's
+/// function and closure environment (`Vm::site_private_atom`).
 #[inline(always)]
-fn lane_private_brand<H: Host>(
+fn lane_private_atom<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
     code: &ResidualProgram,
     atom: crate::bytecode::Atom,
-) -> Option<crate::heap::PrivateBrand> {
+) -> Option<crate::heap::PrivateAtom> {
     let (environment, function, frame) = lane_private_site(cx)?;
-    unsafe { vm(cx) }.site_private_brand(code, ip.addr(), environment, function, frame, atom)
+    unsafe { vm(cx) }.site_private_atom(code, ip.addr(), environment, function, frame, atom)
 }
 
 /// What a lane read of a private name of an object resolves to (`lane_get_private_field`).
@@ -6988,7 +6988,7 @@ enum PrivateRead {
 }
 
 /// The running function's private-name scope: the environment its frame, or its activation,
-/// captures from, the function, and whether it runs in a frame (`Vm::site_private_brand`).
+/// captures from, the function, and whether it runs in a frame (`Vm::site_private_atom`).
 #[inline(always)]
 fn lane_private_site<H: Host>(cx: *mut LaneContext<H>) -> Option<(Value, u32, bool)> {
     let vm = unsafe { vm(cx) };
@@ -7003,8 +7003,8 @@ fn lane_private_site<H: Host>(cx: *mut LaneContext<H>) -> Option<(Value, u32, bo
     })
 }
 
-/// The store of private field `atom` of `object` at the record `ip`, under its brand there
-/// (`lane_private_brand`). `false` leaves the store, a private accessor's or method's
+/// The store of private field `atom` of `object` at the record `ip`, under its private atom there
+/// (`lane_private_atom`). `false` leaves the store, a private accessor's or method's
 /// included, to the general path.
 #[inline(never)]
 fn lane_private_field_store<H: Host>(
@@ -7015,10 +7015,10 @@ fn lane_private_field_store<H: Host>(
     atom: crate::bytecode::Atom,
     value: Value,
 ) -> bool {
-    let Some(brand) = lane_private_brand(cx, ip, code, atom) else {
+    let Some(private) = lane_private_atom(cx, ip, code, atom) else {
         return false;
     };
-    (unsafe { vm(cx) }).object_data_mut(object).is_some_and(|data| data.set_private_field(brand, value))
+    (unsafe { vm(cx) }).set_private_field_in(object, private, value)
 }
 
 /// Leave the lane at `ip` after its instruction failed with `error` before any effect: a frame
@@ -7134,15 +7134,15 @@ script_handler! {
 }
 
 script_handler! {
-    /// `CheckPrivate` of an object holding the private field under the name's brand at this
-    /// record (`lane_private_brand`), which proves the check; any other check takes
+    /// `CheckPrivate` of an object holding the private field under the name's atom at this
+    /// record (`lane_private_atom`), which proves the check; any other check takes
     /// `lane_general_step`.
     #[inline(never)]
     fn lane_check_private<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let present = lane_private_brand(cx, ip, code, i.imm()).is_some_and(|brand| {
-            (unsafe { vm(cx) }).object_data(r.get(i.a)).is_some_and(|data| data.private_field(brand).is_some())
+        let present = lane_private_atom(cx, ip, code, i.imm()).is_some_and(|private| {
+            (unsafe { vm(cx) }).private_field_in(r.get(i.a), private).is_some()
         });
         if !present {
             sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
@@ -7169,14 +7169,15 @@ script_handler! {
 
 script_handler! {
     /// `PrivateIn` (`#x in object`) of an object with its own data (`Vm::object_data`): whether
-    /// it carries the name's brand at this record (`lane_private_brand`), a field's or a
-    /// method's. Any other operand, which may raise, takes `lane_general_step`.
+    /// its shape holds the name's atom at this record (`lane_private_atom`), a field's or a
+    /// method's brand. Any other operand, which may raise, takes `lane_general_step`.
     #[inline(never)]
     fn lane_private_in<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let carries = lane_private_brand(cx, ip, code, i.imm()).and_then(|brand| {
-            (unsafe { vm(cx) }).object_data(r.get(i.b)).map(|data| data.has_private_name(brand))
+        let carries = lane_private_atom(cx, ip, code, i.imm()).and_then(|private| {
+            let (vm, object) = (unsafe { vm(cx) }, r.get(i.b));
+            vm.object_data(object).is_some().then(|| vm.has_private_slot(object, private))
         });
         let Some(carries) = carries else {
             sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
@@ -7188,21 +7189,21 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a private name (`Vm::is_private_name`) from a register or `this`, which
-    /// no field cache records (`lane_get_field_first`): the object's private element under
-    /// the name's brand at this record (`lane_private_brand`). Any other read, a private
+    /// no field cache records (`lane_get_field_first`): the object's private field under
+    /// the name's atom at this record (`lane_private_atom`). Any other read, a private
     /// method's or accessor's included, takes `lane_get_field`.
     #[inline(never)]
     fn lane_get_private_field<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let read = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }.and_then(|object| {
-            let brand = lane_private_brand(cx, ip, code, i.imm())?;
-            let data = (unsafe { vm(cx) }).object_data(object)?;
-            match data.private_field(brand) {
+            let private = lane_private_atom(cx, ip, code, i.imm())?;
+            let vm = unsafe { vm(cx) };
+            match vm.private_field_in(object, private) {
                 Some(value) => Some(PrivateRead::Value(value)),
                 // A method or accessor of a brand the object carries (`Vm::site_private_element`).
-                None if data.has_private_name(brand) => {
-                    match (unsafe { vm(cx) }).site_private_element(ip.addr(), brand, object)? {
+                None if vm.has_private_slot(object, private) => {
+                    match vm.site_private_element(ip.addr(), (private, i.imm()), object)? {
                         super::private_site_home::PrivateElement::Method(value) => Some(PrivateRead::Value(value)),
                         super::private_site_home::PrivateElement::Getter(getter) => Some(PrivateRead::Getter(object, getter)),
                     }

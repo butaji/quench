@@ -140,6 +140,7 @@ mod dynamic_strings;
 mod lane_exits;
 mod embedding;
 mod provenance;
+mod private_slots;
 mod inspection;
 mod environment;
 mod equality;
@@ -1390,6 +1391,17 @@ const DEFAULT_DATA_ATTRIBUTES: DataAttributes = DataAttributes {
     enumerable: true,
     configurable: true,
 };
+/// A private field's slot (`private_slots`): writable, and neither enumerable nor configurable.
+const PRIVATE_FIELD_ATTRIBUTES: DataAttributes = DataAttributes {
+    writable: true,
+    enumerable: false,
+    configurable: false,
+};
+/// A private method's or accessor's brand: a field's attributes but read-only, which tells the two apart.
+const PRIVATE_BRAND_ATTRIBUTES: DataAttributes = DataAttributes {
+    writable: false,
+    ..PRIVATE_FIELD_ATTRIBUTES
+};
 /// The attributes of a function's own `length` and `name`.
 const FUNCTION_INFO_ATTRIBUTES: DataAttributes = DataAttributes {
     writable: false,
@@ -2237,6 +2249,9 @@ pub(crate) struct Vm<H> {
     /// Private-name home objects found by `private_name_home`, kept while their starting
     /// environment is live.
     private_homes: FxHashMap<PrivateHomeKey, Value>,
+    /// The raw id of the next private atom a class evaluation declares (`Vm::fresh_private_atom`);
+    /// ids are never reused, so a shape's private key names one evaluation's name for good.
+    next_private_atom: u32,
     /// The collation `String.prototype.localeCompare` resolves without locales or options
     /// (`Vm::locale_compare_collation`); the host's default locale fixes it.
     default_collation: Option<std::rc::Rc<intl_collator::Collation>>,

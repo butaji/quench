@@ -25,6 +25,9 @@ var kk = new K();
 function P2(a, b) { this.a = a; this.b = b; }
 function Q(v) { this.f = v; }
 var setterHits = 0;
+var mkClass = () => class { #n = 1; #m() { return 2; } static #s = 3; bump() { return this.#n++; } call() { return this.#m(); } static has(o) { return #n in o; } static sget() { return this.#s; } };
+var PA = mkClass(), PB = mkClass();
+var pa = new PA(), pb = new PB();
 ";
 
 /// (opcode family, loop body over `i` with the locals `acc`, `s`, `t`, `o` and `arr`).
@@ -109,6 +112,12 @@ const FAMILIES: &[(&str, &str)] = &[
     ("set-function-name-object-and-default", "var h = { m: function () {}, n: () => 1 }; var { d = function () {} } = {}; acc += h.m.name.length + h.n.name.length + d.name.length;"),
     ("set-function-name-late-class-static-name", "var kc = i === 1500 ? class { static name() { return 3; } } : class {}; acc += typeof kc.name === 'function' ? 2 : kc.name.length + 1;"),
     ("set-function-name-after-name-redefined", "var fn = function () {}; if (i % 50 === 0) Object.defineProperty(fn, 'name', { value: 'z' + i }); acc += fn.name.length;"),
+    ("private-field-read-write-two-evaluations", "acc += pa.bump() % 7 + pb.bump() % 5;"),
+    ("private-method-call-two-evaluations", "acc += pa.call() + pb.call();"),
+    ("private-brand-check-across-evaluations", "acc += (PA.has(pa) ? 1 : 0) + (PA.has(pb) ? 10 : 0) + (PB.has(pb) ? 100 : 0);"),
+    ("private-static-read-two-evaluations", "acc += PA.sget() + PB.sget();"),
+    ("private-brand-after-late-evaluation", "if (i === 1200) { PB = mkClass(); pb = new PB(); } acc += PB.has(pb) ? 1 : 2;"),
+    ("private-access-wrong-receiver-throws", "try { PA.prototype.bump.call(pb); acc += 1; } catch (e) { acc += e instanceof TypeError ? 2 : 3; }"),
     ("async-function", "(async function () { await 0; acc += 1; })();"),
 ];
 

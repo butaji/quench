@@ -1762,7 +1762,9 @@ struct ObjectExtras {
     structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
     deferred_module: Option<crate::ModuleSource>,
-    private_elements: Vec<PrivateElement>,
+    /// The private names the class evaluation this object is a home of declared, with the atom
+    /// it made for each: its private environment. Atoms are integers, so nothing here is traced.
+    private_environment: Vec<(Atom, PrivateAtom)>,
     stack_data: Option<StackData>,
     /// What has been recorded about the object's properties beside its shape; bits are set
     /// once and never cleared (`ElementFacts`).
@@ -1799,7 +1801,7 @@ impl ObjectExtras {
                     + module.source.len()
                     + module.original_bytes.as_ref().map_or(0, |bytes| bytes.len())
             })
-            + self.private_elements.capacity() * std::mem::size_of::<PrivateElement>()
+            + self.private_environment.capacity() * std::mem::size_of::<(Atom, PrivateAtom)>()
             + self
                 .stack_data
                 .as_ref()
@@ -1827,17 +1829,22 @@ impl StackData {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PrivateBrand {
-    pub home: Value,
-    pub name: Atom,
-}
-/// A name's actual class home and its data share one lifetime-owned entry.
-#[derive(Clone, Copy, Debug)]
-struct PrivateElement {
-    brand: PrivateBrand,
-    // Brand-only entries name methods/accessors or reserve a class-home declaration.
-    data: Option<Value>,
+/// A private name as one class evaluation made it: an id of its own space, apart from string
+/// atoms, that a shape keys a private field or brand by (`PropertyKey::Private`). Each class
+/// evaluation declares a fresh one per private name on its home objects (`Object::declare_private`,
+/// its private environment), so two evaluations of one class never share a brand. Ids are never
+/// reused, so a shape that names one never names another evaluation's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) struct PrivateAtom(u32);
+
+impl PrivateAtom {
+    pub(crate) const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub(crate) const fn raw(self) -> u32 {
+        self.0
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2471,12 +2478,6 @@ impl Object {
         if let Some(value) = extras.boxed_primitive {
             visit(value);
         }
-        for element in &extras.private_elements {
-            visit(element.brand.home);
-            if let Some(value) = element.data {
-                visit(value);
-            }
-        }
         match extras.stack_data.as_ref() {
             Some(StackData::Captured { records, .. }) => {
                 for record in records {
@@ -2686,47 +2687,21 @@ impl Object {
     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
         self.extras_mut().deferred_module = module;
     }
-    pub(crate) fn private_names(&self) -> impl Iterator<Item = PrivateBrand> + '_ {
-        self.extras()
-            .into_iter()
-            .flat_map(|extras| extras.private_elements.iter().map(|element| element.brand))
+    /// The private names this object, as a class evaluation's home, declared and the atom made
+    /// for each (its private environment).
+    pub(crate) fn private_declarations(&self) -> impl Iterator<Item = (Atom, PrivateAtom)> + '_ {
+        self.extras().into_iter().flat_map(|extras| extras.private_environment.iter().copied())
     }
-    pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
-        self.private_names().any(|candidate| candidate == brand)
+    /// The atom this home declared for private name `name`.
+    pub(crate) fn private_atom(&self, name: Atom) -> Option<PrivateAtom> {
+        self.private_declarations().find(|(declared, _)| *declared == name).map(|(_, atom)| atom)
     }
-    pub(crate) fn add_private_name(&mut self, brand: PrivateBrand) {
-        if !self.has_private_name(brand) {
-            self.extras_mut()
-                .private_elements
-                .push(PrivateElement { brand, data: None });
+    /// Declares private name `name` of this home's class evaluation as `atom`; a name declared
+    /// already keeps its atom, so a replayed class definition adds none.
+    pub(crate) fn declare_private(&mut self, name: Atom, atom: PrivateAtom) {
+        if self.private_atom(name).is_none() {
+            self.extras_mut().private_environment.push((name, atom));
         }
-    }
-    pub(crate) fn private_field(&self, brand: PrivateBrand) -> Option<Value> {
-        self.extras()?
-            .private_elements
-            .iter()
-            .find(|element| element.brand == brand)?
-            .data
-    }
-    pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
-        let Some(element) = self.extras_mut_existing().and_then(|extras| extras.private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some())) else { return false; };
-        element.data = Some(value);
-        true
-    }
-    pub(crate) fn initialize_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
-        let elements = &mut self.extras_mut().private_elements;
-        if let Some(element) = elements.iter_mut().find(|element| element.brand == brand) {
-            if element.data.is_some() {
-                return false;
-            }
-            element.data = Some(value);
-        } else {
-            elements.push(PrivateElement {
-                brand,
-                data: Some(value),
-            });
-        }
-        true
     }
     pub(crate) fn allocated_extra_bytes(&self) -> usize {
         self.extras().map_or(0, ObjectExtras::allocated_bytes)
