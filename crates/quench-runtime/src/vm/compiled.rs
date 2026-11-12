@@ -30,7 +30,8 @@ use crate::bytecode::{Class, Traits,
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
     RETURN_REGISTER, WideInstruction,
 };
-use crate::staged::wasm_operation::WasmOperation;
+use crate::staged::wasm_instance::Instance;
+use crate::staged::wasm_step::Step;
 use crate::wasm::integer::I32BinaryOperator;
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
 use cranelift_codegen::ir::{
@@ -84,6 +85,7 @@ mod static_loops;
 mod wasm_callable;
 #[path = "compiled/wasm_stage.rs"]
 mod wasm_stage;
+mod wasm_instance_stage;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
 pub(super) use lane_unit::static_call_targets;
@@ -8780,7 +8782,7 @@ impl<H: Host> Analysis<'_, H> {
         // The memory register is read only by direct accesses through it.
         if memory_register.is_some_and(|memory| {
             !direct_access(op) && !op.traits().has(Traits::WASM_MEMORY)
-                && !op.is_wasm_instance_binding()
+                && Instance::of(op) != Some(Instance::Binding)
                 && crate::bytecode::InstructionField::ALL.iter().any(|field| {
                     op.field_layout(*field).reads_register()
                         && instruction.field_value(*field) == memory
@@ -8789,14 +8791,26 @@ impl<H: Host> Analysis<'_, H> {
         }) {
             return None;
         }
-        if let Some(operation) = WasmOperation::of(op, instruction.imm()) {
-            return wasm_stage::transfer(
-                state,
-                function.registers,
-                instruction,
-                operation,
-                &value,
-            );
+        match Step::of(op, instruction.imm()) {
+            Some(Step::Numeric(operation)) => {
+                return wasm_stage::transfer(
+                    state,
+                    function.registers,
+                    instruction,
+                    operation,
+                    &value,
+                );
+            }
+            Some(Step::Instance(step)) => {
+                return self.transfer_instance(
+                    function,
+                    instruction,
+                    state,
+                    step,
+                    (memory_register, memory_slot),
+                );
+            }
+            None => {}
         }
         if let Some(load) = MemoryLoad::from_direct_op(op) {
             if Some(instruction.b()) != memory_register
@@ -8821,28 +8835,6 @@ impl<H: Host> Analysis<'_, H> {
             return (value(state, instruction.a())? == Kind::of(store.value_type())?).then_some(());
         }
         match op.class() {
-            Class::Move => match state.get(instruction.b(), function.registers)? {
-                slot @ (Slot::Vector | Slot::Memory32Address) => {
-                    set(state, instruction.a(), slot)
-                }
-                _ => {
-                    let kind = value(state, instruction.b())?;
-                    set(state, instruction.a(), Slot::Value(kind))
-                }
-            },
-            Class::LoadConst => {
-                let constant = self.constant(instruction.constant_index())?;
-                set(state, instruction.a(), self.constant_slot(constant))
-            }
-            Class::WasmFillRegisters => {
-                let constant = self.constant(instruction.constant_index())?;
-                let slot = self.constant_slot(constant);
-                let window = instruction.register_window();
-                for offset in 0..window.count {
-                    set(state, window.base + offset, slot)?;
-                }
-                Some(())
-            }
             // A vector access's effective address: a 32-bit address plus the access's offset,
             // as 64 bits, so the sum cannot wrap.
             Class::WasmMemoryAddress => {
@@ -9030,34 +9022,6 @@ impl<H: Host> Analysis<'_, H> {
                 Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
                 None => Some(()),
             },
-            Class::WasmInstanceBinding => {
-                let slot = instruction.imm();
-                if Some(instruction.a()) == memory_register {
-                    if !self.binds_direct_memory(slot) || memory_slot.is_some_and(|s| s != slot) {
-                        return None;
-                    }
-                    *memory_slot = Some(slot);
-                    return set(state, instruction.a(), Slot::Memory);
-                }
-                set(state, instruction.a(), Slot::Binding(slot))
-            }
-            // Compiled code reads and writes a 32-bit global's encoded value
-            // in place; a 64-bit global's value is a box, so it stays
-            // interpreted.
-            Class::WasmGlobalGet => {
-                let Slot::Binding(slot) = state.get(instruction.b(), function.registers)? else {
-                    return None;
-                };
-                (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
-                set(state, instruction.a(), Slot::Value(Kind::I32))
-            }
-            Class::WasmGlobalSet => {
-                let Slot::Binding(slot) = state.get(instruction.b(), function.registers)? else {
-                    return None;
-                };
-                (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
-                (value(state, instruction.a())? == Kind::I32).then_some(())
-            }
             _ => None,
         }
     }
@@ -10867,8 +10831,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         if let Some(done) = self.vector_instruction(pc, instruction) {
             return done;
         }
-        if let Some(operation) = WasmOperation::of(op, instruction.imm()) {
-            return self.operation(pc, instruction, operation);
+        match Step::of(op, instruction.imm()) {
+            Some(Step::Numeric(operation)) => return self.operation(pc, instruction, operation),
+            Some(Step::Instance(step)) => {
+                self.instance(pc, instruction, step);
+                return true;
+            }
+            None => {}
         }
         if let Some(load) = MemoryLoad::from_direct_op(op) {
             let result = load_type(load).expect("planned");
@@ -10998,27 +10967,6 @@ impl<H: Host> Emitter<'_, '_, H> {
             return true;
         }
         match op.class() {
-            Class::Move => {
-                let kind = self.operand_kind(pc);
-                let value = self.read(b, kind);
-                self.write(a, kind, value);
-            }
-            Class::LoadConst | Class::WasmFillRegisters => {
-                let constant = self
-                    .analysis
-                    .constant(instruction.constant_index())
-                    .expect("planned");
-                let kind = self.analysis.constant_kind(constant);
-                let bits = self.analysis.constant_bits(constant);
-                if op.is_load_const() {
-                    self.write_constant(a, kind, bits);
-                } else {
-                    let window = instruction.register_window();
-                    for offset in 0..window.count {
-                        self.write_constant(window.base + offset, kind, bits);
-                    }
-                }
-            }
             Class::Jump => {
                 let target = instruction.jump_target() as usize;
                 self.jump(target, self.polls(pc, target));
@@ -11135,25 +11083,6 @@ impl<H: Host> Emitter<'_, '_, H> {
                 }
                 self.body.core.builder.ins().return_(&values);
                 return false;
-            }
-            // A binding is known statically per instruction; the globals it
-            // names are reached through the context.
-            Class::WasmInstanceBinding => {}
-            Class::WasmGlobalGet => {
-                let slot = self.binding_slot(pc);
-                let address = self.global_address(slot);
-                let flags = self.flags(Region::Globals);
-                let value = self.body.core.builder.ins().load(types::I32, flags, address, 0);
-                self.write(a, Kind::I32, value);
-            }
-            Class::WasmGlobalSet => {
-                let slot = self.binding_slot(pc);
-                let address = self.global_address(slot);
-                let value = self.read(a, Kind::I32);
-                let wide = self.body.core.builder.ins().uextend(types::I64, value);
-                let encoded = self.body.core.builder.ins().bor_imm_u(wide, INTEGER_TAG as i64);
-                let flags = self.flags(Region::Globals);
-                self.body.core.builder.ins().store(flags, encoded, address, 0);
             }
             _ => unreachable!("planned instructions have a denotation"),
         }
@@ -12993,7 +12922,10 @@ impl<H: Host> Vm<H> {
                             }
                         }
                     }
-                    Class::WasmGlobalGet | Class::WasmGlobalSet => {
+                    _ if matches!(
+                        Step::of(instruction.op(), instruction.imm()),
+                        Some(Step::Instance(step)) if step.accesses_global()
+                    ) => {
                         if let Some(Slot::Binding(slot)) = full_plan.operands[pc]
                             && !globals.contains(&slot)
                         {

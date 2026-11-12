@@ -82,6 +82,14 @@ pub(crate) enum WasmOperation {
     Convert {
         operator: ScalarConversionOperator,
     },
+    /// `a = (b >> c) & imm` on i32: a bit-field extract.
+    BitField,
+    /// `a = b + c` on i32, jumping where the sum is nonzero.
+    AddBranch,
+    /// Jumps where the i32 `a` is nonzero (or zero).
+    Test {
+        nonzero: bool,
+    },
 }
 
 impl WasmOperation {

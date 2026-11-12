@@ -50,7 +50,10 @@ pub(crate) mod effects;
 pub(crate) mod wasm;
 pub(crate) mod wasm_float;
 mod wasm_concrete;
+pub(crate) mod wasm_instance;
+pub(crate) mod wasm_machine;
 pub(crate) mod wasm_operation;
+pub(crate) mod wasm_step;
 pub(crate) use wasm_concrete::ConcreteWasm;
 #[cfg(test)]
 pub(crate) mod trace;
@@ -457,3 +460,5 @@ mod generic_tests;
 mod wasm_tests;
 #[cfg(test)]
 mod wasm_float_tests;
+#[cfg(test)]
+mod wasm_instance_tests;
