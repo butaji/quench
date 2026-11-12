@@ -9,7 +9,20 @@ use super::*;
 /// raised (the error stashed for the general path, which re-runs the record and raises it), or
 /// `LANE_CALL_LEFT` where guest code it ran made the lane's activations frames, which leave the
 /// body at the next record.
-pub(in crate::vm) unsafe extern "C" fn lane_body_value_step<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+///
+/// The heap bases the body's rows read through the payload are reloaded after it
+/// (`Vm::refresh_body_bases`): the step may have allocated or run guest code.
+///
+/// # Safety
+/// The caller is a body's helper row: `context` its running lane context, `call_pc` a record of its function.
+pub(in crate::vm) unsafe extern "C" fn lane_body_value_step<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    // SAFETY: the caller's contract.
+    let status = unsafe { lane_body_value_step_record::<H>(vm, residual, context, call_pc) };
+    unsafe { super::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases();
+    status
+}
+
+unsafe fn lane_body_value_step_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
@@ -38,7 +51,19 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_value_step<H: Host>(_vm: u64, _
 /// it: `LANE_CALL_COMPLETED` with its effects in the frame, or `LANE_CALL_MISSED` where it raised
 /// (the error stashed for the general path to raise at the record) or where the record is no
 /// in-place step or runs in a frameless activation, which has no frame; nothing ran then.
-pub(in crate::vm) unsafe extern "C" fn lane_body_step<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+/// `lane_body_step_record`, then the heap bases the body's rows read through the payload reloaded
+/// (`Vm::refresh_body_bases`): the step may have allocated or run guest code.
+///
+/// # Safety
+/// As `lane_body_step_record`.
+pub(in crate::vm) unsafe extern "C" fn lane_body_step<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    // SAFETY: the caller's contract.
+    let status = unsafe { lane_body_step_record::<H>(vm, residual, context, call_pc) };
+    unsafe { super::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases();
+    status
+}
+
+unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };

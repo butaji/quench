@@ -7157,6 +7157,7 @@ impl<H: Host> Vm<H> {
                 field_entries: self.program_field_entries(program).unwrap_or(0),
                 lane_context: lane_context.addr(),
                 native_registers: registers,
+                native_locals: super::dispatch_fast::frame_locals::<H>(lane_context),
                 residual: residual as *const ResidualProgram as usize,
             }
             .install(&mut *dispatch);
@@ -7282,6 +7283,16 @@ impl<H: Host> Vm<H> {
         exit
     }
 
+    /// Reloads the heap bases a running body's rows read through the payload
+    /// (`JsStepDispatch::refresh_object_bases`): a helper that allocated or ran guest code may
+    /// have moved the record tables or the barrier's mark blocks. Every call, construct and step
+    /// helper ends with it, so a row after one reads current bases and checks none.
+    pub(super) fn refresh_body_bases(&self) {
+        let frame = lane_frame();
+        // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
+        unsafe { (*frame).dispatch.refresh_object_bases(self) }
+    }
+
     /// Hands `write` each of the `count` registers an inlined callee its lane body left
     /// inside held, as the body wrote them to the scratch window (`LaneFrame::scratch`).
     pub(super) fn lane_scratch(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {
@@ -7329,6 +7340,9 @@ struct LaneEntry {
     field_entries: usize,
     lane_context: usize,
     native_registers: *mut Value,
+    /// The activation's local slots and their count (`dispatch_fast::frame_locals`), which a
+    /// body's local rows read through the payload.
+    native_locals: (*mut Value, usize),
     residual: usize,
 }
 
@@ -7339,6 +7353,7 @@ impl LaneEntry {
             field_entries: dispatch.field_entries,
             lane_context: dispatch.lane_context,
             native_registers: dispatch.native_registers,
+            native_locals: (dispatch.native_locals, dispatch.local_count),
             residual: dispatch.residual,
         }
     }
@@ -7348,6 +7363,7 @@ impl LaneEntry {
         dispatch.field_entries = self.field_entries;
         dispatch.lane_context = self.lane_context;
         dispatch.native_registers = self.native_registers;
+        (dispatch.native_locals, dispatch.local_count) = self.native_locals;
         dispatch.residual = self.residual;
     }
 }

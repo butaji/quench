@@ -2346,6 +2346,20 @@ pub(super) fn capture_reads(capture: *const usize) -> *const usize {
     capture.map_addr(|address| address & !CAPTURE_STORES)
 }
 
+/// The local slots (address and count) of the VM frame the lane context `cx` runs, where a body's
+/// `LoadLocalPlain` and `StoreLocalPlain` rows read and write them, as the lane's handlers do
+/// (`lane_frame::staged_load_local_plain`); none where there is no context (a test's entry).
+///
+/// # Safety
+/// `cx` is null or a live `LaneContext<H>`.
+pub(super) unsafe fn frame_locals<H: Host>(cx: *mut ()) -> (*mut Value, usize) {
+    std::ptr::NonNull::new(cx.cast::<LaneContext<H>>()).map_or((std::ptr::null_mut(), 0), |cx| {
+        // SAFETY: the caller's contract; the VM and its frame outlive the lane run.
+        let frame = unsafe { &mut vm(cx.as_ptr()).frames[(*cx.as_ptr()).frame] };
+        (frame.locals.as_mut_ptr(), frame.locals.len())
+    })
+}
+
 /// The slots a `LaneContext::capture` tagged `CAPTURE_STORES` lets a store write.
 #[inline(always)]
 pub(super) fn capture_stores(capture: *const usize) -> Option<*const usize> {
@@ -15367,7 +15381,20 @@ unsafe fn lane_body_record<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> (R
     }
 }
 
-pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+/// The helper a body's call row runs (`LaneHelper::Call`): `lane_body_call_record`, then the
+/// heap bases the body's rows read through the payload reloaded (`Vm::refresh_body_bases`), which the
+/// callee's run or an allocation may have moved.
+///
+/// # Safety
+/// As `lane_body_call_record`.
+pub(super) unsafe extern "C" fn lane_body_call<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    // SAFETY: the caller's contract.
+    let status = unsafe { lane_body_call_record::<H>(vm, residual, context, call_pc) };
+    unsafe { self::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases();
+    status
+}
+
+unsafe fn lane_body_call_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // Static regions recover ordinary calls through their linked semantic operation.
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
@@ -15424,7 +15451,14 @@ unsafe fn lane_body_read_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip
 /// callee's plan, else the receiver its target allocates and, where its body does more
 /// than store fields, its activation, whose completion yields its returned object or the
 /// receiver. A returned construction takes the plan only. Its results are `lane_body_call`'s.
-pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    // SAFETY: the caller's contract.
+    let status = unsafe { lane_body_construct_record::<H>(vm, residual, context, call_pc) };
+    unsafe { self::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases();
+    status
+}
+
+unsafe fn lane_body_construct_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // As `lane_body_call`: static regions recover constructions through their semantic operation.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
     use super::compiled::LANE_CALL_COMPLETED;
