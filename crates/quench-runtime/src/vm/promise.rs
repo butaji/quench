@@ -893,9 +893,8 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         constructor: Value,
     ) -> Result<(Value, Value, Value), JsError> {
-        // The realm's %Promise% runs no guest code and reads nothing a guest can change (its
-        // `prototype` is fixed, its executor internal): the capability is a fresh promise and
-        // its resolving functions, which `construct_promise` would make through an executor.
+        // The realm's %Promise% runs no guest code (its `prototype` is fixed, its executor
+        // internal): the capability is a fresh promise and its resolving functions.
         if constructor == self.intrinsic_promise_constructor() {
             let promise = self.promise_object()?;
             let (resolve, reject) = self.promise_resolving_functions(promise);

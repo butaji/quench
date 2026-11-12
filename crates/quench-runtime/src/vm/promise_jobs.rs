@@ -287,27 +287,6 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    /// `Call(promiseResolve, constructor, « value »)`: the intrinsic `Promise.resolve`, which
-    /// the combinator read from its constructor once, is `PromiseResolve` itself, so it runs
-    /// without a native call's dispatch.
-    fn aggregate_element_resolve(
-        &mut self,
-        p: &ResidualProgram,
-        resolve: Value,
-        constructor: Value,
-        value: Value,
-    ) -> Result<Value, JsError> {
-        let intrinsic = self.heap.function(resolve).is_some_and(|function| {
-            matches!(function.kind, FunctionKind::Native(Native::PromiseResolve))
-                && function.env.is_null()
-                && function.realm == self.realm.globals
-        });
-        if intrinsic {
-            return self.promise_resolve_for_constructor(p, constructor, value);
-        }
-        self.call_value(p, resolve, constructor, &[value])
-    }
-
     fn reject_aggregate_input_completion(
         &mut self,
         p: &ResidualProgram,

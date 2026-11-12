@@ -132,6 +132,12 @@ pub(crate) fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) 
     }
     Err(error)
 }
+/// Whether a microtask queued now must carry async context: Node's
+/// `AsyncContextFrame.current() || enabledHooksExist()`, which `queueMicrotask` tests.
+pub(crate) fn microtask_carries_context(c: &mut Context<'_>) -> Result<bool, RootedError> {
+    let store = c.host_mut().shared_state().borrow().async_hooks.has_visible_store();
+    Ok(store || super::async_hook_registry_shared_vm::hooks_exist(c)?)
+}
 fn method(c: &mut Context<'_>, holder: RootId, name: &str, op: &str, data: RootId) -> Result<(), RootedError> {
     let value = c.host_function_named_with_data(crate::host::shared_vm::operation(op), name, data)?;
     c.define_named_data_property_rooted(holder, name, value, true, false, true)?;
