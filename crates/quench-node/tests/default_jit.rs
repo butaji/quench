@@ -45,14 +45,14 @@ fn run_flags(arguments: &[&str]) -> (bool, String) {
 
 #[test]
 fn the_jit_mode_flags_select_one_mode_and_the_old_flag_is_gone() {
-    for flag in ["--no-jit", "--b-jit", "--u-jit"] {
+    for flag in ["--no-jit", "--b-jit", "--q-jit", "--u-jit"] {
         assert!(run_flags(&[flag]).0, "{flag} runs");
     }
     assert!(!run_flags(&["--no-jit", "--b-jit"]).0, "two modes are an error");
     assert!(!run_flags(&["--b-jit", "--u-jit"]).0, "two modes are an error");
     assert!(!run_flags(&["--jit"]).0, "--jit is removed");
-    assert!(!run_flags(&["--q-jit"]).0, "--q-jit is reserved for the Cranelift quick mode and rejected");
     assert!(compiles(&["--b-jit"]) > 0, "--b-jit: the hot number loop runs from stencils");
+    assert!(compiles(&["--q-jit"]) > 0, "--q-jit: the hot loop runs quick-compiled code");
     assert!(compiles(&["--u-jit"]) > 0, "--u-jit: the hot loop runs compiled code");
 }
 
