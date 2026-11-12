@@ -13,7 +13,7 @@ impl Lowering<'_, '_> {
         window: crate::bytecode::RegisterWindow) -> ir::Value {
         let (payload, result) = (self.payload, self.result);
         self.direct_window(callee, window, top);
-        let descriptor = self.word_const(callee as *const DirectCallee as i64);
+        let descriptor = self.reloc(RelocKind::Descriptor, callee.target.function, callee as *const DirectCallee as u64);
         let entry = self.word_load(cell, dispatch_offset(std::mem::offset_of!(EntryCell, entry)));
         let body = self.word_load(cell, dispatch_offset(std::mem::offset_of!(EntryCell, body)));
         for (field, value) in [(std::mem::offset_of!(ShadowFrame, callee), descriptor), (std::mem::offset_of!(ShadowFrame, this), this), (std::mem::offset_of!(ShadowFrame, body), body), (std::mem::offset_of!(ShadowFrame, window), top)] {
@@ -24,7 +24,7 @@ impl Lowering<'_, '_> {
         self.word_store(next, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, native_top)));
         let signature = native_entry_signature(types::I64, self.builder.func.signature.call_conv);
         let signature = self.builder.import_signature(signature);
-        let captures = self.word_const(super::super::entry_cell::capture_word(callee.capture_values, callee.capture_len) as i64);
+        let captures = self.reloc(RelocKind::CaptureWords, callee.target.function, super::super::entry_cell::capture_word(callee.capture_values, callee.capture_len) as u64);
         let context = self.context;
         let status = self.word_call(signature, entry, &[context, this, captures, top, result]);
         self.word_store(top, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, native_top)));

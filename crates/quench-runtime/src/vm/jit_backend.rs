@@ -102,6 +102,21 @@ impl CompileLevel {
 /// largest bodies' tests). `unwind_info=false` measured nothing.
 const JS_JIT_OPT_LEVEL: &str = "speed";
 
+/// The address of the symbol `(namespace, key)`, a relocation the loader patches: the one form
+/// every position-independent constant takes (stencil holes, `lane_region::relocs`).
+#[cfg(any(feature = "jit", feature = "aot"))]
+pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, ty: cranelift_codegen::ir::Type, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
+    use cranelift_codegen::ir::{self, InstBuilder};
+    let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(namespace, key));
+    let symbol = builder.create_global_value(ir::GlobalValueData::Symbol {
+        name: ir::ExternalName::user(name),
+        offset: ir::immediates::Imm64::new(0),
+        colocated: false,
+        tls: false,
+    });
+    builder.ins().symbol_value(ty, symbol)
+}
+
 /// The executable-memory ISA of every JavaScript JIT tier.
 pub(super) fn target_isa() -> Option<Arc<TargetIsa>> {
     #[cfg(feature = "jit")]

@@ -48,7 +48,7 @@ impl Lowering<'_, '_> {
             // against the image's invalidation word like every other frozen fact.
             let exit = self.guard_exit(state, pc as u32);
             self.read_invalidation(state, exit);
-            let address = self.ins().iconst(types::I64, (base + index * std::mem::size_of::<Value>()) as i64);
+            let address = self.reloc(RelocKind::ConstantPool, index as u32, (base + index * std::mem::size_of::<Value>()) as u64);
             let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             self.define(state, instruction.result_register(), value,
                 RegisterFact::definition(super::super::facts::constant_type(constant), Representation::Tagged));
