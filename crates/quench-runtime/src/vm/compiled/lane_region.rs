@@ -38,6 +38,8 @@ mod int_ranges_tests;
 #[path = "lane_region/global_reads.rs"]
 mod global_reads;
 #[path = "lane_region/native_calls.rs"] mod native_calls;
+#[path = "lane_region/builtin_calls.rs"] mod builtin_calls;
+pub(in crate::vm::compiled) use native_calls::{emit_float_extreme, emit_float_unary, emit_int_multiply};
 #[path = "lane_region/stable.rs"]
 mod stable;
 #[path = "lane_region/polls.rs"]
@@ -1132,7 +1134,7 @@ fn retains_array_views(constants: &[crate::bytecode::Constant], instruction: Wid
 }
 
 /// Whether a loop may hold `instruction` natively: a read, an own-field or element store, or a
-/// call lowered as an intrinsic (`intrinsic`).
+/// call lowered as an intrinsic that changes no array (`native_calls::keeps_arrays`).
 fn stays_native(constants: &[Constant], instruction: WideInstruction, intrinsic: bool) -> bool {
     intrinsic || reads_only(constants, instruction) || stores_own(instruction) || stores_element(instruction)
 }
@@ -1156,7 +1158,7 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
         if (entries != 1 && !entry_header) || side
             || (header + 1..=back).contains(&start)
-            || !body.iter().enumerate().all(|(offset, candidate)| stays_native(constants, *candidate, intrinsics[header + offset].is_some())) { continue }
+            || !body.iter().enumerate().all(|(offset, candidate)| stays_native(constants, *candidate, native_calls::keeps_arrays(intrinsics, header + offset))) { continue }
         loops.push((header, back));
     }
     loops
@@ -4313,8 +4315,9 @@ impl Lowering<'_, '_> {
     }
 
     /// The `length` read through `read` of the value `register` holds, as an int32: a direct
-    /// array's from its record (`emit_array_length_read`), any other's the VM's read, which
-    /// leaves through `exit` where it misses or is not an int32.
+    /// array's from its record (`emit_array_length_read`), a flat string's from its own
+    /// (`string_length`), any other's the VM's read, which leaves through `exit` where it
+    /// misses or is not an int32.
     fn array_length(&mut self, state: &mut State, register: Register, read: (Atom, u16), exit: ir::Block) -> ir::Value {
         let base = self.tagged(state, register);
         let (generic, join) = (self.builder.create_block(), self.builder.create_block());
@@ -4323,6 +4326,11 @@ impl Lowering<'_, '_> {
         let native = super::emit_array_length_read(&mut self.builder, self.payload, base, generic);
         self.ins().jump(join, &[ir::BlockArg::Value(native)]);
         self.builder.switch_to_block(generic);
+        let probe = self.builder.create_block();
+        self.builder.set_cold_block(probe);
+        let string = self.string_length(base, probe);
+        self.ins().jump(join, &[ir::BlockArg::Value(string)]);
+        self.builder.switch_to_block(probe);
         let value = self.field_probe(state, FieldOwner::Temporary, base, read, exit);
         let integer = is_int_tagged(&mut self.builder, value);
         emit_js_guard(&mut self.builder, integer, exit);

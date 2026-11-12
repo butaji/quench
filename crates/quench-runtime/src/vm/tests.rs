@@ -25505,3 +25505,75 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
     assert_eq!(compiled.native_entries(), 1, "the shared adapter must enter once");
     assert_eq!(compiled.specialized_guard_misses(), 0, "interrupts are native exits, not entry guard misses");
 }
+
+#[test]
+fn lane_builtin_rows_keep_builtin_semantics() {
+    // The staged builtin rows (`staged::builtins`, `staged::strings`) run in hot functions of
+    // the interpreter's lane and its native body alike: `charCodeAt`, `charAt`, `length`,
+    // `push`, `pop` and `Number.isInteger`, and the cases a row leaves for the native: ropes,
+    // slices, wide strings, odd indexes, frozen and sealed arrays, holes, shared backings,
+    // an index on a prototype, array-likes, and a replaced method. Expected value is Node's.
+    let source = r#"
+      var out = [];
+      function code(s, i) { return s.charCodeAt(i); }
+      function chr(s, i) { return s.charAt(i); }
+      function len(s) { return s.length; }
+      function push(a, v) { return a.push(v); }
+      function pop(a) { return a.pop(); }
+      function integer(x) { return Number.isInteger(x); }
+      function show(v) { return Object.is(v, -0) ? "-0" : String(v); }
+      var narrow = "hello world, this string is long enough to leave the inline form";
+      var wide = "h€llo\ud800";
+      var rope = "ab"; for (var k = 0; k < 40; k++) rope = rope + "cd" + k;
+      var sum = 0, i;
+      for (i = 0; i < 400; i++) {
+        sum += code(narrow, i % 70) | 0;
+        sum += code(wide, i % 8) | 0;
+        sum += chr(narrow, i % 70).length + len(narrow) + len(wide);
+        sum += integer(i) + integer(i + 0.5) + integer(i / 2);
+      }
+      out.push(sum);
+      var indexes = [0, 1, 5, -1, 1000, 1.5, NaN, "2", undefined, null, true, 2147483647, -2147483648, 4294967296, -0];
+      for (i = 0; i < indexes.length; i++) {
+        out.push(show(code(narrow, indexes[i])), show(code(wide, indexes[i])), JSON.stringify(chr(narrow, indexes[i])), JSON.stringify(chr(wide, indexes[i])), show(code(rope, indexes[i])), chr(rope, indexes[i]));
+      }
+      out.push(len(rope), len("") , len(wide), len(rope.slice(3, 50)), code(rope.slice(3, 50), 4), chr(rope.slice(3, 50), 2));
+      out.push(len({ length: 5 }), len([1, 2, 3]), len(function (a, b) {}));
+      var a = [1, 2];
+      for (i = 0; i < 300; i++) { push(a, i); if (i % 3) pop(a); }
+      out.push(a.length, a[a.length - 1], pop([]), pop([,]), pop([1, , ]), show(pop([0.5, -0])));
+      var frozen = Object.freeze([1, 2, 3]);
+      try { push(frozen, 4); } catch (e) { out.push(e.constructor.name); }
+      try { pop(frozen); } catch (e) { out.push(e.constructor.name); }
+      var sealed = Object.seal([1, 2]);
+      try { push(sealed, 4); } catch (e) { out.push(e.constructor.name); }
+      try { pop(sealed); } catch (e) { out.push(e.constructor.name); }
+      var held = [1, , 3]; out.push(push(held, 4), held.length, 1 in held);
+      var objects = []; for (i = 0; i < 5; i++) out.push(push(objects, { i: i }), push(objects, "s" + i), push(objects, i + 0.5));
+      out.push(objects.length, pop(objects).toString(), typeof pop(objects));
+      var shared = [1, 2, 3]; var copy = shared.slice(); push(copy, 9); out.push(shared.length, copy.length, pop(copy), pop(copy), shared.join());
+      Array.prototype[4] = "proto"; var inherit = [1, 2, 3, 4]; out.push(push(inherit, 5), inherit[4], inherit.length); delete Array.prototype[4];
+      var count = 0, stored = 2; var observed = { get length() { count++; return stored; }, set length(v) { stored = v; }, 0: 1, 1: 2, push: Array.prototype.push, pop: Array.prototype.pop };
+      out.push(push(observed, 7), pop(observed), count, stored);
+      var values = [0, -0, 1, 1.5, NaN, Infinity, -Infinity, 2147483647, 2147483648, 9007199254740992, 1e300, "1", null, undefined, true, {}, 5n];
+      for (i = 0; i < values.length; i++) out.push(integer(values[i]));
+      try { code(null, 0); } catch (e) { out.push(e.constructor.name); }
+      try { code({ charCodeAt: String.prototype.charCodeAt }, 0); out.push("object receiver"); } catch (e) { out.push(e.constructor.name); }
+      var savedCode = String.prototype.charCodeAt;
+      String.prototype.charCodeAt = function (i) { return "mine" + i; };
+      out.push(code("abc", 1));
+      String.prototype.charCodeAt = savedCode;
+      out.push(code("abc", 1));
+      var savedPush = Array.prototype.push;
+      Array.prototype.push = function (v) { return "mine" + v; };
+      out.push(push([], 1));
+      Array.prototype.push = savedPush;
+      out.push(push([], 1));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "lane_builtin_rows_keep_builtin_semantics.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"3268350|104|104|"h"|"h"|97|a|101|8364|"e"|"€"|98|b|32|55296|" "|"\ud800"|99|c|NaN|NaN|""|""|NaN||NaN|NaN|""|""|NaN||101|8364|"e"|"€"|98|b|104|104|"h"|"h"|97|a|108|108|"l"|"l"|99|c|104|104|"h"|"h"|97|a|104|104|"h"|"h"|97|a|101|8364|"e"|"€"|98|b|NaN|NaN|""|""|NaN||NaN|NaN|""|""|NaN||NaN|NaN|""|""|NaN||104|104|"h"|"h"|97|a|152|0|6|47|49|c|5|3|2|102|297||||-0|TypeError|TypeError|TypeError|TypeError|4|4|false|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|15|4.5|string|3|4|9|3|1,2,3|5|5|5|3|7|2|2|true|true|true|false|false|false|false|true|true|true|true|false|false|false|false|false|false|TypeError|object receiver|mine1|98|1"#]);
+}

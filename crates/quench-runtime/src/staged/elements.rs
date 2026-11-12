@@ -66,14 +66,29 @@ pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base:
 /// leaves at `miss`.
 #[inline(always)]
 pub(crate) fn writable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<()> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    unbarred_backing(stage, backing, ARRAY.frozen_mask, miss)
+}
+
+/// `writable_backing` of an array that is also extensible, which a change of its length
+/// (`push`, `pop`) needs: `Object::holds_ordinary_elements`' integrity bits are all clear.
+#[inline(always)]
+pub(crate) fn resizable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<()> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    unbarred_backing(stage, backing, ARRAY.integrity_mask, miss)
+}
+
+/// `backing` unshared, plain, and with none of the meta bits `barred`.
+#[inline(always)]
+fn unbarred_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, barred: u32, miss: S::Miss) -> Option<()> {
     use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
     let owners = stage.load_u32(Region::Elements.mutable(), backing.header, ARRAY.header_owners_offset as i32);
     let unique = stage.eq_imm(owners, 1u32);
     stage.guard(unique, miss)?;
     let meta = stage.load_u32(Region::Records.mutable(), backing.record, (ARRAY.object_offset + OBJECT.meta_offset) as i32);
-    let frozen = stage.and_imm(meta, u64::from(ARRAY.frozen_mask));
-    let unfrozen = stage.eq_imm(frozen, 0u32);
-    stage.guard(unfrozen, miss)?;
+    let held = stage.and_imm(meta, u64::from(barred));
+    let clear = stage.eq_imm(held, 0u32);
+    stage.guard(clear, miss)?;
     let payload = stage.load_u64(Region::Payload.mutable(), backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
     let plain = super::object::plain_payload(stage, payload);
     stage.guard(plain, miss)
@@ -129,7 +144,7 @@ pub(crate) fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S
 /// A backing's count of other values once a write added `added` and overwrote `removed`;
 /// `OTHERS_UNKNOWN` stays unknown. Subtracting first keeps an exact count from overflowing.
 #[inline(always)]
-fn recount<S: Stage>(stage: &mut S, others: S::Word, added: S::Word, removed: S::Word) -> S::Word {
+pub(super) fn recount<S: Stage>(stage: &mut S, others: S::Word, added: S::Word, removed: S::Word) -> S::Word {
     let removed_first = stage.sub(others, removed);
     let recounted = stage.add(removed_first, added);
     let unknown = stage.eq_imm(others, u64::from(crate::heap::OTHERS_UNKNOWN));
@@ -138,7 +153,7 @@ fn recount<S: Stage>(stage: &mut S, others: S::Word, added: S::Word, removed: S:
 
 /// One where `value` counts among a backing's others (it is no int32), else zero.
 #[inline(always)]
-fn other<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
+pub(super) fn other<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
     let tag = stage.and_imm(value, crate::value::ValueLayout::TAG_MASK);
     let int = stage.eq_imm(tag, crate::value::ValueLayout::INT_TAG);
     let (zero, one) = (stage.constant(0), stage.constant(1));

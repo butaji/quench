@@ -667,7 +667,9 @@ impl<H: Host> Vm<H> {
     /// (`Object::holds_ordinary_elements`) and whose prototypes hold no index
     /// (`chain_holds_no_index`, a held proof that a change to any of them retires): OrdinarySet
     /// of the index at its length defines a plain element there, and `length` grows by one,
-    /// so the steps are one append. `None` leaves any other call to `array_push_dense`.
+    /// so the steps are one append: in the backing's room by the staged row (`push_in_room`),
+    /// else through the heap, which copies a shared backing and logs a store the write
+    /// barrier needs. `None` leaves any other call to `array_push_dense`.
     #[inline(always)]
     pub(super) fn array_push_one(&mut self, this: Value, value: Value) -> Option<Value> {
         let object = self.heap.record_array(this)?;
@@ -676,21 +678,38 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
+        if let Some(grown) = self.push_in_room(this, value) {
+            return Some(grown);
+        }
         self.heap.push_array_element(this, value)?;
         Some(Value::length(length + 1))
+    }
+
+    /// The staged append (`staged::builtins::array_push_one`) of `value` to `array`, whose
+    /// backing it owns alone and has a slot for it, as a store the write barrier passes
+    /// without logging. A growth adds no payload then, so there is nothing to charge.
+    #[inline(always)]
+    fn push_in_room(&mut self, array: Value, value: Value) -> Option<Value> {
+        let records = self.heap.array_record_base()?;
+        let room = self.heap.record_array_store_mut_unlogged(array, value)?.elements().capacity();
+        crate::staged::builtins::concrete_array_push(records, array, room, value)
     }
 
     /// `pop()` of a direct array whose elements are ordinary and dense, as
     /// `array_push_one` admits it: an empty one answers `undefined`; one whose last element is
     /// present removes it, as the generic steps' Get, DeletePropertyOrThrow and `length` set
-    /// do. `None` for a hole, which its prototypes answer, and for any other receiver.
+    /// do: in place by the staged row (`pop_in_place`) where the array owns its backing, else
+    /// through the heap, which copies it first. `None` for a hole, which its prototypes
+    /// answer, and for any other receiver.
     #[inline(always)]
     pub(super) fn array_pop_one(&mut self, this: Value) -> Option<Value> {
-        let object = self.heap.record_array(this)?;
-        if !object.holds_ordinary_elements() {
+        if !self.heap.record_array(this)?.holds_ordinary_elements() {
             return None;
         }
-        match object.elements().last() {
+        if let Some(popped) = self.pop_in_place(this) {
+            return Some(popped);
+        }
+        match self.heap.record_array(this)?.elements().last() {
             None => Some(Value::UNDEFINED),
             Some(last) if last.is_deleted() => None,
             // Removing stores no reference, which the write barrier passes.
@@ -699,6 +718,15 @@ impl<H: Host> Vm<H> {
             )
             .pop(),
         }
+    }
+
+    /// The staged removal (`staged::builtins::array_pop`) of the last element of `array`,
+    /// which retires the proofs a shorter array falsifies first.
+    #[inline(always)]
+    fn pop_in_place(&mut self, array: Value) -> Option<Value> {
+        let records = self.heap.array_record_base()?;
+        self.heap.record_array(array)?.announce_shrinking();
+        crate::staged::builtins::concrete_array_pop(records, array)
     }
 
     /// `push` onto a dense array (`dense_array_length`) as one append, when each appended

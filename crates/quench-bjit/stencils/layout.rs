@@ -71,6 +71,7 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) header_owners_offset: usize,
     pub(crate) object_offset: usize,
     pub(crate) frozen_mask: u32,
+    pub(crate) integrity_mask: u32,
 }
 
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
@@ -84,6 +85,7 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     header_owners_offset: 0,
     object_offset: 0,
     frozen_mask: 2147483648,
+    integrity_mask: 3221225472,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

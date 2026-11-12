@@ -1,5 +1,6 @@
 use super::property_key::PropertyKey;
 use super::*;
+use crate::staged::math::FloatUnary;
 use num_bigint::{BigInt, Sign};
 
 const MINIMUM_SUBNORMAL_BIT_PATTERN: u64 = 1;
@@ -423,12 +424,12 @@ pub(super) fn global_number_predicate(native: Native, number: f64) -> Option<boo
 /// coerces its argument, so a non-Number answers `false`. `None` for any other native.
 pub(super) fn number_predicate(native: Native, value: Value) -> Option<bool> {
     let number = value.as_number();
-    let integral = |number: f64| number.is_finite() && number.fract() == 0.0;
+    let integral = || crate::staged::builtins::concrete_is_integral(value);
     Some(match native {
         Native::NumberIsNaN => number.is_some_and(f64::is_nan),
         Native::NumberIsFinite => number.is_some_and(f64::is_finite),
-        Native::NumberIsInteger => number.is_some_and(integral),
-        Native::NumberIsSafeInteger => number.is_some_and(|number| integral(number) && number.abs() <= MAX_SAFE_INTEGER),
+        Native::NumberIsInteger => integral(),
+        Native::NumberIsSafeInteger => integral() && number.is_some_and(|number| number.abs() <= MAX_SAFE_INTEGER),
         _ => return None,
     })
 }
@@ -567,35 +568,15 @@ pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
     let argument = |index: usize| values.get(index).copied().unwrap_or(f64::NAN);
     Some(match native {
         Native::MathMin | Native::MathMax => {
-            let min = native == Native::MathMin;
-            let mut result = if min { f64::INFINITY } else { f64::NEG_INFINITY };
-            for &number in values {
-                if number.is_nan() {
-                    return Some(f64::NAN);
-                }
-                // Signed zeros order as -0 < +0, which `f64::min`/`max` do not observe.
-                result = if number == 0.0 && result == 0.0 {
-                    // The minimum of zeros is -0 when either is; the maximum only when both are.
-                    let negative = if min {
-                        number.is_sign_negative() || result.is_sign_negative()
-                    } else {
-                        number.is_sign_negative() && result.is_sign_negative()
-                    };
-                    if negative { -0.0 } else { 0.0 }
-                } else if min {
-                    result.min(number)
-                } else {
-                    result.max(number)
-                };
-            }
-            result
+            let maximum = native == Native::MathMax;
+            let start = if maximum { f64::NEG_INFINITY } else { f64::INFINITY };
+            values.iter().fold(start, |result, &number| crate::staged::math::float_extreme(maximum, result, number))
         }
         Native::MathPow => super::operations::exponentiate(argument(0), argument(1)),
         Native::MathAtan2 => super::fdlibm_math::atan2(argument(0), argument(1)),
         Native::MathImul => {
-            let product = (crate::value::number_to_u32(argument(0)) as i32)
-                .wrapping_mul(crate::value::number_to_u32(argument(1)) as i32);
-            f64::from(product)
+            let [left, right] = [argument(0), argument(1)].map(|number| crate::value::number_to_u32(number) as i32);
+            f64::from(crate::staged::math::int_multiply(left, right))
         }
         _ => return None,
     })
@@ -650,25 +631,12 @@ pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
 /// and simple operations do not pay the stack setup of more complex operations.
 fn math_unary_operation(native: Native) -> Option<fn(f64) -> f64> {
     Some(match native {
-        Native::MathFloor => f64::floor,
-        Native::MathAbs => f64::abs,
-        Native::MathCeil => f64::ceil,
-        Native::MathRound => |value| {
-            if value.is_nan() || value == 0.0 || value.is_infinite() {
-                value
-            } else if (-0.5..0.0).contains(&value) {
-                -0.0
-            } else {
-                let floor = value.floor();
-                if value - floor < 0.5 {
-                    floor
-                } else {
-                    floor + 1.0
-                }
-            }
-        },
-        Native::MathTrunc => f64::trunc,
-        Native::MathSqrt => f64::sqrt,
+        Native::MathFloor => |value| crate::staged::math::float_unary(FloatUnary::Floor, value),
+        Native::MathAbs => |value| crate::staged::math::float_unary(FloatUnary::Abs, value),
+        Native::MathCeil => |value| crate::staged::math::float_unary(FloatUnary::Ceil, value),
+        Native::MathRound => |value| crate::staged::math::float_unary(FloatUnary::Round, value),
+        Native::MathTrunc => |value| crate::staged::math::float_unary(FloatUnary::Trunc, value),
+        Native::MathSqrt => |value| crate::staged::math::float_unary(FloatUnary::Sqrt, value),
         Native::MathAcos => f64::acos,
         Native::MathAsin => f64::asin,
         Native::MathAtan => super::fdlibm_math::atan,
@@ -682,7 +650,7 @@ fn math_unary_operation(native: Native) -> Option<fn(f64) -> f64> {
         Native::MathCbrt => super::fdlibm_math::cbrt,
         Native::MathCosh => f64::cosh,
         Native::MathExpm1 => f64::exp_m1,
-        Native::MathFround => |value| f64::from(value as f32),
+        Native::MathFround => |value| crate::staged::math::float_unary(FloatUnary::Fround, value),
         Native::MathLog10 => f64::log10,
         Native::MathLog1p => f64::ln_1p,
         Native::MathLog2 => f64::log2,

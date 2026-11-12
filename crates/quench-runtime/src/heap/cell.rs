@@ -1620,10 +1620,18 @@ impl ArrayObject {
     /// storage proofs retire first (`retire_array_storage_proofs`).
     #[inline(always)]
     pub(crate) fn elements_mut(&mut self) -> &mut super::ArrayElements {
+        self.announce_shrinking();
+        &mut self.elements
+    }
+
+    /// What a change to this array's elements that a proof may not bound retires: the proofs
+    /// that read a prototype's elements, and the running lane's array storage proofs. A change
+    /// the staged `array_pop` makes in place announces itself here, as `elements_mut` does.
+    #[inline(always)]
+    pub(crate) fn announce_shrinking(&self) {
         // A prototype's elements answer index reads of the objects it is the prototype of.
         self.object.note_prototype_elements_change();
         super::array_proofs::retire_array_storage_proofs();
-        &mut self.elements
     }
 
     /// Whether a dead array owns anything its drop frees: extras, or an element allocation

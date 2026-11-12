@@ -50,6 +50,8 @@ impl Stage for Trace {
     fn constant(&mut self, bits: u64) -> u32 { self.word(format!("constant {bits:#x}")) }
     fn load_u32(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_u32 w{base}+{offset}")) }
     fn load_u64(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_u64 w{base}+{offset}")) }
+    fn load_u8(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_u8 w{base}+{offset}")) }
+    fn load_u16(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_u16 w{base}+{offset}")) }
     fn load_site(&mut self, _at: Access, base: u32, offset: Imm) -> u32 {
         self.word(format!("load_site w{base}+{}", Self::operand(offset)))
     }

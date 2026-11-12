@@ -20,9 +20,11 @@ pub(crate) enum GlobalRead {
     /// The lane's own read at run time (`LaneHelper::GlobalGet`).
     Dynamic,
     /// At a field read of a Stable global (`Math.imul`): the member's value when the body was
-    /// compiled, the native function `native`. A call of the register it defines runs the
-    /// native's operation inline while the callee is still that value (`Lowering::native_call`).
-    NativeMember { value: Value, native: super::Native },
+    /// compiled, the native function `native`, held by the watched prototype of exact shape
+    /// `holder`, a code dependency (`StableUses::holders`) that keeps the function's identity
+    /// from being recycled. A call of the register it defines runs the native's operation
+    /// inline while the callee is still that value (`Lowering::intrinsic_call`).
+    NativeMember { value: Value, native: super::Native, holder: u32 },
 }
 
 /// What each by-name global read of a function or unit takes, by PC: a flat table, empty at

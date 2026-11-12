@@ -56,6 +56,16 @@ impl Stage for Concrete {
         unsafe { ((base as *const u8).offset(offset as isize) as *const u64).read() }
     }
     #[inline(always)]
+    fn load_u8(&mut self, _at: Access, base: u64, offset: i32) -> u64 {
+        // SAFETY: as `load_u32`.
+        u64::from(unsafe { ((base as *const u8).offset(offset as isize)).read() })
+    }
+    #[inline(always)]
+    fn load_u16(&mut self, _at: Access, base: u64, offset: i32) -> u64 {
+        // SAFETY: as `load_u32`; a wide string's units are 2-byte aligned.
+        u64::from(unsafe { ((base as *const u8).offset(offset as isize) as *const u16).read() })
+    }
+    #[inline(always)]
     fn load_table(&mut self, at: Access, address: u64) -> u64 { self.load_u64(at, address, 0) }
     #[inline(always)]
     fn add(&mut self, a: u64, b: u64) -> u64 { a.wrapping_add(b) }

@@ -1841,6 +1841,8 @@ lane_helper_inventory! { H;
     StringConcat => super::dispatch_fast::lane_body_string_concat::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
+    /// The array storage proofs a shorter array falsifies (`lane_retire_array_proofs`).
+    RetireArrayProofs => lane_retire_array_proofs,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
@@ -6624,6 +6626,12 @@ struct JsStepDispatch {
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
     allocated: usize,
     collect_at: usize,
+    /// The string record reservation, whose records' flat units a string row reads in place
+    /// (`staged::strings::flat_string`), and the table of one-unit ASCII strings (`charAt`'s
+    /// results); zero where absent. A callout may reserve or empty either, so each is read
+    /// again after one (`refresh_object_bases`).
+    string_record_base: usize,
+    ascii_unit_strings: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -7000,6 +7008,13 @@ unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u6
     u64::from(vm.try_replace_record_element(object, key, value) || vm.try_add_record_element(object, key, value))
 }
 
+/// Retires the running lane's array storage proofs (`retire_array_storage_proofs`), which a
+/// native `pop` calls once it has shortened an array, as a heap change does.
+unsafe extern "C" fn lane_retire_array_proofs(_vm: u64, _residual: u64) -> u64 {
+    crate::heap::retire_array_storage_proofs();
+    0
+}
+
 /// A lane loop's room for appending to the dense array `object` (`Vm::reserve_native_array_append`):
 /// the room its backing holds, or zero, which leaves the append to `lane_index_set`.
 unsafe extern "C" fn lane_array_append_room<H: Host>(vm: u64, _residual: u64, object: u64) -> u64 {
@@ -7357,6 +7372,8 @@ impl LaneFrame {
                 capture_values: std::ptr::null(),
                 capture_len: 0,
                 array_record_base: 0,
+                string_record_base: 0,
+                ascii_unit_strings: 0,
                 object_record_base: 0,
                 function_record_base: 0,
                 object_mark_blocks: 0,
@@ -7503,7 +7520,7 @@ impl JsNativeActivation {
             local_count: activation.locals.len(),
             native_pcs: std::ptr::null(), native_pc_count: 0, fixed_this_slot: std::ptr::null(),
             capture_values: std::ptr::null(), capture_len: 0,
-            array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
+            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
             field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
             stores_specialized: 0,
@@ -7564,6 +7581,8 @@ impl JsStepDispatch {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
+        self.string_record_base = vm.heap.string_record_base().map_or(0, |base| base as usize);
+        self.ascii_unit_strings = vm.heap.ascii_unit_strings_base().map_or(0, |base| base as usize);
         self.epoch = vm.heap.collection_epoch();
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
