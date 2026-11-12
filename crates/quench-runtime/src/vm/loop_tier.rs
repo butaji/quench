@@ -26,6 +26,9 @@ pub(super) struct LoopTier {
     widened: Vec<usize>,
     /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
     abandoned: Vec<usize>,
+    /// The cache site the latest run left at, which the interpreter then ran and whose entry
+    /// the next entry re-patches (`lane_loop_repatch`).
+    miss: Option<u32>,
 }
 
 impl LoopTier {
@@ -47,6 +50,11 @@ impl LoopTier {
     /// compaction renumbers.
     pub(super) fn retire_named_shapes(&self) {
         if let Some(pending) = &self.pending { pending.retire_named_shapes(); }
+    }
+
+    /// Notes that the code left at the field access of `pc`.
+    pub(super) fn missed_at(&mut self, pc: u32) {
+        self.miss = Some(pc);
     }
 
     /// Counts a run of the code that left at `pc`. An operation or element read left `widen_after_leaves`
@@ -139,6 +147,56 @@ impl LoopTier {
             publication.retire();
         }
         self.code = Some(publication);
+    }
+}
+
+/// A named field access: its cache site and atom, and whether it reads.
+struct FieldAccess {
+    site: u16,
+    atom: crate::bytecode::Atom,
+    read: bool,
+}
+
+impl FieldAccess {
+    fn of(instruction: &WideInstruction) -> Option<Self> {
+        let op = instruction.op();
+        if matches!(op.class(), Class::GetField) {
+            let Some(crate::bytecode::FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup() else { return None };
+            return Some(Self { site: cache_site, atom, read: true });
+        }
+        op.is_field_store().then(|| Self { site: instruction.cache_site_index(), atom: instruction.atom_index(), read: false })
+    }
+}
+
+/// Answers the miss the code left at (`LoopTier::missed_at`), which the interpreter has run:
+/// the site's entry is re-patched to the shape the interpreter's cache holds now, so the loop
+/// runs natively again. A leave that patched nothing counts toward widening the read
+/// (`LoopTier::left_at`).
+#[inline(always)]
+pub(super) fn lane_loop_repatch<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite) {
+    if let Some(pc) = site.tier.borrow_mut().miss.take() {
+        repatch_miss(cx, site, pc);
+    }
+}
+
+#[cold]
+fn repatch_miss<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
+    // SAFETY: the lane's VM is live, and nothing borrows it across the call.
+    let machine = unsafe { vm(cx) };
+    let access = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
+        let body = program.function(site.function() as usize);
+        body.code.get(pc as usize).and_then(|packed| FieldAccess::of(&decoded_instruction(body, *packed)))
+    });
+    let Some(access) = access else { return };
+    let mut tier = site.tier.borrow_mut();
+    let patched = tier.code.clone().and_then(|publication| {
+        let region = publication.lease()?;
+        let watch: Rc<dyn crate::code_dependencies::DependentCode> = publication;
+        let load = machine.native_field_load_descriptor(access.site, None)?;
+        Some(region.repatch(pc, access.atom, &load, &watch, &mut machine.heap))
+    });
+    if patched != Some(super::super::compiled::base_region::Repatch::Patched) && access.read {
+        tier.left_at(pc, false);
     }
 }
 

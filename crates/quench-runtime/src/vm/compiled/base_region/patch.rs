@@ -30,12 +30,15 @@ pub(super) struct SiteEntry {
     pc: u32,
     store: bool,
     ty: Type,
+    /// The shape the entry names now: a re-patch to it is no change (a leave that was no shape
+    /// miss, a type guard's, say, must not use a patch).
+    shape: u32,
 }
 
 impl SiteEntry {
     /// The entry of `load` at `pc`, where it is the chain's only one and an own field.
     pub(super) fn of(pc: u32, store: bool, load: &NativeFieldLoad, chain: usize) -> Option<Self> {
-        (chain == 1 && load.holder.is_none()).then_some(Self { pc, store, ty: load.ty })
+        (chain == 1 && load.holder.is_none()).then_some(Self { pc, store, ty: load.ty, shape: load.shape })
     }
 
     fn operands(&self) -> EntryOperands {
@@ -81,7 +84,7 @@ pub(in crate::vm) enum Repatch {
     /// The site has used its patches (`MAX_REPATCHES_PER_SITE`), now or earlier.
     Generic,
     /// The site or load is not one a patch keeps valid: no site there, a chain, a holder read,
-    /// another slot type, or a dependency that no longer holds.
+    /// another slot type, the shape it names already, or a dependency that no longer holds.
     Declined,
 }
 
@@ -121,7 +124,7 @@ impl CacheSites {
             return Repatch::Generic;
         }
         let takes = if site.entry.store { takes_set(load) } else { takes_get(load) };
-        if !takes || load.holder.is_some() || load.ty != site.entry.ty || !subscribe() {
+        if !takes || load.holder.is_some() || load.ty != site.entry.ty || load.shape == site.entry.shape || !subscribe() {
             return Repatch::Declined;
         }
         let operands = site.entry.operands();
@@ -129,6 +132,7 @@ impl CacheSites {
         for (fields, operand) in [(&site.fields.shape, operands.shape), (&site.fields.slot, operands.slot)] {
             fields.iter().for_each(|field| write(field.offset as usize, field.value(holes[operand] as u32)));
         }
+        site.entry.shape = load.shape;
         site.state = site.state.after_patch();
         Repatch::Patched
     }
@@ -215,6 +219,7 @@ mod tests {
         assert_eq!(sites.repatch(PC, 0, &widened, || true, |_, _| writes += 1), Repatch::Declined);
         assert_eq!(sites.repatch(PC, 0, &load(6, 1), || false, |_, _| writes += 1), Repatch::Declined);
         assert_eq!(sites.repatch(PC + 1, 0, &load(6, 1), || true, |_, _| writes += 1), Repatch::Declined);
+        assert_eq!(sites.repatch(PC, 0, &load(5, 1), || true, |_, _| writes += 1), Repatch::Declined);
         assert_eq!((writes, sites.remaining(PC)), (0, MAX_REPATCHES_PER_SITE));
     }
 }

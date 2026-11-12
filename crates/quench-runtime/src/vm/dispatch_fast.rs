@@ -8061,6 +8061,7 @@ fn lane_loop_native<H: Host>(
     if site.tier.borrow_mut().awaits_code(&mut unsafe { vm(cx) }.heap, site) {
         return LoopAttempt::Declined;
     }
+    loop_tier::lane_loop_repatch(cx, site);
     let mut entry = super::compiled::LoopEntry::new();
     let Some(views) = lane_loop_entry(cx, r, region, &mut entry) else {
         site.declines.set(site.declines.get() + 1);
@@ -8100,10 +8101,14 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
         body.code.get(pc as usize).and_then(|packed| {
             let op = decoded_instruction(body, *packed).op();
             super::compiled::base_region::leave(site.function(), pc, op);
+            // A BaseJIT region's cache miss: the interpreter's run of the access re-patches the
+            // entry at the next entry (`lane_loop_repatch`), which counts the leave if it patches nothing.
+            if crate::jit_mode::base_regions() && (matches!(op.class(), Class::GetField) || op.is_field_store()) {
+                site.tier.borrow_mut().missed_at(pc);
+                return None;
+            }
             (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
-                || matches!(op.class(), Class::LoadCapture)
-                // A BaseJIT region also holds a loaded field as an int32 until it leaves there.
-                || (crate::jit_mode::base_regions() && matches!(op.class(), Class::GetField))).then(|| op.is_get_index())
+                || matches!(op.class(), Class::LoadCapture)).then(|| op.is_get_index())
         })
     });
     if let Some(read) = counted { site.tier.borrow_mut().left_at(pc, read); }

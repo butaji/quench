@@ -22,7 +22,7 @@ mod specialize;
 mod workspace;
 use dispatch::Dispatch;
 use native::NativeSlot;
-use specialize::{step, Concrete, Cursor, Step};
+use specialize::{replay, step, Concrete, Cursor, Replay, Step};
 use workspace::{AnchoredRun, ClassRun, anchored_run_of, class_run_of};
 
 use super::{
@@ -1571,53 +1571,22 @@ impl Program {
         }
     }
 
-    /// Backtracks to the latest choice of this run: restores registers on the way, and at the
-    /// run's barrier a search moves on to its next start while a run of a body fails.
+    /// Backtracks to the latest choice of this run (`specialize::replay`): at the run's barrier
+    /// a search moves on to its next start while a run of a body fails.
     fn resume<T: Text + ?Sized>(&self, stage: &mut Concrete<'_, T>, search: Option<Search>, start: &mut usize) -> Option<Cursor> {
-        let text = stage.text;
         loop {
-            match stage.stack.pop() {
-                None | Some(Frame::Barrier) => {
-                    let next = search.and_then(|search| self.next_start(text, *start + 1, search.last))?;
+            match replay(stage) {
+                Replay::Undone => {}
+                Replay::Resume(at) => return Some(at),
+                Replay::Exhausted => {
+                    let next = search.and_then(|search| self.next_start(stage.text, *start + 1, search.last))?;
                     stage.stack.push(Frame::Barrier);
                     *start = next;
-                    let (pc, position) = self.entry(text, next);
+                    let (pc, position) = self.entry(stage.text, next);
                     return Some(Cursor::at(pc, position));
-                }
-                Some(frame @ (Frame::Restore { .. } | Frame::RestoreCapture { .. })) => restore(stage.registers, frame),
-                Some(Frame::Choice { pc, position }) => return Some(Cursor::at(pc, position)),
-                Some(Frame::Greedy { pc, floor, position }) => {
-                    let at = position - 1;
-                    if at > floor {
-                        stage.stack.push(Frame::Greedy { pc, floor, position: at });
-                    }
-                    return Some(Cursor::at(pc, at));
-                }
-                Some(Frame::Lazy { pc, test, ceiling, position }) => {
-                    if !self.test(test, text.unit(position)) {
-                        continue;
-                    }
-                    let at = position + 1;
-                    if at < ceiling {
-                        stage.stack.push(Frame::Lazy { pc, test, ceiling, position: at });
-                    }
-                    return Some(Cursor::at(pc, at));
                 }
             }
         }
-    }
-}
-
-/// The registers a restore entry puts back; any other entry restores nothing.
-fn restore(registers: &mut [usize], frame: Frame) {
-    match frame {
-        Frame::Restore { register, value } => registers[register as usize] = value,
-        Frame::RestoreCapture { capture, start, end } => {
-            let bound = 2 * capture as usize;
-            registers[bound] = start;
-            registers[bound + 1] = end;
-        }
-        _ => {}
     }
 }
 

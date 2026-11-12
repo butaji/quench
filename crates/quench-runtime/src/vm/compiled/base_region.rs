@@ -32,6 +32,8 @@ use cache::*;
 use decode::*;
 use link::*;
 pub(in crate::vm) use patch::{CacheSites, Repatch};
+#[cfg(test)]
+pub(in crate::vm) use patch::MAX_REPATCHES_PER_SITE;
 use patch::SiteEntry;
 use plan::*;
 use repr::*;

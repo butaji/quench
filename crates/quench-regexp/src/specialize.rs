@@ -24,8 +24,8 @@
 //! operations below are exactly the dynamic accesses; a static operand is an argument, so an
 //! emitting stage sees it as a constant and folds it.
 //!
-//! Not yet here, and the next steps in order: the run loop's backtracking (`Frame` replay, which
-//! is the same machine read backwards), the search driver (`next_start`, prefix scan) as the
+//! Backtracking is here too (`replay`, the same machine read backwards), so the whole matcher
+//! runs on the stage. Not yet here, and the next steps in order: the search driver (`next_start`, prefix scan) as the
 //! outer loop of the specialized code, and the lookahead body, which `Stage::look` runs as a
 //! nested interpreter until an emitting stage inlines it. Matching behaviour is unchanged.
 
@@ -89,6 +89,8 @@ pub(super) trait Stage {
     /// Writes a register with no restore entry.
     fn assign(&mut self, register: u32, value: usize);
     fn push(&mut self, frame: Frame);
+    /// The latest backtrack entry, if the stack holds one.
+    fn pop(&mut self) -> Option<Frame>;
     /// Whether the body behind guard `guard` can start at `position`.
     fn admits(&self, guard: u32, position: usize) -> bool;
     /// The target of dispatch table `table` for the unit at `position`, its other branches
@@ -117,6 +119,62 @@ fn set_capture<S: Stage>(stage: &mut S, capture: u32, (start, end): (usize, usiz
     stage.push(Frame::RestoreCapture { capture, start: old_start, end: old_end });
     stage.assign(bound, start);
     stage.assign(bound + 1, end);
+}
+
+/// Puts back the registers a restore entry saved; any other entry restores nothing.
+#[inline(always)]
+fn undo<S: Stage>(stage: &mut S, frame: Frame) {
+    match frame {
+        Frame::Restore { register, value } => stage.assign(register, value),
+        Frame::RestoreCapture { capture, start, end } => {
+            stage.assign(2 * capture, start);
+            stage.assign(2 * capture + 1, end);
+        }
+        _ => {}
+    }
+}
+
+/// What backtracking one entry of the stack comes to.
+#[derive(Clone, Copy)]
+pub(super) enum Replay {
+    /// The entry offers a choice: the run continues at the cursor.
+    Resume(Cursor),
+    /// The entry was a restore, or a lazy repeat that cannot take another unit: pop on.
+    Undone,
+    /// The run's bottom: no choice is left (a barrier, or an empty stack).
+    Exhausted,
+}
+
+/// Backtracks one entry: the same machine read backwards, with each entry's meaning written
+/// once over the stage. A greedy or lazy repeat that may still give or take a unit stays on the
+/// stack, one position on.
+#[inline(always)]
+pub(super) fn replay<S: Stage>(stage: &mut S) -> Replay {
+    match stage.pop() {
+        None | Some(Frame::Barrier) => Replay::Exhausted,
+        Some(frame @ (Frame::Restore { .. } | Frame::RestoreCapture { .. })) => {
+            undo(stage, frame);
+            Replay::Undone
+        }
+        Some(Frame::Choice { pc, position }) => Replay::Resume(Cursor::at(pc, position)),
+        Some(Frame::Greedy { pc, floor, position }) => {
+            let at = position - 1;
+            if at > floor {
+                stage.push(Frame::Greedy { pc, floor, position: at });
+            }
+            Replay::Resume(Cursor::at(pc, at))
+        }
+        Some(Frame::Lazy { pc, test, ceiling, position }) => {
+            if !stage.test(test, stage.unit(position)) {
+                return Replay::Undone;
+            }
+            let at = position + 1;
+            if at < ceiling {
+                stage.push(Frame::Lazy { pc, test, ceiling, position: at });
+            }
+            Replay::Resume(Cursor::at(pc, at))
+        }
+    }
 }
 
 /// The meaning of `inst` at `at`.
@@ -304,6 +362,11 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     }
 
     #[inline(always)]
+    fn pop(&mut self) -> Option<Frame> {
+        self.stack.pop()
+    }
+
+    #[inline(always)]
     fn admits(&self, guard: u32, position: usize) -> bool {
         self.program.guards[guard as usize].admits(self.text, position)
     }
@@ -336,7 +399,7 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
         } else if found {
             while self.stack.len() > base {
                 if let Some(frame) = self.stack.pop() {
-                    super::restore(self.registers, frame);
+                    undo(self, frame);
                 }
             }
         }
