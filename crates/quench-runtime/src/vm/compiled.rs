@@ -6567,16 +6567,20 @@ struct JsStepDispatch {
     lane_context: usize,
     /// The record a lane body's completion runs (`LANE_BODY_RETURNED`).
     returned_pc: usize,
-    /// A lane run's free lane-stack values, where a direct call places its callee's
-    /// registers (`DirectCallee`): the next and the end of the stack's capacity.
+    /// A frameless entry's free windows and shadow records (`frameless`): the next and the end
+    /// of each stack.
     native_top: usize,
     native_end: usize,
-    /// The next free and the end of the run's shadow frames (`LaneFrame::shadow`).
     shadow_top: usize,
     shadow_end: usize,
-    /// The first native frame's address (the lane stack's activations' end); `shadow_top`
-    /// equals it while no native frame lives.
-    shadow_base: usize,
+    /// A lane run's lane stack, where a direct call places its callee's registers and its
+    /// native frame (`DirectCallee`): the words that hold the values' and the activations'
+    /// tops, which the VM's `LaneStack` owns (`Vm::lane_stack_words`), the end of the values'
+    /// capacity, and the end of the frames the run nests (`SHADOW_FRAMES`).
+    lane_values_top: usize,
+    lane_values_end: usize,
+    lane_activations_top: usize,
+    lane_frames_end: usize,
     /// The VM's cached read (`general_field_get`), which a read its site's primary row does
     /// not answer asks before the exact step, then its cached user getter (`general_getter`).
     field_get: usize, field_getter: usize,
@@ -7160,6 +7164,8 @@ impl<H: Host> Vm<H> {
                 (*frame).scratch.resize(method.scratch_width, Value::UNDEFINED);
             }
             let dispatch = &raw mut (*frame).dispatch;
+            // A run whose lane may not make the frames' activations makes no direct call.
+            let words = self.lane_stack_words(if direct_calls { SHADOW_FRAMES } else { 0 });
             LaneEntry {
                 program_id: program,
                 field_entries: self.program_field_entries(program).unwrap_or(0),
@@ -7167,6 +7173,7 @@ impl<H: Host> Vm<H> {
                 native_registers: registers,
                 native_locals: super::dispatch_fast::frame_locals::<H>(lane_context),
                 residual: residual as *const ResidualProgram as usize,
+                frames_end: words.frames_end,
             }
             .install(&mut *dispatch);
             (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
@@ -7175,14 +7182,11 @@ impl<H: Host> Vm<H> {
             (*dispatch).slots_tracked = usize::from(self.heap.tracks_slot_values());
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);
-            // A run starts with no native frames; its direct calls place their callees past
-            // the stack's values.
-            let (top, end, activations, shadow) = self.lane_stack_spare();
-            ((*dispatch).native_top, (*dispatch).native_end) = (top.addr(), end.addr());
-            // A run whose lane may not make the frames' activations makes no direct call.
-            let frames = if direct_calls { SHADOW_FRAMES.min(activations) } else { 0 };
-            (*dispatch).shadow_base = shadow.addr();
-            ((*dispatch).shadow_top, (*dispatch).shadow_end) = (shadow.addr(), shadow.add(frames).addr());
+            // A run starts with no native frames; its direct calls push their callees' windows
+            // and frames onto the lane stack's own tops, which the dispatch points at.
+            (*dispatch).lane_values_top = words.values_top;
+            (*dispatch).lane_values_end = words.values_end;
+            (*dispatch).lane_activations_top = words.activations_top;
             let context = &raw mut (*frame).context;
             (*context).adapter_payload = dispatch.cast();
             (*context).interrupt = self.execution_interrupt.atomic_flag() as *const _;
@@ -7210,49 +7214,6 @@ impl<H: Host> Vm<H> {
             return LaneExit::Returned { pc, value: Value::from_bits(word) };
         }
         Self::lane_method_exit(status, word)
-    }
-
-    /// The native frames the last run left inside, outermost first, which the lane now
-    /// materializes (`ShadowFrame`); none once taken.
-    pub(super) fn take_shadow_frames() -> ShadowFrames {
-        let frame = lane_frame();
-        // SAFETY: no lane body runs while the lane reads the frame; the frames sit past the
-        // activations' end, which the lane's own pushes (materialization) overwrite in
-        // order, each after the frame it replaces was read (`ShadowFrames::get`).
-        unsafe {
-            let base = (*frame).dispatch.shadow_base as *const Activation;
-            let top = (*frame).dispatch.shadow_top as *const Activation;
-            let count = if top.is_null() { 0 } else { top.offset_from(base) as usize };
-            (*frame).dispatch.shadow_top = base.addr();
-            ShadowFrames { base, count }
-        }
-    }
-
-    /// The callee of the innermost native frame of the running body (`ShadowFrame`): the
-    /// body a helper runs for when it runs as a direct callee; `None` in the activation's own.
-    pub(super) fn innermost_direct_callee() -> Option<&'static DirectCallee> {
-        Self::innermost_shadow_frame().map(|frame| unsafe { &*frame.callee })
-    }
-
-    /// The innermost native frame of the running body (`ShadowFrame`), whose window and callee
-    /// are the registers and function a helper called from that body (`dispatch_fast::lane_body_record`)
-    /// reads; `None` in the activation's own.
-    pub(super) fn innermost_shadow_frame() -> Option<ShadowFrame> {
-        let frame = lane_frame();
-        // SAFETY: as `lane_shadow_active`.
-        unsafe {
-            let (base, top) = ((*frame).dispatch.shadow_base as *const Activation, (*frame).dispatch.shadow_top as *const Activation);
-            (!top.is_null() && top != base).then(|| (*top.sub(1)).native)
-        }
-    }
-
-    /// Whether a running body has native frames below the innermost: a helper's activation
-    /// would sit under them, so a call from one takes the body's exit instead
-    /// (`dispatch_fast::lane_body_call`).
-    pub(super) fn lane_shadow_active() -> bool {
-        let frame = lane_frame();
-        // SAFETY: as `take_shadow_frames`; the running body wrote the top before its call.
-        unsafe { (*frame).dispatch.shadow_top != (*frame).dispatch.shadow_base }
     }
 
     /// `run_lane_method` from inside a running body (`dispatch_fast::lane_body_call`): the
@@ -7318,26 +7279,6 @@ impl<H: Host> Vm<H> {
 /// machine stack each costs a frame; the bound keeps a native recursion within it.
 const SHADOW_FRAMES: usize = 64;
 
-/// The native frames a leave took (`Vm::take_shadow_frames`): the prefixes of `count` activations
-/// at `base`, in the activations' spare room, where materialization makes the activations in place.
-#[derive(Clone, Copy)]
-pub(super) struct ShadowFrames {
-    base: *const Activation,
-    pub(super) count: usize,
-}
-
-impl ShadowFrames {
-    /// Frame `index`, outermost first, read before the activation that replaces it is pushed.
-    pub(super) fn get(&self, index: usize) -> ShadowFrame {
-        // SAFETY: `index < count` frames were pushed in place by the run that left.
-        unsafe { (*self.base.add(index)).native }
-    }
-}
-
-/// `shadow_base` before any lane body ran on the frame: no frame word equals it, so a helper
-/// a loop region calls then sees native frames (`lane_shadow_active`) and its call leaves.
-const NO_LANE_RUN: usize = usize::MAX;
-
 /// The stride of the native frames a run pushes: an activation record, whose first words they are.
 pub(super) const FRAME_BYTES: usize = std::mem::size_of::<Activation>();
 
@@ -7352,6 +7293,8 @@ struct LaneEntry {
     /// body's local rows read through the payload.
     native_locals: (*mut Value, usize),
     residual: usize,
+    /// The end of the frames the run may nest, which a nested run narrows and its caller regains.
+    frames_end: usize,
 }
 
 impl LaneEntry {
@@ -7363,6 +7306,7 @@ impl LaneEntry {
             native_registers: dispatch.native_registers,
             native_locals: (dispatch.native_locals, dispatch.local_count),
             residual: dispatch.residual,
+            frames_end: dispatch.lane_frames_end,
         }
     }
 
@@ -7373,6 +7317,7 @@ impl LaneEntry {
         dispatch.native_registers = self.native_registers;
         (dispatch.native_locals, dispatch.local_count) = self.native_locals;
         dispatch.residual = self.residual;
+        dispatch.lane_frames_end = self.frames_end;
     }
 }
 
@@ -7436,7 +7381,11 @@ impl LaneFrame {
                 native_top: 0,
                 native_end: 0,
                 shadow_top: 0,
-                shadow_end: 0, shadow_base: NO_LANE_RUN,
+                shadow_end: 0,
+                lane_values_top: 0,
+                lane_values_end: 0,
+                lane_activations_top: 0,
+                lane_frames_end: 0,
                 #[cfg(test)]
                 island_steps: 0,
                 #[cfg(test)]
@@ -7584,7 +7533,11 @@ impl JsNativeActivation {
             native_top: 0,
             native_end: 0,
             shadow_top: 0,
-            shadow_end: 0, shadow_base: 0,
+            shadow_end: 0,
+            lane_values_top: 0,
+            lane_values_end: 0,
+            lane_activations_top: 0,
+            lane_frames_end: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]

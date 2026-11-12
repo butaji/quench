@@ -23,8 +23,17 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_value_step<H: Host>(vm: u64, re
 }
 
 unsafe fn lane_body_value_step_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
+    native_frames::in_innermost_frame(cx, || unsafe { lane_body_value_step_in(cx, call_pc) })
+}
+
+/// `lane_body_value_step` with the context of the running body, which a native callee's frame
+/// made the innermost (`native_frames::in_innermost_frame`).
+///
+/// # Safety
+/// As `lane_body_value_step`.
+unsafe fn lane_body_value_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
     let function = match vm.lane_stack.activations.last() {
@@ -34,6 +43,7 @@ unsafe fn lane_body_value_step_record<H: Host>(_vm: u64, _residual: u64, context
     // SAFETY: the context's program outlives the lane run.
     let body = unsafe { &*(*cx).code }.function(function as usize);
     let instruction = decoded_instruction(body, body.code[call_pc as usize]);
+    if !instruction.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP) { return LANE_CALL_MISSED; }
     let [a, b] = super::super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
     let Some(value) = lane_in_place(cx, ip, |vm, code| vm.value_step(code, instruction, a, b)) else { return LANE_CALL_MISSED };
     // Guest code the step ran may have made the activations frames, whose registers these are.
@@ -72,10 +82,21 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_step<H: Host>(vm: u64, residual
 }
 
 unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    use super::super::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
+    native_frames::in_innermost_frame(cx, || unsafe { lane_body_step_in(cx, call_pc) })
+}
+
+/// `lane_body_step` with the context of the running body, which a native callee's frame made the
+/// innermost (`native_frames::in_innermost_frame`). Where the body runs as lane activations (a native
+/// callee, a lane callee) the steps that have no frame to run in take the value step's form, which
+/// reads the operands from the activation's registers (`lane_body_value_step_in`).
+///
+/// # Safety
+/// As `lane_body_step`.
+unsafe fn lane_body_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+    use super::super::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let vm = unsafe { vm(cx) };
-    if !vm.lane_stack.activations.is_empty() || Vm::<H>::lane_shadow_active() { return LANE_CALL_MISSED; }
+    if !vm.lane_stack.activations.is_empty() { return unsafe { lane_body_value_step_in(cx, call_pc) }; }
     // SAFETY: the context's program outlives the lane run, and `call_pc` is a record of the running frame's function.
     let (code, frame, ip) = unsafe { (&*(*cx).code, (*cx).frame, (*cx).base.add(call_pc as usize)) };
     let function = code.function(vm.frames[frame].function as usize);

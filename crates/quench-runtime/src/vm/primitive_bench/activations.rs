@@ -88,7 +88,7 @@ mod measurements {
                 let at = stack.values.as_mut_ptr().wrapping_add(index * WASM_REGISTERS);
                 unsafe { stack.push_activation(activation(kinds, index), at) };
             }
-            black_box(stack.activations.as_slice());
+            black_box(&stack.activations[..]);
             black_box(stack.wasm_storage_bytes);
             for _ in 0..ACTIVATIONS {
                 black_box(stack.pop_activation().unwrap());

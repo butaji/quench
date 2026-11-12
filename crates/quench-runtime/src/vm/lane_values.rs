@@ -34,6 +34,9 @@ impl LaneValues {
     pub(super) fn capacity(&self) -> usize { self.end.addr().wrapping_sub(self.base.addr()) / std::mem::size_of::<Value>() }
     #[inline(always)]
     pub(super) fn top(&self) -> *mut Value { self.top }
+    /// The address of the top word, which emitted code bumps through a pointer as the lane does.
+    #[inline(always)]
+    pub(super) fn top_word(&mut self) -> *mut *mut Value { &raw mut self.top }
     /// The values that fit above the top.
     #[inline(always)]
     pub(super) fn room(&self) -> usize { self.end.addr().wrapping_sub(self.top.addr()) / std::mem::size_of::<Value>() }
