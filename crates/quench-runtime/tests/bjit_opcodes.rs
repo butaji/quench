@@ -103,6 +103,9 @@ const FAMILIES: &[(&str, &str)] = &[
     ("late-type-flip", "t = i < 1500 ? i : 'k' + i; acc += typeof t === 'number' ? 1 : 2;"),
     ("int32-overflow-flip", "t = i < 1600 ? 2147483000 + i : i; acc = (acc + t) | 0; acc += t * 2 > 4294967296 ? 1 : 0;"),
     ("negative-zero", "t = i % 2 ? -0 : 0; acc += (1 / t) < 0 ? 1 : 2;"),
+    ("backward-conditional-loop-over-non-numbers", "var w = 0, z = 'a'; do { w++; z = z + 'b'; } while (z.length < 3 && w < 5); acc += w + z.length;"),
+    ("backward-conditional-loop-with-in-and-instanceof", "var u = 0; do { u++; } while (u < 4 && !(u in arr) && !(t instanceof C)); acc += u;"),
+    ("backward-conditional-nested-with-break", "for (var a = 0; a < 3; a++) { var b = 0; while (b < 4 && o.p) { b++; if (b === 3) break; } acc += a + b; }"),
     ("async-function", "(async function () { await 0; acc += 1; })();"),
 ];
 

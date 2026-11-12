@@ -372,7 +372,7 @@ pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u3
     numeric_row(&|index| region.number_constant(index), instruction)
         .flatten()
         .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0))
-        .unwrap_or_else(|| decode_step(pc, instruction, helpers))
+        .unwrap_or_else(|| decode_step(pc, instruction, (helpers, matches!(facts, Facts::Site))))
 }
 
 /// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it

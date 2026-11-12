@@ -32,9 +32,9 @@
 //!    frame's `this` the body's rows read from its payload; `SuperConstArrayObject2`; the
 //!    suspensions `Await`, `Yield` and `YieldStar`, whose generator or async record the lane
 //!    resumes in the interpreter, so no native code could continue past them; the Wasm opcodes
-//!    (`EXCLUDED`); a conditional jump the helper would take backward, which must poll the
-//!    interrupt flag where a region has no such row; and any instruction that carries result
-//!    flags, which a helper cannot give back.
+//!    (`EXCLUDED`); a conditional jump the helper would take backward in a loop region, which has
+//!    no row that polls the interrupt flag before it (a body has: `function::preludes`); and any
+//!    instruction that carries result flags, which a helper cannot give back.
 //!
 //! A whole function's body (`function`) also has the two steps that are the body's own: its
 //! `Return` completes the activation, and its `Call` is the call planner's chain
@@ -148,19 +148,21 @@ pub(super) fn lowering(instruction: WideInstruction, helpers: LaneHelpers) -> St
 }
 
 /// Whether `instruction` at `pc` may jump backward, which only a row that polls the interrupt flag
-/// may do.
+/// may do: a body polls before every row that branches back (`function::preludes`), a region only
+/// at its own backedge.
 fn branches_back(pc: u32, instruction: WideInstruction) -> bool {
     instruction.op().control_flow_layout().jumps() && instruction.jump_target() <= pc
 }
 
 /// The row of an instruction at `pc` that has no numeric or heap row: a `Nop` is the jump to the
-/// next instruction, the rest their step. A helper step names the register it writes, and a fast
+/// next instruction, the rest their step. `polls` where a row before it polls the interrupt flag,
+/// as a body's do, so a step that jumps backward may be made in place. A helper step names the register it writes, and a fast
 /// arm the register it reads.
-pub(super) fn decode_step(pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
+pub(super) fn decode_step(pc: u32, instruction: WideInstruction, (helpers, polls): (LaneHelpers, bool)) -> Decoded {
     match instruction.op().class() {
         Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
         _ => {
-            let step = if branches_back(pc, instruction) { Step::Leave } else { lowering(instruction, helpers) };
+            let step = if branches_back(pc, instruction) && !polls { Step::Leave } else { lowering(instruction, helpers) };
             let helped = step.runs_helper();
             let written = if helped { instruction.written_registers().next() } else { None };
             let target = (helped && instruction.op().control_flow_layout().jumps()).then(|| instruction.jump_target());
@@ -424,7 +426,7 @@ mod tests {
                 let function = program.function(index);
                 for packed in &function.code {
                     let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);
-                    let row = decode_step(0, instruction, process);
+                    let row = decode_step(0, instruction, (process, false));
                     if row.step == Some(Step::Helper) {
                         assert!(RESIDUAL.contains(&instruction.op()) || !instruction.op().traits().has(Traits::LANE_IN_PLACE), "{path:?}: {:?} takes the generic helper", instruction.op());
                         assert_eq!(row.target.is_some(), instruction.op().control_flow_layout().jumps(), "{:?}", instruction.op());
@@ -439,8 +441,19 @@ mod tests {
     fn a_throw_is_the_raising_step_and_ends_the_run() {
         let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
         assert_eq!(lowering(instruction(Op::Throw), process), Step::Throw);
-        assert_eq!(decode_step(0, instruction(Op::Throw), process).step, Some(Step::Throw));
+        assert_eq!(decode_step(0, instruction(Op::Throw), (process, false)).step, Some(Step::Throw));
         assert!(!Step::Throw.falls() && !Step::Catch.falls() && !Step::Leave.falls() && Step::Helper.falls());
+    }
+
+    /// A conditional jump backward is a helper step where a row polls before it (a body's), and a
+    /// leave where none does (a loop region's).
+    #[test]
+    fn a_backward_conditional_jump_is_a_helper_step_where_a_row_polls_before_it() {
+        let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+        let back = |polls| decode_step(5, instruction(Op::JumpBinaryFalse), (process, polls));
+        assert_eq!(back(false).step, Some(Step::Leave));
+        let polled = back(true);
+        assert_eq!((polled.step, polled.target), (Some(Step::Helper), Some(0)));
     }
 
     /// The opcode table, not a list here, says which operation raises: the throw alone.
@@ -473,7 +486,7 @@ mod tests {
 
     #[test]
     fn a_nop_is_the_jump_to_the_next_instruction() {
-        let row = decode_step(7, instruction(Op::Nop), LaneHelpers::Ahead);
+        let row = decode_step(7, instruction(Op::Nop), (LaneHelpers::Ahead, false));
         assert_eq!((row.kind, row.target, row.step.is_none()), (Kind::Jump, Some(8), true));
     }
 
@@ -496,7 +509,7 @@ mod tests {
                 let function = program.function(index);
                 for packed in &function.code {
                     let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);
-                    let row = decode_step(0, instruction, process);
+                    let row = decode_step(0, instruction, (process, false));
                     assert!(row.step.is_some() || row.target.is_some(), "{path:?}: {:?}", instruction.op());
                     instructions += 1;
                 }
