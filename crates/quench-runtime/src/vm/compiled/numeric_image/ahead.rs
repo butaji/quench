@@ -19,6 +19,9 @@ fn ahead_image(source: &str) -> (RelocatableCode, usize) {
     (image, usize::from(unit.caller_registers))
 }
 
+/// `pick`'s inputs and the results the entry returns for them.
+const PICKS: [(f64, f64); 3] = [(0.0, 2.0), (5.0, 1.0), (-1.5, 1.0)];
+
 /// Runs `linked` as a lane entry over `pick`'s inputs and checks each result.
 fn run_pick(linked: &[u8], registers: usize) {
     let memory = CodeMemory::new(linked).unwrap();
@@ -30,7 +33,7 @@ fn run_pick(linked: &[u8], registers: usize) {
     frame.dispatch.bind_native_storage(&mut vm);
     frame.dispatch.receiver = Value::UNDEFINED.to_bits();
     frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
-    for (input, expected) in [(0.0, 2.0), (5.0, 1.0), (-1.5, 1.0)] {
+    for (input, expected) in PICKS {
         let mut words = vec![Value::UNDEFINED; registers];
         words[0] = Value::number(input);
         let mut word = 0;
@@ -62,20 +65,29 @@ fn write_image(image: &RelocatableCode, registers: usize) -> Vec<u8> {
     out
 }
 
+/// A reader of the words `write_image` wrote.
+struct Words<'a>(&'a [u8]);
+
+impl Words<'_> {
+    fn take<const N: usize>(&mut self) -> [u8; N] {
+        let (head, rest) = self.0.split_at(N);
+        self.0 = rest;
+        head.try_into().unwrap()
+    }
+    fn word(&mut self) -> u64 { u64::from_le_bytes(self.take()) }
+    fn half(&mut self) -> u32 { u32::from_le_bytes(self.take()) }
+}
+
 /// The image `write_image` wrote, and its caller registers.
 fn read_image(file: &[u8]) -> (RelocatableCode, usize) {
-    let word = |at: usize| u64::from_le_bytes(file[at..at + 8].try_into().unwrap());
-    let half = |at: usize| u32::from_le_bytes(file[at..at + 4].try_into().unwrap());
-    let (registers, length) = (word(0) as usize, word(8) as usize);
-    let code: Box<[u8]> = file[16..16 + length].into();
-    let (count, mut at) = (word(16 + length) as usize, 24 + length);
-    let relocations = (0..count).map(|_| {
-        let relocation = crate::vm::jit_backend::relocatable_code::Relocation { offset: word(at) as usize,
-            kind: cranelift_codegen::binemit::Reloc::Abs8, namespace: half(at + 8), key: half(at + 12),
-            addend: word(at + 16) as i64 };
-        at += 24;
-        relocation
-    }).collect();
+    let mut words = Words(file);
+    let registers = words.word() as usize;
+    let length = words.word() as usize;
+    let code: Box<[u8]> = words.0[..length].into();
+    words.0 = &words.0[length..];
+    let relocations = (0..words.word()).map(|_| crate::vm::jit_backend::relocatable_code::Relocation {
+        offset: words.word() as usize, kind: cranelift_codegen::binemit::Reloc::Abs8,
+        namespace: words.half(), key: words.half(), addend: words.word() as i64 }).collect();
     (RelocatableCode { code, relocations }, registers)
 }
 
