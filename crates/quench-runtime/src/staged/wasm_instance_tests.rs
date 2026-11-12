@@ -1,13 +1,14 @@
 //! The register, constant, binding and global steps of `staged::wasm_instance`: the opcode
-//! table, the registers a constant defines, the global primitives on the interpreter's stage
+//! table, the registers a constant defines, the global primitives on the interpreter's stage per storage
 //! and the instance stage's scalar rules against `ConcreteWasm`.
 
 use super::ConcreteWasm;
 use super::wasm::{WasmStage, Width, integer_binary};
-use super::wasm_instance::{Instance, WasmInstance};
+use super::wasm_instance::{Instance, Storage, WasmInstance};
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_step::Step;
 use crate::bytecode::{Op, WideInstruction};
+use crate::{Value, WasmType};
 use crate::wasm::integer::I64BinaryOperator as Binary;
 
 #[test]
@@ -46,23 +47,78 @@ fn a_constant_defines_one_register_and_a_fill_its_window() {
     assert_eq!(Instance::Move.constant_registers(constant), None);
 }
 
-#[test]
-fn a_global_holds_the_i32_it_was_given() {
-    let mut globals = [0u64; 2];
+/// The cells after `stored` as the global of type `ty` at slot 1 of two, and the word it loads.
+fn stored(ty: WasmType, word: u64) -> ([Value; 2], u64) {
+    let mut globals = [Value::from_bits(0); 2];
     let mut stage = ConcreteInstance {
         globals: &mut globals,
         memory: &mut [],
     };
-    stage.global_store(1, 0xffff_ffff_8000_0001);
-    assert_eq!(stage.global_load(1), 0x8000_0001);
-    assert_eq!(stage.global_load(0), 0);
-    assert_eq!(globals, [0, 0x8000_0001]);
+    stage.global_store(1, Storage::of(ty), word);
+    let loaded = stage.global_load(1, Storage::of(ty));
+    (globals, loaded)
+}
+
+#[test]
+fn the_storage_of_a_global_follows_its_type() {
+    let storage = [
+        (WasmType::I32, Storage::Bits32),
+        (WasmType::F32, Storage::Bits32),
+        (WasmType::I64, Storage::Bits64),
+        (WasmType::F64, Storage::Bits64),
+        (WasmType::V128, Storage::Handle),
+        (WasmType::FUNC, Storage::Handle),
+    ];
+    for (ty, expected) in storage {
+        assert_eq!(Storage::of(ty), expected, "{ty:?}");
+    }
+}
+
+#[test]
+fn an_i32_global_holds_the_low_word_under_the_integer_tag() {
+    let (globals, loaded) = stored(WasmType::I32, 0xffff_ffff_8000_0001);
+    assert_eq!(loaded, 0x8000_0001);
+    assert_eq!(globals[0].to_bits(), 0);
+    assert_eq!(globals[1].to_bits(), Value::integer(0x8000_0001u32 as i32).to_bits());
+}
+
+#[test]
+fn an_f32_global_keeps_the_payload_of_a_nan() {
+    let nan = 0x7fc0_0001u64;
+    let (globals, loaded) = stored(WasmType::F32, nan);
+    assert_eq!(loaded, nan);
+    assert_eq!(globals[1].to_bits(), Value::integer(nan as u32 as i32).to_bits());
+}
+
+#[test]
+fn an_i64_global_holds_its_whole_word() {
+    let word = 0x0123_4567_89ab_cdefu64;
+    let (globals, loaded) = stored(WasmType::I64, word);
+    assert_eq!(loaded, word);
+    assert_eq!(globals[1].to_bits(), word);
+}
+
+#[test]
+fn an_f64_global_holds_its_whole_word() {
+    let word = (-0.0f64).to_bits();
+    let (globals, loaded) = stored(WasmType::F64, word);
+    assert_eq!(loaded, word);
+    assert_eq!(globals[1].to_bits(), word);
+}
+
+#[test]
+fn a_reference_and_a_vector_global_hold_their_handle() {
+    for ty in [WasmType::FUNC, WasmType::V128] {
+        let handle = Value::heap(5).to_bits();
+        let (globals, loaded) = stored(ty, handle);
+        assert_eq!((loaded, globals[1].to_bits()), (handle, handle), "{ty:?}");
+    }
 }
 
 #[test]
 fn the_instance_stage_computes_what_the_scalar_stage_computes() {
     let operands = [0i64, 1, -1, 7, 64, i64::MAX, i64::MIN];
-    let mut globals = [0u64; 1];
+    let mut globals = [Value::from_bits(0); 1];
     let mut instance = ConcreteInstance {
         globals: &mut globals,
         memory: &mut [],

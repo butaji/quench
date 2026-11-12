@@ -1,16 +1,15 @@
 //! The interpreter's stages over the state of an instance: the scalar rules of `ConcreteWasm`
 //! plus a table's primitives (`ConcreteTable`, which the VM resolves indirect calls on) and
 //! linear memory over borrowed bytes (`ConcreteBytes` reads, `ConcreteMemory` reads and
-//! writes: the access and bound rules of `MemoryLoad::read` and `MemoryStore::write`). For the
-//! tests that check the Wasm tier's instance primitives against the declared semantics,
-//! `ConcreteInstance` adds the globals over borrowed words.
+//! writes: the access and bound rules of `MemoryLoad::read` and `MemoryStore::write`).
+//! `ConcreteInstance` adds the globals over borrowed cells, which the interpreter's global steps
+//! and the tests of the tier's instance primitives run.
 
 use super::ConcreteWasm;
 use super::wasm::{WasmStage, Width};
 use super::wasm_call::WasmTable;
 use super::wasm_float::{Float, Truncation};
-#[cfg(test)]
-use super::wasm_instance::WasmInstance;
+use super::wasm_instance::{Storage, WasmInstance};
 use super::wasm_memory::{Access, WasmMemory, WasmMemoryWrite};
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
@@ -28,10 +27,10 @@ pub(crate) struct ConcreteMemory<'a> {
     pub(crate) memory: &'a mut [u8],
 }
 
-/// A stage over an instance: its globals by environment slot and its linear memory.
-#[cfg(test)]
+/// A stage over an instance: the cells of its globals by environment slot and its linear
+/// memory.
 pub(crate) struct ConcreteInstance<'a> {
-    pub(crate) globals: &'a mut [u64],
+    pub(crate) globals: &'a mut [Value],
     pub(crate) memory: &'a mut [u8],
 }
 
@@ -76,9 +75,12 @@ macro_rules! scalar_stage {
     )+};
 }
 
-#[cfg(test)]
-scalar_stage!(ConcreteInstance<'_>);
-scalar_stage!(ConcreteTable<'_>, ConcreteBytes<'_>, ConcreteMemory<'_>);
+scalar_stage!(
+    ConcreteInstance<'_>,
+    ConcreteTable<'_>,
+    ConcreteBytes<'_>,
+    ConcreteMemory<'_>
+);
 
 impl WasmTable for ConcreteTable<'_> {
     fn table_length(&mut self) -> u64 {
@@ -99,14 +101,33 @@ impl WasmTable for ConcreteTable<'_> {
     }
 }
 
-#[cfg(test)]
+/// The word a slot holds as `storage`: the 32-bit payload, or the whole slot.
+#[inline(always)]
+pub(crate) fn slot_word(storage: Storage, slot: Value) -> u64 {
+    match storage {
+        Storage::Bits32 => u64::from(slot.wasm_bits32()),
+        Storage::Bits64 | Storage::Handle => slot.to_bits(),
+    }
+}
+
+/// The slot that holds `word` as `storage`.
+#[inline(always)]
+pub(crate) fn slot_value(storage: Storage, word: u64) -> Value {
+    match storage {
+        Storage::Bits32 => Value::integer(word as u32 as i32),
+        Storage::Bits64 | Storage::Handle => Value::from_bits(word),
+    }
+}
+
 impl WasmInstance for ConcreteInstance<'_> {
-    fn global_load(&mut self, slot: u32) -> u64 {
-        u64::from(self.globals[slot as usize] as u32)
+    #[inline(always)]
+    fn global_load(&mut self, slot: u32, storage: Storage) -> u64 {
+        slot_word(storage, self.globals[slot as usize])
     }
 
-    fn global_store(&mut self, slot: u32, value: u64) {
-        self.globals[slot as usize] = u64::from(value as u32);
+    #[inline(always)]
+    fn global_store(&mut self, slot: u32, storage: Storage, value: u64) {
+        self.globals[slot as usize] = slot_value(storage, value);
     }
 }
 
@@ -207,9 +228,5 @@ macro_rules! writable_memory {
     )+};
 }
 
-readable_memory!(ConcreteBytes<'_>, ConcreteMemory<'_>);
-writable_memory!(ConcreteMemory<'_>);
-#[cfg(test)]
-readable_memory!(ConcreteInstance<'_>);
-#[cfg(test)]
-writable_memory!(ConcreteInstance<'_>);
+readable_memory!(ConcreteBytes<'_>, ConcreteMemory<'_>, ConcreteInstance<'_>);
+writable_memory!(ConcreteMemory<'_>, ConcreteInstance<'_>);

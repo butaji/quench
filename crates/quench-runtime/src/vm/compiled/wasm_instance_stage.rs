@@ -3,30 +3,43 @@
 
 use super::{Analysis, AnalysisState, Emitter, Host, INTEGER_TAG, Kind, Region, Slot};
 use crate::bytecode::{Function, WideInstruction};
-use crate::staged::wasm_instance::{Instance, WasmInstance};
+use crate::staged::wasm_instance::{Instance, Storage, WasmInstance};
 use cranelift_codegen::ir::{self, InstBuilder, types};
 
+/// The machine type of a word held as `storage`.
+const fn storage_type(storage: Storage) -> ir::Type {
+    match storage {
+        Storage::Bits32 => types::I32,
+        Storage::Bits64 | Storage::Handle => types::I64,
+    }
+}
+
 impl<H: Host> WasmInstance for Emitter<'_, '_, H> {
-    fn global_load(&mut self, slot: u32) -> ir::Value {
+    fn global_load(&mut self, slot: u32, storage: Storage) -> ir::Value {
         let address = self.global_address(slot);
         let flags = self.flags(Region::Globals);
         self.body
             .core
             .builder
             .ins()
-            .load(types::I32, flags, address, 0)
+            .load(storage_type(storage), flags, address, 0)
     }
 
-    /// The global's cell holds the integer's encoded value: the tag over the zero-extended bits.
-    fn global_store(&mut self, slot: u32, value: ir::Value) {
+    /// A 32-bit payload's cell holds the integer's encoded value, the tag over the zero-extended
+    /// bits; a wider word is the whole slot.
+    fn global_store(&mut self, slot: u32, storage: Storage, value: ir::Value) {
         let address = self.global_address(slot);
-        let wide = self.body.core.builder.ins().uextend(types::I64, value);
-        let encoded = self
-            .body
-            .core
-            .builder
-            .ins()
-            .bor_imm_u(wide, INTEGER_TAG as i64);
+        let encoded = match storage {
+            Storage::Bits32 => {
+                let wide = self.body.core.builder.ins().uextend(types::I64, value);
+                self.body
+                    .core
+                    .builder
+                    .ins()
+                    .bor_imm_u(wide, INTEGER_TAG as i64)
+            }
+            Storage::Bits64 | Storage::Handle => value,
+        };
         let flags = self.flags(Region::Globals);
         self.body
             .core
@@ -57,18 +70,23 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Instance::GlobalGet => {
                 let slot = self.binding_slot(pc);
-                let value = self.global_load(slot);
+                let value = self.global_load(slot, self.global_storage(slot));
                 self.write(a, Kind::I32, value);
             }
             Instance::GlobalSet => {
                 let slot = self.binding_slot(pc);
                 let value = self.read(a, Kind::I32);
-                self.global_store(slot, value);
+                self.global_store(slot, self.global_storage(slot), value);
             }
             // A binding is known statically per instruction; the globals it names are reached
             // through the context. Constants were defined above.
             Instance::Binding | Instance::Constant | Instance::Fill => {}
         }
+    }
+
+    /// How the global bound at `slot` holds its value (the planned globals are 32-bit).
+    fn global_storage(&self, slot: u32) -> Storage {
+        Storage::of(self.analysis.global_type(slot).expect("planned"))
     }
 
     /// Defines each of `registers` as the instruction's constant: a vector's bits, else a scalar.
@@ -129,7 +147,8 @@ impl<H: Host> Analysis<'_, H> {
         }
     }
 
-    /// A global access reads the global its `b` register binds: a 32-bit one.
+    /// A global access reads the global its `b` register binds: one held in 32 bits, the only
+    /// storage whose word is a value the tier computes with.
     fn transfer_global(
         &self,
         state: &mut AnalysisState,
@@ -140,7 +159,7 @@ impl<H: Host> Analysis<'_, H> {
         let Slot::Binding(slot) = state.get(instruction.b(), registers)? else {
             return None;
         };
-        (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
+        (Storage::of(self.global_type(slot)?) == Storage::Bits32).then_some(())?;
         if step == Instance::GlobalGet {
             return state.set(instruction.a(), registers, Slot::Value(Kind::I32));
         }

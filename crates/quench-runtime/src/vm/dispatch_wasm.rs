@@ -20,19 +20,8 @@ impl<H: Host> Vm<H> {
         pc: &mut usize,
     ) -> Result<StepResult, JsError> {
         match i.op() {
-            Op::WasmInstanceBinding => {
-                let value = self
-                    .heap
-                    .environment_slot(self.frames[f].env, i.imm() as usize)
-                    .ok_or_else(|| JsError::validation("invalid Wasm instance binding".into()))?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmGlobalGet => {
-                let value = self.wasm_global_load(self.read(f, i.register_b()))?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmGlobalSet => {
-                self.wasm_global_store(self.read(f, i.register_b()), self.read(f, i.register_a()))?;
+            Op::WasmInstanceBinding | Op::WasmGlobalGet | Op::WasmGlobalSet => {
+                self.wasm_instance_step(f, i)?;
             }
             op if wasm_gc_value_op(op) => {
                 if let Some(value) = self.wasm_gc_value_step(self.frames[f].program, self.frames[f].env, i, |vm, register| vm.read(f, register))? {

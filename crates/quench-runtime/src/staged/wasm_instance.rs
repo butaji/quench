@@ -4,6 +4,7 @@
 //! global's type and where it lives are binding-time facts a tier reads once, not per access.
 
 use super::wasm::WasmStage;
+use crate::WasmType;
 use crate::bytecode::{Class, Op, WideInstruction};
 use std::ops::Range;
 
@@ -54,10 +55,34 @@ impl Instance {
     }
 }
 
-/// The state of the instance a function runs in. A global holds an i32 here: a wider value is
-/// boxed and stays with the interpreter.
+/// How a global's cell holds its value, decided once from the global's type: the static operand
+/// of every access. A cell is one encoded slot, the interpreter's register representation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Storage {
+    /// An i32 or f32: the low 32 bits of the slot, under the integer tag.
+    Bits32,
+    /// An i64 or f64: the slot's 64 bits whole, in place or a handle to the box of a payload in
+    /// the tag space.
+    Bits64,
+    /// A reference or a v128: the slot whole, a handle to the object or the vector's box.
+    Handle,
+}
+
+impl Storage {
+    pub(crate) const fn of(ty: WasmType) -> Self {
+        match ty {
+            WasmType::I32 | WasmType::F32 => Self::Bits32,
+            WasmType::I64 | WasmType::F64 => Self::Bits64,
+            _ => Self::Handle,
+        }
+    }
+}
+
+/// The state of the instance a function runs in. A word is a global's value as its `Storage`
+/// holds it: the 32-bit payload zero-extended, or the whole slot. Only a 32-bit word is a value
+/// a tier computes with; a wider one stays with the interpreter, which owns the boxes.
 pub(crate) trait WasmInstance: WasmStage {
-    /// The i32 value of the global bound at environment slot `slot`.
-    fn global_load(&mut self, slot: u32) -> Self::Word;
-    fn global_store(&mut self, slot: u32, value: Self::Word);
+    /// The word of the global bound at environment slot `slot`.
+    fn global_load(&mut self, slot: u32, storage: Storage) -> Self::Word;
+    fn global_store(&mut self, slot: u32, storage: Storage, value: Self::Word);
 }

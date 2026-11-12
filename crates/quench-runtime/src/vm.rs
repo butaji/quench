@@ -28,6 +28,7 @@ pub use compiled::{AheadImages, ExecutionMode};
 pub use date::local_timezone_changed;
 mod wasm_exception;
 mod wasm_gc;
+mod wasm_global;
 mod wasm_host;
 mod wasm_js;
 pub(crate) use wasm_exception::{js_tag_cell, js_tag_type};

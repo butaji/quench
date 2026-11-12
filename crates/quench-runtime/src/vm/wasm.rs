@@ -961,33 +961,6 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError::wasm_link("invalid Wasm global binding"))
     }
 
-    pub(super) fn wasm_global_load(&self, binding: Value) -> Result<Value, JsError> {
-        match self.heap.get(binding) {
-            Some(Cell::WasmGlobal { value, .. }) => Ok(*value),
-            _ => Err(JsError::validation("invalid Wasm global binding".into())),
-        }
-    }
-
-    pub(super) fn wasm_global_store(
-        &mut self,
-        binding: Value,
-        value: Value,
-    ) -> Result<(), JsError> {
-        match self.heap.get_mut(binding) {
-            Some(Cell::WasmGlobal {
-                value: stored,
-                mutable: true,
-                ..
-            }) => {
-                *stored = value;
-                Ok(())
-            }
-            _ => Err(JsError::validation(
-                "invalid or immutable Wasm global binding".into(),
-            )),
-        }
-    }
-
     pub(super) fn wasm_memory_bytes(
         &self,
         memory: Value,
