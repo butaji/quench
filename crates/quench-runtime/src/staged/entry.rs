@@ -36,6 +36,7 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
     let slot = stage.load_u32(entry, ENTRY.slot_offset as i32);
+    let slot = stage.and_imm(slot, u64::from(u16::MAX));
     let inline = inline_storage(stage, record);
     Some(stage.choose(inline, |stage| {
         let half = stage.mul_imm(slot, std::mem::size_of::<u32>() as u64);
