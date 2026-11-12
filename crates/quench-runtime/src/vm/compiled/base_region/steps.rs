@@ -140,7 +140,7 @@ pub(super) fn lowering(instruction: WideInstruction, helpers: LaneHelpers) -> St
     let addressed = call_plan::helper_address(helpers, LaneHelper::Step).is_some();
     match fast_arm(instruction) {
         _ if !addressed => Step::Leave,
-        _ if instruction.op().is_throw() => Step::Throw,
+        _ if instruction.op().raises() => Step::Throw,
         _ if !steps_in_place(instruction) => Step::Leave,
         Some(fast) => Step::Fast(fast),
         None => Step::Helper,
@@ -441,6 +441,13 @@ mod tests {
         assert_eq!(lowering(instruction(Op::Throw), process), Step::Throw);
         assert_eq!(decode_step(0, instruction(Op::Throw), process).step, Some(Step::Throw));
         assert!(!Step::Throw.falls() && !Step::Catch.falls() && !Step::Leave.falls() && Step::Helper.falls());
+    }
+
+    /// The opcode table, not a list here, says which operation raises: the throw alone.
+    #[test]
+    fn only_the_throw_raises() {
+        let raising: Vec<Op> = (0..Op::COUNT).filter_map(Op::from_index).filter(|op| op.raises()).collect();
+        assert_eq!(raising, [Op::Throw]);
     }
 
     /// The scope, operator, constant and class steps `Op::steps_in_body` names are helper steps of

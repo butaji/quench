@@ -50,7 +50,7 @@ struct Sites<'a> {
 /// leave where nothing does).
 fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     let plain = instruction.result_flags() == 0;
-    if instruction.op().is_throw() && let Some(caught) = throws::caught(sites.function, (pc, sites.registers), instruction) {
+    if instruction.op().raises() && let Some(caught) = throws::caught(sites.function, (pc, sites.registers), instruction) {
         return caught;
     }
     match instruction.op().class() {

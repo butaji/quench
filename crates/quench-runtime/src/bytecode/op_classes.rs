@@ -67,6 +67,12 @@ impl Op {
         )
     }
 
+    /// An op that always completes abruptly, raising its operand: no row follows it, and a handler
+    /// of its function may take it.
+    pub(crate) const fn raises(self) -> bool {
+        self.traits().has(crate::bytecode::Traits::RAISES)
+    }
+
     /// A suspension point: an `await`, or a `yield` of a generator.
     pub(crate) const fn suspends(self) -> bool {
         matches!(self, Op::Await | Op::Yield | Op::YieldStar)
