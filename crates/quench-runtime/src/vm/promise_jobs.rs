@@ -209,11 +209,11 @@ impl<H: Host> Vm<H> {
                     record.remaining += 1;
                     index
                 };
-                let resolved = match self.call_value(
+                let resolved = match self.aggregate_element_resolve(
                     p,
                     self.heap.root_value(promise_resolve_root).unwrap(),
                     self.heap.root_value(constructor_root).unwrap(),
-                    &[value],
+                    value,
                 ) {
                     Ok(value) => value,
                     Err(error) => {
@@ -285,6 +285,27 @@ impl<H: Host> Vm<H> {
             }
         }
         outcome
+    }
+
+    /// `Call(promiseResolve, constructor, « value »)`: the intrinsic `Promise.resolve`, which
+    /// the combinator read from its constructor once, is `PromiseResolve` itself, so it runs
+    /// without a native call's dispatch.
+    fn aggregate_element_resolve(
+        &mut self,
+        p: &ResidualProgram,
+        resolve: Value,
+        constructor: Value,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let intrinsic = self.heap.function(resolve).is_some_and(|function| {
+            matches!(function.kind, FunctionKind::Native(Native::PromiseResolve))
+                && function.env.is_null()
+                && function.realm == self.realm.globals
+        });
+        if intrinsic {
+            return self.promise_resolve_for_constructor(p, constructor, value);
+        }
+        self.call_value(p, resolve, constructor, &[value])
     }
 
     fn reject_aggregate_input_completion(
@@ -566,7 +587,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether `then` is this realm's own %Promise.prototype.then%.
-    fn is_intrinsic_promise_then(&self, then: Value) -> bool {
+    pub(super) fn is_intrinsic_promise_then(&self, then: Value) -> bool {
         matches!(
             self.heap.function(then),
             Some(FunctionRecord {

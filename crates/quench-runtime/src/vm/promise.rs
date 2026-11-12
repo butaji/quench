@@ -893,6 +893,14 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         constructor: Value,
     ) -> Result<(Value, Value, Value), JsError> {
+        // The realm's %Promise% runs no guest code and reads nothing a guest can change (its
+        // `prototype` is fixed, its executor internal): the capability is a fresh promise and
+        // its resolving functions, which `construct_promise` would make through an executor.
+        if constructor == self.intrinsic_promise_constructor() {
+            let promise = self.promise_object()?;
+            let (resolve, reject) = self.promise_resolving_functions(promise);
+            return Ok((promise, resolve, reject));
+        }
         if !self.is_constructable(constructor) {
             return Err(self.type_error(
                 p,
@@ -4958,7 +4966,7 @@ impl<H: Host> Vm<H> {
     /// constructor's own `@@species` is still an intrinsic accessor, whose getter returns
     /// its receiver (`has_intrinsic_species_getter`). Both reads observe nothing, so a
     /// failed proof only leaves the observable steps to the general path.
-    fn promise_species_intrinsic(&mut self, promise: Value) -> bool {
+    pub(super) fn promise_species_intrinsic(&mut self, promise: Value) -> bool {
         if self.promise_species_proved(promise) {
             return true;
         }

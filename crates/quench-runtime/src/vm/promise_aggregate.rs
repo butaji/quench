@@ -99,6 +99,17 @@ impl<H: Host> Vm<H> {
             };
             let then = self.heap.root_value(then_root.unwrap()).unwrap();
             let input = self.heap.root_value(input_root).unwrap();
+            // The intrinsic `then` of a promise whose species it reads without guest code
+            // only registers the reaction: its derived promise, which no code can reach and
+            // no host observes, settles nothing.
+            if self.is_intrinsic_promise_then(then)
+                && self.is_promise(input)
+                && !self.host.observes_promise_lifecycle()
+                && self.promise_species_intrinsic(input)
+            {
+                self.perform_promise_then(p, input, fulfilled, rejected, Value::UNDEFINED);
+                return Ok(());
+            }
             self.call_value(p, then, input, &[fulfilled, rejected])?;
             Ok(())
         })();
