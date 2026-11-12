@@ -34,15 +34,15 @@ impl<H: Host> Vm<H> {
             })
             .collect();
         let members: Vec<(usize, GlobalRead)> = reads.iter().filter_map(|(pc, read)| self.native_member(unit, *pc, read)).collect();
-        let methods = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| Some((pc, self.method_native(instruction)?)));
-        let methods: Vec<(usize, GlobalRead)> = methods.collect();
+        let methods: Vec<(usize, GlobalRead)> = unit.instructions.iter().enumerate()
+            .filter_map(|(pc, instruction)| Some((pc, self.method_native(instruction)?))).collect();
         reads.into_iter().chain(members).chain(methods).collect()
     }
 
     /// The field read `instruction` of a method of strings or arrays that a call runs inline
     /// (`lane_region::native_calls`), where the realm's prototype holds that native as an own
     /// data property now. The receiver is not known: the call guards the callee it reads.
-    fn method_native(&self, instruction: &crate::bytecode::WideInstruction) -> Option<GlobalRead> {
+    fn method_native(&mut self, instruction: &crate::bytecode::WideInstruction) -> Option<GlobalRead> {
         /// The methods a call runs inline, by name.
         const METHODS: [(&str, crate::vm::Native); 4] = [("charCodeAt", crate::vm::Native::StringCharCodeAt), ("charAt", crate::vm::Native::StringCharAt),
             ("push", crate::vm::Native::ArrayPush), ("pop", crate::vm::Native::ArrayPop)];
@@ -53,12 +53,13 @@ impl<H: Host> Vm<H> {
         let holder = if matches!(native, crate::vm::Native::ArrayPush | crate::vm::Native::ArrayPop) { self.array_proto } else { self.string_proto };
         let value = self.own_plain_data(holder, atom)??;
         let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(held), .. } = self.heap.function(value)? else { return None };
-        (held == native).then_some(GlobalRead::NativeMember { value, native: *native })
+        let native = *native;
+        (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder })
     }
 
     /// The field read that follows the global read `read` at `pc` and reads its register, where
     /// the member it names is an own data property holding a native function now.
-    fn native_member(&self, unit: &lane_unit::Unit, pc: usize, read: &GlobalRead) -> Option<(usize, GlobalRead)> {
+    fn native_member(&mut self, unit: &lane_unit::Unit, pc: usize, read: &GlobalRead) -> Option<(usize, GlobalRead)> {
         let (GlobalRead::Constant(object) | GlobalRead::Stable { value: object, .. }) = *read else { return None };
         let (base, member) = (unit.instructions.get(pc)?.result_register(), unit.instructions.get(pc + 1)?);
         if !member.op().is_get_field() { return None; }
@@ -66,6 +67,14 @@ impl<H: Host> Vm<H> {
         if read_base.register_index() != Some(base) { return None; }
         let value = self.own_plain_data(object, atom)??;
         let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(native), .. } = self.heap.function(value)? else { return None };
-        Some((pc + 1, GlobalRead::NativeMember { value, native: *native }))
+        let native = *native;
+        Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)? }))
+    }
+
+    /// The exact shape of `holder`, an object whose own native functions code calls inline,
+    /// made a watched prototype so that a write to one of its values retires that code.
+    fn native_holder(&mut self, holder: Value) -> Option<u32> {
+        self.heap.mark_prototype(holder);
+        Some(self.object_data(holder)?.shape())
     }
 }

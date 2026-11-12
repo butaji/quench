@@ -39,8 +39,25 @@ pub(crate) const SHORT_UNITS_OFFSET: u64 = (offset_of!(ShortForm, text) + offset
 /// count (the pointer of a `Rc<str>` or `Rc<[u16]>`, then its length).
 pub(crate) const SHARED_POINTER_OFFSET: i32 = offset_of!(SharedForm<str>, storage) as i32;
 pub(crate) const SHARED_LENGTH_OFFSET: i32 = SHARED_POINTER_OFFSET + size_of::<usize>() as i32;
-/// How far into that allocation the units start: past its strong and weak counts.
-pub(crate) const SHARED_UNITS_OFFSET: u64 = (2 * size_of::<usize>()) as u64;
+/// How far into that allocation the units start: where `Rc::as_ptr` points from the pointer the
+/// record keeps (a probe of the compiler's own `Rc`, never a literal). Bytes and UTF-16 units
+/// start at the same distance, which the probe asserts.
+pub(crate) fn shared_units_offset() -> u64 {
+    static OFFSET: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *OFFSET.get_or_init(|| {
+        let ascii: Rc<str> = Rc::from("probe");
+        let wide: Rc<[u16]> = Rc::from([0x61u16, 0x62]);
+        let distance = |data: *const u8, handle: *const u8| {
+            // SAFETY: a handle starts with the pointer to its allocation, which `SharedForm` places.
+            let allocation = unsafe { (handle as *const usize).read() };
+            data as usize - allocation
+        };
+        let (narrow, units) = (distance(Rc::as_ptr(&ascii) as *const u8, &ascii as *const Rc<str> as *const u8),
+            distance(Rc::as_ptr(&wide) as *const u8, &wide as *const Rc<[u16]> as *const u8));
+        assert_eq!(narrow, units, "both storages start at one distance");
+        narrow as u64
+    })
+}
 
 const _: () = assert!(offset_of!(SharedForm<str>, storage) == offset_of!(SharedForm<[u16]>, storage));
 
@@ -58,7 +75,7 @@ mod tests {
             let (units, length, wide) = match tag {
                 TAG_SHORT => (record.add(SHORT_UNITS_OFFSET as usize), record.offset(SHORT_LENGTH_OFFSET as isize).read() as usize, false),
                 TAG_ASCII | TAG_WIDE => (
-                    (word(SHARED_POINTER_OFFSET) as *const u8).add(SHARED_UNITS_OFFSET as usize),
+                    (word(SHARED_POINTER_OFFSET) as *const u8).add(shared_units_offset() as usize),
                     word(SHARED_LENGTH_OFFSET), tag == TAG_WIDE),
                 _ => return None,
             };

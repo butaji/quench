@@ -114,12 +114,13 @@ impl Inline {
 }
 
 /// The inline operation of each call of a unit, by PC (`intrinsic_calls`).
-pub(super) type Intrinsics = Vec<Option<(Value, Inline)>>;
+/// Each with the function it held and the exact shape of the prototype holding it.
+pub(super) type Intrinsics = Vec<Option<(Value, Inline, u32)>>;
 
 /// Whether the call at `pc` runs inline and changes no array, so a loop holds it natively and
 /// the Stable facts its code folded survive it.
 pub(super) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
-    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline)| !inline.mutates_arrays())
+    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| !inline.mutates_arrays())
 }
 
 /// The calls of `unit` that run inline, by PC: a call's callee register was defined by a field
@@ -134,10 +135,10 @@ pub(super) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads
         .and_then(|(pc, instruction)| {
             let callee = instruction.register_b();
             let defined = (0..pc).rev().find(|at| unit.instructions[*at].written_registers().any(|register| register == callee))?;
-            let GlobalRead::NativeMember { value, native } = global_reads.get(&defined)? else { return None };
+            let GlobalRead::NativeMember { value, native, holder } = global_reads.get(&defined)? else { return None };
             let inline = Inline::of(*native)?;
             (crate::bytecode::ImmediateLayout::argument_count(instruction.imm()) == inline.arguments())
-                .then_some((*value, inline))
+                .then_some((*value, inline, *holder))
         })).collect()
 }
 
@@ -147,8 +148,12 @@ impl Lowering<'_, '_> {
     /// where it differs) and on each operand its operation reads (a Number, a flat string, a
     /// dense array). False where the call is not one.
     pub(super) fn intrinsic_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        let Some(&Some((callee, inline))) = self.intrinsics.get(pc) else { return false };
+        let Some(&Some((callee, inline, holder))) = self.intrinsics.get(pc) else { return false };
+        // The callee's identity is held by its holder, a dependency that retires this code
+        // before the function can die and its id be reused.
+        if !self.division().folds(BindingTime::Stable) { return false; }
         let exit = self.guard_exit(state, pc as u32);
+        self.hold_holder(state, exit, holder);
         let held = self.tagged(state, instruction.register_b());
         let same = self.ins().icmp_imm_u(IntCC::Equal, held, callee.to_bits() as i64);
         emit_js_guard(&mut self.builder, same, exit);

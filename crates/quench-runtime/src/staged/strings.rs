@@ -43,7 +43,7 @@ pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: 
     // Every form keeps the words of both layouts inside the record, so each is read and the
     // form selects.
     let pointer = stage.load_u64(record, form::SHARED_POINTER_OFFSET);
-    let shared_units = stage.add_imm(pointer, form::SHARED_UNITS_OFFSET);
+    let shared_units = stage.add_imm(pointer, form::shared_units_offset());
     let shared_length = stage.load_u64(record, form::SHARED_LENGTH_OFFSET);
     let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
     let short_length = stage.load_u8(record, form::SHORT_LENGTH_OFFSET);
@@ -85,6 +85,25 @@ pub(crate) fn string_char_at<S: Stage>(stage: &mut S, string: FlatString<S::Word
     let made = stage.ne_imm(character, Value::UNDEFINED.to_bits());
     stage.guard(made, miss)?;
     Some(character)
+}
+
+/// The interpreter's `string_char_code_at` of the string `value` among the records at
+/// `record_base`: `None` for a form the row does not read, which the caller reads through the
+/// string's units (`builtins::concrete_char_code_at`).
+#[inline(always)]
+pub(crate) fn concrete_string_char_code_at(record_base: *const crate::vm::wtf16::JsString, value: Value, index: Value) -> Option<Value> {
+    let mut stage = super::Concrete::new(std::ptr::null());
+    let string = flat_string(&mut stage, record_base as u64, value.to_bits(), ())?;
+    string_char_code_at(&mut stage, string, index.to_bits(), ()).map(Value::from_bits)
+}
+
+/// The interpreter's `string_char_at` of the string `value`, from the table of one-unit strings
+/// at `table`; `None` where the row leaves.
+#[inline(always)]
+pub(crate) fn concrete_string_char_at(record_base: *const crate::vm::wtf16::JsString, table: *const Value, value: Value, index: Value) -> Option<Value> {
+    let mut stage = super::Concrete::new(std::ptr::null());
+    let string = flat_string(&mut stage, record_base as u64, value.to_bits(), ())?;
+    string_char_at(&mut stage, string, index.to_bits(), table as u64, ()).map(Value::from_bits)
 }
 
 #[cfg(test)]
