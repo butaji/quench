@@ -106,37 +106,12 @@ impl<H: Host> Analysis<'_, H> {
         }
         let registers = function.registers;
         match call {
-            Call::IndirectTarget => {
-                let Slot::Binding(table) = state.get(instruction.b(), registers)? else {
-                    return None;
-                };
-                self.binds_table32(table).then_some(())?;
-                (value_kind(state.get(instruction.c(), registers)?)? == Kind::I32).then_some(())?;
-                self.type_signature(instruction.imm())?;
-                let reference = Slot::IndirectReference {
-                    signature: instruction.imm(),
-                    table,
-                };
-                state.set(instruction.a(), registers, reference)
-            }
+            Call::IndirectTarget => self.transfer_indirect_target(function, instruction, state),
             Call::RefFunc => {
                 self.import_signature(instruction.imm())?;
                 state.set(instruction.a(), registers, Slot::Import(instruction.imm()))
             }
-            Call::Known => {
-                let callee = u32::from(instruction.known_function_index());
-                let compiles = callable.contains(callee as usize);
-                if !compiles
-                    && (!self.experimental_root_compilation || (self.root_only && !self.callouts))
-                {
-                    return None;
-                }
-                let signature = self.signature(callee)?;
-                // The VM callout ABI currently carries at most one result: do not admit a
-                // residual fallback that would silently discard the remaining Wasm results.
-                (compiles || signature.results.len() <= 1).then_some(())?;
-                self.transfer_window(function, instruction, state, signature)
-            }
+            Call::Known => self.transfer_known(function, instruction, state, callable),
             Call::Reference => {
                 let signature = match state.get(instruction.b(), registers)? {
                     Slot::Import(import) => self.import_signature(import)?,
@@ -149,6 +124,47 @@ impl<H: Host> Analysis<'_, H> {
                 self.transfer_window(function, instruction, state, signature)
             }
         }
+    }
+
+    /// The reference of an indirect call: a 32-bit index into a table binding, checked against
+    /// a signature the program declares.
+    fn transfer_indirect_target(
+        &self,
+        function: &Function,
+        instruction: WideInstruction,
+        state: &mut AnalysisState,
+    ) -> Option<()> {
+        let registers = function.registers;
+        let Slot::Binding(table) = state.get(instruction.b(), registers)? else {
+            return None;
+        };
+        self.binds_table32(table).then_some(())?;
+        (value_kind(state.get(instruction.c(), registers)?)? == Kind::I32).then_some(())?;
+        self.type_signature(instruction.imm())?;
+        let reference = Slot::IndirectReference {
+            signature: instruction.imm(),
+            table,
+        };
+        state.set(instruction.a(), registers, reference)
+    }
+
+    /// A direct call: the callee compiles, or a callout stands in for it.
+    fn transfer_known(
+        &self,
+        function: &Function,
+        instruction: WideInstruction,
+        state: &mut AnalysisState,
+        callable: &crate::bitset::BitSet,
+    ) -> Option<()> {
+        let callee = u32::from(instruction.known_function_index());
+        let compiles = callable.contains(callee as usize);
+        let rooted = self.experimental_root_compilation && !(self.root_only && !self.callouts);
+        (compiles || rooted).then_some(())?;
+        let signature = self.signature(callee)?;
+        // The VM callout ABI currently carries at most one result: do not admit a residual
+        // fallback that would silently discard the remaining Wasm results.
+        (compiles || signature.results.len() <= 1).then_some(())?;
+        self.transfer_window(function, instruction, state, signature)
     }
 
     /// The call window holds the signature's parameters; the result register takes its result.

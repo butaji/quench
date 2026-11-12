@@ -613,11 +613,8 @@ complexity crates/quench-runtime/src/vm/collections.rs::Vm<H>::initialize_collec
 complexity crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::apply_set_relation 27
 complexity crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::fold_set_record 16
 complexity crates/quench-runtime/src/vm/compiled.rs::Analysis<'_,H>::plan 17
-complexity crates/quench-runtime/src/vm/compiled.rs::Analysis<'_,H>::transfer 93
 complexity crates/quench-runtime/src/vm/compiled.rs::Analysis<'a,H>::build_function 23
 complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::call_reference 12
-complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::instruction 59
-complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::simd 17
 complexity crates/quench-runtime/src/vm/compiled.rs::Vm<H>::call_import 15
 complexity crates/quench-runtime/src/vm/compiled.rs::Vm<H>::compile_program_with_diagnostics_and_root_mode 57
 complexity crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_jit_at_entry 25
@@ -1445,7 +1442,7 @@ file-lines crates/quench-runtime/src/vm/call_printer.rs 624
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 510
 file-lines crates/quench-runtime/src/vm/collections.rs 1470
-file-lines crates/quench-runtime/src/vm/compiled.rs 19000
+file-lines crates/quench-runtime/src/vm/compiled.rs 17595
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5458
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 861
@@ -1520,7 +1517,7 @@ file-lines crates/quench-runtime/src/vm/vector_region.rs 950
 file-lines crates/quench-runtime/src/vm/wasm.rs 6501
 file-lines crates/quench-runtime/src/vm/wasm_host.rs 1418
 file-lines crates/quench-runtime/src/vm/wasm_js.rs 1976
-file-lines crates/quench-runtime/src/vm/wasm_table.rs 1038
+file-lines crates/quench-runtime/src/vm/wasm_table.rs 1004
 file-lines crates/quench-runtime/src/vm/wtf16.rs 1351
 file-lines crates/quench-runtime/src/wasm.rs 2140
 file-lines crates/quench-runtime/src/wasm/constant.rs 980
@@ -2791,8 +2788,7 @@ function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>:
 function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::fold_set_record 124
 function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::get_set_record 61
 function-lines crates/quench-runtime/src/vm/collections_set_relations.rs::Vm<H>::set_relation 44
-function-lines crates/quench-runtime/src/vm/compiled.rs::Analysis<'_,H>::plan 148
-function-lines crates/quench-runtime/src/vm/compiled.rs::Analysis<'_,H>::transfer 372
+function-lines crates/quench-runtime/src/vm/compiled.rs::Analysis<'_,H>::plan 145
 function-lines crates/quench-runtime/src/vm/compiled.rs::Analysis<'a,H>::build_entry 82
 function-lines crates/quench-runtime/src/vm/compiled.rs::Analysis<'a,H>::build_function 190
 function-lines crates/quench-runtime/src/vm/compiled.rs::CallContext::native_adapter 43
@@ -2803,14 +2799,10 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::CompiledProgram::drop 1
 function-lines crates/quench-runtime/src/vm/compiled.rs::CompiledProgram::profiled_indirect_targets 47
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::call_reference 314
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::callout_function 78
-function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::instruction 407
-function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::simd 72
-function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::simd_kernel 80
-function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::vector_instruction 63
 function-lines crates/quench-runtime/src/vm/compiled.rs::JsNativeActivation::with 43
 function-lines crates/quench-runtime/src/vm/compiled.rs::LaneFrame::new 58
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::call_import 132
-function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::compile_program_with_diagnostics_and_root_mode 430
+function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::compile_program_with_diagnostics_and_root_mode 431
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::complete_pushed_call 57
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_jit_at_entry 100
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_jit_general_dispatch_at_entry 114
@@ -5021,7 +5013,6 @@ magic crates/quench-runtime/src/vm/compiled.rs::Analysis<'a,H>::build_entry 5
 magic crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::call_reference 2
 magic crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::callout_function 1
 magic crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::global_address 1
-magic crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::instruction 9
 magic crates/quench-runtime/src/vm/compiled.rs::RegionExit::decode 3
 magic crates/quench-runtime/src/vm/compiled.rs::RegionExit::encode 3
 magic crates/quench-runtime/src/vm/compiled.rs::emit_number_bitwise_bits::Emit<'_,'_>::shift_left 1

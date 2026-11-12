@@ -6,7 +6,8 @@ use super::wasm_flow::Flow;
 use super::wasm_instance::Instance;
 use super::wasm_memory::Memory;
 use super::wasm_operation::WasmOperation;
-use crate::bytecode::{Op, WideInstruction};
+use super::wasm_simd::Simd;
+use crate::bytecode::{InstructionField, Op, WideInstruction};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Step {
@@ -20,6 +21,8 @@ pub(crate) enum Step {
     Flow(Flow),
     /// Direct and indirect calls and the references they call.
     Call(Call),
+    /// Vector operators, shuffles and vector memory accesses.
+    Simd(Simd),
 }
 
 impl Step {
@@ -31,6 +34,21 @@ impl Step {
             .or_else(|| Memory::of(op).map(Self::Memory))
             .or_else(|| Flow::of(op).map(Self::Flow))
             .or_else(|| Call::of(op).map(Self::Call))
+            .or_else(|| Simd::of(op, tag).map(Self::Simd))
+    }
+
+    /// The register whose slot the plan records for the step: its first operand, or a vector
+    /// access's address.
+    pub(crate) fn operand(self, instruction: WideInstruction) -> u16 {
+        match self {
+            Self::Simd(simd) => simd.operand(instruction),
+            _ => instruction.b(),
+        }
+    }
+
+    /// Whether `field` of the instruction is an operand slot nothing reads.
+    pub(crate) fn leaves_unread(self, field: InstructionField) -> bool {
+        matches!(self, Self::Simd(simd) if simd.leaves_unread(field))
     }
 
     /// The function a step calls statically.
@@ -49,5 +67,6 @@ impl Step {
     /// Whether the step reads the function's memory register, which no other step may.
     pub(crate) const fn reads_memory(self) -> bool {
         matches!(self, Self::Memory(_) | Self::Instance(Instance::Binding))
+            || matches!(self, Self::Simd(simd) if simd.reads_memory())
     }
 }

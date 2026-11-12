@@ -6,6 +6,7 @@
 
 use super::wasm::{WasmStage, Width};
 use crate::bytecode::{Class, Op, WideInstruction};
+use crate::wasm::V128_BYTES;
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::integer::I64BinaryOperator as Binary;
 use crate::wasm::memory::{MemoryLoad, MemoryStore, WASM_PAGE_BITS};
@@ -54,6 +55,13 @@ impl Access {
             signed,
         })
     }
+
+    /// A 128-bit vector access, which only the vector steps make.
+    pub(crate) const VECTOR: Self = Self {
+        ty: WasmType::V128,
+        bytes: V128_BYTES,
+        signed: false,
+    };
 
     pub(crate) fn of_store(store: MemoryStore) -> Self {
         Self {
@@ -140,7 +148,7 @@ fn check_range<S: WasmMemory>(
 /// The check of an access of `access` at `index + offset`. `proven` says the caller has shown
 /// the index plus extent inside a guarded reservation, so the machine faults where it must.
 #[inline(always)]
-fn check_access<S: WasmMemory>(
+pub(crate) fn check_access<S: WasmMemory>(
     stage: &mut S,
     access: Access,
     index: S::Word,
@@ -181,6 +189,19 @@ pub(crate) fn store<S: WasmMemory>(
     check_access(stage, access, index, offset, proven)?;
     stage.memory_store(access, index, offset, value);
     Ok(())
+}
+
+/// The effective address of a vector access: the 32-bit `address` plus its static `offset`, as
+/// an `I64` word that cannot wrap.
+#[inline(always)]
+pub(crate) fn effective_address<S: WasmMemory>(
+    stage: &mut S,
+    address: S::Word,
+    offset: u64,
+) -> S::Word {
+    let index = stage.memory_index(address);
+    let offset = stage.constant(Width::I64, offset as i64);
+    stage.operate(Binary::Add, Width::I64, index, offset)
 }
 
 /// `memory.size`: the length in pages, an `I32` word.
@@ -237,7 +258,7 @@ impl Memory {
     pub(crate) fn operands(self, instruction: WideInstruction) -> [Option<u16>; 3] {
         match self {
             Self::Load(_) | Self::Store(_) => [Some(instruction.c()), None, None],
-            Self::Size => [None; 3],
+            Self::Size => [None, None, None],
             Self::Fill => {
                 let (destination, _) = instruction.register_pair();
                 [

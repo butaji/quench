@@ -31,6 +31,7 @@ mod wasm_gc;
 mod wasm_host;
 mod wasm_js;
 pub(crate) use wasm_exception::{js_tag_cell, js_tag_type};
+mod wasm_indirect;
 mod wasm_table;
 use crate::Value;
 use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,

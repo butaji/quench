@@ -56,6 +56,9 @@ pub(crate) mod wasm_instance;
 pub(crate) mod wasm_machine;
 pub(crate) mod wasm_memory;
 pub(crate) mod wasm_operation;
+pub(crate) mod wasm_simd;
+#[cfg(test)]
+mod wasm_simd_concrete;
 pub(crate) mod wasm_step;
 pub(crate) use wasm_concrete::ConcreteWasm;
 #[cfg(test)]
@@ -471,3 +474,5 @@ mod wasm_memory_tests;
 mod wasm_flow_tests;
 #[cfg(test)]
 mod wasm_call_tests;
+#[cfg(test)]
+mod wasm_simd_tests;

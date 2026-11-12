@@ -12,6 +12,11 @@ use crate::bytecode::{Function, WideInstruction};
 use crate::staged::wasm_memory::{Access, Memory, WasmMemory, copy, fill, load, size, store};
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, types};
 
+/// The byte widths of the narrow accesses.
+const BYTE: usize = size_of::<u8>();
+const HALF: usize = size_of::<u16>();
+const WORD: usize = size_of::<u32>();
+
 impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
     fn guarded(&self) -> bool {
         self.guarded
@@ -44,12 +49,12 @@ impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
         match (access.bytes, access.signed) {
             // A float loads straight into its view.
             _ if access.ty != kind.integer() => ins.load(scalar_ir(access.ty), flags, host, 0),
-            (1, false) => ins.uload8(ty, flags, host, 0),
-            (1, true) => ins.sload8(ty, flags, host, 0),
-            (2, false) => ins.uload16(ty, flags, host, 0),
-            (2, true) => ins.sload16(ty, flags, host, 0),
-            (4, false) if kind == Kind::I64 => ins.uload32(flags, host, 0),
-            (4, true) if kind == Kind::I64 => ins.sload32(flags, host, 0),
+            (BYTE, false) => ins.uload8(ty, flags, host, 0),
+            (BYTE, true) => ins.sload8(ty, flags, host, 0),
+            (HALF, false) => ins.uload16(ty, flags, host, 0),
+            (HALF, true) => ins.sload16(ty, flags, host, 0),
+            (WORD, false) if kind == Kind::I64 => ins.uload32(flags, host, 0),
+            (WORD, true) if kind == Kind::I64 => ins.sload32(flags, host, 0),
             _ => ins.load(ty, flags, host, 0),
         }
     }
@@ -60,9 +65,9 @@ impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
         let kind = Kind::of(access.ty).expect("a scalar access");
         let ins = self.body.core.builder.ins();
         match access.bytes {
-            1 => ins.istore8(flags, value, host, 0),
-            2 => ins.istore16(flags, value, host, 0),
-            4 if kind == Kind::I64 => ins.istore32(flags, value, host, 0),
+            BYTE => ins.istore8(flags, value, host, 0),
+            HALF => ins.istore16(flags, value, host, 0),
+            WORD if kind == Kind::I64 => ins.istore32(flags, value, host, 0),
             _ => ins.store(flags, value, host, 0),
         };
     }

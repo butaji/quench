@@ -41,15 +41,12 @@ impl<H: Host> Emitter<'_, '_, H> {
     pub(super) fn instance(&mut self, pc: usize, instruction: WideInstruction, step: Instance) {
         let (a, b) = (instruction.a(), instruction.b());
         if let Some(registers) = step.constant_registers(instruction) {
-            let constant = self
-                .analysis
-                .constant(instruction.constant_index())
-                .expect("planned");
-            let kind = self.analysis.constant_kind(constant);
-            let bits = self.analysis.constant_bits(constant);
-            for register in registers {
-                self.write_constant(register, kind, bits);
-            }
+            self.define_constants(registers, instruction);
+            return;
+        }
+        if step == Instance::Move && self.plan.operand(pc) == Slot::Vector {
+            let value = self.read_vector(b);
+            self.write_vector(a, value);
             return;
         }
         match step {
@@ -71,6 +68,26 @@ impl<H: Host> Emitter<'_, '_, H> {
             // A binding is known statically per instruction; the globals it names are reached
             // through the context. Constants were defined above.
             Instance::Binding | Instance::Constant | Instance::Fill => {}
+        }
+    }
+
+    /// Defines each of `registers` as the instruction's constant: a vector's bits, else a scalar.
+    fn define_constants(&mut self, registers: std::ops::Range<u16>, instruction: WideInstruction) {
+        let constant = self
+            .analysis
+            .constant(instruction.constant_index())
+            .expect("planned");
+        if let Some(bits) = self.analysis.constant_vector(constant) {
+            for register in registers {
+                let value = self.vector_constant(bits);
+                self.write_vector(register, value);
+            }
+            return;
+        }
+        let kind = self.analysis.constant_kind(constant);
+        let bits = self.analysis.constant_bits(constant);
+        for register in registers {
+            self.write_constant(register, kind, bits);
         }
     }
 }
@@ -106,17 +123,28 @@ impl<H: Host> Analysis<'_, H> {
             }
             Instance::Binding => self.bind_instance(state, registers, instruction, memory),
             Instance::GlobalGet | Instance::GlobalSet => {
-                let Slot::Binding(slot) = state.get(b, registers)? else {
-                    return None;
-                };
-                (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
-                if step == Instance::GlobalGet {
-                    return state.set(a, registers, Slot::Value(Kind::I32));
-                }
-                (value_kind(state.get(a, registers)?)? == Kind::I32).then_some(())
+                self.transfer_global(state, registers, instruction, step)
             }
             Instance::Constant | Instance::Fill => unreachable!("defined by their registers"),
         }
+    }
+
+    /// A global access reads the global its `b` register binds: a 32-bit one.
+    fn transfer_global(
+        &self,
+        state: &mut AnalysisState,
+        registers: u16,
+        instruction: WideInstruction,
+        step: Instance,
+    ) -> Option<()> {
+        let Slot::Binding(slot) = state.get(instruction.b(), registers)? else {
+            return None;
+        };
+        (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
+        if step == Instance::GlobalGet {
+            return state.set(instruction.a(), registers, Slot::Value(Kind::I32));
+        }
+        (value_kind(state.get(instruction.a(), registers)?)? == Kind::I32).then_some(())
     }
 
     /// An instance binding: the function's memory register binds its direct memory, any other

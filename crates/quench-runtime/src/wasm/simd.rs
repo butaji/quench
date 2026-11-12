@@ -25,13 +25,13 @@ fn scalar(value: WasmValue) -> u64 {
     }
 }
 
-fn lane_mask(width: u32) -> u128 {
+pub(crate) fn lane_mask(width: u32) -> u128 {
     u128::MAX >> (u128::BITS - width)
 }
-fn lane(bits: u128, width: u32, index: u8) -> u64 {
+pub(crate) fn lane(bits: u128, width: u32, index: u8) -> u64 {
     ((bits >> (width * u32::from(index))) & lane_mask(width)) as u64
 }
-fn replace(bits: u128, width: u32, index: u8, value: u64) -> u128 {
+pub(crate) fn replace(bits: u128, width: u32, index: u8, value: u64) -> u128 {
     let shift = width * u32::from(index);
     let mask = lane_mask(width);
     (bits & !(mask << shift)) | ((u128::from(value) & mask) << shift)
@@ -197,7 +197,7 @@ const fn lane_count(widths: &[u32]) -> u32 {
 
 macro_rules! simd_operators {
     ($($name:ident [$($lane:ident: $width:expr)?]: $left:ident, $right:expr => |$a:ident, $b:ident, $l:ident| $body:expr;)* ) => {
-        #[derive(Clone, Copy, Debug)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u32)]
         pub(crate) enum SimdOperator { $($name,)* }
         impl SimdOperator {
@@ -214,7 +214,7 @@ macro_rules! simd_operators {
                 let (_, lane) = SimdKernel::of(selector)?;
                 Some((Self::ALL[(selector >> SELECTOR_LANE_BITS) as usize], lane))
             }
-            pub(super) fn selector(self, lane: u8) -> u32 { ((self as u32) << SELECTOR_LANE_BITS) | u32::from(lane) }
+            pub(crate) fn selector(self, lane: u8) -> u32 { ((self as u32) << SELECTOR_LANE_BITS) | u32::from(lane) }
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, u8)> {
                 match op {
                     $(wasmparser::Operator::$name $({$lane})? => Some((Self::$name, [$(*$lane)?].first().copied().unwrap_or(0))),)*

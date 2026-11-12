@@ -1,11 +1,16 @@
-//! The interpreter's stage over the state of an instance: the scalar rules of `ConcreteWasm`
-//! plus the instance primitives (`WasmInstance`, `WasmMemory`) over borrowed words and bytes.
+//! The interpreter's stages over the state of an instance: the scalar rules of `ConcreteWasm`
+//! plus a table's primitives (`ConcreteTable`, which the VM resolves indirect calls on), and,
+//! for the tests that check the Wasm tier's instance primitives against the declared
+//! semantics, the globals and linear memory over borrowed words and bytes
+//! (`ConcreteInstance`).
 
 use super::ConcreteWasm;
 use super::wasm::{WasmStage, Width};
 use super::wasm_call::WasmTable;
 use super::wasm_float::{Float, Truncation};
+#[cfg(test)]
 use super::wasm_instance::WasmInstance;
+#[cfg(test)]
 use super::wasm_memory::{Access, WasmMemory};
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
@@ -13,6 +18,7 @@ use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unar
 use crate::{Value, WasmTrap};
 
 /// A stage over an instance: its globals by environment slot and its linear memory.
+#[cfg(test)]
 pub(crate) struct ConcreteInstance<'a> {
     pub(crate) globals: &'a mut [u64],
     pub(crate) memory: &'a mut [u8],
@@ -59,7 +65,9 @@ macro_rules! scalar_stage {
     )+};
 }
 
-scalar_stage!(ConcreteInstance<'_>, ConcreteTable<'_>);
+#[cfg(test)]
+scalar_stage!(ConcreteInstance<'_>);
+scalar_stage!(ConcreteTable<'_>);
 
 impl WasmTable for ConcreteTable<'_> {
     fn table_length(&mut self) -> u64 {
@@ -80,6 +88,7 @@ impl WasmTable for ConcreteTable<'_> {
     }
 }
 
+#[cfg(test)]
 impl WasmInstance for ConcreteInstance<'_> {
     fn global_load(&mut self, slot: u32) -> u64 {
         u64::from(self.globals[slot as usize] as u32)
@@ -90,6 +99,7 @@ impl WasmInstance for ConcreteInstance<'_> {
     }
 }
 
+#[cfg(test)]
 impl ConcreteInstance<'_> {
     /// The bytes of the checked access at `index + offset`.
     fn bytes(&self, access: Access, index: u64, offset: u32) -> std::ops::Range<usize> {
@@ -98,6 +108,7 @@ impl ConcreteInstance<'_> {
     }
 }
 
+#[cfg(test)]
 impl WasmMemory for ConcreteInstance<'_> {
     fn guarded(&self) -> bool {
         false

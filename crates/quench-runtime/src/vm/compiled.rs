@@ -26,7 +26,7 @@
 use tier_policy::TIERS;
 use super::dispatch_fast::Activation;
 use super::*;
-use crate::bytecode::{Class, Traits,
+use crate::bytecode::{Class,
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
     RETURN_REGISTER, WideInstruction,
 };
@@ -92,6 +92,7 @@ mod wasm_instance_stage;
 mod wasm_memory_stage;
 mod wasm_flow_stage;
 mod wasm_call_stage;
+mod wasm_simd_stage;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
 pub(super) use lane_unit::static_call_targets;
@@ -4543,15 +4544,6 @@ unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) 
     0
 }
 
-/// Whether `field` of `instruction` is the unused second operand of a one-operand SIMD
-/// operator, which lowering leaves naming register 0 and nothing reads.
-fn unary_simd_spare(instruction: WideInstruction, field: crate::bytecode::InstructionField) -> bool {
-    instruction.op().is_wasm_simd()
-        && field == crate::bytecode::InstructionField::C
-        && crate::wasm::simd::SimdKernel::of(instruction.imm())
-            .is_some_and(|(kernel, _)| kernel.right.is_none())
-}
-
 /// The machine type compiled code holds a Wasm vector in (`Slot::Vector`).
 const VECTOR_IR: ir::Type = types::I8X16;
 
@@ -8676,8 +8668,7 @@ impl<H: Host> Analysis<'_, H> {
                     instruction,
                     &mut state,
                     callable,
-                    memory_register,
-                    memory_slot,
+                    (memory_register, memory_slot),
                     result,
                 )
                 .is_none()
@@ -8708,10 +8699,8 @@ impl<H: Host> Analysis<'_, H> {
             .zip(&instructions)
             .map(|(state, instruction)| {
                 let state = state.as_ref()?;
-                let operand = match instruction.op().class() {
-                    Class::WasmMemoryLoad | Class::WasmMemoryStore => instruction.c(),
-                    _ => instruction.b(),
-                };
+                let operand = Step::of(instruction.op(), instruction.imm())
+                    .map_or(instruction.b(), |step| step.operand(instruction));
                 Some(state.get(operand, function.registers).unwrap_or(Slot::Conflict))
             })
             .collect();
@@ -8749,141 +8738,64 @@ impl<H: Host> Analysis<'_, H> {
     }
 
     /// Check `instruction` has a compiled denotation in `state`, and apply its
-    /// register writes.
-    #[allow(clippy::too_many_arguments)]
+    /// register writes. `memory` is the function's memory register and the slot it binds.
     fn transfer(
         &self,
         function: &Function,
         instruction: WideInstruction,
         state: &mut AnalysisState,
         callable: &crate::bitset::BitSet,
-        memory_register: Option<u16>,
-        memory_slot: &mut Option<u32>,
+        memory: (Option<u16>, &mut Option<u32>),
         result: Option<crate::WasmType>,
     ) -> Option<()> {
-        let op = instruction.op();
-        if !Step::of(op, instruction.imm()).is_some_and(Step::returns)
-            && instruction.returns_from_frame()
-        {
-            return None;
-        }
-        if !super::dispatch_fast::lane_fields_fit(instruction, function) {
-            return None;
-        }
-        let value =
-            |state: &AnalysisState, register: u16| match state.get(register, function.registers)? {
-                Slot::Value(kind) => Some(kind),
-                Slot::Memory32Address => Some(Kind::I64),
-                _ => None,
-            };
-        let i32_value = |state: &AnalysisState, register: u16| {
-            (value(state, register)? == Kind::I32).then_some(())
-        };
-        let set = |state: &mut AnalysisState, register: u16, slot: Slot| {
-            state.set(register, function.registers, slot)
-        };
-        // The memory register is read only by direct accesses through it.
-        if memory_register.is_some_and(|memory| {
-            !Step::of(op, instruction.imm()).is_some_and(Step::reads_memory)
-                && !op.traits().has(Traits::WASM_MEMORY)
-                && crate::bytecode::InstructionField::ALL.iter().any(|field| {
-                    op.field_layout(*field).reads_register()
-                        && instruction.field_value(*field) == memory
-                        && !unary_simd_spare(instruction, *field)
-                })
-        }) {
-            return None;
-        }
-        match Step::of(op, instruction.imm()) {
-            Some(Step::Numeric(operation)) => {
-                return wasm_stage::transfer(
-                    state,
-                    function.registers,
-                    instruction,
-                    operation,
-                    &value,
-                );
-            }
-            Some(Step::Instance(step)) => {
-                return self.transfer_instance(
-                    function,
-                    instruction,
-                    state,
-                    step,
-                    (memory_register, memory_slot),
-                );
-            }
-            Some(Step::Memory(step)) => {
-                return self.transfer_memory(
-                    function,
-                    instruction,
-                    state,
-                    step,
-                    (memory_register, *memory_slot),
-                );
-            }
-            Some(Step::Flow(flow)) => {
-                return self.transfer_flow(function, instruction, state, flow, result);
-            }
-            Some(Step::Call(call)) => {
-                return self.transfer_call(function, instruction, state, call, callable);
-            }
-            None => {}
-        }
-        match op.class() {
-            // A vector access's effective address: a 32-bit address plus the access's offset,
-            // as 64 bits, so the sum cannot wrap.
-            Class::WasmMemoryAddress => {
-                self.vector_memory(function, state, instruction.c(), memory_register, memory_slot)?;
-                self.memory_offset(instruction.constant_index())?;
-                i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Memory32Address)
-            }
-            Class::WasmMemoryLoad | Class::WasmMemoryStore => {
-                self.vector_memory(function, state, instruction.b(), memory_register, memory_slot)?;
-                if value(state, instruction.c())? != Kind::I64 {
-                    return None;
-                }
-                if op.class().eq(Class::WasmMemoryLoad) {
-                    (crate::wasm::memory::MemoryLoad::from_tag(instruction.imm())?
-                        == crate::wasm::memory::MemoryLoad::V128Load)
-                        .then_some(())?;
-                    set(state, instruction.a(), Slot::Vector)
-                } else {
-                    (crate::wasm::memory::MemoryStore::from_tag(instruction.imm())?
-                        == crate::wasm::memory::MemoryStore::V128Store)
-                        .then_some(())?;
-                    (state.get(instruction.a(), function.registers)? == Slot::Vector).then_some(())
-                }
-            }
-            Class::WasmSimd => {
-                let (kernel, lane) = crate::wasm::simd::SimdKernel::of(instruction.imm())?;
-                let operand = |register: u16, ty: crate::WasmType| match ty {
-                    crate::WasmType::V128 => {
-                        (state.get(register, function.registers)? == Slot::Vector).then_some(())
-                    }
-                    ty => (value(state, register)? == Kind::of(ty)?).then_some(()),
+        let step = Step::of(instruction.op(), instruction.imm())?;
+        admitted(function, instruction, step, memory.0)?;
+        let (memory_register, memory_slot) = memory;
+        match step {
+            Step::Numeric(operation) => {
+                let value = |state: &AnalysisState, register: u16| {
+                    wasm_instance_stage::value_kind(state.get(register, function.registers)?)
                 };
-                operand(instruction.b(), kernel.left)?;
-                if let Some(right) = kernel.right {
-                    operand(instruction.c(), right)?;
-                }
-                let result = match kernel.result_type(lane) {
-                    crate::WasmType::V128 => Slot::Vector,
-                    ty => Slot::Value(Kind::of(ty)?),
-                };
-                set(state, instruction.a(), result)
+                wasm_stage::transfer(state, function.registers, instruction, operation, &value)
             }
-            Class::WasmSimdShuffle => {
-                self.shuffle_lanes(instruction.constant_index())?;
-                for register in [instruction.b(), instruction.c()] {
-                    (state.get(register, function.registers)? == Slot::Vector).then_some(())?;
-                }
-                set(state, instruction.a(), Slot::Vector)
+            Step::Instance(step) => {
+                self.transfer_instance(function, instruction, state, step, (memory_register, memory_slot))
             }
-            _ => None,
+            Step::Memory(step) => {
+                self.transfer_memory(function, instruction, state, step, (memory_register, *memory_slot))
+            }
+            Step::Flow(flow) => self.transfer_flow(function, instruction, state, flow, result),
+            Step::Call(call) => self.transfer_call(function, instruction, state, call, callable),
+            Step::Simd(step) => {
+                self.transfer_simd(function, instruction, state, step, (memory_register, memory_slot))
+            }
         }
     }
+}
+
+/// Checks the lane fields of `instruction` fit, only a return leaves the frame, and the memory
+/// register is read only by the steps that name a memory.
+fn admitted(
+    function: &Function,
+    instruction: WideInstruction,
+    step: Step,
+    memory_register: Option<u16>,
+) -> Option<()> {
+    let fits = super::dispatch_fast::lane_fields_fit(instruction, function);
+    let leaves = instruction.returns_from_frame() && !step.returns();
+    let reads = memory_register
+        .is_some_and(|register| !step.reads_memory() && reads_register(instruction, register, step));
+    (fits && !leaves && !reads).then_some(())
+}
+
+/// Whether `instruction` reads `register` through a field `step` does not leave unread.
+fn reads_register(instruction: WideInstruction, register: u16, step: Step) -> bool {
+    let op = instruction.op();
+    crate::bytecode::InstructionField::ALL.iter().any(|field| {
+        op.field_layout(*field).reads_register()
+            && instruction.field_value(*field) == register
+            && !step.leaves_unread(*field)
+    })
 }
 
 /// Disjoint state compiled code accesses: an access to one never aliases an
@@ -10314,312 +10226,14 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     /// Emit the instruction at `pc`; returns whether control falls through.
-    /// The SIMD variable of `register`.
-    fn vector(&mut self, register: u16) -> Variable {
-        let index = usize::from(register);
-        if self.vectors.len() <= index {
-            self.vectors.resize(index + 1, None);
-        }
-        if let Some(variable) = self.vectors[index] {
-            return variable;
-        }
-        let variable = self.body.core.builder.declare_var(VECTOR_IR);
-        self.vectors[index] = Some(variable);
-        variable
-    }
-
-    fn read_vector(&mut self, register: u16) -> ir::Value {
-        let variable = self.vector(register);
-        self.body.core.builder.use_var(variable)
-    }
-
-    /// Define `register` as the vector `value`, of any lane shape.
-    fn write_vector(&mut self, register: u16, value: ir::Value) {
-        let value = self.lanes(VECTOR_IR, value);
-        let variable = self.vector(register);
-        self.known.retain(|(known, _)| *known != register);
-        self.body.core.builder.def_var(variable, value);
-    }
-
-    /// `value`, a vector, viewed with the lane shape `ty`: the same bits.
-    fn lanes(&mut self, ty: ir::Type, value: ir::Value) -> ir::Value {
-        if self.body.core.builder.func.dfg.value_type(value) == ty {
-            return value;
-        }
-        let flags = MemFlagsData::new().with_endianness(ir::Endianness::Little);
-        self.body.core.builder.ins().bitcast(ty, flags, value)
-    }
-
-    /// Address and effect flags for a full-width vector access. A proven memory32
-    /// address fits the guard reservation, including the vector's last byte. Keep
-    /// this access trapping: even an unused load must fault before later effects.
-    fn vector_address(&mut self, pc: usize, register: u16) -> (ir::Value, MemFlagsData) {
-        let address = self.read(register, Kind::I64);
-        if self.guarded && self.plan.operand(pc) == Slot::Memory32Address {
-            let flags = MemFlagsData::new()
-                .with_trap_code(Some(ir::TrapCode::HEAP_OUT_OF_BOUNDS))
-                .with_endianness(ir::Endianness::Little)
-                .with_alias_region(Some(self.regions[Region::LinearMemory as usize]));
-            return (self.body.core.builder.ins().iadd(self.base, address), flags);
-        }
-        let end = self
-            .body.core.builder
-            .ins()
-            .iadd_imm_u(address, crate::wasm::V128_BYTES as i64);
-        let memory_length = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            self.body.core.context,
-            CONTEXT_MEMORY_LENGTH,
-        );
-        let out_of_bounds =
-            self.body.core.builder
-                .ins()
-                .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
-        self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-        let address = self.body.core.builder.ins().iadd(self.base, address);
-        (address, self.flags(Region::LinearMemory))
-    }
-
-    /// The instructions that define or read vectors (`Slot::Vector`); `None` for any other.
-    fn vector_instruction(&mut self, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        match instruction.op().class() {
-            Class::Move if self.plan.operand(pc) == Slot::Vector => {
-                let value = self.read_vector(b);
-                self.write_vector(a, value);
-            }
-            Class::LoadConst | Class::WasmFillRegisters => {
-                let constant = self.analysis.constant(instruction.constant_index())?;
-                let bits = self.analysis.constant_vector(constant)?;
-                let registers = if instruction.op().class().eq(Class::LoadConst) {
-                    a..a + 1
-                } else {
-                    let window = instruction.register_window();
-                    window.base..window.base + window.count
-                };
-                for register in registers {
-                    let value = self.vector_constant(bits);
-                    self.write_vector(register, value);
-                }
-            }
-            Class::WasmMemoryAddress => {
-                let offset = self
-                    .analysis
-                    .memory_offset(instruction.constant_index())
-                    .expect("planned");
-                let address = self.read(b, Kind::I32);
-                let address = self.body.core.builder.ins().uextend(types::I64, address);
-                // A memory32 offset is below 2^32, so the 64-bit sum cannot wrap.
-                let address = self.body.core.builder.ins().iadd_imm_u(address, offset as i64);
-                self.write(a, Kind::I64, address);
-            }
-            Class::WasmMemoryLoad => {
-                let (address, flags) = self.vector_address(pc, c);
-                let value = self.body.core.builder.ins().load(VECTOR_IR, flags, address, 0);
-                self.write_vector(a, value);
-            }
-            Class::WasmMemoryStore => {
-                let (address, flags) = self.vector_address(pc, c);
-                let value = self.read_vector(a);
-                self.body.core.builder.ins().store(flags, value, address, 0);
-            }
-            Class::WasmSimdShuffle => {
-                let lanes = self
-                    .analysis
-                    .shuffle_lanes(instruction.constant_index())
-                    .expect("planned");
-                let mask = self
-                    .body.core.builder
-                    .func
-                    .dfg
-                    .immediates
-                    .push(ir::ConstantData::from(lanes.to_vec()));
-                let (left, right) = (self.read_vector(b), self.read_vector(c));
-                let value = self.body.core.builder.ins().shuffle(left, right, mask);
-                self.write_vector(a, value);
-            }
-            Class::WasmSimd => self.simd(pc, instruction),
-            _ => return None,
-        }
-        Some(true)
-    }
-
-    fn vector_constant(&mut self, bits: u128) -> ir::Value {
-        let constant = self
-            .body.core.builder
-            .func
-            .dfg
-            .constants
-            .insert(ir::ConstantData::from(bits.to_le_bytes().to_vec()));
-        self.body.core.builder.ins().vconst(VECTOR_IR, constant)
-    }
-
-    /// A SIMD operator: one Cranelift instruction where one has its exact semantics, else
-    /// the operator's own kernel (`SimdKernel::apply_bits`), which the interpreter runs too.
-    fn simd(&mut self, pc: usize, instruction: WideInstruction) {
-        use crate::wasm::simd::SimdOperator as S;
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        let (operator, _) = S::from_selector(instruction.imm()).expect("planned");
-        // Lane-wise integer arithmetic, bitwise logic and shifts: Cranelift reduces a vector
-        // shift's count modulo the lane width, as Wasm does.
-        let lanes = match operator {
-            S::V128And | S::V128Or | S::V128Xor | S::V128AndNot | S::V128Not => Some(VECTOR_IR),
-            S::I8x16Add | S::I8x16Sub => Some(types::I8X16),
-            S::I16x8Add | S::I16x8Sub | S::I16x8Shl | S::I16x8ShrU | S::I16x8ShrS => {
-                Some(types::I16X8)
-            }
-            S::I32x4Add | S::I32x4Sub | S::I32x4Shl | S::I32x4ShrU | S::I32x4ShrS => {
-                Some(types::I32X4)
-            }
-            S::I64x2Add | S::I64x2Sub | S::I64x2Shl | S::I64x2ShrU | S::I64x2ShrS => {
-                Some(types::I64X2)
-            }
-            _ => None,
-        };
-        if let Some(ty) = lanes {
-            let left = self.read_vector(b);
-            let left = self.lanes(ty, left);
-            let builder = &mut self.body.core.builder;
-            let value = match operator {
-                S::V128Not => builder.ins().bnot(left),
-                S::I16x8Shl | S::I32x4Shl | S::I64x2Shl
-                | S::I16x8ShrU | S::I32x4ShrU | S::I64x2ShrU
-                | S::I16x8ShrS | S::I32x4ShrS | S::I64x2ShrS => {
-                    let count = self.read(c, Kind::I32);
-                    let builder = &mut self.body.core.builder;
-                    match operator {
-                        S::I16x8Shl | S::I32x4Shl | S::I64x2Shl => builder.ins().ishl(left, count),
-                        S::I16x8ShrU | S::I32x4ShrU | S::I64x2ShrU => {
-                            builder.ins().ushr(left, count)
-                        }
-                        _ => builder.ins().sshr(left, count),
-                    }
-                }
-                _ => {
-                    let right = self.read_vector(c);
-                    let right = self.lanes(ty, right);
-                    let builder = &mut self.body.core.builder;
-                    match operator {
-                        S::V128And => builder.ins().band(left, right),
-                        S::V128Or => builder.ins().bor(left, right),
-                        S::V128Xor => builder.ins().bxor(left, right),
-                        S::V128AndNot => builder.ins().band_not(left, right),
-                        S::I8x16Add | S::I16x8Add | S::I32x4Add | S::I64x2Add => {
-                            builder.ins().iadd(left, right)
-                        }
-                        _ => builder.ins().isub(left, right),
-                    }
-                }
-            };
-            self.write_vector(a, value);
-            return;
-        }
-        if matches!(operator, S::I64x2ExtMulLowI32x4U) {
-            let (left, right) = (self.read_vector(b), self.read_vector(c));
-            let (left, right) = (self.lanes(types::I32X4, left), self.lanes(types::I32X4, right));
-            let builder = &mut self.body.core.builder;
-            let left = builder.ins().uwiden_low(left);
-            let right = builder.ins().uwiden_low(right);
-            let value = builder.ins().imul(left, right);
-            self.write_vector(a, value);
-            return;
-        }
-        self.simd_kernel(pc, instruction);
-    }
-
-    /// `simd` through the kernel: operands to words, `compiled_simd_kernel`, the result back.
-    fn simd_kernel(&mut self, _pc: usize, instruction: WideInstruction) {
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        let (kernel, lane) = crate::wasm::simd::SimdKernel::of(instruction.imm()).expect("planned");
-        let word = types::I64.bytes();
-        let slot = match self.simd_words {
-            Some(slot) => slot,
-            None => {
-                let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
-                    ir::StackSlotKind::ExplicitSlot,
-                    SIMD_KERNEL_WORDS as u32 * word,
-                    crate::wasm::V128_BYTES.trailing_zeros() as u8,
-                ));
-                self.simd_words = Some(slot);
-                slot
-            }
-        };
-        let operand = |emitter: &mut Self, register: u16, ty: crate::WasmType, at: usize| {
-            let offset = (at as u32 * word) as i32;
-            let (low, high) = match ty {
-                crate::WasmType::V128 => {
-                    let value = emitter.read_vector(register);
-                    let value = emitter.lanes(types::I64X2, value);
-                    let builder = &mut emitter.body.core.builder;
-                    (builder.ins().extractlane(value, 0), builder.ins().extractlane(value, 1))
-                }
-                ty => {
-                    let kind = Kind::of(ty).expect("planned");
-                    let value = emitter.read(register, kind);
-                    let builder = &mut emitter.body.core.builder;
-                    let value = if kind == Kind::I32 {
-                        builder.ins().uextend(types::I64, value)
-                    } else {
-                        value
-                    };
-                    (value, builder.ins().iconst(types::I64, 0))
-                }
-            };
-            let builder = &mut emitter.body.core.builder;
-            builder.ins().stack_store(types::I64, low, slot, offset);
-            builder.ins().stack_store(types::I64, high, slot, offset + word as i32);
-        };
-        operand(self, b, kernel.left, SIMD_KERNEL_LEFT);
-        if let Some(right) = kernel.right {
-            operand(self, c, right, SIMD_KERNEL_RIGHT);
-        }
-        let mut signature = Signature::new(self.call_conv);
-        signature.params.push(AbiParam::new(types::I64));
-        signature.params.push(AbiParam::new(types::I64));
-        let signature = self.body.core.builder.import_signature(signature);
-        let target = self.body.core.builder.ins().iconst(
-            types::I64,
-            compiled_simd_kernel as *const () as usize as i64,
-        );
-        let selector = self
-            .body.core.builder
-            .ins()
-            .iconst(types::I64, i64::from(instruction.imm()));
-        let words = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
-        self.body.core.builder
-            .ins()
-            .call_indirect(signature, target, &[selector, words]);
-        let result = (SIMD_KERNEL_RESULT as u32 * word) as i32;
-        match kernel.result_type(lane) {
-            crate::WasmType::V128 => {
-                let value = self.body.core.builder.ins().stack_load(types::I64, VECTOR_IR, slot, result);
-                self.write_vector(a, value);
-            }
-            ty => {
-                let kind = Kind::of(ty).expect("planned");
-                let value = self.body.core.builder.ins().stack_load(types::I64, types::I64, slot, result);
-                let value = if kind == Kind::I32 {
-                    self.body.core.builder.ins().ireduce(types::I32, value)
-                } else {
-                    value
-                };
-                self.write(a, kind, value);
-            }
-        }
-    }
-
     fn instruction(
         &mut self,
         function: &Function,
         pc: usize,
         instruction: WideInstruction,
     ) -> bool {
-        let op = instruction.op();
-        if let Some(done) = self.vector_instruction(pc, instruction) {
-            return done;
-        }
-        let step = Step::of(op, instruction.imm()).expect("planned instructions have a denotation");
+        let step = Step::of(instruction.op(), instruction.imm())
+            .expect("planned instructions have a denotation");
         match step {
             Step::Numeric(operation) => self.operation(pc, instruction, operation),
             Step::Instance(step) => {
@@ -10633,6 +10247,10 @@ impl<H: Host> Emitter<'_, '_, H> {
             Step::Flow(flow) => self.flow(function, pc, instruction, flow),
             Step::Call(call) => {
                 self.call(pc, instruction, call);
+                true
+            }
+            Step::Simd(step) => {
+                self.simd(pc, instruction, step);
                 true
             }
         }
