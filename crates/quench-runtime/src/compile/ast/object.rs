@@ -2,6 +2,10 @@ use super::*;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
+/// The most data properties one `MakeObjectLiteral` window of registers holds; a longer
+/// literal defines its fields one by one, so its registers stay within the encoded domain.
+const OBJECT_LITERAL_WINDOW_MAX: usize = SET_THIS_REGISTER as usize / 4;
+
 impl FunctionCompiler<'_, '_> {
     pub(super) fn object_expression(&mut self, value: &ObjectExpression<'_>) -> Register {
         let dst = self.reg();
@@ -33,7 +37,7 @@ impl FunctionCompiler<'_, '_> {
         }
         if let Some(properties) = Self::static_object_data_properties(value)
             && properties.len() > crate::bytecode::INLINE_OBJECT_SITE_ATOMS
-            && u16::try_from(properties.len()).is_ok()
+            && properties.len() <= OBJECT_LITERAL_WINDOW_MAX
             && {
                 let mut keys = FxHashSet::default();
                 properties.iter().all(|(_, key)| keys.insert(*key))
