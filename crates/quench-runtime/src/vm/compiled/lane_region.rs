@@ -21,7 +21,7 @@ use crate::bytecode::Class;
 use super::*;
 use super::super::specializer::Specializer;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
-use super::object_slots::{CheckedObject, CheckedObjectTable, Emit, StoreGate, ObjectHeader, ObjectRecord, ObjectTable, PackedAccess};
+use super::object_slots::{CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable, PackedAccess};
 use crate::typed_ir::Division;
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
@@ -3074,7 +3074,7 @@ impl Lowering<'_, '_> {
         access: Option<(&LanePlans<'_>, HeldRead)>) -> crate::staged::Step<ir::Value, ()> {
         let locals = self.completion != Completion::Number;
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
-        let gate = access.and_then(|(_, held)| held.store_ty).map(|ty| StoreGate { payload: self.payload, ty });
+        let gate = access.map(|_| self.payload);
         let mut stage = Emit { builder: &mut self.builder, property_values, gate };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held, registers_base: self.registers_base,
@@ -4438,7 +4438,7 @@ impl Lowering<'_, '_> {
         // an object retires, as another register may name it, and `this`'s facts are read
         // again.
         if self.generic.contains(&pc) && self.completion.status_and_pc() {
-            self.store_through_vm(state, (source, register), (instruction, ty), StorePlan::Add, exit)?;
+            self.store_through_vm(state, (source, register), instruction, StorePlan::Add, exit)?;
             self.forget_append_rooms(self.at);
             self.reshaped(state);
             self.reload_receiver();
@@ -4451,7 +4451,7 @@ impl Lowering<'_, '_> {
             self.loop_slot_store(state, instruction, slot, (value, exit));
         } else if let Some(plan) = self.direct_store_plan(instruction, ty) {
             state.proofs.write_field(instruction.atom_index());
-            self.store_through_vm(state, (source, register), (instruction, ty), plan, exit)?;
+            self.store_through_vm(state, (source, register), instruction, plan, exit)?;
             state.proofs.stable = false;
             self.forget_append_rooms(self.at);
         } else {
@@ -4515,15 +4515,14 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// The store of the `source` register's value, of type `ty`, to `instruction`'s field of
-    /// `register`'s object (`this` for `None`) as one `SetField` row under `plan`.
+    /// The store of the `source` register's value to `instruction`'s field of `register`'s
+    /// object (`this` for `None`) as one `SetField` row under `plan`.
     fn store_through_vm(&mut self, state: &mut State, (source, register): (Register, Option<Register>),
-        (instruction, ty): (WideInstruction, Type), plan: StorePlan, exit: ir::Block) -> Option<()> {
+        instruction: WideInstruction, plan: StorePlan, exit: ir::Block) -> Option<()> {
         let operation = crate::staged::Operation::SetField { value: source, base: register,
             atom: instruction.atom_index(), site: instruction.cache_site_index() };
         let plans = LanePlans { store: Some(plan), ..LanePlans::NONE };
-        let held = HeldRead { store_ty: Some(ty), ..HeldRead::default() };
-        match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, held)) {
+        match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, HeldRead::default())) {
             crate::staged::Step::Value(_) => Some(()),
             _ => None,
         }
@@ -4647,7 +4646,9 @@ impl Lowering<'_, '_> {
         let record_id = self.ins().ireduce(types::I32, object_bits);
         let record_id = self.ins().uextend(types::I64, record_id);
         let payload = self.payload;
-        emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, direct_ty, general);
+        if !direct_ty.is_subtype(Type::IMMEDIATE) {
+            emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, general);
+        }
         // The admitted write domain and barrier above also cover packed
         // references. Encoding support is shared with bound native stores.
         if (direct_ty.is_subtype(Type::INT32)
@@ -4751,7 +4752,9 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, allowed, slow);
             let (address, record) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
                 JsFieldReceiver::Value(object), site, false, slow, Some(binding), header, Some(packed));
-            emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, ty, slow);
+            if !ty.is_subtype(Type::IMMEDIATE) {
+                emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, slow);
+            }
             self.ins().store(MemFlagsData::trusted(), value, address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(packed);
@@ -4760,7 +4763,9 @@ impl Lowering<'_, '_> {
             // mark bit as the arena path; a reference needing logging uses the VM.
             let record = self.ins().ireduce(types::I32, object);
             let record = self.ins().uextend(types::I64, record);
-            emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, ty, slow);
+            if !ty.is_subtype(Type::IMMEDIATE) {
+                emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, slow);
+            }
             self.ins().store(MemFlagsData::trusted(), narrow, packed_address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);

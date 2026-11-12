@@ -37,8 +37,6 @@ pub(super) struct HeldRead {
     pub(super) entry_word: Option<u32>,
     /// The value an earlier read of the first field proved (`LocalProofs::fields`).
     pub(super) known: Option<ir::Value>,
-    /// The semantic type of a stored value, which decides whether its store needs a barrier.
-    pub(super) store_ty: Option<Type>,
 }
 
 /// The Stable facts a lowering takes, and where it takes them.
@@ -91,6 +89,9 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     type Plans = &'a LanePlans<'a>;
 
     fn plans(&self) -> &'a LanePlans<'a> { self.fields.as_ref().map_or(&LanePlans::NONE, |facts| facts.plans) }
+
+    /// The semantic type the lowering's state holds of the register: a static fact.
+    fn value_fact(&self, register: Register) -> Type { self.state.values[usize::from(register)].value.ty }
 
     fn object_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {
         let entry = self.entry()?;

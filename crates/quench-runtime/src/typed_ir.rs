@@ -46,6 +46,11 @@ impl Type {
     pub(crate) const ANY: Self = Self(TypeKind::Language(u16::MAX));
     pub(crate) const NULLISH: Self = Self(TypeKind::Language(
         (1 << ValueType::Null as u16) | (1 << ValueType::Undefined as u16)));
+    /// The types whose values name no heap record (a Number, a Boolean, `null`, `undefined`):
+    /// the tag layout's non-reference words, which a store writes with no barrier.
+    pub(crate) const IMMEDIATE: Self = Self(TypeKind::Language(
+        (1 << ValueType::Number as u16) | (1 << ValueType::Boolean as u16)
+            | (1 << ValueType::Null as u16) | (1 << ValueType::Undefined as u16)));
     pub(crate) const NUMBER: Self = Self::language(ValueType::Number);
     pub(crate) const INT32: Self = Self(TypeKind::Int32);
     /// The canonical direct-object tag only: no object-table range, base,

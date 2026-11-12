@@ -11,17 +11,9 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
     /// The property arena's value base (`Table::PropertyValues`), where the operation
     /// addresses a run; a read through a proved layout already holds its address.
     pub(in crate::vm::compiled) property_values: Option<ir::Value>,
-    /// What a store's barrier test depends on, where the operation stores.
-    pub(in crate::vm::compiled) gate: Option<StoreGate>,
-}
-
-/// The facts a store's barrier decision (`Stage::store_gate`) is made from: the dispatch payload
-/// that holds the object marks, and the semantic type of the stored value, which is known where
-/// the specializer proved it (a Number is immediate and needs no barrier).
-#[derive(Clone, Copy)]
-pub(in crate::vm::compiled) struct StoreGate {
-    pub(in crate::vm::compiled) payload: ir::Value,
-    pub(in crate::vm::compiled) ty: crate::typed_ir::Type,
+    /// The dispatch payload that holds the object marks the store barrier's test reads, where
+    /// the operation stores (`Stage::store_gate`).
+    pub(in crate::vm::compiled) gate: Option<ir::Value>,
 }
 
 /// An immediate of the Cranelift stage: a constant, or a value the caller holds as one (a stencil's
@@ -115,15 +107,14 @@ impl Stage for Emit<'_, '_> {
     fn store_u64(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
         self.builder.ins().store(MemFlagsData::trusted(), value, base, offset);
     }
-    /// Whether the store needs no barrier log: a static fact folds the decision (an immediate
-    /// type emits no test), otherwise the shared tag and mark test decides. A stage with no
-    /// gate facts answers no, and the store leaves at its miss.
+    /// Whether the store needs no barrier log: the shared tag and mark test. A value the frame
+    /// proved immediate never asks (`staged::store`); a stage with no payload answers no, and
+    /// the store leaves at its miss.
     fn store_gate(&mut self, record_id: ir::Value, value: ir::Value) -> ir::Value {
-        let Some(StoreGate { payload, ty }) = self.gate else { return self.ult(record_id, record_id) };
-        if ty.is_subtype(crate::typed_ir::Type::NUMBER) { return self.builder.ins().iconst(types::I8, 1); }
+        let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
         let (logged, join) = (self.builder.create_block(), self.builder.create_block());
         let open = self.builder.append_block_param(join, types::I8);
-        super::super::emit_unlogged_property_store_guard(self.builder, payload, record_id, value, ty, logged);
+        super::super::emit_unlogged_property_store_guard(self.builder, payload, record_id, value, logged);
         let yes = self.builder.ins().iconst(types::I8, 1);
         self.builder.ins().jump(join, &[ir::BlockArg::Value(yes)]);
         self.builder.switch_to_block(logged);

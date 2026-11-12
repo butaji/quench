@@ -12,6 +12,7 @@ use super::ic::{self, IcOp, Reached};
 use super::object::{object_record_at, read_slot, Form, Layout};
 use super::{value, Frame, NumericFrame, NumericStage, Operation, Stage, Step};
 use crate::bytecode::{FieldBase, FieldLookup, Register};
+use crate::typed_ir::Type;
 
 /// Whose object a read starts from: what a frame keys its proofs of an object by.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -111,6 +112,13 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
 
     /// The plans this frame's tier proved.
     fn plans(&self) -> Self::Plans;
+
+    /// What the frame proved of the type of `register`'s value: `Type::ANY` where it proved
+    /// nothing, which a frame that knows no static facts (the interpreter) always answers. A
+    /// store folds what the type decides (the barrier of an immediate, the narrow encoder of an
+    /// int32) and tests the rest dynamically.
+    #[inline(always)]
+    fn value_fact(&self, _register: Register) -> Type { Type::ANY }
 
     /// The base of the object record table, which prototype reads and stores address.
     #[inline(always)]
@@ -353,13 +361,13 @@ fn chain<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, first: (Ow
 /// owner's shape proof, the method-cache admission, then the shared own store, whose barrier
 /// and storage decisions are the stage's. Anything it cannot do stores through the VM.
 pub(super) fn own_store_row<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owner: Owner, object: S::Word,
-    (shape, slot): (u32, u16), (atom, site): (u32, u16), value: S::Word, miss: S::Miss) -> Option<()> {
+    (shape, slot): (u32, u16), (atom, site): (u32, u16), (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
     frame.stored(stage, owner, object, (atom, site), value, miss, |stage, frame, miss| {
         frame.store_admitted(stage, atom, miss)?;
         let at = frame.receiver_record(stage, owner, object, false, miss)?;
         guard_receiver_shape(stage, frame, (owner, true), &at, shape, miss)?;
         let id = stage.and_imm(object, u64::from(u32::MAX));
-        super::store::own_store_proved(stage, at.record, id, slot, value, miss)
+        super::store::own_store_proved(stage, at.record, id, slot, (value, fact), miss)
     })
 }
 

@@ -1535,14 +1535,13 @@ fn emit_js_own_field_set(
     exact.emit(builder, fallback);
 }
 
-/// The shared RecordSpace::store_logs test: an immediate or unmarked owner
-/// needs no barrier. Verified Numbers are immediate and discharge the test at
-/// compilation. Otherwise the caller must perform the logged store.
+/// The shared RecordSpace::store_logs test: an immediate or unmarked owner needs no barrier;
+/// otherwise the caller must perform the logged store. A value the specializer proved
+/// immediate (`Type::IMMEDIATE`) never reaches it (`staged::store`).
 fn emit_unlogged_property_store_guard(
     builder: &mut FunctionBuilder<'_>, payload: ir::Value, record_id: ir::Value,
-    value: ir::Value, ty: typed_ir::Type, fallback: ir::Block,
+    value: ir::Value, fallback: ir::Block,
 ) {
-    if ty.is_subtype(typed_ir::Type::NUMBER) { return; }
     use crate::value::ValueLayout;
     let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
     let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);

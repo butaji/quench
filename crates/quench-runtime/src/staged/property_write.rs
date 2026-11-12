@@ -13,10 +13,11 @@ pub(super) fn set_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     let plan = frame.plans().store_plan(site)?;
     let base = base.map_or(FieldBase::THIS, FieldBase::register);
     let object = base_word(stage, frame, base, miss)?;
+    let fact = frame.value_fact(value);
     let value = frame.tagged(stage, value);
     match plan {
         StorePlan::Own { shape, slot } =>
-            own_store_row(stage, frame, Owner::of(base)?, object, (shape, slot), (atom, site), value, miss)?,
+            own_store_row(stage, frame, Owner::of(base)?, object, (shape, slot), (atom, site), (value, fact), miss)?,
         StorePlan::Add => frame.field_add(stage, object, atom, site, value, miss)?,
         StorePlan::Host => frame.field_store_host(stage, object, atom, site, value, miss)?,
     }
