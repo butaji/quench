@@ -4,11 +4,13 @@
 //! runtime copies them like any stencil (`entry_*` may `call`, `leave_*` may `ret`; `build.rs`
 //! allows nothing else to).
 //!
-//! Entry ABI: (rdi = context, rcx = register file, r8 = result pointer). The thunk moves the
-//! context to r13 and the register file to r12 (the row convention), calls the first row
+//! Entry ABI: (rdi = context, rcx = the frame, r8 = result pointer). The thunk moves the
+//! context to r13 and loads the frame's window of registers (`staged::frame::WINDOW`) into r12
+//! (the row convention), calls the first row
 //! (`HOLE_NEXT`), stores the word the chain returned through the result pointer and returns
 //! status 0.
 
+use crate::staged::frame;
 use crate::words::HOLE_V0;
 
 unsafe extern "C" {
@@ -28,7 +30,7 @@ pub unsafe extern "C" fn entry_thunk() {
         "push r15",
         "push r8",
         "mov r13, rdi",
-        "mov r12, rcx",
+        "mov r12, [rcx + {window}]",
         "call {first}",
         "pop r8",
         "mov [r8], rax",
@@ -41,6 +43,7 @@ pub unsafe extern "C" fn entry_thunk() {
         "xor eax, eax",
         "ret",
         first = sym HOLE_NEXT,
+        window = const frame::WINDOW,
     )
 }
 

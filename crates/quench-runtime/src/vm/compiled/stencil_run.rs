@@ -38,8 +38,10 @@ pub(super) unsafe fn run_bare(
     let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
     context.adapter_payload = (&mut payload as *mut usize).cast();
     let mut word = 0u64;
-    // SAFETY: as the caller promises; the code reads the register file and writes the result word.
-    let status = unsafe { enter_native(&mut context, 0, 0, registers.cast::<u64>(), &mut word, NativeEntryMode::Resumable, entry_code) };
+    // The code takes the frame, whose window is the register file it runs on.
+    let mut frame = super::ShadowFrame { window: registers as usize, ..super::ShadowFrame::EMPTY };
+    // SAFETY: as the caller promises; the code reads the register file through the frame and writes the result word.
+    let status = unsafe { enter_native(&mut context, 0, 0, (&raw mut frame).cast::<u64>(), &mut word, NativeEntryMode::Resumable, entry_code) };
     if let Some(Raised::Panic(panic)) = context.raised.take() {
         std::panic::resume_unwind(panic);
     }

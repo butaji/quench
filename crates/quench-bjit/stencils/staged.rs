@@ -9,3 +9,4 @@ pub(crate) mod effects {
 #[path = "../../quench-runtime/src/staged/elements.rs"] pub(crate) mod elements;
 #[path = "../../quench-runtime/src/staged/environment.rs"] pub(crate) mod environment;
 #[path = "../../quench-runtime/src/staged/entry.rs"] pub(crate) mod entry;
+#[path = "../../quench-runtime/src/staged/frame.rs"] #[allow(dead_code)] pub(crate) mod frame;

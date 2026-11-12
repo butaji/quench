@@ -124,10 +124,10 @@ fn check_transfer(row: &str, code: &[u8], at: usize) {
 
 /// Every file whose change must recompile the stencils: the stencil sources and the runtime's
 /// staged rows they include, and nothing else.
-const SOURCES: [&str; 9] = [
+const SOURCES: [&str; 10] = [
     "stencils", "../quench-runtime/src/staged/stage.rs", "../quench-runtime/src/staged/value.rs",
     "../quench-runtime/src/staged/object.rs", "../quench-runtime/src/staged/elements.rs",
-    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "build.rs", "src/numeric.rs",
+    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "../quench-runtime/src/staged/frame.rs", "build.rs", "src/numeric.rs",
 ];
 
 fn main() {
