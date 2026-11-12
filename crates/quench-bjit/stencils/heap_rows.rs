@@ -20,7 +20,7 @@
 
 use crate::layout::{
     CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
-    JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_STRING_RECORD_BASE, PROPERTY_BUFFER_BASE,
+    JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_STRING_RECORD_BASE, JS_STEP_VM, PROPERTY_BUFFER_BASE,
 };
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word};
 use crate::places::{DEST, LEFT, Places, tagged_place};
@@ -30,7 +30,7 @@ use crate::staged::{Stage, Step, elements, entry, environment, load_this, read_l
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW,
+    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW,
 };
 
 unsafe extern "C" {
@@ -193,6 +193,14 @@ fn live_row(s: S) -> Out {
     if word_at(hole64::<HOLE_A>() as usize, 0) == 0 { Out::Next(s) } else { Out::Exit(s) }
 }
 
+/// Continues while the active realm's global object (the word at hole 1's byte offset in the VM the
+/// payload names) is the one in hole 2, which the code folded facts of (`Vm::realm_globals_offset`);
+/// else the taken successor, the entry's failure.
+#[inline(always)]
+fn realm_row(s: S, payload: usize) -> Out {
+    if word_at(word_at(payload, JS_STEP_VM) as usize, hole::<HOLE_A>()) == hole64::<HOLE_B>() { Out::Next(s) } else { Out::Taken(s) }
+}
+
 /// The `length` of the array or string word at hole 1 (`strings::length_of`).
 #[inline(always)]
 fn length_row<const D: u8>(s: S, payload: usize) -> Out {
@@ -280,6 +288,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         THIS_STORE_ROW => site_store_row::<A>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
         HELD_ROW => held_row::<D>(s, payload, if ENTRY { word_at(payload, JS_STEP_RECEIVER) } else { register_object(&s) }),
         LIVE_ROW => live_row(s),
+        REALM_ROW => realm_row(s, payload),
         ARRAY_ROW => array_row(s),
         IDENTITY_ROW => identity_row(s),
         THIS_ROW => this_row::<D>(s),

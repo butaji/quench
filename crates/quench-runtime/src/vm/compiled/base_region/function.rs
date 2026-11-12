@@ -172,11 +172,12 @@ fn plan_row(layout: &Layout, reprs: &Reprs, reached: bool, pc: u32, row: &Decode
 /// What a body is built for: its function and registers, the rows whose int32 speculation failed
 /// (`widened`, by caller PC), the registers its entry held as ints and doubles (`seen`), and what
 /// the program holds Stable (`Known`), whose invalidation word its code reads where a call may
-/// have changed a fact it folded.
+/// have changed a fact it folded, and the realm its inlined callees belong to (`RealmProof`).
 pub(in crate::vm::compiled) struct BodySpec<'a> {
     pub(in crate::vm::compiled) function: u32,
     pub(in crate::vm::compiled) registers: u16,
     pub(in crate::vm::compiled) known: Known<'a>,
+    pub(in crate::vm::compiled) realm: RealmProof,
     pub(in crate::vm::compiled) widened: &'a [usize],
     pub(in crate::vm::compiled) seen: [&'a [Register]; SEEN],
 }
@@ -227,7 +228,7 @@ fn assemble_body(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers
     let rows: Vec<Decoded> = stitched.rows.into_iter().zip(&reached).map(|(row, reached)| unreached(row, reached)).collect();
     let (reprs, homes, webs, decoded) = analyze(&span, &rows, &widened_rows(&stitched.origins, spec.widened), spec.seen);
     let invalidation = spec.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(Decoded::makes_calls));
-    let layout = Layout { span, homes, webs, ending: Ending::Body, callees: sites.facts, origins: &stitched.origins, copies: &stitched.copies, invalidation };
+    let layout = Layout { span, homes, webs, ending: Ending::Body, callees: sites.facts, origins: &stitched.origins, copies: &stitched.copies, invalidation, realm: (!stitched.frames.is_empty()).then_some(spec.realm) };
     let mut planned = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, &reprs, reached[k], k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let code = link(&layout, &planned)?;
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached[*k] && leaves(&layout, row)).count();

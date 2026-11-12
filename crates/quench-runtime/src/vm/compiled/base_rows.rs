@@ -64,6 +64,10 @@ pub(super) enum Heap {
     Held,
     /// `Held` of the activation's receiver, which the payload holds: hole 0 is the destination alone.
     ThisHeld,
+    /// Branches to its taken successor, an entry's failure, unless the active realm's global object (the
+    /// word at the byte offset in hole 1 of the VM) is the word of hole 2: the realm a body folded
+    /// facts of its callees in (`Vm::realm_globals_offset`), proved once, at the entry.
+    Realm,
     /// Leaves unless the invalidation word at the address in hole 1 is zero (`code_dependencies::Invalidation`):
     /// the check before a row that holds a Stable fact where a call may have changed it.
     Live,
@@ -102,6 +106,7 @@ impl Heap {
             Heap::Identity => library::IDENTITY_ROW,
             Heap::Held | Heap::ThisHeld => library::HELD_ROW,
             Heap::Live => library::LIVE_ROW,
+            Heap::Realm => library::REALM_ROW,
         }
     }
 
@@ -109,7 +114,7 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live)
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live | Heap::Realm)
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value

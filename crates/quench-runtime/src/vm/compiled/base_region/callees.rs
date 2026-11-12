@@ -68,13 +68,13 @@ impl Callees {
 
     /// The callee each call site of `code` calls (`candidates`, by PC), `body_of` the function it
     /// runs, and `stable` the Stable fact holding it by PC.
-    pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(u32) -> Option<InlineBody>, stable: Vec<Option<GlobalFact>>) -> Self {
+    pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<GlobalFact>>) -> Self {
         let mut owned = Vec::new();
         let at = code.iter().zip(candidates).map(|(instruction, site)| {
             owned.push(called(*instruction, site)?.clone());
             Some(owned.len() - 1)
         }).collect();
-        let bodies = owned.iter().map(|callee: &DirectCallee| body_of(callee.target.function)).collect();
+        let bodies = owned.iter().map(body_of).collect();
         Self { owned: owned.into_boxed_slice(), at, bodies, stable }
     }
 

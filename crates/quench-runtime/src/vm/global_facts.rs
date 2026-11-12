@@ -88,10 +88,15 @@ impl<H: Host> Vm<H> {
         };
         // A function's identity lets a call through the read skip its callee check.
         let ty = Type::function(value).filter(|_| self.heap.function(value).is_some()).unwrap_or_else(|| Type::immediate(value));
-        let realm_offset = i32::try_from(std::mem::offset_of!(Vm<H>, realm) + std::mem::offset_of!(super::Realm, globals))
-            .expect("the realm's global lies within the VM");
+        let realm_offset = Self::realm_globals_offset();
         crate::heap::global_value_fact(table, cell)
             .map_or(GlobalRead::Dynamic, |fact| GlobalRead::Stable { value, ty, fact, global: globals, realm_offset })
+    }
+
+    /// The byte offset in the VM of the active realm's global object, which code that folds a
+    /// realm's global cells reads to prove that realm active (`Lowering::prove_realm`, `Heap::Realm`).
+    pub(super) fn realm_globals_offset() -> i32 {
+        i32::try_from(std::mem::offset_of!(Vm<H>, realm) + std::mem::offset_of!(super::Realm, globals)).expect("the realm's global lies within the VM")
     }
 
     /// Binds global lexical `atom` to `value` in the active realm, noting a name it declared

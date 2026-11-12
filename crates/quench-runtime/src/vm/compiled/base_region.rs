@@ -62,6 +62,15 @@ pub(in crate::vm::compiled) struct Known<'a> {
     pub(in crate::vm::compiled) invalidation: Option<usize>,
 }
 
+/// The realm a body's inlined callees were found in: where the active realm's global object sits in
+/// the VM (`Vm::realm_globals_offset`) and the global object itself. A body that inlines code runs
+/// it under its own realm's globals, so its entry proves this realm active (`Heap::Realm`).
+#[derive(Clone, Copy)]
+pub(in crate::vm::compiled) struct RealmProof {
+    pub(in crate::vm::compiled) offset: u64,
+    pub(in crate::vm::compiled) global: u64,
+}
+
 impl Known<'_> {
     /// Whether a store of `atom` may run in place: no method cache names it.
     fn stores_in_place(&self, atom: Atom) -> bool {
@@ -260,7 +269,7 @@ fn assemble(region: &LoopRegion, (dense, known): (bool, Known), widened: &[usize
     settle(&mut decoded);
     let span = Span::of(region);
     let (reprs, homes, webs, decoded) = analyze(&span, &decoded, widened, seen);
-    let layout = Layout { span, homes, webs, ending: Ending::Region, callees: &[], origins: &[], copies: &[], invalidation: None };
+    let layout = Layout { span, homes, webs, ending: Ending::Region, callees: &[], origins: &[], copies: &[], invalidation: None, realm: None };
     let body = decoded.iter().enumerate().map(|(k, row)| plan(row, &layout, header + k as u32, is_general(row, &reprs), helpers)).collect::<Result<Vec<_>, _>>()?;
     let bare = decoded.iter().all(|row| row.heap.is_none() && row.step != Some(Step::Helper));
     Ok(Built { code: link(&layout, &body)?, bare, atoms: held_atoms(&decoded) })

@@ -15,6 +15,9 @@
 //!   redefinition of the callee retires the code and the next plan names the new identity, with no
 //!   check per call. Any other callee (one a closure holds) is proved by a row at the call
 //!   (`Proof::Guard`).
+//! * The callee belongs to the realm the body was compiled in, which the body's entry proves active
+//!   (`Heap::Realm`): a callee of another realm is not inlined (`Vm::inlinable_callee`), as its
+//!   rows would read the caller's globals.
 //! * Each row names the registers of the callee that are live before it (`SiteRow::live`), renamed
 //!   into the window, so the stitch derives what is live at every row of the flat program.
 //!

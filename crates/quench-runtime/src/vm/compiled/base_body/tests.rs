@@ -449,3 +449,22 @@ fn folded_prototype_reads_see_changes_a_call_in_the_body_makes() {
     );
     assert_eq!(interpreted, compiled);
 }
+
+/// A callee of the realm active when a body is compiled may be inlined; once another realm is active
+/// the same function belongs to a foreign one, and the fold is refused (its rows would read the
+/// active realm's globals, not its own).
+#[test]
+fn a_callee_of_another_realm_is_not_inlinable() {
+    let program = Engine::specialize("function g(x) { return x + 1; }", "realm.js").unwrap();
+    let mut vm = crate::vm::Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let atom = vm.lookup_atom("g").unwrap();
+    let callee = vm.own_property(vm.realm.globals, atom).unwrap();
+    let Some(crate::heap::FunctionRecord { kind: crate::heap::FunctionKind::User(_, function), .. }) = vm.heap.function(callee) else { panic!("a script function") };
+    let function = *function;
+    let residual = vm.programs.get(vm.active_program).unwrap();
+    assert!(vm.same_realm_user_target(callee).is_some(), "the function belongs to the active realm");
+    let foreign = vm.create_realm_global(&program).unwrap();
+    vm.switch_realm_global(foreign);
+    assert!(vm.inlinable_callee(&residual, callee, function).is_none(), "a callee of another realm is not folded");
+}

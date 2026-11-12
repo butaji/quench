@@ -73,6 +73,10 @@ pub const THIS_STORE_ROW: u8 = 14;
 pub const HELD_ROW: u8 = 15;
 /// Leaves unless the invalidation word at the address in hole 1 is zero.
 pub const LIVE_ROW: u8 = 16;
+/// Branches to its taken successor (an entry's failure) unless the word at the byte offset in hole 1
+/// of the VM the payload names is the word of hole 2: the active realm's global object, which the
+/// code was compiled against.
+pub const REALM_ROW: u8 = 17;
 /// Bits below the prototype link in a folded read's hole 1, which carries the receiver's exact shape beneath it.
 pub const HELD_LINK_AT: u32 = 32;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries
