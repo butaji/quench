@@ -343,7 +343,7 @@ mod tests {
             [protocol::LANE_CALL_COMPLETED, protocol::LANE_CALL_MISSED, protocol::LANE_CALL_LEFT, protocol::LANE_CALL_TERMINATED, protocol::CALLEE_EXIT]
         );
         assert_eq!(
-            [compiled::JS_GENERAL_RETURN_STATUS_BASE, compiled::LANE_BODY_RETURNED, LANE_BODY_NOT_ENTERED, compiled::NATIVE_JS_STOPPED, compiled::TERMINATED_STATUS as u32],
+            [compiled::RETURN_STATUS_BASE, compiled::LANE_BODY_RETURNED, LANE_BODY_NOT_ENTERED, compiled::NATIVE_JS_STOPPED, compiled::TERMINATED_STATUS as u32],
             [protocol::GENERAL_RETURN_STATUS_BASE, protocol::LANE_BODY_RETURNED, protocol::LANE_BODY_NOT_ENTERED, protocol::NATIVE_JS_STOPPED, protocol::TERMINATED_STATUS]
         );
         assert_eq!(protocol::REGISTER_BYTES, std::mem::size_of::<crate::value::Value>());

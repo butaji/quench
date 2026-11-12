@@ -526,7 +526,6 @@ struct Lowering<'a, 'f> {
     shared_headers: CompoundBitSet,
     payload: ir::Value,
     registers_base: ir::Value,
-    result: ir::Value,
     /// The running body's receiver and capture words its caller passes (`entry_cell::capture_word`).
     entry_words: (ir::Value, ir::Value),
     registers: Registers,
@@ -618,9 +617,8 @@ enum Liveness<'a> {
 }
 
 /// How much of the unit must run natively: a prefix (a lane body, which leaves to the lane
-/// anywhere), or all of it but the leaves to its source (a static typed region).
+/// anywhere), or all of it (a numeric region).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[cfg_attr(not(feature = "aot"), allow(dead_code))]
 pub(super) enum Coverage {
     Prefix,
     Full,
@@ -628,31 +626,24 @@ pub(super) enum Coverage {
     /// instructions in the loop lower; an edge out of it leaves at the exact PC. The
     /// backedge is a native branch to the header with the tier's poll.
     Loop { header: usize, backedge: usize, poll: bool },
-    /// A bounded straight-line range `start..end` of the function's unit: a static scalar
-    /// region. Only instructions in it lower; the instruction at `end` and every edge out
-    /// leave at the exact PC, which the caller resumes at.
-    Range { start: usize, end: usize },
     /// A caller-origin entry into the original unit CFG. Opaque operations
     /// leave at their exact origin; earlier loops and effects are not replayed.
     PrefixFrom(usize),
-    FullFrom(usize),
 }
 
 impl Coverage {
     pub(super) fn entry(self) -> usize {
-        match self { Self::Loop { header, .. } => header, Self::Range { start, .. } => start,
-            Self::PrefixFrom(pc) | Self::FullFrom(pc) => pc, _ => 0 }
+        match self { Self::Loop { header, .. } => header, Self::PrefixFrom(pc) => pc, _ => 0 }
     }
-    fn full(self) -> bool { matches!(self, Self::Full | Self::FullFrom(_)) }
+    fn full(self) -> bool { self == Self::Full }
     fn selected_entry(self) -> bool {
-        matches!(self, Self::PrefixFrom(_) | Self::FullFrom(_) | Self::Loop { .. } | Self::Range { .. })
+        matches!(self, Self::PrefixFrom(_) | Self::Loop { .. })
     }
     /// The PC after the region this coverage selects: where a path that falls off its end
-    /// leaves. A loop leaves after its backward jump, a range at its end.
+    /// leaves. A loop leaves after its backward jump.
     fn exit_pc(self, unit_len: usize) -> usize {
         match self {
             Self::Loop { backedge, .. } => backedge.saturating_add(1).min(unit_len),
-            Self::Range { end, .. } => end,
             _ => unit_len,
         }
     }
@@ -661,40 +652,25 @@ impl Coverage {
     fn lowered(self, pc: usize) -> bool {
         match self {
             Self::Loop { header, backedge, .. } => (header..=backedge).contains(&pc),
-            Self::Range { start, end } => (start..end).contains(&pc),
             _ => true,
         }
     }
 }
 
-/// How a run ends: a lane body's status and result word (`LaneExit`), or a static typed
-/// region's source PC, which its canonical code continues at.
+/// How a run ends. Every kind runs the lane body ABI (`lane_body_signature`): it takes its
+/// inputs in the register window and returns its status and result word in registers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Completion {
-    StatusAndPc,
-    /// `StatusAndPc` of a lane body, which returns its status and result word in registers
-    /// (`lane_body_signature`) where a region writes the word through a pointer.
+    /// A status and a PC (`LaneExit`): a lane body, or a loop region.
     Body,
-    SourcePc,
-    /// Pure, restartable scalar entry: borrowed Number inputs and one Number
-    /// output through the common native ABI; a miss restarts the original call.
+    /// Pure, restartable scalar entry: borrowed inputs in the window's first slots, proved
+    /// Numbers once at entry, and one Number result word; a miss restarts the original call.
     Number,
 }
 
 impl Completion {
     /// Whether a run completes with a status and a PC (a lane body or a loop region).
-    pub(super) fn status_and_pc(self) -> bool { matches!(self, Self::StatusAndPc | Self::Body) }
-
-    /// The entry signature of its function.
-    fn entry_signature(self, isa: &dyn cranelift_codegen::isa::TargetIsa) -> Signature {
-        let (pointer, call_conv) = (isa.pointer_type(), isa.default_call_conv());
-        if self == Self::Body { lane_body_signature(pointer, call_conv) } else { native_entry_signature(pointer, call_conv) }
-    }
-
-    /// The types its leave block takes: the status, and a body's result word.
-    fn leave_params(self) -> &'static [ir::Type] {
-        if self == Self::Body { &[types::I32, types::I64] } else { &[types::I32] }
-    }
+    pub(super) fn status_and_pc(self) -> bool { self == Self::Body }
 }
 
 /// Which arrays a region's loops index in place (`LoopArray`): dense arrays' elements, or
@@ -1504,11 +1480,8 @@ pub(super) fn lower(
     completion: Completion,
     views: ElementViews,
 ) -> Option<LoweredRegion> {
-    // A loop entry may take the rotated residual of its proven condition; a bounded range
-    // is straight-line code whose PCs are its function's, which rotation would rename.
-    let residual = (!matches!(coverage, Coverage::Range { .. }))
-        .then(|| super::static_loops::specialize(program, unit, coverage.entry()))
-        .flatten()
+    // A loop entry may take the rotated residual of its proven condition.
+    let residual = super::static_loops::specialize(program, unit, coverage.entry())
         .map(|instructions| super::lane_unit::Unit { instructions, origins: unit.origins.clone(),
             frames: unit.frames.clone(), markers: unit.markers.clone(), caller_registers: unit.caller_registers,
             registers: unit.registers, end: unit.end });
@@ -1518,15 +1491,11 @@ pub(super) fn lower(
     let numeric = completion == Completion::Number;
     if numeric && (!super::super::js_compiled::function_candidate(function, program)
         || !numeric_unit(program, unit) || function.params > unit.caller_registers) { return None; }
-    // Source-PC recovery admits each statically bound callee at its call edge and
-    // materializes the suspended chain through the shared call/unwind loop.
-    if fields.values().flatten().any(|field| !field.valid())
-        || (completion == Completion::SourcePc && unit.frames.iter().any(|frame|
-            frame.target.callee != CalleeBinding::Function)) { return None; }
-    if unit.instructions.is_empty() || unit.instructions.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
+    if fields.values().flatten().any(|field| !field.valid()) { return None; }
+    if unit.instructions.is_empty() || unit.instructions.len() > MAX_NATIVE_RECORDS {
         return None;
     }
-    let signature = completion.entry_signature(isa);
+    let signature = lane_body_signature(isa.pointer_type(), isa.default_call_conv());
     let mut native = ir::Function::with_name_signature(UserFuncName::user(LANE_REGION_NAMESPACE, function_id), signature);
     let mut builder_context = FunctionBuilderContext::new();
     let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
@@ -1534,10 +1503,8 @@ pub(super) fn lower(
     builder.append_block_params_for_function_params(entry_block);
     builder.switch_to_block(entry_block);
     let parameters = builder.block_params(entry_block).to_vec();
-    let [context, entry_this, entry_captures, registers_base, rest @ ..] = parameters.as_slice() else { return None };
+    let [context, entry_this, entry_captures, registers_base] = parameters.as_slice() else { return None };
     let (context, entry_this, entry_captures, registers_base) = (*context, *entry_this, *entry_captures, *registers_base);
-    // A body returns its result word; a region writes it through its fifth parameter.
-    let result = rest.first().copied().unwrap_or(context);
     let payload = if numeric { builder.ins().iconst(types::I64, 0) } else { builder.ins().load(
         types::I64,
         regions::dispatch(),
@@ -1593,7 +1560,8 @@ pub(super) fn lower(
     }
     let blocks: Vec<_> = (0..unit.instructions.len()).map(|pc| leaders.contains(pc).then(|| builder.create_block())).collect();
     let (leave, stop) = (builder.create_block(), builder.create_block());
-    completion.leave_params().iter().for_each(|&ty| { builder.append_block_param(leave, ty); });
+    builder.append_block_param(leave, types::I32);
+    builder.append_block_param(leave, types::I64);
     builder.append_block_param(stop, types::I64);
     builder.set_cold_block(leave);
     builder.set_cold_block(stop);
@@ -1625,7 +1593,6 @@ pub(super) fn lower(
         context,
         payload,
         registers_base,
-        result,
         entry_words: (entry_this, entry_captures),
         registers,
         written: CompoundBitSet::with_capacity(count),
@@ -1798,8 +1765,10 @@ pub(super) fn lower(
         }
         let undefined = lowering.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
         for register in 0..count {
-            let bits = if !numeric && register < usize::from(lowering.unit.caller_registers)
-                && lowering.is_live(pc, register as Register) {
+            // A numeric entry's window holds its parameters alone.
+            let in_window = if numeric { register < usize::from(function.params) }
+                else { register < usize::from(lowering.unit.caller_registers) && lowering.is_live(pc, register as Register) };
+            let bits = if in_window {
                 lowering.builder.ins().load(types::I64, regions::frame(), registers_base, register_offset(register as Register))
             } else {
                 undefined
@@ -1817,15 +1786,10 @@ pub(super) fn lower(
             emit_js_guard(&mut lowering.builder, admitted, miss);
         }
         if numeric {
+            // Each input is proved a Number once, here; later uses read its unboxed view.
             for register in 0..function.params {
-                let number = lowering.builder.ins().load(types::F64, regions::frame(),
-                    registers_base, register_offset(register));
-                let variable = lowering.float_var(usize::from(register));
-                lowering.builder.def_var(variable, number);
-                state.values[usize::from(register)] = RegisterFact::admit(Fact {
-                    ty: Type::NUMBER, representation: Representation::Float64,
-                    binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact,
-                }).expect("Number input signature is verified by its entry caller");
+                let miss = lowering.guard_exit(&state, pc as u32);
+                lowering.number(&mut state, register, miss);
             }
         }
         if fault_poll {
@@ -1843,7 +1807,7 @@ pub(super) fn lower(
         // an exit: the old lowering's entry admission declines the same arrays.
         // A bounded range reads its fields at their sites; hoisting them to a shared entry
         // guard would make every call leave at the entry.
-        lowering.proving_entry = !matches!(coverage, Coverage::Range { .. });
+        lowering.proving_entry = true;
         lowering.hoist_loop_entry(&mut state, pc);
         lowering.proving_entry = false;
         lowering.builder.ins().jump(target, &[]);
@@ -1900,7 +1864,7 @@ pub(super) fn lower(
         lowering.leave(&mut leaving, pc);
     }
     lowering.fill_call_out_stop();
-    lowering.fill_exits()?;
+    lowering.fill_exits();
     lowering.builder.switch_to_block(stop);
     let word = lowering.builder.block_params(stop)[0];
     let status = lowering.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
@@ -1912,9 +1876,8 @@ pub(super) fn lower(
     // callees rejoin it. A loop or range over the function's own code completes by its exits
     // and backedge, which the plan emits where the interpreter resumes.
     let must_finish = match coverage {
-        Coverage::Prefix | Coverage::PrefixFrom(_) | Coverage::Full | Coverage::FullFrom(_) => true,
+        Coverage::Prefix | Coverage::PrefixFrom(_) | Coverage::Full => true,
         Coverage::Loop { .. } => !unit.frames.is_empty(),
-        Coverage::Range { .. } => false,
     };
     if !lowering.valid || (completion.status_and_pc() && must_finish && !lowering.finishes) {
         return None;
@@ -2054,21 +2017,15 @@ impl Lowering<'_, '_> {
     /// typed region returns it as the source PC its canonical code continues at.
     fn return_at(&mut self, word: u64) {
         match self.completion {
-            Completion::StatusAndPc | Completion::Body => {
+            Completion::Body => {
                 let word = self.builder.ins().iconst(types::I64, word as i64);
                 let stop = self.stop;
                 self.builder.ins().jump(stop, &[word.into()]);
             }
             Completion::Number => {
                 let miss = self.builder.ins().iconst(types::I32, NUMBER_ENTRY_MISS);
-                self.builder.ins().return_(&[miss]);
-            }
-            // Each exit returns its own constant, which a caller that inlines the region
-            // folds into a direct continuation.
-            Completion::SourcePc => {
-                let pc = self.builder.ins().iconst(types::I32,
-                    i64::from(u32::try_from(word).expect("source PC has no inlined-frame tag")));
-                self.builder.ins().return_(&[pc]);
+                let no_word = self.builder.ins().iconst(types::I64, 0);
+                self.builder.ins().return_(&[miss, no_word]);
             }
         }
     }
@@ -2106,14 +2063,15 @@ impl Lowering<'_, '_> {
                     };
                     self.ins().uextend(types::I64, integer)
                 }
-                (NativeNumberResult::Float64, Representation::Int32) => self.ins().fcvt_from_sint(types::F64, value),
-                (NativeNumberResult::Float64, Representation::Float64) => value,
+                (NativeNumberResult::Float64, Representation::Int32) => {
+                    let number = self.ins().fcvt_from_sint(types::F64, value);
+                    self.ins().bitcast(types::I64, MemFlagsData::new(), number)
+                }
+                (NativeNumberResult::Float64, Representation::Float64) => self.ins().bitcast(types::I64, MemFlagsData::new(), value),
                 (_, Representation::Tagged) => unreachable!("typed numeric return"),
             };
-            let result = self.result;
-            self.ins().store(regions::dispatch(), value, result, 0);
             let success = self.ins().iconst(types::I32, 0);
-            self.ins().return_(&[success]);
+            self.ins().return_(&[success, value]);
         }
         format
     }
@@ -2497,12 +2455,10 @@ impl Lowering<'_, '_> {
 
     /// The leave of a failed entry proof, before any instruction ran: a lane plan names it
     /// (`LaneExit::Entry`), so the activation's specialization drops the contract that
-    /// failed; a source-PC region resumes at its entry PC, where its canonical code proves
-    /// the same facts; a Number entry misses, restarting the original call.
+    /// failed; a Number entry misses, restarting the original call.
     fn return_entry(&mut self) {
         match self.completion {
-            Completion::StatusAndPc | Completion::Body => self.return_at(super::LaneExit::Entry.word()),
-            Completion::SourcePc => self.return_at(self.coverage.entry() as u64),
+            Completion::Body => self.return_at(super::LaneExit::Entry.word()),
             Completion::Number => self.return_at(0),
         }
     }
@@ -2774,16 +2730,8 @@ impl Lowering<'_, '_> {
             }
             None => {
                 super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
-                // A residual call in an admitted callee completes this native
-                // prefix through exact frame materialization. Its caller's
-                // effects and the callee's live argument homes cannot replay.
-                let materialized_call = self.completion == Completion::SourcePc
-                    && instruction.op().class().eq(Class::Call)
-                    && matches!(self.unit.origins.get(pc),
-                        Some(super::lane_unit::Origin::Inlined { frame, .. })
-                            if self.unit.frames[*frame].recovery == super::lane_unit::CallRecovery::Materialize);
                 if self.coverage.full() && (self.completion == Completion::Number
-                    || !((instruction.op().class().eq(Class::Return) && plain) || instruction.returns_from_frame() || materialized_call)) {
+                    || !((instruction.op().class().eq(Class::Return) && plain) || instruction.returns_from_frame())) {
                     self.valid = false;
                 }
                 self.exit(state, pc32);
@@ -3392,23 +3340,15 @@ impl Lowering<'_, '_> {
     }
 
     /// Leaves with `status`, and with `word` as the result word where a run publishes one: a
-    /// body returns it beside the status, a region stores it through its result pointer.
+    /// body returns it beside the status.
     pub(super) fn leave_with(&mut self, status: ir::Value, word: Option<ir::Value>) {
         let leave = self.leave;
-        if self.completion == Completion::Body {
-            let word = word.unwrap_or_else(|| self.ins().iconst(types::I64, 0));
-            self.ins().jump(leave, &[status.into(), word.into()]);
-        } else {
-            if let Some(word) = word {
-                let result = self.result;
-                self.ins().store(regions::dispatch(), word, result, 0);
-            }
-            self.ins().jump(leave, &[status.into()]);
-        }
+        let word = word.unwrap_or_else(|| self.ins().iconst(types::I64, 0));
+        self.ins().jump(leave, &[status.into(), word.into()]);
     }
 
     /// Count a taken execution of the region's backward edge in the loop entry record
-    /// (`LoopEntry::backedge_count`), which the lane's general-dispatch pricing reads.
+    /// (`LoopEntry::backedge_count`), which the loop tier's pricing reads.
     /// A lane body (`Coverage::Prefix`) counts nothing.
     fn count_backedge(&mut self) {
         if !matches!(self.coverage, Coverage::Loop { .. }) { return; }
@@ -3846,7 +3786,7 @@ impl Lowering<'_, '_> {
                     let done = self.builder.create_block();
                     let address = self.builder.append_block_param(done, types::I64);
                     let (arena_address, _) = emit_js_cached_field_slot(&mut self.builder,
-                        self.registers_base, self.payload, JsFieldReceiver::Value(object), site,
+                        self.payload, object, site,
                         false, exit, Some(binding), Some(object_header), Some(packed));
                     self.ins().jump(done, &[ir::BlockArg::Value(arena_address)]);
                     self.builder.switch_to_block(packed);
@@ -4636,8 +4576,8 @@ impl Lowering<'_, '_> {
             let packed = self.builder.create_block();
             let packed_address = self.builder.append_block_param(packed, types::I64);
             let result = self.builder.append_block_param(done, types::I64);
-            let (address, _) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-                JsFieldReceiver::Value(object), site, true, slow, Some(binding), header, Some(packed));
+            let (address, _) = emit_js_cached_field_slot(&mut self.builder, self.payload,
+                object, site, true, slow, Some(binding), header, Some(packed));
             let value = self.ins().load(types::I64, regions::object_slots(), address, 0);
             self.ins().jump(done, &[ir::BlockArg::Value(value)]);
             self.builder.switch_to_block(packed);
@@ -4960,8 +4900,8 @@ impl Lowering<'_, '_> {
             if let Some(admitted) = binding.admitted { emit_js_guard(&mut self.builder, admitted, slow); }
             let allowed = self.store_atom_admitted(atom);
             emit_js_guard(&mut self.builder, allowed, slow);
-            let (address, record) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-                JsFieldReceiver::Value(object), site, false, slow, Some(binding), header, Some(packed));
+            let (address, record) = emit_js_cached_field_slot(&mut self.builder, self.payload,
+                object, site, false, slow, Some(binding), header, Some(packed));
             emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, ty, slow);
             self.ins().store(regions::object_slots(), value, address, 0);
             self.ins().jump(done, &[]);
@@ -5027,19 +4967,10 @@ impl Lowering<'_, '_> {
         // record (`Lowering::complete`); an inlined callee's is the unit's binary, move and
         // jump (`lane_unit`). A jump to the function's dead terminal `Return` instead would
         // leave there: no block starts at it.
-        // A static typed region's activation completes in its canonical code, at the
-        // function's terminal `Return`, whose register takes the value.
-        let terminal = self.unit.instructions.len().checked_sub(1)
-            .filter(|terminal| self.unit.instructions[*terminal].op().is_return()
-                && self.unit.instructions[*terminal].result_flags() == 0);
-        if returns && (!matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
-            || (self.completion == Completion::SourcePc && terminal.is_none())) {
+        if returns && !matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) {
             return None;
         }
-        let destination = match terminal {
-            Some(terminal) if returns && self.completion == Completion::SourcePc => self.unit.instructions[terminal].register_a(),
-            _ => instruction.result_register(),
-        };
+        let destination = instruction.result_register();
         let (left, right) = (instruction.operand_b(), instruction.operand_c());
         if !self.operand_supported(left) || !self.operand_supported(right) {
             return None;
@@ -5192,11 +5123,6 @@ impl Lowering<'_, '_> {
             self.return_number(state, destination, pc as u32);
             return Some(false);
         }
-        if returns && self.completion == Completion::SourcePc {
-            self.native += 1;
-            self.continue_at(state, terminal.expect("checked above"));
-            return Some(false);
-        }
         if returns {
             // The completion names the function's terminal `Return` where it has one, whose
             // register the lane reads it from, else the binary's own record.
@@ -5239,39 +5165,6 @@ mod tests {
         state.call_effect();
         assert_eq!(state.values[0].value.ty, Type::DIRECT_OBJECT_FAMILY.join(null));
         assert_eq!(state.values[0].value.ty.direct_object_part(), Some(Type::DIRECT_OBJECT_FAMILY));
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn typed_alternate_backedges_join_before_their_fault_poll() {
-        let program = crate::Engine::specialize(
-            "function subject(count,seed) { let n=count|0, x=seed|0; while(n>0) { n=(n-1)|0; if((x&1)===0) x=x>>1; else x=(x>>1)^13; } return x|0; }",
-            "typed-poll-latch.js",
-        ).unwrap();
-        let id = program.functions.iter().position(|body| body.header().name
-            .is_some_and(|name| &program.atoms[name as usize] == "subject")).unwrap();
-        let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let region = super::super::lower_static_typed_regions(&program, id as u32, &[], &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC, &Default::default())
-            .into_iter().next().expect("typed loop region");
-        cranelift_codegen::verify_function(&region.function, &*isa).unwrap();
-        if !super::super::FAULT_POLL_SUPPORTED { return; }
-        let native = region.function;
-        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
-        let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();
-        dominators.compute(&native, &cfg);
-        let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
-        loops.compute(&native, &cfg, &dominators);
-        assert_eq!(loops.loops().count(), 1, "{native}");
-        let polls: Vec<_> = native.layout.blocks().filter(|block| loops.innermost_loop(*block).is_some())
-            .flat_map(|block| native.layout.block_insts(block))
-            .filter(|inst| native.dfg.insts[*inst].opcode() == ir::Opcode::AtomicLoad).collect();
-        assert_eq!(polls.len(), 1, "{native}");
-        let poll = native.layout.inst_block(polls[0]).unwrap();
-        assert!(native.layout.blocks().any(|block| {
-            loops.innermost_loop(block).is_some_and(|lp| loops.loop_header(lp) != block)
-                && cfg.pred_iter(block).count() == 2
-                && dominators.dominates(block, poll, &native.layout)
-        }), "both arithmetic arms must join before the poll: {native}");
     }
 
     use super::*;
@@ -5345,7 +5238,7 @@ mod tests {
             let isa = super::super::super::jit_backend::target_isa().unwrap();
             let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
             let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-                &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
+                &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense).expect("capture loop region");
             let function = region.function;
             let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
             let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
@@ -5405,58 +5298,6 @@ mod tests {
                     else { return false };
                 args.into_iter().any(|value| function.dfg.value_type(value) == types::I32 && entry_projection(value))
             }), "an entry-projected I32 capture must feed the native equality: {function}");
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "aot")]
-    fn inductive_accumulator_keeps_the_predicate_loop_unboxed() {
-        let source = r#"(function(){
-            let mask=4,threshold=2;
-            class Cell{constructor(n,value){this.left=n|0;this.word=value|0;}
-                accepts(){return (this.word&mask)!==0||this.word===threshold;}}
-            function fold(n,value){const cell=new Cell(n,value);let total=0;
-                while(cell.left>0){cell.left=(cell.left-1)|0;
-                    cell.word=(cell.word>>1)^((cell.word&1)?21:0);
-                    if(cell.accepts())total=(total+1)|0;}return total|0;}
-        })();"#;
-        for typescript in [false, true] {
-            let program = if typescript { crate::Engine::specialize_typescript(source, "inductive-predicate.cts") }
-                else { crate::Engine::specialize(source, "inductive-predicate.cjs") }.unwrap();
-            let caller = program.functions.iter().position(|body|
-                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "fold")).unwrap();
-            let targets = static_call_targets(&program);
-            let unit = super::super::lane_unit::unit(&program, caller as u32, program.function(caller),
-                &|function, pc| targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
-                    .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
-                    .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
-            assert_eq!(unit.frames.len(), 1, "the Boolean method must inline");
-            let isa = super::super::super::jit_backend::target_isa().unwrap();
-            let regions = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::Linked(0, 0), VmFacts::STATIC, &Default::default());
-            assert!(!regions.is_empty(), "selected caller header must publish");
-            let mut integer_add = false;
-            for region in regions {
-                let function = region.function;
-                cranelift_codegen::verify_function(&function, &*isa).unwrap();
-                let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
-                let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
-                let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
-                loops.compute(&function, &cfg, &dom);
-                for block in function.layout.blocks().filter(|block| loops.innermost_loop(*block).is_some()) {
-                    for inst in function.layout.block_insts(block) {
-                        integer_add |= function.dfg.insts[inst].opcode() == ir::Opcode::Iadd
-                            && function.dfg.inst_results(inst).first().is_some_and(|value| function.dfg.value_type(*value) == types::I32);
-                        if let ir::InstructionData::IntCompare { cond: IntCC::Equal, args, .. } = function.dfg.insts[inst] {
-                            assert!(!args.into_iter().any(|value| {
-                                let ir::ValueDef::Result(def, _) = function.dfg.value_def(function.dfg.resolve_aliases(value)) else { return false };
-                                matches!(function.dfg.insts[def], ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
-                                    if imm.bits() as u64 == crate::value::ValueLayout::INT_TAG >> crate::value::ValueLayout::TAG_SHIFT)
-                            }), "integer tag admission must leave the loop: {function}");
-                        }
-                    }
-                }
-            }
-            assert!(integer_add, "the wrapping accumulator update must remain native I32");
         }
     }
 
@@ -5604,10 +5445,10 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
-        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
+        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
         let mut frame = super::super::LaneFrame::new();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         frame.dispatch.refresh_object_bases(&vm);
@@ -5617,8 +5458,7 @@ mod tests {
         for input in [-2.0, -1.0, 0.0, 1.0, 2.0] {
             let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
             registers[0] = Value::number(input);
-            let mut word = 0;
-            let status = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast(), &mut word) };
+            let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
             assert_eq!(status, LANE_BODY_RETURNED, "comparison result must continue natively: {input}, stopped at {word}");
             assert_eq!(Value::from_bits(word), Value::number(if input == -1.0 || input == 1.0 { 7.0 } else { 9.0 }));
         }
@@ -5628,8 +5468,7 @@ mod tests {
             let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
             registers[0] = Value::number(input);
             let before = registers.clone();
-            let mut word = u64::MAX;
-            let status = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast(), &mut word) };
+            let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
             // The entry's proof failed: the leave names it (`LaneExit::Entry`, which resumes
             // at the first record), not a PC the code would continue at.
             assert_eq!((status, word), (NATIVE_JS_STOPPED, super::super::LaneExit::Entry.word()));
@@ -5648,19 +5487,14 @@ mod tests {
         assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
         for instruction in region.function.layout.blocks()
             .flat_map(|block| region.function.layout.block_insts(block)) {
-            if let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = region.function.dfg.insts[instruction] {
-                let bits = i64::from(imm) as u64;
-                assert!(![crate::value::ValueLayout::INT_TAG, crate::value::ValueLayout::CANONICAL_NAN].contains(&bits),
-                    "verified Number inputs must stay unboxed:\n{}", region.function);
-            }
-            if region.function.dfg.insts[instruction].opcode() == ir::Opcode::Store {
-                let value = region.function.dfg.inst_args(instruction)[0];
-                assert_eq!(region.function.dfg.value_type(value), types::I64, "int32 result must not round trip through f64");
+            if region.function.dfg.insts[instruction].opcode() == ir::Opcode::Bitcast {
+                let result = region.function.dfg.first_result(instruction);
+                assert_ne!(region.function.dfg.value_type(result), types::I64, "int32 result must not round trip through f64");
             }
         }
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
-        // SAFETY: the region has the shared entry ABI and borrows one raw Number.
-        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
+        // SAFETY: the region has the lane body ABI and borrows one tagged Number.
+        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
         let interrupt = crate::ExecutionInterrupt::default();
         let mut context = CallContext::interrupt_only(&interrupt);
         let boundary = [0.0, -0.0, 1.0, -1.0, f64::from(i32::MIN), f64::from(i32::MAX),
@@ -5677,17 +5511,16 @@ mod tests {
             f64::from_bits(random)
         }));
         for number in samples {
-            let input = [number.to_bits()];
-            let mut out = u64::MAX;
-            let status = unsafe { entry(&mut context, 0, 0, input.as_ptr(), &mut out) };
+            let input = [Value::number(number).to_bits()];
+            let BodyReturn { status, value: out } = unsafe { entry(&mut context, 0, 0, input.as_ptr()) };
             if number.abs() < EXACT_I64_TRUNCATION_LIMIT {
                     assert_eq!(status, 0, "{number:?}");
                     assert_eq!(out, u64::from(crate::value::number_to_u32(number)), "{number:?}");
             } else {
                     assert_eq!(i64::from(status), NUMBER_ENTRY_MISS, "{number:?}");
-                    assert_eq!(out, u64::MAX, "miss may not publish a result");
+                    assert_eq!(out, 0, "miss may not publish a result");
             }
-            assert_eq!(input[0], number.to_bits(), "borrowed Number is never canonicalized in place");
+            assert_eq!(input[0], Value::number(number).to_bits(), "borrowed Number is never canonicalized in place");
         }
     }
 
@@ -5701,10 +5534,10 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
         assert!(region.fault_poll);
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
-        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
+        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
         let mut frame = super::super::LaneFrame::new();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         frame.dispatch.refresh_object_bases(&vm);
@@ -5713,10 +5546,9 @@ mod tests {
         assert_eq!(frame.context.poll_start, 0);
         let before = vec![Value::number(7.0); usize::from(unit.caller_registers)];
         let mut registers = before.clone();
-        let mut word = u64::MAX;
         // No resumable page is lent, so this entry must leave before touching a
         // poll or executing any guest operation. The canonical inputs stay exact.
-        let status = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast(), &mut word) };
+        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
         assert_eq!(status, NATIVE_JS_STOPPED);
         assert_eq!(word, 0);
         assert_eq!(registers, before);
@@ -5738,7 +5570,7 @@ mod tests {
         for ty in [Type::INT32, Type::ANY] {
             fields.values_mut().next().unwrap()[0].ty = ty;
             let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-                &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+                &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
             let native = region.function;
             let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
                 .any(|instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -5765,7 +5597,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).unwrap();
         let native = region.function;
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -5795,7 +5627,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).unwrap();
         let native = region.function;
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
@@ -5821,7 +5653,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).expect("typed Number residual");
         assert!(region.native > 0);
         let native = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
@@ -5880,7 +5712,7 @@ mod tests {
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
             entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
             plan: RegionPlan { coverage: Coverage::Loop { header, backedge, poll: true },
-                completion: Completion::StatusAndPc, views: ElementViews::Dense } }
+                completion: Completion::Body, views: ElementViews::Dense } }
             .specialize(&program).expect("the loop lowers");
         assert!(region.native > 0, "the loop runs natively");
         let native = region.function;
@@ -5890,29 +5722,5 @@ mod tests {
         let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
         loops.compute(&native, &cfg, &dominators);
         assert_eq!(loops.loops().count(), 1, "one native loop: {native}");
-    }
-
-    /// The JIT lane plan and the AOT typed-region plan are two `RegionPlan`s over the one
-    /// `RegionSpecializer`; neither has its own lowering path.
-    #[test]
-    fn one_region_specializer_drives_the_jit_and_aot_plans() {
-        let program = crate::Engine::specialize(
-            "function accumulate(x) { let s = 0; for (let i = 0; i < x; i++) { s = (s + i) | 0; } return s; } accumulate(4);",
-            "region-plan.js").unwrap();
-        let id = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap() as u32;
-        let unit = super::super::lane_unit::unit(&program, id, program.function(id as usize), &|_, _| Vec::new(), &|_| None).unwrap();
-        let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let helpers = LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]);
-        let specialize = |plan| RegionSpecializer { function_id: id, unit: &unit, helpers,
-            fields: &BTreeMap::new(), global_reads: &Default::default(), facts: VmFacts::STATIC,
-            generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[], plan }
-            .specialize(&program).expect("the region lowers");
-        let jit = specialize(RegionPlan { coverage: Coverage::Prefix,
-            completion: Completion::StatusAndPc, views: ElementViews::Dense });
-        let aot = specialize(RegionPlan { coverage: Coverage::Full,
-            completion: Completion::SourcePc, views: ElementViews::Dense });
-        assert!(jit.native > 0 && aot.native > 0, "both plans lower the same unit");
     }
 }

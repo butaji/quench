@@ -37,24 +37,14 @@ impl NativeJsCode {
 pub struct NativeJsPublicationCounts {
     /// Functions in the program.
     pub functions: usize,
-    /// Functions published through the general-dispatch baseline.
-    pub general_dispatch: usize,
+    /// Functions whose entry runs a lane body, leaving to per-PC semantic entries.
+    pub lane_bodies: usize,
     /// Functions left on the call-threaded body (per-PC semantic entries).
     pub call_threaded: usize,
-    /// Typed regions inlined into their caller.
-    pub typed_regions: usize,
-    /// Scalar regions published beside their caller.
-    pub scalar_regions: usize,
     /// Instruction sites whose continuation is a folded static transfer.
     pub static_transfers: usize,
     /// Instruction sites that call their opcode's semantic entry.
     pub semantic_entry_sites: usize,
-    /// Functions whose entry is the specialized body (general dispatch + typed regions).
-    pub tier_specialized: usize,
-    /// Functions whose entry is general dispatch without a typed region.
-    pub tier_general: usize,
-    /// Functions whose entry is the call-threaded body (the AOT tier zero).
-    pub tier_call_threaded: usize,
     /// Whole-program globals the image folds, each checked at its read site.
     pub frozen_globals: usize,
     /// Whole-program prototype values the image folds, each guarded at its read site.
@@ -75,15 +65,13 @@ pub(crate) struct FrozenAssumptions {
     pub(crate) fields: Box<[crate::bytecode::Atom]>,
     /// Set when any assumption no longer holds; the code leaves at its invalidation point.
     pub(crate) watch: Rc<crate::code_dependencies::PublishedCode<()>>,
-    /// The tier the dispatcher selected last (0 call-threaded, 1 general, 2 specialized).
-    pub(crate) last_tier: Rc<std::cell::Cell<u64>>,
     /// The program's constants, materialized into this block after realm initialization.
     pub(crate) constants: Rc<std::cell::RefCell<Box<[Value]>>>,
 }
 
 impl Clone for FrozenAssumptions {
     fn clone(&self) -> Self {
-        Self { invalidation: self.invalidation.clone(), atoms: self.atoms.clone(), globals: self.globals.clone(), fields: self.fields.clone(), watch: self.watch.clone(), last_tier: self.last_tier.clone(), constants: self.constants.clone() }
+        Self { invalidation: self.invalidation.clone(), atoms: self.atoms.clone(), globals: self.globals.clone(), fields: self.fields.clone(), watch: self.watch.clone(), constants: self.constants.clone() }
     }
 }
 
@@ -165,12 +153,6 @@ impl<H: Host> NativeJsProgram<H> {
     #[cfg(test)]
     pub(crate) fn materialized_constants(&self) -> usize {
         self.frozen.as_ref().map_or(0, |frozen| frozen.constants.borrow().len())
-    }
-
-    /// The AOT tier the dispatcher selected last (tests).
-    #[cfg(test)]
-    pub(crate) fn last_tier(&self) -> u64 {
-        self.frozen.as_ref().map_or(0, |frozen| frozen.last_tier.get())
     }
 
     /// The whole-program prototype values the image folded (tests).

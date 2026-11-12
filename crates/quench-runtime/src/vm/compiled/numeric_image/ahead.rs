@@ -12,7 +12,7 @@ fn ahead_image(source: &str) -> (RelocatableCode, usize) {
     let isa = crate::vm::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Ahead, &BTreeMap::new(), &Default::default(),
         VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[],
-        Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+        Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
     let image = crate::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
     }).unwrap();
@@ -26,7 +26,7 @@ const PICKS: [(f64, f64); 3] = [(0.0, 2.0), (5.0, 1.0), (-1.5, 1.0)];
 fn run_pick(linked: &[u8], registers: usize) {
     let memory = CodeMemory::new(linked).unwrap();
     // SAFETY: the image is a lane entry of the shared ABI, its helpers now this process's.
-    let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(memory.pointer()) };
+    let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(memory.pointer()) };
     let mut frame = super::super::LaneFrame::new();
     let mut vm = Vm::new(crate::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
@@ -36,8 +36,7 @@ fn run_pick(linked: &[u8], registers: usize) {
     for (input, expected) in PICKS {
         let mut words = vec![Value::UNDEFINED; registers];
         words[0] = Value::number(input);
-        let mut word = 0;
-        let status = unsafe { entry(&mut frame.context, 0, 0, words.as_mut_ptr().cast(), &mut word) };
+        let super::super::BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, words.as_mut_ptr().cast()) };
         assert_eq!(status, super::super::LANE_BODY_RETURNED, "{input}");
         assert_eq!(Value::from_bits(word), Value::number(expected), "{input}");
     }
@@ -140,7 +139,7 @@ fn field_reads_calls_and_global_reads_compile_ahead_to_helper_symbols_only() {
         let isa = crate::vm::jit_backend::target_isa().unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Ahead, &BTreeMap::new(), &Default::default(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[],
-            Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).expect(source);
+            Coverage::Full, Completion::Body, ElementViews::Dense).expect(source);
         let image = crate::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
             RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
         }).expect(source);

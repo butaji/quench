@@ -5,7 +5,7 @@ use crate::vm::dispatch_fast::LaneRecoverySpace;
 
 /// The status of a call that entered no body: its callee's entry cell held the stub, so the
 /// caller takes its helper path at the call.
-pub(in crate::vm) const LANE_BODY_NOT_ENTERED: u32 = JS_GENERAL_RETURN_STATUS_BASE - 2;
+pub(in crate::vm) const LANE_BODY_NOT_ENTERED: u32 = RETURN_STATUS_BASE - 2;
 
 /// What a function's native callers read to enter its lane body: the entry (the stub where no
 /// body is published or it retired) and the body's own recovery space, which it is stored in

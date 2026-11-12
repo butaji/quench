@@ -2518,3 +2518,4 @@ fn reflection_finishes_replacement_lazy_groups_before_exposing_data_descriptors(
     }
 }
 #[cfg(feature = "aot")] #[path = "api_native_tests/eager_images.rs"] mod eager_images;
+#[cfg(feature = "aot")] #[path = "api_native_tests/ahead_behaviour.rs"] mod ahead_behaviour;

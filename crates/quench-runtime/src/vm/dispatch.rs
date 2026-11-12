@@ -1762,6 +1762,7 @@ impl<H: Host> Vm<H> {
     /// callee, argument window, receiver and completion. `getter` and `this` are what the step
     /// found running: a getter read's function, and a construction's or getter's receiver.
     /// Frame recovery (`compiled::recover_call`) rebuilds a native activation's frame from it.
+    #[cfg(feature = "native-execution")]
     pub(super) fn pushed_frame(&self, caller: usize, i: WideInstruction, getter: Value, this: Value)
         -> (Value, crate::bytecode::RegisterWindow, Value, CallCompletion) {
         match i.op() {

@@ -1,7 +1,8 @@
-//! Eager native publication: every requested body compiled at once with no
-//! code-cache budget, its frozen whole-program facts, the per-function tier
-//! dispatcher and the general-dispatch fallback tables, addressed directly
-//! because nothing is linked.
+//! Eager native publication: every requested body compiled at once with no code-cache budget.
+//! A function's lane body is lowered under the image's frozen whole-program facts and entered
+//! through a trampoline (`ahead_entry`) whose leaves continue in per-PC semantic entries; a
+//! function the lane lowering does not take keeps the call-threaded body. Everything is
+//! addressed directly because nothing is linked.
 use super::*;
 
 #[cfg(feature = "aot")]
@@ -16,10 +17,6 @@ pub(crate) fn compile_eager_native<H: Host>(
     program.freeze_native_diagnostics();
     let isa = super::jit_backend::target_isa_for("speed", super::jit_backend::CodePublication::RelocatableObject)
         .ok_or("native target unavailable")?;
-    // The static call hints are the same facts the linked image derives from the
-    // program; the eager publisher must fold them too, or its typed regions would
-    // be a second, weaker lowering of the interpreter.
-    let targets = super::compiled::static_call_targets(&program);
     let globals = frozen_globals(&program);
     let frozen_field_facts = frozen_fields(&program);
     let constant_slots: Box<[Value]> = vec![Value::UNDEFINED; program.constants.len()].into_boxed_slice();
@@ -27,25 +24,24 @@ pub(crate) fn compile_eager_native<H: Host>(
     let constant_base = constant_block.borrow().as_ptr() as usize;
     // The image's invalidation word: zero while every whole-program assumption holds.
     let invalidation = crate::code_dependencies::Invalidation::default();
-    let last_tier = Rc::new(std::cell::Cell::new(0u64));
-    let extension = EagerCraneliftExtension::<H> { program: &program, targets, globals: &globals,
+    let extension = EagerCraneliftExtension::<H> { program: &program, globals: &globals,
         fields: &frozen_field_facts, constants: constant_base, isa, options, entries: Vec::new(),
         owners: EagerOwners::default(), counts: Default::default(), invalidation: invalidation.clone(),
-        last_tier: last_tier.as_ptr() as usize, host: std::marker::PhantomData };
+        host: std::marker::PhantomData };
     let (entries, mut owners, mut counts) = super::specialize::CallThreaded::frozen(extension).specialize(&program)?;
     counts.frozen_globals = globals.len();
     counts.frozen_fields = frozen_field_facts.len();
-    let frozen = frozen_assumptions(&mut owners, &globals, &frozen_field_facts, constant_block, invalidation, last_tier);
+    let frozen = frozen_assumptions(&mut owners, &globals, &frozen_field_facts, constant_block, invalidation);
     // SAFETY: every entry was lowered from its exact function for host H.
     unsafe { crate::NativeJsProgram::from_entries_with_counts(program, entries, Rc::new(owners), counts, Some(frozen)) }
 }
 
 /// The whole-program assumptions an eager image carries: its invalidation word, the atoms,
-/// globals and fields it folded, its constants and the tier word it publishes.
+/// globals and fields it folded, and its constants.
 #[cfg(feature = "aot")]
 fn frozen_assumptions(owners: &mut EagerOwners, globals: &std::collections::BTreeMap<Atom, Value>, fields: &std::collections::BTreeMap<Atom, Value>,
     constants: Rc<std::cell::RefCell<Box<[Value]>>>, invalidation: crate::code_dependencies::Invalidation,
-    last_tier: Rc<std::cell::Cell<u64>>) -> crate::vm::native_program::FrozenAssumptions {
+) -> crate::vm::native_program::FrozenAssumptions {
     crate::vm::native_program::FrozenAssumptions {
         invalidation: owners.invalidation.clone(),
         atoms: std::mem::take(&mut owners.frozen_atoms).into_iter().collect(),
@@ -53,7 +49,6 @@ fn frozen_assumptions(owners: &mut EagerOwners, globals: &std::collections::BTre
         fields: fields.keys().copied().collect(),
         constants,
         watch: Rc::new(crate::code_dependencies::PublishedCode::with_invalidation((), invalidation)),
-        last_tier,
     }
 }
 
@@ -76,10 +71,9 @@ pub(super) struct EagerOwners {
 #[cfg(feature = "aot")]
 struct EagerCraneliftExtension<'p, H> {
     program: &'p ResidualProgram,
-    targets: Vec<Vec<lane_unit::StaticTargets>>,
-    /// Whole-program globals the frozen regions may fold.
+    /// Whole-program globals the lane bodies may fold.
     globals: &'p std::collections::BTreeMap<Atom, Value>,
-    /// Whole-program prototype values the frozen regions may fold.
+    /// Whole-program prototype values the lane bodies may fold.
     fields: &'p std::collections::BTreeMap<Atom, Value>,
     /// The address of the image's constant block.
     constants: usize,
@@ -89,8 +83,6 @@ struct EagerCraneliftExtension<'p, H> {
     owners: EagerOwners,
     counts: crate::NativeJsPublicationCounts,
     invalidation: crate::code_dependencies::Invalidation,
-    /// The word the tier dispatcher records the chosen tier in.
-    last_tier: usize,
     host: std::marker::PhantomData<fn(&mut H)>,
 }
 
@@ -127,38 +119,70 @@ impl<'p, H: Host> super::specialize::CallThreadedExtension for EagerCraneliftExt
 
 #[cfg(feature = "aot")]
 impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
-    /// The largest body first: a function over the region budget is split into
-    /// private regions with a dispatch wrapper; every other function takes the
-    /// general-dispatch baseline or the call-threaded body.
+    /// A function over the region budget is split into private call-threaded regions with a
+    /// dispatch wrapper; every other function takes its lane body behind a trampoline, or the
+    /// call-threaded body where the lane lowering declines it.
     fn lower_function(&mut self, function_id: u32, sites: &[super::specialize::InstructionSite],
         isa: &dyn cranelift_codegen::isa::TargetIsa,
     ) -> Result<Vec<CodeMemory>, String> {
         let Some(regions) = self.options.regions(sites.len()) else {
-            return self.lower_baseline_or_threaded(function_id, sites, isa);
+            return match self.publish_lane_body(function_id, isa) {
+                Some(body) => self.lower_trampoline(function_id, sites, isa, body),
+                None => {
+                    self.counts.call_threaded += 1;
+                    Ok(vec![compile_eager_body::<H>(sites, function_id, isa, None)?])
+                }
+            };
         };
         self.counts.call_threaded += 1;
-        self.counts.tier_call_threaded += 1;
         self.lower_regions(function_id, sites, isa, &regions)
     }
 
-    fn lower_baseline_or_threaded(&mut self, function_id: u32, sites: &[super::specialize::InstructionSite],
-        isa: &dyn cranelift_codegen::isa::TargetIsa,
+    /// The function as a lane body under the image's frozen facts (the same body the ahead
+    /// images compile, its helpers embedded): it runs from the first record and leaves at
+    /// the first instruction it does not lower, or where an assumption was retired. `None`
+    /// where the body lowers nothing.
+    fn publish_lane_body(&mut self, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa) -> Option<CodeMemory> {
+        let program = self.program;
+        let unnamed_atoms = super::method_cache::AtomBits::default();
+        let facts = VmFacts { frozen: true, frozen_fields: Some(self.fields), frozen_constants: Some(self.constants),
+            online: Some(OnlineFacts { method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[] }),
+            ..VmFacts::STATIC };
+        let reads = frozen_global_reads(program, program.function_get(function_id as usize)?, self.globals);
+        let (body, atoms) = lower_lane_body(program, function_id, isa,
+            LaneHelpers::Process(LaneHelper::addresses::<H>()), facts, &reads)?;
+        self.owners.frozen_atoms.extend(atoms.iter().copied());
+        publish_eager_graph(body, isa).ok()
+    }
+
+    /// The lane `body`, its per-PC semantic fallback and the trampoline that is the entry.
+    fn lower_trampoline(&mut self, function_id: u32, sites: &[super::specialize::InstructionSite],
+        isa: &dyn cranelift_codegen::isa::TargetIsa, body: CodeMemory,
     ) -> Result<Vec<CodeMemory>, String> {
-        match self.lower_general_dispatch(function_id, sites, isa)? {
-            Some(lowered) => {
-                self.counts.general_dispatch += 1;
-                self.counts.typed_regions += lowered.typed_regions;
-                self.counts.scalar_regions += lowered.scalar_regions;
-                if lowered.typed_regions > 0 { self.counts.tier_specialized += 1; }
-                else { self.counts.tier_general += 1; }
-                Ok(lowered.code)
-            }
-            None => {
-                self.counts.call_threaded += 1;
-                self.counts.tier_call_threaded += 1;
-                Ok(vec![compile_eager_body::<H>(sites, function_id, isa, None)?])
-            }
-        }
+        let (fallback, operands, table) = self.lower_fallback(sites, isa)?;
+        let (mut body_signature, mut fallback_signature) = (None, None);
+        let entry = super::ahead_entry::lower_ahead_entry(super::native_object::NATIVE_FUNCTION_NAMESPACE, function_id, sites.len(), isa,
+            super::ahead_entry::AheadTargets {
+                body: &mut |builder, words| {
+                    let signature = *body_signature.get_or_insert_with(|| builder.import_signature(
+                        lane_body_signature(isa.pointer_type(), isa.default_call_conv())));
+                    let target = builder.ins().iconst(isa.pointer_type(), body.pointer() as usize as i64);
+                    let call = builder.ins().call_indirect(signature, target, words);
+                    let results = builder.inst_results(call);
+                    (results[0], results[1])
+                },
+                fallback: &mut |builder, [context, pc, result]| {
+                    let signature = *fallback_signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(isa)));
+                    let target = builder.ins().iconst(isa.pointer_type(), fallback.pointer() as usize as i64);
+                    let call = builder.ins().call_indirect(signature, target, &[context, pc, result, result]);
+                    builder.inst_results(call)[0]
+                },
+            })?;
+        let entry = publish_eager_graph(entry, isa)?;
+        self.counts.lane_bodies += 1;
+        self.owners.operand_arrays.push(operands);
+        self.owners.entry_tables.push(table);
+        Ok(vec![body, fallback, entry])
     }
 
     fn lower_regions(&mut self, function_id: u32, sites: &[super::specialize::InstructionSite],
@@ -183,82 +207,8 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
         Ok(code)
     }
 
-    /// The same residual the linked publisher builds: general dispatch with
-    /// scalar and typed regions inlined, and a per-PC semantic-entry fallback.
-    /// `None` leaves a function the general baseline does not admit to the
-    /// call-threaded body.
-    fn lower_general_dispatch(&mut self, function_id: u32, sites: &[super::specialize::InstructionSite],
+    fn lower_fallback(&mut self, sites: &[super::specialize::InstructionSite],
         isa: &dyn cranelift_codegen::isa::TargetIsa,
-    ) -> Result<Option<EagerLowering>, String> {
-        let program = self.program;
-        let Some(function) = program.function_get(function_id as usize) else { return Ok(None) };
-        // The root function and bodies outside the baseline keep the
-        // call-threaded body, exactly as the linked publisher does.
-        if function_id == 0 || !js_general_dispatch_candidate(program, function) {
-            return Ok(None);
-        }
-        let (fallback, operands, table) = self.lower_fallback(function_id, sites, function.code.len(), isa)?;
-        let (mut code, units) = (Vec::new(), self.frozen_units(program, function_id, isa));
-        let typed_entries: Vec<_> = units.iter().map(|unit|
-            StaticTypedRegionEntry { header: unit.header, function: &unit.function, gated: !unit.scalar }).collect();
-        // T2: general dispatch with the typed regions; T1: the same baseline without
-        // them; T0: the call-threaded body. The dispatcher reads the image's invalidation
-        // word and selects, all three bodies already resident.
-        let callout = JsGeneralCallout::Address(fallback.pointer() as usize);
-        let Some((ladder, typed, scalars)) = self.lower_ladder(program, function_id, sites, isa,
-            callout, &typed_entries) else { return Ok(None) };
-        code.push(fallback);
-        code.extend(ladder);
-        self.owners.operand_arrays.push(operands);
-        self.owners.entry_tables.push(table);
-        Ok(Some(EagerLowering { code, typed_regions: typed, scalar_regions: scalars }))
-    }
-
-    /// T2 (typed), T1 (general) and T0 (call-threaded) resident, with the dispatcher as
-    /// the entry. `None` where the baseline does not lower the function at all.
-    #[allow(clippy::too_many_arguments)]
-    fn lower_ladder(&mut self, program: &ResidualProgram, function_id: u32,
-        sites: &[super::specialize::InstructionSite], isa: &dyn cranelift_codegen::isa::TargetIsa,
-        callout: JsGeneralCallout, typed_entries: &[StaticTypedRegionEntry<'_>],
-    ) -> Option<(Vec<CodeMemory>, usize, usize)> {
-        let typed = typed_entries.len();
-        let scalars = typed_entries.len();
-        let (specialized, _) = GeneralDispatchSpecializer { function_id, isa, callout,
-            typed_regions: typed_entries }.lower(program).ok()?;
-        let (general, _) = GeneralDispatchSpecializer { function_id, isa, callout,
-            typed_regions: &[] }.lower(program).ok()?;
-        let specialized = publish_eager_graph(specialized, isa).ok()?;
-        let general = publish_eager_graph(general, isa).ok()?;
-        let threaded = compile_eager_body::<H>(sites, function_id, isa, None).ok()?;
-        let dispatch = lower_tier_dispatch(function_id, threaded.pointer(), general.pointer(),
-            specialized.pointer(), self.invalidation.address(), self.last_tier, isa).ok()?;
-        let mut ladder = vec![specialized, general, threaded, publish_eager_graph(dispatch, isa).ok()?];
-        ladder.shrink_to_fit();
-        Some((ladder, typed, scalars))
-    }
-
-    /// The static typed regions under the image's whole-program facts: no method
-    /// cache names an atom yet, and every folded Stable fact is checked against the
-    /// image's invalidation word.
-    fn frozen_units(&mut self, program: &ResidualProgram, function_id: u32,
-        isa: &dyn cranelift_codegen::isa::TargetIsa,
-    ) -> Vec<StaticTypedRegion> {
-        let unnamed_atoms = super::method_cache::AtomBits::default();
-        let facts = VmFacts { frozen: true, frozen_fields: Some(self.fields), frozen_constants: Some(self.constants),
-            online: Some(OnlineFacts {
-            method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[],
-        }), ..VmFacts::STATIC };
-        let function = program.function(function_id as usize);
-        let reads = frozen_global_reads(program, function, self.globals);
-        let units = lower_static_typed_regions_process::<H>(program, function_id, &self.targets, isa, facts, &reads);
-        for unit in &units {
-            self.owners.frozen_atoms.extend(unit.stable.atoms.iter().copied());
-        }
-        units
-    }
-
-    fn lower_fallback(&mut self, _function_id: u32, sites: &[super::specialize::InstructionSite],
-        instruction_count: usize, isa: &dyn cranelift_codegen::isa::TargetIsa,
     ) -> Result<(CodeMemory, Box<[super::NativeJsOperands]>, Box<[*const ()]>), String> {
         let operands: Box<[super::NativeJsOperands]> = sites.iter().map(|site| site.operands).collect();
         let table: Box<[*const ()]> = sites.iter().map(|site|
@@ -266,116 +216,12 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
         // Addresses are taken from the boxes `EagerOwners` keeps alive; moving a
         // box does not move its heap buffer.
         let fallback = publish_eager_graph(
-            lower_eager_fallback(instruction_count, table.as_ptr(), operands.as_ptr(), isa)?, isa)?;
+            lower_eager_fallback(sites.len(), table.as_ptr(), operands.as_ptr(), isa)?, isa)?;
         Ok((fallback, operands, table))
     }
-
 }
 
-/// The AOT tier the dispatcher selected (0 call-threaded, 1 general, 2 specialized).
-#[cfg(feature = "aot")]
-const TIER_THREADED: i64 = 0;
-#[cfg(feature = "aot")]
-const TIER_GENERAL: i64 = 1;
-#[cfg(feature = "aot")]
-const TIER_SPECIALIZED: i64 = 2;
-
-/// The image's invalidation word, as the dispatcher reads it.
-#[cfg(feature = "aot")]
-fn invalidated_word(builder: &mut FunctionBuilder<'_>, isa: &dyn cranelift_codegen::isa::TargetIsa,
-    invalidation: usize,
-) -> ir::Value {
-    let address = builder.ins().iconst(isa.pointer_type(), invalidation as i64);
-    builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0)
-}
-
-/// The dispatcher's entry: branch on the invalidation word and return the observation
-/// address with the call signature.
-#[cfg(feature = "aot")]
-fn emit_tier_prologue(
-    builder: &mut FunctionBuilder<'_>,
-    isa: &dyn cranelift_codegen::isa::TargetIsa,
-    word: ir::Value,
-    general_block: ir::Block,
-    specialized_block: ir::Block,
-    last_tier: usize,
-) -> (ir::SigRef, ir::Value) {
-    let signature = builder.import_signature(native_entry_signature(isa.pointer_type(), isa.default_call_conv()));
-    let observation = builder.ins().iconst(isa.pointer_type(), last_tier as i64);
-    let invalidated = builder.ins().icmp_imm_u(IntCC::NotEqual, word, 0);
-    builder.ins().brif(invalidated, general_block, &[], specialized_block, &[]);
-    (signature, observation)
-}
-
-/// Calls `body` from its tier's dispatcher block and returns its status.
-#[cfg(feature = "aot")]
-fn emit_tier_body(
-    builder: &mut FunctionBuilder<'_>,
-    isa: &dyn cranelift_codegen::isa::TargetIsa,
-    observation: ir::Value,
-    signature: ir::SigRef,
-    body: *mut u8,
-    tier: i64,
-    params: &[ir::Value],
-) {
-    let tier = builder.ins().iconst(types::I64, tier);
-    builder.ins().store(MemFlagsData::trusted(), tier, observation, 0);
-    let target = builder.ins().iconst(isa.pointer_type(), body as usize as i64);
-    let call = builder.ins().call_indirect(signature, target, params);
-    let status = builder.inst_results(call)[0];
-    builder.ins().return_(&[status]);
-}
-
-/// Selects one of the three resident bodies: the specialized one while the image's
-/// invalidation word is zero, the general baseline once it is set, and the call-threaded
-/// body when the policy word names neither. Records the tier in `last_tier`.
-#[cfg(feature = "aot")]
-fn lower_tier_dispatch(
-    function_id: u32,
-    threaded: *mut u8,
-    general: *mut u8,
-    specialized: *mut u8,
-    invalidation: usize,
-    last_tier: usize,
-    isa: &dyn cranelift_codegen::isa::TargetIsa,
-) -> Result<ir::Function, String> {
-    let mut native = ir::Function::with_name_signature(
-        ir::UserFuncName::user(super::native_object::NATIVE_FUNCTION_NAMESPACE, function_id),
-        native_entry_signature(isa.pointer_type(), isa.default_call_conv()),
-    );
-    let mut context = FunctionBuilderContext::new();
-    let mut builder = FunctionBuilder::new(&mut native, &mut context);
-    let entry = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    let params = builder.block_params(entry).to_vec();
-    let (specialized_block, general_block, threaded_block) =
-        (builder.create_block(), builder.create_block(), builder.create_block());
-    let word = invalidated_word(&mut builder, isa, invalidation);
-    let (signature, observation) = emit_tier_prologue(&mut builder, isa, word,
-        general_block, specialized_block, last_tier);
-    for (block, body, tier) in [
-        (specialized_block, specialized, TIER_SPECIALIZED),
-        (general_block, general, TIER_GENERAL),
-        (threaded_block, threaded, TIER_THREADED),
-    ] {
-        builder.switch_to_block(block);
-        emit_tier_body(&mut builder, isa, observation, signature, body, tier, &params);
-    }
-    builder.seal_all_blocks();
-    builder.finalize(isa.frontend_config());
-    Ok(native)
-}
-
-/// One function's eager general-dispatch publication.
-#[cfg(feature = "aot")]
-struct EagerLowering {
-    code: Vec<CodeMemory>,
-    typed_regions: usize,
-    scalar_regions: usize,
-}
-
-/// One exact semantic operation per PC for a live general-dispatch fallback:
+/// One exact semantic operation per PC for a live per-PC fallback:
 /// the same table the linked publisher relocates, addressed directly because
 /// this publication has no linker.
 #[cfg(feature = "aot")]

@@ -4,23 +4,23 @@
 //! runtime copies them like any stencil (`entry_*` may `call`, `leave_*` may `ret`; `build.rs`
 //! allows nothing else to).
 //!
-//! Entry ABI: (rdi = context, rcx = the frame, r8 = result pointer). The thunk moves the
-//! context to r13 and loads the frame's window of registers (`staged::frame::WINDOW`) into r12
-//! (the row convention), calls the first row
-//! (`HOLE_NEXT`), stores the word the chain returned through the result pointer and returns
-//! status `NATIVE_JS_STOPPED`, the status of every run that leaves with a word. `entry_resume` is the same thunk calling the address in rdx, where a resume stub
-//! enters the chain mid-region.
+//! Entry ABI, the lane body ABI: (rdi = context, rcx = the window of registers, rdx = a resume
+//! stub's address for `entry_resume`) -> (eax = status, rdx = word). The thunk moves the context
+//! to r13 and the window into r12 (the row convention), calls the first row (`HOLE_NEXT`) and
+//! returns the word the chain returned in rdx beside status `NATIVE_JS_STOPPED`, the status of
+//! every run that leaves with a word. `entry_resume` is the same thunk calling the address in
+//! rdx, where a resume stub enters the chain mid-region.
 
 use crate::layout::NATIVE_JS_STOPPED;
-use crate::staged::frame;
 use crate::words::HOLE_V0;
 
 unsafe extern "C" {
     static HOLE_NEXT: u8;
 }
 
-/// The thunk around a call of the row chain: saves rbp, rbx, r12-r15 and the result pointer
-/// r8, calls the chain through `$call`, stores its word. Written once for both entries.
+/// The thunk around a call of the row chain: saves rbp, rbx and r12-r15, calls the chain
+/// through `$call` and returns its word beside the stopped status. The eighth word keeps the
+/// stack 16-byte aligned at the call. Written once for both entries.
 macro_rules! thunk {
     ($call:literal $(, $($binding:tt)*)?) => {
         core::arch::naked_asm!(
@@ -30,12 +30,12 @@ macro_rules! thunk {
             "push r13",
             "push r14",
             "push r15",
-            "push r8",
+            "sub rsp, 8",
             "mov r13, rdi",
-            "mov r12, [rcx + {window}]",
+            "mov r12, rcx",
             $call,
-            "pop r8",
-            "mov [r8], rax",
+            "add rsp, 8",
+            "mov rdx, rax",
             "pop r15",
             "pop r14",
             "pop r13",
@@ -44,7 +44,6 @@ macro_rules! thunk {
             "pop rbp",
             "mov eax, {stopped}",
             "ret",
-            window = const frame::WINDOW,
             stopped = const NATIVE_JS_STOPPED
             $(, $($binding)*)?
         )
@@ -58,8 +57,9 @@ pub unsafe extern "C" fn entry_thunk() {
     thunk!("call {first}", first = sym HOLE_NEXT)
 }
 
-/// Calls the address in rdx (the shared ABI's `length` argument): a resume stub of the region,
-/// which loads the pinned registers live at its PC and jumps to the PC's first row.
+/// Calls the address in rdx (the body ABI's `captures` argument, which a stencil region does not
+/// read): a resume stub of the region, which loads the pinned registers live at its PC and jumps
+/// to the PC's first row.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_resume() {

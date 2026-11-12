@@ -1,31 +1,18 @@
 //! What the JavaScript function tier may take, and the artifact it publishes.
 //!
-//! The tier writes no opcode meaning of its own. A function compiles through one of two
-//! projections of the interpreter: a numeric function through the semantic SSA specializer
-//! that frameless JIT bodies and linked AOT regions share (`compile_js_typed_numeric_region`),
-//! any other through the call-threaded specializer over the interpreter's per-opcode semantic
-//! entries (`compile_js_general_dispatch`). Neither matches a program's shape: an interpreter
-//! change reaches both.
+//! The tier writes no opcode meaning of its own. A numeric function compiles through the
+//! semantic SSA specializer that frameless JIT bodies and linked AOT regions share
+//! (`compile_js_typed_numeric_region`): an interpreter change reaches it.
 
 use crate::bytecode::{Function, ProgramKind, ResidualProgram, Traits};
 
 /// Native code and its result interpretation for a JavaScript function.
 pub(super) struct JsJitArtifact {
-    /// Machine code using the ABI selected by `result`.
+    /// Machine code of the lane body ABI.
     pub(super) code: Vec<u8>,
     /// The number of formal parameters read from the argument array.
     pub(super) params: usize,
-    pub(super) result: JsJitResultKind,
-    /// Directly emitted bytecode PCs for the shared general JS dispatcher.
-    pub(super) general_dispatch_native_pcs: Vec<u8>,
-}
-
-pub(super) enum JsJitResultKind {
-    /// Numeric bytecode regions emit the common VM native-entry ABI.
-    SharedNumberEntry(super::compiled::NativeEntryMode, super::compiled::NativeNumberResult),
-    /// A full function CFG whose operation blocks call the shared VM step
-    /// helper and branch directly to the next validated bytecode PC.
-    GeneralDispatch,
+    pub(super) result: super::compiled::NativeNumberResult,
 }
 
 // Keep native regions short so an interpreter interrupt cannot be delayed by a large body.
@@ -35,7 +22,7 @@ pub(crate) const MAX_CODE_BYTES: usize = 64 * 1024;
 const MAX_PARAMETERS: usize = 8;
 
 /// Compile `function_id` as a numeric function through the shared semantic SSA specializer;
-/// any function it does not cover stays with the interpreter and the general tier.
+/// any function it does not cover stays with the interpreter and the lane.
 #[cfg(test)]
 pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJitArtifact> {
     admitted(program, function_id)?;
@@ -143,29 +130,19 @@ fn activation_is_irrelevant(function: &Function) -> bool {
 #[derive(Default)]
 pub(super) struct JsEntryFacts {
     /// Whether the function is a numeric tier candidate (`function_candidate`); only such a
-    /// function enters native code at its entry before the general tier holds it.
+    /// function enters native code at its entry.
     pub(super) candidate: bool,
-    /// Whether the general baseline admits it, and without backward jumps
-    /// (`js_general_dispatch_shape`).
-    pub(super) general: bool,
-    pub(super) general_acyclic: bool,
 }
 
 impl JsEntryFacts {
     /// Whether every fact is unset (`Self::default`).
     pub(super) const fn is_unset(&self) -> bool {
-        !self.candidate && !self.general
+        !self.candidate
     }
 
     pub(super) fn of(program: &ResidualProgram, function: &Function, priced: bool) -> Self {
         let has_calls = function.instructions().any(|instruction|
             instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
-        let candidate = function_candidate(function, program) && (!priced || has_calls || super::compiled::pays_native_entry(function));
-        let shape = super::compiled::js_general_dispatch_shape(function);
-        Self {
-            candidate,
-            general: shape.is_some(),
-            general_acyclic: shape == Some(true),
-        }
+        Self { candidate: function_candidate(function, program) && (!priced || has_calls || super::compiled::pays_native_entry(function)) }
     }
 }

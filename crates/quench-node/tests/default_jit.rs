@@ -90,7 +90,7 @@ fn function_attempts_and_region_runs(flag: &str) -> (u64, u64) {
     let (mut attempts, mut runs) = (0, 0);
     for json in String::from_utf8_lossy(&output.stderr).lines().filter_map(|line| line.strip_prefix("QUENCH_JS_JIT_STATS ")) {
         let (function, osr) = json.split_once("\"osr\"").unwrap_or((json, ""));
-        attempts += count_after(function, "\"compile_attempts\":") + count_after(function, "\"general_dispatch_compile_attempts\":");
+        attempts += count_after(function, "\"compile_attempts\":");
         runs += count_after(osr, "\"native_region_runs\":");
     }
     (attempts, runs)

@@ -51,8 +51,6 @@ region_flags! {
     elements => Elements.mutable,
     /// A record's payload word, or a narrow value packed in it.
     payload => Payload.mutable,
-    /// A captured-variable slot of environment storage.
-    cells => Cells.mutable,
     /// A word of the step dispatch, call context or result.
     dispatch => Dispatch.mutable,
     /// A per-site feedback counter.

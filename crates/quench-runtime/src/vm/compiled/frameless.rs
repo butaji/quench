@@ -1,4 +1,4 @@
-//! Frameless calls between general dispatch bodies. A plain call of an admitted user
+//! Frameless calls between native bodies. A plain call of an admitted user
 //! function calls the callee's native entry directly, its registers a window on this VM's
 //! own native stack (`Frameless::windows`) and its activation a shadow record
 //! (`ShadowRecord`), as the lane's direct calls run (`DirectCallee`). Nothing but native code
@@ -8,13 +8,9 @@
 //! the innermost frame exactly where it left. A function whose activations keep leaving
 //! within one collection cycle takes the framed call again until the next
 //! (`MATERIALIZATION_LIMIT`), so warm-up exits do not disable it for good.
-use super::{
-    emit_js_payload_word, emit_lane_helper_call, native_entry_signature, Host, JsExactFallback, JsNativeStep,
-    JsStepDispatch, ResidualProgram, Vm, CONTEXT_STACK_LIMIT, JS_GENERAL_RETURN_STATUS_BASE,
-};
-use crate::vm::compiled::regions;
-use crate::bytecode::{ConstructArguments, WideInstruction};
-use crate::value::ValueLayout;
+use super::{emit_js_payload_word, emit_lane_helper_call, JsStepDispatch};
+#[cfg(feature = "native-execution")]
+use super::{Host, JsNativeStep, ResidualProgram, Vm};
 use crate::Value;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_frontend::FunctionBuilder;
@@ -26,9 +22,6 @@ pub(super) use admission::general_frameless_admit;
 const WINDOW_VALUES: usize = 1 << 16;
 const SHADOW_RECORDS: usize = 1 << 12;
 const CACHE_ENTRIES: usize = 256;
-/// Native stack a frameless call leaves above the entry's limit for the exact steps and
-/// recovery that may follow inside it.
-const STACK_MARGIN: i64 = 128 * 1024;
 /// Recoveries of one function's frameless activations in one collection epoch after which
 /// its calls keep frames for the rest of the epoch.
 const MATERIALIZATION_LIMIT: u32 = 16;
@@ -111,6 +104,7 @@ impl Frameless {
     }
 
     /// Whether the payload runs inside a frameless activation.
+    #[cfg(feature = "native-execution")]
     pub(super) fn inside(&self, dispatch: &JsStepDispatch) -> bool {
         dispatch.shadow_top != self.shadow.as_ptr() as usize
     }
@@ -121,121 +115,11 @@ impl Frameless {
         self.functions.clear();
     }
 
+    #[cfg(feature = "native-execution")]
     fn live(&self, dispatch: &JsStepDispatch) -> &[ShadowRecord] {
         let count = (dispatch.shadow_top - self.shadow.as_ptr() as usize) / size_of::<ShadowRecord>();
         &self.shadow[..count]
     }
-}
-
-/// A frameless call of the plain `Call` or `Construct` at `pc` where its callee is admitted
-/// and the stacks have room; else `framed`, the instruction's framed path. A construction
-/// binds the receiver its callee allocates in place (`general_construct_receiver`) and yields
-/// it unless the body returns an object.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn emit_call(
-    builder: &mut FunctionBuilder<'_>,
-    (pc, instruction, next): (usize, WideInstruction, ir::Block),
-    register_offset: &dyn Fn(u16) -> Option<i32>,
-    (arguments, payload): (ir::Value, ir::Value),
-    exact: &JsExactFallback,
-    destination: i32,
-    framed: ir::Block,
-) -> Option<()> {
-    let (window, receiver) = if instruction.op().is_construct() {
-        let ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
-        (!instruction.is_super_construct()).then_some((window, None))?
-    } else { (instruction.call_window(), Some(register_offset(instruction.register_c())?)) };
-    let passed = (0..window.count).map(|index| register_offset(window.base + index)).collect::<Option<Vec<_>>>()?;
-    let callee = builder.ins().load(types::I64, regions::frame(), arguments, register_offset(instruction.register_b())?);
-    let receiver = receiver.map(|offset| builder.ins().load(types::I64, regions::frame(), arguments, offset));
-    emit_activation(builder, (pc, next), (arguments, payload), exact, (callee, receiver, &passed), (destination, framed));
-    Some(())
-}
-
-/// A frameless activation of `callee` made by the instruction at `pc`, passing the
-/// `passed` registers, bound to `receiver` or, where none, to the receiver a construction
-/// allocates; its value goes to `destination`, and any refusal to `framed`.
-pub(super) fn emit_activation(
-    builder: &mut FunctionBuilder<'_>,
-    (pc, next): (usize, ir::Block),
-    (arguments, payload): (ir::Value, ir::Value),
-    exact: &JsExactFallback,
-    (callee, receiver, passed): (ir::Value, Option<ir::Value>, &[i32]),
-    (destination, framed): (i32, ir::Block),
-) {
-    let entry = emit_entry(builder, payload, callee, framed);
-    let meta = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, std::mem::offset_of!(CallEntry, meta) as i32);
-    let fits = emit_fits(builder, (entry, meta), passed.len() as u16, receiver.is_none());
-    let registers = builder.ins().ushr_imm_u(meta, i64::from(META_REGISTERS));
-    let registers = builder.ins().band_imm_u(registers, i64::from(u16::MAX));
-    let (top, end, record) = emit_room(builder, payload, exact.context, registers, fits, framed);
-    let (this, constructed) = match receiver {
-        Some(receiver) => (emit_this(builder, entry, receiver, record), None),
-        None => emit_receiver(builder, payload, (callee, record), framed),
-    };
-    emit_window(builder, (arguments, top, end), passed);
-    emit_record(builder, record, pc, callee);
-    let status = emit_enter(builder, (payload, exact.context, exact.result_pointer), entry, (top, end, record, this));
-    emit_returned(builder, (payload, arguments), exact, (status, constructed), (destination, next));
-}
-
-/// Stores the callee's return value, or for a construction the value it yields, in
-/// `destination`; a callee that stopped made the chain's frames (`leave`), and this caller
-/// stops with it.
-fn emit_returned(builder: &mut FunctionBuilder<'_>, (payload, arguments): (ir::Value, ir::Value), exact: &JsExactFallback,
-    (status, constructed): (ir::Value, Option<ir::Value>), (destination, next): (i32, ir::Block)) {
-    let returned = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, status, i64::from(JS_GENERAL_RETURN_STATUS_BASE));
-    let done = builder.create_block();
-    builder.ins().brif(returned, done, &[], exact.stopped_block, &[]);
-    builder.switch_to_block(done);
-    let mut value = builder.ins().load(types::I64, MemFlagsData::trusted(), exact.result_pointer, 0);
-    if let Some(constructed) = constructed {
-        value = emit_construct_result(builder, payload, (value, constructed));
-    }
-    builder.ins().store(regions::frame(), value, arguments, destination);
-    builder.ins().jump(next, &[]);
-}
-
-/// [[Construct]]'s result by the staged rule (`staged::construct::construct_result_by`): the
-/// returned word decides a primitive and a direct object; any other heap reference asks the host.
-fn emit_construct_result(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (value, receiver): (ir::Value, ir::Value)) -> ir::Value {
-    let mut stage = super::object_slots::emit(builder);
-    crate::staged::construct::construct_result_by(&mut stage, value, |_| receiver, |stage| {
-        let helper = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, construct_result));
-        Some(emit_lane_helper_call(stage.builder, payload, helper, &[value, receiver]))
-    }).expect("the emit stage continues past its guards")
-}
-
-/// Whether the call passes no more values than the callee's parameters, and for a
-/// construction whether the callee constructs in place.
-fn emit_fits(builder: &mut FunctionBuilder<'_>, (entry, meta): (ir::Value, ir::Value), count: u16, constructs: bool) -> ir::Value {
-    let params = builder.ins().ushr_imm_u(meta, i64::from(META_PARAMS));
-    let fits = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, params, i64::from(count));
-    if !constructs { return fits; }
-    let admitted = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, std::mem::offset_of!(CallEntry, constructs) as i32);
-    let admitted = builder.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0);
-    builder.ins().band(fits, admitted)
-}
-
-/// The receiver a construction of `callee` allocates, bound in the record's `this` slot:
-/// the slot's address and the receiver; `framed` where it allocates none.
-fn emit_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (callee, record): (ir::Value, ir::Value),
-    framed: ir::Block) -> (ir::Value, Option<ir::Value>) {
-    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, construct_receiver));
-    let receiver = emit_lane_helper_call(builder, payload, helper, &[callee]);
-    let allocated = builder.ins().icmp_imm_u(IntCC::NotEqual, receiver, Value::DELETED.to_bits() as i64);
-    let bound = builder.create_block();
-    builder.ins().brif(allocated, super::forced_or(bound, framed), &[], framed, &[]);
-    builder.switch_to_block(bound);
-    builder.ins().store(MemFlagsData::trusted(), receiver, record, std::mem::offset_of!(ShadowRecord, this) as i32);
-    (builder.ins().iadd_imm_u(record, std::mem::offset_of!(ShadowRecord, this) as i64), Some(receiver))
-}
-
-/// The shadow record's call PC and callee.
-fn emit_record(builder: &mut FunctionBuilder<'_>, record: ir::Value, pc: usize, callee: ir::Value) {
-    builder.ins().store(MemFlagsData::trusted(), callee, record, std::mem::offset_of!(ShadowRecord, callee) as i32);
-    let call_pc = builder.ins().iconst(types::I64, pc as i64);
-    builder.ins().store(MemFlagsData::trusted(), call_pc, record, std::mem::offset_of!(ShadowRecord, call_pc) as i32);
 }
 
 /// The dense capture slots (values, length) of `callee`'s admission (`emit_entry`), which a
@@ -278,118 +162,10 @@ fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir:
     entry
 }
 
-/// The window and shadow record of the activation, where the call fits its parameters
-/// (`fits`), the stacks and the native stack have room; else `framed`.
-fn emit_room(builder: &mut FunctionBuilder<'_>, payload: ir::Value, context: ir::Value, registers: ir::Value,
-    fits: ir::Value, framed: ir::Block) -> (ir::Value, ir::Value, ir::Value) {
-    let top = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, native_top));
-    let end = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, native_end));
-    let bytes = builder.ins().imul_imm_u(registers, size_of::<Value>() as i64);
-    let next = builder.ins().iadd(top, bytes);
-    let windows = builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, next, end);
-    let record = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, shadow_top));
-    let last = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, shadow_end));
-    let pushed = builder.ins().iadd_imm_u(record, size_of::<ShadowRecord>() as i64);
-    let records = builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, pushed, last);
-    let stack = builder.ins().get_stack_pointer(types::I64);
-    let limit = builder.ins().load(types::I64, MemFlagsData::trusted(), context, CONTEXT_STACK_LIMIT);
-    let limit = builder.ins().iadd_imm_u(limit, STACK_MARGIN);
-    let native = builder.ins().icmp(IntCC::UnsignedGreaterThan, stack, limit);
-    let room = builder.ins().band(fits, windows);
-    let room = builder.ins().band(room, records);
-    let room = builder.ins().band(room, native);
-    let enter = builder.create_block();
-    builder.ins().brif(room, super::forced_or(enter, framed), &[], framed, &[]);
-    builder.switch_to_block(enter);
-    (top, next, record)
-}
-
-/// The window's registers, from `top` to `end`: the passed values, then `undefined` up to the
-/// register count, as a plain activation's (`Frame::place_plain_parameters`). The fill walks
-/// one slot pointer, so the loop carries nothing else.
-fn emit_window(builder: &mut FunctionBuilder<'_>, (arguments, top, end): (ir::Value, ir::Value, ir::Value), passed: &[i32]) {
-    for (index, offset) in passed.iter().enumerate() {
-        let value = builder.ins().load(types::I64, regions::frame(), arguments, *offset);
-        builder.ins().store(MemFlagsData::trusted(), value, top, (index * size_of::<Value>()) as i32);
-    }
-    let (header, body, filled) = (builder.create_block(), builder.create_block(), builder.create_block());
-    let slot = builder.append_block_param(header, types::I64);
-    let undefined = builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
-    let first = builder.ins().iadd_imm_u(top, (passed.len() * size_of::<Value>()) as i64);
-    builder.ins().jump(header, &[ir::BlockArg::Value(first)]);
-    builder.switch_to_block(header);
-    let more = builder.ins().icmp(IntCC::UnsignedLessThan, slot, end);
-    builder.ins().brif(more, body, &[], filled, &[]);
-    builder.switch_to_block(body);
-    builder.ins().store(MemFlagsData::trusted(), undefined, slot, 0);
-    let following = builder.ins().iadd_imm_u(slot, size_of::<Value>() as i64);
-    builder.ins().jump(header, &[ir::BlockArg::Value(following)]);
-    builder.switch_to_block(filled);
-}
-
-/// The record's `this` slot address for `fixed_this_slot`, or null where the body binds
-/// no receiver it was passed (`CallEntry::this`): a strict body's receiver as passed, a
-/// sloppy body's direct object, or its global object for `undefined` or `null`.
-fn emit_this(builder: &mut FunctionBuilder<'_>, entry: ir::Value, receiver: ir::Value, record: ir::Value) -> ir::Value {
-    let mode = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, std::mem::offset_of!(CallEntry, this) as i32);
-    let family = builder.ins().band_imm_u(receiver, ValueLayout::HEAP_FAMILY_MASK as i64);
-    let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
-    let undefined = builder.ins().icmp_imm_u(IntCC::Equal, receiver, Value::UNDEFINED.to_bits() as i64);
-    let null = builder.ins().icmp_imm_u(IntCC::Equal, receiver, Value::NULL.to_bits() as i64);
-    let absent = builder.ins().bor(undefined, null);
-    let strict = builder.ins().icmp_imm_u(IntCC::Equal, mode, THIS_RECEIVER as i64);
-    let lexical = builder.ins().icmp_imm_u(IntCC::Equal, mode, THIS_NONE as i64);
-    // A sloppy body: its global object for an absent receiver, else the receiver.
-    let sloppy = builder.ins().select(absent, mode, receiver);
-    let value = builder.ins().select(strict, receiver, sloppy);
-    let bound = builder.ins().bor(object, absent);
-    let bound = builder.ins().bor(bound, strict);
-    let none = builder.ins().bnot(lexical);
-    let bound = builder.ins().band(bound, none);
-    builder.ins().store(MemFlagsData::trusted(), value, record, std::mem::offset_of!(ShadowRecord, this) as i32);
-    let slot = builder.ins().iadd_imm_u(record, std::mem::offset_of!(ShadowRecord, this) as i64);
-    let zero = builder.ins().iconst(types::I64, 0);
-    builder.ins().select(bound, slot, zero)
-}
-
-/// Pushes the activation onto the payload, calls the callee's entry at its first PC and pops
-/// it again: its status. The stacks' tops pop to the window and record the push began at
-/// (`emit_room`'s `top` and `record`); only the caller's views are saved.
-fn emit_enter(builder: &mut FunctionBuilder<'_>, (payload, context, result): (ir::Value, ir::Value, ir::Value),
-    entry: ir::Value, (top, next, record, this): (ir::Value, ir::Value, ir::Value, ir::Value)) -> ir::Value {
-    let offset = |field: usize| field as i32;
-    // The caller's views, saved across the call, then the stacks' tops.
-    let views = [
-        std::mem::offset_of!(JsStepDispatch, capture_values),
-        std::mem::offset_of!(JsStepDispatch, capture_len),
-        std::mem::offset_of!(JsStepDispatch, capture_stores),
-        std::mem::offset_of!(JsStepDispatch, fixed_this_slot),
-    ];
-    let tops = [std::mem::offset_of!(JsStepDispatch, native_top), std::mem::offset_of!(JsStepDispatch, shadow_top)];
-    let saved = views.map(|field| builder.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(field)));
-    let captures = [std::mem::offset_of!(CallEntry, capture_values), std::mem::offset_of!(CallEntry, capture_len),
-        std::mem::offset_of!(CallEntry, capture_stores)]
-        .map(|field| builder.ins().load(types::I64, MemFlagsData::trusted(), entry, offset(field)));
-    let pushed = builder.ins().iadd_imm_u(record, size_of::<ShadowRecord>() as i64);
-    for (field, value) in views.iter().chain(&tops).zip(captures.into_iter().chain([this, next, pushed])) {
-        builder.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
-    }
-    let zero = builder.ins().iconst(types::I64, 0);
-    builder.ins().store(regions::dispatch(), zero, payload, offset(std::mem::offset_of!(JsStepDispatch, start_pc)));
-    let code = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, offset(std::mem::offset_of!(CallEntry, code)));
-    let signature = native_entry_signature(types::I64, builder.func.signature.call_conv);
-    let signature = builder.import_signature(signature);
-    let call = builder.ins().call_indirect(signature, code, &[context, zero, zero, top, result]);
-    let status = builder.inst_results(call)[0];
-    for (field, value) in views.iter().chain(&tops).zip(saved.into_iter().chain([top, record])) {
-        builder.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
-    }
-    status
-}
-
 /// The chain of the payload's frameless activations, outermost first, followed by `inlined`:
 /// each continues at its callee's call, the innermost at `pc`. Counts the leave against the
 /// innermost frameless function (`MATERIALIZATION_LIMIT`).
+#[cfg(feature = "native-execution")]
 pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDispatch, pc: u32,
     inlined: impl Iterator<Item = ChainFrame>) -> Vec<ChainFrame> {
     let live = vm.frameless.live(dispatch);
@@ -418,6 +194,7 @@ pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
 
 /// An exact step inside a frameless activation runs in its frame: the step that made the
 /// chain's frames, which the general loop continues from (`StepResult::ResumeFrames`).
+#[cfg(feature = "native-execution")]
 pub(super) fn leave<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut JsStepDispatch, pc: usize) -> Option<JsNativeStep> {
     if !vm.frameless.inside(dispatch) { return None; }
     let chain = chain(vm, program, dispatch, pc as u32, std::iter::empty());
@@ -430,6 +207,7 @@ pub(super) fn leave<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
 /// allocated for it (`Value::DELETED` for a call), and its callee where its instruction names
 /// none in a register (a getter's read; else `Value::DELETED`).
 #[derive(Clone, Copy)]
+#[cfg(feature = "native-execution")]
 pub(in crate::vm) struct ChainFrame {
     pub(super) function: u32, pub(super) call_pc: u32, pub(super) source_pc: u32, pub(super) registers: *const Value,
     pub(super) this: Value, pub(super) callee: Value,

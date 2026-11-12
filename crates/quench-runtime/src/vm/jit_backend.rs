@@ -223,16 +223,12 @@ impl NativeCompileRejection {
         }
     }
 
+    #[cfg(feature = "aot")]
     pub(super) const fn reason(self) -> &'static str {
         match self {
-            #[cfg(any(feature = "jit", feature = "aot"))]
             Self::Cranelift => "cranelift-compile-error",
-            #[cfg(not(any(feature = "jit", feature = "aot")))]
-            Self::BackendUnavailable => "native-backend-unavailable",
             Self::Relocations => "unresolved-relocations",
-            #[cfg(any(feature = "jit", feature = "aot"))]
             Self::EmptyCode => "empty-code",
-            #[cfg(any(feature = "jit", feature = "aot"))]
             Self::CodeSizeBudget => "code-size-budget",
             Self::Publish => "code-publication-failed",
         }

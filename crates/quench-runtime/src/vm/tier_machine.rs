@@ -123,8 +123,7 @@ pub(super) fn withdraw(cell: &EntryCell, from: TierState, event: TierEvent) -> T
 pub(super) fn js_tier_state(state: Option<&JsTierState>) -> TierState {
     match state {
         None => Interpreter,
-        Some(JsTierState::Hot { .. } | JsTierState::PromotionPending | JsTierState::GeneralPromotionPending { .. }) => Warming,
-        Some(JsTierState::GeneralCompileDue) => Compiling,
+        Some(JsTierState::Hot { .. } | JsTierState::PromotionPending) => Warming,
         Some(JsTierState::Compiled(_)) => UJit,
         Some(JsTierState::Rejected { .. }) => Retired,
         Some(JsTierState::Unsupported) => Declined,

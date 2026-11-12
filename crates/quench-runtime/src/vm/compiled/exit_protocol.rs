@@ -11,7 +11,7 @@
 //! The b-jit leave stubs (`base_region::link`) emit `LaneExit::Entry.word()` and so share the
 //! encoding; their per-stub tables are not built from an `ExitTable` (documented adapter).
 
-use super::{lane_unit, LaneExit, LoopOutcome, LoopRegion, JS_GENERAL_RETURN_STATUS_BASE, LANE_BODY_RETURNED, NATIVE_JS_STOPPED, TERMINATED_STATUS};
+use super::{lane_unit, LaneExit, LoopOutcome, LoopRegion, RETURN_STATUS_BASE, LANE_BODY_RETURNED, NATIVE_JS_STOPPED, TERMINATED_STATUS};
 use super::entry_cell::LANE_BODY_NOT_ENTERED;
 use crate::value::Value;
 
@@ -76,7 +76,7 @@ impl LaneExit {
             LANE_BODY_RETURNED => Self::Returned { pc: returned_pc(), value: Value::from_bits(word) },
             NATIVE_JS_STOPPED => Self::decode(word),
             LANE_BODY_NOT_ENTERED => Self::Stub,
-            _ if status >= JS_GENERAL_RETURN_STATUS_BASE => Self::At((status - JS_GENERAL_RETURN_STATUS_BASE) as usize),
+            _ if status >= RETURN_STATUS_BASE => Self::At((status - RETURN_STATUS_BASE) as usize),
             // Dispatch reaches an invalid PC only before any instruction ran.
             _ => Self::At(0),
         }

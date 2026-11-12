@@ -6,7 +6,7 @@
 //! declarations rather than a copy of every outer name.
 
 use super::{Atom, EvalBinding, EvalBindingLocation, Function};
-#[cfg(feature = "aot")]
+#[cfg(all(test, feature = "aot"))]
 use super::{Op, WideInstruction};
 use std::rc::Rc;
 
@@ -141,7 +141,7 @@ impl Function {
     /// The local slot a store of this function writes: a local store's own, or the slot named
     /// as a by-name store's atom, which a script root keeps for the global var its functions
     /// capture.
-    #[cfg(feature = "aot")]
+    #[cfg(all(test, feature = "aot"))]
     pub(crate) fn stored_slot(&self, instruction: WideInstruction) -> Option<usize> {
         match instruction.op() {
             Op::StoreLocal | Op::StoreEnvLocal => Some(instruction.local_slot()),

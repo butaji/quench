@@ -1,3 +1,4 @@
+#[cfg(feature = "native-execution")]
 mod native_operands;
 mod shape_lookup; mod string_wrapper;
 #[cfg(feature = "native-execution")]
@@ -1795,6 +1796,7 @@ enum CallTarget {
 pub(super) enum StepResult {
     Continue,
     TailCall,
+    #[cfg_attr(not(feature = "native-execution"), allow(dead_code))]
     ResumeFrames(Box<dispatch_frame::RecoveredCalls>),
     PushFrame {
         destination: Register,
@@ -1984,6 +1986,7 @@ pub(crate) struct Vm<H> {
     /// Idle JS entry contexts, one per nesting level reached: an entry takes one and a
     /// reentrant entry under it another, so nested native calls allocate none.
     #[allow(clippy::vec_box)]
+    #[cfg_attr(not(feature = "native-execution"), allow(dead_code))]
     js_native_contexts: Vec<Box<compiled::CallContext>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,

@@ -7,10 +7,6 @@
 
 use super::*;
 
-/// The stack slots a materialized inline recovery builds its activations in: the registers'
-/// snapshot and the frame descriptors.
-type RecoverySlots = (ir::StackSlot, ir::StackSlot);
-
 /// The caller registers a leave stores, by the view the cold block stores each from: the
 /// current tagged bits, or the int32 or float64 view boxed there.
 #[derive(PartialEq)]
@@ -63,18 +59,13 @@ impl Lowering<'_, '_> {
 
     /// The exit blocks: write back each one's registers, and an inlined callee's registers to the
     /// window its recovery makes the activation from, then leave at the origin.
-    pub(super) fn fill_exits(&mut self) -> Option<()> {
-        let slots = self.recovery_slots()?;
+    pub(super) fn fill_exits(&mut self) {
         for pc in 0..self.exits.len() {
             for ExitBlock { stored, block } in std::mem::take(&mut self.exits[pc]) {
                 self.switch_to(block, true);
                 self.store_exit_registers(&stored);
                 let word = match self.unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(self.unit.end)) {
                     super::lane_unit::Origin::Caller(record) => LaneExit::At(record as usize).word(),
-                    super::lane_unit::Origin::Inlined { frame, pc: record } if self.completion == Completion::SourcePc => {
-                        self.materialize_chain(pc, frame, record, slots.expect("materialized chain homes"))?;
-                        LaneExit::At(JS_INLINE_MATERIALIZED_PC as usize).word()
-                    }
                     super::lane_unit::Origin::Inlined { frame, pc: record } => {
                         self.store_inlined_registers(pc, frame);
                         LaneExit::Inlined { frame, pc: record }.word()
@@ -83,7 +74,6 @@ impl Lowering<'_, '_> {
                 self.return_at(word);
             }
         }
-        Some(())
     }
 
     /// Each register of `stored` to the lane frame: its tagged bits, or its unboxed view boxed here.
@@ -101,20 +91,6 @@ impl Lowering<'_, '_> {
         }
     }
 
-    fn recovery_slots(&mut self) -> Option<Option<RecoverySlots>> {
-        if self.completion != Completion::SourcePc || self.unit.frames.is_empty() { return Some(None); }
-        let word = types::I64.bytes();
-        let snapshot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot, u32::from(self.unit.registers - self.unit.caller_registers) * word,
-            word.trailing_zeros() as u8));
-        let depth = self.unit.recovery_depth();
-        let descriptors = self.builder.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot,
-            u32::try_from(depth.checked_mul(size_of::<InlineRecoveryFrame>())?).ok()?,
-            align_of::<InlineRecoveryFrame>().trailing_zeros() as u8));
-        Some(Some((snapshot, descriptors)))
-    }
-
     /// Each register of the frame and the frames around it, at its unit register past the
     /// caller's (`LaneMethod::scratch_width`). Only the live ones: the activation reads no
     /// other (`dispatch_fast::lane_body_inlined_activation`).
@@ -128,64 +104,5 @@ impl Lowering<'_, '_> {
                 self.builder.ins().store(regions::frame(), bits, scratch, register_offset(register - self.unit.caller_registers));
             }
         }
-    }
-
-    /// The suspended chain of inlined activations `frame` is in, built by the shared
-    /// materialization helpers from the registers and descriptors stored in `slots`.
-    fn materialize_chain(&mut self, pc: usize, frame: usize, record: u32, (snapshot, descriptors): RecoverySlots) -> Option<()> {
-        let scratch = self.builder.ins().stack_addr(types::I64, snapshot, 0);
-        let entries = self.builder.ins().stack_addr(types::I64, descriptors, 0);
-        let chain = self.unit.chain(frame);
-        for (depth, index) in chain.iter().copied().enumerate() {
-            let inlined = self.unit.frames[index];
-            self.snapshot_frame(pc, inlined, scratch);
-            // Ancestors are suspended at the next child's call; the innermost
-            // activation resumes at the exact operation whose admission failed.
-            let source = chain.get(depth + 1).map_or(record, |child| self.unit.frames[*child].call);
-            for (offset, value) in [
-                (std::mem::offset_of!(InlineRecoveryFrame, function), inlined.target.function),
-                (std::mem::offset_of!(InlineRecoveryFrame, call_pc), inlined.call),
-                (std::mem::offset_of!(InlineRecoveryFrame, source_pc), source),
-                (std::mem::offset_of!(InlineRecoveryFrame, registers), u32::from(inlined.base - self.unit.caller_registers)),
-            ] {
-                let bits = self.builder.ins().iconst(types::I32, i64::from(value));
-                self.builder.ins().store(MemFlagsData::trusted(), bits, entries,
-                    i32::try_from(depth * size_of::<InlineRecoveryFrame>() + offset).ok()?);
-            }
-        }
-        self.call_materialization(frame, record, chain.len(), scratch, entries)
-    }
-
-    fn snapshot_frame(&mut self, pc: usize, inlined: super::lane_unit::Frame, scratch: ir::Value) {
-        for register in inlined.base..inlined.base + inlined.registers {
-            let bits = if self.is_live(pc, register) {
-                self.builder.use_var(self.registers.tagged[usize::from(register)])
-            } else {
-                self.builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64)
-            };
-            self.builder.ins().store(regions::frame(), bits, scratch,
-                register_offset(register - self.unit.caller_registers));
-        }
-    }
-
-    fn call_materialization(&mut self, frame: usize, record: u32, depth: usize, scratch: ir::Value,
-        entries: ir::Value) -> Option<()> {
-        if depth == 1 {
-            let inlined = self.unit.frames[frame];
-            let function = self.builder.ins().iconst(types::I64, i64::from(inlined.target.function));
-            let call = self.builder.ins().iconst(types::I64, i64::from(inlined.call));
-            let source = self.builder.ins().iconst(types::I64, i64::from(record));
-            let scratch = self.builder.ins().iadd_imm_u(scratch,
-                i64::from(register_offset(inlined.base - self.unit.caller_registers)));
-            let helper = self.helpers.address(&mut self.builder, LaneHelper::MaterializeInline);
-            emit_lane_helper_call(&mut self.builder, self.payload, helper,
-                &[self.payload, function, call, source, scratch]);
-        } else {
-            let count = self.builder.ins().iconst(types::I64, i64::try_from(depth).ok()?);
-            let helper = self.helpers.address(&mut self.builder, LaneHelper::MaterializeInlineChain);
-            emit_lane_helper_call(&mut self.builder, self.payload, helper,
-                &[self.payload, entries, count, scratch]);
-        }
-        Some(())
     }
 }

@@ -218,7 +218,6 @@ macro_rules! int32_zero_product_sign {
         ($negative)(signs)
     }};
 }
-pub(super) use int32_zero_product_sign;
 
 pub(super) trait NumberUnaryStage<T> {
     type Output;
