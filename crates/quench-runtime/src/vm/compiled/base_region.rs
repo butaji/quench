@@ -86,9 +86,23 @@ pub(in crate::vm) fn leave(function: u32, pc: u32, op: crate::bytecode::Op) {
     }
 }
 
-/// Counts `event` where the trace channel is on.
+/// Whether regions and events are counted: a report that reads them is on (`report`, `census`).
+fn counted() -> bool {
+    static COUNTED: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on());
+    *COUNTED
+}
+
+/// What regions did, for the tier census: regions built, the instructions they cover, and runs that
+/// entered published code. All zero unless a report is on.
+pub(in crate::vm) fn census() -> (u64, u64, u64) {
+    let regions = TOTALS.lock().map_or((0, 0), |totals| (totals.regions, totals.ops));
+    (regions.0, regions.1, EVENTS[Event::Entered as usize].load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Counts `event` where a report is on.
 pub(in crate::vm) fn count(event: Event) {
-    if !crate::trace::Channel::JsJit.on() {
+    if !counted() {
         return;
     }
     REPORT.call_once(|| {
@@ -99,6 +113,9 @@ pub(in crate::vm) fn count(event: Event) {
 }
 
 extern "C" fn report() {
+    if !crate::trace::Channel::JsJit.on() {
+        return;
+    }
     let (Ok(totals), Ok(rejects)) = (TOTALS.lock(), REJECTS.lock()) else { return };
     let ops = totals.ops.max(1);
     eprintln!(
@@ -123,7 +140,7 @@ extern "C" fn report() {
 }
 
 fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
-    if !crate::trace::Channel::JsJit.on() {
+    if !counted() {
         return;
     }
     REPORT.call_once(|| {

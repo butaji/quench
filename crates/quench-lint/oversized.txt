@@ -931,7 +931,7 @@ complexity crates/quench-runtime/src/vm/primitive_bench/indexed_compositions.rs:
 complexity crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 96
 complexity crates/quench-runtime/src/vm/program_store.rs::JitTierManager::note_js_entry 17
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::attach_wasm_signatures 31
-complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::drop 53
+complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::report_js_jit 53
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::install_js_tier_with_cache 27
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::note_js_general_dispatch_entry 16
 complexity crates/quench-runtime/src/vm/program_store.rs::ProgramStore::reclaim_unreferenced 21
@@ -3392,7 +3392,7 @@ function-lines crates/quench-runtime/src/vm/primitive_bench/indexed_forwarding.r
 function-lines crates/quench-runtime/src/vm/primitives.rs::Vm<H>::call_primitive_native 502
 function-lines crates/quench-runtime/src/vm/program_store.rs::JitTierManager::note_js_entry 66
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::attach_wasm_signatures 136
-function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::drop 338
+function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::report_js_jit 338
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::insert_shared 44
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::install_js_tier_with_cache 98
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::install_wasm_tier 44

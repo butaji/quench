@@ -9,6 +9,8 @@ use crate::shape::is_test;
 
 const OPCODE_OWNERS: &[&str] = &["Op", "Class"];
 const BYTECODE_OWNER: &[&str] = &["Op"];
+const CLASS_OWNER: &[&str] = &["Class"];
+const DECODER_ROW_FUNCTIONS: &[&str] = &["numeric_row", "heap_row"];
 const OPCODE_TABLE_MACRO: &str = "opcodes";
 const STAGED_OPERATION: &str = "Operation";
 const LANE_EXIT: &str = "LaneExit";
@@ -187,11 +189,18 @@ pub fn entry_uses(file: &syn::File) -> usize {
     uses.0
 }
 
-/// The distinct row kinds (`Op::X` paths) a stencil library names.
-pub fn stencil_kinds(file: &syn::File) -> usize {
-    let mut found = PatternPaths(BYTECODE_OWNER, Vec::new());
-    found.visit_file(file);
-    found.1.into_iter().collect::<BTreeSet<_>>().len()
+/// The distinct opcode classes the b-jit decoder turns into a row: the `Class::X` arms of its
+/// row functions (an arm that only rejects is not a row).
+pub fn decoder_classes(file: &syn::File) -> usize {
+    let mut arms = Arms::new(CLASS_OWNER);
+    for item in module_items(&file.items) {
+        if let Item::Fn(found) = item
+            && DECODER_ROW_FUNCTIONS.iter().any(|name| found.sig.ident == name)
+        {
+            arms.visit_item_fn(found);
+        }
+    }
+    arms.variants.len()
 }
 
 #[cfg(test)]
@@ -257,7 +266,12 @@ mod tests {
     }
 
     #[test]
-    fn stencil_kinds_are_distinct_op_paths() {
-        assert_eq!(stencil_kinds(&parse("const R: &[Op] = &[Op::Add, Op::Sub, Op::Add];")), 2);
+    fn decoder_classes_are_distinct_arms_of_the_row_functions() {
+        let file = parse(
+            "fn numeric_row(i: I) { match i.class() { Class::A | Class::B => 1, _ => 2 } }
+             fn heap_row(i: I) { match i.class() { Class::B => 1, Class::C if x => 2, _ => 3 } }
+             fn reject(i: I) { match i.class() { Class::D => 1, _ => 2 } }",
+        );
+        assert_eq!(decoder_classes(&file), 3);
     }
 }
