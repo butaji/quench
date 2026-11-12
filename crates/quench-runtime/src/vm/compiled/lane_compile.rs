@@ -336,6 +336,9 @@ impl<H: Host> Vm<H> {
         if !pending.watch.is_published() || pending.plan.direct.iter().any(|callee| callee.method.as_ref().is_some_and(|method| !method.is_published())) {
             return Ok(LaneBodyOutcome::Stale);
         }
+        if pending.plan.sites_outran(self) {
+            return Ok(LaneBodyOutcome::Stale);
+        }
         let key = pending.key;
         Ok(match pending.poll() {
             Err(pending) => LaneBodyOutcome::Compiling(pending),
@@ -382,6 +385,16 @@ impl PendingLaneMethod {
 }
 
 impl LanePlan {
+    /// Whether a field site it proved from has since recorded a shape the plan does not name:
+    /// the site had seen too few receivers when it was planned, and its exact-shape proof
+    /// would leave on the first run that meets the other shape.
+    fn sites_outran<H: Host>(&self, vm: &Vm<H>) -> bool {
+        self.fields.iter().any(|(site, loads)| {
+            let live = vm.native_field_read_descriptors(*site);
+            live.iter().any(|now| !loads.iter().any(|planned| planned.shape == now.shape))
+        })
+    }
+
     /// Whether its code names shape ids: its field sites', or its direct callees' bodies'.
     fn names_shapes(&self) -> bool {
         !self.fields.is_empty() || !self.direct.is_empty()
