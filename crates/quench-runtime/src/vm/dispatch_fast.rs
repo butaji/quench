@@ -18036,8 +18036,10 @@ fn lane_return_script_frame<H: Host>(
         }
         drop(call.call_guard);
         frame = call.caller;
-        value = vm.completed_call_value(&call.completion, frame, call.destination, value);
+        // The completion may read the caller's register (`CallCompletion::Assigned`), which
+        // names the register file `active_registers` holds.
         vm.active_registers = vm.frames[frame].registers.as_mut_ptr();
+        value = vm.completed_call_value(&call.completion, frame, call.destination, value);
         if !call.returns {
             vm.write(frame, call.destination, value);
             return lane_enter_script_frame(cx, frame).into_loop();
