@@ -930,6 +930,22 @@ impl LaneView {
         })
     }
 
+    /// The body its entry cell holds, borrowed: the view pins every body it published until it
+    /// drops (`pinned`), and the program store keeps the view alive through any lane run, so a
+    /// run needs no count of its own, and a retirement during the run only unlinks the entry.
+    #[inline(always)]
+    fn cell_method(&self) -> Option<&super::compiled::LaneMethod> {
+        // SAFETY: a published cell's `body` is `Rc::as_ptr` of a body `pinned` keeps (`EntryCell::publish`).
+        self.entry_published().then(|| unsafe { &*(self.entry.body.get() as *const super::compiled::LaneMethod) })
+    }
+
+    /// Whether its prologue says the body reads its receiver (`claim_for_tier`'s `binds_this`).
+    #[inline(always)]
+    fn binds_this(&self) -> bool {
+        // SAFETY: the lane runs on the view's thread; nothing writes the prologue during a call.
+        unsafe { (*self.prologue.get()).b != 0 }
+    }
+
     /// Whether its entry cell holds a published body rather than the stub.
     #[inline(always)]
     fn entry_published(&self) -> bool {
@@ -14846,17 +14862,27 @@ script_handler! {
             }
             next!(cx, r, base, Carried::script(cx))
         }
-        // A frame activation keeps its `this` in the frame (`lane_this`); an uninitialized
-        // one stays `DELETED`, at which the body's `LoadThis` leaves for the general path.
-        // SAFETY: the activation just set the context to its own receiver and frame.
-        let receiver = if i.b != 0 { unsafe { lane_this(cx) }.unwrap_or(Value::DELETED) } else { Value::DELETED };
+        let receiver = lane_body_receiver(cx, i.b != 0);
         // SAFETY: the activation just set the context to its own captures.
         let captures = capture_reads(unsafe { (*cx).capture });
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
-        resume!(cx, lane_body_concluded::<H>(cx, r, ip, own, method, exit, function))
+        let resumed = lane_body_concluded::<H>(cx, r, ip, own, &method, exit, function);
+        drop(method);
+        resume!(cx, resumed)
     }
+}
+
+/// The receiver word a body is entered with: the running activation's `this` where the
+/// prologue says the body reads it (`LaneView::binds_this`), `DELETED` otherwise. A frame
+/// activation keeps its `this` in the frame (`lane_this`); an uninitialized one stays `DELETED`,
+/// at which the body's `LoadThis` leaves for the general path. The activation's `this` is
+/// bound already, by the call's `lane_direct_call_this` (sloppy coercion included).
+#[inline(always)]
+fn lane_body_receiver<H: Host>(cx: *mut LaneContext<H>, binds_this: bool) -> Value {
+    // SAFETY: the context is the running activation's, or the leaf's callee.
+    if binds_this { unsafe { lane_this(cx) }.unwrap_or(Value::DELETED) } else { Value::DELETED }
 }
 
 /// Where the lane continues after a run of `method`, `own`'s body, that ran on the
@@ -14869,7 +14895,7 @@ fn lane_body_concluded<H: Host>(
     r: Registers,
     ip: Ip,
     own: &LaneView,
-    method: std::rc::Rc<super::compiled::LaneMethod>,
+    method: &super::compiled::LaneMethod,
     left: super::compiled::LaneExit,
     function: u32,
 ) -> Resumed {
@@ -14880,14 +14906,12 @@ fn lane_body_concluded<H: Host>(
         // SAFETY: as `lane_leave_counts`; a completed run carries no warming callee.
         unsafe { (*cx).callee_warming = false };
         own.note_lane_body_end(left, false, |_| {});
-        drop(method);
         // SAFETY: the record that completes the activation is one of its function's.
         return lane_returned(cx, unsafe { base.add(pc) }, value);
     }
     let counts = lane_leave_counts(cx, left);
-    let (resumed, feedback) = lane_body_left(cx, r, own, &method, left);
-    drop(method);
-    // Counted once nothing reads the body: a retirement or reoptimization moves it.
+    let (resumed, feedback) = lane_body_left(cx, r, own, method, left);
+    // Counted once the leave is resolved: a retirement or reoptimization moves the body.
     if counts {
         own.note_lane_body_end(feedback, false, |left| lane_note_leave(cx, function, left));
     }
@@ -15833,7 +15857,7 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
 
 /// A plain call of `target`, of the running program, passed the `argc` values at `passed` (at
 /// most its parameters) and not completing its caller, whose entry cell holds a published body
-/// (`LaneView::cell_body`): the body runs on the activation's window before the activation
+/// (`LaneView::cell_method`): the body runs on the activation's window before the activation
 /// exists. The call is a leaf the context holds (`CONTEXT_LEAF`: the caller's receiver and
 /// environment are the leaf's to restore), so a body that returns completes the call with the
 /// caller's registers and the next record, nothing pushed and nothing to pop; a leave, and any
@@ -15859,9 +15883,9 @@ fn lane_enter_cell_body<H: Host>(
     }
     // SAFETY: the program store keeps a derived view alive with its program.
     let own = unsafe { &*target.view };
-    let method = own.cell_body()?;
+    let method = own.cell_method()?;
     let window = lane_fill_window(vm, target, passed, argc);
-    if !lane_body_admits(cx, &method, CALLEE_ACTIVATION_PENDING) {
+    if !lane_body_admits(cx, method, CALLEE_ACTIVATION_PENDING) {
         // SAFETY: the window starts at the stack's top, which the fill moved.
         unsafe { vm.lane_stack.values.set_top(window.0) };
         return None;
@@ -15871,8 +15895,8 @@ fn lane_enter_cell_body<H: Host>(
     super::compiled::LANE_CELL_CROSSINGS.with(|count| count.set(count.get() + 1));
     lane_begin_cell_leaf(cx, ip, r, target, argc, this, window);
     let run = super::compiled::BodyRun {
-        method: &method, direct_calls: lane_direct_calls(cx), program: unsafe { (*cx).program }, residual: unsafe { &*(*cx).code },
-        registers: window.0, receiver: this, captures: capture_reads(target.capture), lane_context: cx.cast(),
+        method, direct_calls: lane_direct_calls(cx), program: unsafe { (*cx).program }, residual: unsafe { &*(*cx).code },
+        registers: window.0, receiver: lane_body_receiver(cx, own.binds_this()), captures: capture_reads(target.capture), lane_context: cx.cast(),
         pending: CALLEE_ACTIVATION_PENDING,
     };
     let exit = vm.run_lane_body(&run);
@@ -15905,7 +15929,7 @@ fn lane_cell_body_ended<H: Host>(
     window: Registers,
     own: &LaneView,
     function: u32,
-    method: std::rc::Rc<super::compiled::LaneMethod>,
+    method: &super::compiled::LaneMethod,
     exit: super::compiled::LaneExit,
 ) -> Resumed {
     if let super::compiled::LaneExit::Returned { value, .. } = exit
@@ -15917,7 +15941,6 @@ fn lane_cell_body_ended<H: Host>(
             vm(cx).lane_stack.values.set_top(window.0);
         }
         own.note_lane_body_end(exit, false, |_| {});
-        drop(method);
         let (registers, next) = lane_complete_leaf(cx, value, CONTEXT_LEAF).expect("the leaf runs until it completes or materializes");
         return Resumed::At(registers, next, Carried::script(cx));
     }
