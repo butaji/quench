@@ -8,6 +8,7 @@
 //! `mov rsp,rbp; pop rbp; jmp rel32`. [`Stencil::strip`] verifies those exact bytes and removes
 //! the frame pair from frameless stencils (the epilogue is overwritten by a 4-byte nop so the
 //! stencil's internal branch displacements stay valid).
+#![cfg_attr(test, feature(rust_preserve_none_cc))]
 mod hoist;
 mod patch;
 pub mod numeric;
@@ -432,5 +433,70 @@ mod tests {
         assert!(stencil.imm32.is_empty(), "no field is patched");
         assert!(stencil.relocs.iter().any(|r| !r.pc_relative && r.index == 0), "the hole is a 64-bit relocation");
         assert!(wide_stencils() > before);
+    }
+}
+
+/// Stencils compiled by rustc from `stencils/rows.rs` (see `build.rs`), as [`Stencil`]s.
+pub mod rustc {
+    use super::{Imm32, Reloc, Stencil, HOLE_CODE, NEXT};
+
+    /// A stencil as `build.rs` read it from the object: relocations as (offset, class, index, addend).
+    pub(crate) struct RawStencil {
+        pub(crate) name: &'static str,
+        pub(crate) code: &'static [u8],
+        pub(crate) relocs: &'static [(usize, u8, u32, i64)],
+    }
+
+    include!(concat!(env!("OUT_DIR"), "/rustc_stencils.rs"));
+
+    /// The stencil of the row function `name`, if the object has it.
+    pub fn stencil(name: &str) -> Option<Stencil> {
+        let raw = RAW.iter().find(|raw| raw.name == name)?;
+        let (mut relocs, mut imm32) = (Vec::new(), Vec::new());
+        for &(offset, class, index, addend) in raw.relocs {
+            match class {
+                0 => imm32.push(Imm32 { offset: offset as u32, index, negate: false, addend: addend as u32 }),
+                1 => relocs.push(Reloc { offset: offset as u32, pc_relative: true, namespace: HOLE_CODE, index, addend }),
+                _ => relocs.push(Reloc { offset: offset as u32, pc_relative: false, namespace: super::HOLE_VALUE, index, addend }),
+            }
+        }
+        let len = raw.code.len();
+        let next_jump = relocs.iter().find(|r| r.index == NEXT && r.offset as usize + REL32 == len).map(|r| r.offset as usize - 1);
+        Some(Stencil { code: raw.code.to_vec(), relocs, imm32, next_jump, tail_len: super::JMP_REL32_LEN, raw_len: len })
+    }
+
+    const REL32: usize = 4;
+}
+
+#[cfg(test)]
+mod rustc_tests {
+    use super::*;
+
+    type Entry = unsafe extern "rust-preserve-none" fn(usize, usize, usize, usize, usize, usize, f64, f64, f64, f64, f64, f64, f64, f64) -> usize;
+
+    /// The rustc-built field-read row, chained to `leave_frame0` by the stitcher and called as a
+    /// preserve-none function: it reads `entry[24]` through `ctx[16]`'s payload into `frame[0]`.
+    #[test]
+    fn the_field_read_row_chains_and_runs() {
+        let (field, leave) = (rustc::stencil("field_read").unwrap(), rustc::stencil("leave_frame0").unwrap());
+        assert!(field.code.len() <= 30 && field.next_jump == Some(field.code.len() - 5), "{field:?}");
+        assert_eq!(field.imm32.len(), 3);
+        let hole: &dyn Fn(u32) -> u64 = &|index| [0, 24, 0, 16][index as usize];
+        let rows = [Row { stencil: &field, hole, taken: None }, Row { stencil: &leave, hole, taken: None }];
+        let (entry, payload, mut frame) = ([0usize, 0, 0, 0xabcd], [0usize], [0usize; 2]);
+        let mut context = [0usize; 4];
+        let payload = { let mut payload = payload; payload[0] = entry.as_ptr() as usize; payload };
+        context[2] = payload.as_ptr() as usize;
+        unsafe {
+            let memory = libc::mmap(std::ptr::null_mut(), 4096, 7, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0).cast::<u8>();
+            assert_ne!(memory.cast(), libc::MAP_FAILED);
+            let (len, starts) = copy_patch(&rows, memory, |_, _| 0);
+            assert_eq!(len, field.code.len() - field.tail_len + leave.code.len(), "the jmp to the adjacent row is dropped");
+            assert_eq!(starts[1], field.code.len() - field.tail_len);
+            let run: Entry = std::mem::transmute(memory);
+            assert_eq!(run(frame.as_mut_ptr() as usize, context.as_ptr() as usize, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0), 0xabcd);
+            assert_eq!(frame[0], 0xabcd);
+            libc::munmap(memory.cast(), 4096);
+        }
     }
 }

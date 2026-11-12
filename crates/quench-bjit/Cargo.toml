@@ -5,6 +5,8 @@ edition = "2024"
 license = "MIT"
 description = "BaseJIT: Cranelift-built stencils copied and patched at run time"
 
+build = "build.rs"
+
 [lib]
 doctest = false
 
