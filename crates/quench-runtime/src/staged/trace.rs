@@ -4,6 +4,7 @@
 //! gives one trace, and only the hole values differ).
 
 use super::{Stage, Table};
+use super::region::Access;
 
 /// An operand: a fixed constant, or the numbered hole a `site` call made.
 #[derive(Clone, Copy)]
@@ -47,12 +48,12 @@ impl Stage for Trace {
         Imm { value: v, hole: Some(self.holes.len() as u32 - 1) }
     }
     fn constant(&mut self, bits: u64) -> u32 { self.word(format!("constant {bits:#x}")) }
-    fn load_u32(&mut self, base: u32, offset: i32) -> u32 { self.word(format!("load_u32 w{base}+{offset}")) }
-    fn load_u64(&mut self, base: u32, offset: i32) -> u32 { self.word(format!("load_u64 w{base}+{offset}")) }
-    fn load_site(&mut self, base: u32, offset: Imm) -> u32 {
+    fn load_u32(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_u32 w{base}+{offset}")) }
+    fn load_u64(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_u64 w{base}+{offset}")) }
+    fn load_site(&mut self, _at: Access, base: u32, offset: Imm) -> u32 {
         self.word(format!("load_site w{base}+{}", Self::operand(offset)))
     }
-    fn load_table(&mut self, address: u32) -> u32 { self.word(format!("load_table w{address}")) }
+    fn load_table(&mut self, _at: Access, address: u32) -> u32 { self.word(format!("load_table w{address}")) }
     fn add(&mut self, a: u32, b: u32) -> u32 { self.word(format!("add w{a} w{b}")) }
     fn or(&mut self, a: u32, b: u32) -> u32 { self.word(format!("or w{a} w{b}")) }
     fn add_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("add_imm w{a} {}", Self::operand(imm.into()))) }
@@ -74,8 +75,8 @@ impl Stage for Trace {
     fn uextend32(&mut self, a: u32) -> u32 { self.word(format!("uextend32 w{a}")) }
     fn sub(&mut self, a: u32, b: u32) -> u32 { self.word(format!("sub w{a} w{b}")) }
     fn select(&mut self, cond: u32, then: u32, otherwise: u32) -> u32 { self.word(format!("select w{cond} w{then} w{otherwise}")) }
-    fn store_u32(&mut self, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u32 w{base}+{offset} w{value}")); }
-    fn store_u64(&mut self, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u64 w{base}+{offset} w{value}")); }
+    fn store_u32(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u32 w{base}+{offset} w{value}")); }
+    fn store_u64(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u64 w{base}+{offset} w{value}")); }
     fn not(&mut self, cond: u32) -> u32 { self.word(format!("not w{cond}")) }
     fn any(&mut self, a: u32, b: u32) -> u32 { self.word(format!("any w{a} w{b}")) }
     fn pick(&mut self, cond: u32, then: u32, otherwise: u32) -> u32 { self.word(format!("pick w{cond} w{then} w{otherwise}")) }

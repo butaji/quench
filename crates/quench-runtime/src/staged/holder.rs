@@ -5,6 +5,7 @@
 
 use super::object::proto_link;
 use super::Stage;
+use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
 /// The value the hint `(shape, link, watch, value)` records for the object part at `record`:
@@ -13,7 +14,7 @@ use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 #[inline(always)]
 pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, shape: u32, link: u32, watch: u64, value: u64,
     miss: S::Miss) -> Option<S::Word> {
-    let exact = stage.load_u32(record, OBJECT.auxiliary_offset as i32);
+    let exact = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
     let shape = stage.site(u64::from(shape));
     let same = stage.eq_imm(exact, shape);
     stage.guard(same, miss)?;

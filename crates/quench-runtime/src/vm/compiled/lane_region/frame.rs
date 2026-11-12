@@ -1,5 +1,6 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
 use super::*;
+use crate::vm::compiled::regions;
 #[path = "frame_calls.rs"] pub(super) mod calls;
 #[path = "frame_call_out.rs"] pub(super) mod call_out;
 #[path = "frame_truthiness.rs"] mod truthiness;
@@ -254,7 +255,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let locals = self.native_locals(stage)?;
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
-        let value = stage.builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+        let value = stage.builder.ins().load(types::I64, regions::frame(), address, 0);
         Some((value, RegisterFact::canonical()))
     }
 
@@ -264,7 +265,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let Some(locals) = self.native_locals(stage) else { return false };
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
-        stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+        stage.builder.ins().store(regions::frame(), value, address, 0);
         true
     }
 }

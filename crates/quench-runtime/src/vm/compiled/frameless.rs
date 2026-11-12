@@ -12,6 +12,7 @@ use super::{
     emit_js_payload_word, emit_lane_helper_call, native_entry_signature, Host, JsExactFallback, JsNativeStep,
     JsStepDispatch, ResidualProgram, Vm, CONTEXT_STACK_LIMIT, JS_GENERAL_RETURN_STATUS_BASE,
 };
+use crate::vm::compiled::regions;
 use crate::bytecode::{ConstructArguments, WideInstruction};
 use crate::value::ValueLayout;
 use crate::Value;
@@ -145,8 +146,8 @@ pub(super) fn emit_call(
         (!instruction.is_super_construct()).then_some((window, None))?
     } else { (instruction.call_window(), Some(register_offset(instruction.register_c())?)) };
     let passed = (0..window.count).map(|index| register_offset(window.base + index)).collect::<Option<Vec<_>>>()?;
-    let callee = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, register_offset(instruction.register_b())?);
-    let receiver = receiver.map(|offset| builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset));
+    let callee = builder.ins().load(types::I64, regions::frame(), arguments, register_offset(instruction.register_b())?);
+    let receiver = receiver.map(|offset| builder.ins().load(types::I64, regions::frame(), arguments, offset));
     emit_activation(builder, (pc, next), (arguments, payload), exact, (callee, receiver, &passed), (destination, framed));
     Some(())
 }
@@ -191,7 +192,7 @@ fn emit_returned(builder: &mut FunctionBuilder<'_>, (payload, arguments): (ir::V
     if let Some(constructed) = constructed {
         value = emit_construct_result(builder, payload, (value, constructed));
     }
-    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
+    builder.ins().store(regions::frame(), value, arguments, destination);
     builder.ins().jump(next, &[]);
 }
 
@@ -308,7 +309,7 @@ fn emit_room(builder: &mut FunctionBuilder<'_>, payload: ir::Value, context: ir:
 /// one slot pointer, so the loop carries nothing else.
 fn emit_window(builder: &mut FunctionBuilder<'_>, (arguments, top, end): (ir::Value, ir::Value, ir::Value), passed: &[i32]) {
     for (index, offset) in passed.iter().enumerate() {
-        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, *offset);
+        let value = builder.ins().load(types::I64, regions::frame(), arguments, *offset);
         builder.ins().store(MemFlagsData::trusted(), value, top, (index * size_of::<Value>()) as i32);
     }
     let (header, body, filled) = (builder.create_block(), builder.create_block(), builder.create_block());
@@ -374,7 +375,7 @@ fn emit_enter(builder: &mut FunctionBuilder<'_>, (payload, context, result): (ir
         builder.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
     }
     let zero = builder.ins().iconst(types::I64, 0);
-    builder.ins().store(MemFlagsData::trusted(), zero, payload, offset(std::mem::offset_of!(JsStepDispatch, start_pc)));
+    builder.ins().store(regions::dispatch(), zero, payload, offset(std::mem::offset_of!(JsStepDispatch, start_pc)));
     let code = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, offset(std::mem::offset_of!(CallEntry, code)));
     let signature = native_entry_signature(types::I64, builder.func.signature.call_conv);
     let signature = builder.import_signature(signature);

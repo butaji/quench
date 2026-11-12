@@ -6,23 +6,7 @@
 #![allow(dead_code)] // Stage v2 vocabulary; first consumers are the rows moving under `Concrete` next.
 
 use super::Operation;
-
-/// An alias region of memory: an access to one never aliases an access to another.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Region {
-    /// The activation's register and local slots.
-    Frame,
-    /// Property slots of objects.
-    ObjectSlots,
-    /// A shape word: written only by a shape change, so a load of it is read-only.
-    ShapeWord,
-    /// Dense and typed array elements.
-    Elements,
-    /// Heap bookkeeping: allocation runs, tables, collection state.
-    HeapMeta,
-    /// Per-site feedback counters.
-    MissCounters,
-}
+pub(crate) use super::region::Region;
 
 /// A set of regions, one bit each, so a fact's invalidation is a mask intersection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -97,7 +81,8 @@ impl<W, P> Operation<W, P> {
             Self::IndexRead { .. } | Self::TypedIndexRead { .. } => Effects::reads(Region::Elements),
             Self::IndexWrite { .. } | Self::TypedIndexWrite { .. } => Effects::writes(Region::Elements),
             Self::MakeObject { .. } | Self::MakeArray { .. } | Self::MakeConstArray { .. } | Self::MakeObjectPair { .. } => Effects {
-                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots), may_alloc: true, ..Effects::NONE },
+                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Records)
+                .with(Region::Payload), may_alloc: true, ..Effects::NONE },
             _ => return self.property_effects(),
         })
     }
@@ -106,8 +91,8 @@ impl<W, P> Operation<W, P> {
     /// shapes; a host callout may run guest code (a getter, a proxy trap) or reshape objects.
     const fn property_effects(&self) -> Option<Effects> {
         Some(match self {
-            Self::GetField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord),
-                may_call_js: true, may_throw: true, ..Effects::NONE },
+            Self::GetField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord)
+                .with(Region::Records).with(Region::Payload), may_call_js: true, may_throw: true, ..Effects::NONE },
             Self::SetField { .. } | Self::StoreField { .. } | Self::FieldAdd { .. } | Self::Delete { .. } => Effects::ANY,
             Self::FieldGetHost { .. } | Self::IndexGetHost { .. } => Effects::ANY,
             _ => return None,

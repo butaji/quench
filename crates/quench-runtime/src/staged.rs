@@ -47,10 +47,13 @@ mod steps;
 mod generic;
 pub(crate) use steps::step;
 pub(crate) mod effects;
+pub(crate) mod region;
 #[cfg(test)]
 pub(crate) mod trace;
 #[allow(unused_imports)] // the Stage v2 vocabulary: stencil and UltraJIT stages use the rest
 pub(crate) use effects::{CallTarget, Effects, Region, RegionSet};
+#[allow(unused_imports)]
+pub(crate) use region::Access;
 pub(crate) use ic::concrete_own_field_hit;
 pub(crate) use object::{Form, Layout, concrete_own_read};
 

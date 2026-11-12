@@ -3,6 +3,7 @@
 //! specializer emits them.
 
 use super::{Concrete, Stage, Table};
+use super::region::Region;
 use crate::heap::{NATIVE_OBJECT_LAYOUT as OBJECT, PlainPropertyStorage};
 use crate::value::{NarrowLayout, ValueLayout};
 
@@ -68,7 +69,7 @@ pub(crate) struct Layout<W, C> {
 /// The record's inline-storage flag (`Object::meta`), true where its values are inline.
 #[inline(always)]
 pub(crate) fn inline_storage<S: Stage>(stage: &mut S, record: S::Word) -> S::Cond {
-    let meta = stage.load_u32(record, OBJECT.meta_offset as i32);
+    let meta = stage.load_u32(Region::Records.mutable(), record, OBJECT.meta_offset as i32);
     let inline = stage.and_imm(meta, u64::from(OBJECT.inline_storage_mask));
     stage.ne_imm(inline, 0u32)
 }
@@ -96,7 +97,7 @@ pub(crate) fn extras_pointer<S: Stage>(stage: &mut S, payload: S::Word) -> S::Wo
 /// The record's encoded prototype link (`Object::proto_link`).
 #[inline(always)]
 pub(crate) fn proto_link<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
-    let meta = stage.load_u32(record, OBJECT.meta_offset as i32);
+    let meta = stage.load_u32(Region::Records.mutable(), record, OBJECT.meta_offset as i32);
     stage.and_imm(meta, u64::from(OBJECT.proto_mask))
 }
 
@@ -139,7 +140,7 @@ pub(crate) fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {
 #[inline(always)]
 pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Cond, form: Form,
     storage_len: usize, access: PackedAccess, miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
-    let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let extras = has_extras(stage, payload);
     if stage.known(extras) == Some(true) {
         return Some(Layout { slots: extras_slots(stage, payload, inline), storage_len });
@@ -161,7 +162,7 @@ fn extras_slots<S: Stage>(stage: &mut S, payload: S::Word, inline: S::Cond) -> S
     if stage.known(inline) == Some(true) {
         Slots::Flat(stage.add_imm(pointer, OBJECT.extras_inline_values_offset as u64))
     } else {
-        let start = stage.load_u32(pointer, OBJECT.extras_arena_start_offset as i32);
+        let start = stage.load_u32(Region::Payload.mutable(), pointer, OBJECT.extras_arena_start_offset as i32);
         Slots::Flat(arena_run(stage, start))
     }
 }
@@ -205,7 +206,7 @@ pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond
 #[inline(always)]
 fn flat_read<S: Stage>(stage: &mut S, base: S::Word, slot: u16) -> S::Word {
     let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
-    stage.load_site(base, offset)
+    stage.load_site(Region::ObjectSlots.mutable(), base, offset)
 }
 
 /// Packed value `slot`: its half of the payload word, decoded.
@@ -214,7 +215,7 @@ fn packed_read<S: Stage>(stage: &mut S, packed: Packed<S::Word>, slot: u16) -> S
     debug_assert!(usize::from(slot) < OBJECT.inline_property_count);
     let payload = match packed {
         Packed::Snapshot(payload) => payload,
-        Packed::Record(record) => stage.load_u64(record, OBJECT.payload_offset as i32),
+        Packed::Record(record) => stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32),
     };
     let shift = stage.site(u64::from(slot) * u64::from(u32::BITS));
     let half = stage.shr_imm(payload, shift);
@@ -245,7 +246,7 @@ pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, up
         let code = stage.and_imm(code, u64::from(NarrowLayout::CODE_MASK));
         let offset = stage.mul_imm(code, std::mem::size_of::<u64>() as u64);
         let entry = stage.add(upper_words, offset);
-        let upper = stage.load_table(entry);
+        let upper = stage.load_table(Region::HeapMeta.readonly(), entry);
         let lower = stage.shr_imm(narrow, NarrowLayout::INDEX_SHIFT);
         stage.or(upper, lower)
     })

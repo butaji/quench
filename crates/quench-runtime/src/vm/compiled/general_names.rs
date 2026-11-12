@@ -3,9 +3,10 @@
 //! step's own cache probe answers it. A lexical declaration, an accessor or a miss takes the
 //! step at the same PC.
 use super::{emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback, JsStepDispatch, ResidualProgram, Vm};
+use crate::vm::compiled::regions;
 use crate::bytecode::WideInstruction;
 use crate::Value;
-use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
+use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
 
 /// Lowers the global read at the exact fallback's PC; false where its result or callee
@@ -31,10 +32,10 @@ pub(super) fn lower_global_read(
     let (done, fallback) = (builder.create_block(), builder.create_block());
     builder.ins().brif(hit, done, &[], fallback, &[]);
     builder.switch_to_block(done);
-    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
+    builder.ins().store(regions::frame(), value, arguments, destination);
     if let Some(receiver) = receiver {
         let undefined = builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
-        builder.ins().store(MemFlagsData::trusted(), undefined, arguments, receiver);
+        builder.ins().store(regions::frame(), undefined, arguments, receiver);
     }
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);

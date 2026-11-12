@@ -2,6 +2,7 @@
 //! makes them, string and BigInt constants, and the operators that take them.
 
 use super::*;
+use crate::vm::compiled::regions;
 
 impl Lowering<'_, '_> {
     /// The values of an array literal whose definitions follow its `MakeArray`, one per index
@@ -49,7 +50,7 @@ impl Lowering<'_, '_> {
             let exit = self.guard_exit(state, pc as u32);
             self.read_invalidation(state, exit);
             let address = self.reloc(RelocKind::ConstantPool, index as u32, (base + index * std::mem::size_of::<Value>()) as u64);
-            let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+            let value = self.ins().load(types::I64, regions::constant(), address, 0);
             self.define(state, instruction.result_register(), value,
                 RegisterFact::definition(super::super::facts::constant_type(constant), Representation::Tagged));
             return Some(true);

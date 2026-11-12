@@ -8,10 +8,11 @@
 //! operations on it (`Vm::initialized_frame_binding`, `Vm::store_initialized_frame_binding`),
 //! and a closure (`MakeClosure`) `general_closure`, the lane's (`lane_closure_value_of`).
 use super::{emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback, JsStepDispatch, ResidualProgram, Vm};
+use crate::vm::compiled::regions;
 use crate::bytecode::WideInstruction;
 use crate::value::ValueLayout;
 use crate::Value;
-use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
+use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
 
 /// Lowers the depth-0 `LoadCapture` or `StoreCapture` at the exact fallback's PC; false
@@ -35,17 +36,17 @@ pub(super) fn lower_capture(
     let fallback = builder.create_block();
     let values = emit_viewed_slots(builder, payload, slot, store, fallback);
     let offset = i32::try_from(slot * size_of::<Value>()).expect("capture slot offset fits i32");
-    let old = builder.ins().load(types::I64, MemFlagsData::trusted(), values, offset);
+    let old = builder.ins().load(types::I64, regions::cells(), values, offset);
     let tag = builder.ins().band_imm_u(old, ValueLayout::TAG_MASK as i64);
     let initialized = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INTERNAL_TAG as i64);
     let done = builder.create_block();
     builder.ins().brif(initialized, super::forced_or(done, fallback), &[], fallback, &[]);
     builder.switch_to_block(done);
     if store {
-        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, register);
-        builder.ins().store(MemFlagsData::trusted(), value, values, offset);
+        let value = builder.ins().load(types::I64, regions::frame(), arguments, register);
+        builder.ins().store(regions::cells(), value, values, offset);
     } else {
-        builder.ins().store(MemFlagsData::trusted(), old, arguments, register);
+        builder.ins().store(regions::frame(), old, arguments, register);
     }
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
@@ -198,7 +199,7 @@ pub(super) fn lower_env_local(
     }
     builder.switch_to_block(asked);
     let word = builder.ins().iconst(types::I64, site.word() as i64);
-    let value = if site.store { builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, site.register) }
+    let value = if site.store { builder.ins().load(types::I64, regions::frame(), arguments, site.register) }
         else { builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64) };
     let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, env_local));
     let answer = emit_lane_helper_call(builder, payload, helper, &[payload, word, value]);
@@ -215,7 +216,7 @@ pub(super) fn lower_env_local(
 /// A load's value in its register, or a store's in the register it copies to, then `next`.
 fn emit_completed(builder: &mut FunctionBuilder<'_>, site: &EnvLocalSite, arguments: ir::Value, value: ir::Value, next: ir::Block) {
     if let Some(destination) = if site.store { site.copy } else { Some(site.register) } {
-        builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
+        builder.ins().store(regions::frame(), value, arguments, destination);
     }
     builder.ins().jump(next, &[]);
 }
@@ -259,7 +260,7 @@ fn emit_direct(builder: &mut FunctionBuilder<'_>, site: &EnvLocalSite, (owned, s
 fn emit_slot(builder: &mut FunctionBuilder<'_>, site: &EnvLocalSite, (arguments, slots): (ir::Value, ir::Value),
     (next, asked): (ir::Block, ir::Block)) {
     let offset = i32::try_from(site.slot * size_of::<Value>()).expect("local slot offset fits i32");
-    let old = builder.ins().load(types::I64, MemFlagsData::trusted(), slots, offset);
+    let old = builder.ins().load(types::I64, regions::cells(), slots, offset);
     if !site.initializing {
         let tag = builder.ins().band_imm_u(old, ValueLayout::TAG_MASK as i64);
         let initialized = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INTERNAL_TAG as i64);
@@ -268,8 +269,8 @@ fn emit_slot(builder: &mut FunctionBuilder<'_>, site: &EnvLocalSite, (arguments,
         builder.switch_to_block(done);
     }
     let value = if site.store {
-        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, site.register);
-        builder.ins().store(MemFlagsData::trusted(), value, slots, offset);
+        let value = builder.ins().load(types::I64, regions::frame(), arguments, site.register);
+        builder.ins().store(regions::cells(), value, slots, offset);
         value
     } else { old };
     emit_completed(builder, site, arguments, value, next);
@@ -343,7 +344,7 @@ pub(super) fn lower_closure(
     let (done, fallback) = (builder.create_block(), builder.create_block());
     builder.ins().brif(made, super::forced_or(done, fallback), &[], fallback, &[]);
     builder.switch_to_block(done);
-    builder.ins().store(MemFlagsData::trusted(), closure, arguments, destination);
+    builder.ins().store(regions::frame(), closure, arguments, destination);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
     true

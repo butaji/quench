@@ -5,6 +5,7 @@
 //! displacements. Layout proofs never freeze writable property contents.
 
 use super::*;
+use crate::vm::compiled::regions;
 use crate::heap::PlainPropertyStorage;
 
 /// A non-null table reservation admitted for this native run. This proves no
@@ -100,7 +101,7 @@ impl ObjectRecord {
         let address = self.address(builder);
         let shape = match known.and_then(|fact| fact.ty.object_shape()) {
             Some(shape) => builder.ins().iconst(types::I32, i64::from(shape)),
-            None => builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32),
+            None => builder.ins().load(types::I32, regions::shape_word(), address, layout.auxiliary_offset as i32),
         };
         ObjectHeader { record: self, shape, inline: inline_storage(builder, address), address }
     }
@@ -141,7 +142,7 @@ impl ObjectHeader {
         let function_object = builder.ins().iadd_imm_u(function_record, function.object_offset as i64);
         builder.ins().jump(join, &[ir::BlockArg::Value(function_object)]);
         builder.switch_to_block(join);
-        let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32);
+        let shape = builder.ins().load(types::I32, regions::shape_word(), record, layout.auxiliary_offset as i32);
         Self { record: ObjectRecord::Address(record), shape, inline: inline_storage(builder, record), address: record }
     }
 }

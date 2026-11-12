@@ -2,6 +2,7 @@
 //! interpreter reads it on `Concrete`; a specializer emits it.
 
 use super::{Concrete, Stage};
+use super::region::Region;
 use crate::value::ValueLayout;
 
 /// Value `slot` of the dense run of `len` environment values at `values`: its ordinary
@@ -18,7 +19,7 @@ pub(crate) fn dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Wo
     stage.guard(in_bounds, miss)?;
     let offset = stage.site(slot * std::mem::size_of::<crate::Value>() as u64);
     let address = stage.add_imm(values, offset);
-    let value = stage.load_u64(address, 0);
+    let value = stage.load_u64(Region::Cells.mutable(), address, 0);
     let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
     let ordinary = stage.ne_imm(tag, ValueLayout::INTERNAL_TAG);
     stage.guard(ordinary, miss)?;
@@ -43,8 +44,8 @@ pub(crate) unsafe fn concrete_dense_capture(values: *const crate::Value, len: us
 #[inline(always)]
 pub(crate) fn environment_slot<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
     let layout = crate::heap::NATIVE_ENVIRONMENT_LAYOUT;
-    let header_pointer = stage.load_u64(storage, layout.header_pointer_offset);
-    let header = stage.load_u64(header_pointer, 0);
+    let header_pointer = stage.load_u64(Region::Cells.mutable(), storage, layout.header_pointer_offset);
+    let header = stage.load_u64(Region::Cells.mutable(), header_pointer, 0);
     let marks = stage.and_imm(header, layout.sparse_mark);
     let dense = stage.eq_imm(marks, 0u64);
     stage.guard(dense, miss)?;

@@ -18,6 +18,7 @@ const EXIT_SUFFIXES: &[&str] = &["_EXIT", "_STATUS"];
 const FRAME_NAMES: &[&str] = &["Frame", "Activation", "ShadowFrame"];
 const FRAME_SUFFIX: &str = "Frame";
 const COMMENT_PREFIX: &str = "#";
+const UNTAGGED_FLAGS: [&str; 2] = ["MemFlagsData", "trusted"];
 
 /// The items of a module tree, nested inline modules flattened, test modules left out.
 pub fn module_items(items: &[Item]) -> Vec<&Item> {
@@ -187,6 +188,32 @@ pub fn entry_uses(file: &syn::File) -> usize {
     uses.0
 }
 
+struct UntaggedFlags(usize);
+
+impl<'ast> Visit<'ast> for UntaggedFlags {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(callee) = &*call.func {
+            let names: Vec<String> = callee.path.segments.iter().map(|segment| segment.ident.to_string()).collect();
+            self.0 += usize::from(names.ends_with(&UNTAGGED_FLAGS.map(String::from)));
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
+    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        if !is_test(&module.attrs) {
+            syn::visit::visit_item_mod(self, module);
+        }
+    }
+}
+
+/// Native memory accesses built from `MemFlagsData::trusted()`, which name no alias region
+/// (the tagged ones go through `vm/compiled/regions.rs`), outside test modules.
+pub fn untagged_memory_accesses(file: &syn::File) -> usize {
+    let mut found = UntaggedFlags(0);
+    found.visit_file(file);
+    found.0
+}
+
 /// The distinct row kinds (`Op::X` paths) a stencil library names.
 pub fn stencil_kinds(file: &syn::File) -> usize {
     let mut found = PatternPaths(BYTECODE_OWNER, Vec::new());
@@ -254,6 +281,15 @@ mod tests {
         let file = parse("type Entry = fn(); struct S { e: Entry } fn f(a: Option<Entry>, b: LaneExit::Entry) {}");
         assert_eq!(entry_uses(&file), 2);
         assert_eq!(entry_uses(&parse("struct Entry; fn f(a: Entry) {}")), 0);
+    }
+
+    #[test]
+    fn untagged_accesses_are_trusted_flags_calls_outside_tests() {
+        let file = parse(
+            "fn f() { b.load(t, MemFlagsData::trusted(), a, 0); b.store(ir::MemFlagsData::trusted(), v, a, 0); regions::frame(); }
+             #[cfg(test)] mod tests { fn g() { MemFlagsData::trusted(); } }",
+        );
+        assert_eq!(untagged_memory_accesses(&file), 2);
     }
 
     #[test]

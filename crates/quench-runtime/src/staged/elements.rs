@@ -2,6 +2,7 @@
 //! `Concrete`, a specializer emits it.
 
 use super::{Concrete, Stage};
+use super::region::Region;
 
 /// Element `index` of the dense backing of `length` values at `values`, with its address:
 /// `None` (leaving at `miss`) past the backing or at a hole (`Value::DELETED`), which the
@@ -15,7 +16,7 @@ pub(crate) fn dense_element<S: Stage>(stage: &mut S, values: S::Word, length: S:
     let offset = stage.uextend32(index);
     let offset = stage.mul_imm(offset, std::mem::size_of::<crate::Value>() as u64);
     let address = stage.add(values, offset);
-    let value = stage.load_u64(address, 0);
+    let value = stage.load_u64(Region::Elements.mutable(), address, 0);
     let present = stage.ne_imm(value, crate::Value::DELETED.to_bits());
     stage.guard(present, miss)?;
     Some((address, value))
@@ -45,8 +46,8 @@ pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base:
     stage.guard(present, miss)?;
     let offset = stage.mul_imm(index, ARRAY.record_size as u64);
     let record = stage.add(record_base, offset);
-    let header = stage.load_u64(record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
-    let length = stage.load_u32(header, ARRAY.header_length_offset as i32);
+    let header = stage.load_u64(Region::Records.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+    let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
     let values = stage.add_imm(header, ARRAY.header_values_offset as u64);
     Some(Backing { record, header, values, length })
 }
@@ -58,14 +59,14 @@ pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base:
 #[inline(always)]
 pub(crate) fn writable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<()> {
     use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
-    let owners = stage.load_u32(backing.header, ARRAY.header_owners_offset as i32);
+    let owners = stage.load_u32(Region::Elements.mutable(), backing.header, ARRAY.header_owners_offset as i32);
     let unique = stage.eq_imm(owners, 1u32);
     stage.guard(unique, miss)?;
-    let meta = stage.load_u32(backing.record, (ARRAY.object_offset + OBJECT.meta_offset) as i32);
+    let meta = stage.load_u32(Region::Records.mutable(), backing.record, (ARRAY.object_offset + OBJECT.meta_offset) as i32);
     let frozen = stage.and_imm(meta, u64::from(ARRAY.frozen_mask));
     let unfrozen = stage.eq_imm(frozen, 0u32);
     stage.guard(unfrozen, miss)?;
-    let payload = stage.load_u64(backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
+    let payload = stage.load_u64(Region::Payload.mutable(), backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
     let plain = super::object::plain_payload(stage, payload);
     stage.guard(plain, miss)
 }
@@ -76,18 +77,18 @@ pub(crate) fn writable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word
 /// count subtracts first, so an exact count never overflows on the way.
 #[inline(always)]
 pub(crate) fn replace_element<S: Stage>(stage: &mut S, values: S::Word, address: S::Word, old: S::Word, value: S::Word) {
-    let others = stage.load_u32(values, crate::heap::OTHERS_FROM_VALUES);
+    let others = stage.load_u32(Region::Elements.mutable(), values, crate::heap::OTHERS_FROM_VALUES);
     let (added, removed) = (other(stage, value), other(stage, old));
     let others = recount(stage, others, added, removed);
-    stage.store_u32(values, crate::heap::OTHERS_FROM_VALUES, others);
-    stage.store_u64(address, 0, value);
+    stage.store_u32(Region::Elements.mutable(), values, crate::heap::OTHERS_FROM_VALUES, others);
+    stage.store_u64(Region::Elements.mutable(), address, 0, value);
 }
 
 /// `replace_element` on a backing whose count is `OTHERS_UNKNOWN`: the count stays unknown
 /// (`recount`), so the write is the element's alone.
 #[inline(always)]
 pub(crate) fn replace_uncounted_element<S: Stage>(stage: &mut S, address: S::Word, value: S::Word) {
-    stage.store_u64(address, 0, value);
+    stage.store_u64(Region::Elements.mutable(), address, 0, value);
 }
 
 /// Appends `value` at `index` of the dense backing at `values`, which holds `length` values
@@ -106,14 +107,14 @@ pub(crate) fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S
     let offset = stage.uextend32(length);
     let offset = stage.mul_imm(offset, std::mem::size_of::<crate::Value>() as u64);
     let address = stage.add(values, offset);
-    let others = stage.load_u32(values, crate::heap::OTHERS_FROM_VALUES);
+    let others = stage.load_u32(Region::Elements.mutable(), values, crate::heap::OTHERS_FROM_VALUES);
     let (added, none) = (other(stage, value), stage.constant(0));
     let others = recount(stage, others, added, none);
-    stage.store_u32(values, crate::heap::OTHERS_FROM_VALUES, others);
-    stage.store_u64(address, 0, value);
+    stage.store_u32(Region::Elements.mutable(), values, crate::heap::OTHERS_FROM_VALUES, others);
+    stage.store_u64(Region::Elements.mutable(), address, 0, value);
     let grown = stage.add_imm(length, 1u32);
     let word = stage.uextend32(grown);
-    stage.store_u32(values, crate::heap::LENGTH_FROM_VALUES, word);
+    stage.store_u32(Region::Elements.mutable(), values, crate::heap::LENGTH_FROM_VALUES, word);
     Some(grown)
 }
 
@@ -209,7 +210,8 @@ mod tests {
         let elements = backing.make_mut();
         elements.reserve(2);
         let others = |elements: &mut crate::heap::UniqueElements| {
-            Concrete::new(std::ptr::null()).load_u32(elements.as_mut_ptr() as u64, crate::heap::OTHERS_FROM_VALUES)
+            Concrete::new(std::ptr::null()).load_u32(crate::staged::Region::Elements.mutable(), elements.as_mut_ptr() as u64,
+                crate::heap::OTHERS_FROM_VALUES)
         };
         assert_eq!(others(elements), 1);
         assert_eq!(append(elements, 3, Value::integer(7)), None, "past the length leaves");
@@ -224,7 +226,8 @@ mod tests {
         while elements.len() < elements.capacity() { elements.push(Value::integer(0)); }
         let full = elements.len();
         assert_eq!(append(elements, full, Value::integer(7)), None, "a full backing leaves");
-        crate::staged::Stage::store_u32(&mut Concrete::new(std::ptr::null()), elements.as_mut_ptr() as u64,
+        crate::staged::Stage::store_u32(&mut Concrete::new(std::ptr::null()), crate::staged::Region::Elements.mutable(),
+            elements.as_mut_ptr() as u64,
             crate::heap::OTHERS_FROM_VALUES, u64::from(crate::heap::OTHERS_UNKNOWN));
         elements.reserve(1);
         assert_eq!(append(elements, full, Value::number(0.25)), Some(full as u64 + 1));

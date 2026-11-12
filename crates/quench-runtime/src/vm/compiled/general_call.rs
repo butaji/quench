@@ -6,9 +6,10 @@ use super::{
     emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback,
     JsNativeStep, JsStepDispatch, ResidualProgram, Vm, ACTIVE_CONTEXT,
 };
+use crate::vm::compiled::regions;
 use crate::bytecode::{ConstructArguments, ControlFlowLayout, JsDenotation, WideInstruction, RETURN_REGISTER};
 use crate::Value;
-use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
+use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
 
 /// `general_user_call`'s outcomes besides a miss: the value is in the call's register, or
@@ -62,7 +63,7 @@ fn lower_branch_table(builder: &mut FunctionBuilder<'_>, (pc, instruction, entri
     let (Some(selector), Some(targets)) = (register_offset(instruction.register_a()),
         entries.get(crate::bytecode::branch_table_entries(pc, instruction))) else { return false };
     let Some((default, cases)) = targets.split_last() else { return false };
-    let bits = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, selector);
+    let bits = builder.ins().load(types::I64, regions::frame(), arguments, selector);
     let case = builder.ins().ireduce(types::I32, bits);
     let default = builder.func.dfg.block_call(*default, &[]);
     let cases: Vec<_> = cases.iter().map(|block| builder.func.dfg.block_call(*block, &[])).collect();
@@ -130,7 +131,7 @@ fn emit_builtin_shortcut(builder: &mut FunctionBuilder<'_>, (arguments, payload)
     let (done, user) = (builder.create_block(), builder.create_block());
     builder.ins().brif(hit, super::forced_or(done, user), &[], user, &[]);
     builder.switch_to_block(done);
-    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
+    builder.ins().store(regions::frame(), value, arguments, destination);
     builder.ins().jump(next, &[]);
     builder.switch_to_block(user);
 }
@@ -155,7 +156,7 @@ fn lower_construct(
     // A frameless construction takes only plain register windows, every register framed.
     let ConstructArguments::Registers(window) = instruction.construct_arguments() else { unreachable!() };
     let offset = |register| register_offset(register).expect("the frameless construction's register");
-    let callee = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset(instruction.register_b()));
+    let callee = builder.ins().load(types::I64, regions::frame(), arguments, offset(instruction.register_b()));
     let window_base = if window.count == 0 { 0 } else { offset(window.base) };
     let values = builder.ins().iadd_imm_s(arguments, i64::from(window_base));
     let count = builder.ins().iconst(types::I64, i64::from(window.count));
@@ -165,7 +166,7 @@ fn lower_construct(
     let (store, user, fallback) = (builder.create_block(), builder.create_block(), builder.create_block());
     builder.ins().brif(built, super::forced_or(store, user), &[], user, &[]);
     builder.switch_to_block(store);
-    builder.ins().store(MemFlagsData::trusted(), array, arguments, destination);
+    builder.ins().store(regions::frame(), array, arguments, destination);
     builder.ins().jump(next, &[]);
     builder.switch_to_block(user);
     emit_user_call(builder, (pc, next, fallback), payload, exact);
@@ -194,7 +195,7 @@ fn lower_literal(
             let (Some(value), Some(object)) = (register_offset(instruction.register_a()), register_offset(instruction.register_b()))
                 else { return false };
             let word = (u64::from(instruction.atom_index()) << u16::BITS) | u64::from(instruction.cache_site_index());
-            let [value, object] = [value, object].map(|offset| builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset));
+            let [value, object] = [value, object].map(|offset| builder.ins().load(types::I64, regions::frame(), arguments, offset));
             let word = builder.ins().iconst(types::I64, word as i64);
             let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, define_field));
             (emit_lane_helper_call(builder, payload, helper, &[payload, object, word, value]), 0, None)
@@ -206,7 +207,7 @@ fn lower_literal(
     builder.ins().brif(hit, super::forced_or(done, fallback), &[], fallback, &[]);
     builder.switch_to_block(done);
     if let Some(destination) = destination {
-        builder.ins().store(MemFlagsData::trusted(), answer, arguments, destination);
+        builder.ins().store(regions::frame(), answer, arguments, destination);
     }
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
@@ -253,8 +254,8 @@ fn builtin_call(instruction: WideInstruction, register_offset: &dyn Fn(u16) -> O
 }
 
 fn emit_builtin_call(builder: &mut FunctionBuilder<'_>, (arguments, payload): (ir::Value, ir::Value), call: BuiltinCall) -> ir::Value {
-    let callee = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, call.callee);
-    let receiver = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, call.receiver);
+    let callee = builder.ins().load(types::I64, regions::frame(), arguments, call.callee);
+    let receiver = builder.ins().load(types::I64, regions::frame(), arguments, call.receiver);
     let window = builder.ins().iadd_imm_s(arguments, i64::from(call.window));
     let count = builder.ins().iconst(types::I64, i64::from(call.count));
     let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, native_call));

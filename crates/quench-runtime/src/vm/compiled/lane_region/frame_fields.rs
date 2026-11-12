@@ -298,5 +298,5 @@ pub(super) fn entry_record_word(builder: &mut FunctionBuilder<'_>, payload: ir::
     let entry = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, loop_entry));
     let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
         * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
-    builder.ins().load(types::I64, MemFlagsData::trusted(), entry, offset)
+    builder.ins().load(types::I64, crate::vm::compiled::regions::loop_entry(), entry, offset)
 }
