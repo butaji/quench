@@ -1,7 +1,9 @@
 use super::program_store::ProgramId;
 use crate::Value;
 
+mod generator_frame;
 mod generator_record;
+pub(crate) use generator_frame::GeneratorFrame;
 pub(crate) use generator_record::{GeneratorRecord, GeneratorState};
 
 /// The only state that crosses an activation boundary. The value is kept as a
@@ -140,19 +142,15 @@ impl CallContext {
     }
 }
 
-/// A suspended activation: its frame, kept whole with the buffers it ran with, and what
-/// its resumer reads. Suspending moves the frame in and resuming moves it back out
-/// (`resume`), so neither copies frame state nor gives up the frame's storage.
+/// A suspended activation: its frame record (`GeneratorFrame`), which owns the frame state,
+/// and what its resumer reads. Suspending moves the frame's state into the record and
+/// resuming moves it back out (`resume`), so neither copies it nor gives up its storage.
 #[derive(Clone)]
 pub(crate) struct Continuation {
-    pub frame: Box<super::Frame>,
+    pub frame: Box<GeneratorFrame>,
     pub completion: Completion,
     pub resume_register: Option<u16>,
     pub promise: Value,
-    /// The registers live at the suspension, when liveness covers the function and every
-    /// other register was cleared there (`Vm::suspend_activation`): only these can name a
-    /// cell, so the GC traces them alone. `None` traces every register.
-    pub(super) live_registers: Option<crate::compile::liveness::RegisterSet>,
 }
 
 impl std::fmt::Debug for Continuation {
@@ -185,29 +183,19 @@ impl Continuation {
     /// `frame`, suspended with `completion`; `resume_register` receives the value it resumes
     /// with, and `promise` is an async activation's result.
     pub(super) fn suspend(
-        mut frame: Box<super::Frame>,
+        frame: Box<super::Frame>,
         completion: Completion,
         resume_register: Option<u16>,
         promise: Value,
     ) -> Self {
-        frame.js_jit_interpreter_started = None;
-        Self { frame, completion, resume_register, promise, live_registers: None }
+        Self { frame: GeneratorFrame::capture(frame), completion, resume_register, promise }
     }
 
     /// The suspended frame, ready to push: it continues after its suspending instruction,
     /// every register holds a value, and the state a run derives for itself (the operation's
     /// field and binding site, the capture cache, a fixed `this`, the `with` base) starts anew.
     pub(super) fn resume(self, with_base: usize) -> Box<super::Frame> {
-        let mut frame = self.frame;
-        frame.pc_is_resume = true;
-        frame.source_field = None;
-        frame.binding_site_pc = None;
-        frame.initialized_registers = frame.registers.len();
-        frame.capture_cache = super::CaptureCache::default();
-        frame.with_base = with_base;
-        frame.js_jit_interpreter_started = None;
-        frame.fixed_this = false;
-        frame
+        self.frame.into_frame(with_base)
     }
 
     /// The program the suspended activation runs.
@@ -215,32 +203,10 @@ impl Continuation {
         self.frame.program
     }
 
-    /// Its edges, appended to `out`: the GC traces every suspended frame this way. Locals and
-    /// registers contribute only their heap values, and registers only the live ones where
-    /// the suspension knows them (`live_registers`): each other one would cost the mark a
-    /// push and a pop to find it names no cell.
+    /// Its edges, appended to `out`: the GC traces every suspended frame this way
+    /// (`GeneratorFrame::extend_roots`).
     pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
-        let frame = &self.frame;
-        out.extend(frame.context.callee());
-        out.extend_from_slice(&frame.original_arguments);
-        out.extend_from_slice(&frame.with_objects);
-        out.extend([frame.env, frame.this]);
-        Value::extend_heap_values(out, &frame.locals);
-        out.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
-        match self.live_registers {
-            Some(mut live) => {
-                while live != 0 {
-                    let register = live.trailing_zeros() as usize;
-                    live &= live - 1;
-                    if let Some(&value) = frame.registers.get(register)
-                        && value.is_heap()
-                    {
-                        out.push(value);
-                    }
-                }
-            }
-            None => Value::extend_heap_values(out, &frame.registers),
-        }
+        self.frame.extend_roots(out);
         out.extend(match self.completion {
             Completion::GeneratorStart => None,
             Completion::Return(value)
@@ -260,62 +226,21 @@ impl Continuation {
 
 use crate::snapshot::Snap;
 
-/// A suspended activation as a snapshot records it: its frame's suspended state, field by
-/// field, then its resumer's; a restored continuation's frame starts its run anew on resume.
+/// A suspended activation as a snapshot records it: its frame record, then its resumer's.
 impl Snap for Continuation {
     fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
-        let super::Frame {
-            context, reflected_parameters, original_arguments, program, function, pc, env, this,
-            locals, dynamic_bindings, registers, active_iterators, with_objects, captured,
-            pc_is_resume: _, source_field: _, binding_site_pc: _, initialized_registers: _,
-            capture_cache: _, with_base: _, js_jit_interpreter_started: _, fixed_this: _,
-            js_jit_skip_entry_once: _,
-        } = &*self.frame;
-        context.snap(writer)?;
-        reflected_parameters.snap(writer)?;
-        original_arguments.snap(writer)?;
-        program.snap(writer)?;
-        function.snap(writer)?;
-        pc.snap(writer)?;
-        env.snap(writer)?;
-        this.snap(writer)?;
-        locals.snap(writer)?;
-        dynamic_bindings.snap(writer)?;
-        registers.snap(writer)?;
-        active_iterators.snap(writer)?;
-        with_objects.snap(writer)?;
+        self.frame.snap(writer)?;
         self.completion.snap(writer)?;
-        captured.snap(writer)?;
         self.resume_register.snap(writer)?;
         self.promise.snap(writer)
     }
 
     fn unsnap(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        let context = Snap::unsnap(reader)?;
-        let reflected_parameters = Snap::unsnap(reader)?;
-        let original_arguments = Snap::unsnap(reader)?;
-        let program = Snap::unsnap(reader)?;
-        let mut frame = Box::new(super::Frame::empty(program, 0));
-        frame.context = context;
-        frame.reflected_parameters = reflected_parameters;
-        frame.original_arguments = original_arguments;
-        frame.function = Snap::unsnap(reader)?;
-        frame.pc = Snap::unsnap(reader)?;
-        frame.env = Snap::unsnap(reader)?;
-        frame.this = Snap::unsnap(reader)?;
-        frame.locals = Snap::unsnap(reader)?;
-        frame.dynamic_bindings = Snap::unsnap(reader)?;
-        frame.registers = Snap::unsnap(reader)?;
-        frame.active_iterators = Snap::unsnap(reader)?;
-        frame.with_objects = Snap::unsnap(reader)?;
-        let completion = Snap::unsnap(reader)?;
-        frame.captured = Snap::unsnap(reader)?;
         Ok(Self {
-            frame,
-            completion,
+            frame: Box::new(Snap::unsnap(reader)?),
+            completion: Snap::unsnap(reader)?,
             resume_register: Snap::unsnap(reader)?,
             promise: Snap::unsnap(reader)?,
-            live_registers: None,
         })
     }
 }

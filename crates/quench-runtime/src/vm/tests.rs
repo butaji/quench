@@ -6963,7 +6963,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
 }
 
 /// A suspended async activation is traced by the registers live at its await alone
-/// (`Continuation::live_registers`): what it made between awaits survives minor collections
+/// (`GeneratorFrame::live_registers`): what it made between awaits survives minor collections
 /// under either promotion age and full ones, and reads back whole when it resumes.
 #[test]
 fn suspended_async_activations_keep_their_live_values_across_collections() {

@@ -30,7 +30,7 @@ impl<H: Host> Vm<H> {
     ) -> Continuation {
         let live_registers = self.release_dead_registers(&mut frame);
         let mut continuation = Continuation::suspend(frame, completion, resume_register, promise);
-        continuation.live_registers = live_registers;
+        continuation.frame.live_registers = live_registers;
         continuation
     }
 
