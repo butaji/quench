@@ -264,6 +264,7 @@ impl<H: Host> Vm<H> {
         let (program, function, env, captured, this, pc) = (frame.program, frame.function, frame.env, frame.captured, frame.this(), frame.pc);
         let view = self.lane_view_any(program, function)?;
         let (parent, locals) = window_environments(self, view, env, captured, environment)?;
+        let this = self.window_this(code.function(function as usize), this, parent)?;
         let stack = crate::stack::StackGuard::enter().ok()?;
         self.check_execution_interrupt().ok()?;
         let capture = self.target_capture(code, program, parent);

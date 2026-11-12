@@ -27,6 +27,20 @@ impl<H: Host> Vm<H> {
             .then_some(plan.suspended_environment)
     }
 
+    /// The receiver a window over `frame`'s record runs with, resumed under the environment
+    /// `parent`: the frame's own, or an arrow's lexical `this`, which a `super()` since the frame
+    /// suspended may have initialized. `None` where it is still uninitialized, which only the
+    /// general path's dead-zone check raises from.
+    pub(in crate::vm) fn window_this(&self, body: &crate::bytecode::Function, this: Value, parent: Value) -> Option<Value> {
+        if !body.is_arrow {
+            return Some(this);
+        }
+        match self.captured_lexical_this(parent) {
+            Some(lexical) => (!lexical.is_deleted()).then_some(lexical),
+            None => Some(this),
+        }
+    }
+
     /// Starts a windowed run of `generator`, which `generator_window_frame` admitted: the
     /// frame stays in its record, `sent` is the value the suspending `yield` evaluates to, and
     /// the native activation roots the generator while the run lasts. The frame's address, which

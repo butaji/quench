@@ -2280,11 +2280,10 @@ impl Function {
     }
 
     /// Whether a suspension of the function parks its frame in a record a lane resumes from: a
-    /// generator or an async function, but for an arrow reading `this`, which is its
-    /// environment's and only a frame binds (`Vm::lexical_activation_this`).
+    /// generator or an async function. An arrow's `this` is its environment's, which each
+    /// resumption reads again (`Vm::window_this`).
     fn suspends_in_record(&self) -> bool {
-        (self.is_generator || self.is_async)
-            && !(self.is_arrow && self.instructions().any(|instruction| instruction.op() == Op::LoadThis))
+        self.is_generator || self.is_async
     }
 
     /// Whether its locals and the environment its closures capture can live in a window past

@@ -99,3 +99,27 @@ fn iteration_copies_of_a_window_environment_share_its_dynamic_scope() {
     );
     assert_eq!(lines, ["10,11,12|10,11,12"]);
 }
+
+#[test]
+fn an_async_arrow_reads_its_lexical_this_across_awaits() {
+    // The arrow's receiver is its environment's, read again at each resumption: a `super()` that
+    // ran while it was suspended has initialized it.
+    let lines = agree(
+        r#"
+        const out = [];
+        const holder = { v: 7, run() { const a = async (k) => { const first = this.v; await k; await k; return first + this.v + k; }; return a(1); } };
+        holder.run().then((v) => out.push(v));
+        class A {}
+        class B extends A {
+            constructor() {
+                const a = async () => { await 0; return typeof this; };
+                const pending = a();
+                super();
+                this.pending = pending;
+            }
+        }
+        new B().pending.then((v) => { out.push(v); print(out.join(" ")); });
+        "#,
+    );
+    assert_eq!(lines, ["15 object"]);
+}
