@@ -10,7 +10,8 @@ use super::relocs::address;
 use super::super::entry_cell::{capture_word, EntryCell, LANE_BODY_NOT_ENTERED};
 use super::super::super::dispatch_fast::LaneRecoverySpace;
 use crate::staged::call::admit_room;
-use crate::staged::{CallEntry, CallFrame, CalleeKind, DirectPlan, Entered, Identity, Invocation, Room, Stage};
+use crate::staged::{plan_entry, CallEntry, CallFrame, CalleeKind, DirectPlan, Entered, Identity, Invocation, Resolved, Room, Stage};
+use crate::typed_ir::BindingTime;
 
 /// Where a run's completion goes: the block a run leaves at, and where it publishes its result
 /// word.
@@ -149,8 +150,10 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_entry(&self, site: &Invocation) -> CallEntry {
         let Some(CallSite { callee: Some(callee), .. }) = self.call_site() else { return CallEntry::Helper };
         let kind = if site.constructs() { CalleeKind::Class } else { CalleeKind::Script };
-        CallEntry::Direct(DirectPlan { kind, identity: Identity::Guarded(callee.callee.to_bits()), sloppy: callee.sloppy.map(Value::to_bits),
-            registers: callee.registers, returned: LANE_BODY_RETURNED })
+        let plan = DirectPlan { kind, identity: Identity::Guarded(callee.callee.to_bits()), sloppy: callee.sloppy.map(Value::to_bits),
+            registers: callee.registers, returned: LANE_BODY_RETURNED, bound: None };
+        // The callee is the one the site linked, which the call guards: a Site fact, never inlined by the plan.
+        plan_entry(Some(Resolved { plan, binding: BindingTime::Site, body: None }), super::super::tier_policy::TIERS.lane_body.max_inlined_instructions)
     }
 
     fn call_registers(&mut self, _stage: &mut Emit<'_, '_>) -> Option<ir::Value> {

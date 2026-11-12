@@ -214,10 +214,6 @@ impl Unit {
     }
 }
 
-/// The longest callee body the unit inlines: each copy of it costs code and compile time at
-/// every call site, and short bodies (accessors, field updates) are where a call costs most
-/// relative to its work.
-const MAX_INLINED_INSTRUCTIONS: usize = 96;
 /// The callee instructions one unit inlines in all, the region's budget: a hot loop's call
 /// graph, inlined, is the region an optimizing tier compiles as one function. Its compile
 /// cost grows with it (Richards' 600-instruction units cost ~63M instructions to compile),
@@ -451,7 +447,7 @@ impl Planner<'_, '_> {
     fn inline_target(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
         let callee = (self.body)(target.function)?;
         let code = decoded(callee);
-        if code.len() > MAX_INLINED_INSTRUCTIONS
+        if code.len() > super::tier_policy::TIERS.lane_body.max_inlined_instructions
             || code.len() > self.budget
             || ImmediateLayout::argument_count(instruction.imm()) > callee.registers
             || !code.iter().all(|instruction| inlinable(*instruction) && renamable(*instruction))

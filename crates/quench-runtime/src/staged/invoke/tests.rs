@@ -1,5 +1,5 @@
 use super::*;
-use crate::staged::{Concrete, Edge, NoPlans};
+use crate::staged::{Bound, Concrete, Edge, NoPlans};
 
 pub(super) const RETURNED: u32 = 3;
 pub(super) const IDENTITY: u64 = 0x1000;
@@ -18,6 +18,12 @@ pub(super) struct Probe {
     pub(super) loaded: Option<(u64, u32, u32)>,
     /// The word a `this` field path reads.
     pub(super) field: Option<u64>,
+    /// The words of a plan's constant list, and what a native was entered with.
+    pub(super) constants: Vec<u64>,
+    pub(super) natives: Vec<(NativeId, u64, Vec<u64>)>,
+    pub(super) native_status: u32,
+    pub(super) linked: bool,
+    pub(super) inlines: bool,
     pub(super) entered: Vec<u64>,
     pub(super) helper: Option<u64>,
     pub(super) settled: Option<u64>,
@@ -27,7 +33,8 @@ pub(super) struct Probe {
 impl Probe {
     pub(super) fn new(entry: CallEntry) -> Self {
         Self { file: [0; 8], stack: [0; 8], entry, this: Value::DELETED.to_bits(), records: None, method: None, loaded: None,
-            field: None, entered: Vec::new(), helper: None, settled: None, returned: None }
+            field: None, constants: Vec::new(), natives: Vec::new(), native_status: RETURNED, linked: false, inlines: false,
+            entered: Vec::new(), helper: None, settled: None, returned: None }
     }
 }
 
@@ -64,6 +71,23 @@ impl CallFrame<Concrete> for Probe {
     fn call_entry(&self, _site: &Invocation) -> CallEntry { self.entry }
     fn call_registers(&mut self, _stage: &mut Concrete) -> Option<u64> { Some(self.file.as_ptr() as u64) }
     fn call_list(&self, list: RegisterList) -> Option<&[Register]> { self.records.as_deref().map(|records| list.registers(records)) }
+    fn call_constants(&self, list: WordList) -> Option<&[u64]> { Some(list.words(&self.constants)) }
+    fn call_link(&mut self, _stage: &mut Concrete, _miss: ()) -> Option<()> {
+        self.linked = true;
+        Some(())
+    }
+    fn call_native(&mut self, _stage: &mut Concrete, native: NativeId, this: u64, (arguments, count): (u64, u16), _miss: ())
+        -> Option<Entered<u64, ()>> {
+        // SAFETY: the arguments are `count` words of the probe's own file or stack.
+        let passed = unsafe { std::slice::from_raw_parts(arguments as *const u64, usize::from(count)) }.to_vec();
+        self.natives.push((native, this, passed));
+        Some(Entered { status: u64::from(self.native_status), word: Value::integer(55).to_bits(), unfinished: () })
+    }
+    fn call_result(&mut self, _stage: &mut Concrete, _site: &Invocation, value: u64) -> Option<()> {
+        self.settled = Some(value);
+        Some(())
+    }
+    fn inline(&mut self, _site: &Invocation) -> bool { self.inlines }
     fn call_method(&mut self, _stage: &mut Concrete, receiver: u64, atom: u32, site: u32, _miss: ()) -> Option<u64> {
         self.loaded = Some((receiver, atom, site));
         self.method
@@ -88,7 +112,7 @@ impl CallFrame<Concrete> for Probe {
 }
 
 pub(super) fn plan(kind: CalleeKind, sloppy: Option<u64>) -> CallEntry {
-    CallEntry::Direct(DirectPlan { kind, identity: Identity::Guarded(IDENTITY), sloppy, registers: 3, returned: RETURNED })
+    CallEntry::Direct(DirectPlan { kind, identity: Identity::Guarded(IDENTITY), sloppy, registers: 3, returned: RETURNED, bound: None })
 }
 
 pub(super) fn site(receiver: Receiver) -> Invocation {
@@ -168,7 +192,7 @@ fn a_return_completes_with_the_register_value() {
 
 fn folded(sloppy: Option<u64>) -> CallEntry {
     CallEntry::Direct(DirectPlan { kind: CalleeKind::Script, identity: Identity::Folded(IDENTITY), sloppy, registers: 3,
-        returned: RETURNED })
+        returned: RETURNED, bound: None })
 }
 
 #[test]
@@ -232,4 +256,77 @@ fn a_this_method_call_binds_this_or_the_field_its_path_reads() {
     probe.helper = None;
     assert_eq!(call(&mut probe, listed(Receiver::This { path: None })), Some(0), "an unbound this leaves");
     assert_eq!(probe.helper, Some(1));
+}
+
+const NATIVE: NativeId = NativeId { index: 5, beside: false };
+
+fn native(beside: bool, bound: Option<Bound>) -> CallEntry {
+    CallEntry::Direct(DirectPlan { kind: CalleeKind::Native(NativeId { beside, ..NATIVE }), identity: Identity::Guarded(IDENTITY),
+        sloppy: None, registers: 0, returned: RETURNED, bound })
+}
+
+#[test]
+fn a_native_is_entered_with_the_callers_window_after_the_lane_links_unless_it_runs_beside() {
+    for beside in [false, true] {
+        let mut probe = Probe::new(native(beside, None));
+        probe.file[..4].copy_from_slice(&[IDENTITY, Value::integer(1).to_bits(), 10, 20]);
+        assert_eq!(call(&mut probe, site(Receiver::Register(1))), Some(Value::integer(55).to_bits()), "the native's value");
+        assert_eq!(probe.natives, [(NativeId { beside, ..NATIVE }, Value::integer(1).to_bits(), vec![10, 20])], "the window as it lies");
+        assert_eq!((probe.linked, probe.settled, probe.helper), (!beside, Some(Value::integer(55).to_bits()), None));
+    }
+}
+
+#[test]
+fn a_native_that_left_or_a_construction_of_one_takes_the_vm_call() {
+    let mut probe = Probe::new(native(false, None));
+    probe.file[..2].copy_from_slice(&[IDENTITY, Value::integer(1).to_bits()]);
+    probe.native_status = RETURNED + 1;
+    assert_eq!(call(&mut probe, site(Receiver::Register(1))), Some(0));
+    assert_eq!((probe.settled, probe.helper), (None, Some(1)), "a status other than returned defines no result");
+    let mut construct = Probe::new(native(false, None));
+    construct.file[0] = IDENTITY;
+    assert_eq!(call(&mut construct, site(Receiver::Allocated)), Some(0));
+    assert_eq!((construct.natives.len(), construct.helper), (0, Some(1)), "a construction is the VM's");
+}
+
+#[test]
+fn a_natives_listed_arguments_and_bound_prefix_are_gathered_into_the_room() {
+    let bound = Bound { this: Value::integer(9).to_bits(), arguments: WordList { start: 0, count: 1 } };
+    let mut probe = Probe::new(native(true, Some(bound)));
+    (probe.constants, probe.records, probe.method) = (vec![7], Some(vec![9, 6, 3]), Some(IDENTITY));
+    probe.file[..7].copy_from_slice(&[0, Value::integer(1).to_bits(), 0, 20, 0, 0, 30]);
+    let site = Invocation { callee: Callee::Method { atom: 8, site: 2 }, arguments: Arguments::List(RegisterList { start: 1, count: 2 }),
+        ..site(Receiver::Register(1)) };
+    assert_eq!(call(&mut probe, site), Some(Value::integer(55).to_bits()));
+    assert_eq!(probe.natives, [(NativeId { beside: true, ..NATIVE }, Value::integer(9).to_bits(), vec![7, 30, 20])],
+        "the bound this and the prefix, then registers 6 and 3");
+}
+
+#[test]
+fn a_bound_function_enters_its_target_with_its_this_and_its_arguments_before_the_calls() {
+    let bound = Bound { this: Value::UNDEFINED.to_bits(), arguments: WordList { start: 0, count: 2 } };
+    let target = DirectPlan { kind: CalleeKind::Script, identity: Identity::Folded(IDENTITY), sloppy: Some(GLOBAL), registers: 5,
+        returned: RETURNED, bound: Some(bound) };
+    let mut probe = Probe::new(CallEntry::Direct(target));
+    probe.constants = vec![4, 5];
+    probe.file[..4].copy_from_slice(&[0, 0, 10, 20]);
+    assert_eq!(call(&mut probe, site(Receiver::Register(1))), Some(GLOBAL), "the target is sloppy, so the bound undefined is the global");
+    assert_eq!(probe.stack[..5], [4, 5, 10, 20, Value::UNDEFINED.to_bits()], "the prefix, the arguments, then undefined");
+    let mut construct = Probe::new(CallEntry::Direct(DirectPlan { kind: CalleeKind::Class, ..target }));
+    assert_eq!(call(&mut construct, site(Receiver::Allocated)), Some(0), "a construction through a bound function is the VM's");
+    assert_eq!(construct.helper, Some(1));
+}
+
+#[test]
+fn a_call_the_frame_inlines_enters_nothing_and_one_it_declines_takes_its_direct_entry() {
+    let plan = DirectPlan { kind: CalleeKind::Script, identity: Identity::Folded(IDENTITY), sloppy: None, registers: 3,
+        returned: RETURNED, bound: None };
+    let mut inlined = Probe::new(CallEntry::Inline(plan));
+    inlined.inlines = true;
+    assert_eq!(call(&mut inlined, site(Receiver::Register(1))), Some(0));
+    assert_eq!((inlined.entered.len(), inlined.helper, inlined.settled), (0, None, None), "the body is the frame's to emit");
+    let mut declined = Probe::new(CallEntry::Inline(plan));
+    declined.file[..4].copy_from_slice(&[0, Value::integer(1).to_bits(), 10, 20]);
+    assert_eq!(call(&mut declined, site(Receiver::Register(1))), Some(Value::integer(1).to_bits()));
+    assert_eq!(declined.entered[..2], [10, 20]);
 }
