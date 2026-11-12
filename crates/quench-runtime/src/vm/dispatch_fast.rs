@@ -249,12 +249,15 @@ pub(super) struct LoopSite {
     /// no call record, whose `call_link` names a call target, and the header of no other
     /// site. The record's `call_link` then names the site.
     hookable: bool,
-    /// Backward jumps taken before the region compiles, up to `TIERS.loops.threshold`.
+    /// Backward jumps taken in the interpreter, counted up to `needed`, and one past it once the
+    /// tier model has admitted the compile (`LoopSite::interprets`).
     taken: std::cell::Cell<u32>,
-    /// The entries native runs have not paid back (`LoopSite::note_run`).
-    exits: std::cell::Cell<u32>,
-    /// Entries declined since the last that ran native code.
-    declines: std::cell::Cell<u32>,
+    /// The backward jumps the interpreter takes before the model weighs the compile: the warm-up
+    /// first, then what the model finds the compile needs (`loop_model::admission_taken`).
+    needed: std::cell::Cell<u32>,
+    /// Whether the site still enters native code: until its runs and declined entries cost more
+    /// than their iterations save (`LoopSite::note_run`).
+    entering: std::cell::Cell<bool>,
     /// Whether this VM requested OSR diagnostics when its lane view was derived.
     diagnostics: bool,
     lane_backedge_count: std::cell::Cell<u64>,
@@ -284,10 +287,8 @@ impl LoopSite {
         self.enters() && self.tier.borrow().may_run(policy)
     }
 
-    /// Whether the site still enters native code: its runs have not exhausted the exits and
-    /// declines `TIERS.loops` allows.
     fn enters(&self) -> bool {
-        self.exits.get() < TIERS.loops.max_exits && self.declines.get() < TIERS.loops.max_declines
+        self.entering.get()
     }
 
     fn is_admitted(&self) -> bool {
@@ -499,7 +500,7 @@ impl LaneView {
                 call_boundary_pcs,
                 admitted: site.is_admitted(),
                 deferred_call,
-                tier_threshold_reached: site.taken.get() >= TIERS.loops.threshold,
+                tier_threshold_reached: site.is_hot(),
                 lane_backedge_count: site.lane_backedge_count.get(),
                 analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
                 compile_attempts: site.compile_attempts.get(),
@@ -7942,8 +7943,7 @@ script_handler! {
                 return exit(header);
             }
         }
-        if site.taken.get() < TIERS.loops.threshold {
-            site.taken.set(site.taken.get() + 1);
+        if site.interprets() {
             next!(cx, r, header, Carried::script(cx))
         }
         // A loop its region takes whole (no call it leaves at) stays the region's, which hoists
@@ -7991,7 +7991,7 @@ script_handler! {
             }) {
                 Some(region) => site.region.get_or_init(|| region),
                 None => {
-                    site.exits.set(TIERS.loops.max_exits);
+                    site.entering.set(false);
                     lane_loop_retire::<H>(cx, ip, site);
                     next!(cx, r, header, Carried::script(cx))
                 }
@@ -8063,13 +8063,13 @@ fn lane_loop_native<H: Host>(
     }
     let mut entry = super::compiled::LoopEntry::new();
     let Some(views) = lane_loop_entry(cx, r, region, &mut entry) else {
-        site.declines.set(site.declines.get() + 1);
+        site.note_decline();
         return LoopAttempt::Declined;
     };
     // The tier's state is borrowed only here, so the dispatch below holds no borrow.
     let continuation = lane_loop_run(cx, r, site, region, &mut entry, views);
     count_continuation(&continuation);
-    site.declines.set(if matches!(continuation, LoopContinuation::Jump) { site.declines.get() + 1 } else { 0 });
+    if matches!(continuation, LoopContinuation::Jump) { site.note_decline(); }
     lane_loop_hold_header::<H>(header, site);
     match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => LoopAttempt::Declined,
@@ -8417,16 +8417,18 @@ fn lane_loop_run<H: Host>(
     };
     if general_dispatch_due {
         match outcome {
-            LoopOutcome::Resume(pc) => return LoopContinuation::Exit(pc),
-            LoopOutcome::Exit(pc) => {
-                site.exits.set(site.exits.get().saturating_add(1));
+            LoopOutcome::Resume(pc) | LoopOutcome::Exit(pc) => {
+                site.note_run(entry.backedge_count());
                 return LoopContinuation::Exit(pc);
             }
             LoopOutcome::Inlined { frame, pc } => {
-                site.exits.set(site.exits.get().saturating_add(1));
+                site.note_run(entry.backedge_count());
                 return LoopContinuation::Inlined { frame, pc };
             }
-            LoopOutcome::Callee => return LoopContinuation::Callee,
+            LoopOutcome::Callee => {
+                site.note_run(entry.backedge_count());
+                return LoopContinuation::Callee;
+            }
             LoopOutcome::NotEntered | LoopOutcome::Terminated | LoopOutcome::Returned { .. } => {}
         }
     }
@@ -19919,8 +19921,8 @@ fn install_loop_sites<'live, H: Host>(
                     header_handler: std::cell::Cell::new(std::ptr::null()),
                     hookable: holds_no_call_link(decoded[header as usize].op()),
                     taken: std::cell::Cell::new(0),
-                    exits: std::cell::Cell::new(0),
-                    declines: std::cell::Cell::new(0),
+                    needed: std::cell::Cell::new(TIERS.loops.warmup_taken),
+                    entering: std::cell::Cell::new(true),
                     diagnostics,
                     lane_backedge_count: std::cell::Cell::new(0),
                     native_entry_attempts: std::cell::Cell::new(0),

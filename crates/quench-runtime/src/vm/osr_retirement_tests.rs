@@ -118,7 +118,7 @@ fn shared_osr_sum_that_overflows_int32_each_iteration_widens_and_stays_native() 
     assert_eq!(compiled, interpreted, "the widened loop computes the interpreter's sum");
     let site = osr_site(&vm, function_named(&program, "f"));
     assert!(
-        site.native_region_runs > 0 && site.exits < u64::from(crate::vm::compiled::tier_policy::TIERS.loops.max_exits),
+        site.native_region_runs > 0 && site.exits <= u64::from(crate::vm::compiled::tier_policy::TIERS.loops.max_compilations),
         "a sum that overflows on every run widens instead of exhausting the site: {site:?}"
     );
 }

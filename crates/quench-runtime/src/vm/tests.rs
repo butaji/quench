@@ -14757,7 +14757,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         );
         assert!(
             site.tier_threshold_reached
-                && site.lane_backedge_count >= u64::from(crate::vm::compiled::tier_policy::TIERS.loops.threshold)
+                && site.lane_backedge_count >= u64::from(crate::vm::compiled::tier_policy::TIERS.loops.warmup_taken)
         );
         assert_eq!(site.analysis_rejection, None);
         let body = program.function_get(function_id).unwrap();

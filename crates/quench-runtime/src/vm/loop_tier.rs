@@ -20,6 +20,8 @@ pub(super) struct LoopTier {
     /// Native runs of the region and the iterations they took: the loop's mean trip count.
     runs: u32,
     iterations: u64,
+    /// Entries the guards declined: each paid for the entry's guards and ran no iteration.
+    declined: u32,
     /// Each operation the code left at, with its leaves so far; and those whose int32
     /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
     leaves: Vec<(u32, u16)>,
@@ -33,6 +35,15 @@ impl LoopTier {
         self.runs = self.runs.saturating_add(1);
         self.iterations = self.iterations.saturating_add(backedges);
     }
+
+    pub(super) fn weigh_decline(&mut self) {
+        self.declined = self.declined.saturating_add(1);
+    }
+
+    /// The entries made, native runs and declined ones, and the iterations the runs took.
+    pub(super) fn entries(&self) -> u64 { u64::from(self.runs) + u64::from(self.declined) }
+
+    pub(super) fn iterations(&self) -> u64 { self.iterations }
 
     /// Iterations per native run, or `None` before the first run.
     pub(super) fn mean_trip(&self) -> Option<u64> {
@@ -125,7 +136,7 @@ impl LoopTier {
         if self.pending.is_none() {
             self.compilations = TIERS.loops.max_compilations;
             // A declined or failed region retires the site now: later entries build no entry record.
-            site.declines.set(TIERS.loops.max_declines);
+            site.entering.set(false);
         }
         self.awaits_code(heap, site);
     }

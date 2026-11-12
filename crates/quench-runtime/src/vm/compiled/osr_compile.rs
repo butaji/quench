@@ -357,8 +357,12 @@ pub(in crate::vm) fn start_osr_region(
     let function = lane?.function;
     let clif = native_dump_directory().map(|_| function.display().to_string());
     let facts = OsrFacts::observed(observation);
+    let ir = function.dfg.num_insts();
     let code = super::super::jit_backend::run_in_background(move || {
-        compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
+        let started = std::time::Instant::now();
+        let code = compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()));
+        super::tier_model::note_compile(started.elapsed(), ir);
+        code
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General })

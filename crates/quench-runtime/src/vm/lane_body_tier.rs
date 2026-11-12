@@ -133,7 +133,7 @@ impl LaneView {
     /// The bytecodes one entry runs inside its loops: each loop's iteration span times the mean
     /// trip count its region's runs took (loops without a native run count one iteration).
     pub(in crate::vm) fn loop_work(&self) -> u64 {
-        self.loops.iter().map(|site| u64::from(site.backedge - site.header + 1) * site.tier.borrow().mean_trip().unwrap_or(1)).sum()
+        self.loops.iter().map(|site| site.span() * site.tier.borrow().mean_trip().unwrap_or(1)).sum()
     }
 
     /// Whether a closed loop of the function runs in a region that still enters native code:
