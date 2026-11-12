@@ -2607,23 +2607,11 @@ impl Lowering<'_, '_> {
                 && (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval() => Some(self.intrinsic_call(state, pc, instruction) || self.call(state, pc, instruction, LaneHelper::Call)),
-            // ToNumeric of a Number is the Number: a typed operand is copied with its facts,
-            // and an untyped one is taken for an int, tested once, which leaves where it is not.
-            Class::ToNumeric if plain && instruction.register_b() < self.unit.registers => {
-                let exit = self.guard_exit(state, pc32);
-                let operation = crate::staged::Operation::decode(instruction, |_| None)
-                    .expect("ToNumeric decodes");
-                self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
-                Some(true)
-            }
-            // Anything but `null` and `undefined` is coercible; those take the lane's TypeError.
-            Class::RequireObjectCoercible if plain && instruction.register_b() < self.unit.registers => {
-                let exit = self.guard_exit(state, pc as u32);
-                let operation = crate::staged::Operation::decode(instruction, |_| None)
-                    .expect("RequireObjectCoercible decodes");
-                self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
-                Some(true)
-            }
+            // ToNumeric of a Number is the Number: a typed operand is copied with its facts, and an
+            // untyped one is taken for an int, tested once, which leaves where it is not. Anything
+            // but `null` and `undefined` is coercible; those take the lane's TypeError.
+            Class::ToNumeric | Class::RequireObjectCoercible if plain && instruction.register_b() < self.unit.registers =>
+                self.operation_step(state, pc32, instruction, true),
             Class::LoadName | Class::LoadNameCall if plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
             Class::Nop if plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
@@ -2633,35 +2621,15 @@ impl Lowering<'_, '_> {
                 let Some(constant) = self.program.constants.get(instruction.constant_index()) else { return false };
                 self.load_constant(state, pc, instruction, constant)
             }
-            _ if plain && instruction.op().js_denotation() == JsDenotation::Move => {
-                crate::staged::Operation::decode(instruction, |_| None).map(|operation| {
-                    self.step(state, frame::Edges::Value, operation);
-                    true
-                })
-            }
-            Class::LoadLocalPlain if plain && self.completion != Completion::Number => {
-                crate::staged::Operation::decode(instruction, |_| None).map(|operation| {
-                    self.step(state, frame::Edges::Value, operation);
-                    true
-                })
-            }
-            Class::StoreLocalPlain if plain && self.completion != Completion::Number => {
-                crate::staged::Operation::decode(instruction, |_| None).map(|operation| {
-                    self.step(state, frame::Edges::Value, operation);
-                    true
-                })
-            }
+            Class::LoadLocalPlain | Class::StoreLocalPlain if plain && self.completion != Completion::Number =>
+                self.operation_step(state, pc32, instruction, false),
+            _ if plain && instruction.op().js_denotation() == JsDenotation::Move =>
+                self.operation_step(state, pc32, instruction, false),
             Class::Return if plain && self.completion == Completion::Number => {
                 self.return_number(state, instruction.register_a(), pc32);
                 Some(false)
             }
-            Class::LoadThis if plain && !instruction.writes_current_this() => {
-                let exit = self.guard_exit(state, pc32);
-                let operation = crate::staged::Operation::decode(instruction, |_| None)
-                    .expect("LoadThis decodes");
-                self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
-                Some(true)
-            }
+            Class::LoadThis if plain && !instruction.writes_current_this() => self.operation_step(state, pc32, instruction, true),
             Class::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
                 let exit = self.guard_exit(state, pc as u32);
                 let value = self.load_capture(state, pc, instruction, exit, None, RootedRead::InBody);
@@ -2919,6 +2887,15 @@ impl Lowering<'_, '_> {
         let word = self.ins().iconst(types::I64, LaneExit::Callee.word() as i64);
         let stop = self.stop;
         self.ins().jump(stop, &[word.into()]);
+    }
+
+    /// `instruction` as its staged operation, stepped: guarded at `pc` where it can leave (`guarded`).
+    /// None where the instruction has no staged operation.
+    fn operation_step(&mut self, state: &mut State, pc: u32, instruction: WideInstruction, guarded: bool) -> Option<bool> {
+        let operation = crate::staged::Operation::decode(instruction, |_| None)?;
+        let edges = if guarded { frame::Edges::ValueGuarded { miss: self.guard_exit(state, pc) } } else { frame::Edges::Value };
+        self.step(state, edges, operation);
+        Some(true)
     }
 
     /// Whether `instruction` is a plain value step the lane's helper makes (`Lowering::value_step`).
