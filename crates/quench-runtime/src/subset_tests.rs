@@ -1694,34 +1694,3 @@ fn unicode_regexp_last_index_inside_a_surrogate_pair_starts_at_its_lead() {
     let expected = expected.trim().lines().map(str::trim).collect::<Vec<_>>();
     assert_eq!(output(source), expected);
 }
-
-#[test]
-fn long_left_nested_chains_compile_and_run() {
-    // Chains of thousands of terms (as generated code has) stay within the transition budget
-    // and walk once, not once per level.
-    let source = r#"
-let sum = "1", text = '"x"', mixed = '"p"';
-for (let i = 0; i < 3000; i++) { sum += "+" + i; text += '+"y"'; mixed += "+v"; }
-const v = 1;
-print([eval(sum), eval(text).length, eval(mixed).length].join());
-"#;
-    assert_eq!(output(source), ["4498501,3001,3001"]);
-}
-
-#[test]
-fn class_clones_environment_only_inside_loops() {
-    // A class evaluated once per activation shares the scope; one in a loop gets a copy per
-    // evaluation so its methods keep that iteration's bindings.
-    let source = r#"
-class Once { static v = 1; m() { return Once.v; } }
-const kept = [];
-for (let i = 0; i < 3; i++) { class K { static v = i; get() { return K; } } kept.push(K); }
-print([new Once().m(), kept.map((k) => k.v + ":" + (new k().get() === k)).join()].join("|"));
-"#;
-    let program = Engine::specialize(source, "class-clone.js").unwrap();
-    program.compile_released();
-    let clones = program.functions[0].instructions().filter(|instruction| instruction.op() == crate::bytecode::Op::CloneEnv).count();
-    assert!(clones >= 1);
-    program.validate().unwrap();
-    assert_eq!(output(source), ["1|0:true,1:true,2:true"]);
-}

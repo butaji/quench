@@ -126,6 +126,8 @@ mod host_stack_tests;
 #[cfg(test)]
 mod test_host;
 #[cfg(test)]
+mod subset_scope_tests;
+#[cfg(test)]
 mod subset_tests;
 #[cfg(test)]
 mod string_parts_tests;

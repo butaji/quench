@@ -8,6 +8,7 @@ use rustc_hash::FxHashMap;
 use std::io::Write as _;
 
 pub(in crate::vm) mod lane_publication;
+mod eval_cache;
 mod snapshot;
 mod wasm_tier;
 pub(super) use wasm_tier::WasmTierState;
@@ -1015,24 +1016,6 @@ impl ProgramStore {
         })))
     }
 
-    pub(super) fn cached_global_eval(&self, source: &super::eval::eval_source::EvalSource) -> Option<ProgramId> {
-        let program = *self.global_eval_programs.get(source)?;
-        self.entry(program).map(|_| program)
-    }
-
-    pub(super) fn cache_global_eval(&mut self, source: super::eval::eval_source::EvalSource, program: ProgramId) {
-        self.global_eval_programs.insert(source, program);
-    }
-
-    pub(super) fn cached_direct_eval(&self, key: &super::eval::eval_source::DirectEvalKey) -> Option<ProgramId> {
-        let program = *self.direct_eval_programs.get(key)?;
-        self.entry(program).map(|_| program)
-    }
-
-    pub(super) fn cache_direct_eval(&mut self, key: super::eval::eval_source::DirectEvalKey, program: ProgramId) {
-        self.direct_eval_programs.insert(key, program);
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.programs.len()
     }
@@ -1216,13 +1199,7 @@ impl ProgramStore {
             if drop_work_map {
                 self.js_general_dispatch_work = None;
             }
-            let programs = &self.programs;
-            self.global_eval_programs
-                .retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
-            self.direct_eval_programs
-                .retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
-            self.owned_scripts
-                .retain(|source, _| programs.get(source.index()).is_some_and(Option::is_some));
+            self.retain_live_eval_programs();
         }
         reclaimed
     }

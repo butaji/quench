@@ -23,6 +23,13 @@ pub(super) fn keep_shared_text(residual: &mut ResidualProgram, shared: Option<st
     }
 }
 
+/// Whether the compiled eval may serve a later eval of the same text: sloppy and without
+/// tagged templates, whose site identities are per evaluation.
+pub(super) fn is_cacheable(residual: &ResidualProgram, source: &str) -> bool {
+    residual.functions.first().is_some_and(|root| !root.strict)
+        && residual.replay.as_ref().map_or_else(|| !crate::Engine::eval_has_tagged_template(source), |replay| replay.template_sites == 0)
+}
+
 /// What an eval's compilation reads of its caller, and the direct-eval cache key it makes.
 pub(super) struct CallerFacts {
     pub(super) context: crate::compile::EvalContext,
@@ -31,10 +38,18 @@ pub(super) struct CallerFacts {
     pub(super) key: Option<DirectEvalKey>,
 }
 
+/// The identity a direct eval's program keeps of its caller: the eval origin its stack frames
+/// print and the script or module its `import()` resolves from.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(in crate::vm) struct EvalCaller {
+    pub(in crate::vm) origin: JsString,
+    pub(in crate::vm) script_or_module: std::rc::Rc<str>,
+}
+
 impl<H: Host> Vm<H> {
     /// The caller facts of the eval of `source`; a direct eval of a cached text also gets its
     /// cache key.
-    pub(super) fn eval_caller_facts(&mut self, p: &ResidualProgram, source: &str, strict: bool, text: Option<&EvalSource>) -> CallerFacts {
+    pub(super) fn eval_caller_facts(&mut self, p: &ResidualProgram, source: &str, strict: bool, text: Option<&EvalSource>) -> Result<CallerFacts, JsError> {
         let context = self.direct_eval_context(p).unwrap_or_default();
         let private_names = if self.direct_eval {
             self.direct_eval_private_names(p).map_or_else(Vec::new, |(_, names)| names)
@@ -48,14 +63,32 @@ impl<H: Host> Vm<H> {
         } else {
             Vec::new()
         };
-        let key = text.filter(|_| self.direct_eval).map(|source| DirectEvalKey {
-            source: source.clone(),
-            strict,
-            context,
-            private_names: private_names.clone(),
-            annex_b_forbidden_names: annex_b_forbidden_names.clone(),
-        });
-        CallerFacts { context, private_names, annex_b_forbidden_names, key }
+        let key = match text.filter(|_| self.direct_eval) {
+            Some(source) => Some(DirectEvalKey {
+                source: source.clone(),
+                strict,
+                context,
+                private_names: private_names.clone(),
+                annex_b_forbidden_names: annex_b_forbidden_names.clone(),
+                caller: self.eval_caller(p)?,
+            }),
+            None => None,
+        };
+        Ok(CallerFacts { context, private_names, annex_b_forbidden_names, key })
+    }
+
+    /// The host's kept compilation of the script `source`, which compiles from its text alone:
+    /// it is no direct eval, so it has no caller context, private names or Annex B restrictions.
+    pub(super) fn kept_host_script(&mut self, source_name: &str, mode: &str, source: &str) -> Option<ResidualProgram> {
+        let bytes = self.host.kept_compiled_program(source_name, &[mode, source])?;
+        let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
+        let specialized = self.specialized;
+        self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
+    }
+
+    /// The caller identity the eval's program is installed with.
+    pub(super) fn eval_caller(&mut self, p: &ResidualProgram) -> Result<EvalCaller, JsError> {
+        Ok(EvalCaller { origin: self.capture_eval_origin(p)?, script_or_module: self.active_script_or_module(p) })
     }
 
     /// The names a direct eval's Annex B function declarations may not bind: the caller's
@@ -114,4 +147,5 @@ pub(crate) struct DirectEvalKey {
     pub(crate) context: crate::compile::EvalContext,
     pub(crate) private_names: Vec<(String, String)>,
     pub(crate) annex_b_forbidden_names: Vec<String>,
+    pub(crate) caller: EvalCaller,
 }

@@ -13,25 +13,6 @@ impl FunctionCompiler<'_, '_> {
         self.lower_class(class, true, None);
     }
 
-    /// Only a class evaluated again in one activation (inside a loop) needs its own copy of
-    /// the environment; copying it costs every slot of the scope per class.
-    fn open_class_clone(&mut self) -> Option<usize> {
-        (self.loop_depth > 0).then(|| {
-            let scopes = self.active_lexical_slots();
-            let plan = self.push_environment_clone(Vec::new(), scopes);
-            self.clone_plans.class.insert(plan);
-            self.emit(Op::CloneEnv, 0, 0, 0, plan as u32);
-            plan
-        })
-    }
-
-    /// The class's own slots, allocated since `first_slot`, are what its clone makes fresh.
-    fn fill_class_clone(&mut self, plan: Option<usize>, first_slot: usize) {
-        if let Some(plan) = plan {
-            self.clone_plans.slots[plan] = (first_slot..self.locals.len()).map(|slot| slot as u16).collect();
-        }
-    }
-
     fn lower_class(
         &mut self,
         class: &Class<'_>,

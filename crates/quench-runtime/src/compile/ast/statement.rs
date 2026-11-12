@@ -778,13 +778,6 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
-    /// Runs `compile` for a loop statement: code inside may execute again in one activation.
-    fn looping(&mut self, compile: impl FnOnce(&mut Self)) {
-        self.loop_depth += 1;
-        compile(self);
-        self.loop_depth -= 1;
-    }
-
     fn labeled_statement(&mut self, item: &LabeledStatement<'_>) {
         let label = self.owner.atom(item.label.name.as_str());
         match &item.body {

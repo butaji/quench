@@ -5,6 +5,8 @@ mod call;
 mod destructure;
 mod disposal;
 mod capture;
+mod completion;
+pub(in crate::compile) use completion::StatementCompletion;
 mod environment_clones;
 mod expression;
 mod iteration;
@@ -21,24 +23,6 @@ enum ControlKind {
     Loop,
     Switch,
     Label,
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum StatementCompletion {
-    Ignored,
-    Track(Register),
-    Suppress(Register),
-    Finally { current: Register, target: Register },
-}
-
-impl StatementCompletion {
-    pub(super) fn register(self) -> Option<Register> {
-        match self {
-            Self::Ignored => None,
-            Self::Track(register) | Self::Suppress(register) => Some(register),
-            Self::Finally { current, .. } => Some(current),
-        }
-    }
 }
 
 struct ControlTarget {
@@ -129,8 +113,6 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) binding_sites: Vec<crate::bytecode::BindingSite>,
     pub(super) clone_plans: environment_clones::ClonePlans,
     controls: Vec<ControlTarget>,
-    /// How many loop statements (heads and bodies) enclose the code being compiled.
-    pub(super) loop_depth: u32,
     /// The start of the last left-nested `+` chain found not to join dynamic parts to a leading
     /// string literal; the chains below it, which start at the same place, miss too.
     pub(super) chain_miss: Option<u32>,
@@ -234,10 +216,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             clobbered_locals,
             last_operand: false,
             temporary_floor: local_register_count,
-            shared_undefined: SharedUndefined {
-                register: shared_undefined,
-                used: false,
-            },
+            shared_undefined: SharedUndefined { register: shared_undefined, used: false },
             function_scope,
             annex_b_collisions,
             scopes,
@@ -247,7 +226,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             binding_sites: vec![],
             clone_plans: Default::default(),
             controls: vec![],
-            loop_depth: 0,
             chain_miss: None,
             iterator_closures: vec![],
             iterator_close_ranges: vec![],

@@ -14,12 +14,41 @@ pub(in crate::compile) struct ClonePlans {
     scope_slots: Vec<Box<[u16]>>,
     /// Plans that open a class evaluation; their slots are never reset.
     pub(in crate::compile) class: FxHashSet<usize>,
+    /// How many loop statements (heads and bodies) enclose the code being compiled: code
+    /// inside may execute again in one activation.
+    loop_depth: u32,
     /// The plans `clone_environment_slots` made, by the hash of their slots and scopes, so a
     /// block entered again with the same scopes reuses its plan without comparing every plan.
     lookup: hashbrown::HashTable<u32>,
 }
 
 impl FunctionCompiler<'_, '_> {
+    /// Runs `compile` for a loop statement.
+    pub(in crate::compile) fn looping(&mut self, compile: impl FnOnce(&mut Self)) {
+        self.clone_plans.loop_depth += 1;
+        compile(self);
+        self.clone_plans.loop_depth -= 1;
+    }
+
+    /// Only a class evaluated again in one activation (inside a loop) needs its own copy of
+    /// the environment; copying it costs every slot of the scope per class.
+    pub(in crate::compile) fn open_class_clone(&mut self) -> Option<usize> {
+        (self.clone_plans.loop_depth > 0).then(|| {
+            let scopes = self.active_lexical_slots();
+            let plan = self.push_environment_clone(Vec::new(), scopes);
+            self.clone_plans.class.insert(plan);
+            self.emit(Op::CloneEnv, 0, 0, 0, plan as u32);
+            plan
+        })
+    }
+
+    /// The class's own slots, allocated since `first_slot`, are what its clone makes fresh.
+    pub(in crate::compile) fn fill_class_clone(&mut self, plan: Option<usize>, first_slot: usize) {
+        if let Some(plan) = plan {
+            self.clone_plans.slots[plan] = (first_slot..self.locals.len()).map(|slot| slot as u16).collect();
+        }
+    }
+
     pub(in crate::compile) fn clone_environment_slots(&mut self, mut slots: Vec<u16>) {
         slots.sort_unstable();
         slots.dedup();
