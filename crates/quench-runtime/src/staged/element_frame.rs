@@ -2,7 +2,8 @@
 //! proofs of an array (its kept view, its record table, its key's int32) and the VM's own steps
 //! behind the dense arm. Every default declines, leaving the row to the host path.
 
-use super::elements::ElementView;
+use super::element_rows::ElementView;
+use super::elements::DenseView;
 use super::{value, PropertyFrame, Stage};
 use crate::bytecode::Operand;
 
@@ -32,14 +33,14 @@ pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {
         Some(stage.and_imm(bits, u64::from(u32::MAX)))
     }
 
-    /// The view of the array `base` an earlier access proved, which no storage change has
-    /// retired; a view proved writable answers a read too.
+    /// The view of the array `base` an earlier access proved, or its loop's entering edge did for
+    /// a typed array, which no storage change has retired; a view proved writable answers a read too.
     #[inline(always)]
     fn kept_view(&mut self, _stage: &mut S, _base: S::Word, _writable: bool) -> Option<ElementView<S::Word>> { None }
 
-    /// Records the view an element access proved of the array `base`.
+    /// Records the dense view an element access proved of the array `base`.
     #[inline(always)]
-    fn keep_view(&mut self, _stage: &mut S, _base: S::Word, _writable: bool, _view: ElementView<S::Word>) {}
+    fn keep_view(&mut self, _stage: &mut S, _base: S::Word, _writable: bool, _view: DenseView<S::Word>) {}
 
     /// Continues where a store of `value` into the array `base` needs no barrier log, for a
     /// value whose type the frame did not prove immediate; a frame with no gate leaves at `miss`.

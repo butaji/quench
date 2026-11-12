@@ -24,7 +24,7 @@ pub(crate) fn dense_element<S: Stage>(stage: &mut S, values: S::Word, length: S:
 /// A dense array's backing as an access reads it, once proved: its first value and its length,
 /// in one width.
 #[derive(Clone, Copy)]
-pub(crate) struct ElementView<W> {
+pub(crate) struct DenseView<W> {
     pub(crate) values: W,
     pub(crate) length: W,
 }
@@ -33,15 +33,15 @@ pub(crate) struct ElementView<W> {
 /// `writable`: `None` (leaving at `miss`) for any other value.
 #[inline(always)]
 pub(crate) fn prove_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Word, writable: bool,
-    miss: S::Miss) -> Option<ElementView<S::Word>> {
+    miss: S::Miss) -> Option<DenseView<S::Word>> {
     let backing = array_backing(stage, records, base, miss)?;
     if writable { writable_backing(stage, backing, miss)?; }
-    Some(ElementView { values: backing.values, length: backing.length })
+    Some(DenseView { values: backing.values, length: backing.length })
 }
 
 /// The present element `index` of `view`: `None` (leaving at `miss`) past the backing or at a hole.
 #[inline(always)]
-pub(crate) fn read_element<S: Stage>(stage: &mut S, view: ElementView<S::Word>, index: S::Word,
+pub(crate) fn read_element<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     dense_element(stage, view.values, view.length, index, miss).map(|(_, value)| value)
 }
@@ -50,7 +50,7 @@ pub(crate) fn read_element<S: Stage>(stage: &mut S, view: ElementView<S::Word>, 
 /// no barrier log; `None` (leaving at `miss`) past the backing or at a hole, where the store
 /// would add an element.
 #[inline(always)]
-pub(crate) fn replace_present<S: Stage>(stage: &mut S, view: ElementView<S::Word>, index: S::Word, value: S::Word,
+pub(crate) fn replace_present<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, value: S::Word,
     miss: S::Miss) -> Option<()> {
     let (address, old) = dense_element(stage, view.values, view.length, index, miss)?;
     replace_element(stage, view.values, address, old, value);

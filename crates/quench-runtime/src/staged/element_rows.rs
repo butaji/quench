@@ -1,8 +1,10 @@
 //! Element access as staged rows: `base[key]` (`GetIndex`) and `base[key] = value`
-//! (`SetIndex`) over a dense array's backing. The array is proved once per access (`proved_view`:
+//! (`SetIndex`) over a dense array's backing. The array is proved once per access (`dense_view`:
 //! a direct array record, its backing and, for a store, its sole ownership; a frame that kept
 //! the proof answers it), the key's int32 is read through the frame, and the element is the
-//! shared dense read or replacement (`elements`). What the dense arm cannot decide (a hole, an
+//! shared dense read or replacement (`elements`). A frame that kept the view of a typed array
+//! (`ElementView::Typed`, proved once at its loop's entering edge) answers the same rows with the
+//! typed element (`typed_elements`): a Number read, a Number store converted to the kind. What the dense arm cannot decide (a hole, an
 //! index past the backing, a store that adds an element or needs the barrier's log, a key that
 //! is no int32) is the frame's host path (`PropertyFrame::index_get_host`, `index_set_host`):
 //! the VM's own element step, which the interpreter makes itself.
@@ -10,11 +12,20 @@
 //! The interpreter's reads and replacements of a record array are the same rows without a
 //! frame (`concrete_record_element`, `concrete_record_replace`).
 
-use super::elements::{prove_view, read_element, replace_present, ElementView};
+use super::elements::{prove_view, read_element, replace_present, DenseView};
 use super::property::Owner;
+use super::typed_elements::{typed_read, typed_write, TypedView};
 use super::{Concrete, ElementFrame, Frame, NumericFrame, NumericStage, Operation, PropertyFrame, Stage, Step};
 use crate::bytecode::{Op, Operand, Register, WideInstruction};
 use crate::typed_ir::Type;
+
+/// An array's elements as an access reads them, once proved: a dense array's backing or a
+/// typed array's elements, whose kind the proof carries.
+#[derive(Clone, Copy)]
+pub(crate) enum ElementView<W> {
+    Dense(DenseView<W>),
+    Typed(TypedView<W>),
+}
 
 impl<W, P> Operation<W, P> {
     /// The element rows of `decode`: `GetIndex` of a register base and a register or immediate
@@ -31,45 +42,76 @@ impl<W, P> Operation<W, P> {
     }
 }
 
-/// The view of `base` the frame kept of an earlier access, else the one this access proves and
-/// keeps.
+/// The dense view of `base` this access proves and keeps, from the array records.
 #[inline(always)]
-fn proved_view<S: Stage, F: ElementFrame<S>>(stage: &mut S, frame: &mut F, base: S::Word, writable: bool,
-    miss: S::Miss) -> Option<ElementView<S::Word>> {
-    if let Some(view) = frame.kept_view(stage, base, writable) { return Some(view); }
+fn prove_and_keep<S: Stage, F: ElementFrame<S>>(stage: &mut S, frame: &mut F, base: S::Word, writable: bool,
+    miss: S::Miss) -> Option<DenseView<S::Word>> {
     let records = frame.array_records(stage)?;
     let view = prove_view(stage, records, base, writable, miss)?;
     frame.keep_view(stage, base, writable, view);
     Some(view)
 }
 
-/// `base[key]`: the present dense element, else the VM's read. The array and the key's int32
-/// are proved first, and leave at the frame's miss edge where they do not hold, so the host
-/// read only ever follows a hole or an index past the backing.
+/// The dense view of `base` the frame kept of an earlier access, else the one this access proves
+/// and keeps.
+#[inline(always)]
+fn dense_view<S: Stage, F: ElementFrame<S>>(stage: &mut S, frame: &mut F, base: S::Word, writable: bool,
+    miss: S::Miss) -> Option<DenseView<S::Word>> {
+    if let Some(ElementView::Dense(view)) = frame.kept_view(stage, base, writable) { return Some(view); }
+    prove_and_keep(stage, frame, base, writable, miss)
+}
+
+/// `base[key]`: the present dense element, else the VM's read; a typed array's element where the
+/// frame kept the view of one. The array and the key's int32 are proved first, and leave at the
+/// frame's miss edge where they do not hold, so the host read only ever follows a hole or an
+/// index past the backing.
 #[inline(always)]
 fn read<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, base: Register, key: Operand) -> Option<S::Word> {
     let miss = frame.miss();
     let object = frame.tagged(stage, base);
-    let view = proved_view(stage, frame, object, false, miss)?;
+    let view = match frame.kept_view(stage, object, false) {
+        Some(view) => view,
+        None => ElementView::Dense(prove_and_keep(stage, frame, object, false, miss)?),
+    };
     let index = frame.index_key(stage, key, miss)?;
     let index = stage.uextend32(index);
-    frame.element_probed(stage, miss,
-        |stage, _, absent| read_element(stage, view, index, absent),
-        |stage, frame, miss| {
-            let key = frame.key_word(stage, key)?;
-            frame.index_get_host(stage, object, key, miss)
-        })
+    match view {
+        ElementView::Typed(view) => typed_read(stage, view, index, miss),
+        ElementView::Dense(view) => frame.element_probed(stage, miss,
+            |stage, _, absent| read_element(stage, view, index, absent),
+            |stage, frame, miss| {
+                let key = frame.key_word(stage, key)?;
+                frame.index_get_host(stage, object, key, miss)
+            }),
+    }
+}
+
+/// `base[key] = value` for a typed array whose view the frame kept: the Number `value` converted
+/// to the element's kind. Any other value, key or index leaves at the frame's miss edge.
+#[inline(always)]
+fn write_typed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, view: TypedView<S::Word>,
+    (value, key): (Register, Register)) -> Option<S::Word> {
+    let miss = frame.miss();
+    let number = frame.number_operand(stage, Operand::register(value), miss);
+    let index = frame.index_key(stage, Operand::register(key), miss)?;
+    let index = stage.uextend32(index);
+    typed_write(stage, view, index, number, miss)?;
+    Some(number)
 }
 
 /// `base[key] = value`: the present dense element replaced in place where the array owns its
 /// backing alone and the value needs no barrier log (an immediate type, or the frame's gate),
-/// else the VM's store.
+/// else the VM's store; a typed array's element where the frame kept the view of one.
 #[inline(always)]
 fn write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (value, base, key): (Register, Register, Register))
     -> Option<S::Word> {
     let miss = frame.miss();
+    let object = frame.tagged(stage, base);
+    if let Some(ElementView::Typed(view)) = frame.kept_view(stage, object, true) {
+        return write_typed(stage, frame, view, (value, key));
+    }
     let fact = frame.value_fact(value);
-    let (word, object) = (frame.tagged(stage, value), frame.tagged(stage, base));
+    let word = frame.tagged(stage, value);
     let key = Operand::register(key);
     // Every operand's tagged word is made before the paths split, so the join sees only words
     // both paths dominate.
@@ -77,7 +119,7 @@ fn write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (val
     frame.stored(stage, Owner::Register(base), miss,
         |stage, frame, general| {
             if !fact.is_subtype(Type::IMMEDIATE) { frame.array_store_gate(stage, object, word, general)?; }
-            let view = proved_view(stage, frame, object, true, general)?;
+            let view = dense_view(stage, frame, object, true, general)?;
             let index = frame.index_key(stage, key, general)?;
             let index = stage.uextend32(index);
             replace_present(stage, view, index, word, general)

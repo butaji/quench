@@ -916,7 +916,7 @@ pub(super) struct DenseArrayView {
 #[derive(Clone, Copy)]
 pub(in crate::vm::compiled) enum EmitProof {
     Index { view: DenseArrayView, absent: ir::Block },
-    TypedIndex { values: ir::Value, length: ir::Value, kind: ir::Value, absent: ir::Block }, Allocation { miss: ir::Block },
+    Allocation { miss: ir::Block },
     Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block> }, FieldStoreMiss { miss: ir::Block },
 }
 
@@ -6940,11 +6940,13 @@ pub(super) struct LaneTypedArrayView {
 }
 
 /// A lane loop's typed array view (`Vm::lane_typed_array_elements`), written to `out`; zero
-/// where the loop cannot address the elements in place, which leaves at the loop's header.
+/// where the loop cannot address the elements in place, which leaves at the loop's header. The
+/// count is below 2^31 (`staged::typed_elements::TypedView`): a longer array leaves too.
 unsafe extern "C" fn lane_typed_array_view<H: Host>(vm: u64, _residual: u64, object: u64, writable: u64, out: u64) -> u64 {
     // SAFETY: as `lane_field_get`; the view reads cells and allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
-    let Some((elements, length, kind)) = vm.lane_typed_array_elements(Value::from_bits(object), writable != 0) else {
+    let Some((elements, length, kind)) = vm.lane_typed_array_elements(Value::from_bits(object), writable != 0)
+        .filter(|&(_, length, _)| i32::try_from(length).is_ok()) else {
         return 0;
     };
     // SAFETY: `out` is the caller's stack slot of one view.

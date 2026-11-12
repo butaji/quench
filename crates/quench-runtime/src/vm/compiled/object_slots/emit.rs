@@ -4,6 +4,12 @@ use super::*;
 use crate::staged::{Domain, NumericStage, Stage, Table};
 use crate::vm::operations::{NumberArithmetic, NumberRelation};
 
+/// One Cranelift instruction at the stage's builder: `ins!(self, iadd(a, b))` is
+/// `self.builder.ins().iadd(a, b)`.
+macro_rules! ins {
+    ($stage:expr, $instruction:ident($($argument:expr),* $(,)?)) => { $stage.builder.ins().$instruction($($argument),*) };
+}
+
 /// The specializer's stage (`crate::staged`): each operation emits its residual as Cranelift
 /// IR into `builder`, where a guard's failure jumps to its miss block.
 pub(in crate::vm::compiled) struct Emit<'a, 'b> {
@@ -49,63 +55,63 @@ impl Stage for Emit<'_, '_> {
     }
     fn shape_in_site(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value { self.shape_in(shape, shapes) }
 
-    fn constant(&mut self, bits: u64) -> ir::Value { self.builder.ins().iconst(types::I64, bits as i64) }
+    fn constant(&mut self, bits: u64) -> ir::Value { ins!(self, iconst(types::I64, bits as i64)) }
     fn load_u32(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().uload32(MemFlagsData::trusted(), base, offset)
+        ins!(self, uload32(MemFlagsData::trusted(), base, offset))
     }
     fn load_u64(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().load(types::I64, MemFlagsData::trusted(), base, offset)
+        ins!(self, load(types::I64, MemFlagsData::trusted(), base, offset))
     }
     fn load_table(&mut self, address: ir::Value) -> ir::Value {
-        self.builder.ins().load(types::I64, MemFlagsData::trusted().with_readonly().with_can_move(), address, 0)
+        ins!(self, load(types::I64, MemFlagsData::trusted().with_readonly().with_can_move(), address, 0))
     }
-    fn add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().iadd(a, b) }
-    fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { ins!(self, iadd(a, b)) }
+    fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { ins!(self, bor(a, b)) }
     fn add_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().iadd(a, v)
+        ins!(self, iadd(a, v))
     }
     fn mul_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().imul(a, v)
+        ins!(self, imul(a, v))
     }
     fn and_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().band(a, v)
+        ins!(self, band(a, v))
     }
     fn or_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().bor(a, v)
+        ins!(self, bor(a, v))
     }
     fn shr_imm(&mut self, a: ir::Value, shift: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(shift.into());
-        self.builder.ins().ushr(a, v)
+        ins!(self, ushr(a, v))
     }
     fn sar32_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value {
-        let low = self.builder.ins().ireduce(types::I32, a);
-        let shifted = self.builder.ins().sshr_imm_u(low, i64::from(shift));
-        self.builder.ins().uextend(types::I64, shifted)
+        let low = ins!(self, ireduce(types::I32, a));
+        let shifted = ins!(self, sshr_imm_u(low, i64::from(shift)));
+        ins!(self, uextend(types::I64, shifted))
     }
     /// Compared at `a`'s width: a record's 32-bit shape word against a shape id is a 32-bit test.
     fn eq_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let EmitImm::Const(bits) = imm.into();
         let width = self.builder.func.dfg.value_type(a);
-        let v = self.builder.ins().iconst(width, bits as i64);
-        self.builder.ins().icmp(IntCC::Equal, a, v)
+        let v = ins!(self, iconst(width, bits as i64));
+        ins!(self, icmp(IntCC::Equal, a, v))
     }
     fn ne_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().icmp(IntCC::NotEqual, a, v)
+        ins!(self, icmp(IntCC::NotEqual, a, v))
     }
-    fn sub(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().isub(a, b) }
+    fn sub(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { ins!(self, isub(a, b)) }
     fn select(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
-        self.builder.ins().select(cond, then, otherwise)
+        ins!(self, select(cond, then, otherwise))
     }
     fn store_u32(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
-        self.builder.ins().istore32(MemFlagsData::trusted(), value, base, offset);
+        ins!(self, istore32(MemFlagsData::trusted(), value, base, offset));
     }
     fn store_u64(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
-        self.builder.ins().store(MemFlagsData::trusted(), value, base, offset);
+        ins!(self, store(MemFlagsData::trusted(), value, base, offset));
     }
     /// Whether the store needs no barrier log: the shared tag and mark test. A value the frame
     /// proved immediate never asks (`staged::store`); a stage with no payload answers no, and
@@ -115,11 +121,11 @@ impl Stage for Emit<'_, '_> {
         let (logged, join) = (self.builder.create_block(), self.builder.create_block());
         let open = self.builder.append_block_param(join, types::I8);
         super::super::emit_unlogged_property_store_guard(self.builder, payload, record_id, value, logged);
-        let yes = self.builder.ins().iconst(types::I8, 1);
-        self.builder.ins().jump(join, &[ir::BlockArg::Value(yes)]);
+        let yes = ins!(self, iconst(types::I8, 1));
+        ins!(self, jump(join, &[ir::BlockArg::Value(yes)]));
         self.builder.switch_to_block(logged);
-        let no = self.builder.ins().iconst(types::I8, 0);
-        self.builder.ins().jump(join, &[ir::BlockArg::Value(no)]);
+        let no = ins!(self, iconst(types::I8, 0));
+        ins!(self, jump(join, &[ir::BlockArg::Value(no)]));
         self.builder.switch_to_block(join);
         open
     }
@@ -135,86 +141,88 @@ impl Stage for Emit<'_, '_> {
         self.ne_imm(zero, 0u32)
     }
     fn ult(&mut self, a: ir::Value, b: ir::Value) -> ir::Value {
-        self.builder.ins().icmp(IntCC::UnsignedLessThan, a, b)
+        ins!(self, icmp(IntCC::UnsignedLessThan, a, b))
     }
     fn uextend32(&mut self, a: ir::Value) -> ir::Value {
-        if self.builder.func.dfg.value_type(a) == types::I32 { self.builder.ins().uextend(types::I64, a) } else { a }
+        if self.builder.func.dfg.value_type(a) == types::I32 { ins!(self, uextend(types::I64, a)) } else { a }
     }
     fn ugt_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().icmp(IntCC::UnsignedGreaterThan, a, v)
+        ins!(self, icmp(IntCC::UnsignedGreaterThan, a, v))
     }
     fn load_u8(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().uload8(types::I32, MemFlagsData::new(), base, offset)
+        ins!(self, uload8(types::I32, MemFlagsData::new(), base, offset))
     }
     fn load_i8(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().sload8(types::I32, MemFlagsData::new(), base, offset)
+        ins!(self, sload8(types::I32, MemFlagsData::new(), base, offset))
     }
     fn load_u16(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().uload16(types::I32, MemFlagsData::new(), base, offset)
+        ins!(self, uload16(types::I32, MemFlagsData::new(), base, offset))
     }
     fn load_i16(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().sload16(types::I32, MemFlagsData::new(), base, offset)
+        ins!(self, sload16(types::I32, MemFlagsData::new(), base, offset))
     }
     fn load_i32(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().load(types::I32, MemFlagsData::new(), base, offset)
+        ins!(self, load(types::I32, MemFlagsData::new(), base, offset))
     }
     fn load_f32(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().load(types::F32, MemFlagsData::new(), base, offset)
+        ins!(self, load(types::F32, MemFlagsData::new(), base, offset))
     }
     fn load_f64(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().load(types::F64, MemFlagsData::new(), base, offset)
+        ins!(self, load(types::F64, MemFlagsData::new(), base, offset))
     }
     fn store_u8(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
-        self.builder.ins().istore8(MemFlagsData::new(), value, base, offset);
+        ins!(self, istore8(MemFlagsData::new(), value, base, offset));
     }
     fn store_u16(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
-        self.builder.ins().istore16(MemFlagsData::new(), value, base, offset);
+        ins!(self, istore16(MemFlagsData::new(), value, base, offset));
     }
     fn store_f32(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
-        self.builder.ins().store(MemFlagsData::new(), value, base, offset);
+        ins!(self, store(MemFlagsData::new(), value, base, offset));
     }
     fn store_f64(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
-        self.builder.ins().store(MemFlagsData::new(), value, base, offset);
+        ins!(self, store(MemFlagsData::new(), value, base, offset));
     }
-    fn f32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fpromote(types::F64, a) }
-    fn f64_to_f32(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fdemote(types::F32, a) }
+    fn f32_to_f64(&mut self, a: ir::Value) -> ir::Value { ins!(self, fpromote(types::F64, a)) }
+    fn f64_to_f32(&mut self, a: ir::Value) -> ir::Value { ins!(self, fdemote(types::F32, a)) }
     /// NaN is zero, the rest clamps and rounds half to even (`nearest`) before the saturating conversion.
     fn clamp_u8(&mut self, a: ir::Value) -> ir::Value {
-        let (zero, max) = (self.builder.ins().f64const(f64::from(u8::MIN)), self.builder.ins().f64const(f64::from(u8::MAX)));
-        let unordered = self.builder.ins().fcmp(FloatCC::Unordered, a, a);
-        let above = self.builder.ins().fmax(a, zero);
-        let clamped = self.builder.ins().fmin(above, max);
-        let rounded = self.builder.ins().nearest(clamped);
-        let number = self.builder.ins().select(unordered, zero, rounded);
-        self.builder.ins().fcvt_to_uint_sat(types::I32, number)
+        let (zero, max) = (ins!(self, f64const(f64::from(u8::MIN))), ins!(self, f64const(f64::from(u8::MAX))));
+        let unordered = ins!(self, fcmp(FloatCC::Unordered, a, a));
+        let above = ins!(self, fmax(a, zero));
+        let clamped = ins!(self, fmin(above, max));
+        let rounded = ins!(self, nearest(clamped));
+        let number = ins!(self, select(unordered, zero, rounded));
+        ins!(self, fcvt_to_uint_sat(types::I32, number))
     }
-    fn not(&mut self, cond: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, cond, 0) }
-    fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn not(&mut self, cond: ir::Value) -> ir::Value { ins!(self, icmp_imm_u(IntCC::Equal, cond, 0)) }
+    fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { ins!(self, bor(a, b)) }
     fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
-        self.builder.ins().select(cond, then, otherwise)
+        ins!(self, select(cond, then, otherwise))
     }
     fn shape_in(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value {
-        let word = if self.builder.func.dfg.value_type(shape) == types::I32 { shape } else { self.builder.ins().ireduce(types::I32, shape) };
+        let word = if self.builder.func.dfg.value_type(shape) == types::I32 { shape } else { ins!(self, ireduce(types::I32, shape)) };
         super::shape_in_set(self.builder, word, shapes)
     }
     fn number_truthy(&mut self, bits: ir::Value) -> ir::Value {
-        let number = self.builder.ins().bitcast(types::F64, MemFlagsData::new(), bits);
+        let number = ins!(self, bitcast(types::F64, MemFlagsData::new(), bits));
         super::super::emit_number_truthiness(self.builder, number)
     }
     fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
         otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
         let (then_block, else_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
-        let value = self.builder.append_block_param(join, types::I64);
-        self.builder.ins().brif(cond, then_block, &[], else_block, &[]);
+        ins!(self, brif(cond, then_block, &[], else_block, &[]));
         self.builder.switch_to_block(then_block);
         self.builder.seal_block(then_block);
         let taken = then(self);
-        self.builder.ins().jump(join, &[ir::BlockArg::Value(taken)]);
+        // The arms' words share one type: an address or a tagged word, or a Number's `f64`.
+        let kind = self.builder.func.dfg.value_type(taken);
+        let value = self.builder.append_block_param(join, kind);
+        ins!(self, jump(join, &[ir::BlockArg::Value(taken)]));
         self.builder.switch_to_block(else_block);
         self.builder.seal_block(else_block);
         let other = otherwise(self);
-        self.builder.ins().jump(join, &[ir::BlockArg::Value(other)]);
+        ins!(self, jump(join, &[ir::BlockArg::Value(other)]));
         self.builder.switch_to_block(join);
         self.builder.seal_block(join);
         value
@@ -239,7 +247,7 @@ impl NumericStage for Emit<'_, '_> {
         emit_number_arithmetic_operation(self.builder, operation, left, right)
     }
     fn float_negate(&mut self, value: ir::Value) -> ir::Value {
-        self.builder.ins().fneg(value)
+        ins!(self, fneg(value))
     }
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
@@ -249,18 +257,18 @@ impl NumericStage for Emit<'_, '_> {
         emit_number_remainder(self.builder, types::I64, left, right)
     }
     fn int_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
-        self.builder.ins().srem(left, right)
+        ins!(self, srem(left, right))
     }
-    fn i32_constant(&mut self, value: i32) -> ir::Value { self.builder.ins().iconst(types::I32, i64::from(value)) }
-    fn i32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fcvt_from_sint(types::F64, a) }
-    fn u32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fcvt_from_uint(types::F64, a) }
+    fn i32_constant(&mut self, value: i32) -> ir::Value { ins!(self, iconst(types::I32, i64::from(value))) }
+    fn i32_to_f64(&mut self, a: ir::Value) -> ir::Value { ins!(self, fcvt_from_sint(types::F64, a)) }
+    fn u32_to_f64(&mut self, a: ir::Value) -> ir::Value { ins!(self, fcvt_from_uint(types::F64, a)) }
     fn to_int32(&mut self, number: ir::Value, miss: ir::Block) -> Option<ir::Value> {
         Some(emit_number_to_int32(self.builder, number, miss))
     }
-    fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, 0) }
-    fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, a, 0) }
-    fn both(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().band(a, b) }
-    fn either(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { ins!(self, icmp_imm_u(IntCC::Equal, a, 0)) }
+    fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { ins!(self, icmp_imm_s(IntCC::SignedLessThan, a, 0)) }
+    fn both(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { ins!(self, band(a, b)) }
+    fn either(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { ins!(self, bor(a, b)) }
     fn cond_word(&mut self, cond: ir::Value) -> ir::Value { cond }
     fn guard_false(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
         let passed = self.builder.create_block();
@@ -269,7 +277,7 @@ impl NumericStage for Emit<'_, '_> {
         let passed_or_miss = if crate::vm::compiled::forced_miss::next() { miss } else { passed };
         #[cfg(not(test))]
         let passed_or_miss = passed;
-        self.builder.ins().brif(cond, miss, &[], passed_or_miss, &[]);
+        ins!(self, brif(cond, miss, &[], passed_or_miss, &[]));
         self.builder.switch_to_block(passed);
         Some(())
     }

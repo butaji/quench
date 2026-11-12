@@ -320,114 +320,6 @@ struct ArrayVariables {
     room: Variable,
 }
 
-/// The typed array kinds whose elements a loop reads and writes natively, with how a load
-/// of one makes its Number. Float16 and BigInt elements stay on the general path.
-#[derive(Clone, Copy)]
-enum TypedLoad { Unsigned8, Clamped8, Signed8, Unsigned16, Signed16, Signed32, Unsigned32, Float32, Float64 }
-
-/// The element widths an integer typed array store writes, in bytes.
-const BYTE_WIDTH: u32 = 1;
-const HALFWORD_WIDTH: u32 = 2;
-
-const TYPED_LOADS: [(crate::heap::TypedArrayKind, TypedLoad); 9] = {
-    use crate::heap::TypedArrayKind as Kind;
-    [(Kind::Uint8, TypedLoad::Unsigned8), (Kind::Uint8Clamped, TypedLoad::Clamped8), (Kind::Int8, TypedLoad::Signed8),
-     (Kind::Uint16, TypedLoad::Unsigned16), (Kind::Int16, TypedLoad::Signed16), (Kind::Int32, TypedLoad::Signed32),
-     (Kind::Uint32, TypedLoad::Unsigned32), (Kind::Float32, TypedLoad::Float32), (Kind::Float64, TypedLoad::Float64)]
-};
-
-impl TypedLoad {
-    fn width(self) -> u32 {
-        match self {
-            Self::Unsigned8 | Self::Clamped8 | Self::Signed8 => 1,
-            Self::Unsigned16 | Self::Signed16 => 2,
-            Self::Signed32 | Self::Unsigned32 | Self::Float32 => 4,
-            Self::Float64 => 8,
-        }
-    }
-}
-
-/// The typed element at `index` of a view `values`/`length` with `kind`: one block per kind
-/// of `TYPED_LOADS`, chosen by a jump table, over which `access` loads or stores the kind's
-/// element and joins as `f64`. An index past the view or any other kind continues at `exit`.
-fn typed_element(builder: &mut FunctionBuilder<'_>, elements: ir::Value, length: ir::Value,
-    kind: ir::Value, index: ir::Value, exit: ir::Block,
-    access: impl Fn(&mut FunctionBuilder<'_>, TypedLoad, ir::Value) -> ir::Value) -> ir::Value {
-    let wide = builder.ins().sextend(types::I64, index);
-    let in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, wide, length);
-    emit_js_guard(builder, in_bounds, exit);
-    let join = builder.create_block();
-    let result = builder.append_block_param(join, types::F64);
-    let mut cases = vec![builder.func.dfg.block_call(exit, &[]); usize::from(u8::try_from(crate::heap::TypedArrayKind::Float64 as u32).expect("kind fits u8")) + 1];
-    let mut blocks = Vec::with_capacity(TYPED_LOADS.len());
-    for (kind, load) in TYPED_LOADS {
-        let block = builder.create_block();
-        cases[kind as usize] = builder.func.dfg.block_call(block, &[]);
-        blocks.push((block, load));
-    }
-    let selector = builder.ins().ireduce(types::I32, kind);
-    let default = builder.func.dfg.block_call(exit, &[]);
-    let table = builder.create_jump_table(ir::JumpTableData::new(default, &cases));
-    builder.ins().br_table(selector, table);
-    for (block, load) in blocks {
-        builder.switch_to_block(block);
-        builder.seal_block(block);
-        let offset = builder.ins().ishl_imm_u(wide, i64::from(load.width().trailing_zeros()));
-        let address = builder.ins().iadd(elements, offset);
-        let value = access(builder, load, address);
-        builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
-    }
-    builder.switch_to_block(join);
-    builder.seal_block(join);
-    result
-}
-
-/// `load`'s element at `address`, as a Number (`f64`): an integer kind by `fcvt_from_sint`,
-/// a float kind as loaded.
-fn typed_read(builder: &mut FunctionBuilder<'_>, load: TypedLoad, address: ir::Value) -> ir::Value {
-    let flags = MemFlagsData::new();
-    let (int, float) = match load {
-        TypedLoad::Unsigned8 | TypedLoad::Clamped8 => (Some(builder.ins().uload8(types::I32, flags, address, 0)), None),
-        TypedLoad::Signed8 => (Some(builder.ins().sload8(types::I32, flags, address, 0)), None),
-        TypedLoad::Unsigned16 => (Some(builder.ins().uload16(types::I32, flags, address, 0)), None),
-        TypedLoad::Signed16 => (Some(builder.ins().sload16(types::I32, flags, address, 0)), None),
-        TypedLoad::Signed32 => (Some(builder.ins().load(types::I32, flags, address, 0)), None),
-        TypedLoad::Unsigned32 => (Some(builder.ins().uload32(flags, address, 0)), None),
-        TypedLoad::Float32 => {
-            let single = builder.ins().load(types::F32, flags, address, 0);
-            (None, Some(builder.ins().fpromote(types::F64, single)))
-        }
-        TypedLoad::Float64 => (None, Some(builder.ins().load(types::F64, flags, address, 0))),
-    };
-    float.unwrap_or_else(|| builder.ins().fcvt_from_sint(types::F64, int.expect("an integer element")))
-}
-
-/// Store `number` as `load`'s element at `address`: a float kind stored directly (`f32`
-/// demoted), an integer kind by ToInt32 modulo the element's bytes. A clamped element
-/// rounds half to even in the general path, so it continues at `exit`.
-fn typed_write(builder: &mut FunctionBuilder<'_>, load: TypedLoad, address: ir::Value,
-    number: ir::Value, exit: ir::Block) {
-    let flags = MemFlagsData::new();
-    match load {
-        TypedLoad::Float64 => { builder.ins().store(flags, number, address, 0); }
-        TypedLoad::Float32 => { let single = builder.ins().fdemote(types::F32, number); builder.ins().store(flags, single, address, 0); }
-        TypedLoad::Clamped8 => {
-            builder.ins().jump(exit, &[]);
-            let unreached = builder.create_block();
-            builder.switch_to_block(unreached);
-            builder.seal_block(unreached);
-        }
-        integer => {
-            let word = super::emit_number_to_int32(builder, number, exit);
-            match integer.width() {
-                BYTE_WIDTH => { builder.ins().istore8(flags, word, address, 0); }
-                HALFWORD_WIDTH => { builder.ins().istore16(flags, word, address, 0); }
-                _ => { builder.ins().store(flags, word, address, 0); }
-            }
-        }
-    }
-}
-
 /// A STORE-site projection admitted on entry to a storage-preserving loop.
 /// The record is physical receiver identity, not merely an equal shape.
 #[derive(Clone, Copy)]
@@ -481,7 +373,7 @@ struct Lowering<'a, 'f> {
     left_here: bool,
     /// The view of the loop's hoisted dense array the next element row reads or writes through, which
     /// its entering edge proved once (`EmitFrame::held`).
-    held_view: Option<super::DenseArrayView>,
+    held_view: Option<frame_elements::Held>,
     /// The shared leave of a failed input proof (`LaneExit::Entry`), made at its first guard
     /// and filled with the other exits.
     entry_exit: Option<ir::Block>,
@@ -4018,24 +3910,11 @@ impl Lowering<'_, '_> {
         self.builder.use_var(variables.kind)
     }
 
-    /// Element `index` (an int32) of a hoisted typed array's view, into `destination`, a Number.
-    /// Any other element exits. A hoisted dense array is read by its row (`held_dense`).
-    fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, (pc, destination): (usize, Register), exit: ir::Block) {
-        let (values, length) = self.hoisted_view(array);
-        let kind = self.hoisted_kind(array);
-        let proof = super::EmitProof::TypedIndex { values, length, kind, absent: exit };
-        let number = match self.step(state, frame::Edges::ValueGuarded { miss: exit },
-            crate::staged::Operation::TypedIndexRead { index, proof }) {
-            crate::staged::Step::Value(value) => value,
-            _ => unreachable!("a typed element read yields a value or leaves at its miss edge"),
-        };
-        self.set_number(state, destination, number);
-    }
-
     /// A Number's store through a hoisted dense array view at a site that left (`left_here`): in place,
     /// else appended inline (`dense_append`), else the VM's store. Any other hoisted store is its row.
     fn dense_element_write(&mut self, state: &mut State, array: LoopArray, pc: u32, instruction: WideInstruction,
-        index: ir::Value, exit: ir::Block) {
+        exit: ir::Block) {
+        let index = self.int(state, instruction.register_c(), exit);
         let (values, length) = self.hoisted_view(array);
         let value = self.tagged(state, instruction.register_a());
         let base = self.tagged(state, instruction.register_b());
@@ -4056,24 +3935,6 @@ impl Lowering<'_, '_> {
         self.ins().jump(done, &[]);
         self.builder.switch_to_block(done);
         self.builder.seal_block(done);
-    }
-
-    /// A Number's store to a hoisted array's element `index` (an int32): a dense array's
-    /// in-place replacement, or its helper on a miss (which may grow a backing, every dense
-    /// view reading its own again after), or a typed array's element by its kind's
-    /// conversion. A typed miss or a clamped element exits at the store.
-    fn loop_element_write(&mut self, state: &mut State, array: LoopArray, pc: u32, instruction: WideInstruction, exit: ir::Block) {
-        let index = self.int(state, instruction.register_c(), exit);
-        let (values, length) = self.hoisted_view(array);
-        if array.views == ElementViews::Dense {
-            return self.dense_element_write(state, array, pc, instruction, index, exit);
-        }
-        let number = self.number(state, instruction.register_a(), exit);
-        let kind = self.hoisted_kind(array);
-        let proof = super::EmitProof::TypedIndex { values, length, kind, absent: exit };
-        let step = self.step(state, frame::Edges::ValueGuarded { miss: exit },
-            crate::staged::Operation::TypedIndexWrite { index, value: number, proof });
-        debug_assert!(matches!(step, crate::staged::Step::Value(_)));
     }
 
     /// The reads of `instruction`'s lookup, one per site, and the sink a nested read of the

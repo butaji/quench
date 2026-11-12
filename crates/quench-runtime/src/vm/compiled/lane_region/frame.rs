@@ -46,7 +46,7 @@ pub(super) struct EmitFrame<'a> {
     pub(super) call_out: Option<&'a call_out::CallOutSite>,
     /// The view of a loop's hoisted dense array the element row reads through, proved at the loop's
     /// entering edge (`ElementFrame::kept_view`).
-    pub(super) held: Option<super::super::DenseArrayView>,
+    pub(super) held: Option<super::frame_elements::Held>,
 }
 
 impl EmitFrame<'_> {
@@ -193,25 +193,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         second: ir::Value, proof: EmitProof) -> Option<ir::Value> {
         let site = stage.builder.ins().iconst(types::I64, i64::from(site));
         self.allocate(stage, LaneHelper::NewObjectPair, destination, &[site, first, second], proof)
-    }
-
-    /// A typed array element: the kind's load, as a Number word.
-    #[inline(always)]
-    fn typed_index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
-        Some(super::typed_element(stage.builder, values, length, kind, index, absent, super::typed_read))
-    }
-
-    /// A typed array element store: the kind's conversion, then its width.
-    #[inline(always)]
-    fn typed_index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
-        proof: EmitProof) -> Option<()> {
-        let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
-        super::typed_element(stage.builder, values, length, kind, index, absent, |builder, load, address| {
-            super::typed_write(builder, load, address, value, absent);
-            value
-        });
-        Some(())
     }
 
     #[inline(always)]

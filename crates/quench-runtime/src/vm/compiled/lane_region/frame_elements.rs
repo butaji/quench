@@ -6,8 +6,18 @@
 use super::*;
 use super::frame::{calls, operand_int};
 use crate::bytecode::{Operand, OperandKind};
-use crate::staged::elements::ElementView;
+use crate::staged::element_rows::ElementView;
+use crate::staged::elements::DenseView;
+use crate::staged::typed_elements::TypedView;
 use crate::staged::{ElementFrame, Stage};
+
+/// The view of a loop's hoisted array an element row reads and writes through, which the loop's
+/// entering edge proved once: a dense array's backing, or a typed array's elements.
+#[derive(Clone, Copy)]
+pub(super) enum Held {
+    Dense(super::super::DenseArrayView),
+    Typed(TypedView<ir::Value>),
+}
 
 /// The VM's element read of the tagged `base` and `key` (`JsStepDispatch::element_get`): the
 /// element the array and its prototypes give a hole or an index past them; the sentinel it answers
@@ -50,14 +60,19 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     }
 
     /// The view an earlier access of the same array value proved, which no storage change has
-    /// retired; a writable view answers a read.
+    /// retired, or the hoisted array's (`Held`); a writable view answers a read.
     fn kept_view(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, writable: bool) -> Option<ElementView<ir::Value>> {
-        let view = self.held.filter(|view| view.writable || !writable).or_else(|| self.state.proofs.arrays.iter()
+        let held = match self.held {
+            Some(Held::Typed(view)) => return Some(ElementView::Typed(view)),
+            Some(Held::Dense(view)) => Some(view),
+            None => None,
+        };
+        let view = held.filter(|view| view.writable || !writable).or_else(|| self.state.proofs.arrays.iter()
             .find(|(known, view)| *known == base && (view.writable || !writable)).map(|(_, view)| *view))?;
-        Some(ElementView { values: view.values, length: stage.uextend32(view.length) })
+        Some(ElementView::Dense(DenseView { values: view.values, length: stage.uextend32(view.length) }))
     }
 
-    fn keep_view(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, writable: bool, view: ElementView<ir::Value>) {
+    fn keep_view(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, writable: bool, view: DenseView<ir::Value>) {
         let length = stage.builder.ins().ireduce(types::I32, view.length);
         self.state.proofs.arrays.retain(|(known, _)| *known != base);
         self.state.proofs.arrays.push((base, super::super::DenseArrayView { values: view.values, length, writable, uncounted: false }));

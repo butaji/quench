@@ -31,6 +31,7 @@ pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
 pub(crate) mod element_rows;
+pub(crate) mod typed_elements;
 mod element_frame;
 pub(crate) use element_frame::ElementFrame;
 pub(crate) mod entry;
@@ -120,14 +121,6 @@ pub(crate) trait Frame<S: Stage> {
     /// Store `value` at the dense array element `index`, under the proof.
     #[inline(always)]
     fn index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
-
-    /// The typed array element at `index`, as a Number word.
-    #[inline(always)]
-    fn typed_index_read(&mut self, _stage: &mut S, _index: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
-
-    /// Store the Number `value` at typed array element `index`.
-    #[inline(always)]
-    fn typed_index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
 
     /// The object literal `destination`, written with the frame's fact; `None` where the
     /// frame has no heap allocator.
@@ -252,10 +245,6 @@ pub(crate) enum Operation<W, P> {
     LogicalNot { destination: Register, source: Register },
     /// Store `value` at dense array element `index`, under `proof`.
     IndexWrite { index: W, value: W, proof: P },
-    /// A typed array element at `index`, as a Number word, under `proof`.
-    TypedIndexRead { index: W, proof: P },
-    /// Store the Number `value` at typed array element `index`, under `proof`.
-    TypedIndexWrite { index: W, value: W, proof: P },
     /// The object literal `destination`, allocated by the frame's heap; a due collection
     /// leaves at the frame's miss edge.
     MakeObject { destination: Register, proof: P },
@@ -455,3 +444,5 @@ mod generic_tests;
 mod element_tests;
 #[cfg(test)]
 mod primitive_tests;
+#[cfg(test)]
+mod typed_element_tests;

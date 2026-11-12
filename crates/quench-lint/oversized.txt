@@ -5464,5 +5464,5 @@ native_ir crates/quench-runtime/src/vm/compiled/lane_region/polymorphic_stores.r
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/stable.rs 7
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/store_domains.rs 2
 native_ir crates/quench-runtime/src/vm/compiled/object_slots.rs 45
-native_ir crates/quench-runtime/src/vm/compiled/object_slots/emit.rs 43
+native_ir crates/quench-runtime/src/vm/compiled/object_slots/emit.rs 5
 native_refusals 26
