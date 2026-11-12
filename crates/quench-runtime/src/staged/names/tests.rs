@@ -92,6 +92,9 @@ fn an_environment_local_reads_the_dense_slot_and_leaves_at_a_marker_or_without_s
     assert!(matches!(run(&mut frame, Row::LoadEnvLocal { destination: 0, slot: 1 }), Step::Unresolved), "a marker leaves");
     assert!(matches!(run(&mut frame, Row::LoadEnvLocal { destination: 0, slot: 2 }), Step::Unresolved), "past the run leaves");
     frame.storage = None;
+    assert!(matches!(run(&mut frame, Row::LoadEnvLocal { destination: 0, slot: 0 }), Step::Value(_)), "the VM reads it");
+    assert_eq!(frame.calls, [(CallOut::LoadEnvLocal { slot: 0 }, Some(0))]);
+    frame.declines = true;
     assert!(matches!(run(&mut frame, Row::LoadEnvLocal { destination: 0, slot: 0 }), Step::Unresolved));
 }
 
@@ -99,7 +102,7 @@ fn an_environment_local_reads_the_dense_slot_and_leaves_at_a_marker_or_without_s
 fn an_environment_store_writes_the_slot_and_the_result_or_declines() {
     let mut frame = Probe::new(3);
     frame.registers[0] = Value::number(4.0).to_bits();
-    let stored = Row::StoreEnvLocal { source: 0, slot: 5, result: Some(2) };
+    let stored = Row::StoreEnvLocal { source: 0, slot: 5, result: Some(2), initialize: false };
     assert!(matches!(run(&mut frame, stored), Step::Value(_)));
     assert_eq!(frame.environment_writes, [(5, Value::number(4.0).to_bits())]);
     assert_eq!(frame.registers[2], frame.registers[0]);
@@ -114,6 +117,8 @@ fn an_arguments_length_defines_the_count_or_declines() {
     let mut frame = Probe::new(1);
     assert!(matches!(run(&mut frame, Row::ArgumentsLength { destination: 0, slot: 1 }), Step::Value(_)));
     assert_eq!(Value::from_bits(frame.registers[0]).as_int(), Some(3));
+    assert!(matches!(run(&mut frame, Row::ArgumentsLength { destination: 0, slot: 2 }), Step::Value(_)), "the VM counts it");
+    frame.declines = true;
     assert!(matches!(run(&mut frame, Row::ArgumentsLength { destination: 0, slot: 2 }), Step::Unresolved));
 }
 

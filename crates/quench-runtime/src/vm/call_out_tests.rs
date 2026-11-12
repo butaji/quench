@@ -101,3 +101,42 @@ fn a_call_out_that_throws_raises_the_interpreters_error_from_the_compiled_body()
     "#);
     assert_eq!(output[0], "RangeError:no key");
 }
+
+#[test]
+fn relations_bigint_operators_instanceof_and_in_match_the_interpreter() {
+    let output = in_both_modes(r#"
+      class Base {} class Derived extends Base {}
+      function relate(a, b) {
+        const lt = a < b, le = a <= b, gt = a > b, ge = a >= b;
+        return (lt ? 1 : 0) | (le ? 2 : 0) | (gt ? 4 : 0) | (ge ? 8 : 0);
+      }
+      function big(a, b) { const sum = a + b, product = a * b, difference = a - b, power = a ** b; return `${sum},${product},${difference},${power}`; }
+      function probe(value, key, constructor) { const has = key in value, is = value instanceof constructor; return (has ? 1 : 0) + (is ? 2 : 0); }
+      const texts = ["a", "b", "ab", "", "10", "9"];
+      let all = "";
+      for (let repeat = 0; repeat < 400; repeat++) {
+        all = "";
+        for (const a of texts) for (const b of texts) all += relate(a, b).toString(16);
+        all += big(7n, 3n) + probe(new Derived(), "x", Base) + probe({ x: 1 }, "x", Base) + probe([], "length", Array);
+      }
+      print(all);
+    "#);
+    assert!(output[0].ends_with("10,21,4,343213"), "{}", output[0]);
+}
+
+#[test]
+fn global_names_environment_locals_and_arguments_match_the_interpreter() {
+    let output = in_both_modes(r#"
+      function names(first, second) {
+        written = (typeof missing === "undefined" ? 1 : 0) + arguments.length;
+        const held = first + second;
+        return () => held + written;
+      }
+      var written;
+      let last = 0;
+      for (let repeat = 0; repeat < 800; repeat++) last = names(repeat, 1, 2)();
+      print(last);
+      print(typeof written + typeof absent);
+    "#);
+    assert_eq!(output, ["804", "numberundefined"]);
+}

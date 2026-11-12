@@ -24,7 +24,7 @@ impl Constant {
 }
 
 /// An iteration or spread step the host makes by the interpreter's own definition
-/// (`Vm::value_step`): the protocol runs guest code (`@@iterator`, `next`, `return`), so a
+/// (`Vm::call_out`): the protocol runs guest code (`@@iterator`, `next`, `return`), so a
 /// frame answers it with a callout.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Protocol {
@@ -42,12 +42,17 @@ pub(crate) enum Protocol {
 /// The VM operations a staged row calls out for when its own words do not decide it, named as
 /// data. A frame answers one in place (`Frame::vm_step`): the interpreter's frame calls the VM
 /// method, the lane specializer's frame calls the lane helper that decodes the record and makes
-/// the same step (`dispatch_fast::lane_vm_step`), and a frame with no host declines.
+/// the same step (`dispatch_fast::lane_vm_step`), and a frame with no host declines. Plain
+/// data: its tag byte (`repr(u8)`) and fields are what a helper-call row passes as immediates.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub(crate) enum CallOut {
     /// `left == right`, or `===` where `strict`, negated for `!=` and `!==`, by the VM's full
     /// equality: strings and BigInts compare by contents, a conversion may run guest code.
     Equality { left: Register, right: Register, strict: bool, negated: bool },
+    /// `left operator right` by the VM's `Vm::binary`: a string or BigInt relation or operator,
+    /// `instanceof`, `in`.
+    Binary { left: Register, right: Register, operator: u32 },
     /// ToPropertyKey of `source` (`Vm::to_property_key`): a Number allocates, an object runs
     /// guest code.
     PropertyKey { source: Register },
@@ -56,6 +61,17 @@ pub(crate) enum CallOut {
     /// The next key of the for-in state in `state`; `Value::DELETED`, which no key is, once
     /// none is left.
     ForInNext { state: Register },
+    /// The environment local `slot` of the running frame, by the binding rules.
+    LoadEnvLocal { slot: u16 },
+    /// `source` to the environment local `slot` of the running frame, by the binding rules (a
+    /// `with` scope, TDZ, a constant), `initialize` where it declares the binding.
+    StoreEnvLocal { source: Register, slot: u16, initialize: bool },
+    /// The length of the arguments binding in local `slot`.
+    ArgumentsLength { slot: u16 },
+    /// `source` to the global name `atom` through cache `site`, `initialize` for a declaration.
+    GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool },
+    /// The `typeof` name of the global `atom` through cache `site`.
+    GlobalTypeof { atom: u32, site: u16 },
 }
 
 impl CallOut {
@@ -63,8 +79,10 @@ impl CallOut {
     /// then the second, which is the only one an operation of a single operand has.
     pub(crate) fn operands(self) -> [Option<Register>; 2] {
         match self {
-            Self::Equality { left, right, .. } => [Some(left), Some(right)],
+            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
+            Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
+            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } => [None, None],
             Self::Protocol { operands, .. } => operands,
         }
     }
