@@ -101,6 +101,10 @@ pub(crate) mod operations;
 pub(crate) mod vm {
     pub(crate) use super::operations;
     pub(crate) use crate::layout::NATIVE_FIELD_CACHE_LAYOUT;
+    pub(crate) mod wtf16 {
+        pub(crate) struct JsString;
+        pub(crate) use crate::layout::string_form as native_string;
+    }
 }
 
 /// The register and operand names the staged numeric rows take. Only a register operand exists

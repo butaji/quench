@@ -13,6 +13,7 @@ pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Ov
 #[path = "../../quench-runtime/src/staged/object.rs"] pub(crate) mod object;
 #[path = "../../quench-runtime/src/staged/elements.rs"] pub(crate) mod elements;
 #[path = "../../quench-runtime/src/staged/environment.rs"] pub(crate) mod environment;
+#[path = "../../quench-runtime/src/staged/strings.rs"] pub(crate) mod strings;
 #[path = "../../quench-runtime/src/staged/entry.rs"] pub(crate) mod entry;
 #[path = "../../quench-runtime/src/staged/frame.rs"] #[allow(dead_code)] pub(crate) mod frame;
 #[path = "../../quench-runtime/src/staged/call.rs"] pub(crate) mod call;

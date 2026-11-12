@@ -8,7 +8,7 @@
 //! and the slot's byte offset) are holes 1 and 2. A site field read (`SITE_ROW`) packs the
 //! object register's frame offset above the destination's in hole 0, takes the process's narrow
 //! upper-word table as hole 1 and its cache entry's byte offset as hole 2. An array length read
-//! (`LENGTH_ROW`) takes the destination in hole 0 and the array word's frame offset in hole 1. A
+//! (`LENGTH_ROW`, an array's or a string's) takes the destination in hole 0 and the base word's frame offset in hole 1. A
 //! capture store (`CAPTURE_SET_ROW`) takes its value operand in hole 0 and the slot and its byte
 //! offset in holes 1 and 2. A field store (`SITE_STORE_ROW`) takes the object register's frame
 //! offset in hole 0, its value operand in hole 1 and the cache entry's byte offset in hole 2. A
@@ -20,13 +20,13 @@
 
 use crate::layout::{
     CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
-    JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, PROPERTY_BUFFER_BASE,
+    JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_STRING_RECORD_BASE, PROPERTY_BUFFER_BASE,
 };
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word};
 use crate::places::{DEST, LEFT, Places, tagged_place};
 use crate::stage::StencilStage;
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-use crate::staged::{Stage, Step, elements, entry, environment, load_this, read_local, value, write_local};
+use crate::staged::{Stage, Step, elements, entry, environment, load_this, read_local, strings, value, write_local};
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
@@ -175,13 +175,13 @@ fn register_object(s: &S) -> u64 {
     word_at(s.frame, (hole64::<0>() >> SITE_OBJECT_AT) as usize)
 }
 
-/// The `length` of the array word at hole 1 (`elements::array_length`).
+/// The `length` of the array or string word at hole 1 (`strings::length_of`).
 #[inline(always)]
 fn length_row<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::from_hole(0);
     let base = array_word::<HOLE_A>(&s);
-    let records = word_at(payload, JS_STEP_ARRAY_RECORD_BASE);
-    deliver::<D>(s, need!(s, elements::array_length(&mut stage, records, base, ())))
+    let records = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_STRING_RECORD_BASE));
+    deliver::<D>(s, need!(s, strings::length_of(&mut stage, records, base, ())))
 }
 
 /// Whether the row's staged work was done and fit its place: it continues, else it leaves.

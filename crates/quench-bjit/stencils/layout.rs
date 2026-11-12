@@ -192,6 +192,8 @@ pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 152;
 pub(crate) const JS_STEP_OBJECT_MARK_BLOCKS: usize = 136;
 pub(crate) const JS_STEP_OBJECT_MARK_BLOCK_COUNT: usize = 144;
 pub(crate) const JS_STEP_SLOTS_TRACKED: usize = 528;
+/// The string record range's base, which a string `length` read finds the record from.
+pub(crate) const JS_STEP_STRING_RECORD_BASE: usize = JS_STEP_SLOTS_TRACKED + core::mem::size_of::<usize>();
 pub(crate) const JS_STEP_FIELD_ENTRIES: usize = 160;
 pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;
 /// Bits of a body's capture word that hold the dense slots' address; the slot count sits above
@@ -219,3 +221,18 @@ pub(crate) const CELL_RECOVERY_AT: usize = 8;
 pub(crate) const CELL_BODY_AT: usize = 16;
 pub(crate) const RECOVERY_VALUES_AT: usize = 0;
 pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;
+
+/// The flat string forms a string record is read in (`vm::wtf16::native_string`): the record's
+/// size (three words), where it keeps its form's tag, each form's tag, and where a short and a
+/// shared form keep their unit count. Checked against the runtime by `stencil_layout_matches`.
+pub(crate) mod string_form {
+    pub(crate) const RECORD_SIZE: usize = 3 * core::mem::size_of::<usize>();
+    pub(crate) const TAG_OFFSET: i32 = 0;
+    pub(crate) const TAG_SHORT: u8 = 0;
+    pub(crate) const TAG_ASCII: u8 = 1;
+    pub(crate) const TAG_WIDE: u8 = 3;
+    /// A short record's length byte follows its tag byte.
+    pub(crate) const SHORT_LENGTH_OFFSET: i32 = 1;
+    /// A shared record's pointer follows its tag at the next word, then its length.
+    pub(crate) const SHARED_LENGTH_OFFSET: i32 = 2 * core::mem::size_of::<usize>() as i32;
+}

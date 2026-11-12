@@ -81,10 +81,7 @@ pub(crate) fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: 
     let payload = stage.load_u64(backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
     let plain = super::object::plain_payload(stage, payload);
     stage.guard(plain, miss)?;
-    let beyond = stage.ugt_imm(backing.length, i32::MAX as u64);
-    let within = stage.not(beyond);
-    stage.guard(within, miss)?;
-    Some(stage.or_imm(backing.length, crate::value::ValueLayout::INT_TAG))
+    super::value::length_value(stage, backing.length, miss)
 }
 
 /// Replaces the present element at `address` of the dense backing at `values`, which held

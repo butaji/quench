@@ -170,9 +170,14 @@ mod tests {
         );
         assert_eq!(
             [std::mem::offset_of!(JsStepDispatch, object_record_base), std::mem::offset_of!(JsStepDispatch, property_buffer), std::mem::offset_of!(JsStepDispatch, field_entries), crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize, std::mem::offset_of!(JsStepDispatch, capture_stores), super::super::super::dispatch_fast::CAPTURE_STORES,
-             std::mem::offset_of!(JsStepDispatch, object_mark_blocks), std::mem::offset_of!(JsStepDispatch, object_mark_block_count), std::mem::offset_of!(JsStepDispatch, slots_tracked), std::mem::offset_of!(JsStepDispatch, receiver), std::mem::offset_of!(JsStepDispatch, native_locals), std::mem::offset_of!(JsStepDispatch, local_count)],
+             std::mem::offset_of!(JsStepDispatch, object_mark_blocks), std::mem::offset_of!(JsStepDispatch, object_mark_block_count), std::mem::offset_of!(JsStepDispatch, slots_tracked), std::mem::offset_of!(JsStepDispatch, string_record_base), std::mem::offset_of!(JsStepDispatch, receiver), std::mem::offset_of!(JsStepDispatch, native_locals), std::mem::offset_of!(JsStepDispatch, local_count)],
             [mirror::JS_STEP_OBJECT_RECORD_BASE, mirror::JS_STEP_PROPERTY_BUFFER, mirror::JS_STEP_FIELD_ENTRIES, mirror::PROPERTY_BUFFER_BASE, mirror::CAPTURE_ADDRESS_BITS as usize, mirror::JS_STEP_CAPTURE_STORES, mirror::CAPTURE_STORES_BIT as usize,
-             mirror::JS_STEP_OBJECT_MARK_BLOCKS, mirror::JS_STEP_OBJECT_MARK_BLOCK_COUNT, mirror::JS_STEP_SLOTS_TRACKED, mirror::JS_STEP_RECEIVER, mirror::JS_STEP_NATIVE_LOCALS, mirror::JS_STEP_LOCAL_COUNT]
+             mirror::JS_STEP_OBJECT_MARK_BLOCKS, mirror::JS_STEP_OBJECT_MARK_BLOCK_COUNT, mirror::JS_STEP_SLOTS_TRACKED, mirror::JS_STEP_STRING_RECORD_BASE, mirror::JS_STEP_RECEIVER, mirror::JS_STEP_NATIVE_LOCALS, mirror::JS_STEP_LOCAL_COUNT]
+        );
+        use crate::vm::wtf16::native_string as form;
+        assert_eq!(
+            [form::RECORD_SIZE as i32, form::TAG_OFFSET, i32::from(form::TAG_SHORT), i32::from(form::TAG_ASCII), i32::from(form::TAG_WIDE), form::SHORT_LENGTH_OFFSET, form::SHARED_LENGTH_OFFSET],
+            [mirror::string_form::RECORD_SIZE as i32, mirror::string_form::TAG_OFFSET, i32::from(mirror::string_form::TAG_SHORT), i32::from(mirror::string_form::TAG_ASCII), i32::from(mirror::string_form::TAG_WIDE), mirror::string_form::SHORT_LENGTH_OFFSET, mirror::string_form::SHARED_LENGTH_OFFSET]
         );
     }
 }

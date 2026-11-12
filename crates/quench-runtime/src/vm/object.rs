@@ -1433,6 +1433,24 @@ impl<H: Host> Vm<H> {
             .or_else(|| self.own_array_length(object).map(Value::length))
     }
 
+    /// The `length` of a direct string, from the staged row over its record (`staged::strings`);
+    /// the rows' other forms (a rope, a slice, a length past int32) are read through the string.
+    #[inline(always)]
+    pub(super) fn string_length_value(&self, object: Value) -> Option<Value> {
+        self.heap
+            .string_record_base()
+            .and_then(|records| crate::staged::strings::concrete_string_length(records, object))
+            .or_else(|| self.heap.string(object).map(|text| Value::length(text.len())))
+    }
+
+    /// The `length` of a direct array or string, from the one staged row over both record
+    /// tables (`staged::strings::length_of`); any other form is the general read's.
+    #[inline(always)]
+    pub(super) fn length_value(&self, object: Value) -> Option<Value> {
+        let (arrays, strings) = (self.heap.array_record_base()?, self.heap.string_record_base()?);
+        crate::staged::strings::concrete_length_of(arrays, strings, object)
+    }
+
     /// `cached_field_hit` for compiled code's probe (`compiled::lane_field_get`), which also
     /// answers from a polymorphic site's prototype-held entries, keyed by both exact shapes.
     /// The interpreter's reads leave that tier to their miss path, which also records the
@@ -2625,10 +2643,10 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Option<Value> {
-        let text = self.heap.string(object)?;
         if atom == self.length_atom {
-            return Some(Value::length(text.len()));
+            return self.string_length_value(object);
         }
+        self.heap.string(object)?;
         if !self.string_field_site_cacheable(p, atom) {
             return None;
         }

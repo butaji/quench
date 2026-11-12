@@ -6464,12 +6464,12 @@ fn nested_last_step<H: Host>(
 /// read's last step reads it (`nested_own_field_hit`, `lane_nested_polymorphic_value`).
 #[inline(always)]
 fn own_length<H: Host>(vm: &Vm<H>, object: Value) -> Option<Value> {
-    // A string first: its test is the value's tag alone, where the array lookup's miss for a
-    // string reads heap cells.
-    match vm.heap.string(object) {
+    // The staged row answers either by the value's tag; a form it leaves is read through the
+    // string's units, or the array's record.
+    vm.length_value(object).or_else(|| match vm.heap.string(object) {
         Some(text) => Some(Value::length(text.len())),
         None => vm.array_length_field(object, vm.length_atom),
-    }
+    })
 }
 
 script_handler! {
@@ -6738,9 +6738,9 @@ fn lane_cached_field<H: Host>(
         // `this.input.length` reads: no cache records a primitive's, and the probes below
         // all decline it (`Vm::cached_string_field_hit`).
         if atom == vm.length_atom
-            && let Some(text) = vm.heap.string(object)
+            && let Some(length) = vm.string_length_value(object)
         {
-            return Some(Value::length(text.len()));
+            return Some(length);
         }
         // A typed array's geometry, which no field cache records (`AtomClass::VIRTUAL_FIELD`).
         if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
