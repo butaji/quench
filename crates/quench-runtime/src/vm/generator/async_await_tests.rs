@@ -1,7 +1,9 @@
 //! An async generator awaiting inside its body parks its frame in its record, so the await's
 //! reaction holds the generator and no continuation of its own; an async activation a promise
-//! job resumes runs in the lane over its frame's register file (`Vm::run_lane_job`).
-use super::window_steps::tests::run;
+//! job resumes runs in the lane over its frame's register file (`Vm::run_lane_job`); a rejection,
+//! a request of an async generator and a run the lane does not admit resume through the owner of
+//! the frame all the same (`Vm::run_job`).
+use super::window_steps::tests::{agree, run};
 use crate::test_host::TestHost;
 use crate::vm::Vm;
 use crate::Engine;
@@ -88,4 +90,41 @@ fn an_async_generator_awaits_in_the_lane_and_serves_for_await() {
         "#,
     );
     assert_eq!(lines, ["4950"]);
+}
+
+#[test]
+fn rejected_awaits_resume_through_the_owner_of_the_frame_and_agree_with_the_interpreter() {
+    let lines = agree(
+        r#"
+        const out = [];
+        async function guarded(promise) {
+            try { await promise; } catch (e) { out.push("caught " + e); }
+            try { await Promise.reject("again"); } finally { out.push("finally"); }
+        }
+        async function* yielding() {
+            try { yield Promise.reject("bad"); } catch (e) { out.push("yield " + e); yield "after"; }
+        }
+        guarded(Promise.reject("boom")).catch((e) => out.push("rejected " + e));
+        yielding().next().then((result) => print(out.join(",") + " " + JSON.stringify(result)));
+        "#,
+    );
+    assert_eq!(lines, [r#"caught boom,yield bad,finally,rejected again {"value":"after","done":false}"#]);
+}
+
+#[test]
+fn async_generator_requests_resume_through_the_record_and_agree_with_the_interpreter() {
+    let lines = agree(
+        r#"
+        const out = [];
+        async function* gen() {
+            try { const a = yield 1; await null; const b = yield a + 1; return b; }
+            finally { out.push("closed"); }
+        }
+        const it = gen();
+        Promise.all([it.next(), it.next(10), it.next(20), it.next()]).then((results) => {
+            print(out.join(",") + " " + results.map((result) => JSON.stringify(result)).join(" "));
+        });
+        "#,
+    );
+    assert_eq!(lines, [r#"closed {"value":1,"done":false} {"value":11,"done":false} {"value":20,"done":true} {"done":true}"#]);
 }

@@ -7,8 +7,9 @@ use crate::heap::{AwaitKind, AwaitRole, AwaitState};
 #[derive(Clone, Copy, Debug)]
 struct AwaitResume {
     /// The spent state itself, whose reaction is running: the activation's next await
-    /// suspends into it again (`Vm::await_again`).
-    state: Value,
+    /// suspends into it again (`Vm::await_again`). `None` for the run of an async generator's
+    /// request, which awaits in a state of its own.
+    state: Option<Value>,
     promise: Value,
     role: AwaitRole,
     rejected: bool,
@@ -231,7 +232,7 @@ impl<H: Host> Vm<H> {
     /// `enqueue_async_resume` of an activation that awaits again from the reaction of its last
     /// await, `resume`: its spent state takes `kind`, as a fresh one would. That reaction was
     /// the state's only one and is running, so nothing else names the state, and an activation
-    /// keeps one state for all its awaits.
+    /// keeps one state for all its awaits. A request's run has no state to re-arm.
     fn await_again(
         &mut self,
         p: &ResidualProgram,
@@ -239,12 +240,15 @@ impl<H: Host> Vm<H> {
         kind: AwaitKind,
         source: Value,
     ) -> Result<(), JsError> {
+        let Some(spent) = resume.state else {
+            return self.enqueue_async_resume(p, kind, resume.promise, source);
+        };
         let realm = self.realm.globals;
-        let state = self.heap.await_state_mut(resume.state).expect("a running await reaction keeps its state");
+        let state = self.heap.await_state_mut(spent).expect("a running await reaction keeps its state");
         debug_assert!(matches!(state, AwaitState::Spent), "an await state re-arms only once spent");
         *state = AwaitState::arm(kind, realm, resume.promise);
-        self.with_call_roots([resume.state, source], |vm| {
-            vm.attach_await_reactions(p, resume.state, resume.promise, resume.role.generator(), source)
+        self.with_call_roots([spent, source], |vm| {
+            vm.attach_await_reactions(p, spent, resume.promise, resume.role.generator(), source)
         })
     }
 
@@ -306,125 +310,7 @@ impl<H: Host> Vm<H> {
         }
         Ok(())
     }
-
-    /// Runs an await's reaction: `state` is the `AwaitState` both its handlers name. A
-    /// fulfilled await whose activation the lane resumes from its record runs there
-    /// (`resume_await_in_lane`); any other run takes the continuation, which resumes in the
-    /// realm that awaited.
-    pub(super) fn resume_await(
-        &mut self,
-        p: &ResidualProgram,
-        state: Value,
-        rejected: bool,
-        value: Value,
-    ) -> Result<Value, JsError> {
-        if !rejected && let Some(settled) = self.resume_await_in_lane(p, state, value) {
-            return settled.map(|()| Value::UNDEFINED);
-        }
-        let spent = state;
-        let Some(state) = self.heap.await_state_mut(state) else {
-            return Err(JsError("await reaction without its state".into()));
-        };
-        let Some((kind, realm, promise)) = state.resume() else {
-            return Err(JsError("stale async continuation".into()));
-        };
-        let (role, continuation) = kind.into_role();
-        let resume = AwaitResume { state: spent, promise, role, rejected };
-        let previous_global = self.switch_realm_global(realm);
-        let result = self.with_call_roots(
-            [Some(resume.promise), resume.role.generator(), Some(value)]
-                .into_iter()
-                .flatten(),
-            |vm| {
-                vm.resume_async_continuation(p, resume, continuation, value)?;
-                if let Some(generator) = resume.role.generator() {
-                    vm.resume_async_generator_queue(p, generator)?;
-                }
-                Ok(Value::UNDEFINED)
-            },
-        );
-        self.switch_realm_global(previous_global);
-        result
-    }
-
-    fn resume_async_continuation(
-        &mut self,
-        p: &ResidualProgram,
-        resume: AwaitResume,
-        continuation: Option<Continuation>,
-        value: Value,
-    ) -> Result<(), JsError> {
-        // A yield's await leaves its continuation in the generator's record: a fulfilled
-        // value completes the request and the generator stays suspended there; a rejected
-        // one resumes it at the yield with the rejection.
-        let continuation = match (continuation, resume.role) {
-            (None, AwaitRole::AsyncGeneratorYield(generator)) => {
-                if !resume.rejected {
-                    if let Some(record) = self.generator_record_mut(generator) {
-                        record.stop();
-                    }
-                    let result = self.iterator_result(value, false)?;
-                    return self.promise_resolve_value(p, resume.promise, result);
-                }
-                self.generator_record_mut(generator).and_then(|record| record.resume())
-            }
-            // An await inside the body left its frame in the record too.
-            (None, AwaitRole::AsyncGeneratorAwait(generator)) => {
-                self.generator_record_mut(generator).and_then(|record| record.resume())
-            }
-            (continuation, _) => continuation,
-        };
-        let Some(continuation) = continuation else {
-            if let Some(generator) = resume.role.generator() {
-                self.fail_async_generator(
-                    p,
-                    generator,
-                    resume.promise,
-                    JsError("stale async generator continuation".into()),
-                )?;
-                return Ok(());
-            }
-            return Err(JsError("stale async continuation".into()));
-        };
-        let Some(program) = self.programs.get(continuation.frame.program) else {
-            return Err(JsError("async continuation program is unavailable".into()));
-        };
-        let active_program = self.replace_active_program(continuation.frame.program);
-        let result =
-            self.resume_async_continuation_in_program(&program, resume, continuation, value);
-        self.restore_active_program(active_program);
-        result
-    }
-
-    fn resume_async_continuation_in_program(
-        &mut self,
-        p: &ResidualProgram,
-        resume: AwaitResume,
-        continuation: Continuation,
-        value: Value,
-    ) -> Result<(), JsError> {
-        let resume_register = continuation.resume_register;
-        let mut frame = continuation.resume(self.with_stack.len());
-        if !resume.rejected
-            && let Some(register) = resume_register
-        {
-            if register as usize >= frame.registers.len() {
-                return Err(JsError("invalid async resume register".into()));
-            }
-            frame.registers[register as usize] = value;
-        }
-        self.activate_frame(&mut frame);
-        self.frames.push(frame);
-        let initial_error = resume
-            .rejected
-            .then(|| JsError::thrown(value, "await rejected".into()));
-        let result = match initial_error {
-            Some(error) => self.run_frame_general_with_error(p, self.frames.len() - 1, Some(error)),
-            None => self.run_resumed_frame(p, self.frames.len() - 1),
-        };
-        self.settle_resumed_frame(p, resume, result)
-    }
 }
 
-mod lane_resume;
+mod job_resume;
 mod settle;

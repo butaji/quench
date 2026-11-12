@@ -9382,7 +9382,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             };
             assert_eq!(resumed.completion, completion(completion_value));
             assert_eq!(resumed.promise, promise);
-            let resumed = resumed.resume(0);
+            let resumed = resumed.frame.into_frame(0);
             assert_eq!(resumed.locals, [local]);
             assert_eq!(resumed.dynamic_bindings, [(atom, binding)]);
             assert_eq!(resumed.registers, [register, iterator, Value::FALSE]);

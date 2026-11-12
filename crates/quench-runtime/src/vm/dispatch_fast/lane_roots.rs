@@ -72,8 +72,9 @@ pub(in crate::vm) enum JobEnd {
     /// The activation awaited the value in the lane: its owner holds the frame, and the await's
     /// reactions are the job's to attach.
     Awaited(Value),
-    /// The lane left the activation to the general path, which ran the VM frames it became: the
-    /// bottom one stays on the frame stack, with this outcome.
+    /// The lane left the activation to the general path, or did not admit the run
+    /// (`Vm::run_job`), which ran the VM frame the activation became: the bottom one stays on
+    /// the frame stack, with this outcome.
     Frames(Result<FrameOutcome, JsError>),
 }
 
@@ -248,7 +249,6 @@ impl<H: Host> Vm<H> {
             || self.direct_eval
             || self.parameter_eval
             || code.kind == crate::bytecode::ProgramKind::Wasm
-            || self.heap.should_collect()
         {
             return None;
         }

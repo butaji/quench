@@ -1,5 +1,5 @@
 use super::activation::{
-    AsyncGeneratorOperation, AsyncGeneratorRequest, Completion, Continuation, GeneratorRecord,
+    AsyncGeneratorOperation, AsyncGeneratorRequest, Completion, Continuation, GeneratorRecord, JobResume,
 };
 use crate::heap::AwaitKind;
 use super::promise::{PromiseReaction, PromiseState};
@@ -79,7 +79,7 @@ impl<H: Host> Vm<H> {
         let record = self.generator_record_mut(generator)?;
         let continuation = record.resume()?;
         let resume_register = continuation.resume_register;
-        let mut frame = continuation.resume(self.with_stack.len());
+        let mut frame = continuation.frame.into_frame(self.with_stack.len());
         if let Some(register) = resume_register {
             *frame.registers.get_mut(usize::from(register))? = sent;
         }
@@ -1376,7 +1376,7 @@ impl<H: Host> Vm<H> {
         if matches!(continuation.completion, Completion::GeneratorStart)
             && let Some(error) = initial_error
         {
-            self.pool_frame(continuation.resume(self.with_stack.len()));
+            self.pool_frame(continuation.frame.into_frame(self.with_stack.len()));
             self.close_generator(generator)?;
             return Err(error);
         }
@@ -1387,7 +1387,7 @@ impl<H: Host> Vm<H> {
             return Err(JsError("generator continuation program is unavailable".into()));
         };
         let resume_register = continuation.resume_register;
-        let mut frame = continuation.resume(self.with_stack.len());
+        let mut frame = continuation.frame.into_frame(self.with_stack.len());
         if initial_error.is_none()
             && let Some(register) = resume_register
         {
@@ -1563,6 +1563,10 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    /// The request `promise` of an async generator resumes it with `value`, or with
+    /// `initial_error` thrown where it suspended: its frame stays in its record, which runs it
+    /// (`Vm::resume_request`). A request of a running generator queues, and of a completed one
+    /// is answered at once.
     fn async_generator_next_with_promise(
         &mut self,
         p: &ResidualProgram,
@@ -1572,7 +1576,7 @@ impl<H: Host> Vm<H> {
         initial_error: Option<JsError>,
     ) -> Result<Value, JsError> {
         self.with_call_roots([generator, value, promise], |vm| {
-            let (continuation, realm) = {
+            let (starting, program, realm) = {
                 let Some(record) = vm.generator_record_mut(generator) else {
                     return Err(JsError("async generator receiver is invalid".into()));
                 };
@@ -1589,107 +1593,31 @@ impl<H: Host> Vm<H> {
                     vm.promise_resolve_value(p, promise, result)?;
                     return Ok(promise);
                 }
-                let Some(continuation) = record.resume() else {
+                let Some(continuation) = record.suspended_continuation() else {
                     return Err(JsError("async generator is suspended".into()));
                 };
-                (continuation, record.realm)
+                (matches!(continuation.completion, Completion::GeneratorStart), continuation.program(), record.realm)
             };
-            if matches!(continuation.completion, Completion::GeneratorStart)
+            // A generator that has not started closes without running its body.
+            if starting
                 && let Some(error) = initial_error
             {
-                vm.pool_frame(continuation.resume(vm.with_stack.len()));
                 vm.fail_async_generator(p, generator, promise, error)?;
                 return Ok(promise);
             }
-            let execution_program = match vm.programs.get(continuation.frame.program) {
-                Some(program) => program,
-                None => {
-                    vm.fail_async_generator(
-                        p,
-                        generator,
-                        promise,
-                        JsError("async generator continuation program is unavailable".into()),
-                    )?;
-                    return Ok(promise);
-                }
+            if vm.programs.get(program).is_none() {
+                let error = JsError("async generator continuation program is unavailable".into());
+                vm.fail_async_generator(p, generator, promise, error)?;
+                return Ok(promise);
+            }
+            let how = match initial_error {
+                Some(error) => JobResume::Throws(error),
+                None => JobResume::Sends(value),
             };
-            let resume_register = continuation.resume_register;
-            let mut frame = continuation.resume(vm.with_stack.len());
-            if initial_error.is_none()
-                && let Some(register) = resume_register
-            {
-                if register as usize >= frame.registers.len() {
-                    vm.fail_async_generator(
-                        p,
-                        generator,
-                        promise,
-                        JsError("invalid async generator resume register".into()),
-                    )?;
-                    return Ok(promise);
-                }
-                frame.registers[register as usize] = value;
-            }
-            let previous_program = vm.replace_active_program(frame.program);
             let previous_global = vm.switch_realm_global(realm);
-            vm.activate_frame(&mut frame);
-            vm.frames.push(frame);
-            let result = vm.run_frame_general_with_error(
-                &execution_program,
-                vm.frames.len() - 1,
-                initial_error,
-            );
-            let mut frame = vm.frames.pop().expect("async generator frame exists");
-            vm.deactivate_frame(&mut frame, &result);
-            vm.set_active_program(previous_program);
+            let resumed = vm.resume_request(generator, promise, how);
             vm.switch_realm_global(previous_global);
-            match result {
-                Err(error) => {
-                    vm.pool_frame(frame);
-                    vm.fail_async_generator(p, generator, promise, error)?;
-                }
-                Ok(
-                    FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. },
-                ) => {
-                    vm.pool_frame(frame);
-                    vm.finish_async_generator(p, generator, promise, value)?;
-                }
-                Ok(FrameOutcome::Yield {
-                    value,
-                    destination,
-                    delegated_result,
-                    frame: None,
-                }) => vm.async_generator_yield(
-                    p,
-                    generator,
-                    promise,
-                    frame,
-                    value,
-                    destination,
-                    delegated_result.is_some(),
-                )?,
-                Ok(FrameOutcome::Await {
-                    value,
-                    destination,
-                    frame: None,
-                }) => {
-                    let continuation = vm.suspend_activation(
-                        frame,
-                        Completion::Await(value),
-                        Some(destination),
-                        promise,
-                    );
-                    vm.async_generator_await(p, generator, promise, continuation, value)?;
-                }
-                Ok(_) => {
-                    vm.pool_frame(frame);
-                    vm.fail_async_generator(
-                        p,
-                        generator,
-                        promise,
-                        JsError("async generator frame retained unexpectedly".into()),
-                    )?;
-                }
-            }
+            resumed?;
             Ok(promise)
         })
     }

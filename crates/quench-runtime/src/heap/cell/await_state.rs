@@ -58,20 +58,19 @@ impl AwaitState {
         }
     }
 
-    /// The activation a pending await resumes in the lane, with the realm and promise it
-    /// settles: an async function's own, whose continuation this state keeps (`state` names this
-    /// state), or the async generator whose frame is parked in its record. `None` for an await
-    /// of a `yield`'s value, which resumes no frame, and for a state that is not pending.
-    pub(crate) fn pending_job(&self, state: Value) -> Option<(JobRoot, Value, Value)> {
-        match self {
-            Self::Pending { kind: AwaitKind::AsyncFunction(_), realm, promise } => {
-                Some((JobRoot { object: state, kind: SuspendKind::AsyncFunction }, *realm, *promise))
-            }
-            Self::Pending { kind: AwaitKind::AsyncGeneratorAwait { generator }, realm, promise } => {
-                Some((JobRoot { object: *generator, kind: SuspendKind::AsyncGenerator }, *realm, *promise))
-            }
-            _ => None,
-        }
+    /// What a pending await resumes, with the realm that awaited and the promise it settles
+    /// (the async function's own, or the async generator request's). `None` for a state that
+    /// is not pending.
+    pub(crate) fn pending(&self) -> Option<(AwaitRole, Value, Value)> {
+        let Self::Pending { kind, realm, promise } = self else {
+            return None;
+        };
+        let role = match kind {
+            AwaitKind::AsyncFunction(_) => AwaitRole::AsyncFunction,
+            AwaitKind::AsyncGeneratorAwait { generator } => AwaitRole::AsyncGeneratorAwait(*generator),
+            AwaitKind::AsyncGeneratorYield { generator } => AwaitRole::AsyncGeneratorYield(*generator),
+        };
+        Some((role, *realm, *promise))
     }
 
     /// The frame an async function's pending await suspended: what a lane job resumes.
@@ -167,6 +166,17 @@ pub(crate) enum AwaitRole {
 }
 
 impl AwaitRole {
+    /// The root of the run that resumes the activation, whose frame an async function's await
+    /// state `state` or its generator's record keeps.
+    pub(crate) fn job(self, state: Value) -> JobRoot {
+        match self {
+            Self::AsyncFunction => JobRoot { object: state, kind: SuspendKind::AsyncFunction },
+            Self::AsyncGeneratorAwait(generator) | Self::AsyncGeneratorYield(generator) => {
+                JobRoot { object: generator, kind: SuspendKind::AsyncGenerator }
+            }
+        }
+    }
+
     /// The async generator the awaiting activation belongs to, if it is one.
     pub(crate) fn generator(self) -> Option<Value> {
         match self {
@@ -185,14 +195,5 @@ impl AwaitKind {
     /// An async generator activation awaiting inside its body, its frame parked in `generator`.
     pub(crate) fn generator_await(generator: Value) -> Self {
         Self::AsyncGeneratorAwait { generator }
-    }
-
-    /// The role and the frame it holds, if any (an async function's), for a reaction run.
-    pub(crate) fn into_role(self) -> (AwaitRole, Option<Continuation>) {
-        match self {
-            Self::AsyncFunction(continuation) => (AwaitRole::AsyncFunction, Some(*continuation)),
-            Self::AsyncGeneratorAwait { generator } => (AwaitRole::AsyncGeneratorAwait(generator), None),
-            Self::AsyncGeneratorYield { generator } => (AwaitRole::AsyncGeneratorYield(generator), None),
-        }
     }
 }

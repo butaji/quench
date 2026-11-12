@@ -2,12 +2,37 @@
 //! (`Vm::run_lane_job`): an async function's await state, which keeps its continuation while
 //! the activation runs, and an async generator's record. Each suspends the activation back in
 //! place at an `await`, completes with it, or gives its frame up when the lane's activations
-//! become VM frames.
+//! become VM frames, or when the lane does not admit the run (`Vm::run_job`).
 use super::*;
-use super::super::activation::{GeneratorFrame, JobRoot, SuspendKind};
+use super::super::activation::{GeneratorFrame, JobResume, JobRoot, SuspendKind};
+use super::super::dispatch_fast::JobEnd;
 use crate::heap::AwaitState;
 
 impl<H: Host> Vm<H> {
+    /// Resumes the activation `job` names with `resume`, which its owner keeps suspended
+    /// (`job_frame`): in the lane over its frame's register file where the lane admits a
+    /// resumption with a value (`run_lane_job`), else as the frame its owner gives up, which the
+    /// general loop runs from the resume point, or, for a throw, from the handler the suspended
+    /// `await` or `yield` selects. How the run ended.
+    pub(in crate::vm) fn run_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> JobEnd {
+        if let JobResume::Sends(sent) = resume
+            && let Some(end) = self.run_lane_job(code, job, sent)
+        {
+            return end;
+        }
+        let sent = match resume {
+            JobResume::Sends(sent) => sent,
+            JobResume::Throws(_) => Value::UNDEFINED,
+        };
+        self.resume_job_window(job, sent).expect("a job's owner keeps the frame its suspension parked");
+        self.push_job_window_frame(job, std::iter::empty());
+        let frame = self.frames.len() - 1;
+        JobEnd::Frames(match resume {
+            JobResume::Sends(_) => self.run_resumed_frame(code, frame),
+            JobResume::Throws(error) => self.run_frame_general_with_error(code, frame, Some(error)),
+        })
+    }
+
     /// The frame `job`'s owner suspended: an async function's pending await's, or the frame an
     /// async generator parked at an `await` (or a `yield`) in its record.
     pub(in crate::vm) fn job_frame(&self, job: JobRoot) -> Option<&GeneratorFrame> {

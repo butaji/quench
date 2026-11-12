@@ -38,6 +38,26 @@ pub(crate) struct JobRoot {
     pub(crate) kind: SuspendKind,
 }
 
+/// How a promise job or a request resumes the activation its owner suspended
+/// (`Vm::run_job`).
+#[derive(Debug)]
+pub(crate) enum JobResume {
+    /// With the value its `await` or `yield` evaluates to.
+    Sends(Value),
+    /// Throwing the error where it suspended, which a handler of its bytecode may catch.
+    Throws(super::JsError),
+}
+
+impl JobResume {
+    /// The heap value it carries, which the run keeps alive.
+    pub(crate) fn value(&self) -> Option<Value> {
+        match self {
+            Self::Sends(value) => Some(*value),
+            Self::Throws(error) => error.thrown_value(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct NativeActivation {
     pub callable: Value,
@@ -163,7 +183,7 @@ impl CallContext {
 
 /// A suspended activation: its frame record (`GeneratorFrame`), which owns the frame state,
 /// and what its resumer reads. Suspending moves the frame's state into the record and
-/// resuming moves it back out (`resume`), so neither copies it nor gives up its storage.
+/// resuming moves it back out (`GeneratorFrame::into_frame`), so neither copies it nor gives up its storage.
 #[derive(Clone)]
 pub(crate) struct Continuation {
     pub frame: Box<GeneratorFrame>,
@@ -206,13 +226,6 @@ impl Continuation {
         promise: Value,
     ) -> Self {
         Self { frame: GeneratorFrame::capture(frame), completion, resume_register, promise }
-    }
-
-    /// The suspended frame, ready to push: it continues after its suspending instruction,
-    /// every register holds a value, and the state a run derives for itself (the operation's
-    /// field and binding site, the capture cache, a fixed `this`, the `with` base) starts anew.
-    pub(super) fn resume(self, with_base: usize) -> Box<super::Frame> {
-        self.frame.into_frame(with_base)
     }
 
     /// A lane resumes the frame as an activation over its register file, which stays in this
@@ -335,7 +348,7 @@ mod tests {
             ]
         );
         // The resumed frame keeps the suspended state and starts its own run anew.
-        let frame = continuation.resume(0);
+        let frame = continuation.frame.into_frame(0);
         assert_eq!(frame.original_arguments, [Value::heap(10)]);
         assert_eq!(frame.with_objects, [Value::heap(11)]);
         assert_eq!((frame.function, frame.pc, frame.with_base), (3, 7, 0));

@@ -3,33 +3,7 @@
 //! instruction addresses a parameter, which the object then aliases to nothing observable. A
 //! function that reads or writes a mapped parameter resumes as a frame, which keeps the
 //! aliasing (`Vm::mapped_argument_load`). Compiled runs agree with the interpreter's.
-use super::window_steps::tests::run;
-use crate::test_host::TestHost;
-use crate::vm::Vm;
-use crate::{Engine, ExecutionMode};
-use std::cell::RefCell;
-use std::rc::Rc;
-
-/// What `source` prints in each execution mode, which must agree.
-fn agree(source: &str) -> Vec<String> {
-    let outputs: Vec<Vec<String>> = [ExecutionMode::Interpreted, ExecutionMode::Compiled]
-        .into_iter()
-        .map(|mode| {
-            let output = Rc::new(RefCell::new(Vec::new()));
-            let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-            vm.set_execution_mode(mode);
-            let program = Engine::specialize(source, "arguments-windows.js").unwrap();
-            vm.execute(&program).unwrap();
-            let lines = output.borrow().clone();
-            lines
-        })
-        .collect();
-    assert_eq!(
-        outputs[0], outputs[1],
-        "compiled differs from the interpreter"
-    );
-    outputs[0].clone()
-}
+use super::window_steps::tests::{agree, run};
 
 #[test]
 fn a_generator_reading_arguments_resumes_in_its_window_without_frames() {

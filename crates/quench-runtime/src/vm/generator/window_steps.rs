@@ -152,6 +152,24 @@ pub(super) mod tests {
         (lines, made)
     }
 
+    /// What running `source` prints in each execution mode, which must agree.
+    pub(in crate::vm) fn agree(source: &str) -> Vec<String> {
+        let outputs: Vec<Vec<String>> = [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled]
+            .into_iter()
+            .map(|mode| {
+                let output = Rc::new(RefCell::new(Vec::new()));
+                let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+                vm.set_execution_mode(mode);
+                let program = Engine::specialize(source, "generator-windows.js").unwrap();
+                vm.execute(&program).unwrap();
+                let lines = output.borrow().clone();
+                lines
+            })
+            .collect();
+        assert_eq!(outputs[0], outputs[1], "compiled differs from the interpreter");
+        outputs[0].clone()
+    }
+
     fn stepping(steps: u32) -> String {
         format!(
             r#"
