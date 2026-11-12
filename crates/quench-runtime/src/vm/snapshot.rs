@@ -301,6 +301,7 @@ impl<H: Host> Vm<H> {
             lane_stack: _,
             execution_mode: _,
             native_execution_rejections: _,
+            js_tier_pending: _,
             #[cfg(feature = "native-execution")]
             native_program_resolver: _,
             execution_interrupt: _,

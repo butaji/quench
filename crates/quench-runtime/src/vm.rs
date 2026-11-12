@@ -1985,6 +1985,8 @@ pub(crate) struct Vm<H> {
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     native_execution_rejections: u64,
+    /// Numeric function bodies whose compile runs on the code generator's thread (`Vm::js_tier_compile`).
+    js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::Pending<Option<compiled::NumericImage>>>,
     #[cfg(feature = "native-execution")]
     native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,

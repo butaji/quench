@@ -76,7 +76,8 @@ use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_n
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
-#[path = "compiled/numeric_image.rs"] mod numeric_image; pub(super) use numeric_image::compile_js_typed_numeric_region;
+#[path = "compiled/numeric_image.rs"] mod numeric_image; #[cfg(test)] pub(super) use numeric_image::compile_js_typed_numeric_region;
+pub(super) use numeric_image::NumericImage;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, lane_body_signature, BodyEntry, BodyReturn};
 #[path = "compiled/general_tier_queries.rs"] mod general_tier_queries;
@@ -13074,16 +13075,27 @@ impl<H: Host> Vm<H> {
         (terminal.op().class().eq(Class::Return)).then_some((last_pc, terminal.register_a(), value))
     }
 
-    /// Compiles and installs `function`'s numeric body (`js_compiled::compile`); `None` where
-    /// the specializer declines it or the tier does not install it.
+    /// Installs `function`'s numeric body once its compile is done (`js_compiled::start`: lowered
+    /// here, compiled on the code generator's thread, polled at later entries); `None` while it
+    /// compiles, and where nothing was installed.
     fn js_tier_compile(&mut self, program: &ResidualProgram, program_id: ProgramId, function_id: u32)
         -> Option<Rc<CompiledJsFunction>> {
         let function = program.function_get(function_id as usize)?;
         let residual = self.programs.get(program_id)?;
         let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
+        let key = (program_id, function_id);
+        let pending = self.js_tier_pending.remove(&key).or_else(|| super::js_compiled::start(&residual, function_id));
+        let image = match pending.map(|pending| (pending.poll(), pending)) {
+            Some((std::task::Poll::Pending, pending)) => {
+                self.js_tier_pending.insert(key, pending);
+                return None;
+            }
+            Some((std::task::Poll::Ready(image), _)) => image.flatten(),
+            None => None,
+        };
         self.host.before_native_compilation();
         let peak_before = crate::trace::Channel::JitPeak.on().then(process_peak_rss_kib);
-        let artifact = super::js_compiled::compile(&residual, function_id);
+        let artifact = image.and_then(|image| image.load());
         if let Some(before) = peak_before {
             let after = process_peak_rss_kib();
             eprintln!(

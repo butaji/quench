@@ -31,6 +31,7 @@ fn lower_numeric_region(program: &ResidualProgram, function_id: u32) -> Option<N
 /// Bind the numeric JIT ABI to the same semantic SSA specializer used by
 /// frameless JIT bodies and linked AOT regions, without a canonical VM frame: the region's
 /// image, linked to this process.
+#[cfg(test)]
 pub(in crate::vm) fn compile_js_typed_numeric_region(program: &ResidualProgram, function_id: u32)
     -> Option<crate::vm::js_compiled::JsJitArtifact> {
     NumericImage::compile(program, function_id)?.load()
@@ -57,8 +58,20 @@ pub(in crate::vm) struct NumericImage {
 impl NumericImage {
     /// The image of `function_id`, `None` where the region lowers to code that needs a link
     /// this build cannot make.
+    #[cfg(test)]
     pub(in crate::vm) fn compile(program: &ResidualProgram, function_id: u32) -> Option<Self> {
-        let NumericLowering { function, isa, params, number_result } = lower_numeric_region(program, function_id)?;
+        Self::build(lower_numeric_region(program, function_id)?, function_id)
+    }
+
+    /// Lowers `function_id` here and compiles it on the code generator's thread: the image
+    /// arrives when the work is done, `None` where the compile declined.
+    pub(in crate::vm) fn start(program: &ResidualProgram, function_id: u32) -> Option<crate::vm::jit_backend::Pending<Option<Self>>> {
+        let lowering = lower_numeric_region(program, function_id)?;
+        Some(crate::vm::jit_backend::run_in_background(move || Self::build(lowering, function_id)))
+    }
+
+    fn build(lowering: NumericLowering, function_id: u32) -> Option<Self> {
+        let NumericLowering { function, isa, params, number_result } = lowering;
         let dump = native_dump_directory().map(|_| function.to_string());
         let code = crate::vm::jit_backend::compile_function(function, &*isa, Some(crate::vm::js_compiled::MAX_CODE_BYTES), |compiled, function| {
             crate::vm::jit_backend::relocatable_code::RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
