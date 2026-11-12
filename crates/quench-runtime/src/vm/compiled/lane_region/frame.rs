@@ -355,6 +355,7 @@ pub(super) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     builder.def_var(variable, value);
     if fact.value.representation == Representation::Tagged { fact.tagged = TaggedView::Value(value); }
     state.values[index] = fact;
+    state.proofs.homed.remove(index);
     state.proofs.headers[index] = None;
     state.proofs.layouts.retain(|(owner, _), _| *owner != Some(register));
     state.proofs.receivers.remove(&register);

@@ -38,6 +38,7 @@ mod stable;
 mod polls;
 #[path = "lane_region/literals.rs"] mod literals;
 #[path = "lane_region/edges.rs"] mod edges;
+#[cfg(all(test, feature = "aot"))] #[path = "lane_region/home_tests.rs"] mod home_tests;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
@@ -175,6 +176,9 @@ struct LocalProofs {
     stable: bool,
     /// Whether this block proved the realm its global reads were compiled against active (`Lowering::hold_global`).
     realm: bool,
+    /// Registers whose lane-frame slot holds their current tagged value (`Lowering::home_written`): a
+    /// definition retires one, so a call writes back only what changed since the last write-back.
+    homed: CompoundBitSet,
 }
 
 impl LocalProofs {
@@ -186,6 +190,12 @@ impl LocalProofs {
     fn write_field(&mut self, atom: Atom) {
         self.fields.retain(|field| field.atom != atom);
     }
+
+    /// Keeps the homes `other` also holds, for a state both arrivals reach.
+    fn meet_homed(&mut self, other: &CompoundBitSet) {
+        let dropped: Vec<usize> = self.homed.iter().filter(|register| !other.contains(*register)).collect();
+        for register in dropped { self.homed.remove(register); }
+    }
 }
 
 impl State {
@@ -194,7 +204,7 @@ impl State {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), stable: false, realm: false,
-            arrays: smallvec::SmallVec::new() } }
+            arrays: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
 
     /// The `headers` index of an owner: a register, or fixed `this` (`None`).
@@ -898,6 +908,11 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.arrays.contains(view))).collect();
         state.proofs.stable = first.stable && rest.iter().all(|other| other.stable);
         state.proofs.realm = first.realm && rest.iter().all(|other| other.realm);
+        // A block a rotated latch also enters has an edge `rest` does not hold: only a sealable block keeps the homes.
+        if self.sealable.contains(pc) {
+            state.proofs.homed.clone_from(&first.homed);
+            for other in rest { state.proofs.meet_homed(&other.homed); }
+        }
     }
 
     /// Conform the machine view and discharge the target's semantic requirements.
@@ -966,6 +981,13 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     fn entry_state(&mut self, pc: usize, registers: usize) -> State {
         let mut state = State::canonical(registers);
+        if pc == self.coverage.entry() && self.completion != Completion::Number
+            && edges::entered_once(&self.unit.instructions, pc, |at| self.coverage.lowered(at)) {
+            // The entry loaded each live caller register from its frame slot.
+            for register in (0..self.unit.caller_registers).filter(|register| self.is_live(pc, *register)) {
+                state.proofs.homed.insert(usize::from(register));
+            }
+        }
         if let Some(types) = self.facts.at(pc) {
             for (index, ty) in types.iter().copied().enumerate() {
                 if !self.is_live(pc, index as Register) { continue; }
@@ -2086,6 +2108,7 @@ impl Lowering<'_, '_> {
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
+        state.proofs.meet_homed(&incoming.proofs.homed);
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
             if current != incoming {
@@ -2903,8 +2926,7 @@ impl Lowering<'_, '_> {
             return false;
         };
         let missed = self.guard_exit(state, pc as u32);
-        self.canonicalize(state, pc);
-        self.spill_written(pc);
+        self.home_written(state, pc);
         let completed = self.builder.create_block();
         let status = self.record_helper(LaneHelper::ValueStep, call_pc);
         self.helper_status(status, completed, missed);
@@ -2927,18 +2949,22 @@ impl Lowering<'_, '_> {
         let base = self.registers_base;
         let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));
         self.set_tagged(state, destination, bits);
+        state.proofs.homed.insert(usize::from(destination));
     }
 
-    /// The live registers the body wrote, stored to the lane's registers for a helper to read.
-    fn spill_written(&mut self, pc: usize) {
+    /// The live registers the body wrote since their last write-back, stored to the lane's registers for a
+    /// helper to read. A register whose slot is current (`LocalProofs::homed`) is neither boxed nor stored.
+    fn home_written(&mut self, state: &mut State, pc: usize) {
         let caller_registers = self.unit.caller_registers;
         let written: Vec<Register> = self.written.iter().map(|register| register as Register)
             .take_while(|register| *register < caller_registers).collect();
         for register in written {
-            if !self.is_live(pc, register) { continue; }
-            let bits = self.builder.use_var(self.registers.tagged[usize::from(register)]);
+            let index = usize::from(register);
+            if !self.is_live(pc, register) || state.proofs.homed.contains(index) { continue; }
+            let bits = self.tagged(state, register);
             let base = self.registers_base;
             self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
+            state.proofs.homed.insert(index);
         }
     }
 
@@ -3416,8 +3442,7 @@ impl Lowering<'_, '_> {
             return false;
         };
         let missed = self.guard_exit(state, pc as u32);
-        self.canonicalize(state, pc);
-        self.spill_written(pc);
+        self.home_written(state, pc);
         let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
         self.reentries.push(completed);
         match self.direct.get(&pc).copied() {
