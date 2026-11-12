@@ -114,8 +114,7 @@ impl LaneView {
         if completed_region || matches!(exit, LaneExit::Returned { .. }) {
             completed.set(true);
             completions.set(completions.get().saturating_add(1));
-            if completions.get() % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); self.note_held(u64::from(completions.get()), u64::from(exits.get())); }
-            self.promote_if_repaid(body);
+            if completions.get() % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); self.note_held(u64::from(completions.get()), u64::from(exits.get())); self.promote_if_repaid(body); }
             return;
         }
         exits.set(exits.get().saturating_add(1));
