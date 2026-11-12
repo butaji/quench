@@ -50,6 +50,7 @@ pub(crate) mod effects;
 pub(crate) mod wasm;
 pub(crate) mod wasm_float;
 mod wasm_concrete;
+pub(crate) mod wasm_call;
 pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;
 pub(crate) mod wasm_machine;
@@ -468,3 +469,5 @@ mod wasm_instance_tests;
 mod wasm_memory_tests;
 #[cfg(test)]
 mod wasm_flow_tests;
+#[cfg(test)]
+mod wasm_call_tests;

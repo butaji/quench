@@ -3,13 +3,14 @@
 
 use super::ConcreteWasm;
 use super::wasm::{WasmStage, Width};
+use super::wasm_call::WasmTable;
 use super::wasm_float::{Float, Truncation};
 use super::wasm_instance::WasmInstance;
 use super::wasm_memory::{Access, WasmMemory};
-use crate::WasmTrap;
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
+use crate::{Value, WasmTrap};
 
 /// A stage over an instance: its globals by environment slot and its linear memory.
 pub(crate) struct ConcreteInstance<'a> {
@@ -17,8 +18,15 @@ pub(crate) struct ConcreteInstance<'a> {
     pub(crate) memory: &'a mut [u8],
 }
 
-/// The scalar primitives are `ConcreteWasm`'s: one definition, delegated.
-macro_rules! scalar_stage {
+/// A stage over a table of function references; `matches` says whether a reference's function
+/// has the expected signature type.
+pub(crate) struct ConcreteTable<'a> {
+    pub(crate) elements: &'a [Value],
+    pub(crate) matches: &'a mut dyn FnMut(Value) -> bool,
+}
+
+/// Methods that are `ConcreteWasm`'s: one definition, delegated.
+macro_rules! delegated {
     ($($name:ident($($argument:ident: $ty:ty),*) -> $result:ty;)+) => {$(
         #[inline(always)]
         fn $name(&mut self, $($argument: $ty),*) -> $result {
@@ -27,22 +35,48 @@ macro_rules! scalar_stage {
     )+};
 }
 
-impl WasmStage for ConcreteInstance<'_> {
-    type Word = u64;
-    type Exit = WasmTrap;
+/// The scalar primitives of a stage over an instance.
+macro_rules! scalar_stage {
+    ($($stage:ty),+) => {$(
+        impl WasmStage for $stage {
+            type Word = u64;
+            type Exit = WasmTrap;
 
-    scalar_stage! {
-        constant(width: Width, value: i64) -> u64;
-        operate(operator: Binary, width: Width, left: u64, right: u64) -> u64;
-        operate_unary(operator: Unary, width: Width, value: u64) -> u64;
-        operate_float(operator: FloatBinary, float: Float, left: u64, right: u64) -> u64;
-        operate_float_unary(operator: FloatUnary, float: Float, value: u64) -> u64;
-        float_unordered(float: Float, left: u64, right: u64) -> u64;
-        float_constant(float: Float, bits: u64) -> u64;
-        select(flag: u64, taken: u64, other: u64) -> u64;
-        truncation_overflows(truncation: Truncation, value: u64) -> u64;
-        convert(operator: ScalarConversionOperator, value: u64) -> u64;
-        trap_when(flag: u64, trap: WasmTrap) -> Result<(), WasmTrap>;
+            delegated! {
+                constant(width: Width, value: i64) -> u64;
+                operate(operator: Binary, width: Width, left: u64, right: u64) -> u64;
+                operate_unary(operator: Unary, width: Width, value: u64) -> u64;
+                operate_float(operator: FloatBinary, float: Float, left: u64, right: u64) -> u64;
+                operate_float_unary(operator: FloatUnary, float: Float, value: u64) -> u64;
+                float_unordered(float: Float, left: u64, right: u64) -> u64;
+                float_constant(float: Float, bits: u64) -> u64;
+                select(flag: u64, taken: u64, other: u64) -> u64;
+                truncation_overflows(truncation: Truncation, value: u64) -> u64;
+                convert(operator: ScalarConversionOperator, value: u64) -> u64;
+                trap_when(flag: u64, trap: WasmTrap) -> Result<(), WasmTrap>;
+            }
+        }
+    )+};
+}
+
+scalar_stage!(ConcreteInstance<'_>, ConcreteTable<'_>);
+
+impl WasmTable for ConcreteTable<'_> {
+    fn table_length(&mut self) -> u64 {
+        self.elements.len() as u64
+    }
+
+    fn table_element(&mut self, index: u64) -> u64 {
+        self.elements[index as usize].to_bits()
+    }
+
+    fn reference_is_null(&mut self, reference: u64) -> u64 {
+        u64::from(Value::from_bits(reference).is_null())
+    }
+
+    /// The signature type is the closure's to know: it closes over the expected one.
+    fn reference_matches(&mut self, reference: u64, _: u32) -> u64 {
+        u64::from((self.matches)(Value::from_bits(reference)))
     }
 }
 

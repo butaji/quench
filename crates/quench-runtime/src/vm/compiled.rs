@@ -30,6 +30,7 @@ use crate::bytecode::{Class, Traits,
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
     RETURN_REGISTER, WideInstruction,
 };
+use crate::staged::wasm_call::Call;
 use crate::staged::wasm_flow::Flow;
 use crate::staged::wasm_instance::Instance;
 use crate::staged::wasm_step::Step;
@@ -90,6 +91,7 @@ mod wasm_stage;
 mod wasm_instance_stage;
 mod wasm_memory_stage;
 mod wasm_flow_stage;
+mod wasm_call_stage;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
 pub(super) use lane_unit::static_call_targets;
@@ -8660,11 +8662,11 @@ impl<H: Host> Analysis<'_, H> {
             let mut state = states[pc]
                 .clone()
                 .expect("queued instructions have a state");
-            if instruction.op().class().eq(Class::CallKnown)
-                && !callable.contains(usize::from(instruction.known_function_index()))
+            if let Some(callee) = Step::of(instruction.op(), instruction.imm())
+                .and_then(|step| step.callee(instruction))
+                && !callable.contains(callee)
                 && !self.experimental_root_compilation
             {
-                let callee = instruction.known_function_index();
                 self.reject(index, || format!("uncompiled-callee:{callee}@{pc}"));
                 return None;
             }
@@ -8823,6 +8825,9 @@ impl<H: Host> Analysis<'_, H> {
             Some(Step::Flow(flow)) => {
                 return self.transfer_flow(function, instruction, state, flow, result);
             }
+            Some(Step::Call(call)) => {
+                return self.transfer_call(function, instruction, state, call, callable);
+            }
             None => {}
         }
         match op.class() {
@@ -8875,82 +8880,6 @@ impl<H: Host> Analysis<'_, H> {
                     (state.get(register, function.registers)? == Slot::Vector).then_some(())?;
                 }
                 set(state, instruction.a(), Slot::Vector)
-            }
-            Class::WasmIndirectTarget if self.callouts => {
-                let Slot::Binding(table) = state.get(instruction.b(), function.registers)? else {
-                    return None;
-                };
-                if !self.binds_table32(table) {
-                    return None;
-                }
-                i32_value(state, instruction.c())?;
-                self.type_signature(instruction.imm())?;
-                set(
-                    state,
-                    instruction.a(),
-                    Slot::IndirectReference {
-                        signature: instruction.imm(),
-                        table,
-                    },
-                )
-            }
-            Class::CallKnown => {
-                let callee = u32::from(instruction.known_function_index());
-                if !callable.contains(callee as usize)
-                    && (!self.experimental_root_compilation || (self.root_only && !self.callouts))
-                {
-                    return None;
-                }
-                let signature = self.signature(callee)?;
-                if signature.results.len() > 1
-                    && !callable.contains(callee as usize)
-                {
-                    // The VM callout ABI currently carries at most one result.
-                    // Do not admit a residual fallback that would silently
-                    // discard the remaining Wasm results.
-                    return None;
-                }
-                let window = instruction.call_window();
-                if usize::from(window.count) != signature.params.len() {
-                    return None;
-                }
-                for (offset, ty) in signature.params.iter().enumerate() {
-                    (value(state, window.base + offset as u16)? == Kind::of(*ty)?).then_some(())?;
-                }
-                let kind = match signature.results.first() {
-                    Some(ty) => Kind::of(*ty)?,
-                    None => Kind::I32,
-                };
-                set(state, instruction.result_register(), Slot::Value(kind))
-            }
-            Class::WasmRefFunc if self.callouts => {
-                let function = instruction.imm();
-                self.import_signature(function)?;
-                set(state, instruction.a(), Slot::Import(function))
-            }
-            Class::Call => {
-                let slot = state.get(instruction.b(), function.registers)?;
-                let signature = match slot {
-                    Slot::Import(function) => self.import_signature(function)?,
-                    Slot::IndirectReference { signature, .. } if self.callouts => {
-                        self.type_signature(signature)?
-                    }
-                    _ => return None,
-                };
-                let window = instruction.call_window();
-                if usize::from(window.count) != signature.params.len()
-                    || signature.results.len() > 1
-                {
-                    return None;
-                }
-                for (offset, ty) in signature.params.iter().enumerate() {
-                    (value(state, window.base + offset as u16)? == Kind::of(*ty)?).then_some(())?;
-                }
-                let kind = match signature.results.first() {
-                    Some(ty) => Kind::of(*ty)?,
-                    None => Kind::I32,
-                };
-                set(state, instruction.result_register(), Slot::Value(kind))
             }
             _ => None,
         }
@@ -10687,88 +10616,26 @@ impl<H: Host> Emitter<'_, '_, H> {
         instruction: WideInstruction,
     ) -> bool {
         let op = instruction.op();
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
         if let Some(done) = self.vector_instruction(pc, instruction) {
             return done;
         }
-        match Step::of(op, instruction.imm()) {
-            Some(Step::Numeric(operation)) => return self.operation(pc, instruction, operation),
-            Some(Step::Instance(step)) => {
+        let step = Step::of(op, instruction.imm()).expect("planned instructions have a denotation");
+        match step {
+            Step::Numeric(operation) => self.operation(pc, instruction, operation),
+            Step::Instance(step) => {
                 self.instance(pc, instruction, step);
-                return true;
+                true
             }
-            Some(Step::Memory(step)) => {
+            Step::Memory(step) => {
                 self.memory(instruction, step);
-                return true;
+                true
             }
-            Some(Step::Flow(flow)) => return self.flow(function, pc, instruction, flow),
-            None => {}
-        }
-        match op.class() {
-            Class::CallKnown => {
-                let callee = usize::from(instruction.known_function_index());
-                let Some(callee_plan) = self.plans[callee].as_ref() else {
-                    self.callout_known_fallback(callee as u32, instruction);
-                    return true;
-                };
-                let window = instruction.call_window();
-                let mut args = vec![self.body.core.context];
-                if self.memory.base {
-                    args.push(self.base);
-                }
-                args.extend(self.length);
-                for (offset, ty) in callee_plan.params.iter().enumerate() {
-                    let kind = Kind::of(*ty).expect("planned");
-                    args.push(self.read(window.base + offset as u16, kind));
-                }
-                // Compiled functions share one code buffer: a direct call,
-                // linked at placement (`link`).
-                let target = match self.callees[callee] {
-                    Some(target) => target,
-                    None => {
-                        let signature = internal_signature(
-                            self.memory,
-                            &callee_plan.params,
-                            callee_plan.result,
-                            self.call_conv,
-                        );
-                        let signature = self.body.core.builder.import_signature(signature);
-                        let name = self
-                            .body.core.builder
-                            .func
-                            .declare_imported_user_function(function_name(callee));
-                        let target = self.body.core.builder.import_function(ir::ExtFuncData {
-                            name: ir::ExternalName::User(name),
-                            signature,
-                            colocated: true,
-                            patchable: false,
-                        });
-                        self.callees[callee] = Some(target);
-                        target
-                    }
-                };
-                let call = self.body.core.builder.ins().call(target, &args);
-                let results = self.body.core.builder.inst_results(call).to_vec();
-                self.propagate(results[0]);
-                let destination = instruction.result_register();
-                match callee_plan.result {
-                    Some(ty) => self.write(destination, Kind::of(ty).expect("planned"), results[1]),
-                    None => {
-                        let zero = self.body.core.builder.ins().iconst(types::I32, 0);
-                        self.write(destination, Kind::I32, zero);
-                    }
-                }
+            Step::Flow(flow) => self.flow(function, pc, instruction, flow),
+            Step::Call(call) => {
+                self.call(pc, instruction, call);
+                true
             }
-            Class::WasmRefFunc => {}
-            Class::WasmIndirectTarget => self.indirect_target(pc, instruction),
-            Class::Call => match self.plan.operand(pc) {
-                Slot::Import(_) => self.callout(pc, instruction),
-                Slot::IndirectReference { .. } => self.call_reference(pc, instruction),
-                _ => unreachable!("planned calls hold a supported callable"),
-            },
-            _ => unreachable!("planned instructions have a denotation"),
         }
-        true
     }
 }
 
@@ -12449,8 +12316,10 @@ impl<H: Host> Vm<H> {
                 *selected_function = true;
                 for packed in &function.code {
                     let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                    if instruction.op().class().eq(Class::CallKnown) {
-                        pending.push(usize::from(instruction.known_function_index()));
+                    if let Some(callee) = Step::of(instruction.op(), instruction.imm())
+                        .and_then(|step| step.callee(instruction))
+                    {
+                        pending.push(callee);
                     }
                 }
             }
@@ -12500,8 +12369,10 @@ impl<H: Host> Vm<H> {
                     for packed in &function.code {
                         let instruction =
                             super::dispatch_fast::decoded_instruction(function, *packed);
-                        if instruction.op().class().eq(Class::CallKnown) {
-                            pending.push(usize::from(instruction.known_function_index()));
+                        if let Some(callee) = Step::of(instruction.op(), instruction.imm())
+                            .and_then(|step| step.callee(instruction))
+                        {
+                            pending.push(callee);
                         }
                     }
                 }
@@ -12590,8 +12461,8 @@ impl<H: Host> Vm<H> {
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                match instruction.op().class() {
-                    Class::Call => {
+                match Step::of(instruction.op(), instruction.imm()) {
+                    Some(Step::Call(Call::Reference)) => {
                         if let Slot::IndirectReference { table, .. } = full_plan.operand(pc) {
                             let site_id = reference_cache_count;
                             reference_cache_count += 1;
@@ -12607,10 +12478,7 @@ impl<H: Host> Vm<H> {
                             }
                         }
                     }
-                    _ if matches!(
-                        Step::of(instruction.op(), instruction.imm()),
-                        Some(Step::Instance(step)) if step.accesses_global()
-                    ) => {
+                    Some(Step::Instance(step)) if step.accesses_global() => {
                         if let Some(Slot::Binding(slot)) = full_plan.operands[pc]
                             && !globals.contains(&slot)
                         {

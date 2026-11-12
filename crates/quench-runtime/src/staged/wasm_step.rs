@@ -1,11 +1,12 @@
 //! What a Wasm function's instruction is, as data: the one table every tier reads (the
 //! analysis, the emitter, the loop and threading passes). No tier names a Wasm opcode.
 
+use super::wasm_call::Call;
 use super::wasm_flow::Flow;
 use super::wasm_instance::Instance;
 use super::wasm_memory::Memory;
 use super::wasm_operation::WasmOperation;
-use crate::bytecode::Op;
+use crate::bytecode::{Op, WideInstruction};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Step {
@@ -17,6 +18,8 @@ pub(crate) enum Step {
     Memory(Memory),
     /// Jumps, tables, selects, traps and returns.
     Flow(Flow),
+    /// Direct and indirect calls and the references they call.
+    Call(Call),
 }
 
 impl Step {
@@ -27,6 +30,15 @@ impl Step {
             .or_else(|| Instance::of(op).map(Self::Instance))
             .or_else(|| Memory::of(op).map(Self::Memory))
             .or_else(|| Flow::of(op).map(Self::Flow))
+            .or_else(|| Call::of(op).map(Self::Call))
+    }
+
+    /// The function a step calls statically.
+    pub(crate) fn callee(self, instruction: WideInstruction) -> Option<usize> {
+        match self {
+            Self::Call(call) => call.callee(instruction),
+            _ => None,
+        }
     }
 
     /// Whether the step returns from the function.
