@@ -230,9 +230,10 @@ fn chain_constructions_cross_programs() {
         "globalThis.R = class R { constructor(a) { this.a = a; this.b = a + 1; } };",
         "function go() { let s = 0; for (let i = 0; i < 3000; i++) s += new Q(i, 2).y + new R(i).b + new P(i).x; return s + JSON.stringify(new Q(1, 2)) + Object.keys(new Q(1, 2)); } print(go()); Object.setPrototypeOf(Q, R); print(go());",
     ];
-    for (index, source) in sources.iter().enumerate() {
-        let program = Engine::specialize(source, &format!("cross-{index}.js")).unwrap();
-        vm.execute(&program).unwrap();
+    let first = Engine::specialize(sources[0], "cross-0.js").unwrap();
+    vm.execute(&first).unwrap();
+    for (index, source) in sources.iter().enumerate().skip(1) {
+        vm.eval_script_source(&first, source, &format!("cross-{index}.js")).unwrap();
     }
     assert_eq!(
         output.take(),

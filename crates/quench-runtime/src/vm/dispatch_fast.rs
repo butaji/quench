@@ -3454,7 +3454,7 @@ fn lane_in_place<H: Host, T>(
 /// general path) or throws: no call, return, `this` binding or environment change the lane caches.
 /// A for-in step jumps out of its loop, which its own handler makes (`for_in_steps`).
 const fn lane_steps_in_place(op: Op) -> bool {
-    op.traits().has(crate::bytecode::Traits::LANE_IN_PLACE) && !matches!(op, Op::ForInNext)
+    op.traits().has(crate::bytecode::Traits::LANE_IN_PLACE) && !matches!(op.class(), Class::ForInNext)
 }
 
 script_handler! {
@@ -17968,7 +17968,7 @@ const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) 
         Class::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
         Class::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
         Class::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
-        _ if matches!(opcode, Op::ForInNext) => Some(for_in_steps::for_in_next_handler::<H, BACKWARD>()),
+        Class::ForInNext => Some(for_in_steps::for_in_next_handler::<H, BACKWARD>()),
         Class::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
         Class::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
         _ => wasm_gc_handler::<H>(opcode),

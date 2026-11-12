@@ -42,6 +42,7 @@ pub(crate) enum Class {
     Nop,
     Jump,
     JumpTrue,
+    ForInNext,
     Unary,
     Return,
     IncDec,
@@ -169,6 +170,7 @@ macro_rules! class_of {
     (Nop) => { Class::Nop };
     (Jump) => { Class::Jump };
     (JumpTrue) => { Class::JumpTrue };
+    (ForInNext) => { Class::ForInNext };
     (Unary) => { Class::Unary };
     (Return) => { Class::Return };
     (IncDec) => { Class::IncDec };
