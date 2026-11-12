@@ -1034,7 +1034,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             OperandKind::Register => Some(self.tagged(state, operand.register_index()?)),
             OperandKind::Constant => {
                 let (value, _) = self.constant_value(usize::from(operand.payload()))?;
-                Some(self.ins().iconst(types::I64, value.to_bits() as i64))
+                Some(self.identity_constant(value))
             }
             OperandKind::Field | OperandKind::Local => None,
         }
@@ -2295,7 +2295,7 @@ impl Lowering<'_, '_> {
                                 self.registers_base, register_offset(root));
                             let matched = match call.target.callee {
                                 CalleeBinding::Function => self.function_binding(callee, call.target.function),
-                                CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => self.builder.ins().icmp_imm_u(IntCC::Equal, callee, identity.to_bits() as i64),
+                                CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => self.is_identity(callee, identity),
                             };
                             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
                             emit_js_guard(&mut self.builder, matched, exit);
@@ -3054,7 +3054,8 @@ impl Lowering<'_, '_> {
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
-            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls };
+            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls,
+            roots: &mut self.stable.roots };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
@@ -3316,7 +3317,7 @@ impl Lowering<'_, '_> {
                 || self.entry.as_ref().expect("entry facts").calls.contains(frame) =>
                     (None, Some(Type::function(identity).expect("admitted callee locator"))),
             CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => (
-                Some(self.ins().icmp_imm_u(IntCC::Equal, callee, identity.to_bits() as i64)),
+                Some(self.is_identity(callee, identity)),
                 Some(Type::function(identity).expect("admitted callee locator")),
             ),
             CalleeBinding::Function => (
@@ -3348,7 +3349,7 @@ impl Lowering<'_, '_> {
         // A forwarded call is the call of the function it forwards to while its native is the one seen.
         if let Some((register, through)) = inlined.function_call {
             let native = self.tagged(state, register);
-            let seen = self.ins().icmp_imm_u(IntCC::Equal, native, through.to_bits() as i64);
+            let seen = self.is_identity(native, through);
             emit_js_guard(&mut self.builder, seen, exit);
         }
         let callee = self.program.function(inlined.target.function as usize);
@@ -3861,7 +3862,7 @@ impl Lowering<'_, '_> {
                         CalleeBinding::Function => (self.function_binding(value, target.function),
                             Type::function_body(target.function)),
                         CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => (
-                            self.ins().icmp_imm_u(IntCC::Equal, value, identity.to_bits() as i64),
+                            self.is_identity(value, identity),
                             Type::function(identity).expect("admitted callee locator")),
                     };
                     emit_js_guard(&mut self.builder, matched, exit);
@@ -4575,7 +4576,7 @@ impl Lowering<'_, '_> {
         if let Some(constant) = field.inherited.filter(|_| self.division().folds(crate::staged::division::INHERITED_FIELD)) {
             self.hold_holder(state, exit, holder);
             // The receiver's link selects its prototype's value; one prototype's is a constant.
-            let pairs: smallvec::SmallVec<[(u32, u64); 4]> = constant.values().iter().map(|(link, value)| (*link, value.to_bits())).collect();
+            let pairs: smallvec::SmallVec<[(u32, u64); 4]> = constant.values().iter().map(|(link, value)| (*link, self.stable.roots.embed_heap_identity(*value))).collect();
             let mut stage = super::object_slots::emit(&mut self.builder);
             let read = crate::staged::ic::run(&mut stage, &[crate::staged::ic::IcOp::PrototypeConstants(&pairs)],
                 crate::staged::ic::Reached { record, shape: None, inline: None }, None, exit)?;

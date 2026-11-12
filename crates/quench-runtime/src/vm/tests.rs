@@ -22396,19 +22396,21 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
         assert!(published.lease().is_some(), "a live callee binding survives collection");
         match transition {
             "collection" => {
-                // A second publication names an unrooted function clone. It must
-                // retire without rooting that function or dropping the live proof.
+                // A second publication names a function nothing else reaches: its code
+                // roots the callee, so a full collection keeps the locator its guard compares.
                 let orphan = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
                 targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(orphan), function: callee_id });
                 let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), &[]).unwrap();
-                let dead = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+                let rooted = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
                 vm.collect_now(&program);
-                assert!(!vm.heap.is_live(orphan));
-                assert!(dead.lease().is_none(), "retire before the function locator can be reused");
-                assert!(published.lease().is_some(), "unrelated live binding is retained");
+                assert!(vm.heap.is_live(orphan), "published code keeps the callee its guard names alive");
+                assert!(rooted.lease().is_some() && published.lease().is_some());
                 let replacement = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
-                assert_eq!(replacement, orphan);
-                assert!(dead.lease().is_none());
+                assert_ne!(replacement, orphan, "a named callee's locator is not reused, so the guard tells the new function apart");
+                rooted.retire();
+                vm.collect_now(&program);
+                assert!(!vm.heap.is_live(orphan), "retiring the code drops its roots");
+                assert!(published.lease().is_some(), "an unrelated live binding is retained");
             }
             "realm" => {
                 let foreign = vm.create_realm_global(&program).unwrap();

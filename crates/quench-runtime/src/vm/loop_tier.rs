@@ -131,8 +131,10 @@ impl LoopTier {
     }
 
     /// Publishes `region` while the facts its code names hold.
-    fn publish(&mut self, heap: &mut crate::heap::Heap, region: super::super::compiled::CompiledOsrRegion) {
+    fn publish(&mut self, heap: &mut crate::heap::Heap, mut region: super::super::compiled::CompiledOsrRegion) {
+        let roots = std::mem::take(&mut region.facts.roots);
         let publication = Rc::new(crate::code_dependencies::PublishedCode::new(region));
+        publication.hold_roots(roots, heap);
         let code = publication.lease().expect("new publication");
         let dependent: Rc<dyn crate::code_dependencies::DependentCode> = publication.clone();
         if !code.facts.subscribe(&dependent, heap) {

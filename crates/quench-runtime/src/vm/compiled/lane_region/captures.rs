@@ -99,9 +99,9 @@ impl Lowering<'_, '_> {
     pub(super) fn frozen_capture(&mut self, pc: usize, value: ir::Value, exit: ir::Block) -> ir::Value {
         let Some(crate::vm::global_facts::GlobalRead::Frozen { value: expected, .. }) =
             self.global_reads.get(&pc).copied() else { return value };
-        let same = self.ins().icmp_imm_u(IntCC::Equal, value, expected.to_bits() as i64);
+        let same = self.is_identity(value, expected);
         emit_js_guard(&mut self.builder, same, exit);
-        self.ins().iconst(types::I64, expected.to_bits() as i64)
+        self.identity_constant(expected)
     }
 
     /// A capture's read by the lane's own lookup (`dispatch_fast::lane_body_capture`); a miss leaves.

@@ -681,6 +681,8 @@ pub(crate) struct Heap {
     prototypes: Vec<(Value, u32)>,
     /// The proofs that rely on prototypes' layouts, each retired when one it read changes.
     dependencies: dependencies::Dependencies,
+    /// The published code whose generated code embeds heap identities, which every collection roots.
+    folded: crate::folded_roots::FoldedRegistry,
     peak_live: usize,
     /// The last collection's emptied mark stack, the next one's root buffer: a fresh one was
     /// mapped and faulted in by every collection (dotnet-aot-wasm: 2 MB each, 95K faults).
@@ -2012,7 +2014,7 @@ impl Heap {
         self.carried_owners.clear();
         self.young.clear();
         self.young_weak.clear();
-        self.roots.clear();
+        self.roots.clear(); self.folded = Default::default(); // the discarded heap's identities root nothing
         self.sparse_arrays = None;
         // The shared unit strings name cells of the discarded heap.
         self.ascii_unit_strings = None;
@@ -2227,6 +2229,14 @@ impl Heap {
 
     /// The emptied buffer a collection's roots go into, kept from the last collection.
     pub(crate) fn take_mark_stack(&mut self) -> Vec<Value> { std::mem::take(&mut self.mark_stack) }
+
+    /// Roots `code`'s folded identities at every collection while it is published.
+    pub(crate) fn hold_folded_roots(&mut self, code: &std::rc::Rc<dyn crate::folded_roots::RootedCode>) {
+        self.folded.register(code);
+    }
+
+    /// Appends the identities every published code of this heap embeds to a collection's `roots`.
+    pub(crate) fn extend_folded_roots(&mut self, roots: &mut Vec<Value>) { self.folded.extend_roots(roots); }
 
     pub(crate) fn collect_with_object_roots(
         &mut self,

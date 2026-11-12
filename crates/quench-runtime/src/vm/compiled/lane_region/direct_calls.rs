@@ -18,9 +18,11 @@ impl Lowering<'_, '_> {
     pub(super) fn direct_call(&mut self, state: &mut State, site: Invocation, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
         let base = self.registers_base;
         let held = self.word_load(base, register_offset(site.callee));
-        self.call_row(state, helper, CallOperation::Callee { held, expected: callee.callee.to_bits() });
+        let expected = self.stable.roots.embed_heap_identity(callee.callee);
+        self.call_row(state, helper, CallOperation::Callee { held, expected });
         let receiver = self.word_load(base, register_offset(site.receiver.expect("a call has a receiver register")));
-        let this = self.call_row(state, helper, CallOperation::BindThis { receiver, sloppy: callee.sloppy.map(Value::to_bits) });
+        let sloppy = callee.sloppy.map(|global| self.stable.roots.embed_heap_identity(global));
+        let this = self.call_row(state, helper, CallOperation::BindThis { receiver, sloppy });
         let cell = self.reloc(RelocKind::EntryCell, callee.target.function, callee.cell as u64);
         let (top, next, shadow) = self.direct_room(state, callee, cell, helper);
         let status = self.direct_enter(state, site, callee, cell, (this, top, next, shadow), helper);
@@ -36,7 +38,8 @@ impl Lowering<'_, '_> {
     pub(super) fn direct_construct(&mut self, state: &mut State, site: Invocation, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
         let (base, payload) = (self.registers_base, self.payload);
         let constructor = self.word_load(base, register_offset(site.callee));
-        self.call_row(state, helper, CallOperation::Callee { held: constructor, expected: callee.callee.to_bits() });
+        let expected = self.stable.roots.embed_heap_identity(callee.callee);
+        self.call_row(state, helper, CallOperation::Callee { held: constructor, expected });
         let allocated = self.helper_call(LaneHelper::ConstructReceiver, &[payload, constructor]);
         let receiver = self.call_row(state, helper, CallOperation::Receiver { receiver: allocated });
         let cell = self.reloc(RelocKind::EntryCell, callee.target.function, callee.cell as u64);

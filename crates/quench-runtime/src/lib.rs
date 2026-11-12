@@ -47,6 +47,7 @@ mod bitset;
 mod bytecode;
 mod compile;
 mod code_dependencies;
+mod folded_roots;
 mod float_layout;
 mod heap;
 #[cfg_attr(

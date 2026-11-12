@@ -883,7 +883,7 @@ struct OwnedScript {
 }
 
 pub(crate) struct ProgramStore {
-    /// Weak native-call proofs; guest functions are never rooted by compiled code.
+    /// Weak native-call proofs: the published bodies that call callees, whose publications root those callees.
     native_call_bindings: std::cell::RefCell<Vec<lane_publication::NativeCallBinding>>,
     /// The bodies published by what they compile from (`lane_publication::LaneKey`).
     /// The compiles each body or loop entry has had (`lane_publication::LaneKey`'s first three).

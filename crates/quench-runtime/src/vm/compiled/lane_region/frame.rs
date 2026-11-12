@@ -40,6 +40,8 @@ pub(super) struct EmitFrame<'a> {
     pub(super) helpers: LaneHelpers,
     /// The poll instructions a fault-polling body records for later patching.
     pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
+    /// The heap identities the emitted code names (`FoldedRoots::embed_heap_identity`).
+    pub(super) roots: &'a mut crate::folded_roots::FoldedRoots,
 }
 
 impl EmitFrame<'_> {
@@ -117,7 +119,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         } else if let Some(number) = constant.value.as_number() {
             (Representation::Float64, stage.builder.ins().f64const(number))
         } else {
-            (Representation::Tagged, stage.builder.ins().iconst(types::I64, constant.value.to_bits() as i64))
+            (Representation::Tagged, stage.builder.ins().iconst(types::I64, self.roots.embed_heap_identity(constant.value) as i64))
         };
         let fact = RegisterFact::admit(Fact { ty: constant.ty, representation,
             binding: BindingTime::Static, proof: Proof::Static, projection: Projection::Exact })
