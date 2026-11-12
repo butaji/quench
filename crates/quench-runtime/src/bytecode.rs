@@ -2308,57 +2308,60 @@ impl Function {
 
     /// Whether its locals and the environment its closures capture can live in a window past
     /// its registers: the layout an environment activation (`CallPlan::environment_activation`)
-    /// and a suspended generator's window (`CallPlan::suspended_environment`) share. Each local
-    /// is a frame local (none promoted to a register), the captured ones owned by the
-    /// environment, and every instruction that addresses one is a record the window's handlers
-    /// read. A function's own name binding is a local too, which the entry initializes with the
-    /// callee and whose stores leave the lane (`specialize_environment_window`).
+    /// and a suspended generator's window (`CallPlan::suspended_environment`) share. Each
+    /// local that is not promoted is a frame local, the captured ones owned by the environment,
+    /// and every instruction that addresses one is a record the window's handlers read
+    /// (`window_reads_locals`); the promoted ones are registers, which the window's register
+    /// file holds as it holds every register. A function's own name binding is a local too,
+    /// which the entry initializes with the callee and whose stores leave the lane
+    /// (`specialize_environment_window`).
     fn locals_ride_window(&self, tables: &impl FactTables) -> bool {
         self.arguments_own_their_slots(|atom| tables.atom_name(atom))
-            && self.local_registers.is_empty()
             && (self.arguments_slot.is_none() || self.reads_passed_arguments_only() || self.arguments_ride_window())
-            && self.initial_register == InitialRegister::Undefined
             // The implicit bindings `activation_binding_reads` names, but for clones, are a frame's:
             // a suspended function's record keeps them (and gives them to the environment its
             // window makes, `window_environment`), and the opcodes that read them
             // exit the lane to the frame it becomes.
             && (!self.reads_implicit_bindings(tables) || self.suspends_in_record())
             && self.instructions().all(|instruction| {
-                let op = instruction.op();
-                // An iteration's `CloneEnv` copies the window's environment, once a closure
-                // made one (`lane_clone_window_env`).
-                op.immediate_role() != ImmediateRole::SuperinstructionIndex
-                    && (instruction.addressed_local_slots().next().is_none()
-                        || matches!(
-                            op,
-                            Op::LoadLocal
-                                | Op::LoadLocalPlain
-                                | Op::LoadEnvLocal
-                                | Op::StoreLocal
-                                | Op::StoreLocalPlain
-                                | Op::StoreEnvLocal
-                                | Op::InitializeTdz
-                        )
-                        // A read whose base is a plain local reads the window's local
-                        // (`lane_plain_local_operand`).
-                        || (op == Op::GetField
-                            && instruction.addressed_local_slots().eq(instruction.local_field_base()))
-                        // The window keeps every value passed, which these answer.
-                        || op.reads_arguments())
+                instruction.op().immediate_role() != ImmediateRole::SuperinstructionIndex
+                    && self.window_reads_locals(tables, instruction)
             })
     }
 
+    /// Whether the handlers of an environment window read every local `instruction` addresses:
+    /// the local loads, stores and dead-zone openings, a field read from a plain local
+    /// (`lane_plain_local_operand`), a binary operator of a suspending function over plain
+    /// locals, whose operands and numeric target the window holds (`lane_store_numeric_local`),
+    /// the reads of the values
+    /// passed, which the window keeps, and a function's store to a `var` binding its Annex B
+    /// block function declares (`StoreVarBinding`), which is a store to the slot: only a
+    /// program's root stores through the global object or an eval's record.
+    fn window_reads_locals(&self, tables: &impl FactTables, instruction: WideInstruction) -> bool {
+        let op = instruction.op();
+        instruction.addressed_local_slots().next().is_none()
+            || match op {
+                Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreLocal | Op::StoreLocalPlain | Op::StoreEnvLocal | Op::InitializeTdz => true,
+                Op::StoreVarBinding => self.parent.is_some(),
+                Op::GetField => instruction.addressed_local_slots().eq(instruction.local_field_base()),
+                Op::Binary | Op::NumericAdd | Op::NumericMultiply if self.suspends_in_record() => {
+                    instruction.addressed_local_slots().all(|slot| self.plain_local(tables, usize::from(slot)))
+                }
+                _ => op.reads_arguments(),
+            }
+    }
+
     /// Whether the `arguments` object a suspending function made on entry rides its window as
-    /// the local it was stored in, which the lane reads in place (`lane_frame_arguments`): no
-    /// closure captures the binding. A mapped object (`arguments_alias_parameters`) aliases
+    /// the local it was stored in, which the lane reads in place (`lane_frame_arguments`): a
+    /// window local, or, for a binding a closure captures, its slot in the environment the
+    /// window makes (`mapped_windows::window_binding`). A mapped object (`arguments_alias_parameters`) aliases
     /// parameters that live in the window as well, the captured ones among them, which ride the
     /// window's locals until a closure makes its environment and its slots after
     /// (`ParameterHome`): the window's parameter reads and writes go through the object
     /// (`lane_load_mapped_parameter`), whose element writes reach the binding
     /// (`LaneStack::window_parameter`).
     pub(crate) fn arguments_ride_window(&self) -> bool {
-        self.arguments_slot
-            .is_some_and(|slot| self.suspends_in_record() && !self.local_slot_uses_environment(usize::from(slot)))
+        self.arguments_slot.is_some() && self.suspends_in_record()
     }
 
     /// The function's `CallPlan`, derived on first use.
@@ -2425,13 +2428,20 @@ impl Function {
                         .addressed_local_slots()
                         .all(|slot| Some(slot) == self.arguments_slot)
                 });
-            let environment_activation = in_loop && self.parent.is_some() && self.locals_ride_window(tables);
+            // An ordinary call places its arguments in the window's locals, which a promoted
+            // parameter has none of, and fills the registers with `undefined`; a suspended
+            // frame is made with both, and no suspending function starts its registers apart
+            // from `undefined` (Wasm's i32 zero belongs to its bodies, which never suspend).
+            let environment_activation = in_loop
+                && self.parent.is_some()
+                && self.local_registers.is_empty()
+                && self.initial_register == InitialRegister::Undefined
+                && self.locals_ride_window(tables);
             let suspendable = self.suspends_in_record();
             let suspended_registers = suspendable
                 && registers_layout_of_any_kind
                 && !self.rest
                 && self.arguments_slot.is_none()
-                && self.initial_register == InitialRegister::Undefined
                 && !addresses_locals
                 && !self.has_dynamic_scope_access();
             // Its locals and closures ride an environment window as an ordinary body's do, and so

@@ -1,11 +1,12 @@
 //! Parameters a mapped `arguments` object aliases, in the window of a suspended function
 //! (`Function::arguments_ride_window`). The window holds the parameters; the object made
-//! on entry is the window's local `arguments_slot`, and its elements are the parameters' values
+//! on entry is the function's local `arguments_slot` (`window_binding`), and its elements are the parameters' values
 //! while the mapping holds, as the general path keeps them (`Vm::mapped_argument_load`,
 //! `Vm::mapped_argument_store`). A read answers the element, a write goes to the parameter's
 //! binding and the element, and an element's write reaches the binding
 //! (`LaneStack::window_parameter`). A captured parameter rides the window's locals until a
-//! closure makes the environment, and its slot there after (`ParameterHome`).
+//! closure makes the environment, and its slot there after (`ParameterHome`), as a captured
+//! `arguments` object does.
 use super::*;
 
 /// The handler of `class`'s record of parameter `slot` when the parameter is one a mapped
@@ -45,7 +46,7 @@ impl ParameterHome {
     /// # Safety
     /// `entries` starts the entries of a live environment window of `function`
     /// (`lane_activate_environment`), which holds a local for each of its slots.
-    unsafe fn of(entries: *mut Value, function: &Function, slot: usize) -> Self {
+    pub(super) unsafe fn of(entries: *mut Value, function: &Function, slot: usize) -> Self {
         // SAFETY: as the caller guarantees.
         let environment = unsafe { *entries.add(usize::from(WINDOW_ENVIRONMENT)) };
         if !environment.is_deleted() && function.local_slot_uses_environment(slot) {
@@ -56,11 +57,11 @@ impl ParameterHome {
     }
 
     /// The parameter's binding as it stands, `DELETED` for one not initialized.
-    pub(in crate::vm) fn read<H: Host>(self, vm: &Vm<H>) -> Value {
+    pub(in crate::vm) fn read(self, heap: &crate::heap::Heap) -> Value {
         match self {
             // SAFETY: a local of a live window.
             Self::Local(binding) => unsafe { *binding },
-            Self::Environment(environment, slot) => vm.heap.environment_slot(environment, slot).unwrap_or(Value::DELETED),
+            Self::Environment(environment, slot) => heap.environment_slot(environment, slot).unwrap_or(Value::DELETED),
         }
     }
 
@@ -84,6 +85,7 @@ impl LaneStack {
     /// binding holds `object`, where its parameters are.
     pub(in crate::vm) fn window_parameter(
         &self,
+        heap: &crate::heap::Heap,
         code: &ResidualProgram,
         object: Value,
         slot: usize,
@@ -91,13 +93,20 @@ impl LaneStack {
         self.activations.iter().rev().find_map(|activation| {
             activation.script().filter(|script| script.environment)?;
             let body = code.function_get(activation.function as usize)?;
-            // SAFETY: an environment activation's window holds its entries after its registers.
+            // SAFETY: an environment activation's window holds its entries after its registers,
+            // and a local for each slot the function binds.
             let entries = unsafe { activation.window_ptr().add(usize::from(body.registers)) };
-            let arguments = unsafe { *entries.add(usize::from(WINDOW_LOCALS) + usize::from(body.arguments_slot?)) };
-            // SAFETY: the window holds a local for each slot the function binds.
+            let arguments = unsafe { ParameterHome::of(entries, body, usize::from(body.arguments_slot?)) }.read(heap);
             (arguments == object).then(|| unsafe { ParameterHome::of(entries, body, slot) })
         })
     }
+}
+
+/// The binding of local `slot` of `body`, the function of the running window activation whose
+/// registers are `r`: its window's local, or its environment's slot once a closure made one.
+pub(super) fn window_binding<H: Host>(vm: &Vm<H>, r: Registers, body: &Function, slot: usize) -> Value {
+    // SAFETY: the running window activation's entries follow its function's registers.
+    unsafe { ParameterHome::of(r.0.add(usize::from(body.registers)), body, slot) }.read(&vm.heap)
 }
 
 /// The `arguments` object the running window activation made on entry, and the home of its
@@ -112,11 +121,12 @@ fn mapped_window<H: Host>(
     if unsafe { (*cx).env }.is_deleted() {
         return None;
     }
-    let function = unsafe { vm(cx) }.lane_stack.activations.last()?.function;
+    let vm = unsafe { vm(cx) };
+    let function = vm.lane_stack.activations.last()?.function;
     // SAFETY: the context's program outlives the lane run.
     let body = unsafe { &*(*cx).code }.function(function as usize);
     Some((
-        r.get(registers + WINDOW_LOCALS + body.arguments_slot?),
+        window_binding(vm, r, body, usize::from(body.arguments_slot?)),
         // SAFETY: the running window activation's entries start at `registers`.
         unsafe { ParameterHome::of(r.0.add(usize::from(registers)), body, slot) },
     ))
@@ -134,7 +144,7 @@ script_handler! {
             return exit(ip);
         };
         let vm = unsafe { vm(cx) };
-        let value = vm.mapped_window_element(arguments, slot).unwrap_or_else(|| home.read(vm));
+        let value = vm.mapped_window_element(arguments, slot).unwrap_or_else(|| home.read(&vm.heap));
         if value.is_deleted() {
             return exit(ip);
         }
@@ -152,7 +162,7 @@ script_handler! {
             return exit(ip);
         };
         let vm = unsafe { vm(cx) };
-        if i.c == 0 && home.read(vm).is_deleted() {
+        if i.c == 0 && home.read(&vm.heap).is_deleted() {
             return exit(ip);
         }
         let value = r.get(i.a);

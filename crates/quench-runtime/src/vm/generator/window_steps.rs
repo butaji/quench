@@ -260,6 +260,8 @@ pub(super) mod tests {
         // The `arguments` object each made on entry rides its window as a local.
         assert_eq!(layouts[2], (false, true));
         assert_eq!(layouts[6], (false, true));
+        // Locals promoted to registers ride the window beside the closure it makes.
+        assert_eq!(layouts[5], (false, true));
     }
 
     #[test]

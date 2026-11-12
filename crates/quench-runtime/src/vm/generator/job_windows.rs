@@ -13,17 +13,18 @@ impl<H: Host> Vm<H> {
     /// Resumes the activation `job` names with `resume`, which its owner keeps suspended
     /// (`job_frame`): in the lane over its frame's register file (`run_lane_job`), a throw
     /// included, as a nested run above the activations of a lane run that is live
-    /// (`nested_lane_run`); else, where its function lays out as no window, as the frame its
-    /// owner gives up, which the general loop runs from the resume point, or, for a throw, from
-    /// the handler the suspended `await` or `yield` selects. How the run ended.
+    /// (`nested_lane_run`); else, where the lane does not admit the run (`admit_job`), as the
+    /// frame its owner gives up, which the general loop runs from the resume point, or, for a
+    /// throw, from the handler the suspended `await` or `yield` selects. How the run ended.
     ///
-    /// The frame fallback serves the generators and async functions whose plan lays out no window
-    /// (`CallPlan::suspended_registers` and `suspended_environment` both false): one with
-    /// locals promoted to registers (`local_registers`) that also makes a closure, binds a
-    /// `with` scope or a dynamic one, takes a rest parameter or an `arguments` object, or
-    /// has promoted parameters short of its parameter count; one whose initial register is not
-    /// `undefined`; one with an instruction addressing a local outside the window's handlers
-    /// (`Function::locals_ride_window`); and one whose `arguments` object a closure captures.
+    /// The lane admits every function whose plan lays out a window
+    /// (`CallPlan::suspended_registers`, `suspended_environment`): promoted registers, closures,
+    /// dynamic scopes, a rest parameter and a captured `arguments` object included. The frame
+    /// serves what no plan can: an interpreted run, a Wasm program, a frame of another program
+    /// than the active one, a stack with no room or an interrupt due, and the functions with a
+    /// parameter list that binds its names apart from their slots (`arguments_own_their_slots`),
+    /// a superinstruction, or a local addressed by an instruction no window handler reads
+    /// (`Function::window_reads_locals`).
     pub(in crate::vm) fn run_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> JobEnd {
         let nested = !self.lane_stack.activations.is_empty() || self.lane_deferred.is_some();
         let admitted = if nested {

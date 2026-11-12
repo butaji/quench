@@ -3861,14 +3861,27 @@ script_handler! {
             sibling!(lane_binary_general::<H>, r, ip, Carried::script(cx))
         };
         if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
-            let local = usize::from(i.a & crate::bytecode::REGISTER_MASK);
-            // SAFETY: the view admits a numeric local target only below
-            // Function.locals.
-            unsafe { vm(cx).write_validated_local((*cx).frame(), local, value) };
+            lane_store_numeric_local(cx, r, i.a & crate::bytecode::REGISTER_MASK, value);
         } else {
             r.set(i.a, value);
         }
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// Stores `value` to the plain local a numeric target names (`lane_binary`): the running
+/// environment window's, which follows the function's registers (`lane_plain_local_operand`),
+/// else the running frame's.
+#[inline(always)]
+fn lane_store_numeric_local<H: Host>(cx: *mut LaneContext<H>, r: Registers, local: u16, value: Value) {
+    let vm = unsafe { vm(cx) };
+    let window = vm.lane_stack.activations.last().filter(|activation| activation.script().is_some_and(|script| script.environment));
+    // SAFETY: the context's program outlives the lane run.
+    let registers = window.map(|activation| unsafe { &*(*cx).code }.function(activation.function as usize).registers);
+    match registers {
+        Some(registers) => r.set(registers + WINDOW_LOCALS + local, value),
+        // SAFETY: the view admits a numeric local target only below `Function.locals`.
+        None => unsafe { vm.write_validated_local((*cx).frame(), usize::from(local), value) },
     }
 }
 
@@ -14766,12 +14779,12 @@ script_handler! {
 }
 
 /// `ArgumentsLength` or `ArgumentGet` in the window of a suspended function: the `arguments`
-/// object it made on entry is the window's local `i.imm()` (`Function::arguments_ride_window`),
+/// object it made on entry is the function's local `i.imm()` (`mapped_windows::window_binding`),
 /// read as a materialized object is, a mapped element too: the window's writes to its parameter
 /// reach it (`lane_store_mapped_parameter`). `None` takes the general path.
 #[inline(always)]
 fn window_arguments<H: Host, const GET: bool>(vm: &Vm<H>, r: Registers, i: &LaneInstruction, body: &Function) -> Option<Value> {
-    let binding = r.get(body.registers + WINDOW_LOCALS + i.imm() as u16);
+    let binding = mapped_windows::window_binding(vm, r, body, i.imm() as usize);
     if !GET {
         return vm.arguments_object_length(binding);
     }
@@ -20802,8 +20815,9 @@ fn environment_window_fields(i: &LaneInstruction) -> (usize, u16) {
     ((imm & ENVIRONMENT_WINDOW_FIELD) as usize, (imm >> ENVIRONMENT_WINDOW_SHIFT) as u16)
 }
 
-/// Gives a function whose locals an environment activation could hold
-/// (`CallPlan::environment_activation`) the local and closure records that read either a
+/// Gives a function whose locals an environment activation or a suspended frame's window could
+/// hold (`CallPlan::environment_activation`, `CallPlan::suspended_environment`) the local and
+/// closure records that read either a
 /// frame or such an activation's window (`lane_load_window_local`), each record's
 /// immediate also carrying the register count (`environment_window_fields`); the count
 /// when every such record took one. Each other record keeps its handler, and a function
@@ -20815,7 +20829,6 @@ fn specialize_environment_window<H: Host>(
 ) -> Option<EnvironmentWindow> {
     if u32::from(function.locals) > u64::BITS
         || (function.arguments_slot.is_some() && !function.reads_passed_arguments_only() && !function.arguments_ride_window())
-        || !function.local_registers.is_empty()
     {
         return None;
     }
@@ -20852,6 +20865,9 @@ fn specialize_environment_window<H: Host>(
             Class::CloneEnv => 0,
             Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal | Class::StoreLocal | Class::StoreLocalPlain
             | Class::StoreEnvLocal | Class::InitializeTdz => instruction.local_slot() as u32,
+            // A function's Annex B store to its `var` binding is a store to the slot
+            // (`Function::window_reads_locals`).
+            _ if op == Op::StoreVarBinding && function.parent.is_some() => instruction.local_slot() as u32,
             _ => continue,
         };
         if own > ENVIRONMENT_WINDOW_FIELD

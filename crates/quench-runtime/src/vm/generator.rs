@@ -17,6 +17,8 @@ mod eval_tests;
 #[cfg(test)]
 mod hidden_name_tests;
 #[cfg(test)]
+mod job_shape_tests;
+#[cfg(test)]
 mod native_step_tests;
 #[cfg(test)]
 mod root_tests;

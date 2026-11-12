@@ -108,7 +108,7 @@ impl<H: Host> Vm<H> {
             let home = self
                 .programs
                 .residual(self.active_program)
-                .and_then(|code| self.lane_stack.window_parameter(code, object, slot));
+                .and_then(|code| self.lane_stack.window_parameter(&self.heap, code, object, slot));
             if let Some(home) = home {
                 home.write(self, value);
             }
