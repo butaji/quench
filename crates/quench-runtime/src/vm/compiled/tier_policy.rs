@@ -11,6 +11,26 @@ pub(in crate::vm) struct Tiers {
     pub(in crate::vm) lane_body: LaneBody,
     pub(in crate::vm) js_function: JsFunction,
     pub(in crate::vm) wasm: Wasm,
+    pub(in crate::vm) priors: Priors,
+}
+
+/// Parts per thousand, the unit of a prior's share.
+pub(in crate::vm) const PER_MILLE: u64 = 1000;
+
+/// The priors the tier model starts from, each a statement about the world until the engine's own
+/// measurements replace it (`tier-decision-rule-v1`): nothing here is fitted to a benchmark row.
+pub(in crate::vm) struct Priors {
+    /// Nanoseconds an interpreted lane bytecode takes.
+    pub(in crate::vm) interpreter_ns: u64,
+    /// A body's per-bytecode time as a share of the interpreter's, in thousandths.
+    pub(in crate::vm) body_share: u64,
+    /// Nanoseconds the second core takes to compile one IR instruction.
+    pub(in crate::vm) compile_ns_per_ir: u64,
+    /// Nanoseconds entering a loop region from the lane costs per call, and a body's entry.
+    pub(in crate::vm) region_entry_ns: u64,
+    pub(in crate::vm) body_entry_ns: u64,
+    /// The divisor of the entries so far that gives the credible lower bound of the entries to come.
+    pub(in crate::vm) remaining_divisor: u64,
 }
 
 /// The loop tier (OSR regions at backward jumps).
@@ -175,6 +195,7 @@ const FLOOR: Tiers = Tiers {
     lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
+    priors: Priors { interpreter_ns: 6, body_share: 200, compile_ns_per_ir: 3000, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 4 },
 };
 
 /// The base a share in percent is a share of.
@@ -210,6 +231,7 @@ const MEASURED: Tiers = Tiers {
         general_entry_overhead: 32,
     },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
+    priors: Priors { interpreter_ns: 6, body_share: 200, compile_ns_per_ir: 3000, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 4 },
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)
