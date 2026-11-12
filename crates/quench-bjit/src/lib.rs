@@ -290,6 +290,16 @@ fn layout(rows: &[Row]) -> (Vec<usize>, Vec<usize>, usize) {
     (starts, sizes, len)
 }
 
+/// Bytes a 32-bit immediate or pc-relative patch writes, and an absolute one.
+const IMM32_WIDTH: usize = 4;
+const ABS64_WIDTH: usize = 8;
+
+/// Every patch lands inside the row's copied code: a write past it would overwrite the next
+/// row's first bytes.
+fn patch_ends_inside(offset: u32, width: usize, size: usize, what: &str) {
+    assert!(offset as usize + width <= size, "{what} patch ends past its row's code");
+}
+
 /// Copy `rows` into `out` back to back and patch their holes; `exit` gives each row's exit
 /// stub address for an exit kind. Returns the code length and each row's start offset.
 ///
@@ -303,15 +313,12 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
             let base = out.add(starts[k]);
             std::ptr::copy_nonoverlapping(row.stencil.code.as_ptr(), base, sizes[k]);
             for field in row.stencil.imm32.iter().filter(|f| (f.offset as usize) < sizes[k]) {
-                assert!(field.offset as usize + 4 <= sizes[k], "an immediate patch ends past its row's code");
+                patch_ends_inside(field.offset, IMM32_WIDTH, sizes[k], "an immediate");
                 std::ptr::write_unaligned(base.add(field.offset as usize).cast::<u32>(), field.value((row.hole)(field.index) as u32));
             }
             for r in row.stencil.relocs.iter().filter(|r| (r.offset as usize) < sizes[k]) {
                 let place = base.add(r.offset as usize);
-                // Every patch lands inside the row's copied code: a write past it would
-                // overwrite the next row's first bytes.
-                let width = if r.pc_relative { 4 } else { 8 };
-                assert!(r.offset as usize + width <= sizes[k], "a relocation patch ends past its row's code");
+                patch_ends_inside(r.offset, if r.pc_relative { IMM32_WIDTH } else { ABS64_WIDTH }, sizes[k], "a relocation");
                 if !r.pc_relative {
                     std::ptr::write_unaligned(place.cast::<u64>(), (row.hole)(r.index));
                     continue;
