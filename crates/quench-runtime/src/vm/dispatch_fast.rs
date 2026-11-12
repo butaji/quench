@@ -911,6 +911,12 @@ impl LaneView {
         if body.is_some() { (method, body) } else { (None, None) }
     }
 
+    /// Whether the specialized body has left a run (`LaneBody::Specialized::exits`).
+    pub(super) fn has_left(&self) -> bool {
+        // SAFETY: as `lane_body`; nothing writes the tier state while a call is made.
+        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Specialized { exits, .. } if exits.get() > 0)
+    }
+
     /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).
     pub(super) fn entry_cell(&self) -> usize { std::ptr::from_ref(&self.entry).addr() }
 
@@ -15024,7 +15030,7 @@ fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: u
     let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
         .unwrap_or((std::ptr::null(), 0));
     Some(super::compiled::DirectCallee {
-        target, method, body, call: view.records().wrapping_add(pc).addr(), cell: view_of.entry_cell(),
+        target, method, body, call: view.records().wrapping_add(pc).addr(), cell: view_of.entry_cell(), counted: view_of.has_left(),
         callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len, forwarder: None,
     })
 }
@@ -15111,7 +15117,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         .unwrap_or((std::ptr::null(), 0));
     direct[pc] = Some(super::compiled::DirectCallee {
         target, method: Some(leaf_publication.clone()), body: Some(leaf_body.clone()),
-        call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(), cell: unsafe { &*target.view }.entry_cell(),
+        call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(), cell: unsafe { &*target.view }.entry_cell(), counted: true,
         callee: leaf, registers: target.registers,
         sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals),
         capture_values, capture_len, forwarder: None,

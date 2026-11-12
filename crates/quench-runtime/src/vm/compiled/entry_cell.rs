@@ -18,6 +18,9 @@ pub(in crate::vm) struct EntryCell {
     /// The address of the published body (`LaneMethod`), which the view keeps until it drops
     /// (`LaneView::pinned`): a leave inside a call through the cell recovers through it.
     pub(in crate::vm) body: std::cell::Cell<usize>,
+    /// Runs of the body its native callers completed (`Lowering::direct_finish`, for a callee that had left),
+    /// which `note_lane_body_end` never sees: the tier machine's evidence a body runs to its return.
+    pub(in crate::vm) completions: std::cell::Cell<u64>,
 }
 
 /// The entry no body backs: it enters nothing.
@@ -32,7 +35,7 @@ impl EntryCell {
     pub(in crate::vm) fn stub() -> usize { lane_entry_stub as BodyEntry as usize }
 
     pub(in crate::vm) fn new() -> Self {
-        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default() }
+        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), completions: Default::default() }
     }
 
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires.
@@ -41,6 +44,7 @@ impl EntryCell {
         reserve_lane_scratch(body.scratch_width);
         self.recovery.set(std::ptr::addr_of!(body.recovery_space).addr());
         self.body.set(Rc::as_ptr(&body).addr());
+        self.completions.set(0);
         self.entry.set(body.entry_address());
         method.on_retire(&self.entry, body.entry_address(), Self::stub());
     }

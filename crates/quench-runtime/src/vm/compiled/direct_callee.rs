@@ -18,6 +18,8 @@ pub(in crate::vm) struct DirectCallee {
     /// The caller's call record, which the callee's activation returns to.
     pub(in crate::vm) call: usize,
     pub(in crate::vm) cell: usize,
+    /// Whether the callee's body had left when the call was made, so the call counts its completions (`EntryCell::completions`).
+    pub(in crate::vm) counted: bool,
     pub(in crate::vm) callee: Value,
     pub(in crate::vm) registers: u16,
     /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which

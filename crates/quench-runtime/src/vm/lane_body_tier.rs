@@ -95,8 +95,11 @@ impl LaneView {
         }
         exits.set(exits.get().saturating_add(1));
         name_leave(leaves_at, exit, method, left_new);
-        // Leaves past the first `reoptimize_exits` that exceed `reoptimize_share` percent of the runs.
-        let (leaves, runs) = (u64::from(exits.get()), u64::from(exits.get()) + u64::from(completions.get()));
+        // Runs its native callers completed count too: they never end through here. Leaves past
+        // the first `reoptimize_exits` that exceed `reoptimize_share` percent of the runs.
+        let native = self.entry.completions.get();
+        completed.set(completed.get() || native > 0);
+        let (leaves, runs) = (u64::from(exits.get()), u64::from(exits.get()) + u64::from(completions.get()) + native);
         if exits.get() < TIERS.lane_body.reoptimize_exits || leaves * PERCENT <= runs * u64::from(TIERS.lane_body.reoptimize_share) {
             return;
         }
