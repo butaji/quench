@@ -239,7 +239,6 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     }
 
     /// Blocks made so far: grows with every block `native_mark_blocks` may have moved.
-    #[expect(dead_code, reason = "see Heap::native_layout_epoch")]
     pub(super) fn block_count(&self) -> usize {
         self.blocks.len()
     }
