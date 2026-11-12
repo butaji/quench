@@ -189,11 +189,20 @@ fn emit_returned(builder: &mut FunctionBuilder<'_>, (payload, arguments): (ir::V
     builder.switch_to_block(done);
     let mut value = builder.ins().load(types::I64, MemFlagsData::trusted(), exact.result_pointer, 0);
     if let Some(constructed) = constructed {
-        let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, construct_result));
-        value = emit_lane_helper_call(builder, payload, helper, &[value, constructed]);
+        value = emit_construct_result(builder, payload, (value, constructed));
     }
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
     builder.ins().jump(next, &[]);
+}
+
+/// [[Construct]]'s result by the staged rule (`staged::construct::construct_result_by`): the
+/// returned word decides a primitive and a direct object; any other heap reference asks the host.
+fn emit_construct_result(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (value, receiver): (ir::Value, ir::Value)) -> ir::Value {
+    let mut stage = super::object_slots::emit(builder);
+    crate::staged::construct::construct_result_by(&mut stage, value, |_| receiver, |stage| {
+        let helper = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, construct_result));
+        Some(emit_lane_helper_call(stage.builder, payload, helper, &[value, receiver]))
+    }).expect("the emit stage continues past its guards")
 }
 
 /// Whether the call passes no more values than the callee's parameters, and for a
