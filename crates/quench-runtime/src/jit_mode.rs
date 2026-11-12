@@ -1,5 +1,5 @@
 //! The JIT modes a process can run in, and the tiers each one enables: the one place the flags
-//! `--no-jit`, `--b-jit` and `--u-jit` are defined (`--q-jit` is reserved for the Cranelift quick mode and rejected until it lands).
+//! `--no-jit`, `--b-jit`, `--q-jit` and `--u-jit` are defined.
 use crate::ExecutionMode;
 
 /// Which tiers run: the interpreter alone, BaseJIT (stencils) alone, UltraJIT alone, or both (the default).
@@ -46,23 +46,21 @@ impl JitMode {
         }
     }
 
-    /// Whether the (BaseJIT, UltraJIT) tiers are enabled.
-    pub fn tiers_enabled(self) -> (bool, bool) {
-        match self {
-            Self::Interp => (false, false),
-            Self::BaseOnly => (true, false),
-            Self::UltraOnly | Self::QuickOnly => (false, true),
-            Self::Full => (true, true),
+    /// Whether `tier` may run in this mode: the one table every tier question reads.
+    pub fn allows(self, tier: Tier) -> bool {
+        match (self, tier) {
+            (Self::Interp, _) => false,
+            (Self::BaseOnly, tier) => tier == Tier::Base,
+            (Self::QuickOnly, tier) => tier == Tier::Quick,
+            (Self::UltraOnly, tier) => tier == Tier::Ultra,
+            (Self::Full, _) => true,
         }
     }
 
     /// The execution mode the runtime is set to: `--b-jit` runs the compiled lane with its loop
     /// regions built from BaseJIT stencils only (`base_only`).
     pub fn execution_mode(self) -> ExecutionMode {
-        match self.tiers_enabled() {
-            (false, false) => ExecutionMode::Interpreted,
-            _ => ExecutionMode::Compiled,
-        }
+        if [Tier::Base, Tier::Quick, Tier::Ultra].into_iter().any(|tier| self.allows(tier)) { ExecutionMode::Compiled } else { ExecutionMode::Interpreted }
     }
 
     /// Makes this the process's mode, which `base_only` and `base_regions` report.
@@ -71,28 +69,45 @@ impl JitMode {
     }
 }
 
-/// Whether the Cranelift function tiers (lane bodies, their background compiles and entry-cell
-/// publication, the JavaScript function tiers) run: the one `tiers_enabled` fact of the process's mode,
-/// UltraJIT's half. `--b-jit` is the interpreter plus stencil regions.
-pub fn function_tiers() -> bool {
-    let mode = [JitMode::Interp, JitMode::BaseOnly, JitMode::UltraOnly, JitMode::QuickOnly, JitMode::Full]
-        .into_iter()
-        .find(|mode| *mode as u8 == PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed))
-        .unwrap_or_default();
-    mode.tiers_enabled().1
+/// The compiling tiers, in the order a function climbs them: BaseJIT (stencils), QuickJIT
+/// (Cranelift, `CompileLevel::Quick`) and UltraJIT (Cranelift, `CompileLevel::Optimized`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tier {
+    Base,
+    Quick,
+    Ultra,
 }
 
 static PROCESS_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(JitMode::Full as u8);
 
-/// Whether the process runs `--b-jit`: loop regions that BaseJIT declines are not compiled by
-/// UltraJIT either.
-pub fn base_only() -> bool {
-    PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed) == JitMode::BaseOnly as u8
+fn process_mode() -> JitMode {
+    [JitMode::Interp, JitMode::BaseOnly, JitMode::UltraOnly, JitMode::QuickOnly, JitMode::Full]
+        .into_iter()
+        .find(|mode| *mode as u8 == PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed))
+        .unwrap_or_default()
 }
 
-/// Whether the process runs `--q-jit`: every Cranelift compile is `CompileLevel::Quick`.
+/// Whether the process's mode lets `tier` run.
+pub fn tier_allowed(tier: Tier) -> bool {
+    process_mode().allows(tier)
+}
+
+/// Whether the Cranelift function tiers (lane bodies, their background compiles and entry-cell
+/// publication, the JavaScript function tiers) run: either Cranelift tier is allowed.
+/// `--b-jit` is the interpreter plus stencil regions.
+pub fn function_tiers() -> bool {
+    tier_allowed(Tier::Quick) || tier_allowed(Tier::Ultra)
+}
+
+/// Whether the process runs `--b-jit`: loop regions that BaseJIT declines are not compiled by
+/// Cranelift either.
+pub fn base_only() -> bool {
+    tier_allowed(Tier::Base) && !function_tiers()
+}
+
+/// Whether every Cranelift compile is `CompileLevel::Quick`: only QuickJIT is allowed there.
 pub fn quick_only() -> bool {
-    PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed) == JitMode::QuickOnly as u8
+    tier_allowed(Tier::Quick) && !tier_allowed(Tier::Ultra)
 }
 
 /// Whether loop regions are built from BaseJIT stencils: `--b-jit`, or `QUENCH_DEV=bjit`
@@ -107,15 +122,15 @@ mod tests {
 
     #[test]
     fn each_flag_selects_its_tiers() {
-        let tiers = |flag| JitMode::from_flag(flag).map(JitMode::tiers_enabled);
-        assert_eq!(tiers("--no-jit"), Some((false, false)));
-        assert_eq!(tiers("--b-jit"), Some((true, false)));
-        assert_eq!(tiers("--q-jit"), Some((false, true)));
-        assert_eq!(tiers("--u-jit"), Some((false, true)));
+        let tiers = |flag| JitMode::from_flag(flag).map(|mode| [Tier::Base, Tier::Quick, Tier::Ultra].map(|tier| mode.allows(tier)));
+        assert_eq!(tiers("--no-jit"), Some([false, false, false]));
+        assert_eq!(tiers("--b-jit"), Some([true, false, false]));
+        assert_eq!(tiers("--q-jit"), Some([false, true, false]));
+        assert_eq!(tiers("--u-jit"), Some([false, false, true]));
         assert_eq!(tiers("--jit"), None);
         let mut chosen = None;
         let error = JitMode::select(&mut chosen, "--zz-jit").unwrap_err();
         assert!(error.starts_with("unknown JIT flag --zz-jit") && chosen.is_none());
-        assert_eq!(JitMode::default().tiers_enabled(), (true, true));
+        assert!(JitMode::default().allows(Tier::Ultra));
     }
 }
