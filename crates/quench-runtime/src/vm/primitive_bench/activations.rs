@@ -17,7 +17,7 @@ fn activation(kinds: Kinds, index: usize) -> Activation {
         Kinds::Mixed => !index.is_multiple_of(2),
     };
     Activation {
-        function: index as u32,
+        native: crate::vm::compiled::ShadowFrame::EMPTY, function: index as u32,
         call: std::ptr::null(),
         caller_base: std::ptr::null(),
         caller_registers: Registers(std::ptr::null_mut()),
