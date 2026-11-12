@@ -52,24 +52,7 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
         Native::ObjectHasOwn => vm.plain_own_property_query(code, Native::ObjectPrototypeHasOwnProperty, *args.first()?, *args.get(1)?),
         // Pure of any arguments: SameValue.
         Native::ObjectIs => vm.call_object_native(code, Native::ObjectIs, args).ok(),
-        Native::ReflectGet => {
-            let (target, key) = (argument, *args.get(1)?);
-            if vm.heap.is_string(key) {
-                return match vm.reflect_chain_read(target, key)? {
-                    ChainRead::Value(value) => Some(value),
-                    ChainRead::Absent => Some(Value::UNDEFINED),
-                    ChainRead::Getter(_) | ChainRead::Exotic(_) => None,
-                };
-            }
-            vm.heap.ordinary_object(target)?;
-            vm.plain_keyed_get(target, key)
-        }
-        // `HasProperty` calls no getter, so an accessor is a present property.
-        Native::ReflectHas => match vm.reflect_chain_read(argument, *args.get(1)?)? {
-            ChainRead::Value(_) | ChainRead::Getter(_) => Some(Value::TRUE),
-            ChainRead::Absent => Some(Value::FALSE),
-            ChainRead::Exotic(_) => None,
-        },
+        Native::ReflectGet | Native::ReflectHas => reflect_value(vm, native, args),
         // An object's own enumerable properties, where its shape lists them.
         _ if let Some(kind) = super::super::object_keys::EnumerableOwnPropertyKind::of(native) =>
             vm.plain_enumerable_own_properties(argument, kind),
@@ -79,6 +62,24 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
         Native::SymbolFor if args.first().is_some_and(|key| vm.heap.is_string(*key)) =>
             vm.call_symbol_native(code, Native::SymbolFor, args).ok(),
         _ => None,
+    }
+}
+
+/// `Reflect.get` and `Reflect.has` of a target whose chain shapes decide the answer
+/// (`Vm::reflect_chain_read`); a symbol or index key of an ordinary target reads as a plain
+/// keyed read. An accessor is a present property, whose getter only `get` calls.
+fn reflect_value<H: Host>(vm: &mut Vm<H>, native: Native, args: &[Value]) -> Option<Value> {
+    let (target, key) = (*args.first()?, *args.get(1)?);
+    if native == Native::ReflectGet && !vm.heap.is_string(key) {
+        vm.heap.ordinary_object(target)?;
+        return vm.plain_keyed_get(target, key);
+    }
+    match (native, vm.reflect_chain_read(target, key)?) {
+        (_, ChainRead::Exotic(_)) | (Native::ReflectGet, ChainRead::Getter(_)) => None,
+        (Native::ReflectGet, ChainRead::Value(value)) => Some(value),
+        (Native::ReflectGet, _) => Some(Value::UNDEFINED),
+        (_, ChainRead::Absent) => Some(Value::FALSE),
+        _ => Some(Value::TRUE),
     }
 }
 

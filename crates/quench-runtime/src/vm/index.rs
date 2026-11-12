@@ -94,9 +94,8 @@ impl<H: Host> Vm<H> {
                 self.profile.index_get(ARRAY_INDEX_GET_DENSE);
                 return Ok(value);
             }
-            if let Some((target, handler)) = self.proxy_parts(object) {
-                let key = self.to_property_key(p, key)?;
-                return self.proxy_get_key_value(p, target, handler, object, key);
+            if let Some(read) = self.proxy_index_get(p, object, key) {
+                return read;
             }
             if let Some(value) = self.absent_array_element(object, key) {
                 return Ok(value);
@@ -129,6 +128,12 @@ impl<H: Host> Vm<H> {
             return Ok(value);
         }
         self.get_index_slow(p, object, key)
+    }
+
+    /// `get_index` of a Proxy: its trap called with the key as a string; `None` for any other base.
+    fn proxy_index_get(&mut self, p: &ResidualProgram, object: Value, key: Value) -> Option<Result<Value, JsError>> {
+        let (target, handler) = self.proxy_parts(object)?;
+        Some(self.to_property_key(p, key).and_then(|key| self.proxy_get_key_value(p, target, handler, object, key)))
     }
 
     #[inline(never)]
