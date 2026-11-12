@@ -34,7 +34,26 @@ impl<H: Host> Vm<H> {
             })
             .collect();
         let members: Vec<(usize, GlobalRead)> = reads.iter().filter_map(|(pc, read)| self.native_member(unit, *pc, read)).collect();
-        reads.into_iter().chain(members).collect()
+        let methods = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| Some((pc, self.method_native(instruction)?)));
+        let methods: Vec<(usize, GlobalRead)> = methods.collect();
+        reads.into_iter().chain(members).chain(methods).collect()
+    }
+
+    /// The field read `instruction` of a method of strings or arrays that a call runs inline
+    /// (`lane_region::native_calls`), where the realm's prototype holds that native as an own
+    /// data property now. The receiver is not known: the call guards the callee it reads.
+    fn method_native(&self, instruction: &crate::bytecode::WideInstruction) -> Option<GlobalRead> {
+        /// The methods a call runs inline, by name.
+        const METHODS: [(&str, crate::vm::Native); 4] = [("charCodeAt", crate::vm::Native::StringCharCodeAt), ("charAt", crate::vm::Native::StringCharAt),
+            ("push", crate::vm::Native::ArrayPush), ("pop", crate::vm::Native::ArrayPop)];
+        if !instruction.op().is_get_field() { return None; }
+        let Some(crate::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup() else { return None };
+        let name = self.atom_name(atom);
+        let (_, native) = METHODS.iter().find(|(method, _)| *method == name)?;
+        let holder = if matches!(native, crate::vm::Native::ArrayPush | crate::vm::Native::ArrayPop) { self.array_proto } else { self.string_proto };
+        let value = self.own_plain_data(holder, atom)??;
+        let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(held), .. } = self.heap.function(value)? else { return None };
+        (held == native).then_some(GlobalRead::NativeMember { value, native: *native })
     }
 
     /// The field read that follows the global read `read` at `pc` and reads its register, where

@@ -314,4 +314,60 @@ mod tests {
             }
         }
     }
+    /// Native code running `string_char_code_at` of the string value over the string records,
+    /// or `DELETED` where a row leaves.
+    fn compiled_char_code_at(isa: &dyn cranelift_codegen::isa::TargetIsa) -> CodeMemory {
+        let mut signature = Signature::new(isa.default_call_conv());
+        signature.params.extend([AbiParam::new(types::I64); 3]);
+        signature.returns.push(AbiParam::new(types::I64));
+        let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut native, &mut context);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        let [records, string, index] = builder.block_params(entry).try_into().unwrap();
+        let miss = builder.create_block();
+        let mut stage = Emit { builder: &mut builder, property_values: None };
+        let flat = crate::staged::strings::flat_string(&mut stage, records, string, miss).unwrap();
+        let code = crate::staged::strings::string_char_code_at(&mut stage, flat, index, miss).unwrap();
+        builder.ins().return_(&[code]);
+        builder.switch_to_block(miss);
+        let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
+        builder.ins().return_(&[deleted]);
+        builder.seal_all_blocks();
+        builder.finalize(isa.frontend_config());
+        compile_native_function(native, isa, usize::MAX, CodeMemory::new).unwrap()
+    }
+
+    /// The residual of `strings::flat_string` and `string_char_code_at` reads what the
+    /// interpreter's reading of the same rows reads, for each form of string record, and leaves
+    /// where the rows leave (a slice, a double index, a value that is no string).
+    #[test]
+    fn emitted_string_reads_agree_with_the_interpreter_or_leave() {
+        use crate::staged::{Concrete, strings};
+        use crate::vm::wtf16::{JsString, SHORT_ASCII_CAPACITY};
+        let isa = super::super::super::super::jit_backend::target_isa().unwrap();
+        let memory = compiled_char_code_at(&*isa);
+        // SAFETY: the function reads the string record and the units its form names, all live.
+        let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64, u64) -> u64>(memory.pointer()) };
+        let mut heap = Heap::new();
+        let long = JsString::from_str(&"q".repeat(SHORT_ASCII_CAPACITY + 4));
+        let strings_of_every_form = [
+            heap.alloc_string(JsString::from_str("")), heap.alloc_string(JsString::from_str("abc")),
+            heap.alloc_string(JsString::from_units(&[0x61, 0x20ac])), heap.alloc_string(long.substring(1..20)),
+            heap.alloc_string(long), Value::integer(1),
+        ];
+        let records = heap.string_record_base().map_or(0, |base| base as u64);
+        for string in strings_of_every_form {
+            for index in [Value::integer(0), Value::integer(1), Value::integer(2), Value::integer(-1), Value::number(0.5), Value::UNDEFINED] {
+                let mut stage = Concrete::new(std::ptr::null());
+                let expected = strings::flat_string(&mut stage, records, string.to_bits(), ())
+                    .and_then(|flat| strings::string_char_code_at(&mut stage, flat, index.to_bits(), ()))
+                    .map_or(Value::DELETED, Value::from_bits);
+                let read = Value::from_bits(unsafe { run(records, string.to_bits(), index.to_bits()) });
+                assert_eq!(read, expected, "{:#x} at {:#x}", string.to_bits(), index.to_bits());
+            }
+        }
+    }
 }

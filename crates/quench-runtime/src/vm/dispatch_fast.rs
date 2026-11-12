@@ -13369,40 +13369,6 @@ fn callee_is_native<H: Host>(vm: &Vm<H>, callee: Value, native: Native) -> bool 
 }
 
 script_handler! {
-    /// A `Call` site whose callee was `Array.prototype.push` (`native_call_handler`): that
-    /// call of one value in place (`Vm::array_push_one`). Any other callee, receiver or
-    /// count takes `lane_native_call`.
-    fn lane_call_array_push<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        // SAFETY: the call's window is registers of the running function.
-        let length = match unsafe { lane_call_window(r, i) } {
-            [value] if callee_is_native(vm, r.get(i.b), Native::ArrayPush) => vm.array_push_one(r.get(i.c), *value),
-            _ => None,
-        };
-        let Some(length) = length else {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
-        };
-        r.set(i.a, length);
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
-    /// A `Call` site whose callee was `Array.prototype.pop` (`native_call_handler`): that call
-    /// in place (`Vm::array_pop_one`), which reads no argument. Any other callee or receiver
-    /// takes `lane_native_call`.
-    fn lane_call_array_pop<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let value = if callee_is_native(vm, r.get(i.b), Native::ArrayPop) { vm.array_pop_one(r.get(i.c)) } else { None };
-        let Some(value) = value else {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
     /// A `Call` site whose callee was a Math function of Numbers (`native_call_handler`): the
     /// call of Number arguments in place (`number::math_inline_call`). Any other callee or
     /// argument takes `lane_native_call`.

@@ -12,8 +12,7 @@ mod array_elements;
 mod store_gate;
 pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
-pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope};
-use array_proofs::retire_array_storage_proofs;
+pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, retire_array_storage_proofs};
 mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
@@ -84,6 +83,9 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) object_offset: usize,
     /// The meta bit of a frozen array.
     pub(crate) frozen_mask: u32,
+    /// The meta bits of an array whose elements may not all be added or removed: frozen, or
+    /// not extensible.
+    pub(crate) integrity_mask: u32,
 }
 
 /// The native reader's view of a function record: its own properties are the `Object` at
@@ -112,6 +114,7 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     header_owners_offset: array_elements::NATIVE_HEADER_OWNERS_OFFSET,
     object_offset: cell::NATIVE_ARRAY_OBJECT_OFFSET,
     frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
+    integrity_mask: crate::value_vec::VALUE_VEC_INTEGRITY_BITS,
 };
 
 /// Which invariants an existing-slot store must preserve. Native views cannot

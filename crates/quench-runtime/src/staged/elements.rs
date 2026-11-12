@@ -57,14 +57,29 @@ pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base:
 /// leaves at `miss`.
 #[inline(always)]
 pub(crate) fn writable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<()> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    unbarred_backing(stage, backing, ARRAY.frozen_mask, miss)
+}
+
+/// `writable_backing` of an array that is also extensible, which a change of its length
+/// (`push`, `pop`) needs: `Object::holds_ordinary_elements`' integrity bits are all clear.
+#[inline(always)]
+pub(crate) fn resizable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<()> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    unbarred_backing(stage, backing, ARRAY.integrity_mask, miss)
+}
+
+/// `backing` unshared, plain, and with none of the meta bits `barred`.
+#[inline(always)]
+fn unbarred_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, barred: u32, miss: S::Miss) -> Option<()> {
     use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
     let owners = stage.load_u32(backing.header, ARRAY.header_owners_offset as i32);
     let unique = stage.eq_imm(owners, 1u32);
     stage.guard(unique, miss)?;
     let meta = stage.load_u32(backing.record, (ARRAY.object_offset + OBJECT.meta_offset) as i32);
-    let frozen = stage.and_imm(meta, u64::from(ARRAY.frozen_mask));
-    let unfrozen = stage.eq_imm(frozen, 0u32);
-    stage.guard(unfrozen, miss)?;
+    let held = stage.and_imm(meta, u64::from(barred));
+    let clear = stage.eq_imm(held, 0u32);
+    stage.guard(clear, miss)?;
     let payload = stage.load_u64(backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
     let plain = super::object::plain_payload(stage, payload);
     stage.guard(plain, miss)

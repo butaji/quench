@@ -8,11 +8,12 @@
 //! static argument that leaves no code), the array backing (`elements::array_backing`) and the
 //! prototype chain holding no index, which is a dependency, not a per-call test.
 
-use super::elements::{Backing, append_element, other, recount, writable_backing};
+use super::elements::{Backing, append_element, array_backing, other, recount, resizable_backing};
 use super::math::FloatUnary;
 use super::numeric::{Domain, NumericStage};
 use super::{Concrete, Stage};
 use crate::Value;
+use crate::heap::ArrayObject;
 use crate::value::ValueLayout;
 use crate::vm::operations::{NumberArithmetic, NumberRelation};
 use crate::vm::wtf16::Units;
@@ -103,8 +104,6 @@ pub(crate) fn char_at_ascii<S: Stage>(stage: &mut S, width: UnitWidth, units: S:
 
 /// The value word of a string's or array's `length` word: an int32. `None` (leaving at
 /// `miss`) past int32, which `Value::length` holds as a double.
-// Read by the u-jit and b-jit projections of native calls and `length` reads (S3).
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn length_value<S: Stage>(stage: &mut S, length: S::Word, miss: S::Miss) -> Option<S::Word> {
     let past = stage.ugt_imm(length, INT32_MAX);
@@ -113,19 +112,35 @@ pub(crate) fn length_value<S: Stage>(stage: &mut S, length: S::Word, miss: S::Mi
     Some(integer_word(stage, length))
 }
 
+/// The longest length a push grows within int32 (`Value::length`).
+const PUSH_FROM_MAX: u64 = INT32_MAX - 1;
+
 /// `push(value)` of the dense array `backing`, whose elements have room for `room` values,
 /// where OrdinarySet of the index at its length is a plain append: the new `length`, as a
-/// value word. `None` (leaving at `miss`) for a shared, frozen or extended backing or a full
-/// one, which the generic steps grow or refuse. The caller proves the prototype chain holds
-/// no index (`Vm::chain_holds_no_index`), a dependency.
-// Read by the u-jit and b-jit projections of native calls and `length` reads (S3).
-#[allow(dead_code)]
+/// value word. `None` (leaving at `miss`, before any write) for a shared, sealed or extended
+/// backing, a full one or one at the last int32 length, which the generic steps grow or
+/// refuse. The caller proves the prototype chain holds no index (`Vm::chain_holds_no_index`),
+/// a dependency, and that the store of `value` passes the write barrier unlogged.
 #[inline(always)]
 pub(crate) fn array_push_one<S: Stage>(stage: &mut S, backing: Backing<S::Word>, room: S::Word, value: S::Word,
     miss: S::Miss) -> Option<S::Word> {
-    writable_backing(stage, backing, miss)?;
+    resizable_backing(stage, backing, miss)?;
+    let past = stage.ugt_imm(backing.length, PUSH_FROM_MAX);
+    let within = stage.not(past);
+    stage.guard(within, miss)?;
     let grown = append_element(stage, backing.values, backing.length, room, backing.length, value, miss)?;
-    length_value(stage, grown, miss)
+    Some(integer_word(stage, grown))
+}
+
+/// Continues where the value word `value` holds no heap reference, so a store of it passes
+/// the write barrier unlogged; `None` (leaving at `miss`) for a reference, whose store the
+/// heap logs (`Heap::record_array_store_mut`).
+#[inline(always)]
+pub(crate) fn unreferenced<S: Stage>(stage: &mut S, value: S::Word, miss: S::Miss) -> Option<()> {
+    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
+    let reference = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
+    let plain = stage.not(reference);
+    stage.guard(plain, miss)
 }
 
 /// Removes the last element of the backing at `values` of `length` values and answers it, or
@@ -151,13 +166,12 @@ pub(crate) fn pop_last<S: Stage>(stage: &mut S, values: S::Word, length: S::Word
     })
 }
 
-/// `pop()` of the dense array `backing` (`pop_last`), where its backing is writable
-/// (`elements::writable_backing`): the generic steps' Set of `length` is then one store.
-// Read by the u-jit and b-jit projections of native calls and `length` reads (S3).
-#[allow(dead_code)]
+/// `pop()` of the dense array `backing` (`pop_last`), where its backing is resizable
+/// (`elements::resizable_backing`): the generic steps' Set of `length` is then one store. The
+/// caller retires the array storage proofs a shrinking backing falsifies.
 #[inline(always)]
 pub(crate) fn array_pop<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<S::Word> {
-    writable_backing(stage, backing, miss)?;
+    resizable_backing(stage, backing, miss)?;
     pop_last(stage, backing.values, backing.length, miss)
 }
 
@@ -203,6 +217,23 @@ pub(crate) fn concrete_is_integral(value: Value) -> bool {
         (None, Some(number)) => is_integral(&mut stage, Domain::Float64, number.to_bits()),
         (None, None) => false,
     }
+}
+
+/// The interpreter's `array_push_one` of `array`, a direct array among the records at
+/// `record_base` whose backing has room for `room` values: the new length.
+#[inline(always)]
+pub(crate) fn concrete_array_push(record_base: *const ArrayObject, array: Value, room: usize, value: Value) -> Option<Value> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let backing = array_backing(&mut stage, record_base as u64, array.to_bits(), ())?;
+    array_push_one(&mut stage, backing, room as u64, value.to_bits(), ()).map(Value::from_bits)
+}
+
+/// The interpreter's `array_pop` of `array`, a direct array among the records at `record_base`.
+#[inline(always)]
+pub(crate) fn concrete_array_pop(record_base: *const ArrayObject, array: Value) -> Option<Value> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let backing = array_backing(&mut stage, record_base as u64, array.to_bits(), ())?;
+    array_pop(&mut stage, backing, ()).map(Value::from_bits)
 }
 
 /// A run of units as the words a row reads: its width, address and length.
@@ -330,6 +361,27 @@ mod tests {
         let (backing, _) = backing_of(&mut elements, 0, ARRAY.frozen_mask, &mut record);
         assert_eq!(array_pop(&mut stage(), backing, ()), None);
         assert_eq!(elements.len(), 1);
+    }
+
+    #[test]
+    fn a_store_of_a_reference_is_left_to_the_logging_heap() {
+        let mut s = stage();
+        for value in [Value::integer(1), Value::number(0.5), Value::TRUE, Value::UNDEFINED, Value::NULL] {
+            assert_eq!(unreferenced(&mut s, value.to_bits(), ()), Some(()), "{:#x}", value.to_bits());
+        }
+        for value in [Value::direct_object(1), Value::direct_array(1), Value::direct_string(1)] {
+            assert_eq!(unreferenced(&mut s, value.to_bits(), ()), None, "{:#x}", value.to_bits());
+        }
+    }
+
+    #[test]
+    fn push_on_a_non_extensible_backing_leaves_for_the_generic_path() {
+        let mut elements = ArrayElements::from_slice(&[Value::integer(1)]);
+        let mut record = record();
+        let (backing, capacity) = backing_of(&mut elements, 2, crate::value_vec::VALUE_VEC_INTEGRITY_BITS & !ARRAY.frozen_mask, &mut record);
+        assert_eq!(array_push_one(&mut stage(), backing, capacity, Value::integer(9).to_bits(), ()), None);
+        assert_eq!(array_pop(&mut stage(), backing, ()), None);
+        assert_eq!(elements.len(), 1, "nothing was written");
     }
 
     #[test]

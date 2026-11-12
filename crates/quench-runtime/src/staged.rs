@@ -32,6 +32,7 @@ pub(crate) mod environment;
 pub(crate) mod ic;
 pub(crate) mod object;
 pub(crate) mod store;
+pub(crate) mod strings;
 pub(crate) mod holder;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
