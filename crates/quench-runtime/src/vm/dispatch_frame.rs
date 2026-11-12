@@ -2488,8 +2488,8 @@ impl<H: Host> Vm<H> {
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
             }
             };
-            // The frame of a generator its caller resumed in place yields to that caller, as
-            // its return completes the call (`finish_in_loop_generator_step`).
+            // The frame a generator's activation became yields to its caller, as its return
+            // completes the call (`finish_materialized_generator_step`).
             let mut yielded = None;
             let step = match step {
                 Ok(StepResult::Yield { value, destination, delegated_result })
@@ -2497,7 +2497,7 @@ impl<H: Host> Vm<H> {
                 {
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
-                    yielded = Some(super::generator::InLoopGeneratorStop::Yielded { destination, delegated_result });
+                    yielded = Some(super::generator::MaterializedStop::Yielded { destination, delegated_result });
                     Ok(StepResult::Return(value))
                 }
                 step => step,
@@ -2537,8 +2537,8 @@ impl<H: Host> Vm<H> {
                         );
                         match pending.completion.take_generator() {
                             Some(resume) => {
-                                let stop = yielded.take().unwrap_or(super::generator::InLoopGeneratorStop::Returned);
-                                value = self.finish_in_loop_generator_step(completed_frame, resume, value, stop);
+                                let stop = yielded.take().unwrap_or(super::generator::MaterializedStop::Returned);
+                                value = self.finish_materialized_generator_step(completed_frame, resume, value, stop);
                             }
                             None => {
                                 self.finish_frame_scopes(&completed_frame);
@@ -2819,9 +2819,9 @@ impl<H: Host> Vm<H> {
                         Err(error) => error,
                         Ok(_) => unreachable!(),
                     };
-                    // A generator resumed in place finishes with its frame's throw.
+                    // A generator whose activation became a frame finishes with its throw.
                     if let Some(resume) = pending.completion.take_generator() {
-                        self.abandon_in_loop_generator_step(resume);
+                        self.abandon_materialized_generator_step(resume);
                     }
                     if let Some(step) = pending.completion.take_array_step() {
                         self.abandon_array_step(*step);

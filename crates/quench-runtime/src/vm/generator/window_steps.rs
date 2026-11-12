@@ -126,6 +126,20 @@ impl<H: Host> Vm<H> {
         self.frames.push(frame);
     }
 
+    /// The `value` and `done` of `result` where it is an iterator result this realm made
+    /// (`iterator_result`) whose fields are still its own data slots, `done` a Boolean: a
+    /// delegate step's result, which no code has seen. `None` for any other object, whose
+    /// fields `[[Get]]` reads.
+    pub(in crate::vm) fn own_iterator_result_parts(&self, result: Value) -> Option<(Value, bool)> {
+        let (prototype, header) = self.iterator_result_header?;
+        let object = self.heap.object_record(result)?;
+        if object.shape() != header.shape() || object.proto() != prototype {
+            return None;
+        }
+        let value = self.heap.property_get(object, crate::vm::iterators::ITERATOR_RESULT_VALUE_SLOT)?;
+        Some((value, self.heap.property_get(object, crate::vm::iterators::ITERATOR_RESULT_DONE_SLOT)?.as_bool()?))
+    }
+
     /// The iterator result of a generator step that stopped with `value`: the reused object a step
     /// whose `done` and `value` reads alone observe it shares (`reused_iterator_result`), or a
     /// fresh one.

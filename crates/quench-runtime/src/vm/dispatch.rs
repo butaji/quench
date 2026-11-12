@@ -73,13 +73,6 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
-        // A generator's `next()` resumes its suspended frame in place.
-        if i.op() == Op::Call && i.call_window().count == 0 {
-            let generator = self.read(f, i.register_c());
-            if self.steps_as_generator(generator, callee) {
-                return self.try_in_loop_generator_step(f, pc, callee, generator, i.a(), false);
-            }
-        }
         let Some(entry) = self.in_loop_call_entry(p, callee) else { return self.try_forwarded_user_call(p, f, i, pc, callee) };
         let target = (entry.program, entry.function, entry.env);
         if entry.push == super::InLoopPush::Settles {
@@ -1171,19 +1164,13 @@ impl<H: Host> Vm<H> {
                 };
                 let awaited_result = self.read(f, state_register);
                 let asynchronous = p.function(self.frames[f].function as usize).is_async;
-                // An awaited step's result, or a synchronous step made in place
-                // (`Vm::yield_star_in_place`), waits in the state register.
+                // An awaited step's result, or a synchronous delegate step the lane made as an
+                // activation (`Completion::Delegates`), waits in the state register.
                 let result = if !awaited_result.is_undefined() {
                     self.write(f, state_register, Value::UNDEFINED);
                     awaited_result
                 } else {
                     let input = self.read(f, i.result_register());
-                    if !asynchronous
-                        && self.steps_as_generator(iterator, next_method)
-                        && let Some(pushed) = self.yield_star_in_place(f, *pc - 1, next_method, iterator, input, state_register)
-                    {
-                        return pushed;
-                    }
                     let result =
                         self.iterator_next_with_cached_method(p, iterator, next_method, &[input])?;
                     if asynchronous {

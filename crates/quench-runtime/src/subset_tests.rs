@@ -1052,8 +1052,8 @@ function chain(n) { let p = Promise.resolve(0); for (let i = 0; i < n; i++) p = 
 
 #[test]
 fn generators_resumed_in_place_keep_iteration_semantics() {
-    // A generator's `next()` from a frame or a lane iteration step resumes its frame in place
-    // (`Vm::try_in_loop_generator_step`), its `yield` and return completing the call: for-of,
+    // A generator's `next()` from a frame or a lane iteration step resumes over its record or
+    // as the native `next` (`Vm::resume_generator_step`), its `yield` and return completing the call: for-of,
     // explicit steps, nesting, delegation, throws, `finally` on an early exit, a re-entrant
     // step, closures over its locals, `arguments`, `with` and a resumed value.
     let source = r#"

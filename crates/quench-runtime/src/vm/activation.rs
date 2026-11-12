@@ -61,9 +61,8 @@ impl JobResume {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct NativeActivation {
     pub callable: Value,
-    /// What the activation runs on and keeps alive besides its callable: an in-place
-    /// generator step's generator (`Vm::try_in_loop_generator_step`, `Vm::resume_generator_window`),
-    /// `undefined` for others.
+    /// What the activation runs on and keeps alive besides its callable: a windowed
+    /// generator step's generator (`Vm::resume_generator_window`), `undefined` for others.
     pub receiver: Value,
     pub frame_depth: usize,
     pub boundary: NativeCallBoundary,

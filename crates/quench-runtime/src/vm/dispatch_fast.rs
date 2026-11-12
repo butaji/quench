@@ -12494,17 +12494,15 @@ script_handler! {
 
 script_handler! {
     /// An iteration step (`lane_iteration_step`) of this realm's generator `next` of a
-    /// generator that is not running: the generator resumes in place from the running frame,
-    /// as `lane_call_native` calls the native, with a result only the step's `done` and
-    /// `value` reads observe (`Vm::generator_iteration_step`).
+    /// generator that is not running: the generator resumes as an activation over its record
+    /// (`lane_resume_generator_step`), or, where its function has no window, as the native
+    /// `next` runs it (`Vm::generator_iteration_step`), with a result only the step's `done`
+    /// and `value` reads observe.
     #[inline(never)]
     fn lane_generator_step<>(cx, r, ip, i, view) {
         let (method, iterator) = (r.get(i.b), r.get(i.c));
         if let Some((registers, start)) = lane_resume_generator_step(cx, r, ip, i, method, iterator) {
             next!(cx, registers, start, Carried::script(cx))
-        }
-        if let Some(next) = lane_resume_generator_frame(cx, ip, i, method, iterator) {
-            return next;
         }
         let value = lane_call_from_frame(cx, ip, |vm, code| vm.generator_iteration_step(code, method, iterator));
         resume!(cx, lane_native_complete(cx, ip, i, value))
@@ -17987,51 +17985,6 @@ fn lane_push_frame_call<H: Host>(
     }
 }
 
-/// `lane_generator_step` of a generator the general loop would resume in place
-/// (`Vm::try_in_loop_generator_step`): lane activations become frames, the generator's frame
-/// is pushed with the pending call its `yield` or return completes with the step's reused
-/// result, and the lane runs it. `None` leaves any other step to the native call.
-#[inline(never)]
-fn lane_resume_generator_frame<H: Host>(
-    cx: *mut LaneContext<H>,
-    ip: Ip,
-    i: &LaneInstruction,
-    method: Value,
-    generator: Value,
-) -> Option<Ip> {
-    let vm = unsafe { vm(cx) };
-    // A step that returns its result from the frame takes the native call.
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 || !vm.generator_resumes_in_place(generator) {
-        return None;
-    }
-    vm.materialize_lane_activations(cx);
-    let frame = unsafe { (*cx).frame() };
-    // SAFETY: the call record lies in the running view.
-    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
-    let destination = i.a & crate::bytecode::REGISTER_MASK;
-    match vm.resume_generator_in_place(frame, call_pc + 1, method, generator, Value::UNDEFINED, true)? {
-        Ok((call_guard, resume)) => {
-            // SAFETY: the general loop's pending calls outlive the lane run.
-            unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
-                caller: frame,
-                caller_cursor: None,
-                call_pc: call_pc as u32,
-                destination,
-                completion: CallCompletion::Generator(resume),
-                returns: false,
-                call_guard: Some(call_guard),
-                caller_program: None,
-            });
-            vm.lane_stack.refresh_activation_limit();
-            Some(lane_enter_script_frame(cx, frame + 1).into_loop())
-        }
-        Err(error) => {
-            vm.lane_raised = Some(error);
-            Some(exit(ip))
-        }
-    }
-}
-
 /// `new` of a user constructor that needs a VM frame, made in place as the general loop's
 /// in-loop construction makes it (`Vm::inline_construct_target`): lane activations become
 /// frames, the receiver is allocated, and the constructor's frame is pushed with the pending
@@ -18194,7 +18147,7 @@ fn lane_return_script_frame<H: Host>(
     let mut exit_ip = ip;
     loop {
         // An async callee's promise settles on the general path (`PendingGeneralCall::completion`);
-        // a generator resumed in place finishes here as there (`PendingGeneralCall::completion`).
+        // a generator whose activation became a frame finishes here as there (`PendingGeneralCall::completion`).
         let returns_here = pending.last().is_some_and(|call| lane_completes_return(cx, call, frame, retired));
         if !returns_here {
             // A record that has not run yet runs again on the general path; one that ran (a
@@ -18208,8 +18161,8 @@ fn lane_return_script_frame<H: Host>(
         let completed = vm.frames.pop().expect("the returning frame is the innermost");
         match call.completion.take_generator() {
             Some(resume) => {
-                let stop = super::generator::InLoopGeneratorStop::Returned;
-                value = vm.finish_in_loop_generator_step(completed, resume, value, stop);
+                let stop = super::generator::MaterializedStop::Returned;
+                value = vm.finish_materialized_generator_step(completed, resume, value, stop);
                 note_allocation(vm);
             }
             None => {
