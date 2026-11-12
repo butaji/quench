@@ -54,7 +54,7 @@ pub(super) enum CallForm {
     /// `Construct` over registers: the construct helper (`lane_body_construct`), which plans the
     /// receiver's fields or activates the constructor as the lane's own construction does.
     Construct,
-    /// Every other form (method, this-method, known, array, spread and forwarding calls; a `super`
+    /// Every other form (method, this-method, array, spread and forwarding calls; a `super`
     /// or array-argument construction): the interpreter's own step made in place by the step helper,
     /// the call it makes running the callee as any call from a helper does. These sites record no
     /// callee to call by its entry cell, and a method call's callee is the method cache's lookup,
@@ -64,12 +64,14 @@ pub(super) enum CallForm {
 
 impl CallForm {
     /// The form of the call `instruction` is, if a body's call chain makes it: a call form with no
-    /// result flag left but the `this` binding (the return flag is `cover`'s). A call that binds the caller's
+    /// result flag left but the `this` binding (the return flag is `cover`'s). `CallKnown` is the Wasm
+    /// compiler's call, which no JavaScript function holds, so it has no form. A call that binds the caller's
     /// `this` (`SET_THIS_REGISTER`, a `super()` call) or has an `eval` flag (which declares bindings in the
     /// caller's scope) is the step helper's own step made in place, a helper call row whatever its form: the
     /// helper binds the frame's `this` and publishes the receiver, or runs the eval in the frame.
     pub(super) fn of(instruction: WideInstruction) -> Option<Self> {
-        if !instruction.op().makes_script_call() || instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER != 0 {
+        if !instruction.op().makes_script_call() || instruction.op().class() == Class::CallKnown
+            || instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER != 0 {
             return None;
         }
         let in_place = instruction.writes_current_this() || instruction.resolves_dynamic_scope();
@@ -349,9 +351,10 @@ mod tests {
         use crate::bytecode::{Op, RETURN_REGISTER};
         let form = |op| CallForm::of(WideInstruction::new(op, 1, 2, 3, 0));
         assert_eq!((form(Op::Call), form(Op::Construct)), (Some(CallForm::Plain), Some(CallForm::Construct)));
-        for op in [Op::CallMethod, Op::CallThisMethod, Op::CallKnown, Op::CallArray, Op::CallSpread, Op::CallForwardingArguments] {
+        for op in [Op::CallMethod, Op::CallThisMethod, Op::CallArray, Op::CallSpread, Op::CallForwardingArguments] {
             assert_eq!(form(op), Some(CallForm::Stepped), "{op:?}");
         }
+        assert_eq!(form(Op::CallKnown), None, "the Wasm compiler's call is no JavaScript call form");
         assert_eq!(form(Op::Move), None);
         assert_eq!(CallForm::of(WideInstruction::new(Op::Call, 1 | RETURN_REGISTER, 2, 3, 0)), None);
         let binds_this = WideInstruction::new(Op::Call, 1 | crate::bytecode::SET_THIS_REGISTER, 2, 3, 0);
