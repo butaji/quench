@@ -444,20 +444,21 @@ pub mod rustc {
     pub(crate) struct RawStencil {
         pub(crate) name: &'static str,
         pub(crate) code: &'static [u8],
-        pub(crate) relocs: &'static [(usize, u8, u32, i64)],
+        pub(crate) relocs: &'static [(u16, u8, u8, i32)],
     }
 
     include!(concat!(env!("OUT_DIR"), "/rustc_stencils.rs"));
 
     /// The stencil of the row function `name`, if the object has it.
     pub fn stencil(name: &str) -> Option<Stencil> {
-        let raw = RAW.iter().find(|raw| raw.name == name)?;
+        let raw = &RAW[RAW.binary_search_by(|raw| raw.name.cmp(name)).ok()?];
         let (mut relocs, mut imm32) = (Vec::new(), Vec::new());
         for &(offset, class, index, addend) in raw.relocs {
+            let (offset, index) = (u32::from(offset), u32::from(index));
             match class {
-                0 => imm32.push(Imm32 { offset: offset as u32, index, negate: false, addend: addend as u32 }),
-                1 => relocs.push(Reloc { offset: offset as u32, pc_relative: true, namespace: HOLE_CODE, index, addend }),
-                _ => relocs.push(Reloc { offset: offset as u32, pc_relative: false, namespace: super::HOLE_VALUE, index, addend }),
+                0 => imm32.push(Imm32 { offset, index, negate: false, addend: addend as u32 }),
+                1 => relocs.push(Reloc { offset, pc_relative: true, namespace: HOLE_CODE, index, addend: i64::from(addend) }),
+                _ => relocs.push(Reloc { offset, pc_relative: false, namespace: super::HOLE_VALUE, index, addend: i64::from(addend) }),
             }
         }
         let len = raw.code.len();

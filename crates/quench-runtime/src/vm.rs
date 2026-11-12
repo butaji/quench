@@ -911,6 +911,7 @@ impl site_table::SiteEntry for FieldCache {
 }
 /// Layout facts for generated code that reads a field cache entry as `SiteEntry for
 /// FieldCache` stores it: three words, each complemented against `EMPTY_CACHE`.
+#[derive(Debug)]
 pub(crate) struct NativeFieldCacheLayout {
     pub(crate) entry_size: usize,
     pub(crate) receiver_offset: usize,

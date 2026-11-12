@@ -1,7 +1,10 @@
-//! Compiles `stencils/rows.rs` with the toolchain's own rustc into an object, reads its
-//! functions and relocations with a minimal ELF64 reader, and writes them as static tables
+//! Compiles `stencils/rows.rs` (and the Number rows `stencils/library.rs` lists, generated into
+//! `OUT_DIR/instances.rs`) with the toolchain's own rustc into an object, reads its functions and
+//! relocations with a minimal ELF64 reader, and writes them as static tables
 //! (`OUT_DIR/rustc_stencils.rs`). A row that contains a `call` or a `ret` is a build error:
 //! rows chain by `become` only, and only the `leave_*` rows return.
+#[path = "stencils/library.rs"]
+mod library;
 
 use std::{env, fs, path::PathBuf, process::Command};
 
@@ -79,51 +82,80 @@ fn check_transfer(row: &str, code: &[u8], at: usize) {
     assert!(jmp || jcc, "stencil {row}: relocation at {at} is not a jmp or jcc (a `call`?)");
 }
 
+/// Every file whose change must recompile the stencils: the stencil sources and the runtime's
+/// staged rows they include, and nothing else.
+const SOURCES: [&str; 15] = [
+    "stencils/rows.rs", "stencils/heap_rows.rs", "stencils/facade.rs", "stencils/layout.rs", "stencils/library.rs", "stencils/numeric.rs", "stencils/stage.rs",
+    "stencils/staged.rs", "../quench-runtime/src/staged/stage.rs", "../quench-runtime/src/staged/value.rs",
+    "../quench-runtime/src/staged/object.rs", "../quench-runtime/src/staged/elements.rs",
+    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "build.rs",
+];
+
 fn main() {
-    println!("cargo::rerun-if-changed={SOURCE}");
-    println!("cargo::rerun-if-changed=build.rs");
+    for source in SOURCES {
+        println!("cargo::rerun-if-changed={source}");
+    }
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let table = out.join("rustc_stencils.rs");
     if env::var("CARGO_CFG_TARGET_ARCH").as_deref() != Ok("x86_64") || env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
         fs::write(&table, "pub(crate) static RAW: &[RawStencil] = &[];\n").unwrap();
         return;
     }
+    let instances: String = library::library().into_iter().map(|c| format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4)).collect();
+    let heap: String = library::heap_library().into_iter().map(|c| format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4)).collect();
+    fs::write(out.join("instances.rs"), instances + &heap).unwrap();
+    let object = compile(&out);
+    fs::write(&table, stencil_table(&fs::read(&object).unwrap())).unwrap();
+}
+
+fn compile(out: &std::path::Path) -> PathBuf {
     let object = out.join("rows.o");
     let status = Command::new(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
-        .args(["--edition", "2024", "--crate-type=lib", "--crate-name=quench_stencil_rows", "--emit=obj", "-C", "opt-level=3", "-C", "panic=abort", "-C", "relocation-model=static", "-C", "codegen-units=1", "-C", "debuginfo=0"])
+        .args(["--edition", "2024", "--crate-type=lib", "--crate-name=quench_stencil_rows", "--emit=obj", "-C", "opt-level=3", "-C", "panic=abort", "-C", "relocation-model=static", "-C", "codegen-units=8", "-C", "debuginfo=0"])
         .arg("-o")
         .arg(&object)
         .arg(SOURCE)
         .status()
         .expect("run rustc");
     assert!(status.success(), "rustc failed on {SOURCE}");
-    let data = fs::read(&object).unwrap();
-    let elf = Elf::parse(&data);
+    object
+}
+
+/// The rows of an object as the static table `RAW`, sorted by name.
+fn stencil_table(data: &[u8]) -> String {
+    let elf = Elf::parse(data);
     let symbols = elf.symbols();
-    let mut text = String::from("pub(crate) static RAW: &[RawStencil] = &[\n");
+    let mut rows: Vec<(String, String)> = Vec::new();
     for (name, section, value, _) in symbols.iter().filter(|s| s.3 & 0xf == 2 && s.3 >> 4 == 1 && s.1 != 0 && !s.0.starts_with("_R")) {
-        let section_data = &elf.sections[*section];
         assert_eq!(*value, 0, "{name}: one function per section");
+        let section_data = &elf.sections[*section];
         let code = &data[section_data.offset..section_data.offset + section_data.size];
         let returns = name.starts_with("leave_");
         assert!(returns || !code.contains(&0xc3) || !ends_with_ret(code), "stencil {name} ends with `ret`");
-        let mut relocs = Vec::new();
-        for rela in elf.sections.iter().filter(|s| s.kind == 4 && s.info == *section) {
-            for k in 0..rela.size / 24 {
-                let at = rela.offset + k * 24;
-                let (offset, info, addend) = (u64_at(&data, at) as usize, u64_at(&data, at + 8), u64_at(&data, at + 16) as i64);
-                let (symbol, kind) = (&symbols[(info >> 32) as usize].0, (info & 0xffff_ffff) as u32);
-                let (class, index) = hole_of(name, symbol, kind);
-                if class == 1 {
-                    check_transfer(name, code, offset);
-                }
-                relocs.push((offset, class, index, addend));
-            }
-        }
-        text += &format!("    RawStencil {{ name: {name:?}, code: &{code:?}, relocs: &{relocs:?} }},\n");
+        let relocs = relocations(&elf, &symbols, data, name, *section, code);
+        rows.push((name.clone(), format!("    RawStencil {{ name: {name:?}, code: &{code:?}, relocs: &{relocs:?} }},\n")));
     }
-    text += "];\n";
-    fs::write(&table, text).unwrap();
+    rows.sort();
+    let body: String = rows.into_iter().map(|(_, row)| row).collect();
+    format!("pub(crate) static RAW: &[RawStencil] = &[\n{body}];\n")
+}
+
+/// The relocations of one row as (offset, class, index, addend).
+fn relocations(elf: &Elf, symbols: &[(String, usize, usize, u8)], data: &[u8], name: &str, section: usize, code: &[u8]) -> Vec<(u16, u8, u8, i32)> {
+    let mut relocs = Vec::new();
+    for rela in elf.sections.iter().filter(|s| s.kind == 4 && s.info == section) {
+        for k in 0..rela.size / 24 {
+            let at = rela.offset + k * 24;
+            let (offset, info, addend) = (u64_at(data, at) as usize, u64_at(data, at + 8), u64_at(data, at + 16) as i64);
+            let (symbol, kind) = (&symbols[(info >> 32) as usize].0, (info & 0xffff_ffff) as u32);
+            let (class, index) = hole_of(name, symbol, kind);
+            if class == 1 {
+                check_transfer(name, code, offset);
+            }
+            relocs.push((u16::try_from(offset).expect("a stencil under 64 KiB"), class, u8::try_from(index).expect("a small hole index"), i32::try_from(addend).expect("a small addend")));
+        }
+    }
+    relocs
 }
 
 fn ends_with_ret(code: &[u8]) -> bool {
