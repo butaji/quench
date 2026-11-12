@@ -1,7 +1,8 @@
 //! The heap record of a frame: everything its activation needs to run again, owned in one
 //! place instead of spread over a pooled `Frame` and its continuation. A suspended function's
-//! (a generator, an async function) holds it while suspended; an ordinary function that
-//! enters a `with` or binds dynamically gets one when it first does (`FrameRecord::of_activation`).
+//! (a generator, an async function) holds it while suspended and a lane activation runs over its
+//! register file; an ordinary function's activation keeps its scope chain on the lane stack and
+//! has no record, a frame being what holds its dynamic bindings.
 
 use super::CallContext;
 use crate::bytecode::Atom;
