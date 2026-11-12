@@ -77,14 +77,6 @@ fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_form(
     }
 }
 
-/// The registers an allocation row reads from its window.
-fn window_values(allocation: Allocation) -> i32 {
-    match allocation {
-        Allocation::ObjectLiteral { window, .. } | Allocation::Concat { window } => i32::from(window.count),
-        Allocation::Closure { .. } | Allocation::Template { .. } => 0,
-    }
-}
-
 /// A concrete register frame: the interpreter keeps no facts about its registers. A heap
 /// value whose cell decides its truthiness reads the cell through `heap`, as the lane does.
 struct ConcreteFrame<'a> {
@@ -122,15 +114,6 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
         let object = heap.object_record(Value::from_bits(self.registers[usize::from(base)]))?;
         // SAFETY: the object is live in this frame's heap and the caller proved the slot.
         Some((unsafe { concrete_own_read(object, heap.property_values_base(), usize::from(slot)) }.to_bits(), ()))
-    }
-
-    /// A frame with a heap allocates the value `window_values` names: the number of registers
-    /// the allocation reads, written to the destination.
-    fn allocate_value(&mut self, _stage: &mut Concrete, destination: Register, allocation: Allocation, _proof: ()) -> Option<u64> {
-        self.heap?;
-        let value = Value::integer(window_values(allocation)).to_bits();
-        self.registers[usize::from(destination)] = value;
-        Some(value)
     }
 
     fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> {
@@ -440,46 +423,6 @@ fn an_allocation_is_a_staged_operation_with_a_host_boundary() {
     }
 }
 
-/// The window, closure, template and concatenation rows are one staged operation over the
-/// frame's allocator: a frame with none declines each, writing nothing, and one with a heap
-/// defines the destination with the word it made.
-#[test]
-fn an_allocation_row_defines_its_destination_through_the_frame_or_declines() {
-    use crate::bytecode::RegisterWindow;
-    let window = RegisterWindow { base: 1, count: 2 };
-    let rows = [
-        (Allocation::ObjectLiteral { site: 4, window }, 2),
-        (Allocation::Concat { window }, 2),
-        (Allocation::Closure { function: 1 }, 0),
-        (Allocation::Template { template: 0 }, 0),
-    ];
-    let heap = Heap::new();
-    let mut stage = Concrete::new(std::ptr::null());
-    for (allocation, made) in rows {
-        let operation = Operation::Allocate { destination: 0, allocation, proof: () };
-        let mut bare = ConcreteFrame { registers: vec![0; 3], heap: None };
-        assert!(matches!(step(&mut stage, &mut bare, operation), Step::Unresolved), "{allocation:?}");
-        assert_eq!(bare.registers[0], 0, "a declined row writes nothing");
-        let mut held = ConcreteFrame { registers: vec![0; 3], heap: Some(&heap) };
-        let Step::Value(word) = step(&mut stage, &mut held, operation) else { panic!("{allocation:?} allocates") };
-        assert_eq!(Value::from_bits(word), Value::integer(made), "{allocation:?}");
-        assert_eq!(held.registers[0], word, "the row defines its destination");
-    }
-}
-
-/// Only a closure writes the frame (its promotion), only concatenation may run guest code,
-/// and every allocation row may allocate: the rows a specializer keeps facts across.
-#[test]
-fn allocation_rows_declare_their_effects() {
-    use crate::bytecode::RegisterWindow;
-    let window = RegisterWindow { base: 0, count: 1 };
-    let row = |allocation| Operation::<u64, ()>::Allocate { destination: 0, allocation, proof: () }.effects();
-    let (literal, closure) = (row(Allocation::ObjectLiteral { site: 0, window }), row(Allocation::Closure { function: 0 }));
-    assert!(literal.may_alloc && !literal.may_call_js && !literal.writes.contains(Region::Frame));
-    assert!(closure.may_alloc && closure.writes.contains(Region::Frame));
-    assert!(row(Allocation::Concat { window }).may_call_js, "ToString of an object runs guest code");
-}
-
 #[test]
 fn the_element_store_helper_is_the_host_callout_boundary() {
     // The interpreter stage has no helper table: an element-store helper is the host callout
@@ -521,7 +464,6 @@ fn every_host_callout_operation_has_a_concrete_reading() {
     let declines = [
         Operation::MakeObject { destination: 0, proof: () },
         Operation::MakeArray { destination: 0, length: 0, elements: 0, proof: () },
-        Operation::Allocate { destination: 0, allocation: Allocation::Closure { function: 0 }, proof: () },
         Operation::IndexSetHelper { base: 0, key: 1, value: 2, proof: () },
         Operation::GlobalRead { destination: 0, atom: 0, site: 0, binding: GlobalBinding::Dynamic, proof: () },
         Operation::FieldStoreMiss { object: 0, atom: 0, site: 0, value: 1, proof: () },

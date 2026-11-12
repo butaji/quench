@@ -43,7 +43,6 @@ mod stable;
 #[path = "lane_region/polls.rs"]
 mod polls;
 #[path = "lane_region/literals.rs"] mod literals;
-#[path = "lane_region/allocations.rs"] mod allocations;
 #[path = "lane_region/edges.rs"] mod edges;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
@@ -2692,7 +2691,6 @@ impl Lowering<'_, '_> {
             // A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
             // collection leaves first. The staged operation allocates and writes the result.
             Class::MakeObject | Class::MakeArray | Class::MakeConstArray | Class::MakeObject2 if self.literal_completes(instruction, pc) => Some(self.literal(state, pc, instruction)),
-            _ if self.allocation_row(pc, instruction) => Some(self.allocation(state, pc, instruction)),
             Class::Construct if self.completion != Completion::Number && !instruction.is_super_construct()
                 && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
             Class::IncDec if plain && instruction.numeric_local_target().is_none() => {

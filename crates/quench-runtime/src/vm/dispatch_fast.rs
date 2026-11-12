@@ -29,7 +29,6 @@ use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
 use crate::bytecode::index as opc;
 use crate::bytecode::{Class, Traits};
-use crate::staged::Allocation;
 use crate::bytecode::{
     FieldLayout, FieldStore, Function, ImmediateLayout, ImmediateRole, InstructionField, StoreReceiver, WideInstruction,
 };
@@ -2769,7 +2768,7 @@ lane_handler! {
 mod lane_frame;
 mod loop_body;
 use loop_body::{lane_loop_body, LoopBody};
-use lane_frame::{lane_load_const, lane_move, staged_allocate, staged_jump, staged_jump_if, staged_load_this, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
+use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
@@ -5324,11 +5323,12 @@ script_handler! {
 }
 
 script_handler! {
-    /// `MakeClosure` in a frame's own lane run: the staged closure row (`lane_closure_value_of`).
+    /// `MakeClosure` in a frame's own lane run (`lane_closure_value`).
     fn lane_make_closure<>(cx, r, ip, i, view) {
-        if !staged_allocate(cx, r, i.a, Allocation::Closure { function: i.imm() }) {
+        let Some(value) = lane_closure_value(cx, i) else {
             return exit(ip);
-        }
+        };
+        r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -5337,6 +5337,12 @@ script_handler! {
 /// run of a function with no binding sites outside a module's root: its environment is the
 /// frame's, promoted once, and making it allocates and runs no guest code. Any other
 /// closure takes the general path; a promotion made first is idempotent.
+#[inline(never)]
+fn lane_closure_value<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> Option<Value> {
+    lane_closure_value_of(cx, i.imm())
+}
+
+/// `lane_closure_value` of function `id`.
 #[inline(never)]
 fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
@@ -5399,30 +5405,22 @@ script_handler! {
     /// `MakeObjectLiteral`: an ordinary object of the literal site's shape holding the
     /// record's window of registers, as the general loop makes it.
     fn lane_make_object_literal<>(cx, r, ip, i, view) {
-        if !staged_allocate(cx, r, i.a, Allocation::ObjectLiteral { site: i.imm(), window: lane_literal_window(i) }) {
-            return exit(ip);
-        }
+        let value = lane_object_literal_value(cx, r, i);
+        r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
-/// The window of property values a `MakeObjectLiteral` record reads.
+/// The object a `MakeObjectLiteral` record makes: its site's shape over the record's window
+/// of property values (`Vm::object_site_shape`).
 #[inline(always)]
-fn lane_literal_window(i: &LaneInstruction) -> crate::bytecode::RegisterWindow {
-    crate::bytecode::RegisterWindow { base: i.b, count: i.c }
-}
-
-/// The object a staged object literal row makes: its site's shape over the window of property
-/// values (`Vm::object_site_shape`).
-#[inline(always)]
-fn lane_object_literal_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: u32,
-    window: crate::bytecode::RegisterWindow) -> Value {
+fn lane_object_literal_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Value {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
-    let shape = vm.object_site_shape(unsafe { &*(*cx).code }, site as usize);
+    let shape = vm.object_site_shape(unsafe { &*(*cx).code }, i.imm() as usize);
     // SAFETY: `lane_fields_fit` admitted the window inside the register file, and no
     // other reference into it is live while the object is allocated.
-    let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window.base)), usize::from(window.count)) };
+    let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.b)), usize::from(i.c)) };
     let value = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
     note_allocation(vm);
     value
@@ -17497,7 +17495,7 @@ script_handler! {
                 RETURNING_UNARY => lane_unary_value(cx, r, i),
                 RETURNING_BINARY => lane_returning_binary_value(cx, r, i),
                 RETURNING_OBJECT => Some(lane_object_pair(cx, r, i)),
-                RETURNING_OBJECT_LITERAL => Some(lane_object_literal_value(cx, r, i.imm(), lane_literal_window(i))),
+                RETURNING_OBJECT_LITERAL => Some(lane_object_literal_value(cx, r, i)),
                 _ => lane_literal_value(cx, r, i),
             }
         };

@@ -143,26 +143,6 @@ impl<H: Host> Vm<H> {
         self.converted_string_concat(p, count, part)
     }
 
-    /// `string_concat` of parts a string of parts does not take, where every part converts to a
-    /// string without guest code (`converts_to_string_purely`); `None` for any other part or a
-    /// result past the string length limit, which the general step makes or raises.
-    pub(super) fn pure_string_concat_apart(&mut self, p: &ResidualProgram, count: usize,
-        part: impl Fn(&Self, usize) -> Value + Copy) -> Option<Value> {
-        if let Some(text) = self.ascii_string_concat(count, part) {
-            return Some(self.heap.alloc_string(text));
-        }
-        if !(0..count).all(|index| self.converts_to_string_purely(part(self, index))) {
-            return None;
-        }
-        self.converted_string_concat(p, count, part).ok()
-    }
-
-    /// `string_concat` that runs no guest code: a string of parts, or `pure_string_concat_apart`.
-    pub(super) fn pure_string_concat(&mut self, p: &ResidualProgram, count: usize,
-        part: impl Fn(&Self, usize) -> Value + Copy) -> Option<Value> {
-        self.string_of_parts(count, part).or_else(|| self.pure_string_concat_apart(p, count, part))
-    }
-
     /// `StringConcat` of the register `window` of frame `f`.
     pub(super) fn frame_string_concat(&mut self, p: &ResidualProgram, f: usize, window: crate::bytecode::RegisterWindow) -> Result<Value, JsError> {
         let start = usize::from(window.base);
