@@ -3070,11 +3070,12 @@ fn lane_window_closure_value<H: Host>(
     registers: u16,
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    let owner = vm.lane_stack.activations.last().map(|activation| activation.function);
+    let activation = vm.lane_stack.activations.last().copied();
+    let bindings = activation.map(|activation| activation.take_record_bindings()).unwrap_or_default();
     // SAFETY: the running environment activation's window, whose function is the
     // innermost activation's and whose environment's parent is the context's.
-    let environment = owner.map(|owner| unsafe {
-        window_environment(vm, &*(*cx).code, r.0.add(usize::from(registers)), owner, (*cx).env, (*cx).program, (*cx).this, Vec::new())
+    let environment = activation.map(|activation| unsafe {
+        window_environment(vm, &*(*cx).code, r.0.add(usize::from(registers)), activation.function, (*cx).env, (*cx).program, (*cx).this, bindings)
     });
     // SAFETY: the context's program outlives the lane run.
     let value = environment.and_then(|environment| vm.closure(unsafe { &*(*cx).code }, function, environment).ok());
@@ -16159,9 +16160,9 @@ fn lane_activate_environment<H: Host>(
 /// window reaches the new storage from then on. The environment binds the activation's
 /// `this`, where its closures' arrows find it (`Vm::captured_lexical_this`), as a frame's
 /// promotion carries its bindings; an arrow's own `this` is that same lexical value. The
-/// environment of a window activation that resolves names at run time also takes over the
-/// activation's dynamic `bindings` (`FrameRecord::dynamic_bindings`), as a frame's promotion
-/// takes its own (`Vm::promote_frame_environment`); any other passes none.
+/// environment of a window over a record also takes over the activation's dynamic `bindings`
+/// (`FrameRecord::dynamic_bindings`, `Activation::take_record_bindings`), as a frame's
+/// promotion takes its own (`Vm::promote_frame_environment`); any other passes none.
 ///
 /// # Safety
 /// `entries` starts the entries of a live environment window (`lane_activate_environment`).

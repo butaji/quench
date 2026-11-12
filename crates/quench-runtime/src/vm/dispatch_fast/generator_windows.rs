@@ -23,6 +23,18 @@ impl Activation {
     }
 }
 
+impl Activation {
+    /// The dynamic bindings its record holds (implicit ones, a direct eval's), which the
+    /// environment its window makes for its first closure takes over, as a frame's promotion
+    /// takes its own (`Vm::promote_frame_environment`); none once taken, or for an activation
+    /// without a record.
+    pub(super) fn take_record_bindings(&self) -> Vec<(crate::bytecode::Atom, Value)> {
+        let record = self.script().map_or(std::ptr::null_mut(), |script| script.record);
+        // SAFETY: a record outlives the activation that runs over it, and nothing else accesses it.
+        unsafe { record.as_mut() }.map(|record| std::mem::take(&mut record.dynamic_bindings)).unwrap_or_default()
+    }
+}
+
 impl LaneStack {
     /// Pushes `activation` over the register file of a suspended frame, which its prefix names
     /// (`FrameRecord::prefix`): the window is marked as no lane stack's (`HEAP_WINDOW`), so
@@ -163,20 +175,18 @@ fn lane_resume_generator<H: Host>(
 }
 
 /// Lays `frame`'s environment window after its registers (`FrameRecord::open_environment_window`).
-/// A frame holding implicit bindings makes its environment first, which owns them for the
-/// closures the window makes (`Vm::promote_record_environment`). An environment the frame made
-/// already is written through the window's stores without the barrier a heap write takes, so it
-/// joins the remembered set once, as a capture store's target does (`Vm::target_capture`).
+/// A frame holding implicit bindings keeps them in its record until a closure makes the window's
+/// environment, which takes them over (`Activation::take_record_bindings`). An environment the
+/// frame made already is written through the window's stores without the barrier a heap write
+/// takes, so it joins the remembered set once, as a capture store's target does
+/// (`Vm::target_capture`).
 pub(super) fn open_window_locals<H: Host>(vm: &mut Vm<H>, frame: *mut FrameRecord, locals: WindowLocals) {
     // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
     let frame = unsafe { &mut *frame };
-    let own_slots = locals
-        .own_slots
-        .or_else(|| (!frame.dynamic_bindings.is_empty()).then(|| vm.promote_record_environment(frame)));
-    if own_slots.is_some() {
+    if locals.own_slots.is_some() {
         vm.heap.remember_cell(frame.env);
     }
-    frame.open_environment_window(locals.captured, own_slots);
+    frame.open_environment_window(locals.captured, locals.own_slots);
 }
 
 /// What the activation of a resumed generator runs (`generator_activation`): its frame's

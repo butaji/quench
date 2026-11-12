@@ -1,6 +1,6 @@
 //! A suspending function that reads implicit bindings (`super`, `new.target`) by hidden name
 //! resumes in its window: its record keeps the bindings, which the environment its window makes
-//! for closures takes over (`Vm::promote_record_environment`), and the opcode that reads one exits
+//! for closures takes over (`Activation::take_record_bindings`), and the opcode that reads one exits
 //! the lane, which makes the frame from the record (`Vm::push_generator_window_frame`). Compiled
 //! runs agree with the interpreter's.
 use super::window_steps::tests::agree;
