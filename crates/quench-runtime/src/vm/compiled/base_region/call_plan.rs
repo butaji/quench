@@ -34,7 +34,7 @@ use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
 use quench_bjit::call::{self, CallRow};
 use quench_bjit::call_record::{CallRecord, MAX_DIRECT_ARGC};
 use quench_bjit::numeric::{self, Kind, Place};
-use quench_bjit::{HOLES, Stencil};
+use quench_bjit::{HOLES, Stencil, padded_holes};
 
 /// What a `Call` instruction names, decoded once: the record the helper takes (`call_pc`), the
 /// callee and receiver registers, the first argument register, the argument count and the
@@ -198,18 +198,18 @@ fn part(stencil: &'static Stencil, holes: [u64; HOLES], exits: Vec<Leave>) -> Ca
 
 fn spill_part(place: Place, register: Register) -> Result<CallPart, String> {
     let row = numeric::Row { kind: Kind::Spill, dst: Place::Mem, a: place, b: Place::Mem, speculate: false };
-    Ok(part(numeric::stencil(row)?, [slot(register), 0, 0], Vec::new()))
+    Ok(part(numeric::stencil(row)?, padded_holes([slot(register)]), Vec::new()))
 }
 
 fn reload_part(place: Place, register: Register) -> Result<CallPart, String> {
-    Ok(part(call::stencil(CallRow::Reload(place))?, [slot(register), 0, 0], Vec::new()))
+    Ok(part(call::stencil(CallRow::Reload(place))?, padded_holes([slot(register)]), Vec::new()))
 }
 
 fn helper_part(shape: &CallShape, helper: usize) -> Result<CallPart, String> {
     if helper == 0 {
         return Err("call: no helper address".to_string());
     }
-    Ok(part(call::stencil(CallRow::Helper)?, [u64::from(shape.call_pc), helper as u64, 0], vec![Leave::At(shape.call_pc), Leave::Status]))
+    Ok(part(call::stencil(CallRow::Helper)?, padded_holes([u64::from(shape.call_pc), helper as u64]), vec![Leave::At(shape.call_pc), Leave::Status]))
 }
 
 /// The direct row and the record it reads, whose address is its hole 0.
@@ -229,7 +229,7 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let stencil = call::stencil(CallRow::Direct { argc, sloppy: facts.global_this.is_some() })?;
-    Ok((part(stencil, [std::ptr::from_ref(&*record).addr() as u64, 0, 0], vec![Leave::Status]), record))
+    Ok((part(stencil, padded_holes([std::ptr::from_ref(&*record).addr() as u64]), vec![Leave::Status]), record))
 }
 
 /// The chain of a call (see the module doc for its layout and successors).

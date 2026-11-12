@@ -44,6 +44,13 @@ pub const INDEX_ROW: u8 = 1;
 pub const STORE_ROW: u8 = 2;
 pub const FIELD_ROW: u8 = 3;
 pub const ARRAY_ROW: u8 = 4;
+/// The inline-cache rows (`ic_rows.rs`): a read of the receiver's own flat slot, a read of the
+/// slot its prototype holds, and a store of a Number into the receiver's own flat slot, whose
+/// slot type is `ANY` or `NUMBER` (`IC_SET_ROW`) or `INT32` (`IC_SET_INT_ROW`).
+pub const IC_GET_ROW: u8 = 5;
+pub const IC_GET_HOLDER_ROW: u8 = 6;
+pub const IC_SET_ROW: u8 = 7;
+pub const IC_SET_INT_ROW: u8 = 8;
 
 /// The kind families the library is built from.
 pub const fn is_copy(kind: u8) -> bool {

@@ -125,7 +125,7 @@ fn fuse(pc: u32, first: &Planned, second: &Planned, fed: Operand, supernode: &Su
     let stencil = numeric::supernode_stencil([head, tail])?;
     let holes = joined(first, second, exchanged, supernodes::roles(&head));
     let exit_pc = first.exit_pc.or(second.exit_pc).map(|_| pc);
-    Some(Planned { stencil, node: None, holes, target: second.target, exit_pc, pre: Vec::new(), post: Vec::new() })
+    Some(Planned { stencil, node: None, holes, target: second.target, exit_pc, pre: Vec::new(), post: Vec::new(), patch: None })
 }
 
 /// The tile starting at row `at` and the rows it covers.
@@ -139,7 +139,7 @@ fn tile_at(layout: &Layout, decoded: &[Decoded], singles: &[Option<Planned>], fa
 }
 
 fn covered() -> Planned {
-    Planned { stencil: &COVERED, node: None, holes: [0; HOLES], target: None, exit_pc: None, pre: Vec::new(), post: Vec::new() }
+    Planned { stencil: &COVERED, node: None, holes: [0; HOLES], target: None, exit_pc: None, pre: Vec::new(), post: Vec::new(), patch: None }
 }
 
 /// The plan of every row of the region, one entry per row: a tile at its first row, `covered`
@@ -277,7 +277,7 @@ mod tests {
     }
 
     fn planned(node: Node, holes: [u64; HOLES], exit_pc: Option<u32>, target: Option<u32>) -> Planned {
-        Planned { stencil: &COVERED, node: Some(node), holes, target, exit_pc, pre: Vec::new(), post: Vec::new() }
+        Planned { stencil: &COVERED, node: Some(node), holes, target, exit_pc, pre: Vec::new(), post: Vec::new(), patch: None }
     }
 
     #[test]

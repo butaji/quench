@@ -55,10 +55,10 @@ const EXIT_BASE: u32 = 2;
 
 /// Every file whose change must recompile the stencils: the stencil sources and the runtime's
 /// staged rows they include, and nothing else.
-const SOURCES: [&str; 14] = [
+const SOURCES: [&str; 16] = [
     "stencils", "../quench-runtime/src/staged/stage.rs", "../quench-runtime/src/staged/value.rs",
     "../quench-runtime/src/staged/object.rs", "../quench-runtime/src/staged/elements.rs",
-    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "../quench-runtime/src/staged/frame.rs", "../quench-runtime/src/staged/call.rs", "build.rs", "build", "src/class.rs", "src/numeric.rs", "src/call_record.rs",
+    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "../quench-runtime/src/staged/frame.rs", "../quench-runtime/src/staged/call.rs", "../quench-runtime/src/staged/ic.rs", "../quench-runtime/src/staged/slot_store.rs", "build.rs", "build", "src/class.rs", "src/numeric.rs", "src/call_record.rs",
 ];
 
 /// The architecture and object reader of a build target, if its stencils are supported.

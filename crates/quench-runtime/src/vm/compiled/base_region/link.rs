@@ -1,5 +1,5 @@
 use super::*;
-use quench_bjit::{exit_stub, patch_successor, EXIT_STUB_LEN, HOLES};
+use quench_bjit::{exit_stub, padded_holes, patch_successor, EXIT_STUB_LEN, HOLES};
 
 /// `jmp rel32`: a resume stub's last row, which jumps to its PC's first row.
 pub(super) const JMP_REL32: u8 = 0xe9;
@@ -89,7 +89,7 @@ pub(super) fn entry_rows(layout: &Layout, entered: &[usize]) -> Result<Vec<(&'st
     let region = layout.region;
     let guard = |kind, dst, offset: u64| {
         numeric::stencil(numeric::Row { kind, dst, a: Place::Mem, b: Place::Mem, speculate: true }).map(|stencil| {
-            (stencil, if kind == Kind::TagInit { [offset, 0, 0] } else { [0, offset, 0] })
+            (stencil, padded_holes(if kind == Kind::TagInit { [offset, 0, 0] } else { [0, offset, 0] }))
         })
     };
     let mut rows = Vec::new();
@@ -168,8 +168,8 @@ fn branch_targets(layout: &Layout, body: &[&Planned], starts: &[usize], g: usize
 }
 
 /// Lays the entry rows, rows, leave stubs and resume stubs out as one code buffer behind the
-/// entry thunk, with the table of the resume stubs.
-pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, ResumeTable), String> {
+/// entry thunk, with the table of the resume stubs and the cache entries a miss may re-patch.
+pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, ResumeTable, CacheSites), String> {
     // A row's own rows run before and after it at its PC: a branch to the PC lands on the first.
     let body: Vec<&Planned> = planned.iter().flat_map(|row| row.pre.iter().chain(std::iter::once(row)).chain(&row.post)).collect();
     let starts = row_starts(planned);
@@ -191,7 +191,7 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, Res
     let jumps = place_stubs(&mut rows, &stubs, &jump, &hole_fns, g + n + 1);
     let (exits, routines) = exit_routines(layout, &body, g)?;
     let (code, offsets, thunk) = place_rows(&rows, &exits, &routines, &jumps)?;
-    Ok((code, ResumeTable::of(thunk, &stubs, &jumps, &offsets)?))
+    Ok((code, ResumeTable::of(thunk, &stubs, &jumps, &offsets)?, CacheSites::collect(&body, g, &offsets)))
 }
 
 pub(super) fn leaf_index(layout: &Layout, leaves: &mut Vec<(u64, Vec<u8>)>, pc: u32) -> Result<usize, String> {

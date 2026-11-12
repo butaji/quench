@@ -9,6 +9,8 @@ pub(crate) const HIGH_SHIFT: u32 = 32;
 pub(crate) const INT_HIGH: u64 = INT_TAG >> HIGH_SHIFT;
 /// Byte offset of the upper half of a tagged word.
 pub(crate) const HIGH_HALF_AT: usize = 4;
+/// The last value hole a row may name (`quench_bjit::HOLES` - 1).
+pub(crate) const LAST_HOLE: u8 = 4;
 /// The holes of the first and second operand.
 pub(crate) const HOLE_A: u8 = 1;
 pub(crate) const HOLE_B: u8 = 2;
@@ -17,6 +19,8 @@ unsafe extern "C" {
     pub(crate) static HOLE_V0: u8;
     static HOLE_V1: u8;
     static HOLE_V2: u8;
+    static HOLE_V3: u8;
+    static HOLE_V4: u8;
 }
 
 /// The frame, the context and the pinned registers: ints and doubles.
@@ -79,12 +83,15 @@ macro_rules! hole_word {
 /// The value of hole `H` as a 64-bit constant (a tagged word).
 #[inline(always)]
 pub(crate) fn hole64<const H: u8>() -> u64 {
+    const { assert!(H <= LAST_HOLE) };
     // SAFETY: the template only materializes a symbol's value in a register.
     unsafe {
         match H {
             0 => hole_word!(HOLE_V0),
             1 => hole_word!(HOLE_V1),
-            _ => hole_word!(HOLE_V2),
+            2 => hole_word!(HOLE_V2),
+            3 => hole_word!(HOLE_V3),
+            _ => hole_word!(HOLE_V4),
         }
     }
 }
@@ -95,10 +102,13 @@ pub(crate) fn hole64<const H: u8>() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub(crate) fn hole<const H: u8>() -> usize {
+    const { assert!(H <= LAST_HOLE) };
     match H {
         0 => &raw const HOLE_V0 as usize,
         1 => &raw const HOLE_V1 as usize,
-        _ => &raw const HOLE_V2 as usize,
+        2 => &raw const HOLE_V2 as usize,
+        3 => &raw const HOLE_V3 as usize,
+        _ => &raw const HOLE_V4 as usize,
     }
 }
 #[cfg(target_arch = "aarch64")]

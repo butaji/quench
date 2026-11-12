@@ -1,6 +1,6 @@
 use super::*;
 use quench_bjit::numeric::supernodes::Node;
-use quench_bjit::HOLES;
+use quench_bjit::{padded_holes, HOLES};
 
 /// Where the registers of the region live: pinned (int32 or double), int slots, or tagged
 /// frame slots.
@@ -72,26 +72,32 @@ pub(super) struct Planned {
     /// frame slots only; these move its operands and result between the slot and a pinned register).
     pub(super) pre: Vec<Planned>,
     pub(super) post: Vec<Planned>,
+    /// Set where the row is a site's only cache entry and its shape and slot may be re-patched
+    /// in place (`patch.rs`).
+    pub(super) patch: Option<SiteEntry>,
 }
 
 impl Planned {
     fn single(stencil: &'static Stencil, node: Node, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
-        Self { stencil, node: Some(node), holes, target, exit_pc, pre: Vec::new(), post: Vec::new() }
+        Self { stencil, node: Some(node), holes, target, exit_pc, pre: Vec::new(), post: Vec::new(), patch: None }
     }
 }
 
 /// The plan of a heap row, given its (place, hole) of destination, first and second operand.
 fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
+    if let Some(cache) = &decoded.cache {
+        return cache_plan(decoded, cache, homes, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
+    }
     // An array the entry record holds is named by its record offset (`decoded.hole`), else by its slot.
     let entry = decoded.hole != 0 && matches!(heap, Heap::Store | Heap::Index);
     let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
-    let holes = match heap {
+    let holes = padded_holes(match heap {
         Heap::Store => [base, a_hole, b_hole],
         Heap::Index if entry => [dst_hole, decoded.hole, b_hole],
         Heap::Field => [dst_hole, decoded.hole, 0],
         Heap::Capture(slot) => [dst_hole, u64::from(slot), u64::from(slot) * SLOT],
         _ => [dst_hole, a_hole, b_hole],
-    };
+    });
     // The row's stencil reads pinned operands and delivers a pinned result itself.
     let row = HeapRow { heap, dst, a, b, entry };
     Ok(Planned::single(base_rows::stencil(row)?, Node::Heap(row.code()), holes, None, Some(pc)))
@@ -135,7 +141,7 @@ pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool, var
     let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || matches!(dst, Place::Pin(_) | Place::PinF(_) | Place::MemInt);
     // A poll row also names where the run's backward-edge counter lives (`jump_row`).
     let counter = [std::mem::offset_of!(super::super::CallContext, adapter_payload) as u64, std::mem::offset_of!(super::super::JsStepDispatch, loop_entry) as u64];
-    let holes = if polls { [interrupt, counter[0], counter[1]] } else { [dst_hole, a_hole, b_hole] };
+    let holes = padded_holes(if polls { [interrupt, counter[0], counter[1]] } else { [dst_hole, a_hole, b_hole] });
     Ok(Planned::single(stencil, Node::Number(numeric::library::canonical(row.code())), holes, decoded.target, exits.then_some(pc)))
 }
 

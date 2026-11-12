@@ -50,6 +50,8 @@ pub(in crate::vm) struct PendingOsrRegion {
     crossing: super::Crossing,
     /// Where a run may re-enter the code mid-region.
     resumes: super::base_region::ResumeTable,
+    /// The inline-cache entries of BaseJIT code that a miss may re-patch in place.
+    sites: super::base_region::CacheSites,
 }
 
 /// What a background loop-region compile came to.
@@ -233,14 +235,19 @@ fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
 impl OsrFacts {
     /// The facts the observation's field descriptors embed in code compiled from it.
     fn observed(observation: &Observation<'_>) -> Self {
-        let loads = || observation.native_field_loads.iter().flatten();
-        let mut shape_dependencies: Vec<_> = loads().flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
+        Self::of_loads(observation.native_field_loads.iter().flatten())
+    }
+
+    /// The facts the descriptors `loads` embed in code that took them.
+    pub(super) fn of_loads<'a>(loads: impl IntoIterator<Item = &'a NativeFieldLoad>) -> Self {
+        let loads: Vec<&NativeFieldLoad> = loads.into_iter().collect();
+        let mut shape_dependencies: Vec<_> = loads.iter().flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
         shape_dependencies.sort_unstable();
         shape_dependencies.dedup();
-        let mut departure_shapes: Vec<_> = loads().filter_map(|field| field.holder).collect();
+        let mut departure_shapes: Vec<_> = loads.iter().filter_map(|field| field.holder).collect();
         departure_shapes.sort_unstable();
         departure_shapes.dedup();
-        let mut slot_dependencies: Vec<_> = loads().filter_map(|field| field.slot_dependency()).collect();
+        let mut slot_dependencies: Vec<_> = loads.iter().filter_map(|field| field.slot_dependency()).collect();
         slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
         slot_dependencies.dedup();
         Self { shape_dependencies, departure_shapes, slot_dependencies, roots: Default::default() }
@@ -316,15 +323,15 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usiz
         return base_only.then_some(None);
     }
     let built = super::base_region::build(region, views == super::ElementViews::Dense, widened,
-        [observation.int_registers, observation.double_registers], observation.operand_kinds);
-    let Ok(super::base_region::BaseCode { code, bare, resumes }) = built else { return base_only.then_some(None) };
+        [observation.int_registers, observation.double_registers], observation.operand_kinds, observation.native_field_loads);
+    let Ok(super::base_region::Built { code, bare, resumes, embedded, sites }) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, region.header, &code, None, "");
     }
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let code = super::super::jit_backend::run_in_background(move || Ok(code));
     Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean }, resumes,
-        facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new(), roots: Default::default() } }))
+        facts: OsrFacts::of_loads(&embedded), sites }))
 }
 
 /// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
@@ -371,7 +378,7 @@ pub(in crate::vm) fn start_osr_region(
         code
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General, resumes: super::base_region::ResumeTable::empty() })
+    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General, resumes: super::base_region::ResumeTable::empty(), sites: Default::default() })
 }
 
 impl PendingOsrRegion {
@@ -396,12 +403,12 @@ impl PendingOsrRegion {
             std::task::Poll::Ready(Some(Ok(code))) => code,
             std::task::Poll::Ready(_) => return Ok(OsrCompile::Failed),
         };
-        let Self { header, clif, facts, crossing, resumes, .. } = *self;
+        let Self { header, clif, facts, crossing, resumes, sites, .. } = *self;
         let Some((memory, entry)) = publish_entry(&code) else { return Ok(OsrCompile::Failed) };
         if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
             dump_native_code(directory, header, &memory, &clif);
         }
-        Ok(OsrCompile::Done(CompiledOsrRegion { _code: memory, entry, facts, crossing, resumes }))
+        Ok(OsrCompile::Done(CompiledOsrRegion { code: memory, entry, facts, crossing, resumes, sites: sites.into() }))
     }
 }
 

@@ -186,3 +186,10 @@ pub(crate) const CELL_RECOVERY_AT: usize = 8;
 pub(crate) const CELL_BODY_AT: usize = 16;
 pub(crate) const RECOVERY_VALUES_AT: usize = 0;
 pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;
+pub(crate) const JS_STEP_OBJECT_RECORD_BASE: usize = 120;
+pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 152;
+pub(crate) const JS_STEP_METHOD_CACHE_ATOMS: usize = 176;
+pub(crate) const JS_STEP_METHOD_CACHE_ATOM_WORDS: usize = 184;
+pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = 192;
+/// Where the property arena's header (`PropertyBuffer`) keeps the address of its first value.
+pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;

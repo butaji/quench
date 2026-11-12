@@ -4,10 +4,12 @@
 //! patches into the instruction that uses it. An operation with no stencil form calls an
 //! `UNSUPPORTED_*` symbol, which `build.rs` rejects, so a row cannot silently use one.
 
+use crate::layout::words::{HEAP_TAG, TAG_MASK};
+use crate::layout::{JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE};
 use crate::staged::{Stage, Table};
 use crate::words::hole;
 use crate::typed_ir::Type;
-use crate::staged::region::Access;
+use crate::staged::region::{Access, Region};
 
 unsafe extern "C" {
     fn UNSUPPORTED_store_gate(a: u64, b: u64) -> u64;
@@ -15,28 +17,36 @@ unsafe extern "C" {
     fn UNSUPPORTED_number_operator(a: u64, b: u64, c: u64) -> u64;
     fn UNSUPPORTED_number_truthy(a: u64) -> u64;
     fn UNSUPPORTED_shape_in(a: u64) -> u64;
-    fn UNSUPPORTED_table(a: u64) -> u64;
     fn UNSUPPORTED_site(a: u64) -> u64;
 }
 
-/// The stencil stage; `sites` is the number of the next value hole a `site` call names.
+/// The stencil stage; `sites` is the number of the next value hole a `site` call names, and
+/// `payload` the activation's dispatch payload (`JsStepDispatch`), which the process tables
+/// (`table`) are read through; zero for a row that addresses none.
 #[derive(Clone, Copy)]
 pub(crate) struct StencilStage {
     sites: u8,
+    payload: u64,
 }
 
 impl StencilStage {
     /// A stage whose first `site` is hole `first`.
     #[inline(always)]
     pub(crate) fn from_hole(first: u8) -> Self {
-        Self { sites: first }
+        Self { sites: first, payload: 0 }
+    }
+
+    /// As `from_hole`, for a row whose operations address a process table through `payload`.
+    #[inline(always)]
+    pub(crate) fn with_payload(first: u8, payload: u64) -> Self {
+        Self { sites: first, payload }
     }
 
     /// The runtime's `Concrete::new`, which the shared rows' interpreter wrappers call; those
     /// wrappers are never used here.
     #[inline(always)]
     pub(crate) fn new(_property_values: *const crate::Value) -> Self {
-        Self { sites: 0 }
+        Self { sites: 0, payload: 0 }
     }
 }
 
@@ -57,6 +67,8 @@ impl Stage for StencilStage {
                 0 => hole::<0>() as u64,
                 1 => hole::<1>() as u64,
                 2 => hole::<2>() as u64,
+                3 => hole::<3>() as u64,
+                4 => hole::<4>() as u64,
                 _ => UNSUPPORTED_site(n as u64),
             }
         }
@@ -126,9 +138,11 @@ impl Stage for StencilStage {
         unsafe { (base.wrapping_add(offset as i64 as u64) as *mut u64).write(value) }
     }
     #[inline(always)]
-    fn store_gate(&mut self, record_id: u64, value: u64) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_store_gate(record_id, value) != 0 }
+    fn store_gate(&mut self, _record_id: u64, value: u64) -> bool {
+        // A value that is no heap reference needs no barrier log (`RecordSpace::store_logs`), as
+        // the native guard (`emit_unlogged_property_store_guard`) tests first; a reference leaves,
+        // for its record's mark bit is not a hole yet.
+        value & TAG_MASK != HEAP_TAG
     }
     #[inline(always)]
     fn assumption(&mut self, watch: u64) -> bool {
@@ -166,8 +180,13 @@ impl Stage for StencilStage {
     fn known(&self, _cond: bool) -> Option<bool> { None }
     #[inline(always)]
     fn table(&mut self, table: Table) -> u64 {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_table(table as u64) }
+        match table {
+            // The arena's header is the allocator's own, whose base native code reads each time.
+            Table::PropertyValues => {
+                let header = self.load_u64(Region::Dispatch.mutable(), self.payload, JS_STEP_PROPERTY_BUFFER as i32);
+                self.load_u64(Region::HeapMeta.mutable(), header, PROPERTY_BUFFER_BASE as i32)
+            }
+        }
     }
 }
 

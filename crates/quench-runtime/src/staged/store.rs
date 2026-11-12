@@ -2,7 +2,8 @@
 //! a value at a slot, whichever of the two plain storage forms it keeps its values in. The
 //! interpreter runs it on `Concrete`; a specializer emits it from the same rows.
 
-use super::object::{arena_run, inline_storage, plain_payload};
+use super::object::inline_storage;
+use super::slot_store::{admitted_payload, store_flat};
 use super::Stage;
 use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
@@ -77,15 +78,7 @@ fn reference_form<S: Stage>(stage: &mut S, value: S::Word, upper: S::Word) -> S:
 #[inline(always)]
 pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, slot: u16,
     value: S::Word, miss: S::Miss) -> Option<()> {
-    let exact = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
-    let shape = stage.site(u64::from(shape));
-    let same = stage.eq_imm(exact, shape);
-    stage.guard(same, miss)?;
-    let open = stage.store_gate(record_id, value);
-    stage.guard(open, miss)?;
-    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
-    let plain = plain_payload(stage, payload);
-    stage.guard(plain, miss)?;
+    let payload = admitted_payload(stage, record, record_id, shape, value, miss)?;
     let inline = inline_storage(stage, record);
     // A packed slot needs the value's narrow form; a flat one takes any value.
     let narrow = stage.choose(inline, |stage| narrow_form(stage, value), |stage| stage.constant(0));
@@ -97,10 +90,7 @@ pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::
         stage.store_u32(Region::Payload.mutable(), address, 0, narrow);
         stage.constant(0)
     }, |stage| {
-        let run = arena_run(stage, payload);
-        let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
-        let address = stage.add_imm(run, offset);
-        stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
+        store_flat(stage, payload, slot, value);
         stage.constant(0)
     });
     Some(())

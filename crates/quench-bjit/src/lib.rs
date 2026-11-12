@@ -16,7 +16,7 @@ pub mod call;
 pub mod call_record;
 pub mod stub;
 pub use class::{ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32};
-pub use patch::{HOLES, Imm32, PatchError, patch_successor, patch_value};
+pub use patch::{HOLES, Imm32, padded_holes, PatchError, patch_successor, patch_value};
 pub use stub::{EXIT_STUB_LEN, exit_stub};
 
 /// Pinned int registers a stencil takes, and the double registers (xmm0 to xmm7) after them.
@@ -77,6 +77,16 @@ fn layout(rows: &[Row]) -> (Vec<usize>, Vec<usize>, usize) {
         len += sizes[k];
     }
     (starts, sizes, len)
+}
+
+/// Bytes a 32-bit immediate or pc-relative patch writes.
+pub const IMM32_WIDTH: usize = 4;
+
+/// Every patch lands inside the code it patches, at link time (a row's copied code: a write
+/// past it would overwrite the next row's first bytes) and at run time (an inline-cache
+/// re-patch of published code, which must end inside the body's own bytes).
+pub fn patch_ends_inside(offset: u32, width: usize, size: usize, what: &str) {
+    assert!(offset as usize + width <= size, "{what} patch ends past its row's code");
 }
 
 /// Copy `rows` into `out` back to back and patch their holes; `exit` gives each row's exit
@@ -193,6 +203,31 @@ mod rustc_tests {
                 assert!(reloc.offset as usize + width <= stencil.code.len(), "{name}: {reloc:?}");
                 assert!(crate::class::is_successor(reloc.class) || (reloc.index as usize) < crate::HOLES, "{name}: {reloc:?}");
             }
+        }
+    }
+
+    /// The cache rows (`stencils/ic_rows.rs`) patch the holes `base_rows` fills: a get its
+    /// destination, receiver, shape and slot offset (a holder read also the holder's shape), a
+    /// store its receiver, value, atom, shape and slot offset; a chained row's hit takes the
+    /// branch target and the last entry's miss takes the exit.
+    #[test]
+    fn cache_rows_patch_their_entry_holes_and_take_their_successors() {
+        use super::numeric::library::{heap_canonical, heap_name, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_ROW, MEM};
+        let row = |heap, chained| {
+            let stencil = rustc::stencil(&heap_name(heap_canonical((heap, chained, MEM, MEM, MEM)))).expect("a cache row");
+            let mut values: Vec<u32> = stencil.imm32.iter().map(|field| field.index).collect();
+            values.sort_unstable();
+            values.dedup();
+            let successors: Vec<u32> = stencil.relocs.iter().filter(|reloc| reloc.pc_relative).map(|reloc| reloc.index).collect();
+            (values, successors)
+        };
+        assert_eq!(row(IC_GET_ROW, false).0, [0, 1, 2, 3]);
+        assert_eq!(row(IC_GET_HOLDER_ROW, false).0, [0, 1, 2, 3, 4]);
+        assert_eq!(row(IC_SET_ROW, false).0, [0, 1, 2, 3, 4]);
+        for heap in [IC_GET_ROW, IC_GET_HOLDER_ROW, IC_SET_ROW] {
+            let (last, chained) = (row(heap, false).1, row(heap, true).1);
+            assert!(last.contains(&crate::EXIT) && !last.contains(&crate::TAKEN), "{heap}: {last:?}");
+            assert!(chained.contains(&crate::TAKEN) && chained.contains(&crate::NEXT), "{heap}: {chained:?}");
         }
     }
 }

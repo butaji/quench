@@ -10,7 +10,8 @@
 //! jump when an interrupt is requested so the interpreter's safepoint runs, and an entry guard
 //! that finds a register that is no Number returns `LaneExit::Entry`.
 
-use super::osr_loop::LoopRegion;
+use super::osr_loop::{FieldReceiver, LoopRegion};
+use super::NativeFieldLoad;
 use crate::vm::dispatch_fast::operand_feedback::OperandKinds;
 use crate::bytecode::{Class, OperandKind, Register, WideInstruction};
 use crate::value::Value;
@@ -24,16 +25,23 @@ use std::sync::Mutex;
 // The call planner: consumed by the whole-function b-jit planner, which names its chains.
 #[allow(dead_code)]
 mod call_plan;
+mod cache;
 mod decode;
 mod link;
+mod patch;
 mod plan;
 mod repr;
 mod residuals;
 mod resume;
 mod tile;
 mod webs;
+use cache::*;
 use decode::*;
 use link::*;
+pub(in crate::vm) use patch::{CacheSites, Repatch};
+#[cfg(test)]
+pub(in crate::vm) use patch::MAX_REPATCHES_PER_SITE;
+use patch::SiteEntry;
 use plan::*;
 use repr::*;
 pub(in crate::vm) use resume::ResumeTable;
@@ -164,9 +172,9 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 /// The machine code of `region`, entered at the shared native entry ABI, or the instruction that
 /// has no row. `ints` are the registers that held an int32 as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows,
 /// as do those whose `kinds` (per instruction from the header) record a declined int32 step.
-pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], kinds: &[OperandKinds]) -> Result<BaseCode, String> {
+pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], kinds: &[OperandKinds], loads: &[Vec<NativeFieldLoad>]) -> Result<Built, String> {
     let started = std::time::Instant::now();
-    let built = assemble(region, dense, widened, seen, kinds);
+    let built = assemble(region, dense, widened, seen, kinds, loads);
     let nanos = started.elapsed().as_nanos() as u64;
     note(|totals, rejects| match &built {
         Ok(built) => {
@@ -183,22 +191,24 @@ pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [
     built
 }
 
-/// A region's machine code.
-pub(in crate::vm) struct BaseCode {
-    pub(in crate::vm) code: Vec<u8>,
-    /// Whether it reads no heap row: such a region needs from its payload only the entry
-    /// record's address (`Crossing::Bare`).
-    pub(in crate::vm) bare: bool,
+/// A built region: its code, whether it reads no heap row (such a region needs from its payload
+/// only the entry record's address, `Crossing::Bare`), and the inline-cache entries its code
+/// embeds, whose shapes and slots it depends on (`OsrFacts::of_loads`).
+pub(super) struct Built {
+    pub(super) code: Vec<u8>,
+    pub(super) bare: bool,
     /// Where a run that left the region at a PC re-enters it.
-    pub(in crate::vm) resumes: ResumeTable,
+    pub(super) resumes: ResumeTable,
+    pub(super) embedded: Vec<NativeFieldLoad>,
+    /// Where each re-patchable cache entry's shape and slot sit in `code`.
+    pub(super) sites: CacheSites,
 }
 
-/// The code of `region`.
-fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], kinds: &[OperandKinds]) -> Result<BaseCode, String> {
+fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], kinds: &[OperandKinds], loads: &[Vec<NativeFieldLoad>]) -> Result<Built, String> {
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
-    let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, dense, header + k as u32, *instruction)).collect::<Result<Vec<_>, _>>()?;
+    let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, dense, header + k as u32, *instruction, loads)).collect::<Result<Vec<_>, _>>()?;
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged: std::collections::BTreeSet<Register> = Default::default();
@@ -216,7 +226,8 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     let general: Vec<bool> = decoded.iter().map(|row| is_general(row, &reprs)).collect();
     let body = tile::plan_all(&layout, &decoded, &general, kinds)?;
     let bare = decoded.iter().all(|row| row.heap.is_none());
-    let (code, resumes) = link(&layout, &body)?;
+    let embedded = decoded.iter().filter_map(|row| row.cache.as_ref()).flat_map(|cache| cache.loads.iter().copied()).collect();
+    let (code, resumes, sites) = link(&layout, &body)?;
     residuals::report_rows(&layout, &decoded, &body, code.len());
-    Ok(BaseCode { code, bare, resumes })
+    Ok(Built { code, bare, resumes, embedded, sites })
 }

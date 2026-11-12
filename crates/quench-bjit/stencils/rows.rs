@@ -24,6 +24,7 @@ mod entry;
 mod entry;
 mod facade;
 mod heap_rows;
+mod ic_rows;
 mod layout;
 mod numeric;
 mod stage;

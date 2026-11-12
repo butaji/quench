@@ -395,3 +395,63 @@ fn shared_osr_leave_inside_an_inlined_callee_makes_its_activation() {
       print([method(o), plain()].join(","));
     "#, &["method", "plain"]);
 }
+
+const REPATCH_SOURCE: &str = r#"
+    function sum(list, n) {
+      let total = 0;
+      for (let i = 0; i < n; i++) {
+        let node = list[i & 0];
+        total = (total + node.value) | 0;
+      }
+      return total;
+    }
+    var anchor = { value: 1, second: 2, third: 3 };
+    var list = [anchor];
+"#;
+
+/// The leaves a BaseJIT region makes in one `sum` call after `anchor` changes shape `changes`
+/// times in a row, one call to each: the exits and native runs that call added.
+fn repatch_leaves(changes: i32) -> Vec<(u64, u64)> {
+    crate::jit_mode::JitMode::BaseOnly.set_process_mode();
+    let program = Engine::compile(crate::ExecutionRequest::script(REPATCH_SOURCE, "bjit-repatch.js")).unwrap();
+    let function_id = function_named(&program, "sum");
+    let mut vm = test_vm();
+    vm.execute(&program).unwrap();
+    let (sum, anchor, list) = sum_and_objects(&mut vm);
+    let mut call = |vm: &mut Vm<TestHost>| {
+        assert_eq!(vm.call_value(&program, sum, Value::UNDEFINED, &[list, Value::number(3000.0)]).unwrap(), Value::number(3000.0));
+        let site = osr_site(vm, function_id);
+        (site.exits, site.native_region_runs)
+    };
+    (0..4).for_each(|_| { call(&mut vm); });
+    let mut shape = vm.heap.object(anchor).unwrap().exact_shape();
+    let mut last = call(&mut vm);
+    assert!(last.1 > 0, "the field loop runs natively before the shape changes");
+    let mut leaves = Vec::new();
+    for round in 0..changes {
+        shape = depart(&mut vm, anchor, shape, round);
+        let now = call(&mut vm);
+        leaves.push((now.0 - last.0, now.1 - last.1));
+        last = now;
+    }
+    crate::jit_mode::JitMode::default().set_process_mode();
+    leaves
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn bjit_loop_whose_receiver_shape_changes_once_runs_native_again_after_one_leave() {
+    let (exits, runs) = repatch_leaves(1)[0];
+    assert_eq!(exits, 1, "the miss leaves once; the re-patched entry then hits");
+    assert!(runs >= 2, "the region runs again after the leave: {runs} runs");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn bjit_site_whose_receiver_shape_changes_past_the_patch_bound_goes_generic() {
+    use crate::vm::compiled::base_region::MAX_REPATCHES_PER_SITE;
+    let leaves = repatch_leaves(i32::from(MAX_REPATCHES_PER_SITE) + 1);
+    let (patched, generic) = leaves.split_at(usize::from(MAX_REPATCHES_PER_SITE));
+    assert!(patched.iter().all(|(exits, _)| *exits == 1), "each change within the bound leaves once: {leaves:?}");
+    assert!(generic[0].0 > 1, "the change past the bound misses on every iteration: {leaves:?}");
+}
