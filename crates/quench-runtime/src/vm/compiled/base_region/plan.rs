@@ -92,6 +92,10 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
     Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
 }
 
+/// Plans a row. A `Variant::Concat` site allocates, so it can only run as a call of the runtime
+/// through the helper-call stencil class (`(vm, residual, lane_context, call_pc)` giving
+/// `LANE_CALL_{COMPLETED, MISSED, LEFT, TERMINATED}`); until that class exists its general row's
+/// tag guard exits at the PC for a string operand, writing nothing.
 pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Planned, String> {
     let (a, a_hole) = operand(homes, decoded.a);
     let (b, b_hole) = operand(homes, decoded.b);
