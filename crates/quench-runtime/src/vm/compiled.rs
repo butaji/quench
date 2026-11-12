@@ -7256,10 +7256,18 @@ impl<H: Host> Vm<H> {
     /// (`JsStepDispatch::refresh_object_bases`): a helper that allocated or ran guest code may
     /// have moved the record tables or the barrier's mark blocks. Every call, construct and step
     /// helper ends with it, so a row after one reads current bases and checks none.
-    pub(super) fn refresh_body_bases(&self) {
-        let frame = lane_frame();
+    ///
+    /// A body that runs in the VM frame `frame` also reloads the view of that frame's environment slots its
+    /// environment rows read (`env_view`, kept where its barrier admissions are); one that runs as lane
+    /// activations has none.
+    pub(super) fn refresh_body_bases(&self, frame: Option<usize>) {
+        let lane = lane_frame();
         // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
-        unsafe { (*frame).dispatch.refresh_object_bases(self) }
+        let dispatch = unsafe { &mut (*lane).dispatch };
+        let (epoch, view) = (dispatch.epoch, dispatch.env_view);
+        dispatch.refresh_object_bases(self);
+        dispatch.env_view = frame.map_or(general_capture::EnvView::EMPTY, |frame| general_capture::EnvView::of_frame(self, frame))
+            .kept(view, usize::from(epoch == dispatch.epoch));
     }
 
     /// Publishes `receiver`, a `this` the running body's frame has just bound (`InitializeThis`), as the

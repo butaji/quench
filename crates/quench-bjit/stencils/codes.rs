@@ -97,6 +97,11 @@ pub const STORE_CHECKED_ROW: u8 = 23;
 /// whose tag decides its index, the entry of the table of result strings at hole 2 at that index, to the
 /// destination (hole 0). A hit continues at TAKEN; a heap value leaves through EXIT0 into the helper step.
 pub const TYPEOF_STRING_ROW: u8 = 24;
+/// A fast arm of `LoadEnvLocal` (`staged::environment::dense_capture` over the frame's environment view): slot
+/// hole 1 of the dense run the view at payload byte offset hole 2 names, written to the destination (hole 0). A hit
+/// continues at TAKEN; a slot past the run or holding an internal marker (a dead zone, a slot the environment took),
+/// or no view, leaves through EXIT0 into the helper step after the row.
+pub const ENV_ROW: u8 = 25;
 /// Bits below the prototype link in a folded read's hole 1, which carries the receiver's exact shape beneath it.
 pub const HELD_LINK_AT: u32 = 32;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries

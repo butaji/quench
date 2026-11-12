@@ -17,6 +17,9 @@
 //!   initialize reads the slot first (`staged::write_initialized_local`): a binding in its temporal dead
 //!   zone holds the deleted marker, and the row leaves into the helper step, which raises.
 //! * `LoadLocal` is the read that leaves for the same marker (`staged::read_initialized_local`).
+//! * `LoadEnvLocal` of a binding the frame's own environment holds is the read of that environment's dense view
+//!   (`ENV_ROW`, `staged::environment::dense_capture`), which a body's helpers reload (`Vm::refresh_body_bases`);
+//!   a slot outside the view, a dead zone or a frame with no view leaves into the helper step.
 use super::*;
 use crate::bytecode::{Function, InstructionField};
 
@@ -25,12 +28,25 @@ fn frame_owned(function: &Function, id: u32, slot: usize) -> bool {
     id != crate::vm::ROOT_FUNCTION_ID && function.plain_local_slot_is_safe(slot) && !function.local_slot_uses_environment(slot)
 }
 
+/// Whether `slot` of `function` (index `id`) is a binding the frame's own environment holds that a direct view of it
+/// answers, as the general tier's direct access does (`general_capture::EnvLocalSite::direct`): the function
+/// resolves no names at run time and no mapped `arguments` aliases the slot.
+fn env_owned(function: &Function, id: u32, slot: usize) -> bool {
+    id != crate::vm::ROOT_FUNCTION_ID && function.local_slot_uses_environment(slot) && !function.has_dynamic_scope_access()
+        && crate::vm::arguments::mapped_arguments_slot(function, slot).is_none()
+}
+
 /// The fast row of the local instruction `instruction` of `function` (index `id`), if it has one.
 pub(super) fn fast_row(function: &Function, id: u32, instruction: WideInstruction) -> Option<Decoded> {
     let owned = |slot: usize| u16::try_from(slot).ok().filter(|_| frame_owned(function, id, slot));
     let store = |slot: u16, value: Source| Decoded { a: Some(value), ..Decoded::step(Step::Fast(Heap::StoreLocal(slot)), None) };
     let checked = |slot: u16, value: Source| Decoded { a: Some(value), ..Decoded::step(Step::Fast(Heap::StoreChecked(slot)), None) };
     match instruction.op().class() {
+        Class::LoadEnvLocal if !instruction.writes_numeric_local() => {
+            let view = std::mem::offset_of!(super::super::JsStepDispatch, env_view) as u64;
+            u16::try_from(instruction.local_slot()).ok().filter(|slot| env_owned(function, id, usize::from(*slot)))
+                .map(|slot| Decoded { hole: view, ..Decoded::step(Step::Fast(Heap::EnvLocal(slot)), Some(instruction.result_register())) })
+        }
         Class::LoadLocal if !instruction.writes_numeric_local() => {
             owned(instruction.local_slot()).map(|slot| Decoded::step(Step::Fast(Heap::LoadChecked(slot)), Some(instruction.result_register())))
         }

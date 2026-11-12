@@ -18,7 +18,7 @@ use super::*;
 pub(in crate::vm) unsafe extern "C" fn lane_body_value_step<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
     let status = unsafe { lane_body_value_step_record::<H>(vm, residual, context, call_pc) };
-    unsafe { super::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases();
+    unsafe { super::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases(unsafe { super::body_frame::<H>(context) });
     status
 }
 
@@ -90,7 +90,7 @@ fn value_step_values<H: Host>(cx: *mut LaneContext<H>, r: Registers, instruction
 pub(in crate::vm) unsafe extern "C" fn lane_body_step<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
     let status = unsafe { lane_body_step_record::<H>(vm, residual, context, call_pc) };
-    unsafe { super::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases();
+    unsafe { super::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases(unsafe { super::body_frame::<H>(context) });
     status
 }
 

@@ -15374,6 +15374,17 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
     u64::from(stored)
 }
 
+/// The VM frame the running body runs in, whose environment its rows read (`Vm::refresh_body_bases`); none where
+/// it runs as lane activations, which keep their environments in their windows.
+///
+/// # Safety
+/// `context` is the running lane's context.
+unsafe fn body_frame<H: Host>(context: u64) -> Option<usize> {
+    let cx = context as usize as *mut LaneContext<H>;
+    // SAFETY: the caller's contract.
+    unsafe { vm(cx).lane_stack.activations.is_empty().then(|| (*cx).frame) }
+}
+
 /// The helper a body's call row runs (`LaneHelper::Call`): `lane_body_call_record`, then the
 /// heap bases the body's rows read through the payload reloaded (`Vm::refresh_body_bases`), which the
 /// callee's run or an allocation may have moved.
@@ -15383,7 +15394,7 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
 pub(super) unsafe extern "C" fn lane_body_call<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
     let status = unsafe { lane_body_call_record::<H>(vm, residual, context, call_pc) };
-    unsafe { self::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases();
+    unsafe { self::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases(unsafe { body_frame::<H>(context) });
     status
 }
 
@@ -15451,7 +15462,7 @@ unsafe fn lane_body_read_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip
 pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
     let status = unsafe { lane_body_construct_record::<H>(vm, residual, context, call_pc) };
-    unsafe { self::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases();
+    unsafe { self::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases(unsafe { body_frame::<H>(context) });
     status
 }
 

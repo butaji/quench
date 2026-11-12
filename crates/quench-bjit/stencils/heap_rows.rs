@@ -19,7 +19,7 @@
 //! instruction.
 
 use crate::layout::{
-    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
+    ENV_VIEW_LEN, ENV_VIEW_VALUES, CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
     JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_STRING_RECORD_BASE, PROPERTY_BUFFER_BASE,
 };
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word};
@@ -31,7 +31,7 @@ use crate::staged::{Frame, Stage, Step, elements, entry, environment, iteration,
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW,
+    STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, ENV_ROW,
 };
 
 unsafe extern "C" {
@@ -130,6 +130,19 @@ fn capture_set_row<const A: u8>(s: S, payload: usize) -> Out {
     let slots = (word_at(payload, JS_STEP_CAPTURE_VALUES), word_at(payload, JS_STEP_CAPTURE_LEN), word_at(payload, JS_STEP_CAPTURE_STORES));
     need!(s, environment::dense_capture_store(&mut stage, slots, 0, tagged_place::<A, 0>(&s), ()));
     Out::Next(s)
+}
+
+/// A fast arm's read of slot (hole 1) of the dense environment view at payload byte offset hole 2, an initialized
+/// slot (`environment::dense_capture`) written to the destination (hole 0) or the row leaves.
+#[inline(always)]
+fn env_row(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::from_hole(HOLE_A);
+    let view = payload + hole::<HOLE_B>() as usize;
+    let word = need!(s, environment::dense_capture(&mut stage, word_at(view, ENV_VIEW_VALUES), word_at(view, ENV_VIEW_LEN), 0, ()));
+    match deliver::<MEM>(s, word) {
+        Out::Next(s) => Out::Taken(s),
+        left => left,
+    }
 }
 
 #[inline(always)]
@@ -362,6 +375,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
     match KIND {
         CAPTURE_ROW => capture_row::<D>(s, payload),
         CAPTURE_SET_ROW => capture_set_row::<A>(s, payload),
+        ENV_ROW => env_row(s, payload),
         FIELD_ROW => field_row::<D>(s, payload),
         SITE_ROW => site_row::<D, ENTRY>(s, payload, register_object(&s)),
         SITE_STORE_ROW => site_store_row::<A>(s, payload, word_at(s.frame, hole::<0>())),

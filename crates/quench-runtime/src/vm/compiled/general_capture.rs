@@ -157,14 +157,20 @@ impl EnvLocalSite {
 /// taken again with the other views (`JsStepDispatch::refresh_heap_bases`).
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub(super) struct EnvView { values: *const Value, len: usize, stores: usize }
+pub(super) struct EnvView { pub(super) values: *const Value, pub(super) len: usize, pub(super) stores: usize }
 
 impl EnvView {
     pub(super) const EMPTY: Self = Self { values: std::ptr::null(), len: 0, stores: 0 };
 
     pub(super) fn of<H: Host>(vm: &Vm<H>, dispatch: &JsStepDispatch) -> Self {
-        let Some(frame) = vm.frames.get(dispatch.frame).filter(|frame| frame.captured && dispatch.lane_context == 0)
-            else { return Self::EMPTY };
+        if dispatch.lane_context != 0 { return Self::EMPTY }
+        Self::of_frame(vm, dispatch.frame)
+    }
+
+    /// The dense slots of frame `frame`'s own environment, where it is captured and they are dense; no
+    /// direct write is admitted. A lane body in a frame names its own (`Vm::refresh_body_bases`).
+    pub(super) fn of_frame<H: Host>(vm: &Vm<H>, frame: usize) -> Self {
+        let Some(frame) = vm.frames.get(frame).filter(|frame| frame.captured) else { return Self::EMPTY };
         let Some(crate::heap::Cell::Environment { slots, .. }) = vm.heap.get(frame.env) else { return Self::EMPTY };
         slots.native_dense_view().map_or(Self::EMPTY, |(values, len)| Self { values, len, stores: 0 })
     }

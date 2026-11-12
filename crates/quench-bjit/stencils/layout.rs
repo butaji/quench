@@ -202,6 +202,10 @@ pub(crate) const CAPTURE_ADDRESS_BITS: u32 = 48;
 pub(crate) const CAPTURE_ADDRESS_PAD: u32 = u64::BITS - CAPTURE_ADDRESS_BITS;
 /// The record a completed body names (`LANE_BODY_RETURNED`).
 pub(crate) const JS_STEP_RETURNED_PC: usize = 256;
+/// The words of a view of dense environment slots (`general_capture::EnvView`): the slots' address and their
+/// count, at a payload byte offset a row names (`ENV_ROW`).
+pub(crate) const ENV_VIEW_VALUES: usize = 0;
+pub(crate) const ENV_VIEW_LEN: usize = 8;
 
 /// More `JsStepDispatch` fields the call rows read: the lane body's VM, residual and lane
 /// context (a helper call's first three arguments), the lane stack's free span and the shadow
