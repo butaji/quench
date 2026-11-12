@@ -24,7 +24,7 @@ mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;
 mod wasm;
-pub use compiled::ExecutionMode;
+pub use compiled::{AheadImages, ExecutionMode};
 pub use date::local_timezone_changed;
 mod wasm_exception;
 mod wasm_gc;

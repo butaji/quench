@@ -76,6 +76,8 @@ use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_n
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
 #[path = "compiled/numeric_image.rs"] mod numeric_image;
+#[path = "compiled/ahead_images.rs"] mod ahead_images;
+pub use ahead_images::AheadImages;
 pub(super) use numeric_image::compile_js_typed_numeric_region;
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, lane_body_signature, BodyEntry, BodyReturn};
 #[path = "compiled/general_tier_queries.rs"] mod general_tier_queries;
@@ -1956,7 +1958,6 @@ pub(super) enum LaneHelpers {
     /// The compile target "ahead": a lane region whose helpers, and every run-time address
     /// `RelocKind` names, are symbols a loader resolves (`Process`, the target "live", embeds
     /// them). It differs from `Numeric` only in having the VM helper capability.
-    #[cfg(test)]
     Ahead,
     #[cfg(feature = "aot")]
     Linked(u32, u32),
@@ -1998,7 +1999,6 @@ impl LaneHelpers {
     fn names_symbols(self) -> bool {
         match self {
             Self::Numeric => true,
-            #[cfg(test)]
             Self::Ahead => true,
             _ => false,
         }
@@ -2008,7 +2008,6 @@ impl LaneHelpers {
     fn table_address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
         match self {
             Self::Numeric => unreachable!("a frameless Number region names its helper by symbol"),
-            #[cfg(test)]
             Self::Ahead => unreachable!("an ahead region names its helper by symbol"),
             Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
             #[cfg(feature = "aot")]

@@ -29,7 +29,6 @@ pub(in crate::vm::compiled) fn numeric_symbol(namespace: u32, key: u32) -> Optio
 }
 
 /// The helper number a symbol `(namespace, key)` names, if it names one.
-#[cfg(test)]
 pub(in crate::vm::compiled) fn helper_key(namespace: u32, key: u32) -> Option<usize> {
     (namespace == RelocKind::Helper as u32).then_some(key as usize)
 }

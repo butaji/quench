@@ -11,17 +11,17 @@ type LaneCode = Result<Vec<u8>, super::jit_backend::NativeCompileRejection>;
 
 /// A lowered lane body: the method it becomes once its code exists.
 pub(super) struct LanePlan {
-    unit: lane_unit::Unit,
-    lowered: lane_region::LoweredLane,
-    fields: BTreeMap<u16, Vec<NativeFieldLoad>>,
-    direct: Box<[DirectCallee]>,
+    pub(super) unit: lane_unit::Unit,
+    pub(super) lowered: lane_region::LoweredLane,
+    pub(super) fields: BTreeMap<u16, Vec<NativeFieldLoad>>,
+    pub(super) direct: Box<[DirectCallee]>,
     /// Whether every call of it that has run is inlined or direct (`LaneMethod::closed`).
-    closed: bool,
-    function: u32,
+    pub(super) closed: bool,
+    pub(super) function: u32,
     /// The word its publication sets when one of its Stable facts changes.
-    invalidation: crate::code_dependencies::Invalidation,
+    pub(super) invalidation: crate::code_dependencies::Invalidation,
     /// The callee instructions its unit inlined at most (`lane_unit::with_budget`).
-    budget: usize,
+    pub(super) budget: usize,
 }
 
 /// A plan whose code compiles on the code generator's thread. It holds while the facts it
@@ -313,6 +313,8 @@ impl<H: Host> Vm<H> {
         // the calling thread, without one) publishes at once.
         loop {
             let (generic, budget) = pending;
+            // A function with an ahead-of-time body takes it where a first compile would.
+            if let Some(published) = self.install_ahead_body(program, function, entry, &generic) { return LaneBodyOutcome::Published(published); }
             let direct = direct(self);
             let started = match self.start_lane_method(program, function, targets, captures, &direct, &generic, budget, entry, observed, called, caller.expect("a started body names its view"), &arrays) {
                 Ok(started) => started,
@@ -406,7 +408,7 @@ impl LanePlan {
 
     /// The method its compiled `code` makes, published to executable memory. The method
     /// takes its direct callees whole: the code names them by address.
-    fn finish(mut self, code: &[u8]) -> Option<LaneMethod> {
+    pub(super) fn finish(mut self, code: &[u8]) -> Option<LaneMethod> {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
         let amortizes = amortizes_entry(unit, self.function, &self.direct);

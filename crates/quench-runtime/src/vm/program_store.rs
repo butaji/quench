@@ -888,6 +888,8 @@ pub(crate) struct ProgramStore {
     /// The compiles each body or loop entry has had (`lane_publication::LaneKey`'s first three).
     lane_compiles: std::cell::RefCell<std::collections::BTreeMap<(u32, u32), u8>>,
     lane_installed: std::cell::RefCell<std::collections::BTreeMap<lane_publication::LaneKey, Weak<crate::vm::compiled::PublishedLaneMethod>>>,
+    /// The ahead-of-time bodies a loaded file holds, and the program they are of.
+    ahead: std::cell::RefCell<Option<(ProgramId, Rc<crate::vm::compiled::AheadImages>)>>,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
@@ -948,6 +950,7 @@ impl Default for ProgramStore {
         Self {
             native_call_bindings: Default::default(),
             lane_installed: Default::default(),
+            ahead: Default::default(),
             lane_compiles: Default::default(),
             programs: Vec::new(),
             global_eval_programs: FxHashMap::default(),

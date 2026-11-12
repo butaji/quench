@@ -83,6 +83,8 @@ impl<H: Host> Runtime<H> {
         Self { vm: Vm::new(host) }
     }
 
+    /// Takes `images` (compiled ahead from this runtime's program) as its functions' first bodies.
+    pub fn load_ahead_images(&mut self, images: crate::AheadImages) { self.vm.load_ahead_images(images); }
     /// Choose how JavaScript and Wasm functions execute; see [`ExecutionMode`].
     pub fn set_execution_mode(&mut self, mode: crate::ExecutionMode) {
         self.vm.set_execution_mode(mode); if mode == crate::ExecutionMode::Compiled { self.vm.enable_lane_methods(); }
@@ -663,8 +665,6 @@ pub enum RuntimeError {
 mod tests {
     use super::*;
     use crate::test_host::TestHost;
-
-
 
     fn assert_output_in_execution_modes(source: &str, expected: &[&str]) {
         for (mode, compile) in [
