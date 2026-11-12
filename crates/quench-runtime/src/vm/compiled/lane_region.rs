@@ -3435,6 +3435,9 @@ impl Lowering<'_, '_> {
     /// whose base and length the body reloads.
     fn call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, helper: LaneHelper) -> bool {
         let Some(super::lane_unit::Origin::Caller(call_pc)) = self.unit.origins.get(pc).copied() else {
+            // An inlined callee's call has no record the lane could run: a native that completes
+            // in place runs by its operands, any other callee leaves at the call.
+            if helper == LaneHelper::Call && self.native_in_place_call(state, pc, instruction) { return true; }
             self.exit(state, pc as u32);
             return false;
         };
