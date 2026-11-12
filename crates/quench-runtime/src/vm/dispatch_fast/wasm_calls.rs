@@ -87,6 +87,7 @@ macro_rules! enter_wasm_function {
             // SAFETY: capacity holds the activation.
             unsafe {
                 stack.push_activation(Activation {
+                    native: crate::vm::compiled::ShadowFrame::EMPTY,
                     function: u32::from($function),
                     call: ip,
                     caller_base: (*cx).base,

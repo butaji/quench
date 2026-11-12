@@ -17,7 +17,7 @@ impl Lowering<'_, '_> {
         for (field, value) in [(std::mem::offset_of!(ShadowFrame, callee), descriptor), (std::mem::offset_of!(ShadowFrame, this), this), (std::mem::offset_of!(ShadowFrame, body), body), (std::mem::offset_of!(ShadowFrame, window), top)] {
             self.word_store(value, shadow, dispatch_offset(field));
         }
-        let pushed = self.word_add_imm(shadow, std::mem::size_of::<ShadowFrame>() as i64);
+        let pushed = self.word_add_imm(shadow, super::super::FRAME_BYTES as i64);
         self.word_store(pushed, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
         self.word_store(next, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, native_top)));
         let signature = native_entry_signature(types::I64, self.builder.func.signature.call_conv);
