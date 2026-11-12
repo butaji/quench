@@ -3946,6 +3946,17 @@ macro_rules! lane_return_value {
 /// handlers keep their registers.
 #[inline(never)]
 fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Resumed {
+    // Another program's activation, which a program that calls across programs returns from
+    // as often as the common return, completes without the frame the other completions need.
+    if let Some(resumed) = lane_complete_cross_activation(cx, value) {
+        return resumed;
+    }
+    lane_return_value_other(cx, ip, value)
+}
+
+/// `lane_return_value_general` of any other activation's completion, or the frame's return.
+#[inline(never)]
+fn lane_return_value_other<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Resumed {
     if let Some(resumed) = lane_complete_returning(cx, ip, value) {
         return resumed;
     }
@@ -16490,11 +16501,23 @@ return_handler! {
 }
 
 lane_handler! {
-    /// `lane_return` past the common return (`lane_complete_plain_activation`): any other
-    /// activation's completion, or the frame's return. Out of line, so `lane_return` keeps its
-    /// registers.
+    /// `lane_return` past the common return (`lane_complete_plain_activation`): another
+    /// program's activation, which a program that calls across programs returns from as
+    /// often as the common return; any other completion takes `lane_return_other`. Out of
+    /// line, so `lane_return` keeps its registers.
     #[inline(never)]
     fn lane_return_general<>(cx, r, ip, i, view) {
+        if let Some(resumed) = lane_complete_cross_activation(cx, r.get(i.a)) {
+            resume!(cx, resumed)
+        }
+        sibling!(lane_return_other::<H>, r, ip, view)
+    }
+}
+
+lane_handler! {
+    /// `lane_return_general` of any other activation's completion, or the frame's return.
+    #[inline(never)]
+    fn lane_return_other<>(cx, r, ip, i, view) {
         if let Some(resumed) = lane_complete_returning(cx, ip, r.get(i.a)) {
             resume!(cx, resumed)
         }
