@@ -53,6 +53,12 @@ impl Stage for Emit<'_, '_> {
     fn load_u64(&mut self, base: ir::Value, offset: i32) -> ir::Value {
         self.builder.ins().load(types::I64, MemFlagsData::trusted(), base, offset)
     }
+    fn load_u8(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().uload8(types::I64, MemFlagsData::trusted(), base, offset)
+    }
+    fn load_u16(&mut self, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().uload16(types::I64, MemFlagsData::trusted(), base, offset)
+    }
     fn load_table(&mut self, address: ir::Value) -> ir::Value {
         self.builder.ins().load(types::I64, MemFlagsData::trusted().with_readonly().with_can_move(), address, 0)
     }

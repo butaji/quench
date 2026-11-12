@@ -120,7 +120,7 @@ pub(crate) fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S
 /// A backing's count of other values once a write added `added` and overwrote `removed`;
 /// `OTHERS_UNKNOWN` stays unknown. Subtracting first keeps an exact count from overflowing.
 #[inline(always)]
-fn recount<S: Stage>(stage: &mut S, others: S::Word, added: S::Word, removed: S::Word) -> S::Word {
+pub(super) fn recount<S: Stage>(stage: &mut S, others: S::Word, added: S::Word, removed: S::Word) -> S::Word {
     let removed_first = stage.sub(others, removed);
     let recounted = stage.add(removed_first, added);
     let unknown = stage.eq_imm(others, u64::from(crate::heap::OTHERS_UNKNOWN));
@@ -129,7 +129,7 @@ fn recount<S: Stage>(stage: &mut S, others: S::Word, added: S::Word, removed: S:
 
 /// One where `value` counts among a backing's others (it is no int32), else zero.
 #[inline(always)]
-fn other<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
+pub(super) fn other<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
     let tag = stage.and_imm(value, crate::value::ValueLayout::TAG_MASK);
     let int = stage.eq_imm(tag, crate::value::ValueLayout::INT_TAG);
     let (zero, one) = (stage.constant(0), stage.constant(1));

@@ -25,6 +25,7 @@ pub(crate) mod math;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
+pub(crate) mod builtins;
 pub(crate) mod elements;
 pub(crate) mod entry;
 pub(crate) mod environment;

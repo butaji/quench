@@ -84,6 +84,16 @@ impl Stage for StencilStage {
         unsafe { (base.wrapping_add(offset as i64 as u64) as *const u64).read() }
     }
     #[inline(always)]
+    fn load_u8(&mut self, base: u64, offset: i32) -> u64 {
+        // SAFETY: as `load_u32`.
+        u64::from(unsafe { (base.wrapping_add(offset as i64 as u64) as *const u8).read() })
+    }
+    #[inline(always)]
+    fn load_u16(&mut self, base: u64, offset: i32) -> u64 {
+        // SAFETY: as `load_u32`.
+        u64::from(unsafe { (base.wrapping_add(offset as i64 as u64) as *const u16).read() })
+    }
+    #[inline(always)]
     fn load_table(&mut self, address: u64) -> u64 { self.load_u64(address, 0) }
     #[inline(always)]
     fn add(&mut self, a: u64, b: u64) -> u64 { a.wrapping_add(b) }

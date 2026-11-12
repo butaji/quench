@@ -674,10 +674,15 @@ impl<H: Host> Vm<H> {
     /// The string of the one code unit `unit`, when it is ASCII (`Heap::ascii_unit_strings`).
     pub(super) fn ascii_unit_string(&mut self, unit: u16) -> Option<Value> {
         let byte = u8::try_from(unit).ok().filter(u8::is_ascii)?;
+        Some(self.ascii_byte_string(byte))
+    }
+
+    /// The string of the one ASCII byte `byte`.
+    pub(super) fn ascii_byte_string(&mut self, byte: u8) -> Value {
         let byte = [byte];
-        // SAFETY: an ASCII byte is UTF-8.
+        // SAFETY: the caller's byte is ASCII, so UTF-8.
         let text = super::wtf16::JsString::from_str(unsafe { std::str::from_utf8_unchecked(&byte) });
-        Some(self.heap.alloc_string(text))
+        self.heap.alloc_string(text)
     }
 }
 

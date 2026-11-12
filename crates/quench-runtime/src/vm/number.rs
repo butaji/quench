@@ -424,12 +424,12 @@ pub(super) fn global_number_predicate(native: Native, number: f64) -> Option<boo
 /// coerces its argument, so a non-Number answers `false`. `None` for any other native.
 pub(super) fn number_predicate(native: Native, value: Value) -> Option<bool> {
     let number = value.as_number();
-    let integral = |number: f64| number.is_finite() && number.fract() == 0.0;
+    let integral = || crate::staged::builtins::concrete_is_integral(value);
     Some(match native {
         Native::NumberIsNaN => number.is_some_and(f64::is_nan),
         Native::NumberIsFinite => number.is_some_and(f64::is_finite),
-        Native::NumberIsInteger => number.is_some_and(integral),
-        Native::NumberIsSafeInteger => number.is_some_and(|number| integral(number) && number.abs() <= MAX_SAFE_INTEGER),
+        Native::NumberIsInteger => integral(),
+        Native::NumberIsSafeInteger => integral() && number.is_some_and(|number| number.abs() <= MAX_SAFE_INTEGER),
         _ => return None,
     })
 }
