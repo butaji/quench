@@ -2,7 +2,7 @@
 //! `quench-runtime/src/staged/*.rs` compile unchanged under the stencil build: the layout
 //! numbers (`layout.rs`), a bare `Value`, and the stage the rows run on (`StencilStage`).
 
-pub(crate) use crate::layout::{INLINE_PROPERTY_COUNT as _INLINE, words};
+pub(crate) use crate::layout::{INLINE_PROPERTIES as _INLINE, words};
 
 /// A tagged word. Only its constants and bit conversions exist here.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -50,7 +50,7 @@ pub(crate) mod value {
     }
     pub(crate) struct NarrowLayout;
     impl NarrowLayout {
-        pub(crate) const INTEGER_FLAG: u32 = words::NARROW_INTEGER_FLAG;
+        pub(crate) const INTEGER_FLAG: u32 = words::NARROW_INT_FLAG;
         pub(crate) const INTEGER_BITS: u32 = words::NARROW_INTEGER_BITS;
         pub(crate) const CODE_SHIFT: u32 = words::NARROW_CODE_SHIFT;
         pub(crate) const CODE_MASK: u32 = words::NARROW_CODE_MASK;
@@ -70,7 +70,7 @@ pub(crate) mod value {
 }
 
 pub(crate) mod value_vec {
-    pub(crate) use crate::layout::INLINE_PROPERTY_COUNT;
+    pub(crate) use crate::layout::INLINE_PROPERTIES as INLINE_PROPERTY_COUNT;
 }
 
 pub(crate) mod heap {

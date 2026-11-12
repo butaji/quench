@@ -9,63 +9,10 @@
 //! through exit 0 with the registers as they were at the row's start (every guard comes before
 //! any write to a pinned register).
 
-use crate::layout::words::{CANONICAL_NAN, FIRST_TAG_FIELD, INT_TAG, TAG_SHIFT};
+use crate::layout::words::{CANONICAL_NAN, INT_TAG, TAG_SHIFT};
+pub(crate) use crate::words::*;
 
-pub(crate) const MEM: u8 = 0;
-pub(crate) const MEMINT: u8 = 1;
-pub(crate) const CONST: u8 = 2;
-pub(crate) const IMM: u8 = 3;
-pub(crate) const PIN: u8 = 4;
-pub(crate) const PINF: u8 = 8;
-
-pub(crate) const MOVE: u8 = 0;
-pub(crate) const COPY: u8 = 1;
-pub(crate) const ADD: u8 = 2;
-pub(crate) const SUB: u8 = 3;
-pub(crate) const MUL: u8 = 4;
-pub(crate) const DIV: u8 = 5;
-pub(crate) const AND: u8 = 6;
-pub(crate) const OR: u8 = 7;
-pub(crate) const XOR: u8 = 8;
-pub(crate) const SHL: u8 = 9;
-pub(crate) const SHR: u8 = 10;
-pub(crate) const USHR: u8 = 11;
-pub(crate) const LT: u8 = 12;
-pub(crate) const LE: u8 = 13;
-pub(crate) const GT: u8 = 14;
-pub(crate) const GE: u8 = 15;
-pub(crate) const EQ: u8 = 16;
-pub(crate) const NE: u8 = 17;
-pub(crate) const JUMP: u8 = 18;
-pub(crate) const JUMP_POLL: u8 = 19;
-pub(crate) const GUARD: u8 = 20;
-pub(crate) const TAG_INIT: u8 = 21;
-pub(crate) const SPILL: u8 = 22;
-
-const FIRST_TAG: u64 = FIRST_TAG_FIELD << TAG_SHIFT;
-const TAG_SPAN: u64 = 6 << TAG_SHIFT;
-const INT_HIGH: u64 = INT_TAG >> 32;
-
-unsafe extern "C" {
-    static HOLE_V0: u8;
-    static HOLE_V1: u8;
-    static HOLE_V2: u8;
-}
-
-/// The frame, the context and the pinned registers: ints and doubles.
-#[derive(Clone, Copy)]
-pub(crate) struct S {
-    pub(crate) frame: usize,
-    pub(crate) ctx: usize,
-    pub(crate) p: [usize; 4],
-    pub(crate) f: [f64; 8],
-}
-
-pub(crate) enum Out {
-    Next(S),
-    Taken(S),
-    Exit(S),
-}
+pub(crate) use crate::codes::*;
 
 macro_rules! need {
     ($s:expr, $e:expr) => {
@@ -76,113 +23,6 @@ macro_rules! need {
     };
 }
 
-/// The value of hole `H` as a 32-bit field or a displacement.
-#[inline(always)]
-fn hole<const H: u8>() -> usize {
-    match H {
-        0 => &raw const HOLE_V0 as usize,
-        1 => &raw const HOLE_V1 as usize,
-        _ => &raw const HOLE_V2 as usize,
-    }
-}
-
-/// The value of hole `H` as a 64-bit constant (a tagged word).
-#[inline(always)]
-fn hole64<const H: u8>() -> u64 {
-    let v: u64;
-    // SAFETY: `movabs` of a symbol's address into a register: an R_X86_64_64 relocation.
-    unsafe {
-        match H {
-            0 => core::arch::asm!("movabs {v}, offset {h}", v = out(reg) v, h = sym HOLE_V0, options(pure, nomem, nostack, preserves_flags)),
-            1 => core::arch::asm!("movabs {v}, offset {h}", v = out(reg) v, h = sym HOLE_V1, options(pure, nomem, nostack, preserves_flags)),
-            _ => core::arch::asm!("movabs {v}, offset {h}", v = out(reg) v, h = sym HOLE_V2, options(pure, nomem, nostack, preserves_flags)),
-        }
-    }
-    v
-}
-
-#[inline(always)]
-fn slot<const H: u8>(s: &S) -> usize {
-    s.frame.wrapping_add(hole::<H>())
-}
-
-#[inline(always)]
-fn is_int(x: u64) -> bool {
-    x >> TAG_SHIFT == INT_TAG >> TAG_SHIFT
-}
-
-#[inline(always)]
-fn is_double(x: u64) -> bool {
-    x.wrapping_sub(FIRST_TAG) >= TAG_SPAN
-}
-
-#[inline(always)]
-fn int_word(v: i32) -> u64 {
-    u64::from(v as u32) | INT_TAG
-}
-
-/// `cvttsd2si` to 32 bits: the truncated int32, or `i32::MIN` where `f` is out of range or NaN
-/// (Rust's saturating `as` would load its bounds from a constant pool, which a stencil may not use).
-#[inline(always)]
-fn truncate32(f: f64) -> i32 {
-    // SAFETY: SSE2 is the x86-64 baseline.
-    unsafe { core::arch::x86_64::_mm_cvttsd_si32(core::arch::x86_64::_mm_set_sd(f)) }
-}
-
-/// `cvttsd2si` to 64 bits: the truncated integer, or `i64::MIN` out of range or for NaN.
-#[inline(always)]
-fn truncate64(f: f64) -> i64 {
-    // SAFETY: SSE2 is the x86-64 baseline.
-    unsafe { core::arch::x86_64::_mm_cvttsd_si64(core::arch::x86_64::_mm_set_sd(f)) }
-}
-
-/// `Value::number(f)`.
-#[inline(always)]
-fn canonical(f: f64) -> u64 {
-    let i = truncate32(f);
-    let back = i as f64;
-    if back.to_bits() == f.to_bits() {
-        int_word(i)
-    } else if f.is_nan() {
-        CANONICAL_NAN
-    } else {
-        f.to_bits()
-    }
-}
-
-#[inline(always)]
-fn to_f64(x: u64) -> Option<f64> {
-    if is_int(x) {
-        Some(x as u32 as i32 as f64)
-    } else if is_double(x) {
-        Some(f64::from_bits(x))
-    } else {
-        None
-    }
-}
-
-#[inline(always)]
-fn f64_to_i32(f: f64) -> Option<i32> {
-    let wide = truncate64(f);
-    if wide != i64::MIN { Some(wide as i32) } else { None }
-}
-
-#[inline(always)]
-fn to_i32(x: u64) -> Option<i32> {
-    if is_int(x) {
-        Some(x as u32 as i32)
-    } else if is_double(x) {
-        f64_to_i32(f64::from_bits(x))
-    } else {
-        None
-    }
-}
-
-#[inline(always)]
-fn unsigned_word(v: i32) -> u64 {
-    if v >= 0 { int_word(v) } else { (v as u32 as f64).to_bits() }
-}
-
 /// The tagged word of an operand.
 #[inline(always)]
 fn word_of<const P: u8, const H: u8>(s: &S) -> u64 {
@@ -190,7 +30,7 @@ fn word_of<const P: u8, const H: u8>(s: &S) -> u64 {
         MEM | MEMINT => unsafe { (slot::<H>(s) as *const u64).read() },
         CONST => hole64::<H>(),
         IMM => int_word(hole::<H>() as u32 as i32),
-        PIN..=7 => int_word(s.p[(P - PIN) as usize] as u32 as i32),
+        PIN..=LAST_INT_PIN => int_word(s.p[(P - PIN) as usize] as u32 as i32),
         _ => canonical(s.f[(P - PINF) as usize]),
     }
 }
@@ -199,13 +39,13 @@ fn word_of<const P: u8, const H: u8>(s: &S) -> u64 {
 #[inline(always)]
 fn int_of<const P: u8, const H: u8>(s: &S) -> Option<i32> {
     match P {
-        PIN..=7 => Some(s.p[(P - PIN) as usize] as u32 as i32),
+        PIN..=LAST_INT_PIN => Some(s.p[(P - PIN) as usize] as u32 as i32),
         IMM => Some(hole::<H>() as u32 as i32),
         MEMINT => Some(unsafe { (slot::<H>(s) as *const u32).read() } as i32),
         PINF.. => f64_to_i32(s.f[(P - PINF) as usize]),
         _ => {
             let word = word_of::<P, H>(s);
-            if word >> 32 == INT_HIGH { Some(word as u32 as i32) } else { None }
+            if word >> HIGH_SHIFT == INT_HIGH { Some(word as u32 as i32) } else { None }
         }
     }
 }
@@ -215,7 +55,7 @@ fn int_of<const P: u8, const H: u8>(s: &S) -> Option<i32> {
 fn f64_of<const P: u8, const H: u8>(s: &S) -> Option<f64> {
     match P {
         PINF.. => Some(s.f[(P - PINF) as usize]),
-        PIN..=7 | IMM | MEMINT => int_of::<P, H>(s).map(f64::from),
+        PIN..=LAST_INT_PIN | IMM | MEMINT => int_of::<P, H>(s).map(f64::from),
         CONST => Some(f64::from_bits(word_of::<P, H>(s))),
         _ => to_f64(word_of::<P, H>(s)),
     }
@@ -223,19 +63,19 @@ fn f64_of<const P: u8, const H: u8>(s: &S) -> Option<f64> {
 
 #[inline(always)]
 fn both_int(x: u64, y: u64) -> bool {
-    ((x ^ INT_TAG) | (y ^ INT_TAG)) >> 32 == 0
+    ((x ^ INT_TAG) | (y ^ INT_TAG)) >> HIGH_SHIFT == 0
 }
 
 #[inline(always)]
 const fn holds_int(p: u8) -> bool {
-    matches!(p, PIN..=7 | MEMINT)
+    matches!(p, PIN..=LAST_INT_PIN | MEMINT)
 }
 
 /// Writes the int32 `v` to the destination and continues.
 #[inline(always)]
 fn finish_int<const D: u8>(mut s: S, v: i32) -> Out {
     match D {
-        PIN..=7 => s.p[(D - PIN) as usize] = v as u32 as usize,
+        PIN..=LAST_INT_PIN => s.p[(D - PIN) as usize] = v as u32 as usize,
         MEMINT => unsafe { (slot::<0>(&s) as *mut u32).write(v as u32) },
         _ => unsafe { (slot::<0>(&s) as *mut u64).write(int_word(v)) },
     }
@@ -269,7 +109,7 @@ pub(crate) fn deliver<const D: u8>(mut s: S, word: u64) -> Out {
                 s.f[i] = f64::from(word as u32 as i32);
             }
         }
-        PIN..=7 => {
+        PIN..=LAST_INT_PIN => {
             if !is_int(word) {
                 return Out::Exit(s);
             }
@@ -318,19 +158,7 @@ fn float_arith<const K: u8>(x: f64, y: f64) -> f64 {
 }
 
 #[inline(always)]
-fn relation_int<const K: u8>(x: i32, y: i32) -> bool {
-    match K {
-        LT => x < y,
-        LE => x <= y,
-        GT => x > y,
-        GE => x >= y,
-        EQ => x == y,
-        _ => x != y,
-    }
-}
-
-#[inline(always)]
-fn relation_float<const K: u8>(x: f64, y: f64) -> bool {
+fn relation<T: PartialOrd, const K: u8>(x: T, y: T) -> bool {
     match K {
         LT => x < y,
         LE => x <= y,
@@ -361,17 +189,21 @@ fn double_path<const K: u8, const D: u8>(s: S, x: u64, y: u64) -> Out {
     finish_word::<D>(s, canonical(float_arith::<K>(fx, fy)))
 }
 
+/// An arithmetic row that speculates int32: an overflow or a negative zero leaves the row.
 #[inline(always)]
-fn arith<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>(s: S) -> Out {
-    if SPEC {
-        let (x, y) = (need!(s, int_of::<A, 1>(&s)), need!(s, int_of::<B, 2>(&s)));
-        let (value, overflow) = checked::<K>(x, y);
-        if overflow || (K == MUL && value == 0 && (x | y) < 0) {
-            return Out::Exit(s);
-        }
-        return finish_int::<D>(s, value);
+fn arith_speculated<const K: u8, const D: u8, const A: u8, const B: u8>(s: S) -> Out {
+    let (x, y) = (need!(s, int_of::<A, HOLE_A>(&s)), need!(s, int_of::<B, HOLE_B>(&s)));
+    let (value, overflow) = checked::<K>(x, y);
+    if overflow || (K == MUL && value == 0 && (x | y) < 0) {
+        return Out::Exit(s);
     }
-    let (x, y) = (word_of::<A, 1>(&s), word_of::<B, 2>(&s));
+    finish_int::<D>(s, value)
+}
+
+/// A general arithmetic row: ints stay ints while exact, anything else goes through doubles.
+#[inline(always)]
+fn arith_general<const K: u8, const D: u8, const A: u8, const B: u8>(s: S) -> Out {
+    let (x, y) = (word_of::<A, HOLE_A>(&s), word_of::<B, HOLE_B>(&s));
     if K == DIV {
         return double_path::<K, D>(s, x, y);
     }
@@ -382,6 +214,11 @@ fn arith<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>(s
     } else {
         double_path::<K, D>(s, x, y)
     }
+}
+
+#[inline(always)]
+fn arith<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>(s: S) -> Out {
+    if SPEC { arith_speculated::<K, D, A, B>(s) } else { arith_general::<K, D, A, B>(s) }
 }
 
 #[inline(always)]
@@ -399,7 +236,7 @@ fn int_bitwise<const K: u8>(x: i32, y: i32) -> i32 {
 #[inline(always)]
 fn bitwise<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>(s: S) -> Out {
     if SPEC {
-        let (x, y) = (need!(s, int_of::<A, 1>(&s)), need!(s, int_of::<B, 2>(&s)));
+        let (x, y) = (need!(s, int_of::<A, HOLE_A>(&s)), need!(s, int_of::<B, HOLE_B>(&s)));
         let value = int_bitwise::<K>(x, y);
         if K != USHR {
             return finish_int::<D>(s, value);
@@ -412,7 +249,7 @@ fn bitwise<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>
         }
         return finish_word::<D>(s, unsigned_word(value));
     }
-    let (x, y) = (word_of::<A, 1>(&s), word_of::<B, 2>(&s));
+    let (x, y) = (word_of::<A, HOLE_A>(&s), word_of::<B, HOLE_B>(&s));
     let (x32, y32) = (need!(s, to_i32(x)), need!(s, to_i32(y)));
     let value = int_bitwise::<K>(x32, y32);
     finish_word::<D>(s, if K == USHR { unsigned_word(value) } else { int_word(value) })
@@ -421,35 +258,35 @@ fn bitwise<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>
 #[inline(always)]
 fn copy<const D: u8, const A: u8>(s: S) -> Out {
     if holds_int(D) {
-        let value = need!(s, int_of::<A, 1>(&s));
+        let value = need!(s, int_of::<A, HOLE_A>(&s));
         return finish_int::<D>(s, value);
     }
-    finish_word::<D>(s, word_of::<A, 1>(&s))
+    finish_word::<D>(s, word_of::<A, HOLE_A>(&s))
 }
 
 #[inline(always)]
 fn compare<const K: u8, const A: u8, const B: u8, const SPEC: bool>(s: S) -> Out {
     if SPEC {
-        let (x, y) = (need!(s, int_of::<A, 1>(&s)), need!(s, int_of::<B, 2>(&s)));
-        return jump_if(s, !relation_int::<K>(x, y));
+        let (x, y) = (need!(s, int_of::<A, HOLE_A>(&s)), need!(s, int_of::<B, HOLE_B>(&s)));
+        return jump_if(s, !relation::<i32, K>(x, y));
     }
-    let (x, y) = (word_of::<A, 1>(&s), word_of::<B, 2>(&s));
+    let (x, y) = (word_of::<A, HOLE_A>(&s), word_of::<B, HOLE_B>(&s));
     if both_int(x, y) {
-        return jump_if(s, !relation_int::<K>(x as u32 as i32, y as u32 as i32));
+        return jump_if(s, !relation::<i32, K>(x as u32 as i32, y as u32 as i32));
     }
     let (fx, fy) = (need!(s, to_f64(x)), need!(s, to_f64(y)));
-    jump_if(s, !relation_float::<K>(fx, fy))
+    jump_if(s, !relation::<f64, K>(fx, fy))
 }
 
 #[inline(always)]
 fn float_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut s: S) -> Out {
-    let x = need!(s, f64_of::<A, 1>(&s));
+    let x = need!(s, f64_of::<A, HOLE_A>(&s));
     let value = if K == MOVE || K == COPY {
         x
     } else {
-        let y = need!(s, f64_of::<B, 2>(&s));
+        let y = need!(s, f64_of::<B, HOLE_B>(&s));
         if K >= LT {
-            return jump_if(s, !relation_float::<K>(x, y));
+            return jump_if(s, !relation::<f64, K>(x, y));
         }
         float_arith::<K>(x, y)
     };
@@ -467,7 +304,7 @@ fn float_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut s: S) -> Ou
 fn count_backedge(s: &S) {
     unsafe {
         let payload = ((s.ctx + hole::<1>()) as *const usize).read();
-        let entry = ((payload + hole::<2>()) as *const usize).read();
+        let entry = ((payload + hole::<HOLE_B>()) as *const usize).read();
         let count = (entry as *const u64).read();
         (entry as *mut u64).write(count.wrapping_add(1));
     }
@@ -488,13 +325,13 @@ fn jump<const POLL: bool>(s: S) -> Out {
 
 #[inline(always)]
 fn guard<const D: u8, const A: u8>(mut s: S) -> Out {
-    let word = word_of::<A, 1>(&s);
+    let word = word_of::<A, HOLE_A>(&s);
     match D {
-        MEMINT => jump_if(s, word >> 32 != INT_HIGH),
-        PIN..=7 => {
+        MEMINT => jump_if(s, word >> HIGH_SHIFT != INT_HIGH),
+        PIN..=LAST_INT_PIN => {
             // Loads the pinned register: an int word, else the entry fails.
             s.p[(D - PIN) as usize] = word as u32 as usize;
-            jump_if(s, word >> 32 != INT_HIGH)
+            jump_if(s, word >> HIGH_SHIFT != INT_HIGH)
         }
         PINF.. => {
             let (int, double) = (is_int(word), is_double(word));
@@ -505,11 +342,31 @@ fn guard<const D: u8, const A: u8>(mut s: S) -> Out {
     }
 }
 
+/// A row over a pinned double, other than a bitwise row (which reads a double as its ToInt32).
+const fn is_double_row<const K: u8, const D: u8, const A: u8, const B: u8>() -> bool {
+    (D >= PINF || A >= PINF || B >= PINF) && K <= NE && !is_bitwise(K)
+}
+
+/// The tag of a fresh int slot: the upper half of its word.
+#[inline(always)]
+fn tag_init(s: S) -> Out {
+    // SAFETY: the frame slot of hole 0 is writable; the stencil writes its tag half only.
+    unsafe { (slot::<0>(&s).wrapping_add(HIGH_HALF_AT) as *mut u32).write(INT_HIGH as u32) };
+    Out::Next(s)
+}
+
+/// A pinned double (operand `a`) to the frame slot as a canonical word.
+#[inline(always)]
+fn spill<const A: u8>(s: S) -> Out {
+    // SAFETY: the frame slot of hole 0 is writable.
+    unsafe { (slot::<0>(&s) as *mut u64).write(word_of::<A, HOLE_A>(&s)) };
+    Out::Next(s)
+}
+
 /// One row, by kind and places. `SPEC` rows take int32 operands only.
 #[inline(always)]
 pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>(s: S) -> Out {
-    let floats = D >= PINF || A >= PINF || B >= PINF;
-    if floats && K <= NE && !(AND..=USHR).contains(&K) {
+    if is_double_row::<K, D, A, B>() {
         return float_row::<K, D, A, B>(s);
     }
     match K {
@@ -520,14 +377,7 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         JUMP => jump::<false>(s),
         JUMP_POLL => jump::<true>(s),
         GUARD => guard::<D, A>(s),
-        TAG_INIT => {
-            unsafe { (slot::<0>(&s).wrapping_add(4) as *mut u32).write(INT_HIGH as u32) };
-            Out::Next(s)
-        }
-        _ => {
-            // SPILL: a pinned double (operand `a`) to the frame slot as a canonical word.
-            unsafe { (slot::<0>(&s) as *mut u64).write(word_of::<A, 1>(&s)) };
-            Out::Next(s)
-        }
+        TAG_INIT => tag_init(s),
+        _ => spill::<A>(s),
     }
 }

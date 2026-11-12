@@ -44,11 +44,11 @@ impl Heap {
     /// The row's code in `quench_bjit::numeric::library`.
     pub(super) fn code(self) -> u8 {
         match self {
-            Heap::Capture(_) => 0,
-            Heap::Index => 1,
-            Heap::Store => 2,
-            Heap::Field => 3,
-            Heap::Array => 4,
+            Heap::Capture(_) => library::CAPTURE_ROW,
+            Heap::Index => library::INDEX_ROW,
+            Heap::Store => library::STORE_ROW,
+            Heap::Field => library::FIELD_ROW,
+            Heap::Array => library::ARRAY_ROW,
         }
     }
 }
@@ -87,10 +87,15 @@ mod tests {
         assert_eq!(format!("{:?}", crate::heap::NATIVE_OBJECT_LAYOUT), format!("{:?}", mirror::NATIVE_OBJECT_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_ARRAY_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_ENVIRONMENT_LAYOUT), format!("{:?}", mirror::NATIVE_ENVIRONMENT_LAYOUT));
-        assert_eq!(format!("{:?}", crate::vm::NATIVE_FIELD_CACHE_LAYOUT), format!("{:?}", mirror::NATIVE_FIELD_CACHE_LAYOUT));
+        let (cache, copy) = (crate::vm::NATIVE_FIELD_CACHE_LAYOUT, mirror::NATIVE_FIELD_CACHE_LAYOUT);
+        assert_eq!([cache.entry_size, cache.receiver_offset, cache.holder_offset, cache.slot_offset], [copy.entry_size, copy.receiver_offset, copy.holder_offset, copy.slot_offset]);
+        assert_eq!(
+            [cache.receiver_complement, cache.holder_complement, cache.slot_complement, cache.own_holder],
+            [copy.receiver_complement, copy.holder_complement, copy.slot_complement, copy.own_holder]
+        );
         assert_eq!(
             [crate::heap::OTHERS_UNKNOWN as u64, crate::heap::LENGTH_FROM_VALUES as i64 as u64, crate::heap::OTHERS_FROM_VALUES as i64 as u64, crate::value_vec::INLINE_PROPERTY_COUNT as u64],
-            [mirror::OTHERS_UNKNOWN as u64, mirror::LENGTH_FROM_VALUES as i64 as u64, mirror::OTHERS_FROM_VALUES as i64 as u64, mirror::INLINE_PROPERTY_COUNT as u64]
+            [mirror::OTHERS_UNKNOWN as u64, mirror::LENGTH_FROM_VALUES as i64 as u64, mirror::OTHERS_FROM_VALUES as i64 as u64, mirror::INLINE_PROPERTIES as u64]
         );
         use mirror::words as w;
         assert_eq!(
@@ -99,7 +104,7 @@ mod tests {
         );
         assert_eq!(
             [u64::from(NarrowLayout::INTEGER_FLAG), u64::from(NarrowLayout::INTEGER_BITS), u64::from(NarrowLayout::CODE_SHIFT), u64::from(NarrowLayout::CODE_MASK), u64::from(NarrowLayout::INDEX_SHIFT), u64::from(NarrowLayout::INDEX_BITS), NarrowLayout::DIRECT_OBJECT_UPPER, u64::from(NarrowLayout::DIRECT_OBJECT_CODE)],
-            [u64::from(w::NARROW_INTEGER_FLAG), u64::from(w::NARROW_INTEGER_BITS), u64::from(w::NARROW_CODE_SHIFT), u64::from(w::NARROW_CODE_MASK), u64::from(w::NARROW_INDEX_SHIFT), u64::from(w::NARROW_INDEX_BITS), w::DIRECT_OBJECT_UPPER, u64::from(w::DIRECT_OBJECT_NARROW_CODE)]
+            [u64::from(w::NARROW_INT_FLAG), u64::from(w::NARROW_INTEGER_BITS), u64::from(w::NARROW_CODE_SHIFT), u64::from(w::NARROW_CODE_MASK), u64::from(w::NARROW_INDEX_SHIFT), u64::from(w::NARROW_INDEX_BITS), w::DIRECT_OBJECT_UPPER, u64::from(w::DIRECT_OBJECT_NARROW_CODE)]
         );
         assert_eq!(
             [std::mem::offset_of!(CallContext, adapter_payload), std::mem::offset_of!(JsStepDispatch, loop_entry), std::mem::offset_of!(JsStepDispatch, capture_values), std::mem::offset_of!(JsStepDispatch, capture_len), std::mem::offset_of!(JsStepDispatch, array_record_base)],

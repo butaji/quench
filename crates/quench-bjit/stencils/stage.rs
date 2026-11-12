@@ -55,11 +55,9 @@ impl Stage for StencilStage {
         self.sites += 1;
         // SAFETY: only the addresses of the statics are taken.
         unsafe {
-            match n {
-                0 => &raw const HOLE_V0 as u64,
-                1 => &raw const HOLE_V1 as u64,
-                2 => &raw const HOLE_V2 as u64,
-                _ => UNSUPPORTED_site(n as u64),
+            match [&raw const HOLE_V0, &raw const HOLE_V1, &raw const HOLE_V2].get(n as usize) {
+                Some(hole) => *hole as u64,
+                None => UNSUPPORTED_site(n as u64),
             }
         }
     }

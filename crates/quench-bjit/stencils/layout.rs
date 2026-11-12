@@ -127,7 +127,7 @@ pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeField
 pub(crate) const OTHERS_UNKNOWN: u32 = 4294967295;
 pub(crate) const LENGTH_FROM_VALUES: i32 = -12;
 pub(crate) const OTHERS_FROM_VALUES: i32 = -4;
-pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
+pub(crate) const INLINE_PROPERTIES: usize = 2;
 
 /// `ValueLayout`, `Value` and `NarrowLayout` constants.
 pub(crate) mod words {
@@ -148,7 +148,7 @@ pub(crate) mod words {
     pub(crate) const UNDEFINED: u64 = 0x7ff9000000000000;
     pub(crate) const DELETED: u64 = 0x7ffe000000000000;
     pub(crate) const FALSE: u64 = 0x7ffb000000000000;
-    pub(crate) const NARROW_INTEGER_FLAG: u32 = 1;
+    pub(crate) const NARROW_INT_FLAG: u32 = 1;
     pub(crate) const NARROW_INTEGER_BITS: u32 = 30;
     pub(crate) const NARROW_CODE_SHIFT: u32 = 1;
     pub(crate) const NARROW_CODE_MASK: u32 = 0xf;

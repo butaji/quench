@@ -10,12 +10,14 @@
 #![allow(incomplete_features, non_upper_case_globals, dead_code, unused_imports)]
 extern crate core as std;
 
+mod codes;
 mod facade;
 mod heap_rows;
 mod layout;
 mod numeric;
 mod stage;
 mod staged;
+mod words;
 pub(crate) use facade::{Value, heap, typed_ir, value, value_vec, vm};
 
 use numeric::{Out, S};

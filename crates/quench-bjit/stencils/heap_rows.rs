@@ -9,15 +9,11 @@
 //! nothing written, so the interpreter runs the instruction.
 
 use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_VALUES, JS_STEP_LOOP_ENTRY};
-use crate::numeric::{Out, S, deliver, index_of, number_word};
+use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of, number_word};
 use crate::stage::StencilStage;
 use crate::staged::{elements, entry, environment, value};
 
-pub(crate) const CAPTURE: u8 = 0;
-pub(crate) const INDEX: u8 = 1;
-pub(crate) const STORE: u8 = 2;
-pub(crate) const FIELD: u8 = 3;
-pub(crate) const ARRAY: u8 = 4;
+pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, INDEX_ROW, STORE_ROW};
 
 unsafe extern "C" {
     static HOLE_V0: u8;
@@ -78,45 +74,63 @@ fn stage_site(stage: &mut StencilStage) -> u64 {
     stage.site(0)
 }
 
+/// The hole holding the site table an element access reads its shape facts from.
+const ELEMENT_SITES: u8 = 3;
+
+#[inline(always)]
+fn capture_row<const D: u8>(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::from_hole(HOLE_A);
+    let values = word_at(payload, JS_STEP_CAPTURE_VALUES);
+    let len = word_at(payload, JS_STEP_CAPTURE_LEN);
+    let word = need!(s, environment::dense_capture(&mut stage, values, len, 0, ()));
+    deliver::<D>(s, word)
+}
+
+#[inline(always)]
+fn field_row<const D: u8>(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::from_hole(HOLE_A);
+    let record = word_at(payload, JS_STEP_LOOP_ENTRY);
+    let offset = stage_site(&mut stage);
+    deliver::<D>(s, entry::entry_word(&mut stage, record, offset))
+}
+
+#[inline(always)]
+fn array_row(s: S) -> Out {
+    let mut stage = StencilStage::from_hole(0);
+    let base = array_word::<HOLE_A>(&s);
+    if value::is_direct_array(&mut stage, base) { Out::Next(s) } else { Out::Exit(s) }
+}
+
+/// An element read: the array word is hole 1; an entry row's record offset is hole 1 too.
+#[inline(always)]
+fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
+    let index = need!(s, index_of::<B, HOLE_B>(&s));
+    let (values, length, _) = need!(s, backing::<ENTRY, HOLE_A, false>(&s, payload));
+    let mut stage = StencilStage::from_hole(ELEMENT_SITES);
+    let (_, word) = need!(s, elements::dense_element(&mut stage, values, length, u64::from(index as u32), ()));
+    deliver::<D>(s, word)
+}
+
+/// An element store: the array is hole 0, the value hole 1, the index hole 2.
+#[inline(always)]
+fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
+    let index = need!(s, index_of::<B, HOLE_B>(&s));
+    let word = need!(s, number_word::<A, HOLE_A>(&s));
+    let (values, length, _) = need!(s, backing::<ENTRY, 0, true>(&s, payload));
+    let mut stage = StencilStage::from_hole(ELEMENT_SITES);
+    let (address, old) = need!(s, elements::dense_element(&mut stage, values, length, u64::from(index as u32), ()));
+    elements::replace_element(&mut stage, values, address, old, word);
+    Out::Next(s)
+}
+
 #[inline(always)]
 pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, const B: u8>(s: S) -> Out {
     let payload = payload(&s);
     match KIND {
-        CAPTURE => {
-            let mut stage = StencilStage::from_hole(1);
-            let values = word_at(payload, JS_STEP_CAPTURE_VALUES);
-            let len = word_at(payload, JS_STEP_CAPTURE_LEN);
-            let word = need!(s, environment::dense_capture(&mut stage, values, len, 0, ()));
-            deliver::<D>(s, word)
-        }
-        FIELD => {
-            let mut stage = StencilStage::from_hole(1);
-            let record = word_at(payload, JS_STEP_LOOP_ENTRY);
-            let offset = stage_site(&mut stage);
-            deliver::<D>(s, entry::entry_word(&mut stage, record, offset))
-        }
-        ARRAY => {
-            let mut stage = StencilStage::from_hole(0);
-            let base = array_word::<1>(&s);
-            if value::is_direct_array(&mut stage, base) { Out::Next(s) } else { Out::Exit(s) }
-        }
-        INDEX => {
-            let index = need!(s, index_of::<B, 2>(&s));
-            // The array word is hole 1; an entry row's record offset is hole 1 too.
-            let (values, length, _) = need!(s, backing::<ENTRY, 1, false>(&s, payload));
-            let mut stage = StencilStage::from_hole(3);
-            let (_, word) = need!(s, elements::dense_element(&mut stage, values, length, u64::from(index as u32), ()));
-            deliver::<D>(s, word)
-        }
-        _ => {
-            // STORE: the array is hole 0, the value hole 1, the index hole 2.
-            let index = need!(s, index_of::<B, 2>(&s));
-            let word = need!(s, number_word::<A, 1>(&s));
-            let (values, length, _) = need!(s, backing::<ENTRY, 0, true>(&s, payload));
-            let mut stage = StencilStage::from_hole(3);
-            let (address, old) = need!(s, elements::dense_element(&mut stage, values, length, u64::from(index as u32), ()));
-            elements::replace_element(&mut stage, values, address, old, word);
-            Out::Next(s)
-        }
+        CAPTURE_ROW => capture_row::<D>(s, payload),
+        FIELD_ROW => field_row::<D>(s, payload),
+        ARRAY_ROW => array_row(s),
+        INDEX_ROW => index_row::<ENTRY, D, B>(s, payload),
+        _ => store_row::<ENTRY, A, B>(s, payload),
     }
 }

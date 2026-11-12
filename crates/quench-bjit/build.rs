@@ -15,6 +15,44 @@ const R_X86_64_PLT32: u32 = 4;
 const R_X86_64_32: u32 = 10;
 const R_X86_64_32S: u32 = 11;
 
+// ELF64 layout: header, section header and symbol/relocation entry fields, in bytes.
+const ELF_MAGIC: &[u8] = b"\x7fELF";
+const CLASS_AT: usize = 4;
+const DATA_AT: usize = 5;
+const CLASS_64: u8 = 2;
+const LITTLE_ENDIAN: u8 = 1;
+const SECTION_TABLE_AT: usize = 0x28;
+const SECTION_ENTRY_AT: usize = 0x3a;
+const SECTION_COUNT_AT: usize = 0x3c;
+const SECTION_KIND: usize = 4;
+const SECTION_OFFSET: usize = 0x18;
+const SECTION_SIZE: usize = 0x20;
+const SECTION_LINK: usize = 0x28;
+const SECTION_INFO: usize = 0x2c;
+const SYMTAB: u32 = 2;
+const RELA: u32 = 4;
+const SYMBOL_SIZE: usize = 24;
+const SYMBOL_INFO: usize = 4;
+const SYMBOL_SECTION: usize = 6;
+const SYMBOL_VALUE: usize = 8;
+const RELA_SIZE: usize = 24;
+const RELA_INFO: usize = 8;
+const RELA_ADDEND: usize = 16;
+const SYMBOL_FUNCTION: u8 = 2;
+const SYMBOL_GLOBAL: u8 = 1;
+const SYMBOL_KIND_MASK: u8 = 0xf;
+const SYMBOL_BIND_SHIFT: u32 = 4;
+const SYMBOL_INDEX_SHIFT: u32 = 32;
+const RELOC_KIND_MASK: u64 = 0xffff_ffff;
+const U16_BYTES: usize = 2;
+const U32_BYTES: usize = 4;
+const U64_BYTES: usize = 8;
+const EXIT_PREFIX: usize = 4;
+const EXIT_BASE: u32 = 2;
+const ABS32: u8 = 0;
+const SUCCESSOR: u8 = 1;
+const ABS64: u8 = 2;
+
 struct Section {
     kind: u32,
     offset: usize,
@@ -29,13 +67,13 @@ struct Elf<'a> {
 }
 
 fn u16_at(data: &[u8], at: usize) -> usize {
-    u16::from_le_bytes(data[at..at + 2].try_into().unwrap()) as usize
+    u16::from_le_bytes(data[at..at + U16_BYTES].try_into().unwrap()) as usize
 }
 fn u32_at(data: &[u8], at: usize) -> u32 {
-    u32::from_le_bytes(data[at..at + 4].try_into().unwrap())
+    u32::from_le_bytes(data[at..at + U32_BYTES].try_into().unwrap())
 }
 fn u64_at(data: &[u8], at: usize) -> u64 {
-    u64::from_le_bytes(data[at..at + 8].try_into().unwrap())
+    u64::from_le_bytes(data[at..at + U64_BYTES].try_into().unwrap())
 }
 fn c_string(data: &[u8], at: usize) -> String {
     let end = data[at..].iter().position(|b| *b == 0).expect("terminated string");
@@ -44,18 +82,18 @@ fn c_string(data: &[u8], at: usize) -> String {
 
 impl<'a> Elf<'a> {
     fn parse(data: &'a [u8]) -> Self {
-        assert!(data.starts_with(b"\x7fELF") && data[4] == 2 && data[5] == 1, "an ELF64 little-endian object");
-        let (table, entry, count) = (u64_at(data, 0x28) as usize, u16_at(data, 0x3a), u16_at(data, 0x3c));
+        assert!(data.starts_with(ELF_MAGIC) && data[CLASS_AT] == CLASS_64 && data[DATA_AT] == LITTLE_ENDIAN, "an ELF64 little-endian object");
+        let (table, entry, count) = (u64_at(data, SECTION_TABLE_AT) as usize, u16_at(data, SECTION_ENTRY_AT), u16_at(data, SECTION_COUNT_AT));
         let header = |k: usize| table + k * entry;
         let sections = (0..count)
             .map(|k| {
                 let at = header(k);
                 Section {
-                    kind: u32_at(data, at + 4),
-                    offset: u64_at(data, at + 0x18) as usize,
-                    size: u64_at(data, at + 0x20) as usize,
-                    link: u32_at(data, at + 0x28) as usize,
-                    info: u32_at(data, at + 0x2c) as usize,
+                    kind: u32_at(data, at + SECTION_KIND),
+                    offset: u64_at(data, at + SECTION_OFFSET) as usize,
+                    size: u64_at(data, at + SECTION_SIZE) as usize,
+                    link: u32_at(data, at + SECTION_LINK) as usize,
+                    info: u32_at(data, at + SECTION_INFO) as usize,
                 }
             })
             .collect();
@@ -64,12 +102,12 @@ impl<'a> Elf<'a> {
 
     /// Every symbol: (name, section index, value, info byte).
     fn symbols(&self) -> Vec<(String, usize, usize, u8)> {
-        let symtab = self.sections.iter().find(|s| s.kind == 2).expect("a symbol table");
+        let symtab = self.sections.iter().find(|s| s.kind == SYMTAB).expect("a symbol table");
         let strings = &self.sections[symtab.link];
-        (0..symtab.size / 24)
+        (0..symtab.size / SYMBOL_SIZE)
             .map(|k| {
-                let at = symtab.offset + k * 24;
-                (c_string(self.data, strings.offset + u32_at(self.data, at) as usize), u16_at(self.data, at + 6), u64_at(self.data, at + 8) as usize, self.data[at + 4])
+                let at = symtab.offset + k * SYMBOL_SIZE;
+                (c_string(self.data, strings.offset + u32_at(self.data, at) as usize), u16_at(self.data, at + SYMBOL_SECTION), u64_at(self.data, at + SYMBOL_VALUE) as usize, self.data[at + SYMBOL_INFO])
             })
             .collect()
     }
@@ -77,18 +115,18 @@ impl<'a> Elf<'a> {
 
 /// `jmp rel32` and `jcc rel32` are the only transfers a row may make through a relocation.
 fn check_transfer(row: &str, code: &[u8], at: usize) {
-    let jmp = code[at - 1] == 0xe9;
-    let jcc = at >= 2 && code[at - 2] == 0x0f && (0x80..0x90).contains(&code[at - 1]);
+    let before = &code[..at];
+    let jmp = matches!(before, [.., 0xe9]);
+    let jcc = matches!(before, [.., 0x0f, 0x80..=0x8f]);
     assert!(jmp || jcc, "stencil {row}: relocation at {at} is not a jmp or jcc (a `call`?)");
 }
 
 /// Every file whose change must recompile the stencils: the stencil sources and the runtime's
 /// staged rows they include, and nothing else.
-const SOURCES: [&str; 15] = [
-    "stencils/rows.rs", "stencils/heap_rows.rs", "stencils/facade.rs", "stencils/layout.rs", "stencils/library.rs", "stencils/numeric.rs", "stencils/stage.rs",
-    "stencils/staged.rs", "../quench-runtime/src/staged/stage.rs", "../quench-runtime/src/staged/value.rs",
+const SOURCES: [&str; 9] = [
+    "stencils", "../quench-runtime/src/staged/stage.rs", "../quench-runtime/src/staged/value.rs",
     "../quench-runtime/src/staged/object.rs", "../quench-runtime/src/staged/elements.rs",
-    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "build.rs",
+    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "build.rs", "src/numeric.rs",
 ];
 
 fn main() {
@@ -126,12 +164,12 @@ fn stencil_table(data: &[u8]) -> String {
     let elf = Elf::parse(data);
     let symbols = elf.symbols();
     let mut rows: Vec<(String, String)> = Vec::new();
-    for (name, section, value, _) in symbols.iter().filter(|s| s.3 & 0xf == 2 && s.3 >> 4 == 1 && s.1 != 0 && !s.0.starts_with("_R")) {
+    for (name, section, value, _) in symbols.iter().filter(|s| s.3 & SYMBOL_KIND_MASK == SYMBOL_FUNCTION && s.3 >> SYMBOL_BIND_SHIFT == SYMBOL_GLOBAL && s.1 != 0 && !s.0.starts_with("_R")) {
         assert_eq!(*value, 0, "{name}: one function per section");
         let section_data = &elf.sections[*section];
         let code = &data[section_data.offset..section_data.offset + section_data.size];
         let returns = name.starts_with("leave_");
-        assert!(returns || !code.contains(&0xc3) || !ends_with_ret(code), "stencil {name} ends with `ret`");
+        assert!(returns || !ends_with_ret(code), "stencil {name} ends with `ret`");
         let relocs = relocations(&elf, &symbols, data, name, *section, code);
         rows.push((name.clone(), format!("    RawStencil {{ name: {name:?}, code: &{code:?}, relocs: &{relocs:?} }},\n")));
     }
@@ -143,13 +181,13 @@ fn stencil_table(data: &[u8]) -> String {
 /// The relocations of one row as (offset, class, index, addend).
 fn relocations(elf: &Elf, symbols: &[(String, usize, usize, u8)], data: &[u8], name: &str, section: usize, code: &[u8]) -> Vec<(u16, u8, u8, i32)> {
     let mut relocs = Vec::new();
-    for rela in elf.sections.iter().filter(|s| s.kind == 4 && s.info == section) {
-        for k in 0..rela.size / 24 {
-            let at = rela.offset + k * 24;
-            let (offset, info, addend) = (u64_at(data, at) as usize, u64_at(data, at + 8), u64_at(data, at + 16) as i64);
-            let (symbol, kind) = (&symbols[(info >> 32) as usize].0, (info & 0xffff_ffff) as u32);
+    for rela in elf.sections.iter().filter(|s| s.kind == RELA && s.info == section) {
+        for k in 0..rela.size / RELA_SIZE {
+            let at = rela.offset + k * RELA_SIZE;
+            let (offset, info, addend) = (u64_at(data, at) as usize, u64_at(data, at + RELA_INFO), u64_at(data, at + RELA_ADDEND) as i64);
+            let (symbol, kind) = (&symbols[(info >> SYMBOL_INDEX_SHIFT) as usize].0, (info & RELOC_KIND_MASK) as u32);
             let (class, index) = hole_of(name, symbol, kind);
-            if class == 1 {
+            if class == SUCCESSOR {
                 check_transfer(name, code, offset);
             }
             relocs.push((u16::try_from(offset).expect("a stencil under 64 KiB"), class, u8::try_from(index).expect("a small hole index"), i32::try_from(addend).expect("a small addend")));
@@ -159,7 +197,7 @@ fn relocations(elf: &Elf, symbols: &[(String, usize, usize, u8)], data: &[u8], n
 }
 
 fn ends_with_ret(code: &[u8]) -> bool {
-    code.last() == Some(&0xc3)
+    matches!(code.last(), Some(0xc3))
 }
 
 /// The class (0: absolute 32-bit field, 1: pc-relative 32-bit successor, 2: absolute 64-bit) and
@@ -168,17 +206,17 @@ fn ends_with_ret(code: &[u8]) -> bool {
 fn hole_of(row: &str, symbol: &str, kind: u32) -> (u8, u32) {
     let rest = symbol.strip_prefix("HOLE_").unwrap_or_else(|| panic!("stencil {row}: relocation against {symbol}, not a hole"));
     let class = match kind {
-        R_X86_64_32 | R_X86_64_32S => 0,
-        R_X86_64_PC32 | R_X86_64_PLT32 => 1,
-        R_X86_64_64 => 2,
+        R_X86_64_32 | R_X86_64_32S => ABS32,
+        R_X86_64_PC32 | R_X86_64_PLT32 => SUCCESSOR,
+        R_X86_64_64 => ABS64,
         other => panic!("stencil {row}: relocation kind {other}"),
     };
     let number = |digits: &str| digits.parse::<u32>().unwrap_or_else(|_| panic!("stencil {row}: bad hole {symbol}"));
     match (class, rest) {
-        (1, "NEXT") => (1, 0),
-        (1, "TAKEN") => (1, 1),
-        (1, exit) if exit.starts_with("EXIT") => (1, 2 + number(&exit[4..])),
-        (_, value) if value.starts_with('V') && class != 1 => (class, number(&value[1..])),
+        (SUCCESSOR, "NEXT") => (SUCCESSOR, 0),
+        (SUCCESSOR, "TAKEN") => (SUCCESSOR, 1),
+        (SUCCESSOR, exit) if exit.starts_with("EXIT") => (SUCCESSOR, EXIT_BASE + number(&exit[EXIT_PREFIX..])),
+        (_, value) if value.starts_with('V') && class != SUCCESSOR => (class, number(&value[1..])),
         _ => panic!("stencil {row}: hole {symbol} used in the wrong way"),
     }
 }
