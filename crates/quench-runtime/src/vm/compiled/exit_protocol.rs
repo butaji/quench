@@ -1,8 +1,8 @@
 //! The exit protocol: how native code says where and why it left, written once.
 //!
-//! A run ends with a status and a result word. `LaneExit::read` (lane bodies) and `read_region`
-//! (loop regions and bare stencil regions, whose status carries no leave) are the only decoders of that
-//! pair, for lane bodies, loop regions and bare stencil regions alike; `LaneExit::word` is
+//! A run ends with a status and a result word. `LaneExit::read` is the only decoder of that
+//! pair, for lane bodies, loop regions and bare stencil regions alike (a leave's status is
+//! `NATIVE_JS_STOPPED`, entry thunks of stencil regions included); `LaneExit::word` is
 //! the only encoder of a leave word, for every tier that emits one. A leave word holds its
 //! `ExitKind` in its top bits and the leave's place below: a caller PC, or an inlined frame
 //! and its callee PC. `ExitTable` interns, per compiled unit, each leave's `ExitSig` (the
@@ -67,30 +67,17 @@ impl LaneExit {
         }
     }
 
-    /// How a run that completed its activation or was terminated ended, by its status alone.
-    fn completion(status: u32, word: u64, returned_pc: impl FnOnce() -> usize) -> Option<Self> {
-        match status {
-            _ if i64::from(status) == TERMINATED_STATUS => Some(Self::Terminated),
-            LANE_BODY_RETURNED => Some(Self::Returned { pc: returned_pc(), value: Value::from_bits(word) }),
-            _ => None,
-        }
-    }
-
-    /// How a lane body that returned `status` and wrote `word` ended. `returned_pc` names the
-    /// record that completes the activation, read only then.
+    /// How a native run that returned `status` and wrote `word` ended: the one reader of the
+    /// result. `returned_pc` names the record that completes the activation, read only then.
     pub(super) fn read(status: u32, word: u64, returned_pc: impl FnOnce() -> usize) -> Self {
-        Self::completion(status, word, returned_pc).unwrap_or_else(|| match status {
+        match status {
+            _ if i64::from(status) == TERMINATED_STATUS => Self::Terminated,
+            LANE_BODY_RETURNED => Self::Returned { pc: returned_pc(), value: Value::from_bits(word) },
             NATIVE_JS_STOPPED => Self::decode(word),
             _ if status >= JS_GENERAL_RETURN_STATUS_BASE => Self::At((status - JS_GENERAL_RETURN_STATUS_BASE) as usize),
             // Dispatch reaches an invalid PC only before any instruction ran.
             _ => Self::At(0),
-        })
-    }
-
-    /// How a loop region's run ended. A region's status carries no leave (a stencil region's
-    /// entry thunk returns none), so its word is the leave unless the run completed or terminated.
-    pub(super) fn read_region(status: u32, word: u64, returned_pc: impl FnOnce() -> usize) -> Self {
-        Self::completion(status, word, returned_pc).unwrap_or_else(|| Self::decode(word))
+        }
     }
 
     /// Whether a leave at a caller PC is one of `range`'s (a loop's PCs); other leaves are
@@ -266,14 +253,13 @@ mod tests {
         assert!(matches!(returned, LaneExit::Returned { pc: 5, .. }));
     }
 
-    /// A stencil region's entry thunk returns status 0 with the leave in the word.
+    /// Every producer of a leave word stops with `NATIVE_JS_STOPPED` (the stencil entry thunks
+    /// return it, `stencil_layout_matches`), which the one reader decodes.
     #[test]
-    fn a_region_leave_is_its_word_whatever_its_status() {
+    fn a_leave_status_decodes_its_word() {
         for exit in EXITS {
-            assert_eq!(LaneExit::read_region(0, exit.word(), || unreachable!()), exit);
-            assert_eq!(LaneExit::read_region(NATIVE_JS_STOPPED, exit.word(), || unreachable!()), exit);
+            assert_eq!(LaneExit::read(NATIVE_JS_STOPPED, exit.word(), || unreachable!()), exit);
         }
-        assert_eq!(LaneExit::read_region(TERMINATED_STATUS as u32, 0, || unreachable!()), LaneExit::Terminated);
-        assert!(matches!(LaneExit::read_region(LANE_BODY_RETURNED, Value::UNDEFINED.to_bits(), || 5), LaneExit::Returned { pc: 5, .. }));
+        assert_eq!(LaneExit::read(0, LaneExit::Entry.word(), || unreachable!()), LaneExit::At(0), "status 0 is no leave");
     }
 }

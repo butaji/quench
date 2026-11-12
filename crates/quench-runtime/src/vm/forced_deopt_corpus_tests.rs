@@ -27,7 +27,7 @@ fn forced_deopt_corpus_matches_the_interpreter() {
     assert!(guards_total > 0, "the corpus compiled no guard");
 }
 
-/// A stencil region leaves with status 0 and its leave in the result word (`read_region`): the
+/// A stencil region leaves with `NATIVE_JS_STOPPED` and its leave in the result word: the
 /// program whose forced guards 9 and 17 once read as a leave at PC 0.
 const STENCIL_LEAVE_SEED: u64 = 0xf9d8_02c6_6f7c_6717;
 

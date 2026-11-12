@@ -8,8 +8,9 @@
 //! context to r13 and loads the frame's window of registers (`staged::frame::WINDOW`) into r12
 //! (the row convention), calls the first row
 //! (`HOLE_NEXT`), stores the word the chain returned through the result pointer and returns
-//! status 0.
+//! status `NATIVE_JS_STOPPED`, the status of every run that leaves with a word.
 
+use crate::layout::NATIVE_JS_STOPPED;
 use crate::staged::frame;
 use crate::words::HOLE_V0;
 
@@ -40,10 +41,11 @@ pub unsafe extern "C" fn entry_thunk() {
         "pop r12",
         "pop rbx",
         "pop rbp",
-        "xor eax, eax",
+        "mov eax, {stopped}",
         "ret",
         first = sym HOLE_NEXT,
         window = const frame::WINDOW,
+        stopped = const NATIVE_JS_STOPPED,
     )
 }
 

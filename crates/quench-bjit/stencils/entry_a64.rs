@@ -7,8 +7,9 @@
 //! convention is named here. Only `leave_pop` is assembly: it pops the PC an exit stub pushed
 //! (`quench_bjit::stub`) into x0, the register AAPCS64 and `preserve_none` return a word in.
 //!
-//! Entry ABI: (x0 = context, x3 = the frame record, x4 = result pointer), status 0 in w0.
+//! Entry ABI: (x0 = context, x3 = the frame record, x4 = result pointer), status `NATIVE_JS_STOPPED` in w0.
 
+use crate::layout::NATIVE_JS_STOPPED;
 use crate::staged::frame;
 use crate::words::hole64;
 use crate::Row;
@@ -29,7 +30,7 @@ pub unsafe extern "C" fn entry_thunk(ctx: usize, _unused0: usize, _unused1: usiz
         let window = ((frame + frame::WINDOW) as *const usize).read();
         result.write(first(window, ctx, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0));
     }
-    0
+    NATIVE_JS_STOPPED
 }
 
 /// Returns hole 0 (a word the region leaves with: a PC or a lane exit).
