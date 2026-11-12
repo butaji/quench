@@ -8513,11 +8513,13 @@ fn lane_loop_entry<H: Host>(
         // its entry value only to seed its representation: a receiver it does not answer for
         // now (a null child, another shape), or a value its Number representation does not
         // hold, seeds the representation's own placeholder.
-        let value = lane_region_field(cx, r, field, |index| entry.field_value(region, index))
+        let blind = region.seeds_without_receiver(index);
+        let value = (!blind).then(|| lane_region_field(cx, r, field, |index| entry.field_value(region, index)))
+            .flatten()
             .filter(|value| field.tagged || !region.is_dynamic_field(index) || value.as_number().is_some())
             .or_else(|| {
                 (region.is_dynamic_field(index)
-                    && vm.field_cache_entry(field.cache_site).receiver != super::NO_FIELD_RECEIVER)
+                    && (blind || vm.field_cache_entry(field.cache_site).receiver != super::NO_FIELD_RECEIVER))
                     .then(|| if field.tagged { Value::UNDEFINED } else { Value::integer(0) })
             })?;
         entry.push_field(value, field.tagged)?;
