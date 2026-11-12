@@ -14,6 +14,10 @@ use std::sync::{Mutex, OnceLock};
 
 #[cfg(any(feature = "jit", feature = "aot"))]
 mod select;
+#[cfg(any(feature = "jit", feature = "aot"))]
+pub(super) mod relocatable_code;
+#[cfg(any(feature = "jit", feature = "aot"))]
+pub(super) mod symbol_words;
 mod worker;
 pub(super) use worker::{Pending, run_in_background};
 
@@ -102,19 +106,34 @@ impl CompileLevel {
 /// largest bodies' tests). `unwind_info=false` measured nothing.
 const JS_JIT_OPT_LEVEL: &str = "speed";
 
-/// The address of the symbol `(namespace, key)`, a relocation the loader patches: the one form
-/// every position-independent constant takes (stencil holes, `lane_region::relocs`).
+/// Declares the symbol `(namespace, key)` in `function`, a relocation the loader patches: the
+/// one form every position-independent constant takes (stencil holes, `lane_region::relocs`).
 #[cfg(any(feature = "jit", feature = "aot"))]
-pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, ty: cranelift_codegen::ir::Type, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
-    use cranelift_codegen::ir::{self, InstBuilder};
-    let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(namespace, key));
-    let symbol = builder.create_global_value(ir::GlobalValueData::Symbol {
+fn declare_symbol(function: &mut cranelift_codegen::ir::Function, namespace: u32, key: u32) -> cranelift_codegen::ir::GlobalValue {
+    use cranelift_codegen::ir;
+    let name = function.declare_imported_user_function(ir::UserExternalName::new(namespace, key));
+    function.create_global_value(ir::GlobalValueData::Symbol {
         name: ir::ExternalName::user(name),
         offset: ir::immediates::Imm64::new(0),
         colocated: false,
         tls: false,
-    });
+    })
+}
+
+/// The address of symbol `(namespace, key)`, as a value of type `ty` built at `builder`.
+#[cfg(any(feature = "jit", feature = "aot"))]
+pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, ty: cranelift_codegen::ir::Type, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
+    use cranelift_codegen::ir::InstBuilder;
+    let symbol = declare_symbol(builder.func, namespace, key);
     builder.ins().symbol_value(ty, symbol)
+}
+
+/// The address of symbol `(namespace, key)` as a 64-bit value built at `cursor`.
+#[cfg(any(feature = "jit", feature = "aot"))]
+pub(super) fn symbol_in(cursor: &mut cranelift_codegen::cursor::FuncCursor<'_>, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
+    use cranelift_codegen::ir::{InstBuilder, types};
+    let symbol = declare_symbol(cursor.func, namespace, key);
+    cursor.ins().symbol_value(types::I64, symbol)
 }
 
 /// The executable-memory ISA of every JavaScript JIT tier.
