@@ -20,16 +20,16 @@ pub(super) struct Catch {
 /// What a handler's entry settles, which native code does as `Vm::exception_handler_target` does.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Bind {
-    /// A catch that binds nothing.
+    /// A catch that binds nothing, with no scope to unwind.
     Nothing,
     /// A binding promoted to a register (`ThrownValueSlot::Register`).
     Register(Register),
     /// A frame local no environment owns, stored where the interpreter stores it.
     Local(u16),
-    /// A local the frame's environment owns, which only the frame's own helper settles
-    /// (`dispatch_fast::lane_handler_edge`): a captured frame gives it a fresh environment per
-    /// entry.
-    Frame,
+    /// Frame state only the frame's own helper settles (`dispatch_fast::lane_handler_edge`): the
+    /// `with` scopes the exception leaves, and a local the frame's environment owns, which a
+    /// captured frame gives a fresh environment per entry; the promoted register, if any.
+    Frame(Option<Register>),
 }
 
 /// The edges out of a native call: its helper path, its completion, and the callee's exception.
@@ -46,8 +46,9 @@ fn is_own_record(unit: &Unit, pc: usize) -> bool {
     unit.origins.get(pc) == Some(&Origin::Caller(pc as u32))
 }
 
-/// Whether an exception of `function` unwinds through native code alone: a generator, an async
-/// function and a dynamic scope have state only the interpreter's unwinding settles.
+/// Whether an exception no handler of `function` covers unwinds through native code alone: a
+/// generator or async function ends in its promise or generator state, and a dynamic scope in
+/// the `with` scopes of its frame, which only the interpreter's unwinding settles.
 fn unwinds_natively(function: &Function) -> bool {
     !(function.is_generator || function.is_async || function.has_dynamic_scope_access())
 }
@@ -83,6 +84,9 @@ struct Admission<'a> {
     function: &'a Function,
     unit: &'a Unit,
     completion: Completion,
+    /// Whether the function may hold `with` scopes an exception leaves (a `with` statement,
+    /// an inherited scope, names resolved at run time).
+    scoped: bool,
 }
 
 impl Admission<'_> {
@@ -94,21 +98,21 @@ impl Admission<'_> {
         !(plan.registers_only || plan.environment_activation)
     }
 
-    /// Whether `handler`'s entry settles frame state beyond native stores: a local the frame's
-    /// environment owns once captured, or a local a body cannot reach (only a loop region
-    /// reads the activation's locals, `JsStepDispatch::native_locals`).
-    fn settles_frame(&self, local: Option<u16>) -> bool {
-        local.is_some_and(|slot| self.completion == Completion::Body || self.function.local_slot_uses_environment(usize::from(slot)))
+    /// Whether `handler`'s entry settles frame state beyond native stores: `with` scopes the
+    /// exception may leave, a local the frame's environment owns once captured, or a local a
+    /// body cannot reach (only a loop region reads the activation's locals,
+    /// `JsStepDispatch::native_locals`).
+    fn settles_frame(&self, handler: Handler, local: Option<u16>) -> bool {
+        handler.with_depth != 0 || self.scoped
+            || local.is_some_and(|slot| self.completion == Completion::Body || self.function.local_slot_uses_environment(usize::from(slot)))
     }
 
     /// How native code enters `handler`, `None` for one it cannot serve: frame state in a
     /// function that may run frameless.
     fn bind(&self, handler: Handler) -> Option<Bind> {
-        // A `with` scope to unwind stays with the interpreter's unwinding.
-        if handler.with_depth != 0 { return None; }
         let (register, local) = slot_parts(self.unit, handler)?;
-        if self.settles_frame(local) {
-            return self.frame_bound().then_some(Bind::Frame);
+        if self.settles_frame(handler, local) {
+            return self.frame_bound().then_some(Bind::Frame(register));
         }
         Some(match (register, local) {
             (Some(register), _) => Bind::Register(register),
@@ -124,10 +128,10 @@ impl Admission<'_> {
 /// the interpreter raises exactly, and a call is made by the lane (`Lowering::raises_from`).
 pub(super) fn catch_edges(program: &ResidualProgram, function: &Function, unit: &Unit, coverage: Coverage, completion: Completion) -> BTreeMap<usize, Catch> {
     let mut catches = BTreeMap::new();
-    if !completion.status_and_pc() || !unwinds_natively(function) || !unit.frames.is_empty() || function.handlers.is_empty() {
+    if !completion.status_and_pc() || !unit.frames.is_empty() || function.handlers.is_empty() {
         return catches;
     }
-    let admission = Admission { program, function, unit, completion };
+    let admission = Admission { program, function, unit, completion, scoped: !function.own_names_resolve_statically(program) };
     for (pc, instruction) in unit.instructions.iter().enumerate() {
         if !raising_instruction(*instruction, unit.registers)
             || !coverage.lowered(pc) || !is_own_record(unit, pc) { continue; }
@@ -225,11 +229,12 @@ impl Lowering<'_, '_> {
                 let address = super::frame::local_slot_address(&mut self.builder, self.payload, slot);
                 self.ins().store(MemFlagsData::trusted(), value, address, 0);
             }
-            Bind::Frame => {
+            Bind::Frame(register) => {
                 let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
                 let record = self.ins().iconst(types::I64, pc as i64);
                 self.helper_call(LaneHelper::HandlerEdge, &[context, record, value]);
                 self.allocated(state);
+                if let Some(register) = register { self.set_tagged(state, register, value); }
             }
         }
     }

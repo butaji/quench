@@ -326,3 +326,72 @@ fn a_catch_binding_a_closure_captures_is_fresh_per_entry() {
     "#;
     wrapped_matches_interpreter(called, "run");
 }
+
+/// A throw inside a `with` statement caught outside it leaves the `with` scope at the handler
+/// (a name after the catch no longer reads the object), and a catch inside the statement keeps
+/// it.
+#[test]
+fn a_catch_unwinds_the_with_scopes_it_leaves() {
+    let outside = r#"
+      var o = { x: 5 };
+      function run(n) {
+        let total = 0;
+        for (let i = 0; i < n; i++) {
+          try { with (o) { if ((i & 1) === 0) throw x + i; total += x; } }
+          catch (e) { total += e + (typeof x === 'undefined' ? 1000 : 0); }
+        }
+        return total;
+      }
+      let result = 0;
+      for (let repeat = 0; repeat < 256; repeat++) result = run(48);
+      print(String(result));
+    "#;
+    wrapped_matches_interpreter(outside, "run");
+    let inside = r#"
+      var o = { x: 7 };
+      function boom(k) { if (k % 3 === 0) throw k; return k; }
+      function run(n) {
+        let total = 0;
+        for (let i = 0; i < n; i++) {
+          with (o) {
+            try { total += boom(i); }
+            catch (e) { total += e + x; }
+          }
+        }
+        return total;
+      }
+      let result = 0;
+      for (let repeat = 0; repeat < 256; repeat++) result = run(48);
+      print(String(result));
+    "#;
+    wrapped_matches_interpreter(inside, "run");
+}
+
+/// A catch inside a generator body, of a `throw` and of a call's exception, serves from the
+/// generator's frame as it does in any function.
+#[test]
+fn a_catch_inside_a_generator_body_matches_the_interpreter() {
+    let source = r#"
+      function boom(k) { if (k % 4 === 0) throw k; return k; }
+      function* gen(n) {
+        let total = 0;
+        for (let i = 0; i < n; i++) {
+          try { if (i % 3 === 0) throw i; total += i; }
+          catch (e) { total += e * 2; }
+          try { total += boom(i); }
+          catch (f) { total += f * 3; }
+          yield total;
+        }
+        return total;
+      }
+      function run(n) {
+        let sum = 0;
+        for (const value of gen(n)) sum += value;
+        return sum;
+      }
+      let result = 0;
+      for (let repeat = 0; repeat < 256; repeat++) result = run(48);
+      print(String(result));
+    "#;
+    wrapped_matches_interpreter(source, "gen");
+}
