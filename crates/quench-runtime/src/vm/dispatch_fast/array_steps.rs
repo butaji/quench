@@ -290,7 +290,7 @@ pub(super) fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H
             // The callback's completed loops close nothing more.
             vm.lane_stack.drop_iterators_from(depth);
             // SAFETY: an activation runs, the innermost, at `depth`.
-            let window = unsafe { vm.lane_stack.activations.get_unchecked(depth) }.window;
+            let window = unsafe { vm.lane_stack.activations.get_unchecked(depth) }.window(vm.lane_stack.values.as_ptr());
             // SAFETY: the window the activation held, which its return left in place.
             let start = unsafe { lane_enter_array_step::<H, true>(cx, &step.entry, &step.iteration, element, index, window) };
             return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));

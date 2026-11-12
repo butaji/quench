@@ -21,7 +21,6 @@ fn activation(kinds: Kinds, index: usize) -> Activation {
         call: std::ptr::null(),
         caller_base: std::ptr::null(),
         caller_registers: Registers(std::ptr::null_mut()),
-        window: index * WASM_REGISTERS,
         caller_program: ProgramId::MAIN,
         kind: if wasm {
             ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: WASM_STORAGE_BYTES }
@@ -54,13 +53,14 @@ fn activation_storage_tracks_mixed_push_pop_and_empty_stack() {
             let bytes = if entry.script().is_some() { 0 } else { WASM_STORAGE_BYTES };
             expected += bytes;
             // SAFETY: capacity was reserved for the complete batch.
-            unsafe { stack.push_activation(entry) };
+            let at = stack.values.as_mut_ptr().wrapping_add(index * WASM_REGISTERS);
+            unsafe { stack.push_activation(entry, at) };
             assert_eq!(stack.wasm_storage_bytes, expected);
         }
         for index in (0..ACTIVATIONS).rev() {
             let entry = stack.pop_activation().unwrap();
             assert_eq!(entry.function, index as u32);
-            assert_eq!(entry.window, index * WASM_REGISTERS);
+            assert_eq!(entry.window(stack.values.as_ptr()), index * WASM_REGISTERS);
             assert_eq!(entry.caller_program, ProgramId::MAIN);
             let bytes = if entry.script().is_some() { 0 } else { WASM_STORAGE_BYTES };
             expected -= bytes;
@@ -85,7 +85,8 @@ mod measurements {
             let stack = black_box(&mut stack);
             for index in 0..ACTIVATIONS {
                 // SAFETY: each iteration starts empty and capacity holds this batch.
-                unsafe { stack.push_activation(activation(kinds, index)) };
+                let at = stack.values.as_mut_ptr().wrapping_add(index * WASM_REGISTERS);
+                unsafe { stack.push_activation(activation(kinds, index), at) };
             }
             black_box(stack.activations.as_slice());
             black_box(stack.wasm_storage_bytes);
