@@ -370,12 +370,20 @@ impl<W, P> Operation<W, P> {
             Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec => return Self::decode_value(instruction),
             Op::GetField | Op::Delete => return Self::decode_property(instruction),
             op if op.is_field_store() => return Self::decode_property(instruction),
-            Op::Construct if instruction.is_super_construct() => return spread::decode(instruction),
             Op::Call | Op::CallForwardingArguments | Op::Construct | Op::CallKnown | Op::CallMethod | Op::CallThisMethod =>
-                Self::Call(CallOperation::Site(Invocation::of(instruction, context)?)),
+                return Self::decode_call(instruction, context),
             Op::Return => Self::Return { source: instruction.register_a() },
             _ => return names::decode(instruction),
         })
+    }
+
+    /// The call operations of `decode`: a call or construction through its forms (`Invocation`),
+    /// except `super(...)`, whose arguments the VM gathers (`spread`).
+    fn decode_call(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+        if instruction.op() == Op::Construct && instruction.is_super_construct() {
+            return spread::decode(instruction);
+        }
+        Some(Self::Call(CallOperation::Site(Invocation::of(instruction, context)?)))
     }
 
     /// The property operations of `decode`: a plain named read, a named store and `delete`.

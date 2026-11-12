@@ -18,12 +18,11 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Call(CallOperation::Site(site)) => super::invoke::invoke(stage, frame, frame.miss(), site),
         Operation::Return { source } => super::invoke::ret(stage, frame, source),
         Operation::Call(operation) => super::protocol::step(stage, frame.miss(), operation),
-        Operation::SpreadCall { .. } | Operation::SuperCall { .. } => super::spread::step(stage, frame, operation),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } => register_step(stage, frame, operation),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::Protocol { .. }
-            | Operation::ForInNext { .. } => super::names::step(stage, frame, operation),
+            | Operation::ForInNext { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. } => super::names::step(stage, frame, operation),
         heap => super::heap::heap_step(stage, frame, heap),
     }
 }

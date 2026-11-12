@@ -129,6 +129,14 @@ impl<W, P> Operation<W, P> {
             Self::GlobalWrite { source, atom, site, initialize } =>
                 (CallOut::GlobalWrite { source, atom, site, initialize }, None),
             Self::GlobalTypeof { destination, atom, site } => (CallOut::GlobalTypeof { atom, site }, Some(destination)),
+            _ => return self.call_out_of_call(),
+        })
+    }
+
+    /// The VM operation of a call row the VM gathers the arguments of (`spread`), and the register it
+    /// defines; `None` for any other row.
+    fn call_out_of_call(&self) -> Option<(CallOut, Option<Register>)> {
+        Some(match *self {
             Self::SpreadCall { destination, callee, receiver, arguments, passing } =>
                 (CallOut::Spread { callee, receiver, arguments, passing }, Some(destination)),
             Self::SuperCall { destination, callee, arguments, passing } =>

@@ -135,24 +135,37 @@ impl Invocation {
     }
 
     fn operands(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Callee, Receiver, Arguments)> {
+        match instruction.op() {
+            Op::Call | Op::CallForwardingArguments => Self::call(instruction),
+            Op::CallKnown => Some(Self::known(instruction)),
+            Op::CallMethod | Op::CallThisMethod => Self::method(instruction, context),
+            Op::Construct => Self::construction(instruction),
+            _ => None,
+        }
+    }
+
+    /// A call through registers: the callee, receiver and a window of arguments; `None` for an
+    /// eval, which the host decides.
+    fn call(instruction: WideInstruction) -> Option<(Callee, Receiver, Arguments)> {
         let imm = instruction.imm();
-        Some(match instruction.op() {
-            Op::Call | Op::CallForwardingArguments if !instruction.direct_eval() && !instruction.parameter_eval() =>
-                (Callee::Register(instruction.register_b()), Receiver::Register(instruction.register_c()),
-                    Arguments::Window { first: ImmediateLayout::call_window_base(imm), count: ImmediateLayout::argument_count(imm) }),
-            Op::CallKnown => {
-                let window = instruction.call_window();
-                (Callee::Known(instruction.known_function_index()), Receiver::Undefined,
-                    Arguments::Window { first: window.base, count: window.count })
-            }
-            Op::CallMethod | Op::CallThisMethod => return Self::method(instruction, context),
-            Op::Construct if !instruction.is_super_construct() => match instruction.construct_arguments() {
-                ConstructArguments::Registers(window) => (Callee::Register(instruction.register_b()), Receiver::Allocated,
-                    Arguments::Window { first: window.base, count: window.count }),
-                ConstructArguments::Array(_) => return None,
-            },
-            _ => return None,
-        })
+        (!instruction.direct_eval() && !instruction.parameter_eval()).then(|| (Callee::Register(instruction.register_b()),
+            Receiver::Register(instruction.register_c()),
+            Arguments::Window { first: ImmediateLayout::call_window_base(imm), count: ImmediateLayout::argument_count(imm) }))
+    }
+
+    /// A call of a function the record names: no receiver, the window the record names.
+    fn known(instruction: WideInstruction) -> (Callee, Receiver, Arguments) {
+        let window = instruction.call_window();
+        (Callee::Known(instruction.known_function_index()), Receiver::Undefined, Arguments::Window { first: window.base, count: window.count })
+    }
+
+    /// A construction with its arguments in registers; `None` for `super(...)` and an array of arguments.
+    fn construction(instruction: WideInstruction) -> Option<(Callee, Receiver, Arguments)> {
+        match instruction.construct_arguments() {
+            ConstructArguments::Registers(window) if !instruction.is_super_construct() => Some((Callee::Register(instruction.register_b()),
+                Receiver::Allocated, Arguments::Window { first: window.base, count: window.count })),
+            _ => None,
+        }
     }
 
     /// A method call: the receiver and the method atom come from the method site, the arguments
