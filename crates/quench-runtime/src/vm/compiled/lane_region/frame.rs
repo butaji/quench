@@ -126,18 +126,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         (value, fact)
     }
 
-    /// A proven-slot write: the projection's arena address, with the miss edge its layout
-    /// guard uses.
-    #[inline(always)]
-    fn field_write(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, _ty: Type,
-        value: ir::Value, proof: EmitProof) -> Option<()> {
-        let EmitProof::Field(proof) = proof else { return None };
-        let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
-        let address = proof.arena_address(stage.builder, slot, miss)?;
-        stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
-        Some(())
-    }
-
     /// A dense element under the view proof; a hole or an index past the view continues at
     /// the proof's cold block, exactly as the lowering's cold path did.
     #[inline(always)]

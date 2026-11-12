@@ -911,11 +911,10 @@ pub(super) struct DenseArrayView {
     pub(super) uncounted: bool,
 }
 
-/// The emission proofs a staged value operation carries: a field projection or a dense
-/// array view with the cold block a hole or miss continues at.
+/// The emission proofs a staged value operation carries: a dense array view with the cold
+/// block a hole or miss continues at.
 #[derive(Clone, Copy)]
 pub(in crate::vm::compiled) enum EmitProof {
-    Field(object_slots::CheckedObject),
     Index { view: DenseArrayView, absent: ir::Block },
     TypedIndex { values: ir::Value, length: ir::Value, kind: ir::Value, absent: ir::Block }, Allocation { miss: ir::Block },
     Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block> }, FieldStoreMiss { miss: ir::Block },
@@ -1641,45 +1640,6 @@ fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value
     }
     let shifted = builder.ins().ishl_imm_u(int, i64::from(NARROW::CODE_SHIFT));
     builder.ins().bor_imm_u(shifted, i64::from(NARROW::INTEGER_FLAG))
-}
-
-/// The integer and direct-object cases of `Value::to_narrow_reference`.
-/// Other values and overflowing indices retain the shared store's fallback.
-fn emit_narrow_store_value(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    ty: typed_ir::Type, fallback: ir::Block) -> ir::Value {
-    if ty.is_subtype(typed_ir::Type::INT32) {
-        return emit_narrow_integer_write(builder, value, fallback, None);
-    }
-    use crate::value::NarrowLayout as N;
-    let joined = (!ty.is_direct_object_family()).then(|| {
-        let integer = builder.create_block();
-        let reference = builder.create_block();
-        let done = builder.create_block();
-        let result = builder.append_block_param(done, types::I32);
-        let is_integer = lane_region::is_int_tagged(builder, value);
-        builder.ins().brif(is_integer, integer, &[], reference, &[]);
-        builder.switch_to_block(integer);
-        let narrow = emit_narrow_integer_write(builder, value, fallback, None);
-        builder.ins().jump(done, &[ir::BlockArg::Value(narrow)]);
-        builder.switch_to_block(reference);
-        (done, result)
-    });
-    let upper = builder.ins().ushr_imm_u(value, i64::from(u32::BITS));
-    let direct = builder.ins().icmp_imm_u(IntCC::Equal, upper, (N::DIRECT_OBJECT_UPPER >> u32::BITS) as i64);
-    emit_js_guard(builder, direct, fallback);
-    let index = builder.ins().ireduce(types::I32, value);
-    let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, index, 1_i64 << N::INDEX_BITS);
-    emit_js_guard(builder, fits, fallback);
-    let shifted = builder.ins().ishl_imm_u(index, i64::from(N::INDEX_SHIFT));
-    let narrow = builder.ins().bor_imm_u(shifted, i64::from(N::DIRECT_OBJECT_CODE << N::CODE_SHIFT));
-    match joined {
-        Some((done, result)) => {
-            builder.ins().jump(done, &[ir::BlockArg::Value(narrow)]);
-            builder.switch_to_block(done);
-            result
-        }
-        None => narrow,
-    }
 }
 
 /// Binding time changes the table address, never the packed-value semantics.
@@ -14442,13 +14402,9 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
-        let fallback = builder.create_block();
-        let encoded = emit_narrow_store_value(&mut builder, value, typed_ir::Type::ANY, fallback);
-        let encoded = builder.ins().uextend(types::I64, encoded);
+        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None };
+        let encoded = crate::staged::store::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
-        builder.switch_to_block(fallback);
-        let rejected = builder.ins().iconst(types::I64, -1);
-        builder.ins().return_(&[rejected]);
         builder.seal_all_blocks();
         builder.finalize(isa.frontend_config());
         let memory = compile_native_function(function, &*isa, usize::MAX, CodeMemory::new).unwrap();
@@ -14460,9 +14416,7 @@ mod tests {
         values.extend([i32::MIN, -limit - 1, -limit, -1, 0, 1, limit - 1, limit, i32::MAX].map(Value::integer));
         values.extend([0, 1, (1 << N::INDEX_BITS) - 1, 1 << N::INDEX_BITS, u32::MAX].map(Value::direct_object));
         for value in values {
-            let admitted = value.as_int().is_some()
-                || value.to_bits() >> u32::BITS == N::DIRECT_OBJECT_UPPER >> u32::BITS;
-            let expected = admitted.then(|| value.to_narrow_reference()).flatten().map(u64::from).unwrap_or(u64::MAX);
+            let expected = value.to_narrow().map_or(u64::MAX, u64::from);
             assert_eq!(unsafe { encode(value.to_bits()) }, expected, "{value:?}");
         }
     }

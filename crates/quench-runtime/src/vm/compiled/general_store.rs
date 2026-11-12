@@ -54,16 +54,6 @@ fn emit_any(builder: &mut FunctionBuilder<'_>, flags: impl IntoIterator<Item = i
     flags.into_iter().fold(none, |held, flag| builder.ins().bor(held, flag))
 }
 
-/// Whether `bits` is a direct object or a nullish alternative of `slot`, a type that holds a
-/// direct object of any shape (`Type::is_any_object_slot`): a store of it widens nothing.
-pub(super) fn emit_holds_object_slot(builder: &mut FunctionBuilder<'_>, bits: ir::Value, slot: crate::typed_ir::Type) -> ir::Value {
-    use crate::{typed_ir::Type, ValueType};
-    let classes = [(StoreClass::DirectObject, Type::DIRECT_OBJECT_FAMILY), (StoreClass::Null, Type::language(ValueType::Null)),
-        (StoreClass::Undefined, Type::language(ValueType::Undefined))];
-    let holds: Vec<ir::Value> = classes.into_iter().filter(|(_, held)| held.is_subtype(slot)).map(|(class, _)| class.emit_holds(builder, bits)).collect();
-    emit_any(builder, holds)
-}
-
 /// Records on `site`'s entry the class of `value`, which a native-preserving helper store just
 /// wrote through it without widening its slot's representation, where the class proves
 /// every later store of it (`StoreClass`).

@@ -21,7 +21,7 @@ use crate::bytecode::Class;
 use super::*;
 use super::super::specializer::Specializer;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
-use super::object_slots::{CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable, PackedAccess};
+use super::object_slots::{CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable};
 use crate::typed_ir::Division;
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
@@ -50,9 +50,9 @@ use captures::RootedRead;
 #[path = "lane_region/bindings.rs"] mod bindings;
 #[path = "lane_region/frame.rs"] mod frame;
 #[path = "lane_region/frame_fields.rs"] mod frame_fields;
+#[path = "lane_region/frame_stores.rs"] mod frame_stores;
 #[path = "lane_region/field_plans.rs"] mod field_plans;
 #[path = "lane_region/headers.rs"] mod headers;
-#[path = "lane_region/polymorphic_stores.rs"] mod polymorphic_stores;
 #[path = "lane_region/hoisted_reads.rs"] mod hoisted_reads;
 #[path = "lane_region/field_reads.rs"] mod field_reads;
 #[path = "lane_region/number_domains.rs"] mod number_domains;
@@ -2257,7 +2257,7 @@ impl Lowering<'_, '_> {
             receiver_shapes.insert(field.shape, variable);
         }
         // A direct store of an atom needs a specialized run and no method cache naming it; a
-        // run that makes no call changes neither (`emit_js_own_field_set`, `store_field`).
+        // run that makes no call changes neither (`emit_js_own_field_set`, `Lowering::site_store`).
         let mut store_atoms = BTreeMap::new();
         let stored = instructions.iter().filter_map(|instruction| match instruction.op().class() {
             _ if instruction.op().is_field_store() => Some(instruction.atom_index()),
@@ -2397,7 +2397,7 @@ impl Lowering<'_, '_> {
                     let slot = binding.slot.read(&mut self.builder);
                     binding.slot = FieldSlot::Bound(slot);
                     // A slot whose writes the run does not admit leaves only at its stores
-                    // (`store_helper`): the rest of the run, which reads it by shape, holds.
+                    // (`EmitFrame::bound_store`): the rest of the run, which reads it by shape, holds.
                     if writes != Type::NEVER { binding.admitted = Some(self.field_writes_admitted(&mut binding, writes)); }
                     // The extra entry arithmetic pays for repeated receiver loads.
                     // A one-off access keeps its cheaper storage-plus-slot form.
@@ -4328,7 +4328,7 @@ impl Lowering<'_, '_> {
         let held = HeldRead { known: known.map(|field| field.value), ..HeldRead::default() };
         let value = self.field_value(state, (base, lookup), &parts, held, exit)?;
         if let Some((atom, site)) = sink {
-            self.store_field(state, sink_owner, atom, site, value, Type::ANY, exit)?;
+            self.sink_store(state, sink_owner, (atom, site), value, exit)?;
         }
         if let Some(record) = completes {
             self.return_value(record, value);
@@ -4407,23 +4407,12 @@ impl Lowering<'_, '_> {
         headers::object_header(&mut self.builder, &mut self.registers, state, (entry, self.payload), owner, read, exit)
     }
 
-    /// `owner`'s value: a register's, or the fixed `this`.
-    fn owner_bits(&mut self, state: &mut State, owner: Option<Register>) -> ir::Value {
-        let entry = self.entry.as_ref().expect("entry facts");
-        headers::owner_bits(&mut self.builder, &mut self.registers, state, entry, owner)
-    }
-
     fn set_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let source = instruction.register_a();
         if source >= self.unit.registers || instruction.writes_current_this() || instruction.returns_from_frame() {
             return None;
         }
-        let register = if let Some(register) = instruction.field_store_register() {
-            Some(register)
-        } else if let Some(super::lane_unit::Origin::Inlined { frame, .. }) = self.unit.origins.get(pc) {
-            Some(self.unit.frames[*frame].receiver)
-        } else { None };
-        if register.is_some_and(|register| register >= self.unit.registers) { return None; }
+        let register = self.store_owner(pc, instruction)?;
         let carried = match self.loop_fields.iter().find(|field| field.stores.contains(&pc)) {
             Some(field) => Some(*self.hoisted.get(&field.reads[0])?),
             None => None,
@@ -4432,85 +4421,97 @@ impl Lowering<'_, '_> {
         let carried_int = carried.filter(|read| read.representation == Representation::Int32)
             .map(|_| self.int(state, source, exit));
         let ty = state.values[usize::from(source)].value.ty;
-        let value = self.tagged(state, source);
+        let operation = crate::staged::Operation::SetField { value: source, base: register,
+            atom: instruction.atom_index(), site: instruction.cache_site_index() };
         // A store a previous body left at may add its property (`compiled::lane_field_add`),
         // which changes the object's shape and may move the property arena: every proof of
         // an object retires, as another register may name it, and `this`'s facts are read
         // again.
         if self.generic.contains(&pc) && self.completion.status_and_pc() {
-            self.named_store(state, (source, register), instruction, StorePlan::Add, exit)?;
+            self.store_step(state, operation, (StorePlan::Add, HeldRead::default()), exit)?;
             self.after_store(state, StoreJoin::Add);
             return Some(true);
         }
-        let projected = self.loop_stores.get(&pc).copied().filter(|slot|
-            ty.is_subtype(Type::INT32) && state.proofs.headers[state.header_index(register)]
-                .is_some_and(|header| header.record == slot.header.record));
-        if let Some(slot) = projected {
-            self.loop_slot_store(state, instruction, slot, (value, exit));
-        } else if let Some((arms, join)) = self.store_arms(instruction, ty) {
-            state.proofs.write_field(instruction.atom_index());
-            self.named_store(state, (source, register), instruction, StorePlan::of(&arms, join), exit)?;
-            self.after_store(state, join);
+        let (atom, site) = (instruction.atom_index(), instruction.cache_site_index());
+        let slot = self.projected_slot(state, pc, (register, ty));
+        if slot.is_some() {
+            state.proofs.write_field(atom);
+            self.store_step(state, operation, (StorePlan::Entry, HeldRead { slot, ..HeldRead::default() }), exit)?;
         } else {
-            self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, ty, exit)?;
+            self.site_store(state, operation, (atom, site, ty), exit)?;
         }
         if let Some(read) = carried {
-            self.builder.def_var(read.value, carried_int.unwrap_or(value));
-            #[cfg(test)] if read.representation == Representation::Int32 {
-                LOOP_INT32_PHIS.with(|count| count.set(count.get() + 1));
-            }
+            self.carry_store(state, source, (read, carried_int));
         }
         Some(true)
     }
 
-    /// The int32 `value` stored through the slot a loop's entry projected (`LoopStore`): a
-    /// packed object takes the narrow word, an arena object the full one, both without the
-    /// store barrier a verified integer never needs.
-    fn loop_slot_store(&mut self, state: &mut State, instruction: WideInstruction, slot: LoopStore,
-        (value, exit): (ir::Value, ir::Block)) {
-        #[cfg(test)] LOOP_SLOT_STORES.with(|count| count.set(count.get() + 1));
-        state.proofs.write_field(instruction.atom_index());
-        let packed = self.builder.create_block();
-        let arena = self.builder.create_block();
-        let done = self.builder.create_block();
-        self.ins().brif(slot.header.inline, packed, &[], arena, &[]);
-        self.builder.switch_to_block(packed);
-        #[cfg(test)] if slot.packed_range.is_some() { PACKED_RANGE_SITE.with(|site| {
-            if let Some((expected, count)) = site.get() && expected == instruction.cache_site_index() {
-                site.set(Some((expected, count + 1)));
-            }
-        }); }
-        let narrow = emit_narrow_integer_write(&mut self.builder, value, exit, slot.packed_range);
-        // Ordinary JS own fields are not shared memory. Observation requires
-        // a guest/host effect or poll; the backend must prove their absence
-        // before deferring this numeric, barrier-free write to an exit.
-        let store = self.ins().store(MemFlagsData::trusted(), narrow, slot.address, 0);
-        self.builder.func.private_stores.push(store);
-        self.ins().jump(done, &[]);
-        self.builder.switch_to_block(arena);
-        // Verified integers neither widen an arena slot nor create a heap edge.
-        let store = self.ins().store(MemFlagsData::trusted(), value, slot.address, 0);
-        self.builder.func.private_stores.push(store);
-        self.ins().jump(done, &[]);
-        self.builder.switch_to_block(done);
+    /// The loop-carried variable of the field a store writes takes the stored value: the int32
+    /// view proved before the store where the carried read is unboxed, else the tagged word.
+    fn carry_store(&mut self, state: &mut State, source: Register, (read, int): (LoopRead, Option<ir::Value>)) {
+        let bits = int.unwrap_or_else(|| self.tagged(state, source));
+        self.builder.def_var(read.value, bits);
+        #[cfg(test)] if read.representation == Representation::Int32 {
+            LOOP_INT32_PHIS.with(|count| count.set(count.get() + 1));
+        }
     }
 
-    /// The in-place arms and the VM's completion of the store `instruction` makes of a value of
-    /// type `ty`, which the `SetField` row runs (`StorePlan::of`): one arm for each of the
-    /// site's own shapes whose layout the plan admits and whose slot the value's type fits or
-    /// widens by a test (`StoreArm::of`), the VM's own-field hit where no arm takes the store,
-    /// and in a body that completes through the VM's polymorphic entries (`status_and_pc`) a
-    /// site of several shapes ends in its adding entry. `None` leaves the store to
-    /// `store_field`: a site whose slot the entry bound, a run that calls.
-    fn store_arms(&self, instruction: WideInstruction, ty: Type) -> Option<(Vec<StoreArm>, StoreJoin)> {
-        let site = instruction.cache_site_index();
+    /// The object `instruction` stores to: a register, or the fixed `this` for `None`; `None`
+    /// for a register the unit does not have.
+    fn store_owner(&self, pc: usize, instruction: WideInstruction) -> Option<Option<Register>> {
+        let register = if let Some(register) = instruction.field_store_register() {
+            Some(register)
+        } else if let Some(super::lane_unit::Origin::Inlined { frame, .. }) = self.unit.origins.get(pc) {
+            Some(self.unit.frames[*frame].receiver)
+        } else { None };
+        (!register.is_some_and(|register| register >= self.unit.registers)).then_some(register)
+    }
+
+    /// The slot a loop's entry projected for the int32 store at `pc` (`LoopStore`), where the
+    /// store's object is the record the projection addresses.
+    fn projected_slot(&self, state: &State, pc: usize, (register, ty): (Option<Register>, Type)) -> Option<LoopStore> {
+        self.loop_stores.get(&pc).copied().filter(|slot| ty.is_subtype(Type::INT32)
+            && state.proofs.headers[state.header_index(register)].is_some_and(|header| header.record == slot.header.record))
+    }
+
+    /// The named store of `operation` through its site's plan: `ty` is the stored value's type,
+    /// and the site's own shapes, binding and completion decide how it writes (`site_store_plan`).
+    fn site_store(&mut self, state: &mut State, operation: crate::staged::Operation<ir::Value, EmitProof>,
+        (atom, site, ty): (Atom, u16, Type), exit: ir::Block) -> Option<()> {
+        let (arms, join) = self.site_store_plan(site, ty);
+        let plan = StorePlan::of(&arms, join);
+        let admitted = (!arms.is_empty() || join == StoreJoin::Bound).then(|| self.store_atom_admitted(atom));
+        state.proofs.write_field(atom);
+        self.store_step(state, operation, (plan, HeldRead { admitted, ..HeldRead::default() }), exit)?;
+        self.after_store(state, join);
+        Some(())
+    }
+
+    /// The store of `value`, a word no register names, to the sink field `atom` of `owner`'s
+    /// object (`this` for `None`) that a nested lookup writes (`FieldSite::sink`), through its
+    /// site's plan. It is the only store of a value with no register, so it runs the row's word
+    /// form (`Operation::StoreField`).
+    fn sink_store(&mut self, state: &mut State, owner: Option<Register>, (atom, site): (Atom, u16), value: ir::Value,
+        exit: ir::Block) -> Option<()> {
+        let operation = crate::staged::Operation::StoreField { base: owner, value, fact: Type::ANY, atom, site };
+        self.site_store(state, operation, (atom, site, Type::ANY), exit)
+    }
+
+    /// The in-place arms and the VM's completion of a store of a value of type `ty` through
+    /// `site`, which the row runs (`StorePlan::of`): one arm for each of the site's own shapes
+    /// whose layout the plan admits and whose slot the value's type fits or widens by a test
+    /// (`StoreArm::of`); the VM's own-field hit where no arm takes the store, through the slot
+    /// the entry bound for the site where there is one; and in a body that completes through
+    /// the VM's polymorphic entries (`status_and_pc`) a site of several shapes ends in its
+    /// adding entry.
+    fn site_store_plan(&self, site: u16, ty: Type) -> (Vec<StoreArm>, StoreJoin) {
         let own: Vec<&NativeFieldLoad> = self.fields.get(&site).into_iter().flatten().filter(|load| load.holder.is_none()).collect();
         let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
-        if bound || self.native_calls { return None; }
         let arms = own.iter().filter(|load| load.valid())
             .filter_map(|load| StoreArm::of((load.shape, load.slot), load.ty, ty)).collect();
-        let completes = own.len() > 1 && self.completion.status_and_pc();
-        Some((arms, if completes { StoreJoin::Add } else { StoreJoin::Host }))
+        let join = if own.len() > 1 && self.completion.status_and_pc() { StoreJoin::Add }
+            else if bound { StoreJoin::Bound } else { StoreJoin::Host };
+        (arms, join)
     }
 
     /// What a store the VM may have completed changes: an adding entry reshapes any object, so
@@ -4523,18 +4524,15 @@ impl Lowering<'_, '_> {
                 self.reshaped(state);
                 self.reload_receiver();
             }
-            StoreJoin::Host => state.proofs.stable = false,
+            StoreJoin::Host | StoreJoin::Bound => state.proofs.stable = false,
         }
     }
 
-    /// The store of the `source` register's value to `instruction`'s field of `register`'s
-    /// object (`this` for `None`) as one `SetField` row under `plan`.
-    fn named_store(&mut self, state: &mut State, (source, register): (Register, Option<Register>),
-        instruction: WideInstruction, plan: StorePlan, exit: ir::Block) -> Option<()> {
-        let operation = crate::staged::Operation::SetField { value: source, base: register,
-            atom: instruction.atom_index(), site: instruction.cache_site_index() };
+    /// The store `operation` as one row step under `plan` and the `held` facts of its access.
+    fn store_step(&mut self, state: &mut State, operation: crate::staged::Operation<ir::Value, EmitProof>,
+        (plan, held): (StorePlan, HeldRead), exit: ir::Block) -> Option<()> {
         let plans = LanePlans { store: Some(plan), ..LanePlans::NONE };
-        match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, HeldRead::default())) {
+        match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, held)) {
             crate::staged::Step::Value(_) => Some(()),
             _ => None,
         }
@@ -4565,139 +4563,6 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// The store of `value` through `site` to the field `atom` of the object `register` names
-    /// (`this` for `None`): the site's proved own shapes and slots written directly, one by a
-    /// guard and several by a shape switch, as a read's (`field_plans`), with the
-    /// object's record proved once (the receiver's at entry, in a body that makes no call),
-    /// else the VM's own-field store hit; anything else leaves through `exit`. A value of
-    /// type `ty` the slot's type may not hold takes the hit too, which joins it.
-    #[allow(clippy::too_many_arguments)]
-    fn store_field(&mut self, state: &mut State, register: Option<Register>, atom: Atom, site: u16,
-        value: ir::Value, ty: Type, exit: ir::Block) -> Option<()> {
-        state.proofs.write_field(atom);
-        let receiver = !self.native_calls
-            && (register.is_none() || register.is_some_and(|register| state.proofs.receivers.contains(&register)));
-        let owner = if receiver { None } else { register };
-        let object_bits = self.owner_bits(state, register);
-        // A bound slot's store needs a dominating proof of the object, for both its branches.
-        let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
-        let dynamic_header = bound.then(|| self.object_header(state, register, false, exit));
-        let shapes: Vec<NativeFieldLoad> = self.fields.get(&site).map(|shapes| shapes.iter()
-            .filter(|field| field.holder.is_none()).copied().collect()).unwrap_or_default();
-        let field = match shapes.as_slice() {
-            [field] => *field,
-            [] => {
-                self.store_helper(state, object_bits, atom, site, value, ty, exit, dynamic_header);
-                return Some(());
-            }
-            _ => {
-                let header = self.object_header(state, register, false, exit);
-                let object = header.address;
-                let admitted = self.store_atom_admitted(atom);
-                let properties = { let entry = self.entry.as_ref().expect("entry facts"); self.builder.use_var(entry.receiver.properties) };
-                let (general, done) = (self.builder.create_block(), self.builder.create_block());
-                let mut widens = Vec::new();
-                for field in shapes {
-                    let (matched, next) = (self.builder.create_block(), self.builder.create_block());
-                    let same = self.ins().icmp_imm_u(IntCC::Equal, header.shape, i64::from(field.shape));
-                    let ok = self.ins().band(same, admitted);
-                    self.ins().brif(ok, matched, &[], next, &[]);
-                    self.builder.switch_to_block(matched);
-                    widens.extend(self.store_direct(state, field, object_bits, object, header.inline, properties, None, value, ty, done, general)?);
-                    self.builder.switch_to_block(next);
-                }
-                self.ins().jump(general, &[]);
-                self.finish_shape_switch_store(state, object_bits, atom, site, value, ty, exit, dynamic_header, general, &widens, done);
-                return Some(());
-            }
-        };
-        let header = (!receiver).then(|| {
-            let header = self.object_header(state, register, false, exit);
-            (header.address, header.shape, header.inline)
-        });
-        let admitted = self.store_atom_admitted(atom);
-        let entry = self.entry.as_ref().expect("entry facts");
-        let projection = state.proofs.layouts.get(&(owner, field.shape)).copied();
-        let (object, shape, inline) = header.unwrap_or_else(|| (
-            self.builder.use_var(entry.receiver.object),
-            self.builder.use_var(entry.receiver.shape),
-            self.builder.use_var(entry.receiver.inline),
-        ));
-        let properties = self.builder.use_var(entry.receiver.properties);
-        let direct = self.builder.create_block();
-        let general = self.builder.create_block();
-        self.builder.set_cold_block(general);
-        let done = self.builder.create_block();
-        let ok = if projection.is_some() { admitted } else {
-            let same = if receiver { self.builder.use_var(entry.receiver_shapes[&field.shape]) }
-                else { self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape)) };
-            self.ins().band(same, admitted)
-        };
-        self.ins().brif(ok, direct, &[], general, &[]);
-        self.builder.switch_to_block(direct);
-        let widen = self.store_direct(state, field, object_bits, object, inline, properties, projection, value, ty, done, general)?;
-        self.finish_store(state, object_bits, atom, site, value, ty, exit, dynamic_header, general,
-            widen.as_slice(), done);
-        Some(())
-    }
-
-    /// The store of `value`, of type `ty`, into `field`'s slot of the object `object` whose
-    /// shape the caller proved `field.shape`, continuing at `done`; one the barrier or the
-    /// storage does not admit continues at `general`. A value the slot's type may not hold
-    /// continues at the block returned, which the caller completes by the VM's hit, which
-    /// joins its type (`ValueArena::note_slot_value`); a raw store would not.
-    #[allow(clippy::too_many_arguments)]
-    fn store_direct(&mut self, state: &mut State, field: NativeFieldLoad, object_bits: ir::Value, object: ir::Value, inline: ir::Value,
-        properties: ir::Value, projection: Option<CheckedObject>, value: ir::Value, ty: Type, done: ir::Block,
-        general: ir::Block) -> Option<Option<ir::Block>> {
-        let (widen, direct_ty) = if !ty.is_subtype(field.ty) {
-            let widen = self.builder.create_block();
-            self.builder.set_cold_block(widen);
-            (Some(widen), self.represented(field.ty, value, widen))
-        } else { (None, ty) };
-        let record_id = self.ins().ireduce(types::I32, object_bits);
-        let record_id = self.ins().uextend(types::I64, record_id);
-        let payload = self.payload;
-        if !direct_ty.is_subtype(Type::IMMEDIATE) {
-            emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, general);
-        }
-        // The admitted write domain and barrier above also cover packed
-        // references. Encoding support is shared with bound native stores.
-        if (direct_ty.is_subtype(Type::INT32)
-            || field.storage_len <= crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count)
-            && usize::from(field.slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count {
-            self.store_narrow_value(object, inline, field.slot, value, direct_ty, done, general);
-        }
-        let projection = match projection {
-            Some(projection) => projection,
-            None => {
-                let plan = NativeFieldLoad { storage: Some(crate::heap::PlainPropertyStorage::Arena), ..field };
-                CheckedObject::prove(&mut self.builder, object, inline, properties, plan, PackedAccess::Reload, general)?
-            }
-        };
-        let step = self.step(state, frame::Edges::ValueGuarded { miss: general },
-            crate::staged::Operation::WriteField { base: 0, slot: field.slot, ty: direct_ty, value, proof: EmitProof::Field(projection) });
-        if !matches!(step, crate::staged::Step::Value(_)) { return None; }
-        self.ins().jump(done, &[]);
-        Some(widen)
-    }
-
-    /// A store's slow paths: `general` by the VM's hit, through the site's bound slot first,
-    /// and each `widens` block by the joining hit; all continue at `done`.
-    #[allow(clippy::too_many_arguments)]
-    fn finish_store(&mut self, state: &mut State, object_bits: ir::Value, atom: Atom, site: u16, value: ir::Value,
-        ty: Type, exit: ir::Block, header: Option<ObjectHeader>, general: ir::Block, widens: &[ir::Block], done: ir::Block) {
-        self.builder.switch_to_block(general);
-        self.store_helper(state, object_bits, atom, site, value, ty, exit, header);
-        self.ins().jump(done, &[]);
-        for widen in widens {
-            self.builder.switch_to_block(*widen);
-            self.store_helper_unbound(state, object_bits, atom, site, value, exit);
-            self.ins().jump(done, &[]);
-        }
-        self.builder.switch_to_block(done);
-    }
-
     /// Whether the run admits a direct store of `atom`. A run that calls may meet a method
     /// cache that names the atom only after a call; one that does not tests it once, at
     /// entry (`Lowering::entry_facts`).
@@ -4707,96 +4572,6 @@ impl Lowering<'_, '_> {
         } else {
             self.builder.use_var(self.entry.as_ref().expect("entry facts").store_atoms[&atom])
         }
-    }
-
-    /// Store an encodable `value` into inline `slot` of the packed object `record` and
-    /// continue at `done`; an object with arena storage continues here, one with extras or a
-    /// value past the narrow range takes `general`.
-    fn store_narrow_value(&mut self, record: ir::Value, inline: ir::Value, slot: u16, value: ir::Value, ty: Type,
-        done: ir::Block, general: ir::Block) {
-        use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-        let (packed, arena) = (self.builder.create_block(), self.builder.create_block());
-        self.ins().brif(inline, packed, &[], arena, &[]);
-        self.builder.switch_to_block(packed);
-        let payload = self.ins().load(types::I64, MemFlagsData::trusted(), record, OBJECT.payload_offset as i32);
-        let plain = crate::staged::object::plain_payload(&mut super::object_slots::emit(&mut self.builder), payload);
-        emit_js_guard(&mut self.builder, plain, general);
-        let narrow = emit_narrow_store_value(&mut self.builder, value, ty, general);
-        let offset = OBJECT.payload_offset + usize::from(slot) * std::mem::size_of::<u32>();
-        self.ins().store(MemFlagsData::trusted(), narrow, record, offset as i32);
-        self.ins().jump(done, &[]);
-        self.builder.switch_to_block(arena);
-    }
-
-    /// Continue where a slot of type `slot` (`NativeFieldLoad::ty`) holds `value`, by its int
-    /// tag, else at `otherwise`.
-    fn represented(&mut self, slot: Type, value: ir::Value, otherwise: ir::Block) -> Type {
-        // Only the type algebra may establish that an int fits. In particular,
-        // nullable object contracts must not inherit the old numeric-chain rule.
-        if slot.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) {
-            let held = super::general_store::emit_holds_object_slot(&mut self.builder, value, slot);
-            emit_js_guard(&mut self.builder, held, otherwise);
-            return slot;
-        }
-        let held = if Type::INT32.is_subtype(slot) { is_int_tagged(&mut self.builder, value) }
-            else { self.ins().iconst(types::I8, 0) };
-        emit_js_guard(&mut self.builder, held, otherwise);
-        // Only the successful edge carries this fact. The general store may
-        // also be reached before admission and must retain the original type.
-        Type::INT32
-    }
-
-    /// The lane's logged own-field store hit (`Vm::primary_own_field_store_hit`), barrier
-    /// included, through the site's bound slot first where the entry bound one; anything
-    /// else leaves through `exit`.
-    #[allow(clippy::too_many_arguments)]
-    fn store_helper(&mut self, state: &mut State, object: ir::Value, atom: Atom, site: u16, value: ir::Value, ty: Type,
-        exit: ir::Block, header: Option<ObjectHeader>) {
-        let bound = self.entry.as_ref().and_then(|entry| entry.fields.iter()
-            .find_map(|(known, binding)| (*known == site).then_some(*binding)));
-        if let Some(binding) = bound.filter(|binding| binding.writes.is_some_and(|domain| ty.is_subtype(domain))) {
-            let slow = self.builder.create_block();
-            let done = self.builder.create_block();
-            let packed = self.builder.create_block();
-            let packed_address = self.builder.append_block_param(packed, types::I64);
-            if let Some(admitted) = binding.admitted { emit_js_guard(&mut self.builder, admitted, slow); }
-            let allowed = self.store_atom_admitted(atom);
-            emit_js_guard(&mut self.builder, allowed, slow);
-            let (address, record) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-                JsFieldReceiver::Value(object), site, false, slow, Some(binding), header, Some(packed));
-            if !ty.is_subtype(Type::IMMEDIATE) {
-                emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, slow);
-            }
-            self.ins().store(MemFlagsData::trusted(), value, address, 0);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(packed);
-            let narrow = emit_narrow_store_value(&mut self.builder, value, ty, slow);
-            // The slot admission proved a direct object. Its index names the same
-            // mark bit as the arena path; a reference needing logging uses the VM.
-            let record = self.ins().ireduce(types::I32, object);
-            let record = self.ins().uextend(types::I64, record);
-            if !ty.is_subtype(Type::IMMEDIATE) {
-                emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, slow);
-            }
-            self.ins().store(MemFlagsData::trusted(), narrow, packed_address, 0);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(slow);
-            self.store_helper_unbound(state, object, atom, site, value, exit);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(done);
-            return;
-        }
-        self.store_helper_unbound(state, object, atom, site, value, exit);
-    }
-
-    /// The VM's store hit, which may write a prototype's own field: the block reads the
-    /// invalidation word again before it next holds a Stable fact.
-    fn store_helper_unbound(&mut self, state: &mut State, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
-        state.proofs.stable = false;
-        self.forget_append_rooms(self.at);
-        let proof = super::EmitProof::FieldStoreMiss { miss: exit };
-        self.step(state, frame::Edges::ValueGuarded { miss: exit },
-            crate::staged::Operation::FieldStoreMiss { object, atom, site, value, proof });
     }
 
     /// `+source` or `-source` of a Number: the shared Number unary denotation, with the

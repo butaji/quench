@@ -46,8 +46,7 @@ pub(crate) mod trace;
 #[allow(unused_imports)] // the Stage v2 vocabulary: stencil and UltraJIT stages use the rest
 pub(crate) use effects::{CallTarget, Effects, Region, RegionSet};
 pub(crate) use ic::concrete_own_field_hit;
-pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
-    own_layout, read_slot};
+pub(crate) use object::{Form, Layout, concrete_own_read};
 
 mod stage;
 pub(crate) use stage::{Stage, Table};
@@ -108,13 +107,6 @@ pub(crate) trait Frame<S: Stage> {
 
     /// `register`'s value from `constant`, with the fact the stage keeps of it.
     fn constant(&mut self, stage: &mut S, constant: Constant) -> (S::Word, Self::Fact);
-
-    /// Write `value` to the proven slot; `None` where the frame has no heap or the slot is
-    /// not writable, leaving the instruction to the host.
-    #[inline(always)]
-    fn field_write(&mut self, _stage: &mut S, _base: Register, _slot: u16, _ty: Type, _value: S::Word, _proof: S::Proof) -> Option<()> {
-        None
-    }
 
     /// The dense array element at `index`, under the proof; a hole, a miss or an index past
     /// the view leaves `None` to the caller's cold path.
@@ -231,8 +223,6 @@ pub(crate) enum Operation<W, P> {
     RequireObjectCoercible { register: Register },
     /// Define `destination` with the logical negation of register `source`'s truthiness.
     LogicalNot { destination: Register, source: Register },
-    /// Write `value` to the proven slot `slot` of `base`'s object under `proof`.
-    WriteField { base: Register, slot: u16, ty: Type, value: W, proof: P },
     /// A dense array element at `index`, under `proof`; a hole or miss leaves `Unresolved`.
     IndexRead { index: W, proof: P },
     /// Store `value` at dense array element `index`, under `proof`.
@@ -267,6 +257,9 @@ pub(crate) enum Operation<W, P> {
     /// `base.atom = value` through cache `site`'s store plan (`property_write::set_field`);
     /// `base` is `this` for `None`.
     SetField { value: Register, base: Option<Register>, atom: u32, site: u16 },
+    /// `base.atom = value` of a word no register names, of type `fact`, through cache site
+    /// `site`'s store plan (`property_write::store_word`); `base` is `this` for `None`.
+    StoreField { base: Option<Register>, value: W, fact: Type, atom: u32, site: u16 },
     /// The VM's read of `atom` of `object`, a value no register names, through `site`
     /// (`PropertyFrame::field_probe`).
     FieldGetHost { object: W, atom: u32, site: u16 },

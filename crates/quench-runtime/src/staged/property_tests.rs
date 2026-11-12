@@ -83,6 +83,13 @@ impl<'p> PropertyFrame<Concrete> for Host<'p> {
     fn field_store_host(&mut self, _stage: &mut Concrete, _object: u64, _atom: u32, _site: u16, _value: u64, _miss: ()) -> Option<()> {
         self.call("field_store_host").then_some(())
     }
+    fn field_store_bound(&mut self, _stage: &mut Concrete, _owner: Owner, _object: u64, _site: (u32, u16), _value: (u64, Type),
+        _miss: ()) -> Option<()> {
+        self.call("field_store_bound").then_some(())
+    }
+    fn entry_slot_store(&mut self, _stage: &mut Concrete, _site: u16, _value: u64, _miss: ()) -> Option<()> {
+        self.call("entry_slot_store").then_some(())
+    }
     fn delete_property(&mut self, _stage: &mut Concrete, _base: u64, _key: u64, strict: bool, _miss: ()) -> Option<u64> {
         self.call(if strict { "delete_strict" } else { "delete" }).then_some(ANSWER)
     }
@@ -279,17 +286,24 @@ fn a_guard_is_recorded_as_the_owners_proof_and_a_proven_shape_is_not_tested_agai
     assert_eq!((read, proved), (Some(Value::integer(8)), vec![]));
 }
 
-/// `plan` run as the store of `value` to `object`'s field, by a frame that holds no proof: the
-/// word the row stored (none where it left) and the VM callouts it made.
-fn store(heap: &mut Heap, plan: StorePlan<'static>, object: Value, value: Value) -> (Option<Value>, Vec<&'static str>) {
+/// `operation` run over `registers` under `plan`, by a frame that holds no proof: the word the
+/// row stored (none where it left) and the callouts it made.
+fn store_step(heap: &mut Heap, plan: StorePlan<'static>, registers: Vec<u64>, operation: Operation<u64, ()>)
+    -> (Option<Value>, Vec<&'static str>) {
     let plans = Plans { read: FieldPlan::Host { atom: 0, site: 0 }, store: plan };
-    let mut frame = Host::new(records(heap), &plans, vec![0, object.to_bits(), value.to_bits()]);
+    let mut frame = Host::new(records(heap), &plans, registers);
     let mut stage = Concrete::storing(&*heap);
-    let word = match step(&mut stage, &mut frame, Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3 }) {
+    let word = match step(&mut stage, &mut frame, operation) {
         Step::Value(word) => Some(Value::from_bits(word)),
         _ => None,
     };
     (word, frame.log)
+}
+
+/// `plan` run as the store of `value` to `object`'s field.
+fn store(heap: &mut Heap, plan: StorePlan<'static>, object: Value, value: Value) -> (Option<Value>, Vec<&'static str>) {
+    let operation = Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3 };
+    store_step(heap, plan, vec![0, object.to_bits(), value.to_bits()], operation)
 }
 
 #[test]
@@ -336,4 +350,32 @@ fn several_arms_store_through_the_one_that_holds_the_receivers_shape() {
     assert_eq!(store(&mut heap, plan, third, Value::integer(12)).1, ["field_store_host"], "a shape no arm names");
     let adding = StorePlan::of(arms, StoreJoin::Add);
     assert_eq!(store(&mut heap, adding, third, Value::integer(12)).1, ["field_add"], "the join the plan names");
+}
+
+#[test]
+fn bound_and_entry_plans_reach_their_frame_callouts_and_a_bound_join_completes_what_no_arm_takes() {
+    let mut heap = heap_of(1);
+    let (object, shape) = object_of(&mut heap, &[Value::integer(7)]);
+    let (other, _) = object_of(&mut heap, &[]);
+    assert_eq!(store(&mut heap, StorePlan::Bound, object, Value::integer(1)).1, ["field_store_bound"]);
+    assert_eq!(store(&mut heap, StorePlan::Entry, object, Value::integer(1)).1, ["entry_slot_store"]);
+    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: None }]));
+    let plan = StorePlan::of(arms, StoreJoin::Bound);
+    assert_eq!(store(&mut heap, plan, object, Value::integer(2)).1, Vec::<&str>::new(), "the arm takes its shape");
+    assert_eq!(store(&mut heap, plan, other, Value::integer(2)).1, ["field_store_bound"], "the join the plan names");
+}
+
+#[test]
+fn a_word_no_register_names_stores_through_the_sites_plan_with_the_fact_it_is_given() {
+    let mut heap = heap_of(1);
+    let (object, shape) = object_of(&mut heap, &[Value::integer(7)]);
+    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: None }]));
+    let plan = StorePlan::of(arms, StoreJoin::Host);
+    let word = Value::integer(5);
+    let operation = Operation::StoreField { base: Some(1), value: word.to_bits(), fact: Type::INT32, atom: 7, site: 3 };
+    let (stored, log) = store_step(&mut heap, plan, vec![0, object.to_bits()], operation);
+    assert_eq!((stored, log), (Some(word), Vec::new()));
+    assert_eq!(read(&heap, own(shape, 0, 1), object), Some(word));
+    let (_, log) = store_step(&mut heap, StorePlan::Host, vec![0, object.to_bits()], operation);
+    assert_eq!(log, ["field_store_host"]);
 }

@@ -1,7 +1,8 @@
 //! The named-property family as staged rows: `GetField` in every form (own slot, prototype
 //! slot, prototype constant, polymorphic arms, nested chains, a VM probe behind a fast plan),
-//! `SetField` (adding store, VM store), `Delete` and `in`. A site's proved plan is static data
-//! (`FieldPlan`, `StorePlan`); each row runs it once over a stage, so the interpreter
+//! `SetField` and `StoreField` (own slots in place by shape arms, a loop's projected slot, the
+//! VM's own-field, bound-slot and adding stores), `Delete` and `in`. A site's proved plan is
+//! static data (`FieldPlan`, `StorePlan`); each row runs it once over a stage, so the interpreter
 //! (`Concrete`) and every specializer (`Emit`) read one definition of each read and store.
 //! Whatever the plan cannot prove is an explicit `PropertyFrame` call-out to the VM's helper,
 //! never a second copy of the lookup. What a tier proved of an object before the row runs (its
@@ -99,6 +100,9 @@ impl StoreArm {
 pub(crate) enum StoreJoin {
     /// The VM's own-field store hit, which a failure leaves at the miss edge.
     Host,
+    /// The same hit through the site's bound slot first, which the frame addressed before the
+    /// run (`PropertyFrame::field_store_bound`).
+    Bound,
     /// The VM's adding entries, which complete a store of any shape without leaving; a frame
     /// that uses it holds no object proof past the store.
     Add,
@@ -109,12 +113,16 @@ pub(crate) enum StoreJoin {
 pub(crate) enum StorePlan<'a> {
     /// The first of `arms` whose exact shape the receiver has stores in place where the
     /// value, the barrier and the storage admit it; every other store runs through `join`.
-    /// There is at least one arm (`StorePlan::of`).
     Own { arms: &'a [StoreArm], join: StoreJoin },
+    /// The slot a loop's entry projected for this store, which the frame addresses
+    /// (`PropertyFrame::entry_slot_store`).
+    Entry,
     /// A store that may add the property or change the shape: the VM's adding entry.
     Add,
     /// A setter, a read-only or dictionary property, a proxy: the VM's store.
     Host,
+    /// The VM's store through the slot the entry bound for the site.
+    Bound,
 }
 
 impl<'a> StorePlan<'a> {
@@ -124,6 +132,7 @@ impl<'a> StorePlan<'a> {
         match (arms.is_empty(), join) {
             (false, join) => Self::Own { arms, join },
             (true, StoreJoin::Host) => Self::Host,
+            (true, StoreJoin::Bound) => Self::Bound,
             (true, StoreJoin::Add) => Self::Add,
         }
     }
@@ -255,9 +264,24 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn field_store_host(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word, _miss: S::Miss) -> Option<()> { None }
 
-    /// Continues where the run admits a direct store of `atom` (no method cache names it).
+    /// The VM's own-field store hit of `value`, of type `fact`, through the slot the entry bound
+    /// for `site`, which a frame that bound one stores into inline first (a value its writes
+    /// admit); the plain hit otherwise.
     #[inline(always)]
-    fn store_admitted(&mut self, _stage: &mut S, _atom: u32, _miss: S::Miss) -> Option<()> { Some(()) }
+    fn field_store_bound(&mut self, stage: &mut S, _owner: Owner, object: S::Word, (atom, site): (u32, u16),
+        (value, _fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
+        self.field_store_host(stage, object, atom, site, value, miss)
+    }
+
+    /// Stores `value` through the slot a loop's entry projected for the access at `site`, which
+    /// a frame that made the projection (`StorePlan::Entry`) addresses; a failure leaves at `miss`.
+    #[inline(always)]
+    fn entry_slot_store(&mut self, _stage: &mut S, _site: u16, _value: S::Word, _miss: S::Miss) -> Option<()> { None }
+
+    /// Continues where the run admits a direct store of the atom the access names (no method
+    /// cache names it); a frame whose run changes that between accesses tests it here.
+    #[inline(always)]
+    fn store_admitted(&mut self, _stage: &mut S, _miss: S::Miss) -> Option<()> { Some(()) }
 
     /// What `fast` stores, which leaves at the edge it is given; where it misses, `slow` (the
     /// VM's store) instead, and past the join only what both prove holds.
@@ -429,6 +453,8 @@ pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
     let word = match operation {
         Operation::GetField { base, lookup } => get_field(stage, frame, base, lookup, miss),
         Operation::SetField { value, base, atom, site } => super::property_write::set_field(stage, frame, (value, base), (atom, site), miss),
+        Operation::StoreField { base, value, fact, atom, site } =>
+            super::property_write::store_word(stage, frame, base, (value, fact), (atom, site), miss),
         Operation::FieldGetHost { object, atom, site } => frame.field_probe(stage, Owner::Temporary, object, atom, site, miss),
         Operation::FieldAdd { object, atom, site, value } => frame.field_add(stage, object, atom, site, value, miss).map(|()| value),
         Operation::Delete { base, key, strict } => {

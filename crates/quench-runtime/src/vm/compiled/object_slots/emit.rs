@@ -230,7 +230,7 @@ impl NumericStage for Emit<'_, '_> {
 mod tests {
     use super::*;
     use crate::heap::{Cell, Heap, Object, PlainPropertyStorage};
-    use crate::staged::{Form, PackedAccess};
+    use crate::staged::object::{own_layout, read_slot, Form, PackedAccess};
 
     /// Objects of every storage form, with their values: narrow and wide, inline and spilled,
     /// plain and marked as prototypes.
@@ -270,9 +270,9 @@ mod tests {
         let miss = builder.create_block();
         let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None };
         let inline = crate::staged::object::inline_storage(&mut stage, record);
-        let layout = crate::staged::own_layout(&mut stage, record, inline, form,
+        let layout = own_layout(&mut stage, record, inline, form,
             usize::from(slot) + 1, PackedAccess::Reload, miss).unwrap();
-        let value = crate::staged::read_slot(&mut stage, layout, slot);
+        let value = read_slot(&mut stage, layout, slot);
         builder.ins().return_(&[value]);
         builder.switch_to_block(miss);
         let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);

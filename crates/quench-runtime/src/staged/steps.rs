@@ -11,7 +11,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
-        property @ (Operation::GetField { .. } | Operation::SetField { .. } | Operation::FieldGetHost { .. }
+        property @ (Operation::GetField { .. } | Operation::SetField { .. } | Operation::StoreField { .. } | Operation::FieldGetHost { .. }
             | Operation::FieldAdd { .. } | Operation::Delete { .. } | Operation::HasProperty { .. }
             | Operation::IndexGetHost { .. }) => super::property::property_step(stage, frame, property),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }

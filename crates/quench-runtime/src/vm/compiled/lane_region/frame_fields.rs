@@ -1,8 +1,9 @@
 //! The lane frame's property callouts (`staged::PropertyFrame`): what the property rows read
 //! back of the lowering's proofs of an object (its record header, its shape, its layout), the
 //! reads a loop or an OSR entry already holds, the code dependencies a folded prototype value
-//! takes and the VM's own probe of a site. The rows decide what a read is; this frame owns
-//! the facts it is proved under, kept in `State` beside the registers'.
+//! takes and the VM's own probe of a site (`frame_stores`: the store callouts). The rows decide
+//! what a read is; this frame owns the facts it is proved under, kept in `State` beside the
+//! registers'.
 
 use super::*;
 use super::field_plans::LanePlans;
@@ -28,7 +29,8 @@ pub(super) struct FieldFacts<'a> {
     pub(super) stable: StableHold<'a>,
 }
 
-/// The reads an instruction's value may already come from.
+/// What an instruction's field access already holds: the reads its value may come from, and for
+/// a store the slot its loop projected and the run's admission of the atom.
 #[derive(Clone, Copy, Default)]
 pub(super) struct HeldRead {
     /// A read the loop made once on its entry edge.
@@ -37,6 +39,11 @@ pub(super) struct HeldRead {
     pub(super) entry_word: Option<u32>,
     /// The value an earlier read of the first field proved (`LocalProofs::fields`).
     pub(super) known: Option<ir::Value>,
+    /// The slot a loop's entry projected for the store at this access (`StorePlan::Entry`).
+    pub(super) slot: Option<LoopStore>,
+    /// The test that no method cache names the atom a store writes: the entry's where the run
+    /// calls nothing, made at the store where it does.
+    pub(super) admitted: Option<ir::Value>,
 }
 
 /// The Stable facts a lowering takes, and where it takes them.
@@ -50,7 +57,7 @@ pub(super) struct StableHold<'a> {
 
 impl<'a> EmitFrame<'a> {
     /// The region's entry proofs, where the lowering has them.
-    fn entry(&self) -> Option<&'a Entry> { self.fields.as_ref()?.entry }
+    pub(super) fn entry(&self) -> Option<&'a Entry> { self.fields.as_ref()?.entry }
 
     /// Whether `owner`'s object is the entry's receiver, whose record, shape and storage kind
     /// the entry proved: `this`, or a register holding it, in a run that calls nothing.
@@ -65,7 +72,7 @@ impl<'a> EmitFrame<'a> {
 
     /// The key of `owner`'s proofs in `State` (`None` is the fixed `this`'s); a receiver's
     /// proofs are shared by every register that holds it, and a temporary keeps none.
-    fn proof_key(&self, owner: Owner) -> Option<Option<Register>> {
+    pub(super) fn proof_key(&self, owner: Owner) -> Option<Option<Register>> {
         match owner {
             Owner::Temporary => None,
             Owner::This => Some(None),
@@ -189,12 +196,20 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         calls::field_store_miss(self, stage, object, atom, site, value, EmitProof::FieldStoreMiss { miss })
     }
 
-    /// The entry's test that no method cache names `atom`, which a run that calls nothing makes once.
-    fn store_admitted(&mut self, stage: &mut Emit<'b, 'c>, atom: u32, miss: ir::Block) -> Option<()> {
-        let entry = self.entry().filter(|_| !self.fields.as_ref()?.native_calls)?;
-        let admitted = stage.builder.use_var(*entry.store_atoms.get(&atom)?);
+    /// The run's test that no method cache names the atom stored (`HeldRead::admitted`).
+    fn store_admitted(&mut self, stage: &mut Emit<'b, 'c>, miss: ir::Block) -> Option<()> {
+        let admitted = self.fields.as_ref()?.held.admitted?;
         emit_js_guard(stage.builder, admitted, miss);
         Some(())
+    }
+
+    fn field_store_bound(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, site: (u32, u16),
+        value: (ir::Value, Type), miss: ir::Block) -> Option<()> {
+        self.bound_store(stage, owner, object, site, value, miss)
+    }
+
+    fn entry_slot_store(&mut self, stage: &mut Emit<'b, 'c>, site: u16, value: ir::Value, miss: ir::Block) -> Option<()> {
+        self.loop_slot_store(stage, site, value, miss)
     }
 
     /// The direct store, and where it declines (a shape, the barrier or the storage does not

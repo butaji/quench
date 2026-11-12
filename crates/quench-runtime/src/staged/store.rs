@@ -28,7 +28,7 @@ const NOT_NARROW: u64 = u64::MAX;
 /// store leaves to the general path. A `fact` that proves an int32 selects the integer arm
 /// alone: the tag test and the reference arm are not emitted. Each form computes only its own arm.
 #[inline(always)]
-fn narrow_form<S: Stage>(stage: &mut S, value: S::Word, fact: Type) -> S::Word {
+pub(crate) fn narrow_form<S: Stage>(stage: &mut S, value: S::Word, fact: Type) -> S::Word {
     if fact.is_subtype(Type::INT32) { return integer_form(stage, value); }
     let upper = stage.and_imm(value, UPPER_WORD);
     let is_int = stage.eq_imm(upper, ValueLayout::INT_TAG);

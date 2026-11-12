@@ -444,8 +444,7 @@ mod tests {
     }
 }
 
-pub(super) use crate::staged::PackedAccess;
-use crate::staged::{Form, Layout, Slots};
+use crate::staged::Layout;
 mod emit;
 pub(super) use emit::Emit;
 
@@ -455,41 +454,6 @@ pub(super) use emit::Emit;
 pub(super) struct CheckedObject(Layout<ir::Value, ir::Value>);
 
 impl CheckedObject {
-    /// A flat store can reuse the range proof; packed writes use the VM's
-    /// narrow-value encoder and layout-preserving barrier helper instead.
-    pub(super) fn arena_address(self, builder: &mut FunctionBuilder<'_>, slot: u16, miss: ir::Block) -> Option<ir::Value> {
-        debug_assert!(usize::from(slot) < self.0.storage_len);
-        let base = match self.0.slots {
-            Slots::Packed(_) => return None,
-            Slots::Flat(base) => base,
-            Slots::Either { inline, flat, .. } => {
-                let is_flat = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-                emit_js_guard(builder, is_flat, miss);
-                flat
-            }
-        };
-        Some(builder.ins().iadd_imm_u(base,
-            i64::from(slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64))
-    }
-
-    /// The caller proves receiver identity and exact shape before this operation; `inline`
-    /// is the record's inline-storage bits (`ObjectRecord::header`), `base` the arena's.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn prove(
-        builder: &mut FunctionBuilder<'_>,
-        record: ir::Value,
-        inline: ir::Value,
-        base: ir::Value,
-        plan: NativeFieldLoad,
-        access: PackedAccess,
-        miss: ir::Block,
-    ) -> Option<Self> {
-        if !plan.valid() { return None; }
-        let mut stage = Emit { builder, property_values: Some(base), gate: None };
-        crate::staged::own_layout(&mut stage, record, inline, Form::of(plan.storage, plan.storage_len),
-            plan.storage_len, access, miss).map(Self)
-    }
-
     /// The proof of a layout a staged read established.
     pub(super) fn of(layout: Layout<ir::Value, ir::Value>) -> Self { Self(layout) }
 
