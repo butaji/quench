@@ -604,6 +604,7 @@ mod closure_targets;
 mod getters;
 mod lane_stack_growth;
 use super::lane_values::LaneValues;
+use super::lane_activations::LaneActivations;
 mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
@@ -1263,7 +1264,7 @@ const LANE_STACK_ACTIVATIONS: usize = 1 << 16;
 /// a window of the lane stack; it returns to the record after `call` in its
 /// caller, whose registers, view and memory it keeps for the return.
 #[derive(Clone, Copy)]
-#[repr(C)]
+#[repr(C, align(128))]
 pub(in crate::vm) struct Activation {
     /// The native prefix: a direct call's frame, which a leave inside it links in place
     /// (`lane_materialize_frames`); empty for an activation the lane made.
@@ -1836,7 +1837,7 @@ pub(super) struct LaneStack {
     /// swept (`forget_dead_callees`).
     call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[super::compiled::CallTarget; INLINE_SITE_TARGETS]>>>,
     values: LaneValues,
-    activations: Vec<Activation>,
+    activations: LaneActivations,
     /// Wasm activation payload represented by `values` before lane materialization.
     wasm_storage_bytes: usize,
     /// Resolved targets of lane `Call` records (`Vm::script_call_entry`) of callees of the
@@ -1910,7 +1911,7 @@ impl Default for LaneStack {
     fn default() -> Self {
         Self {
             values: LaneValues::with_capacity(LANE_STACK_VALUES),
-            activations: Vec::with_capacity(LANE_STACK_ACTIVATIONS),
+            activations: LaneActivations::with_capacity(LANE_STACK_ACTIVATIONS),
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
@@ -2004,12 +2005,9 @@ impl LaneStack {
         let len = self.activations.len();
         let frame_storage_bytes = activation.frame_storage_bytes();
         debug_assert!(len < self.activations.capacity(), "lane activations stay within capacity");
-        // SAFETY: the slot at `len` lies within capacity and is uninitialized; the length
+        // SAFETY: the slot at `len` lies within capacity and is uninitialized; the top
         // covers it only once written.
-        unsafe {
-            self.activations.as_mut_ptr().add(len).write(activation);
-            self.activations.set_len(len + 1);
-        }
+        unsafe { self.activations.push_unchecked(activation); }
         self.wasm_storage_bytes += frame_storage_bytes;
     }
 
@@ -11119,7 +11117,7 @@ impl<H: Host> Vm<H> {
         // pending calls and executing program (`NativeBoundary`).
         let boundary = self.lane_stack.native_boundary.take();
         let before = self.frames.len();
-        for (depth, (activation, state)) in activations.drain(..).zip(states).enumerate() {
+        for (depth, (activation, state)) in activations.drain().zip(states).enumerate() {
             let below = boundary.filter(|boundary| depth < boundary.activation);
             if let Some(boundary) = boundary
                 && depth == boundary.activation
