@@ -1253,6 +1253,11 @@ impl Carried {
     }
 }
 
+/// The capacity the lane stack reserves once (virtual until touched): values and activations
+/// keep their addresses below it.
+const LANE_STACK_VALUES: usize = 1 << 20;
+const LANE_STACK_ACTIVATIONS: usize = 1 << 16;
+
 /// An activation a lane call made without a VM frame. Its registers are
 /// a window of the lane stack; it returns to the record after `call` in its
 /// caller, whose registers, view and memory it keeps for the return.
@@ -1894,8 +1899,8 @@ const NO_SCRIPT_GENERATION: ScriptGeneration = 0;
 impl Default for LaneStack {
     fn default() -> Self {
         Self {
-            values: Vec::new(),
-            activations: Vec::new(),
+            values: Vec::with_capacity(LANE_STACK_VALUES),
+            activations: Vec::with_capacity(LANE_STACK_ACTIVATIONS),
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
