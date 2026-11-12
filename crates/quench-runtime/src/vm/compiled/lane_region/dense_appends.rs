@@ -50,9 +50,12 @@ impl Lowering<'_, '_> {
         let (values, length) = self.hoisted_view(array);
         let variables = self.array_variables(array);
         let room = self.builder.use_var(variables.room);
+        // The emit stage's words are 64-bit; the view's index, length and room are 32-bit.
+        let [index, length, room] = [index, length, room].map(|word| self.ins().uextend(types::I64, word));
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let grown = crate::staged::elements::append_element(&mut stage, values, length, room, index, value, miss)
             .expect("the emit stage continues past its guards");
+        let grown = self.ins().ireduce(types::I32, grown);
         self.builder.def_var(variables.length, grown);
         self.ins().jump(done, &[]);
     }
@@ -65,7 +68,7 @@ impl Lowering<'_, '_> {
             .copied().collect();
         let bits = self.array_variables(array).bits;
         let bits = self.builder.use_var(bits);
-        let mut aliased = self.ins().iconst(types::I8, 0);
+        let mut aliased = self.int_const(types::I8, 0);
         for other in others {
             let other = self.array_variables(other).bits;
             let other = self.builder.use_var(other);
@@ -82,7 +85,7 @@ impl Lowering<'_, '_> {
             .filter(|array| array.views == ElementViews::Dense && (array.header..=array.back).contains(&pc)).copied().collect();
         for array in arrays {
             let room = self.array_variables(array).room;
-            let unproved = self.ins().iconst(types::I32, 0);
+            let unproved = self.int_const(types::I32, 0);
             self.builder.def_var(room, unproved);
         }
     }
