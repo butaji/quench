@@ -21,7 +21,11 @@ mod concrete;
 pub(crate) mod numeric;
 mod heap;
 mod global;
+mod names;
+mod callout;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
+pub(crate) use names::Protocol;
+pub(crate) use callout::CallOut;
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
@@ -39,6 +43,7 @@ mod property_write;
 pub(crate) use property::{NoPlans, PropertyFrame};
 pub(crate) mod value;
 mod steps;
+mod generic;
 pub(crate) use steps::step;
 pub(crate) mod effects;
 #[cfg(test)]
@@ -167,6 +172,29 @@ pub(crate) trait Frame<S: Stage> {
     #[allow(dead_code)]
     fn ret(&mut self, _stage: &mut S, _value: S::Word) -> Option<Self::Control> { None }
 
+    /// The activation's environment storage word and the fact its slot reads carry
+    /// (`environment::environment_slot`); `None` where the frame holds no environment.
+    #[inline(always)]
+    fn environment(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Store `value` to environment slot `slot`; `None` where the frame cannot, leaving the
+    /// binding rules (an uninitialized or constant binding, a `with` scope) to the host.
+    #[inline(always)]
+    fn environment_write(&mut self, _stage: &mut S, _slot: u16, _value: S::Word) -> Option<()> { None }
+
+    /// The count of the arguments binding in local `slot`, an int32 word; `None` where the
+    /// binding is not one only kept values answer.
+    #[inline(always)]
+    fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// The VM's own operation `operation` (`CallOut`), run in place where a row's words do not
+    /// decide it, defining `result` where the operation has one: the word it defined with the
+    /// fact the frame keeps of it, or a placeholder word where it defines none. `None` where the
+    /// frame has no host, or the operation raised, leaving the instruction to the interpreter.
+    #[inline(always)]
+    fn vm_step(&mut self, _stage: &mut S, _operation: CallOut, _result: Option<Register>)
+        -> Option<(S::Word, Self::Fact)> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -249,6 +277,39 @@ pub(crate) enum Operation<W, P> {
     /// The global-name read of `atom` through cache `site`, defined into `destination` as
     /// `binding` says; a miss leaves at the proof's edge.
     GlobalRead { destination: Register, atom: u32, site: u16, binding: GlobalBinding, proof: P },
+    /// Define `destination` as `undefined` (`void`).
+    Void { destination: Register },
+    /// ToPropertyKey of a string `source`, which is its own key; any other value leaves at the
+    /// miss edge, where the VM converts it (`Vm::to_property_key`: a Number allocates, an object
+    /// runs guest code).
+    PropertyKey { destination: Register, source: Register },
+    /// `left == right` (or `===`; negated for `!=`, `!==`) where the two words decide it: the
+    /// same word, two int32s, or `null` and `undefined` under `==`. Any other pair leaves at the
+    /// miss edge, where the VM compares (strings, BigInts, conversions that run guest code).
+    Equality { destination: Register, left: Register, right: Register, strict: bool, negated: bool },
+    /// Any other `Binary` of two registers (a string or BigInt relation, an arithmetic of other
+    /// than Numbers, `instanceof`, `in`): the VM's own operation, a callout.
+    Binary { destination: Register, left: Register, right: Register, operator: u32 },
+    /// Define `destination` from environment slot `slot` (`environment::environment_slot`); a
+    /// sparse storage or an internal marker leaves at the frame's miss edge.
+    LoadEnvLocal { destination: Register, slot: u16 },
+    /// Write `source` to environment slot `slot`, and to `result` where the instruction has one;
+    /// `initialize` where the store is the binding's declaration.
+    StoreEnvLocal { source: Register, slot: u16, result: Option<Register>, initialize: bool },
+    /// Define `destination` with the length of the arguments binding in local `slot`.
+    ArgumentsLength { destination: Register, slot: u16 },
+    /// Define `destination` with the `typeof` name of the global `atom` through cache `site`
+    /// (the lane's own read); an unresolvable name is `undefined`, not an error.
+    GlobalTypeof { destination: Register, atom: u32, site: u16 },
+    /// The global-name store of `source` to `atom` through cache `site`, an initialization
+    /// where `initialize`; a binding the lane's store does not take leaves at the miss edge.
+    GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool },
+    /// An iteration or spread step (`Protocol`) over the `operands` registers, defining
+    /// `destination` where it has one; the generic protocol runs guest code, a callout.
+    Protocol { step: Protocol, destination: Option<Register>, operands: [Option<Register>; 2] },
+    /// Define `destination` with the next key of the for-in state in register `state`; continue
+    /// at the jump target once none is left.
+    ForInNext { destination: Register, state: Register },
     /// The VM field-store helper for `object.atom = value` through cache `site`.
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
     /// The value `base.name` reads through `lookup`'s plan (`property::read_with`); the tier
@@ -291,21 +352,20 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
+            Op::Binary | Op::ToPropertyKey => return Self::decode_generic(instruction),
             Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary => return Self::decode_value(instruction),
-            Op::GetField | Op::Delete | Op::Binary => return Self::decode_property(instruction),
+            Op::GetField | Op::Delete => return Self::decode_property(instruction),
             op if op.is_field_store() => return Self::decode_property(instruction),
-            _ => return None,
+            _ => return names::decode(instruction),
         })
     }
 
-    /// The property operations of `decode`: a plain named read, a named store, `delete` and
-    /// `in` of registers.
+    /// The property operations of `decode`: a plain named read, a named store and `delete`.
     fn decode_property(instruction: WideInstruction) -> Option<Self> {
         match instruction.op() {
             Op::GetField => Self::decode_get_field(instruction),
             Op::Delete => Some(Self::Delete { base: instruction.register_b(), key: instruction.register_c(),
                 strict: instruction.boolean_flag()? }),
-            Op::Binary => Self::decode_has_property(instruction),
             op if op.is_field_store() => Some(Self::SetField { value: instruction.register_a(),
                 base: instruction.field_store_register(), atom: instruction.atom_index(),
                 site: instruction.cache_site_index() }),
@@ -325,7 +385,7 @@ impl<W, P> Operation<W, P> {
         Some(Self::GetField { base, lookup })
     }
 
-    /// `key in base` of two registers.
+    /// `key in base` of two registers (`generic::decode_binary` decodes `Binary` rows).
     fn decode_has_property(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0
             || instruction.binary_operator() != oxc_ast::ast::BinaryOperator::In as u32 { return None; }
@@ -345,6 +405,8 @@ impl<W, P> Operation<W, P> {
             Op::Unary if instruction.unary_operator()
                 == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot {
                     destination: instruction.result_register(), source: instruction.register_b() },
+            Op::Unary if instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Void as u32
+                && !instruction.returns_from_frame() => Self::Void { destination: instruction.result_register() },
             _ => return None,
         })
     }
@@ -390,3 +452,5 @@ mod tests;
 mod property_tests;
 #[cfg(test)]
 mod coverage_tests;
+#[cfg(test)]
+mod generic_tests;
