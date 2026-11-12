@@ -316,6 +316,7 @@ impl<H: Host> Vm<H> {
             free_cache_layouts: _,
             active_registers: _,
             lane_raised,
+            lane_raise_site: _,
             lane_returned,
             lane_native,
             lane_native_returned,

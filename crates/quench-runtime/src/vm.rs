@@ -141,6 +141,7 @@ mod embedding;
 mod provenance;
 mod inspection;
 mod environment;
+mod handler_entry;
 mod equality;
 mod error;
 mod eval;
@@ -200,6 +201,7 @@ mod object_static;
 mod object_symbols;
 #[cfg(test)] mod lane_loop_tests;
 #[cfg(test)] mod native_frame_tests;
+#[cfg(test)] mod catch_tests;
 #[cfg(test)] mod object_tests;
 mod property_key;
 use call_arguments::CallArguments;
@@ -2013,6 +2015,10 @@ pub(crate) struct Vm<H> {
     /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
     /// the general loop raises at that call's instruction once the lane exits there.
     lane_raised: Option<JsError>,
+    /// Where a lane body's native `throw` raised the error in `lane_raised`
+    /// (`compiled::raise_site`), which the lane gives it as its source location once it
+    /// escapes the native frames (`dispatch_fast::lane_raised_exit`).
+    lane_raise_site: u64,
     /// A lane native call running with its activations still frameless
     /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
     /// frames (`materialize_deferred_lane`).

@@ -141,7 +141,7 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
     let (resumed, _) = lane_body_left(cx, r, own, &method, resume);
     let inside = match resume {
         LaneExit::At(pc) => (site.header..=site.backedge).contains(&(pc as u32)),
-        LaneExit::Returned { .. } | LaneExit::Terminated => false,
+        LaneExit::Returned { .. } | LaneExit::Threw { .. } | LaneExit::Terminated => false,
         _ => true,
     };
     if inside { site.body.borrow_mut().note_leave(exit); }
@@ -151,6 +151,7 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
         // A callee's run that left the lane for the general path leaves it at its record.
         LaneBodyLeft::Resume(_, next, _) if body_calls::left_lane(next) => LoopAttempt::Leave(next),
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
+        LaneBodyLeft::Raised(record) => LoopAttempt::Leave(lane_raised_exit(cx, record)),
         LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(lane_return_value_general::<H>(cx, record, value)),
     })
 }

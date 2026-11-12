@@ -3275,11 +3275,7 @@ script_handler! {
                 return exit(ip);
             }
             note_allocation(vm);
-            unsafe {
-                (*cx).capture = std::ptr::null();
-                (*cx).outer = NO_OUTER_WALK;
-                (*cx).frame_storage = NO_FRAME_STORAGE;
-            }
+            handler_edges::drop_environment_caches(cx);
         }
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -8176,6 +8172,7 @@ fn lane_loop_native<H: Host>(
         LoopContinuation::Callee => LoopAttempt::Leave(exit(unsafe { (*cx).callee_resume })),
         LoopContinuation::Completed(pc, value) =>
             LoopAttempt::Resumed(lane_return_value_general::<H>(cx, at(pc), value)),
+        LoopContinuation::Threw(pc) => LoopAttempt::Leave(lane_raised_exit(cx, at(pc))),
     }
 }
 
@@ -8354,6 +8351,8 @@ enum LoopContinuation {
     Compiling,
     /// The region completed its activation with this value at this record.
     Completed(u32, Value),
+    /// The region raised the exception in `Vm::lane_raised` at this record: unwind from it.
+    Threw(u32),
     /// A call activated the callee's lane body: leave the run in that activation.
     Callee,
 }
@@ -8363,7 +8362,7 @@ fn count_continuation(continuation: &LoopContinuation) {
     use super::compiled::base_region::{count, Event};
     count(match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => Event::Declined,
-        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Safepoint | LoopContinuation::Callee => Event::Left,
+        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Safepoint | LoopContinuation::Callee | LoopContinuation::Threw(_) => Event::Left,
         LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => Event::Entered,
     });
 }
@@ -8436,7 +8435,7 @@ fn lane_loop_run<H: Host>(
                 site.native_region_runs.set(site.native_region_runs.get().saturating_add(1));
                 site.native_exits.set(site.native_exits.get().saturating_add(1));
             }
-            LoopOutcome::Resume(_) | LoopOutcome::Returned { .. } | LoopOutcome::Callee => {
+            LoopOutcome::Resume(_) | LoopOutcome::Returned { .. } | LoopOutcome::Threw { .. } | LoopOutcome::Callee => {
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
             }
@@ -8520,7 +8519,7 @@ fn lane_loop_run<H: Host>(
                 return LoopContinuation::Inlined { frame, pc };
             }
             LoopOutcome::Callee => return LoopContinuation::Callee,
-            LoopOutcome::NotEntered | LoopOutcome::Terminated | LoopOutcome::Returned { .. } => {}
+            LoopOutcome::NotEntered | LoopOutcome::Terminated | LoopOutcome::Returned { .. } | LoopOutcome::Threw { .. } => {}
         }
     }
     match outcome {
@@ -8538,6 +8537,7 @@ fn lane_loop_run<H: Host>(
             site.note_run(entry.backedge_count());
             LoopContinuation::Completed(pc, value)
         }
+        LoopOutcome::Threw { pc } => { site.note_run(entry.backedge_count()); LoopContinuation::Threw(pc) }
         LoopOutcome::Terminated => LoopContinuation::Safepoint,
     }
 }
@@ -13427,6 +13427,8 @@ mod generator_windows; use generator_windows::{lane_generator_returned, lane_res
 mod array_steps;
 mod value_steps;
 pub(in crate::vm) use value_steps::lane_body_value_step;
+mod handler_edges;
+pub(in crate::vm) use handler_edges::lane_handler_edge;
 use array_steps::*;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
 mod wasm_gc;
@@ -14980,6 +14982,7 @@ macro_rules! lane_body_conclude {
             LaneBodyLeft::Terminated => return self::exit(ip),
             LaneBodyLeft::Resume(_, resume, _) if body_calls::left_lane(resume) => return resume,
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
+            LaneBodyLeft::Raised(record) => return lane_raised_exit(cx, record),
             LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value),
         }
     }};
@@ -15680,7 +15683,8 @@ fn lane_body_push<H: Host>(
 
 /// The activation of `target` a lane body's call (`constructs`: `new`) at `ip` makes, its
 /// `argc` arguments at `passed`, run by the target's own body where it has one: its
-/// completion writes the call's register (`LANE_CALL_COMPLETED`), and any other end leaves
+/// completion writes the call's register (`LANE_CALL_COMPLETED`), its exception pops the
+/// activation and waits in `Vm::lane_raised` (`LANE_CALL_RAISED`), and any other end leaves
 /// the lane in the activation (`LANE_CALL_LEFT`).
 #[allow(clippy::too_many_arguments)]
 fn lane_body_activate<H: Host>(
@@ -15729,6 +15733,7 @@ fn lane_body_activate<H: Host>(
     match resumed {
         LaneBodyLeft::Terminated => LANE_CALL_TERMINATED,
         LaneBodyLeft::Resume(_, resume, carried) => leave(resume, unsafe { carried.acc.get() }),
+        LaneBodyLeft::Raised(_) => lane_pop_raised(cx, r, ip, constructs),
         // A construction's completion yields its returned object or the receiver.
         LaneBodyLeft::Completed(_, value) if constructs => {
             lane_complete_activation(cx, ip, value).expect("the construction made an activation");
@@ -15739,6 +15744,36 @@ fn lane_body_activate<H: Host>(
             LANE_CALL_COMPLETED
         }
     }
+}
+
+/// Leaves the lane at `record`, where the running activation's body raised the exception in
+/// `Vm::lane_raised`: the general loop unwinds from there, from the frames frameless
+/// activations become first (`lane_in_place`).
+fn lane_raised_exit<H: Host>(cx: *mut LaneContext<H>, record: Ip) -> Ip {
+    let vm = unsafe { vm(cx) };
+    let (function, throw_pc) = super::compiled::raise_site_parts(vm.lane_raise_site);
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    if let Some(error) = vm.lane_raised.as_mut() { error.capture_source_location(code, function, throw_pc); }
+    if !vm.lane_stack.activations.is_empty() {
+        // SAFETY: `record` is one of the running function's records.
+        let call_pc = unsafe { record.offset_from((*cx).base) } as usize;
+        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
+        vm.materialize_deferred_lane();
+    }
+    exit(record)
+}
+
+/// The call at `ip` whose callee's body raised (`LaneBodyLeft::Raised`): the callee's activation
+/// is popped and the call's register keeps its value, which a handler of the caller may read;
+/// the exception waits in `Vm::lane_raised` for the caller's body (`LANE_CALL_RAISED`).
+fn lane_pop_raised<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, constructs: bool) -> u64 {
+    let destination = unsafe { (*ip).a } & crate::bytecode::REGISTER_MASK;
+    let kept = r.get(destination);
+    let popped = if constructs { lane_complete_activation(cx, ip, Value::UNDEFINED).is_some() } else { lane_return_to_body(cx, Value::UNDEFINED).is_some() };
+    debug_assert!(popped, "the call made the activation its body raised in");
+    r.set(destination, kept);
+    super::compiled::LANE_CALL_RAISED
 }
 
 /// Whether a body's run that ended at `exit` counts toward its retirement and
@@ -15758,6 +15793,9 @@ enum LaneBodyLeft {
     /// Irreversible cancellation leaves the lane without dispatching another record.
     Terminated,
     Resume(Registers, Ip, Carried),
+    /// The activation's body raised an exception (`Vm::lane_raised`) at the record: the
+    /// lane unwinds from it, or the call that made the activation pops it (`lane_pop_raised`).
+    Raised(Ip),
     /// The activation completes with the value, by the record.
     Completed(Ip, Value),
 }
@@ -15794,6 +15832,8 @@ fn lane_body_left<H: Host>(
     let base = unsafe { (*cx).base };
     (match exit.resumed() {
         super::compiled::LaneExit::Terminated | super::compiled::LaneExit::Entry => unreachable!("termination leaves before recovery; an entry leave resumes at its first record"),
+        // SAFETY: the record that raised is one of the activation's function.
+        super::compiled::LaneExit::Threw { pc } => LaneBodyLeft::Raised(unsafe { base.add(pc) }),
         super::compiled::LaneExit::At(pc) => {
             let mut carried = Carried::script(cx);
             if let Some(&register) = own.accumulator_registers.get(pc)

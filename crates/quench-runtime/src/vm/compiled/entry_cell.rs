@@ -54,7 +54,15 @@ unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *co
 /// The recovery space the stub's cell names: no body, nothing to recover.
 static NO_RECOVERY: LaneRecoverySpace = LaneRecoverySpace { values: 0, activations: 0 };
 
+/// One completion in `EntryCell::counters` (its high word): a run of the body that ended by
+/// an exception through a native caller (`Lowering::direct_finish`), which no Rust code sees.
+pub(in crate::vm) const RAISED_RUN: u64 = 1 << u32::BITS;
+
 impl EntryCell {
+    /// The runs of the body that ended by an exception through a native caller, for tests.
+    #[cfg(test)]
+    pub(in crate::vm) fn raised_runs(&self) -> u32 { (self.counters.get() >> u32::BITS) as u32 }
+
     pub(in crate::vm) fn stub() -> usize { lane_entry_stub as BodyEntry as usize }
 
     pub(in crate::vm) fn new() -> Self {

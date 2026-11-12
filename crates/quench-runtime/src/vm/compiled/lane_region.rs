@@ -38,6 +38,8 @@ mod stable;
 mod polls;
 #[path = "lane_region/literals.rs"] mod literals;
 #[path = "lane_region/edges.rs"] mod edges;
+#[path = "lane_region/catches.rs"] mod catches;
+use catches::CallEdges;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
@@ -448,6 +450,8 @@ struct Lowering<'a, 'f> {
     /// The function's parameter count: an entry guard on a parameter declines the region
     /// when a call's value does not match the compiled entry fact.
     params: usize,
+    /// The lowered function, which an exception it raises names as its source (`Lowering::throw`).
+    function_id: u32,
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
@@ -562,6 +566,8 @@ struct Lowering<'a, 'f> {
     leave: ir::Block,
     /// The stop at a record: it writes its result word parameter and leaves stopped.
     stop: ir::Block,
+    /// The throws native code catches itself, by unit PC (`catches::catch_edges`).
+    catches: BTreeMap<usize, catches::Catch>,
 }
 
 enum Liveness<'a> {
@@ -1539,6 +1545,9 @@ pub(super) fn lower(
     for alternative in unit.frames.iter().filter_map(|frame| frame.alternative) {
         if alternative < unit.instructions.len() { leaders.insert(alternative); }
     }
+    // A handler's block is entered by the throws it catches, edges no jump names.
+    let catches = catches::catch_edges(program, function, unit, coverage, completion);
+    for catch in catches.values() { leaders.insert(catch.target); }
     let blocks: Vec<_> = (0..unit.instructions.len()).map(|pc| leaders.contains(pc).then(|| builder.create_block())).collect();
     let (leave, stop) = (builder.create_block(), builder.create_block());
     completion.leave_params().iter().for_each(|&ty| { builder.append_block_param(leave, ty); });
@@ -1551,6 +1560,7 @@ pub(super) fn lower(
         program,
         unit,
         params: usize::from(function.params),
+        function_id,
         helpers,
         fields,
         entry_fields,
@@ -1609,6 +1619,7 @@ pub(super) fn lower(
         finishes: false,
         leave,
         stop,
+        catches,
     };
     let instructions = unit.instructions.clone();
     for instruction in &instructions {
@@ -1728,6 +1739,12 @@ pub(super) fn lower(
             matches!(unit.origins[read.pc], super::lane_unit::Origin::Inlined { .. })));
     }
     (lowering.forward, lowering.sealable) = edges::leader_edges(&instructions, &leaders, entry_pc);
+    // No forward edge of the bytecode's enters a handler's block: its proofs are none, and it
+    // seals once the region ends.
+    for catch in lowering.catches.values() {
+        lowering.forward[catch.target] = None;
+        lowering.sealable.remove(catch.target);
+    }
     lowering.entered.insert(entry_pc);
     lowering.stable.start = entry_pc;
     {
@@ -2588,6 +2605,7 @@ impl Lowering<'_, '_> {
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op().class() {
+            Class::Throw => self.throw(state, pc, instruction),
             // A static typed region's canonical code completes its activation.
             Class::Return if plain && self.completion.status_and_pc() && instruction.register_a() < self.unit.registers => {
                 Some(self.complete(state, pc, instruction.register_a()))
@@ -2855,8 +2873,9 @@ impl Lowering<'_, '_> {
     }
 
     /// The continuation of a lane helper's `status`: its completion continues at `completed`, a
-    /// miss leaves at `missed`, and a leave in a callee, or a termination, stops the body.
-    fn helper_status(&mut self, status: ir::Value, completed: ir::Block, missed: ir::Block) {
+    /// miss leaves at `missed`, a call whose callee raised continues at `raised` (a helper that
+    /// makes no calls has none), and a leave in a callee, or a termination, stops the body.
+    fn helper_status(&mut self, status: ir::Value, completed: ir::Block, missed: ir::Block, raised: Option<ir::Block>) {
         let other = self.builder.create_block();
         let left = self.builder.create_block();
         self.builder.set_cold_block(left);
@@ -2871,9 +2890,10 @@ impl Lowering<'_, '_> {
         let callee = self.builder.create_block();
         self.ins().brif(terminated, stopped, &[], callee, &[]);
         self.builder.switch_to_block(stopped);
-        let status = self.ins().iconst(types::I32, TERMINATED_STATUS);
-        self.leave_with(status, None);
+        let terminate = self.ins().iconst(types::I32, TERMINATED_STATUS);
+        self.leave_with(terminate, None);
         self.builder.switch_to_block(callee);
+        if let Some(raised) = raised { self.branch_if_raised(status, raised); }
         let word = self.ins().iconst(types::I64, LaneExit::Callee.word() as i64);
         let stop = self.stop;
         self.ins().jump(stop, &[word.into()]);
@@ -2907,7 +2927,7 @@ impl Lowering<'_, '_> {
         self.spill_written(pc);
         let completed = self.builder.create_block();
         let status = self.record_helper(LaneHelper::ValueStep, call_pc);
-        self.helper_status(status, completed, missed);
+        self.helper_status(status, completed, missed, None);
         self.builder.switch_to_block(completed);
         state.call_effect();
         self.reload_property_arena();
@@ -3407,39 +3427,49 @@ impl Lowering<'_, '_> {
 
     /// A call (or a construction, by `helper`) the body does not inline, by `helper`'s
     /// protocol: the body's registers written back, then a direct call of a `Call`'s compiled
-    /// callee or the helper; its completion continues, a leave in the callee stops the body,
+    /// callee or the helper; its completion continues, the callee's exception goes to a
+    /// handler of the body or out of it (`raised_call`), a leave in the callee stops the body,
     /// and a miss leaves at `pc`. The callee may allocate, which may move the property arena,
     /// whose base and length the body reloads.
     fn call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, helper: LaneHelper) -> bool {
-        let Some(super::lane_unit::Origin::Caller(call_pc)) = self.unit.origins.get(pc).copied() else {
+        // A callee's exception must go where native code takes it (`Lowering::raises_from`):
+        // a call it cannot unwind from is made by the lane.
+        let origin = self.unit.origins.get(pc).copied().filter(|_| self.raises_from(pc));
+        let Some(super::lane_unit::Origin::Caller(call_pc)) = origin else {
             self.exit(state, pc as u32);
             return false;
         };
         let missed = self.guard_exit(state, pc as u32);
         self.canonicalize(state, pc);
         self.spill_written(pc);
-        let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
+        let edges = self.call_edges();
+        let CallEdges { helper: generic, completed, raised } = edges;
         self.reentries.push(completed);
         match self.direct.get(&pc).copied() {
             // SAFETY: the body owns the callee for as long as its code runs.
-            Some(callee) if instruction.op().class().eq(Class::Call) => self.direct_call(instruction, unsafe { &*callee }, generic, completed),
-            Some(callee) if instruction.op().class().eq(Class::Construct) => self.direct_construct(instruction, unsafe { &*callee }, generic, completed),
+            Some(callee) if instruction.op().class().eq(Class::Call) => self.direct_call(instruction, unsafe { &*callee }, edges),
+            Some(callee) if instruction.op().class().eq(Class::Construct) => self.direct_construct(instruction, unsafe { &*callee }, edges),
             _ => { self.ins().jump(generic, &[]); }
         }
         self.builder.switch_to_block(generic);
         let status = self.record_helper(helper, call_pc);
-        self.helper_status(status, completed, missed);
+        self.helper_status(status, completed, missed, Some(raised));
+        self.raised_call(state, pc, call_pc, raised);
         self.builder.switch_to_block(completed);
-        // A returning call's completion is its activation's: the lane completes it with the
-        // result, which the call left in its register (`LaneExit::Returned`).
+        self.call_completed(state, instruction, call_pc)
+    }
+
+    /// The code after a call's completion: a returning call completes its activation with the
+    /// result, which the call left in its register (`LaneExit::Returned`); any other call's
+    /// callee may have changed any object, and allocated, which may move the property arena:
+    /// proofs of their shapes and storage retire, and the arena's base reloads.
+    fn call_completed(&mut self, state: &mut State, instruction: WideInstruction, call_pc: u32) -> bool {
         if instruction.returns_from_frame() {
             let base = self.registers_base;
             let value = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(instruction.result_register()));
             self.return_value(call_pc, value);
             return false;
         }
-        // The callee may have changed any object, and allocated, which may move the property
-        // arena: proofs of their shapes and storage retire, and the arena's base reloads.
         state.call_effect();
         self.reload_property_arena();
         self.reload_result(state, instruction.result_register());
@@ -3463,13 +3493,7 @@ impl Lowering<'_, '_> {
     /// Stops with the activation's completion: `value` in the result word, `record` the
     /// record that completes it (`LANE_BODY_RETURNED`).
     fn return_value(&mut self, record: u32, value: ir::Value) {
-        self.finishes = true;
-        let record = self.ins().iconst(types::I64, i64::from(record));
-        let payload = self.payload;
-        self.ins().store(MemFlagsData::trusted(), record, payload,
-            i32::try_from(std::mem::offset_of!(JsStepDispatch, returned_pc)).expect("dispatch offset fits i32"));
-        let returned = self.ins().iconst(types::I32, i64::from(LANE_BODY_RETURNED));
-        self.leave_with(returned, Some(value));
+        self.stop_with(LANE_BODY_RETURNED, record, Some(value));
     }
 
     /// Leaves with `status`, and with `word` as the result word where a run publishes one: a

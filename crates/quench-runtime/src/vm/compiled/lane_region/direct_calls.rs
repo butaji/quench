@@ -2,24 +2,24 @@
 //! it admits, the window and frame it pushes, and where each status goes.
 
 use super::*;
-use super::super::entry_cell::LANE_BODY_NOT_ENTERED;
-use super::direct_admission::DirectStacks;
+use super::super::entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED, RAISED_RUN};
+use super::direct_admission::{dispatch_offset, DirectStacks};
 
 impl Lowering<'_, '_> {
     /// The call of `callee` by its compiled entry: the callee's registers in the lane stack's
     /// free values, a native frame (`ActivationKind::Native`) the lane links only should the callee
     /// observe it or leave, and the per-entry words the callee runs with. A
     /// completion stores its value to the call's register and continues at `completed`; a
-    /// leave stops the caller too, its frames kept; any other callee, receiver, or a full
-    /// stack takes `helper`. The caller wrote back its registers.
-    pub(super) fn direct_call(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
+    /// leave stops the caller too, its frames kept; a callee's exception goes to `raised`; any
+    /// other callee, receiver, or a full stack takes `helper`. The caller wrote back its registers.
+    pub(super) fn direct_call(&mut self, instruction: WideInstruction, callee: &DirectCallee, edges: CallEdges) {
         let (mut admitted, this) = self.direct_receiver(instruction, callee);
         let cell = self.reloc(RelocKind::EntryCell, callee.target.function, callee.cell as u64);
         let (stacks, [fits, room]) = self.direct_room(callee, cell);
         admitted.extend([fits, room]);
-        self.direct_admit(&admitted, helper);
+        self.direct_admit(&admitted, edges.helper);
         let status = self.direct_enter(instruction, callee, cell, (this, stacks));
-        self.direct_finish(instruction, status, stacks, helper, completed, None);
+        self.direct_finish(instruction, status, (stacks, cell), edges, None);
     }
 
     /// The construction through forwarding constructor `callee.callee` whose forwarded
@@ -28,36 +28,46 @@ impl Lowering<'_, '_> {
     /// runs through its cell; the construction yields the receiver whatever it returns, as
     /// the constructor's forwarding body does. Any other constructor, a plan that does not
     /// hold, or no room takes `helper`.
-    pub(super) fn direct_construct(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
+    pub(super) fn direct_construct(&mut self, instruction: WideInstruction, callee: &DirectCallee, edges: CallEdges) {
         let (base, payload) = (self.registers_base, self.payload);
         let constructor = self.word_load(base, register_offset(instruction.register_b()));
         let same = self.word_cmp_imm(IntCC::Equal, constructor, callee.callee.to_bits() as i64);
-        self.direct_admit(&[same], helper);
+        self.direct_admit(&[same], edges.helper);
         let receiver = self.helper_call(LaneHelper::ConstructReceiver, &[payload, constructor]);
         let built = self.word_cmp_imm(IntCC::NotEqual, receiver, Value::DELETED.to_bits() as i64);
         let cell = self.reloc(RelocKind::EntryCell, callee.target.function, callee.cell as u64);
         let (stacks, [fits, room]) = self.direct_room(callee, cell);
-        self.direct_admit(&[built, fits, room], helper);
+        self.direct_admit(&[built, fits, room], edges.helper);
         let status = self.direct_enter(instruction, callee, cell, (receiver, stacks));
-        self.direct_finish(instruction, status, stacks, helper, completed, Some(receiver));
+        self.direct_finish(instruction, status, (stacks, cell), edges, Some(receiver));
     }
 
     /// Where each status of a native call goes: a completion stores its value, or the
-    /// construction's `receiver`, to the call's register and continues at `completed`.
-    fn direct_finish(&mut self, instruction: WideInstruction, (status, word): (ir::Value, ir::Value), stacks: DirectStacks, helper: ir::Block, completed: ir::Block, receiver: Option<ir::Value>) {
+    /// construction's `receiver`, to the call's register and continues at `completed`; the
+    /// callee's exception pops its frame and continues at `raised`.
+    fn direct_finish(&mut self, instruction: WideInstruction, (status, word): (ir::Value, ir::Value), (stacks, cell): (DirectStacks, ir::Value), edges: CallEdges, receiver: Option<ir::Value>) {
         let base = self.registers_base;
         let returned = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_RETURNED));
         let (back, check, left, missed) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        let (threw, popped) = (self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(left);
         self.builder.set_cold_block(missed);
         self.word_brif(returned, back, &[], check, &[]);
         // The cell held the stub: nothing ran, so the call takes the helper path.
         self.builder.switch_to_block(check);
         let not_entered = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_NOT_ENTERED));
-        self.word_brif(not_entered, missed, &[], left, &[]);
+        self.word_brif(not_entered, missed, &[], threw, &[]);
         self.builder.switch_to_block(missed);
-        stacks.pop(self);
-        self.word_jump(helper, &[]);
+        self.direct_unwind(stacks, edges.helper);
+        // The callee ended by an exception, which sits in `Vm::lane_raised`: its frame is gone.
+        self.builder.switch_to_block(threw);
+        let raised = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_THREW));
+        self.word_brif(raised, popped, &[], left, &[]);
+        self.builder.switch_to_block(popped);
+        let counters = self.word_load(cell, dispatch_offset(std::mem::offset_of!(EntryCell, counters)));
+        let counted = self.word_add_imm(counters, RAISED_RUN as i64);
+        self.word_store(counted, cell, dispatch_offset(std::mem::offset_of!(EntryCell, counters)));
+        self.direct_unwind(stacks, edges.raised);
         // A leave inside the callee stops the caller with it: the lane makes the frames'
         // activations and continues in the innermost (`dispatch_fast::lane_body_left`).
         self.builder.switch_to_block(left);
@@ -66,7 +76,13 @@ impl Lowering<'_, '_> {
         stacks.pop(self);
         let value = match receiver { Some(receiver) => receiver, None => word };
         self.word_store(value, base, register_offset(instruction.result_register()));
-        self.word_jump(completed, &[]);
+        self.word_jump(edges.completed, &[]);
+    }
+
+    /// Pops the callee's window and frame (`DirectStacks::pop`) and continues at `target`.
+    fn direct_unwind(&mut self, stacks: DirectStacks, target: ir::Block) {
+        stacks.pop(self);
+        self.word_jump(target, &[]);
     }
 
     /// Copies the call's arguments into the callee's window at `top`; parameter `k` lives in

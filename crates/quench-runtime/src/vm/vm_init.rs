@@ -97,6 +97,7 @@ impl<H: Host> Vm<H> {
             free_cache_layouts: FxHashMap::default(),
             active_registers: std::ptr::null_mut(),
             lane_raised: None,
+            lane_raise_site: 0,
             lane_deferred: None,
             resolved_module_requests: Default::default(),
             resolved_module_names: Default::default(),

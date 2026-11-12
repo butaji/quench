@@ -514,9 +514,9 @@ mod tests {
 
     const NO_METHODS: &[MethodSite] = &[];
 
-    #[test]
-    fn branch_roots_are_derived_from_successor_uses() {
-        let function = Function {
+    /// A function of `code` over `registers` registers, with `handlers`, and nothing else.
+    fn function_of(code: Vec<Instr>, registers: u16, handlers: Vec<crate::bytecode::Handler>) -> Function {
+        Function {
             parent: None,
             name: None,
             inferred_name: None,
@@ -554,14 +554,9 @@ mod tests {
             binding_sites: vec![].into(),
             source_positions: Default::default(),
             environment_clones: vec![].into(),
-            code: vec![
-                Instr::new(Op::LoadConst, 0, 0, 0, 0),
-                Instr::new(Op::Jump, 0, 0, 0, 3),
-                Instr::new(Op::Return, 0, 0, 0, 0),
-                Instr::new(Op::Return, 1, 0, 0, 0),
-            ],
+            code,
             wide: vec![],
-            registers: 2,
+            registers,
             dispatch: crate::bytecode::DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
@@ -573,16 +568,42 @@ mod tests {
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             initializer: Default::default(),
-            handlers: vec![].into(),
+            handlers: handlers.into(),
             register_roots: Default::default(),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
-        };
+        }
+    }
+
+    #[test]
+    fn branch_roots_are_derived_from_successor_uses() {
+        let function = function_of(vec![
+            Instr::new(Op::LoadConst, 0, 0, 0, 0),
+            Instr::new(Op::Jump, 0, 0, 0, 3),
+            Instr::new(Op::Return, 0, 0, 0, 0),
+            Instr::new(Op::Return, 1, 0, 0, 0),
+        ], 2, vec![]);
         let roots = analyze(&function, NO_METHODS, &[], &[]).unwrap();
         assert_eq!(roots[3], register_bit(1));
         assert_eq!(roots[1], register_bit(1));
         assert_eq!(roots[1] & register_bit(0), 0);
+    }
+
+    /// A register only a catch block reads is live before every instruction its handler covers,
+    /// including one that overwrites it: the write is not made when that instruction throws.
+    #[test]
+    fn a_register_only_the_catch_reads_is_live_in_the_covered_code() {
+        let handler = crate::bytecode::Handler { start: 1, end: 2, target: 3, slot: None, return_target: None, return_slot: None, with_depth: 0 };
+        let function = function_of(vec![
+            Instr::new(Op::LoadConst, 1, 0, 0, 0),
+            Instr::new(Op::LoadConst, 1, 0, 0, 0),
+            Instr::new(Op::Return, 0, 0, 0, 0),
+            Instr::new(Op::Return, 1, 0, 0, 0),
+        ], 2, vec![handler]);
+        let live = analyze(&function, NO_METHODS, &[], &[]).unwrap();
+        assert_ne!(live[1] & register_bit(1), 0, "the covered write does not kill the catch's input");
+        assert_eq!(live[0] & register_bit(1), 0, "outside the covered range the write kills it");
     }
 
     #[test]

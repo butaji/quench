@@ -41,12 +41,12 @@ pub(super) struct EmitFrame<'a> {
     pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
 }
 
-impl EmitFrame<'_> {
-    /// The activation's local slots, read where an instruction uses them.
-    fn native_locals(&self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
-        self.locals.then(|| super::super::emit_js_payload_word(stage.builder, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, native_locals)))
-    }
+/// The address of the activation's local `slot` (`JsStepDispatch::native_locals`), which an
+/// instruction or a handler's entry reads or writes.
+pub(super) fn local_slot_address(builder: &mut FunctionBuilder<'_>, payload: ir::Value, slot: u16) -> ir::Value {
+    let locals = super::super::emit_js_payload_word(builder, payload,
+        std::mem::offset_of!(super::super::JsStepDispatch, native_locals));
+    builder.ins().iadd_imm_s(locals, i64::from(slot) * std::mem::size_of::<Value>() as i64)
 }
 
 impl EmitFrame<'_> {
@@ -261,9 +261,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
         -> Option<(ir::Value, RegisterFact)> {
-        let locals = self.native_locals(stage)?;
-        let address = stage.builder.ins().iadd_imm_s(locals,
-            i64::from(slot) * std::mem::size_of::<Value>() as i64);
+        let address = self.locals.then(|| local_slot_address(stage.builder, self.payload, slot))?;
         let value = stage.builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
         Some((value, RegisterFact::canonical()))
     }
@@ -271,9 +269,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn store_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, value: ir::Value,
         _miss: Option<ir::Block>) -> bool {
-        let Some(locals) = self.native_locals(stage) else { return false };
-        let address = stage.builder.ins().iadd_imm_s(locals,
-            i64::from(slot) * std::mem::size_of::<Value>() as i64);
+        let Some(address) = self.locals.then(|| local_slot_address(stage.builder, self.payload, slot)) else { return false };
         stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
         true
     }
