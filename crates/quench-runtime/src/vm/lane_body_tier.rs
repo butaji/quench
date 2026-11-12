@@ -88,7 +88,7 @@ impl LaneView {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
         let LaneBody::Specialized { exits, leaves_at, completed, completions, recompiles, stuck, method, .. } = body else { return };
-        if completed_region || matches!(exit, LaneExit::Returned { .. }) {
+        if completed_region || exit.completes() {
             completed.set(true);
             completions.set(completions.get().saturating_add(1));
             return;

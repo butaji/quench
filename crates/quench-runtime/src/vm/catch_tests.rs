@@ -1,5 +1,6 @@
-//! Exceptions inside compiled code: a `throw` a handler of the same function covers is the
-//! catch's jump in native code (`lane_region::catches`), and every result equals the
+//! Exceptions inside compiled code: a `throw` or a callee's exception that a handler of the
+//! same function covers is the catch's jump in native code, and one that none covers crosses
+//! compiled frames as `LANE_BODY_THREW` (`lane_region::catches`); every result equals the
 //! interpreter's.
 use super::*;
 use crate::Engine;
@@ -122,4 +123,148 @@ fn an_uncaught_throw_in_a_hot_loop_reaches_the_outer_handler() {
       print(String(seen));
     "#;
     matches_interpreter(&format!("(function(){{{source}}})();"), "run");
+}
+
+/// Runs `source` compiled and returns its printed lines and, per function of `names`, the lane
+/// body's runs that ended the activation and the ones that left it to the lane
+/// (`LaneBodyStats::runs`): a throw that crossed native frames made no frame, so no run left.
+fn body_runs(source: &str, names: &[&str]) -> (Vec<String>, Vec<(u32, u32)>) {
+    let program = Engine::specialize(source, "catch-tests.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.programs.enable_js_lane_methods();
+    vm.execute(&program).unwrap();
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let runs = names.iter().map(|name| {
+        let id = program.functions.iter()
+            .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name))
+            .unwrap();
+        views.get(id).and_then(super::program_store::derived_lane_view).expect("lane view").body_stats.runs()
+    }).collect();
+    let lines = output.borrow().clone();
+    (lines, runs)
+}
+
+/// The compiled run's lines, which must equal the interpreter's, and the body runs of `names`.
+fn bodies_match_interpreter(source: &str, names: &[&str]) -> Vec<(u32, u32)> {
+    let wrapped = format!("(function(){{{source}}})();");
+    let (expected, _) = run_in(crate::ExecutionMode::Interpreted, &wrapped, names[0]);
+    let (actual, runs) = body_runs(&wrapped, names);
+    assert_eq!(actual, expected);
+    runs
+}
+
+/// A compiled callee's throw reaches the compiled caller's catch through the native call:
+/// no run of the caller leaves, so no frame was made for the exception.
+#[test]
+fn a_throw_from_a_compiled_callee_is_caught_by_a_compiled_caller_without_leaving() {
+    let source = r#"
+      function thrower(k) {
+        let s = 0;
+        for (let j = 0; j < 4; j++) s += j;
+        if (k % 3 === 0) throw k + s;
+        return k;
+      }
+      function caller(k) {
+        try { return thrower(k) + 1; } catch (e) { return e * 10; }
+      }
+      let result = 0;
+      for (let repeat = 0; repeat < 512; repeat++) {
+        result = 0;
+        for (let i = 0; i < 24; i++) result += caller(i);
+      }
+      print(String(result));
+    "#;
+    let runs = bodies_match_interpreter(source, &["caller", "thrower"]);
+    assert!(runs[0].0 > 0, "the caller's body runs natively");
+    assert_eq!(runs[0].1, 0, "the callee's throw is caught by native code: no run of the caller leaves");
+}
+
+/// An exception no compiled frame catches crosses three of them and reaches the
+/// interpreter's handler with its value intact; none of them leaves.
+#[test]
+fn an_uncaught_throw_crosses_three_compiled_frames_to_the_interpreter() {
+    let source = r#"
+      function third(k) {
+        let s = 0;
+        for (let j = 0; j < 4; j++) s += j;
+        if (k % 4 === 0) throw { k, s };
+        return k;
+      }
+      function second(k) { let a = third(k); for (let j = 0; j < 2; j++) a += j; return a; }
+      function first(k) { let b = second(k); for (let j = 0; j < 2; j++) b += j; return b; }
+      let seen = 0, total = 0;
+      for (let repeat = 0; repeat < 512; repeat++) {
+        for (let i = 0; i < 16; i++) {
+          try { total += first(i); } catch (error) { seen += error.k + error.s; }
+        }
+      }
+      print(String(seen) + ':' + String(total));
+    "#;
+    let runs = bodies_match_interpreter(source, &["first", "second", "third"]);
+    assert!(runs[0].0 > 0, "the outermost compiled frame runs natively");
+    assert_eq!(runs[0].1, 0, "the exception unwinds through the native frames without a leave");
+}
+
+/// A `finally` in a compiled frame between the throw and the catch runs once per unwind, and a
+/// rethrow from a catch is a new throw: the values and the order equal the interpreter's.
+#[test]
+fn finally_blocks_and_rethrows_across_compiled_frames_match_the_interpreter() {
+    let source = r#"
+      let log = 0;
+      function inner(k) {
+        let s = 0;
+        for (let j = 0; j < 4; j++) s += j;
+        if (k % 2 === 0) throw k + s;
+        return k;
+      }
+      function guarded(k) {
+        try { return inner(k) * 2; } finally { log++; }
+      }
+      function rethrower(k) {
+        try { return guarded(k); } catch (e) { if (e % 4 === 0) throw e + 1; return -e; }
+      }
+      function run(n) {
+        let total = 0;
+        for (let i = 0; i < n; i++) {
+          try { total += rethrower(i); } catch (e) { total += e * 100; }
+        }
+        return total * 1000 + log;
+      }
+      let result = 0;
+      for (let repeat = 0; repeat < 256; repeat++) { log = 0; result = run(24); }
+      print(String(result));
+    "#;
+    bodies_match_interpreter(source, &["run", "rethrower", "guarded", "inner"]);
+}
+
+/// The source location of an uncaught exception thrown in compiled code is the throw's, as the
+/// interpreter reports it.
+#[test]
+fn an_uncaught_exception_from_compiled_frames_reports_the_throws_location() {
+    let source = r#"
+      function thrower(k) {
+        let s = 0;
+        for (let j = 0; j < 4; j++) s += j;
+        if (k === 40000) throw new Error('boom ' + s);
+        return k;
+      }
+      function caller(k) { return thrower(k) + 1; }
+      let total = 0;
+      for (let i = 0; i <= 40000; i++) total += caller(i);
+      print(String(total));
+    "#;
+    let location = |mode: crate::ExecutionMode| {
+        let program = Engine::specialize(source, "catch-tests.js").unwrap();
+        let mut vm = Vm::new(TestHost::writing_to(Rc::new(RefCell::new(Vec::new()))));
+        vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+        vm.set_execution_mode(mode);
+        vm.programs.enable_js_lane_methods();
+        let error = vm.execute(&program).expect_err("the exception is uncaught");
+        error.source_location().map(|(file, line, column, _)| (file.to_owned(), line, column))
+    };
+    assert_eq!(location(crate::ExecutionMode::Compiled), location(crate::ExecutionMode::Interpreted));
 }
