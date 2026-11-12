@@ -30,9 +30,12 @@ use crate::bytecode::{Class, Traits,
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
     RETURN_REGISTER, WideInstruction,
 };
+use crate::staged::wasm_flow::Flow;
 use crate::staged::wasm_instance::Instance;
 use crate::staged::wasm_step::Step;
-use crate::wasm::integer::I32BinaryOperator;
+use crate::staged::wasm::{WasmStage, Width, integer_binary};
+use crate::staged::wasm_operation::{Form, Operand as Right, WasmOperation};
+use crate::staged::ConcreteWasm;
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName,
     condcodes::{FloatCC, IntCC},
@@ -86,6 +89,7 @@ mod wasm_callable;
 mod wasm_stage;
 mod wasm_instance_stage;
 mod wasm_memory_stage;
+mod wasm_flow_stage;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
 pub(super) use lane_unit::static_call_targets;
@@ -8756,7 +8760,9 @@ impl<H: Host> Analysis<'_, H> {
         result: Option<crate::WasmType>,
     ) -> Option<()> {
         let op = instruction.op();
-        if !op.is_return() && instruction.returns_from_frame() {
+        if !Step::of(op, instruction.imm()).is_some_and(Step::returns)
+            && instruction.returns_from_frame()
+        {
             return None;
         }
         if !super::dispatch_fast::lane_fields_fit(instruction, function) {
@@ -8814,6 +8820,9 @@ impl<H: Host> Analysis<'_, H> {
                     (memory_register, *memory_slot),
                 );
             }
+            Some(Step::Flow(flow)) => {
+                return self.transfer_flow(function, instruction, state, flow, result);
+            }
             None => {}
         }
         match op.class() {
@@ -8866,21 +8875,6 @@ impl<H: Host> Analysis<'_, H> {
                     (state.get(register, function.registers)? == Slot::Vector).then_some(())?;
                 }
                 set(state, instruction.a(), Slot::Vector)
-            }
-            Class::Jump => Some(()),
-            Class::WasmBranchTable => {
-                i32_value(state, instruction.a())?;
-                
-                // Entries are `Jump`s; validation guarantees it for
-                // reachable tables.
-                (!crate::bytecode::branch_table_entries(0, instruction).next().is_none()).then_some(())
-            }
-            Class::WasmSelect => {
-                let (condition, _) = instruction.register_pair();
-                i32_value(state, condition)?;
-                let kind = value(state, instruction.b())?;
-                (value(state, instruction.c())? == kind).then_some(())?;
-                set(state, instruction.a(), Slot::Value(kind))
             }
             Class::WasmIndirectTarget if self.callouts => {
                 let Slot::Binding(table) = state.get(instruction.b(), function.registers)? else {
@@ -8958,15 +8952,6 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Class::WasmUnreachable
-                if self.experimental_root_compilation || eager_unreachable_admitted() =>
-            {
-                Some(())
-            }
-            Class::Return => match result {
-                Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
-                None => Some(()),
-            },
             _ => None,
         }
     }
@@ -9206,17 +9191,26 @@ fn writes_register(instruction: WideInstruction, register: u16) -> bool {
 /// Whether conditional jump `instruction` is taken when `register` holds
 /// `value`, if that alone decides it.
 fn decided_branch(instruction: WideInstruction, register: u16, value: i32) -> Option<bool> {
-    let op = instruction.op();
     if instruction.a() != register {
         return None;
     }
-    if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
-        let right = i32::from(instruction.b() as i16);
-        return operator.evaluate(value, right).ok().map(|holds| holds != 0);
-    }
-    match op.class() {
-        Class::WasmJumpI32Zero => Some(value == 0),
-        Class::WasmJumpI32NonZero => Some(value != 0),
+    match WasmOperation::of(instruction.op(), instruction.imm())? {
+        WasmOperation::Test { nonzero } => Some((value != 0) == nonzero),
+        WasmOperation::Binary {
+            operator,
+            width: Width::I32,
+            form: Form::BranchImmediate,
+        } => {
+            let Right::Constant(right) = Form::BranchImmediate.right(instruction) else {
+                return None;
+            };
+            let (left, right) = (
+                ConcreteWasm.constant(Width::I32, i64::from(value)),
+                ConcreteWasm.constant(Width::I32, right),
+            );
+            let holds = integer_binary(&mut ConcreteWasm, operator, Width::I32, left, right);
+            holds.ok().map(|holds| holds != 0)
+        }
         _ => None,
     }
 }
@@ -10707,51 +10701,10 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.memory(instruction, step);
                 return true;
             }
+            Some(Step::Flow(flow)) => return self.flow(function, pc, instruction, flow),
             None => {}
         }
         match op.class() {
-            Class::Jump => {
-                let target = instruction.jump_target() as usize;
-                self.jump(target, self.polls(pc, target));
-                return false;
-            }
-            Class::WasmBranchTable => {
-                let selector = self.read(a, Kind::I32);
-                let entries: Vec<usize> = crate::bytecode::branch_table_entries(pc, instruction)
-                    .map(|entry| {
-                        super::dispatch_fast::decoded_instruction(function, function.code[entry])
-                            .jump_target() as usize
-                    })
-                    .collect();
-                // A table entry at or before `pc` is a backedge; a loop may
-                // repeat through the table alone, so it polls like a jump.
-                if entries.iter().any(|&target| target <= pc) {
-                    self.interrupt_safepoint();
-                }
-                let (default, cases) = entries.split_last().expect("a default entry");
-                let default = self.block(*default);
-                let default = self.body.core.builder.func.dfg.block_call(default, &[]);
-                let cases: Vec<_> = cases
-                    .iter()
-                    .map(|target| {
-                        let block = self.block(*target);
-                        self.body.core.builder.func.dfg.block_call(block, &[])
-                    })
-                    .collect();
-                let table = ir::JumpTableData::new(default, &cases);
-                let table = self.body.core.builder.create_jump_table(table);
-                self.body.core.builder.ins().br_table(selector, table);
-                return false;
-            }
-            Class::WasmSelect => {
-                let (condition, _) = instruction.register_pair();
-                let kind = self.operand_kind(pc);
-                let condition = self.read(condition, Kind::I32);
-                let taken = self.read(b, kind);
-                let other = self.read(c, kind);
-                let value = self.body.core.builder.ins().select(condition, taken, other);
-                self.write(a, kind, value);
-            }
             Class::CallKnown => {
                 let callee = usize::from(instruction.known_function_index());
                 let Some(callee_plan) = self.plans[callee].as_ref() else {
@@ -10813,20 +10766,6 @@ impl<H: Host> Emitter<'_, '_, H> {
                 Slot::IndirectReference { .. } => self.call_reference(pc, instruction),
                 _ => unreachable!("planned calls hold a supported callable"),
             },
-            Class::WasmUnreachable => {
-                let trap = self.trap_block(crate::WasmTrap::Unreachable);
-                self.body.core.builder.ins().jump(trap, &[]);
-                return false;
-            }
-            Class::Return => {
-                let status = self.body.core.builder.ins().iconst(types::I64, 0);
-                let mut values = vec![status];
-                if let Some(ty) = self.plan.result {
-                    values.push(self.read(a, Kind::of(ty).expect("planned")));
-                }
-                self.body.core.builder.ins().return_(&values);
-                return false;
-            }
             _ => unreachable!("planned instructions have a denotation"),
         }
         true
@@ -11042,7 +10981,10 @@ impl<'a, H: Host> Analysis<'a, H> {
             .iter()
             .enumerate()
             .filter(|(pc, instruction)| {
-                plan.reachable(*pc) && instruction.op().is_wasm_branch_table()
+                plan.reachable(*pc) && matches!(
+                    Step::of(instruction.op(), instruction.imm()),
+                    Some(Step::Flow(Flow::Table))
+                )
             })
             .map(|(_, instruction)| instruction.a())
             .collect();

@@ -1,6 +1,7 @@
 //! What a Wasm function's instruction is, as data: the one table every tier reads (the
 //! analysis, the emitter, the loop and threading passes). No tier names a Wasm opcode.
 
+use super::wasm_flow::Flow;
 use super::wasm_instance::Instance;
 use super::wasm_memory::Memory;
 use super::wasm_operation::WasmOperation;
@@ -14,6 +15,8 @@ pub(crate) enum Step {
     Instance(Instance),
     /// Linear-memory loads, stores, size and bulk operations.
     Memory(Memory),
+    /// Jumps, tables, selects, traps and returns.
+    Flow(Flow),
 }
 
 impl Step {
@@ -23,6 +26,12 @@ impl Step {
             .map(Self::Numeric)
             .or_else(|| Instance::of(op).map(Self::Instance))
             .or_else(|| Memory::of(op).map(Self::Memory))
+            .or_else(|| Flow::of(op).map(Self::Flow))
+    }
+
+    /// Whether the step returns from the function.
+    pub(crate) const fn returns(self) -> bool {
+        matches!(self, Self::Flow(Flow::Return))
     }
 
     /// Whether the step reads the function's memory register, which no other step may.
