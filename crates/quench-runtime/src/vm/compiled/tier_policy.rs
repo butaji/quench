@@ -197,10 +197,6 @@ pub(in crate::vm) const SPECULATION: Speculation =
 /// inlining plan), before a native run of it has measured its mean: enough that a site in a loop
 /// outweighs one outside it, and that nesting orders deeper sites first.
 pub(in crate::vm) const ASSUMED_LOOP_TRIP: u64 = 8;
-/// The bodies a field site's leaves may have named (`Vm::field_site_leaves`) before a plan reads
-/// it as a probed read rather than a shape proof: a site that left in one body may have met its
-/// second shape by chance.
-pub(in crate::vm) const UNSTABLE_SITE_LEAVES: u8 = 2;
 
 /// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
 /// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
