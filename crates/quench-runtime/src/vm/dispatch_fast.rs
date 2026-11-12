@@ -16112,6 +16112,9 @@ fn lane_activate_environment<H: Host>(
         if let Some(gathered) = gathered {
             local.add(usize::from(target.params) - 1).write(gathered);
         }
+        if let Some(slot) = body.self_binding_slot {
+            local.add(usize::from(slot)).write(target.callee);
+        }
         stack.values.set_top(registers.add(held + locals + usize::from(argc)));
         Registers(registers)
     };
@@ -20829,7 +20832,12 @@ fn specialize_environment_window<H: Host>(
         }
         let environment = !op.captures_environment() && function.local_slot_uses_environment(own as usize);
         let mapped = mapped_windows::mapped_parameter_handler::<H>(function, op.class(), own as usize);
+        // A store to the function's own name is ignored or throws (`Function::strict`), which
+        // the general step decides.
+        let own_name_store = function.is_self_binding_slot(own as usize)
+            && matches!(op.class(), Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal);
         let handler: Handler = mapped.unwrap_or(match (op.class(), environment) {
+            _ if own_name_store => lane_exit::<H>,
             (Class::MakeClosure, _) if scoped => scoped_names::scoped_closure::<H>(),
             (Class::MakeClosure, _) => lane_make_window_closure::<H>,
             (Class::CloneEnv, _) => lane_clone_window_env::<H>,

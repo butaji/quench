@@ -56,3 +56,29 @@ fn a_parameter_eval_declaring_arguments_raises_at_the_eval_in_any_activation() {
     );
     assert_eq!(lines, ["1 SyntaxError SyntaxError 5"]);
 }
+
+#[test]
+fn a_named_function_expression_binds_its_own_name_in_its_window() {
+    // The name is a window local the entry initializes with the callee; a store to it leaves the
+    // lane, where it is ignored (sloppy) or throws (strict).
+    let lines = agree(
+        r#"
+        const out = [];
+        const fact = function f(n) { const k = () => n; return n < 2 ? k() : n * f(n - 1); };
+        out.push(fact(6));
+        const rebind = function r(n) { const k = () => n; r = 1; return typeof r + k(); };
+        out.push(rebind(3));
+        const strict = function s(n) { "use strict"; const k = () => n; try { s = 1; } catch (e) { return e.constructor.name + k(); } };
+        out.push(strict(2));
+        const gen = function* g(n) { const k = () => n; yield typeof g; yield k(); };
+        out.push([...gen(4)].join());
+        const viaClosure = function c(n) { const k = () => n; return [1].map(() => c.length + k())[0]; };
+        out.push(viaClosure(5));
+        let total = 0;
+        for (let i = 0; i < 500; i++) total += fact(5);
+        out.push(total);
+        print(out.join("|"));
+        "#,
+    );
+    assert_eq!(lines, ["720|function3|TypeError2|function,4|6|60000"]);
+}

@@ -1773,8 +1773,8 @@ pub(crate) struct CallPlan {
     pub(crate) registers_only: bool,
     /// The activation's state is its registers, its frame locals and the environment its
     /// closures capture, which it may make on entry: an ordinary body but for the closures
-    /// it makes and the iteration copies of its environment, with no `arguments`, self
-    /// binding, binding site, dynamic scope access or superinstruction, whose every local access is a plain or
+    /// it makes and the iteration copies of its environment, with no `arguments`, binding
+    /// site, dynamic scope access or superinstruction, whose every local access is a plain or
     /// environment load, store or dead-zone opening of a selectively captured layout. A lane
     /// may run such a body without a frame (`CallEntry::Environment`).
     pub(crate) environment_activation: bool,
@@ -2292,10 +2292,10 @@ impl Function {
     /// and a suspended generator's window (`CallPlan::suspended_environment`) share. Each local
     /// is a frame local (none promoted to a register), the captured ones owned by the
     /// environment, and every instruction that addresses one is a record the window's handlers
-    /// read.
+    /// read. A function's own name binding is a local too, which the entry initializes with the
+    /// callee and whose stores leave the lane (`specialize_environment_window`).
     fn locals_ride_window(&self, tables: &impl FactTables, scoped: bool) -> bool {
         self.arguments_own_their_slots(|atom| tables.atom_name(atom))
-            && self.self_binding_slot.is_none()
             && self.local_registers.is_empty()
             && (self.arguments_slot.is_none() || self.reads_passed_arguments_only() || self.arguments_ride_window())
             && self.initial_register == InitialRegister::Undefined
