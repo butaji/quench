@@ -6188,7 +6188,7 @@ fn lane_loop_outcome(word: u64, region: &LoopRegion) -> LoopOutcome {
             let latch = region.inlining.as_ref().map_or(region.backedge, |inlining| inlining.latch);
             if (region.header..=latch).contains(&pc) { LoopOutcome::Exit(pc) } else { LoopOutcome::Resume(pc) }
         }
-        LaneExit::Entry => LoopOutcome::NotEntered,
+        LaneExit::Entry | LaneExit::Stub => LoopOutcome::NotEntered,
         LaneExit::Terminated => LoopOutcome::Terminated,
         LaneExit::Callee => LoopOutcome::Callee,
         LaneExit::Inlined { frame, pc } => LoopOutcome::Inlined { frame, pc },
@@ -6688,6 +6688,10 @@ pub(super) enum LaneExit {
     /// The entry's proof of its inputs failed before any instruction ran: the activation
     /// resumes at its first record, and a plan again proves no input contract.
     Entry,
+    /// The call went through an entry cell that held the stub, so no body ran: the caller
+    /// takes its general path at its own first record (`LANE_BODY_NOT_ENTERED`). Not a leave of
+    /// any body: a loop or OSR root, whose entry proves its own inputs, never reads it as one.
+    Stub,
 }
 
 /// The bit of a lane body's result word that marks a leave inside an inlined frame, whose
@@ -6723,11 +6727,11 @@ impl LaneExit {
     }
     #[cfg(test)]
     pub(super) fn caller_pc(self) -> Option<usize> {
-        match self { Self::At(pc) | Self::Returned { pc, .. } => Some(pc), Self::Entry => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
+        match self { Self::At(pc) | Self::Returned { pc, .. } => Some(pc), Self::Entry | Self::Stub => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
     }
     /// Where the activation resumes: an entry leave at its first record.
     pub(super) fn resumed(self) -> Self {
-        if self == Self::Entry { Self::At(0) } else { self }
+        if matches!(self, Self::Entry | Self::Stub) { Self::At(0) } else { self }
     }
     pub(super) fn word(self) -> u64 {
         match self {
@@ -6735,7 +6739,7 @@ impl LaneExit {
             Self::Inlined { frame, pc } => INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc),
             Self::Callee => CALLEE_EXIT,
             Self::Entry => ENTRY_EXIT,
-            Self::Returned { .. } | Self::Terminated => unreachable!("a completion is a status, not a leave word"),
+            Self::Returned { .. } | Self::Terminated | Self::Stub => unreachable!("a completion or an unentered call is a status, not a leave word"),
         }
     }
 
@@ -6756,6 +6760,10 @@ impl LaneExit {
 /// Lane bodies compiled by this process, for tests that a lane activation ran natively.
 #[cfg(test)]
 pub(super) static LANE_METHODS_COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Entries `Vm::run_lane_method` made on this thread and the runs they bound
+/// (`LaneFrame::bind_run` writing its words), for the crossing-cost test.
+#[cfg(test)]
+thread_local! { pub(super) static LANE_ENTRIES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) }; }
 /// Calls lane bodies compiled by this process inline, for tests that inlining happened.
 #[cfg(test)]
 pub(super) static LANE_CALLS_INLINED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -7129,6 +7137,8 @@ impl<H: Host> Vm<H> {
         lane_context: *mut (),
     ) -> LaneExit {
         let frame = lane_frame();
+        #[cfg(test)]
+        LANE_ENTRIES.with(|counts| counts.set((counts.get().0 + 1, counts.get().1)));
         // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
         let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(captures) }
             .unwrap_or((std::ptr::null(), 0));
@@ -7140,17 +7150,17 @@ impl<H: Host> Vm<H> {
                 (*frame).scratch.resize(method.scratch_width, Value::UNDEFINED);
             }
             let dispatch = &raw mut (*frame).dispatch;
-            LaneEntry {
+            let run = LaneRun {
                 program_id: program,
-                field_entries: self.program_field_entries(program).unwrap_or(0),
                 lane_context: lane_context.addr(),
-                native_registers: registers,
                 residual: residual as *const ResidualProgram as usize,
-            }
-            .install(&mut *dispatch);
+                stores_specialized: usize::from(self.specialized && residual.specialized),
+            };
+            (*frame).bind_run(run, &self.execution_interrupt);
+            (*dispatch).field_entries = self.program_field_entries(program).unwrap_or(0);
+            (*dispatch).native_registers = registers;
             (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
             (*dispatch).refresh_object_bases_at_entry(self);
-            (*dispatch).stores_specialized = usize::from(self.specialized && residual.specialized);
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);
             // A run starts with no native frames; its direct calls place their callees past
@@ -7161,11 +7171,7 @@ impl<H: Host> Vm<H> {
             let frames = if direct_calls { SHADOW_FRAMES.min(activations) } else { 0 };
             (*dispatch).shadow_base = shadow.addr();
             ((*dispatch).shadow_top, (*dispatch).shadow_end) = (shadow.addr(), shadow.add(frames).addr());
-            let context = &raw mut (*frame).context;
-            (*context).adapter_payload = dispatch.cast();
-            (*context).interrupt = self.execution_interrupt.atomic_flag() as *const _;
-            (*context).interrupt_owner = &self.execution_interrupt;
-            context
+            &raw mut (*frame).context
         };
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases set above.
@@ -7337,6 +7343,24 @@ impl LaneEntry {
     }
 }
 
+/// The words of the dispatch payload and context that stay as they are for every entry of one
+/// lane run: its program, residual, lane context and store specialization (`LaneFrame::bind_run`).
+/// An entry writes them only where its run is not the one that bound them; the words it writes
+/// per entry are its registers and the stack's room.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct LaneRun {
+    program_id: ProgramId,
+    lane_context: usize,
+    residual: usize,
+    stores_specialized: usize,
+}
+
+impl LaneRun {
+    fn of(dispatch: &JsStepDispatch) -> Self {
+        Self { program_id: dispatch.program_id, lane_context: dispatch.lane_context, residual: dispatch.residual, stores_specialized: dispatch.stores_specialized }
+    }
+}
+
 /// The context and payload every lane body on this thread runs with
 /// (`Vm::run_lane_method`). Thread facts are set once; each entry writes its own.
 struct LaneFrame {
@@ -7347,6 +7371,27 @@ struct LaneFrame {
 }
 
 impl LaneFrame {
+    /// Binds the payload and context to `run`'s words, written once per run: a nested entry
+    /// of the same run (`Vm::run_nested_lane_method`) and each next entry of the lane's calls
+    /// find them standing.
+    #[inline(always)]
+    fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt) {
+        let owner = std::ptr::from_ref(interrupt);
+        if LaneRun::of(&self.dispatch) != run {
+            #[cfg(test)]
+            LANE_ENTRIES.with(|counts| counts.set((counts.get().0, counts.get().1 + 1)));
+            self.dispatch.program_id = run.program_id;
+            self.dispatch.lane_context = run.lane_context;
+            self.dispatch.residual = run.residual;
+            self.dispatch.stores_specialized = run.stores_specialized;
+        }
+        if self.context.interrupt_owner != owner {
+            self.context.interrupt = interrupt.atomic_flag() as *const _;
+            self.context.interrupt_owner = owner;
+        }
+        self.context.adapter_payload = (&raw mut self.dispatch).cast();
+    }
+
     fn new() -> Self {
         let mut context = CallContext::native_adapter(std::ptr::null_mut(), std::ptr::null(), None);
         context.callout = lane_method_exit as unsafe extern "C" fn(u64, u64, u64, u64) -> i64 as usize;
@@ -7431,6 +7476,7 @@ impl<H: Host> Vm<H> {
         match status {
             status if i64::from(status) == TERMINATED_STATUS => LaneExit::Terminated,
             NATIVE_JS_STOPPED => LaneExit::decode(word),
+            entry_cell::LANE_BODY_NOT_ENTERED => LaneExit::Stub,
             status if status >= JS_GENERAL_RETURN_STATUS_BASE => LaneExit::At((status - JS_GENERAL_RETURN_STATUS_BASE) as usize),
             // Dispatch reaches an invalid PC only before any instruction ran.
             _ => LaneExit::At(0),

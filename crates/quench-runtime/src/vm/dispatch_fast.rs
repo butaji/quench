@@ -912,6 +912,23 @@ impl LaneView {
         if body.is_some() { (method, body) } else { (None, None) }
     }
 
+    /// The body its entry cell holds, which every caller enters through the cell's one entry
+    /// word: `None` while the cell holds the stub (no closed body is published, or it retired),
+    /// whose entries take `lane_body` or the warming path. Owned as `lane_body` owns it, so a
+    /// reentrant change of the publication leaves the run its code.
+    fn cell_body(&self) -> Option<std::rc::Rc<super::compiled::LaneMethod>> {
+        let cell = &self.entry;
+        (cell.entry.get() != super::compiled::entry_cell::EntryCell::stub()).then(|| {
+            let body = cell.body.get() as *const super::compiled::LaneMethod;
+            // SAFETY: a published cell's `body` is `Rc::as_ptr` of the body `pinned` keeps
+            // (`EntryCell::publish`); the strong count taken here is the run's own.
+            unsafe {
+                std::rc::Rc::increment_strong_count(body);
+                std::rc::Rc::from_raw(body)
+            }
+        })
+    }
+
     /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).
     pub(super) fn entry_cell(&self) -> usize { std::ptr::from_ref(&self.entry).addr() }
 
@@ -14765,7 +14782,7 @@ script_handler! {
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)
             .expect("a lane body entry runs in its view");
         // A body a lifecycle edge retired gives its prologue back and warms again.
-        let Some(method) = own.lane_body() else {
+        let Some(method) = own.cell_body().or_else(|| own.lane_body()) else {
             own.settle_retired_body();
             next!(cx, r, base, Carried::script(cx))
         };
@@ -15665,7 +15682,7 @@ fn lane_body_left<H: Host>(
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
     (match exit.resumed() {
-        super::compiled::LaneExit::Terminated | super::compiled::LaneExit::Entry => unreachable!("termination leaves before recovery; an entry leave resumes at its first record"),
+        super::compiled::LaneExit::Terminated | super::compiled::LaneExit::Entry | super::compiled::LaneExit::Stub => unreachable!("termination leaves before recovery; an entry leave or an unentered call resumes at its first record"),
         super::compiled::LaneExit::At(pc) => {
             let mut carried = Carried::script(cx);
             if let Some(&register) = own.accumulator_registers.get(pc)

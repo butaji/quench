@@ -9,7 +9,7 @@ pub(super) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<u
     generic.iter().filter_map(|exit| unit.origins.iter().position(|origin| match *exit {
         LaneExit::At(pc) => *origin == lane_unit::Origin::Caller(pc as u32),
         LaneExit::Inlined { frame, pc } => *origin == lane_unit::Origin::Inlined { frame, pc },
-        LaneExit::Callee | LaneExit::Returned { .. } | LaneExit::Terminated | LaneExit::Entry => false,
+        LaneExit::Callee | LaneExit::Returned { .. } | LaneExit::Terminated | LaneExit::Entry | LaneExit::Stub => false,
     })).collect()
 }
 

@@ -137,7 +137,7 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
     let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
     unsafe { (*cx).callee_warming = false };
     // A failed entry contract resumes at the loop's header, not at the function's first record.
-    let resume = if exit == LaneExit::Entry { LaneExit::At(site.header as usize) } else { exit };
+    let resume = if matches!(exit, LaneExit::Entry | LaneExit::Stub) { LaneExit::At(site.header as usize) } else { exit };
     let (resumed, _) = lane_body_left(cx, r, own, &method, resume);
     let inside = match resume {
         LaneExit::At(pc) => (site.header..=site.backedge).contains(&(pc as u32)),

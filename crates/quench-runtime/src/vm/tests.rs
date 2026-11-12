@@ -25502,3 +25502,62 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
     assert_eq!(compiled.native_entries(), 1, "the shared adapter must enter once");
     assert_eq!(compiled.specialized_guard_misses(), 0, "interrupts are native exits, not entry guard misses");
 }
+
+/// Runs `source` and returns the number it leaves in `globalThis.answer`, with the lane body
+/// entries the run made and the runs those entries bound (`LaneFrame::bind_run`).
+fn lane_entry_counts(source: &str, mode: crate::ExecutionMode) -> (Option<f64>, (usize, usize), bool) {
+    let program = Engine::specialize(source, "lane-crossing.js").unwrap();
+    super::compiled::LANE_ENTRIES.with(|counts| counts.set((0, 0)));
+    let mut vm = Vm::new(TestHost::default());
+    vm.programs.enable_js_lane_methods();
+    vm.set_execution_mode(mode);
+    vm.execute(&program).unwrap();
+    let atom = vm.intern_atom("answer");
+    let answer = vm.own_property(vm.realm.globals, atom).and_then(Value::as_number);
+    (answer, super::compiled::LANE_ENTRIES.with(std::cell::Cell::get), super::compiled::js_function_tiers_compile(vm.memory_policy()))
+}
+
+/// The interpreter enters a hot callee's body through its function's one entry word, and a run
+/// binds the dispatch payload once: entries of one lane run find its program, residual, lane
+/// context and interrupt standing, so the runs bound are a small fraction of the entries.
+#[test]
+fn interpreter_calls_cross_into_bodies_with_one_payload_per_lane_run() {
+    let source = r#"(function () {
+      function step(a, b) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + a * i + b) | 0; } return s; }
+      let total = 0;
+      for (let round = 0; round < 20000; round++) { total = (total + step(round & 7, round & 3)) & 1048575; }
+      globalThis.answer = total;
+    })();"#;
+    let (expected, ..) = lane_entry_counts(source, crate::ExecutionMode::Interpreted);
+    let (answer, (entries, binds), compiles) = lane_entry_counts(source, crate::ExecutionMode::Compiled);
+    assert_eq!(answer, expected, "entering through the cell matches the interpreter");
+    if compiles {
+        assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
+        assert!(binds * 50 < entries, "{binds} payload binds for {entries} entries");
+    }
+}
+
+/// Callees whose cell holds the stub (no body yet, a declined or a retired one) run in the
+/// lane and agree with the interpreter, as do those that change from a body to the stub when
+/// their shapes change under a caller that keeps calling.
+#[test]
+fn interpreter_calls_of_stub_callees_match_the_interpreter() {
+    let source = r#"(function () {
+      function cold(a) { return a + 1; }
+      function hot(a) { let s = 0; for (let i = 0; i < 3; i++) { s = (s + a.x + i) | 0; } return s; }
+      function thrower(a) { if (a.x === 7777) throw new Error("t"); return a.x; }
+      const shapes = [{ x: 1 }, { y: 0, x: 2 }, { z: 0, y: 0, x: 3 }, { x: 4, w: 1 }];
+      let total = 0, caught = 0;
+      for (let round = 0; round < 6000; round++) {
+        const o = shapes[(round >> 6) & 3];
+        total = (total + hot(o) + cold(round & 15)) & 1048575;
+        if (round % 1000 === 999) { o.x = 7777; try { thrower(o); } catch (e) { caught++; } o.x = round & 7; }
+        else total = (total + thrower(o)) & 1048575;
+      }
+      globalThis.answer = total * 8 + caught;
+    })();"#;
+    let (expected, ..) = lane_entry_counts(source, crate::ExecutionMode::Interpreted);
+    let (answer, ..) = lane_entry_counts(source, crate::ExecutionMode::Compiled);
+    assert!(expected.is_some());
+    assert_eq!(answer, expected);
+}
