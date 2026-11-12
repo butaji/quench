@@ -7108,6 +7108,10 @@ impl JsNativeActivation {
             global_name_cache_hits: 0,
             outcome: None,
         }, _program: program };
+        // The prologue already coerced `this` (`Vm::call_this_value`); a frame that has not
+        // initialized it leaves the receiver `DELETED`, at which a body's `LoadThis` leaves.
+        let frame = &vm.frames[frame];
+        if frame.fixed_this { native.dispatch.receiver = frame.this.to_bits(); }
         if views { native.dispatch.refresh_heap_bases(vm, &native._program); }
         Some(run(&mut native, vm))
     }

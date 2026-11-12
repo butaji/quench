@@ -236,3 +236,37 @@ fn functions_past_4096_registers_keep_precise_maps() {
     let masks = program.register_root_masks(wide as u32).expect("a body past 4096 keeps a map");
     assert!(masks.is_windowed() && masks.live_at(0, 4096).is_some(), "nine precise windows");
 }
+
+#[cfg(feature = "aot")]
+fn run_native_answer(source: &str) {
+    let (_program, native) = compile_frozen(source);
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    assert_eq!(runtime.native_execution_rejections(), 0);
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn a_lane_body_leave_continues_in_the_per_pc_fallback() {
+    // `String(i)` is no lane instruction: the body leaves there, the fallback runs it and
+    // every later record, and the answer is the interpreter's.
+    run_native_answer(r#"
+        function mix(n) { let s = 0; for (let i = 0; i < n; i++) { s += String(i).length + i; } return s; }
+        const answer = mix(12);
+        if (answer !== 66 + 15) throw Error("answer " + answer);
+    "#);
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn an_ahead_body_reads_the_activations_receiver() {
+    run_native_answer(r#"
+        var o = { k: 4, get() { return this.k + 1; } };
+        function sloppy() { return typeof this; }
+        function strict() { "use strict"; return this === undefined; }
+        if (o.get() !== 5) throw Error("method receiver");
+        if (sloppy.call(3) !== "object") throw Error("sloppy coercion");
+        if (!strict.call(undefined)) throw Error("strict receiver");
+    "#);
+}
