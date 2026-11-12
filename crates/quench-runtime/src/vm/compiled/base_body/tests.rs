@@ -435,3 +435,36 @@ fn class_construction_and_super_print_what_the_interpreter_prints() {
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the bodies ran {runs} times");
 }
+
+/// An instruction that carries the return flag (`return a + b`, `-x`, `o.p`, `typeof v`, `a < b`,
+/// `f(x)`) is its row followed by the completion with its result: the body never leaves, and the
+/// result is the interpreter's.
+#[test]
+fn returning_instructions_complete_the_activation_in_a_body() {
+    assert_bodies_never_leave(
+        "function sum(a, b) { return a + b; }
+         function neg(x) { return -x; }
+         function pick(o) { return o.p; }
+         function kind(v) { return typeof v; }
+         function less(a, b) { return a < b; }
+         function twice(x) { return sum(x, x); }
+         const o = { p: 7 }; let t = 0;
+         for (let k = 0; k < 300; k++) t = (t + sum(k, 1) + neg(k % 5) + pick(o) + kind(k).length + (less(k, 100) ? 1 : 0) + twice(k % 7)) | 0;
+         print(t); print(sum(2, 3)); print(neg(4)); print(kind(1)); print(less(1, 2));",
+    );
+}
+
+/// A returning instruction whose row misses (an overflow, a string operand, a getter) leaves at the
+/// instruction with its flag, and the interpreter completes the function with the value.
+#[test]
+fn a_returning_instruction_that_misses_completes_in_the_interpreter() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function sum(a, b) { return a + b; }
+         function pick(o) { return o.p; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + sum(k, 1) + pick({ p: k })) | 0;
+         print(t); print(sum(2147483647, 1)); print(sum('a', 1)); print(sum(0.5, 0.25));
+         print(pick({ get p() { return 'got'; } })); print(pick({}));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+}

@@ -55,6 +55,9 @@ pub(super) struct CallShape {
     pub(super) window: Register,
     pub(super) argc: u16,
     pub(super) result: Register,
+    /// The call completes its caller's activation with its result (`return f(x)`): the row that
+    /// follows it does (`steps::completing`), and nothing is live after it.
+    pub(super) returning: bool,
 }
 
 impl CallShape {
@@ -67,6 +70,7 @@ impl CallShape {
             window: ImmediateLayout::call_window_base(imm),
             argc: ImmediateLayout::argument_count(imm),
             result: instruction.result_register(),
+            returning: instruction.returns_from_frame(),
         }
     }
 }
@@ -132,6 +136,9 @@ pub(super) enum Declined {
     Window,
     /// The cell's facts do not describe the callee (not yet published, or another function's).
     Facts,
+    /// A returning call: its callee's activation under a host that makes proper tail calls must not
+    /// grow the stack, which only the helper row's own admission (`lane_returning_call_admitted`) knows.
+    Returning,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,6 +156,7 @@ pub(super) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice 
         (facts.construction, Declined::Construction),
         (facts.registers == 0, Declined::Window),
         (!facts.describes(shape.argc), Declined::Facts),
+        (shape.returning, Declined::Returning),
     ];
     declined.into_iter().find(|(declined, _)| *declined).map_or(Choice::Direct, |(_, why)| Choice::Helper(why))
 }
@@ -195,7 +203,7 @@ fn part(stencil: &'static Stencil, holes: [u64; HOLES], exits: Vec<Exit>) -> Cal
     CallPart { stencil, holes, taken: None, exits }
 }
 
-fn spill_part(place: Place, register: Register) -> Result<CallPart, String> {
+pub(super) fn spill_part(place: Place, register: Register) -> Result<CallPart, String> {
     let row = numeric::Row { kind: Kind::Spill, dst: Place::Mem, a: place, b: Place::Mem, speculate: false };
     Ok(part(numeric::stencil(row)?, [slot(register), 0, 0], Vec::new()))
 }
@@ -269,7 +277,7 @@ mod tests {
     use super::*;
     use quench_bjit::call_record as protocol;
 
-    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6 };
+    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false };
 
     fn facts(registers: u16, params: u16) -> DirectFacts {
         let cell = CellFacts { registers, room: registers, params, entry: ENTRY_ACTIVATES as u8 };
@@ -291,6 +299,8 @@ mod tests {
         assert_eq!(choose(&SHAPE, Some(&DirectFacts { construction: true, ..facts(4, 2) })), helper(Declined::Construction));
         assert_eq!(choose(&SHAPE, Some(&facts(0, 2))), helper(Declined::Window));
         assert_eq!(choose(&SHAPE, Some(&facts(4, 1))), helper(Declined::Facts), "more arguments than params");
+        let returning = CallShape { returning: true, ..SHAPE };
+        assert_eq!(choose(&returning, Some(&facts(4, 2))), helper(Declined::Returning));
         let unpublished = DirectFacts { facts: CellFacts { room: 9, ..facts(4, 2).facts }, ..facts(4, 2) };
         assert_eq!(choose(&SHAPE, Some(&unpublished)), helper(Declined::Facts), "the cell describes another window");
         let other_kind = DirectFacts { facts: CellFacts { entry: 1, ..facts(4, 2).facts }, ..facts(4, 2) };

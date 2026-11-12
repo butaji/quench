@@ -106,6 +106,9 @@ const FAMILIES: &[(&str, &str)] = &[
     ("backward-conditional-loop-over-non-numbers", "var w = 0, z = 'a'; do { w++; z = z + 'b'; } while (z.length < 3 && w < 5); acc += w + z.length;"),
     ("backward-conditional-loop-with-in-and-instanceof", "var u = 0; do { u++; } while (u < 4 && !(u in arr) && !(t instanceof C)); acc += u;"),
     ("backward-conditional-nested-with-break", "for (var a = 0; a < 3; a++) { var b = 0; while (b < 4 && o.p) { b++; if (b === 3) break; } acc += a + b; }"),
+    ("returning-arithmetic-field-unary-relational-typeof", "var f = function (a, b) { return a + b; }, g = function (v) { return v.p; }, h = function (a) { return -a; }, k = function (a, b) { return a < b; }, m = function (v) { return typeof v; }; acc += f(i, 1) + g(o) + h(i & 3) + (k(i, 9) ? 1 : 0) + m(i).length;"),
+    ("returning-calls-chain", "var leaf = function (x) { return x + 1; }, mid = function (x) { return leaf(x); }; acc += mid(i) | 0;"),
+    ("returning-misses", "var f2 = function (a, b) { return a + b; }; acc += f2(i < 1500 ? i : 'k', 1).length | 0;"),
     ("async-function", "(async function () { await 0; acc += 1; })();"),
 ];
 

@@ -44,11 +44,11 @@ struct Sites<'a> {
     known: Known<'a>,
 }
 
-/// The row of the instruction at `pc`: a `Return` of a register, a `throw` a handler of the function
-/// catches natively (`throws::caught`), a call the stitch inlines as the
-/// callee's one row or the call planner's chain, else what the loop regions' decode covers (a
-/// leave where nothing does).
-fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
+/// The row of `instruction` at `pc`, which carries no result flag (`cover` strips the return flag
+/// of a returning one, `returning`): a `Return` of a register, a `throw` a handler of the function
+/// catches natively (`throws::caught`), a call the stitch inlines as the callee's one row or the
+/// call planner's chain, else what the loop regions' decode covers (a leave where nothing does).
+fn lowered(region: &LoopRegion, pc: u32, sites: &mut Sites, (instruction, returning): (WideInstruction, bool), helpers: LaneHelpers) -> Decoded {
     let plain = instruction.result_flags() == 0;
     if instruction.op().raises() && let Some(caught) = throws::caught(sites.function, (pc, sites.registers), instruction) {
         return caught;
@@ -58,12 +58,29 @@ fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstr
             Decoded { a: Some(Source::Register(instruction.register_a())), ..Decoded::step(Step::Return, None) }
         }
         Class::Call if chains(instruction) => {
-            let shape = CallShape::of(pc, instruction);
+            let shape = CallShape { returning, ..CallShape::of(pc, instruction) };
             sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape, sites.registers)
                 .unwrap_or_else(|| Decoded::step(Step::Call(shape), Some(shape.result)))
         }
         _ => decode(region, (Facts::Site, sites.known), pc, instruction, helpers),
     }
+}
+
+/// Whether a row may be followed by the completion of the activation with its result: it falls
+/// through to what follows it, and writes the register the completion reads.
+fn completable(row: &Decoded) -> bool {
+    row.dst.is_some() && row.target.is_none() && row.step.is_none_or(|step| matches!(step, Step::Helper | Step::Fast(_) | Step::Call(_)))
+}
+
+/// The row of the instruction at `pc`: what it lowers to (`lowered`), where an instruction that
+/// carries the return flag (`return a + b`, `return o.p`, `return f(x)`) lowers as the one without it,
+/// followed by the completion with its result (`Decoded::completes`); an instruction no row takes
+/// leaves at its PC as it is, flag and all, for the interpreter.
+fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
+    let returning = instruction.only_returns_from_frame();
+    let plain = if returning { instruction.without_return() } else { instruction };
+    let row = lowered(region, pc, sites, (plain, returning), helpers);
+    Decoded { completes: returning && completable(&row), ..row }
 }
 
 /// Which rows control reaches from PC 0; an error where one falls off the function's end.
@@ -169,6 +186,9 @@ fn plan_row(layout: &Layout, reprs: &Reprs, reached: bool, pc: u32, row: &Decode
     let mut planned = plan(row, layout, pc, is_general(row, reprs), helpers)?;
     // The preludes come before the row's own run (a chain's spills): their leaves write the pinned registers back themselves.
     planned.pre.splice(0..0, preludes(layout, row, pc)?);
+    if row.completes {
+        planned = completing(planned, layout, pc, row.dst)?;
+    }
     Ok(planned)
 }
 

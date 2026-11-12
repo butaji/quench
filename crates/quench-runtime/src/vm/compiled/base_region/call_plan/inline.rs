@@ -89,7 +89,8 @@ fn admit(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &Cont
     let policy = &TIERS.stitch;
     let window = context.top + u32::from(callee.registers);
     let refusals = [
-        (choose(shape, Some(facts)) != Choice::Direct, Refused::NotDirect),
+        // A returning call grows no stack where it inlines, so it is direct as the call that does not return is.
+        (choose(&CallShape { returning: false, ..*shape }, Some(facts)) != Choice::Direct, Refused::NotDirect),
         (facts.callee != callee.identity.to_bits(), Refused::Identity),
         (context.chain.contains(&callee.function), Refused::Recursion),
         (context.chain.len() > policy.max_depth, Refused::Depth),
@@ -257,7 +258,7 @@ mod tests {
     use crate::staged::call::{CellFacts, ENTRY_ACTIVATES};
     use oxc_ast::ast::BinaryOperator;
 
-    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6 };
+    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false };
     /// The caller's registers: the callee's window starts here.
     const BASE: Register = 8;
     const IDENTITY: u64 = 7;

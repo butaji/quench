@@ -211,7 +211,7 @@ fn chained(parts: Vec<CallPart>, spills: usize, owned: Option<Box<quench_bjit::c
 pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     match decoded.step.ok_or("plan_step: no step")? {
         Step::Leave => Ok(Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, Some(pc))),
-        Step::Helper => plan_helper(layout, pc, decoded.target, helpers),
+        Step::Helper => plan_helper(layout, pc, decoded, helpers),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
         Step::Fast(fast) => plan_fast(decoded, fast, layout, pc, helpers),
@@ -234,13 +234,35 @@ fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], helpers
     Ok(row)
 }
 
-/// The chain of a helper step at `pc`, which also branches to `target` where its instruction jumps.
-fn plan_helper(layout: &Layout, pc: u32, target: Option<u32>, helpers: LaneHelpers) -> Result<Planned, String> {
-    let row = helper_chain(layout, pc, &layout.spills(pc + 1), helpers)?;
-    match target {
+/// The pinned registers a row at `pc` reloads before it continues: those live at the next
+/// instruction, none where the row completes the activation (nothing runs after it).
+fn reloads(layout: &Layout, decoded: &Decoded, pc: u32) -> Vec<(Place, Register)> {
+    if decoded.completes { Vec::new() } else { layout.spills(pc + 1) }
+}
+
+/// The chain of a helper step at `pc`, which also branches to the target of its instruction where
+/// it jumps.
+fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
+    let row = helper_chain(layout, pc, &reloads(layout, decoded, pc), helpers)?;
+    match decoded.target {
         Some(target) => branching(row, layout, (pc, target)),
         None => Ok(row),
     }
+}
+
+/// `run`, whose instruction carried the return flag, followed by the completion of the activation
+/// with the result it wrote: the pinned register that holds the result written to its frame slot
+/// first (a leave writes back only the registers live at the instruction, and the result is the
+/// instruction's own definition), then the row that completes with that slot, recording the
+/// instruction's PC as the completion, as a body's `Return` does.
+pub(super) fn completing(mut run: Planned, layout: &Layout, pc: u32, result: Option<Register>) -> Result<Planned, String> {
+    let web = result.ok_or("completion: the instruction writes no result")?;
+    let (place, slot) = operand(&layout.homes, Some(Source::Register(web)));
+    if matches!(place, Place::Pin(_) | Place::PinF(_)) {
+        run.post.push(Planned::of_part(call_plan::spill_part(place, layout.homes.orig[usize::from(web)])?));
+    }
+    run.post.push(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) });
+    Ok(run)
 }
 
 /// The chain of a `throw` at `pc`: the spills and the helper row, which raises, so nothing is live
@@ -267,7 +289,7 @@ fn plan_catch(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers)
 /// into where its proof fails. An operand or result held outside its frame slot (a pinned register
 /// holds a Number, which no fast arm takes) has the helper step alone.
 fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
-    let slow = plan_helper(layout, pc, None, helpers)?;
+    let slow = plan_helper(layout, pc, decoded, helpers)?;
     let homes = &layout.homes;
     let ((read, read_hole), (written, written_hole)) = (operand(homes, decoded.a), operand(homes, decoded.dst.map(Source::Register)));
     if read != Place::Mem || written != Place::Mem {
@@ -322,7 +344,7 @@ fn branching(mut row: Planned, layout: &Layout, (pc, target): (u32, u32)) -> Res
 /// the helper row, reloads. The direct row's record is the row's `owned`.
 fn plan_call(layout: &Layout, shape: CallShape, helpers: LaneHelpers) -> Result<Planned, String> {
     let helper = call_plan::helper_address(helpers, LaneHelper::Call).ok_or("call: no helper address")?;
-    let (spills, reloads) = (layout.spills(shape.call_pc), layout.spills(shape.call_pc + 1));
+    let (spills, reloads) = (layout.spills(shape.call_pc), if shape.returning { Vec::new() } else { layout.spills(shape.call_pc + 1) });
     let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads };
     let CallChain { parts, record, choice } = call_plan::plan_call(&plan)?;
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });

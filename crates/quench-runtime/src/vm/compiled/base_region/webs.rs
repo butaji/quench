@@ -64,7 +64,7 @@ impl Decoded {
 
     /// Where control goes after row `k` of `count`.
     pub(super) fn successors(&self, k: usize, count: usize, region: &LoopRegion) -> impl Iterator<Item = Next> {
-        let fall = (self.kind != Kind::Jump && self.step.is_none_or(Step::falls)).then(|| if k + 1 < count { Next::Row(k + 1) } else { Next::Leave(region.backedge + 1) });
+        let fall = (self.kind != Kind::Jump && !self.completes && self.step.is_none_or(Step::falls)).then(|| if k + 1 < count { Next::Row(k + 1) } else { Next::Leave(region.backedge + 1) });
         let branch = self.target.map(|target| row_at(region, target).map_or(Next::Leave(target), Next::Row));
         fall.into_iter().chain(branch)
     }

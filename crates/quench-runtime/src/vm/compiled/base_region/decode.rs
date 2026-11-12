@@ -76,11 +76,14 @@ pub(super) struct Decoded {
     /// The callee register and function word a row stands on where it replaces the call of that
     /// function (`function::inlined_call`): the row proves the register holds it.
     pub(super) identity: Option<(Register, u64)>,
+    /// The instruction carried the return flag: the activation completes with the result the row
+    /// writes (`steps::completing`), so control reaches nothing after it.
+    pub(super) completes: bool,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, identity: None }
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, identity: None, completes: false }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {

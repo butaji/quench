@@ -150,6 +150,18 @@ impl WideInstruction {
         debug_assert!(self.op().result_layout().allows_return());
         self.a |= RETURN_REGISTER;
     }
+
+    /// Whether the return flag is the instruction's only result flag: it completes its function with
+    /// the value it would write to its result register, and does nothing else with it.
+    pub(crate) fn only_returns_from_frame(self) -> bool {
+        self.result_flags() == RETURN_REGISTER && self.returns_from_frame()
+    }
+
+    /// The instruction without its return flag: the same operation, which writes its result register.
+    pub(crate) const fn without_return(mut self) -> Self {
+        self.a &= !RETURN_REGISTER;
+        self
+    }
 }
 
 macro_rules! layout_accessors {

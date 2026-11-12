@@ -77,7 +77,9 @@ unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64,
     // SAFETY: the context's program outlives the lane run, and `call_pc` is a record of the running frame's function.
     let (code, frame, ip) = unsafe { (&*(*cx).code, (*cx).frame, (*cx).base.add(call_pc as usize)) };
     let function = code.function(vm.frames[frame].function as usize);
-    let instruction = decoded_instruction(function, function.code[call_pc as usize]);
+    // A returning record (`return a + b`) is made as the step that writes its result register: the body's
+    // own `Return` row completes the activation with it.
+    let instruction = decoded_instruction(function, function.code[call_pc as usize]).without_return();
     if !instruction.op().steps_in_body() { return LANE_CALL_MISSED; }
     let following = call_pc as usize + 1;
     let branched = lane_in_place(cx, ip, |vm, code| {
