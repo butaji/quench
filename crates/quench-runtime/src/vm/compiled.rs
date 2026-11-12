@@ -6041,11 +6041,29 @@ pub(super) struct CompiledOsrRegion {
     entry: Entry,
     pub(super) facts: OsrFacts,
     crossing: Crossing,
+    /// Where a run may re-enter the code mid-region (stencil regions only).
+    resumes: base_region::ResumeTable,
 }
 
 impl CompiledOsrRegion {
+    /// Whether a run can begin at `pc`: the region's header, or a PC with a resume stub.
+    pub(super) fn can_run_from(&self, region: &LoopRegion, pc: u32) -> bool {
+        pc == region.header || self.resumes.stub(pc).is_some()
+    }
+
+    /// The native entry and its `length` argument that begin a run at `from` (`can_run_from`):
+    /// the region's entry at its header; otherwise the resume thunk, given the stub's address.
+    fn start_at(&self, region: &LoopRegion, from: u32) -> (Entry, u64) {
+        let Some(stub) = self.resumes.stub(from).filter(|_| from != region.header) else { return (self.entry, 0) };
+        let base = self._code.pointer();
+        // SAFETY: the thunk is a routine of the code at `base`, of the shared entry ABI.
+        let thunk = unsafe { std::mem::transmute::<*mut u8, Entry>(base.add(self.resumes.thunk())) };
+        (thunk, base as u64 + stub as u64)
+    }
+
     /// Runs the region on `registers` with `entry`'s record, through the native entry every
-    /// compiled artifact shares (`enter_native`).
+    /// compiled artifact shares (`enter_native`), from its header or, where `can_run_from`,
+    /// from the instruction at `from`.
     ///
     /// # Safety
     /// `registers` is the running activation's register file, at least `Function::registers`
@@ -6064,10 +6082,12 @@ impl CompiledOsrRegion {
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
         lane_context: usize,
+        from: u32,
     ) -> LoopOutcome {
+        let start = self.start_at(region, from);
         // SAFETY: the caller's contract; the region runs the same lane entry ABI.
-        unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(self.entry, registers, entry, region, interrupt) }
-            else { self.run_lane(registers, entry, region, vm, program, function, frame, interrupt, lane_context) } }
+        unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(start, registers, entry, region, interrupt) }
+            else { self.run_lane(start, registers, entry, region, vm, program, function, frame, interrupt, lane_context) } }
     }
 
     /// Runs a loop compiled through the lane region specializer: the shared lane entry ABI,
@@ -6078,6 +6098,7 @@ impl CompiledOsrRegion {
     /// belong to this lane activation.
     unsafe fn run_lane<H: Host>(
         &self,
+        (code, length): (Entry, u64),
         registers: *mut crate::value::Value,
         entry: &mut LoopEntry,
         region: &LoopRegion,
@@ -6152,8 +6173,8 @@ impl CompiledOsrRegion {
             // A stencil region (`Lean`) takes the frame, whose window is the register file; Cranelift code takes the file.
             let mut shadow = ShadowFrame { window: registers as usize, ..ShadowFrame::EMPTY };
             let arguments = if self.crossing == Crossing::Lean { (&raw mut shadow).cast::<u64>().cast_const() } else { registers.cast::<u64>().cast_const() };
-            let status = enter_native(&mut context, 0, 0, arguments,
-                &mut word, NativeEntryMode::Resumable, self.entry);
+            let status = enter_native(&mut context, 0, length, arguments,
+                &mut word, NativeEntryMode::Resumable, code);
 
             if let Some(Raised::Panic(panic)) = context.raised.take() {
                 std::panic::resume_unwind(panic);

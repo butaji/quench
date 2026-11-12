@@ -25,7 +25,7 @@ pub(super) enum Crossing {
 /// # Safety
 /// As `run`.
 pub(super) unsafe fn run_bare(
-    entry_code: Entry,
+    (entry_code, length): (Entry, u64),
     registers: *mut crate::value::Value,
     entry: &mut LoopEntry,
     region: &LoopRegion,
@@ -41,7 +41,7 @@ pub(super) unsafe fn run_bare(
     // The code takes the frame, whose window is the register file it runs on.
     let mut frame = super::ShadowFrame { window: registers as usize, ..super::ShadowFrame::EMPTY };
     // SAFETY: as the caller promises; the code reads the register file through the frame and writes the result word.
-    let status = unsafe { enter_native(&mut context, 0, 0, (&raw mut frame).cast::<u64>(), &mut word, NativeEntryMode::Resumable, entry_code) };
+    let status = unsafe { enter_native(&mut context, 0, length, (&raw mut frame).cast::<u64>(), &mut word, NativeEntryMode::Resumable, entry_code) };
     if let Some(Raised::Panic(panic)) = context.raised.take() {
         std::panic::resume_unwind(panic);
     }

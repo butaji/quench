@@ -43,6 +43,11 @@ impl LoopTier {
         self.code.as_ref().is_some_and(|code| code.is_published())
     }
 
+    /// Whether published code can re-enter `region` at `pc` (`CompiledOsrRegion::can_run_from`).
+    pub(super) fn resumable(&self, region: &LoopRegion, pc: u32) -> bool {
+        self.code.as_ref().and_then(|code| code.lease()).is_some_and(|code| code.can_run_from(region, pc))
+    }
+
     /// Makes the compile under way stale where its code names shape ids, which a shape
     /// compaction renumbers.
     pub(super) fn retire_named_shapes(&self) {

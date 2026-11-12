@@ -24,11 +24,14 @@ mod decode;
 mod link;
 mod plan;
 mod repr;
+mod resume;
 mod webs;
 use decode::*;
 use link::*;
 use plan::*;
 use repr::*;
+pub(in crate::vm) use resume::ResumeTable;
+use resume::*;
 use webs::*;
 
 /// Bytes of a register slot in the activation's register file.
@@ -137,15 +140,15 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 
 /// The machine code of `region`, entered at the shared native entry ABI, or the instruction that
 /// has no row. `ints` are the registers that held an int32 as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows.
-pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<(Vec<u8>, bool), String> {
+pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<BaseCode, String> {
     let started = std::time::Instant::now();
     let built = assemble(region, dense, widened, seen);
     let nanos = started.elapsed().as_nanos() as u64;
     note(|totals, rejects| match &built {
-        Ok((code, _)) => {
+        Ok(built) => {
             totals.regions += 1;
             totals.ops += u64::from(region.backedge - region.header) + 1;
-            totals.bytes += code.len() as u64;
+            totals.bytes += built.code.len() as u64;
             totals.nanos += nanos;
         }
         Err(name) => {
@@ -156,9 +159,18 @@ pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [
     built
 }
 
-/// The code, and whether it reads no heap row: such a region needs from its payload only the entry
-/// record's address (`Crossing::Bare`).
-fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<(Vec<u8>, bool), String> {
+/// A region's machine code.
+pub(in crate::vm) struct BaseCode {
+    pub(in crate::vm) code: Vec<u8>,
+    /// Whether it reads no heap row: such a region needs from its payload only the entry
+    /// record's address (`Crossing::Bare`).
+    pub(in crate::vm) bare: bool,
+    /// Where a run that left the region at a PC re-enters it.
+    pub(in crate::vm) resumes: ResumeTable,
+}
+
+/// The code of `region`.
+fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<BaseCode, String> {
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
@@ -182,7 +194,8 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
         body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs))?);
     }
     let bare = decoded.iter().all(|row| row.heap.is_none());
-    Ok((link(&layout, &body)?, bare))
+    let (code, resumes) = link(&layout, &body)?;
+    Ok(BaseCode { code, bare, resumes })
 }
 
 impl<H: crate::Host> crate::vm::Vm<H> {
