@@ -37,10 +37,11 @@ pub(in crate::vm) struct DirectCallee {
 /// The callees a call site reached that a body may call by their entries, the latest first.
 pub(in crate::vm) type DirectCandidates = smallvec::SmallVec<[DirectCallee; tier_policy::POLYMORPHISM]>;
 
-/// A native frame of a direct call (`DirectCallee`), which the lane materializes as an
-/// activation only if a run leaves inside it (`Vm::take_shadow_frames`): its callee, which
-/// names the call record it returns to, and its receiver. Its registers are the window past
-/// the frame below it, at the lane stack's end, so the frame holds neither.
+/// The prefix of a native frame of a direct call (`DirectCallee`), which every activation
+/// starts with: its callee, which names the call record it returns to, its receiver, the body
+/// it runs and its window of registers. Emitted code writes it, with `ActivationKind::Native`,
+/// into the lane stack's activations; the lane links the frame (`native_frames`) only where a
+/// helper observes it.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub(in crate::vm) struct ShadowFrame {

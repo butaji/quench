@@ -5,6 +5,27 @@ use super::*;
 use super::super::entry_cell::EntryCell;
 use super::super::super::dispatch_fast::LaneRecoverySpace;
 
+/// The lane stack's two tops a native call pushes onto: the words that hold them (the values'
+/// and the activations', which the VM owns and the dispatch points at), and what they held
+/// before the call, where its window and its frame begin; `next` is the values' top once the
+/// callee's window is pushed.
+#[derive(Clone, Copy)]
+pub(super) struct DirectStacks {
+    pub(super) values: ir::Value,
+    pub(super) activations: ir::Value,
+    pub(super) top: ir::Value,
+    pub(super) next: ir::Value,
+    pub(super) frame: ir::Value,
+}
+
+impl DirectStacks {
+    /// Pops both stacks to where the call began: its window and its frame go.
+    pub(super) fn pop(self, lowering: &mut Lowering<'_, '_>) {
+        lowering.word_store(self.top, self.values, 0);
+        lowering.word_store(self.frame, self.activations, 0);
+    }
+}
+
 impl Lowering<'_, '_> {
     /// What admits the callee and receiver the call names (the descriptor's), and the `this`
     /// it binds. A sloppy callee binds an object receiver itself and an `undefined` or `null`
@@ -24,30 +45,32 @@ impl Lowering<'_, '_> {
         (vec![same, bound], self.word_select(object, this, global))
     }
 
-    /// The lane stack's top and the callee window's end, the shadow stack's top, and whether
-    /// both stacks hold the window and the space the callee's published body needs to
-    /// recover (`EntryCell::recovery`), each as its own condition so each is one compare and
-    /// branch (`direct_admit`).
-    pub(super) fn direct_room(&mut self, callee: &DirectCallee, cell: ir::Value) -> (ir::Value, ir::Value, ir::Value, [ir::Value; 2]) {
+    /// The lane stack's two tops, each read through the word that holds it (the values' and
+    /// the activations'), and whether both stacks hold the window, the frame and the space the
+    /// callee's published body needs to recover (`EntryCell::recovery`), each as its own
+    /// condition so each is one compare and branch (`direct_admit`).
+    pub(super) fn direct_room(&mut self, callee: &DirectCallee, cell: ir::Value) -> (DirectStacks, [ir::Value; 2]) {
         let word = std::mem::size_of::<Value>() as i64;
         let payload = self.payload;
         let load = |this: &mut Self, base: ir::Value, field: usize| this.word_load(base, dispatch_offset(field));
-        let top = load(self, payload, std::mem::offset_of!(JsStepDispatch, native_top));
-        let end = load(self, payload, std::mem::offset_of!(JsStepDispatch, native_end));
+        let values = load(self, payload, std::mem::offset_of!(JsStepDispatch, lane_values_top));
+        let top = self.word_load(values, 0);
+        let end = load(self, payload, std::mem::offset_of!(JsStepDispatch, lane_values_end));
         let next = self.word_add_imm(top, i64::from(callee.registers) * word);
         let recovery = load(self, cell, std::mem::offset_of!(EntryCell, recovery));
-        let values = load(self, recovery, std::mem::offset_of!(LaneRecoverySpace, values));
-        let bytes = self.word_mul_imm(values, word);
+        let recovered_values = load(self, recovery, std::mem::offset_of!(LaneRecoverySpace, values));
+        let bytes = self.word_mul_imm(recovered_values, word);
         let reserved = self.word_add(next, bytes);
         let fits = self.word_cmp(IntCC::UnsignedLessThanOrEqual, reserved, end);
-        let shadow = load(self, payload, std::mem::offset_of!(JsStepDispatch, shadow_top));
-        let shadow_end = load(self, payload, std::mem::offset_of!(JsStepDispatch, shadow_end));
-        let activations = load(self, recovery, std::mem::offset_of!(LaneRecoverySpace, activations));
-        let frames = self.word_add_imm(activations, 1);
+        let activations = load(self, payload, std::mem::offset_of!(JsStepDispatch, lane_activations_top));
+        let frame = self.word_load(activations, 0);
+        let frames_end = load(self, payload, std::mem::offset_of!(JsStepDispatch, lane_frames_end));
+        let recovered_frames = load(self, recovery, std::mem::offset_of!(LaneRecoverySpace, activations));
+        let frames = self.word_add_imm(recovered_frames, 1);
         let frame_bytes = self.word_mul_imm(frames, super::super::FRAME_BYTES as i64);
-        let recovered = self.word_add(shadow, frame_bytes);
-        let room = self.word_cmp(IntCC::UnsignedLessThanOrEqual, recovered, shadow_end);
-        (top, next, shadow, [fits, room])
+        let recovered = self.word_add(frame, frame_bytes);
+        let room = self.word_cmp(IntCC::UnsignedLessThanOrEqual, recovered, frames_end);
+        (DirectStacks { values, activations, top, next, frame }, [fits, room])
     }
 
     /// Branches to `helper` unless every condition holds: one compare and branch each, not

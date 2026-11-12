@@ -10,8 +10,17 @@ use super::*;
 /// `LANE_CALL_LEFT` where guest code it ran made the lane's activations frames, which leave the
 /// body at the next record.
 pub(in crate::vm) unsafe extern "C" fn lane_body_value_step<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
+    native_frames::in_innermost_frame(cx, || unsafe { lane_body_value_step_in(cx, call_pc) })
+}
+
+/// `lane_body_value_step` with the context of the running body, which a native callee's frame
+/// made the innermost (`native_frames::in_innermost_frame`).
+///
+/// # Safety
+/// As `lane_body_value_step`.
+unsafe fn lane_body_value_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
     let function = match vm.lane_stack.activations.last() {
