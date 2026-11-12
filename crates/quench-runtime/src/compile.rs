@@ -1246,7 +1246,7 @@ impl Engine {
         // Parsing is done; the semantic analysis starts here.
         compile_phase_boundary(CompilePhase::Analysis);
         let inherited_directive = add_use_strict(&mut parsed.program, &allocator, inherited_strict);
-        let semantic = checked_semantic(&parsed.program, name)?;
+        let semantic = semantic_stats::checked_semantic(&parsed.program, name)?;
         let mut private_name_ids = private_name_ids(&semantic.semantic);
         let mut private_name_labels = private_name_labels(&semantic.semantic);
         let mut prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
@@ -1394,16 +1394,6 @@ impl Engine {
         replay::verify(&program);
         Ok(program)
     }
-}
-
-/// OXC's semantic analysis of `program`, its early errors as diagnostics of `name`.
-fn checked_semantic<'a>(program: &'a Program<'a>, name: &str) -> Result<oxc_semantic::SemanticBuilderReturn<'a>, Vec<Diagnostic>> {
-    let semantic = semantic_stats::builder(program).with_check_syntax_error(true).build(program);
-    if semantic.diagnostics.is_empty() {
-        return Ok(semantic);
-    }
-    let syntax = |error| Diagnostic { kind: DiagnosticKind::Syntax, source: name.into(), message: format!("SyntaxError: {error}"), span: Span::default() };
-    Err(semantic.diagnostics.into_iter().map(syntax).collect())
 }
 
 /// Gives `program`, when it `inherits` strictness (eval code in strict code), a leading

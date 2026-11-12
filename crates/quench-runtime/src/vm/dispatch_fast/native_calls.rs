@@ -1,6 +1,7 @@
 //! Calls the lane answers in place for their common case (else `lane_native_call`), and
 //! for-in's step (`lane_for_in_next`).
 use super::*;
+use crate::vm::object_get::ordinary_chain::ChainRead;
 
 /// `charCodeAt` of a flat string at an integer index: the unit there, or NaN outside the
 /// string. `None` for any other receiver or index, which the native coerces, and for a
@@ -133,4 +134,41 @@ pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, r: Registe
     note_allocation(vm);
     r.set(i.a, value);
     LANE_CALL_COMPLETED
+}
+
+script_handler! {
+    /// `lane_native_call` of `Reflect.get`, read once along an ordinary chain
+    /// (`Vm::reflect_chain_read`): a data value or an absent key completes the call in place,
+    /// an accessor with a getter is that getter's activation with the receiver argument as
+    /// `this` (`lane_activate_getter`), whose completion is the call's value; any other
+    /// call is the native's (`lane_native_call_value`).
+    #[inline(never)]
+    fn lane_reflect_get_call<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: the window is registers of the running function, read before anything runs.
+        let window = unsafe { lane_call_window(r, i) };
+        if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+            return exit(ip);
+        }
+        let read = match window {
+            [target, key, ..] => vm.reflect_chain_read(*target, *key).map(|read| (read, window.get(2).copied().unwrap_or(*target))),
+            _ => None,
+        };
+        match read {
+            Some((ChainRead::Value(value), _)) => resume!(cx, lane_native_complete(cx, ip, i, Some(value))),
+            Some((ChainRead::Absent, _)) => resume!(cx, lane_native_complete(cx, ip, i, Some(Value::UNDEFINED))),
+            Some((ChainRead::Getter(Some(getter)), receiver)) if !getter.is_undefined() => {
+                match lane_activate_getter(cx, r, ip, getter, receiver) {
+                    Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                    Err(next) => next,
+                }
+            }
+            _ => resume!(cx, lane_native_call_value(cx, r, ip, i, Native::ReflectGet)),
+        }
+    }
+}
+
+/// The handler of a `Reflect.get` call site (`lane_native_call`'s sibling).
+pub(super) fn reflect_get_call_handler<H: Host>() -> Handler {
+    lane_reflect_get_call::<H>
 }

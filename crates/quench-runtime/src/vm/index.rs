@@ -1,4 +1,5 @@
 use super::*;
+mod element;
 mod keys;
 
 const MAX_DENSE_ARRAY_HOLE_GAP: usize = 1024;
@@ -80,47 +81,10 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: Value,
     ) -> Result<Value, JsError> {
-        if let Some(index) = self.array_index_key(key) {
-            let index = index as usize;
-            // Accessor indices are stored as holes, so a present dense element is a data property.
-            if let Some(array_object) = self.heap.array(object)
-                && let Some(value) = array_object
-                    .elements()
-                    .get(index)
-                    .copied()
-                    .filter(|value| !value.is_deleted())
-            {
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.index_get(ARRAY_INDEX_GET_DENSE);
-                return Ok(value);
-            }
-            if let Some(read) = self.proxy_index_get(p, object, key) {
-                return read;
-            }
-            if let Some(value) = self.absent_array_element(object, key) {
-                return Ok(value);
-            }
-            if let Some(value) = self.typed_array_get(object, index) {
-                return Ok(value);
-            }
-            if let Some(unit) = self.string_index_value(object, index) {
-                return Ok(unit);
-            }
-            if let Some((atom, attributes)) = self.array_descriptor_entry(object, index)
-                && attributes.accessor
-            {
-                return self.get_property(p, object, atom);
-            }
-            if self.heap.array(object).is_some()
-                && let Some(value) = self
-                    .heap
-                    .sparse_get(object, index)
-                    .filter(|value| !value.is_deleted())
-            {
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.index_get(ARRAY_INDEX_GET_SPARSE);
-                return Ok(value);
-            }
+        if let Some(index) = self.array_index_key(key)
+            && let Some(read) = self.indexed_element_get(p, object, key, index as usize)
+        {
+            return read;
         }
         // A symbol or an existing non-index name that the plain chain walk answers, as the
         // lane reads it (`plain_keyed_get`): no guest code runs before the slow path would.
@@ -128,12 +92,6 @@ impl<H: Host> Vm<H> {
             return Ok(value);
         }
         self.get_index_slow(p, object, key)
-    }
-
-    /// `get_index` of a Proxy: its trap called with the key as a string; `None` for any other base.
-    fn proxy_index_get(&mut self, p: &ResidualProgram, object: Value, key: Value) -> Option<Result<Value, JsError>> {
-        let (target, handler) = self.proxy_parts(object)?;
-        Some(self.to_property_key(p, key).and_then(|key| self.proxy_get_key_value(p, target, handler, object, key)))
     }
 
     #[inline(never)]

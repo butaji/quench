@@ -792,7 +792,6 @@ complexity crates/quench-runtime/src/vm/generator.rs::Vm<H>::call_generator 16
 complexity crates/quench-runtime/src/vm/generator.rs::Vm<H>::resume_generator_step 22
 complexity crates/quench-runtime/src/vm/generator.rs::Vm<H>::throw_into_yield_star 13
 complexity crates/quench-runtime/src/vm/index.rs::Vm<H>::absent_array_element 14
-complexity crates/quench-runtime/src/vm/index.rs::Vm<H>::get_index 12
 complexity crates/quench-runtime/src/vm/index.rs::Vm<H>::set_index_mode 31
 complexity crates/quench-runtime/src/vm/index.rs::Vm<H>::set_index_slow 21
 complexity crates/quench-runtime/src/vm/inspection.rs::Vm<H>::constructor_name 16
@@ -3155,7 +3154,6 @@ function-lines crates/quench-runtime/src/vm/generator.rs::Vm<H>::throw_into_yiel
 function-lines crates/quench-runtime/src/vm/group_by.rs::Vm<H>::add_value_to_group 57
 function-lines crates/quench-runtime/src/vm/group_by.rs::Vm<H>::group_by 103
 function-lines crates/quench-runtime/src/vm/host_function.rs::Vm<H>::create_host_function_with_capture 74
-function-lines crates/quench-runtime/src/vm/index.rs::Vm<H>::get_index 52
 function-lines crates/quench-runtime/src/vm/index.rs::Vm<H>::set_index_mode 103
 function-lines crates/quench-runtime/src/vm/index.rs::Vm<H>::set_index_slow 76
 function-lines crates/quench-runtime/src/vm/index.rs::Vm<H>::store_validated_array_element 43

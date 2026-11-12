@@ -2,7 +2,8 @@
 //! link: the part of `get_property_with_receiver` that needs no exotic handling.
 
 use super::super::object::AtomClass;
-use super::super::{Atom, Host, PropertyKey, Value, Vm};
+use super::super::{Atom, Host, JsError, PropertyKey, ResidualProgram, Value, Vm};
+use std::ops::ControlFlow;
 
 /// Where `Vm::ordinary_chain_read` stopped.
 pub(in crate::vm) enum ChainRead {
@@ -17,6 +18,29 @@ pub(in crate::vm) enum ChainRead {
 }
 
 impl<H: Host> Vm<H> {
+    /// One step of `get_property_with_receiver`'s walk from `object`: the read's completion
+    /// where the ordinary chain decides it (a getter is called with `receiver`), else the
+    /// link the general read continues from. Private names are not chain keys.
+    pub(in crate::vm) fn ordinary_chain_step(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        receiver: Value,
+        private_name: bool,
+    ) -> ControlFlow<Result<Value, JsError>, Value> {
+        let read = if private_name { None } else { self.ordinary_chain_read(object, atom) };
+        match read {
+            Some(ChainRead::Value(value)) => ControlFlow::Break(Ok(value)),
+            Some(ChainRead::Absent) => ControlFlow::Break(Ok(Value::UNDEFINED)),
+            Some(ChainRead::Getter(getter)) => {
+                ControlFlow::Break(getter.map_or(Ok(Value::UNDEFINED), |getter| self.call_value(p, getter, receiver, &[])))
+            }
+            Some(ChainRead::Exotic(link)) => ControlFlow::Continue(link),
+            None => ControlFlow::Continue(object),
+        }
+    }
+
     /// The read of `atom` from `object` along the records whose shapes alone say what they
     /// hold. `None` where the key is an index, which exotic receivers answer by position.
     pub(in crate::vm) fn ordinary_chain_read(&self, mut object: Value, atom: Atom) -> Option<ChainRead> {

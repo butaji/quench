@@ -3,6 +3,7 @@ use std::ops::ControlFlow;
 use super::*;
 use crate::heap::PrivateBrand;
 pub(super) mod ordinary_chain;
+mod function_reflection;
 mod plain_key_set;
 mod proxy_get;
 
@@ -774,19 +775,8 @@ impl<H: Host> Vm<H> {
             let property = self.atom_name(atom).to_owned();
             return Err(self.nullish_property_error(p, object, Some(&property)));
         }
-        if !private_name
-            && self
-                .atom_class(atom)
-                .contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY)
-            && self.heap.is_function_value(object)
-            && self.own_property(object, atom).is_none()
-            && !self.function_caller_is_restricted(object)
-        {
-            return match self.atom_name(atom) {
-                "caller" => self.function_caller_value(object),
-                "arguments" => self.function_arguments(object),
-                _ => unreachable!("legacy function reflection property"),
-            };
+        if !private_name && let Some(read) = self.restricted_function_read(object, atom) {
+            return read;
         }
         let private_target = object;
         let mut object = match self.primitive_read_holder(object, atom) {
@@ -800,16 +790,9 @@ impl<H: Host> Vm<H> {
             }
         }
         loop {
-            if !private_name {
-                match self.ordinary_chain_read(object, atom) {
-                    Some(ordinary_chain::ChainRead::Value(value)) => return Ok(value),
-                    Some(ordinary_chain::ChainRead::Absent) => return Ok(Value::UNDEFINED),
-                    Some(ordinary_chain::ChainRead::Getter(getter)) => {
-                        return getter.map_or(Ok(Value::UNDEFINED), |getter| self.call_value(p, getter, receiver, &[]));
-                    }
-                    Some(ordinary_chain::ChainRead::Exotic(link)) => object = link,
-                    None => {}
-                }
+            match self.ordinary_chain_step(p, object, atom, receiver, private_name) {
+                ControlFlow::Break(read) => return read,
+                ControlFlow::Continue(link) => object = link,
             }
             self.evaluate_deferred_namespace_for_key(
                 p,

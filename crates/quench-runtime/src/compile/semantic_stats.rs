@@ -5,6 +5,7 @@
 //! bytes has: a little under a source of mostly code (minified text has 0.21 to 0.37 nodes
 //! a byte), and the tables grow past them.
 
+use super::{Diagnostic, DiagnosticKind, Span};
 use oxc_ast::ast::Program;
 use oxc_semantic::{SemanticBuilder, Stats};
 
@@ -26,6 +27,16 @@ pub(super) fn builder<'a>(program: &Program<'_>) -> SemanticBuilder<'a> {
         bytes / BYTES_PER_SYMBOL,
         bytes / BYTES_PER_REFERENCE,
     ))
+}
+
+/// OXC's semantic analysis of `program`, its early errors as diagnostics of `name`.
+pub(super) fn checked_semantic<'a>(program: &'a Program<'a>, name: &str) -> Result<oxc_semantic::SemanticBuilderReturn<'a>, Vec<Diagnostic>> {
+    let semantic = builder(program).with_check_syntax_error(true).build(program);
+    if semantic.diagnostics.is_empty() {
+        return Ok(semantic);
+    }
+    let syntax = |error| Diagnostic { kind: DiagnosticKind::Syntax, source: name.into(), message: format!("SyntaxError: {error}"), span: Span::default() };
+    Err(semantic.diagnostics.into_iter().map(syntax).collect())
 }
 
 #[cfg(test)]
