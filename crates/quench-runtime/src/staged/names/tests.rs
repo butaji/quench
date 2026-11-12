@@ -61,7 +61,7 @@ impl Frame<Concrete> for Probe {
 }
 
 impl GlobalFrame<Concrete> for Probe {
-    fn global_write(&mut self, _stage: &mut Concrete, atom: u32, site: u16, value: u64, initialize: bool) -> Option<()> {
+    fn global_write(&mut self, _stage: &mut Concrete, _source: Register, atom: u32, site: u16, value: u64, initialize: bool) -> Option<()> {
         self.answers().then(|| self.global_writes.push((atom, site, value, initialize)))
     }
     fn global_typeof(&mut self, _stage: &mut Concrete, destination: Register, _atom: u32, _site: u16) -> Option<()> {

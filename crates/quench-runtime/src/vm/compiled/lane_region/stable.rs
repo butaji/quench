@@ -13,6 +13,11 @@ pub(crate) struct StableFacts {
     pub(crate) atoms: Box<[Atom]>,
     /// Global cells whose values it holds (`heap::subscribe_global_value`).
     pub(crate) globals: Box<[crate::heap::GlobalFact]>,
+    /// Global objects whose layout it holds (`heap::subscribe_global_layout`).
+    pub(crate) layouts: Box<[crate::heap::GlobalLayoutFact]>,
+    /// Global slots it stores to, or reads the `typeof` of, by the slot's observed type
+    /// (`Heap::subscribe_slot_observation`).
+    pub(crate) slots: Box<[crate::code_dependencies::SlotDependency]>,
 }
 
 /// The Stable facts a lowering folded so far.
@@ -24,6 +29,10 @@ pub(super) struct StableUses {
     atoms: BTreeSet<Atom>,
     /// Global cells whose values the code took as constants.
     globals: BTreeSet<crate::heap::GlobalFact>,
+    /// Global objects whose layout the code held.
+    layouts: BTreeSet<crate::heap::GlobalLayoutFact>,
+    /// Global slots whose observed type the code relied on, each once.
+    slots: Vec<crate::code_dependencies::SlotDependency>,
     /// Loops, by header and backedge, entered only through forward edges that proved the realm
     /// (`Lowering::hoist_stable`): their blocks hold the proof.
     realm_loops: Vec<(usize, usize)>,
@@ -39,7 +48,9 @@ impl StableUses {
     pub(super) fn take(&mut self) -> StableFacts {
         StableFacts { holders: std::mem::take(&mut self.holders).into_iter().collect(),
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
-            globals: std::mem::take(&mut self.globals).into_iter().collect() }
+            globals: std::mem::take(&mut self.globals).into_iter().collect(),
+            layouts: std::mem::take(&mut self.layouts).into_iter().collect(),
+            slots: std::mem::take(&mut self.slots).into_iter().collect() }
     }
 }
 
@@ -95,6 +106,18 @@ impl Lowering<'_, '_> {
         self.hold_stable(state, exit);
         self.stable.globals.insert(fact);
         self.prove_realm(state, exit, realm);
+    }
+
+    /// Holds the layout of the global object `realm` names (`hold_stable`) and, where the slot
+    /// `slot` was typed when the code was compiled, that type: the code stores to the slot, or
+    /// reads its `typeof`, with no check but the invalidation word and the realm proof.
+    pub(super) fn hold_global_slot(&mut self, state: &mut State, exit: ir::Block, slot: crate::vm::global_facts::GlobalSlot) {
+        self.hold_stable(state, exit);
+        self.stable.layouts.insert(slot.layout);
+        if let Some(dependency) = slot.dependency && !self.stable.slots.contains(&dependency) {
+            self.stable.slots.push(dependency);
+        }
+        self.prove_realm(state, exit, (slot.global, slot.realm_offset));
     }
 
     /// Proves the realm of global object `global` active, from the VM's field at `realm_offset`.

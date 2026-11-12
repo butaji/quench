@@ -494,6 +494,8 @@ impl LaneDependencies {
             && stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
             && stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
             && stable.globals.iter().all(|fact| crate::heap::subscribe_global_value(*fact, code))
+            && stable.layouts.iter().all(|fact| crate::heap::subscribe_global_layout(*fact, code))
+            && stable.slots.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
     }
 }
 

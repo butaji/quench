@@ -2,8 +2,37 @@
 //! read of the global scope resolves to now, which a lane body folds under a dependency, and
 //! the global lexical assignments and declarations that retire the code holding one.
 use super::{Atom, Host, Value, Vm};
-use crate::heap::{GlobalCell, GlobalFact};
+use crate::code_dependencies::SlotDependency;
+use crate::heap::{GlobalCell, GlobalFact, GlobalLayoutFact};
 use crate::typed_ir::Type;
+use crate::ValueType;
+
+/// The kinds whose `typeof` name one string spells for every value of the kind: an object's
+/// does not (an `[[IsHTMLDDA]]` object reads as `undefined`), and `undefined` may be a hole.
+const TYPEOF_NAMED_KINDS: [ValueType; 5] =
+    [ValueType::Number, ValueType::Boolean, ValueType::String, ValueType::BigInt, ValueType::Symbol];
+
+/// A global object's own data property that a lane body stores to, or asks the `typeof` of,
+/// at a slot it holds under the global object's layout (`GlobalLayoutFact`) and the slot's
+/// observed type: neither can change without retiring the code, which then checks nothing
+/// per use but the realm. For a store, no code holds the slot's value (the cell is `Mutable`,
+/// so its writes notify nothing) and no inheritor reads the global object.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GlobalSlot {
+    pub(crate) slot: u16,
+    /// The slot count of the global object's shape.
+    pub(crate) storage_len: usize,
+    /// The slot's observed type: a store of a value of it needs no admission.
+    pub(crate) ty: Type,
+    /// What the code holds of `ty` (`None` where any value fits or none was observed).
+    pub(crate) dependency: Option<SlotDependency>,
+    /// The one string `typeof` yields for every value of `ty`, where one does.
+    pub(crate) typeof_name: Option<Value>,
+    pub(crate) layout: GlobalLayoutFact,
+    /// The global object, and the realm field that names it while its realm is active.
+    pub(crate) global: Value,
+    pub(crate) realm_offset: i32,
+}
 
 /// What a lane body's by-name global read takes when it is compiled (`Vm::lane_global_reads`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,6 +46,8 @@ pub(crate) enum GlobalRead {
     /// site and folded while it holds (`Division::Frozen`).
     #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     Frozen { value: Value, ty: Type },
+    /// A `StoreName` or `LoadNameTypeof` of a slot of the global object held directly.
+    Slot(GlobalSlot),
     /// The lane's own read at run time (`LaneHelper::GlobalGet`).
     Dynamic,
     /// At a field read of a Stable global (`Math.imul`): the member's value when the body was
@@ -25,8 +56,8 @@ pub(crate) enum GlobalRead {
     NativeMember { value: Value, native: super::Native },
 }
 
-/// What each by-name global read of a function or unit takes, by PC: a flat table, empty at
-/// a PC that is no such read (`Vm::lane_global_reads`).
+/// What each by-name global access of a function or unit takes, by PC: a flat table, empty at
+/// a PC that is no such access (`Vm::lane_global_reads`).
 #[derive(Default)]
 pub(crate) struct GlobalReads(Box<[Option<GlobalRead>]>);
 
@@ -88,10 +119,37 @@ impl<H: Host> Vm<H> {
         };
         // A function's identity lets a call through the read skip its callee check.
         let ty = Type::function(value).filter(|_| self.heap.function(value).is_some()).unwrap_or_else(|| Type::immediate(value));
-        let realm_offset = i32::try_from(std::mem::offset_of!(Vm<H>, realm) + std::mem::offset_of!(super::Realm, globals))
-            .expect("the realm's global lies within the VM");
+        let realm_offset = Self::realm_global_offset();
         crate::heap::global_value_fact(table, cell)
             .map_or(GlobalRead::Dynamic, |fact| GlobalRead::Stable { value, ty, fact, global: globals, realm_offset })
+    }
+
+    /// The offset of the VM's field that names the active realm's global object.
+    fn realm_global_offset() -> i32 {
+        i32::try_from(std::mem::offset_of!(Vm<H>, realm) + std::mem::offset_of!(super::Realm, globals))
+            .expect("the realm's global lies within the VM")
+    }
+
+    /// The global object's own data property `atom` as a slot a lane body holds, for its
+    /// `store` or its `typeof`; `None` where a lexical binding may shadow the name, the property
+    /// is no (writable) data property, or a store would be seen by code that holds the cell's
+    /// value or by an inheritor of the global object (`GlobalSlot`).
+    pub(super) fn stable_global_slot(&mut self, atom: Atom, store: bool) -> Option<GlobalSlot> {
+        let globals = self.realm.globals;
+        if !self.global_name_hintable(atom) { return None; }
+        let hint = if store { self.own_data_field_hint::<true>(globals, atom) } else { self.own_data_field_hint::<false>(globals, atom) }?;
+        let table = self.heap.object_mut(globals).map(crate::heap::Object::global_values_table)?;
+        let held = crate::heap::global_value_fact(table, GlobalCell::Slot(u32::from(hint.slot))).is_some();
+        let inherited = self.heap.object(globals)?.was_used_as_prototype();
+        if store && (held || inherited || self.method_caches_may_name(atom)) { return None; }
+        let ty = self.heap.slot_type(hint.receiver, usize::from(hint.slot));
+        let dependency = (ty != Type::ANY && ty != Type::NEVER)
+            .then_some(SlotDependency { shape: hint.receiver, slot: hint.slot, ty });
+        let typeof_name = TYPEOF_NAMED_KINDS.into_iter().find(|kind| ty != Type::NEVER && ty.is_subtype(Type::language(*kind)))
+            .and_then(|kind| self.typeof_constant(super::coercion::typeof_text(kind)));
+        Some(GlobalSlot { slot: hint.slot, storage_len: self.shapes.get(hint.receiver as usize)?.storage_len(), ty, dependency,
+            typeof_name, layout: crate::heap::global_layout_fact(table)?, global: globals,
+            realm_offset: Self::realm_global_offset() })
     }
 
     /// Binds global lexical `atom` to `value` in the active realm, noting a name it declared
