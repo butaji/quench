@@ -27,3 +27,24 @@ pub(super) fn builder<'a>(program: &Program<'_>) -> SemanticBuilder<'a> {
         bytes / BYTES_PER_REFERENCE,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::builder;
+    use oxc_allocator::Allocator;
+    use oxc_span::SourceType;
+
+    /// The hints size tables and decide nothing: the analysis of a source reports what the
+    /// counted one does, for a source with more nodes than the hint and one with an error.
+    #[test]
+    fn hints_leave_the_early_errors_unchanged() {
+        let dense = format!("var a = {};", "[1,".repeat(200) + &"]".repeat(200));
+        for source in ["let a = 1; let a = 2;", "function f(x) { return x + 1; } f(1);", dense.as_str()] {
+            let allocator = Allocator::default();
+            let parsed = oxc_parser::Parser::new(&allocator, source, SourceType::script()).parse();
+            let hinted = builder(&parsed.program).with_check_syntax_error(true).build(&parsed.program);
+            let counted = oxc_semantic::SemanticBuilder::new().with_check_syntax_error(true).build(&parsed.program);
+            assert_eq!(hinted.diagnostics.len(), counted.diagnostics.len(), "{source}");
+        }
+    }
+}

@@ -51,6 +51,18 @@ pub(crate) fn analyze_transfers<M: LiveMask>(function: &Function, transfers: &[(
     analyze_successors(function, transfers, &crate::bytecode::Successors::of_code(function))
 }
 
+/// `analyze_successors` of wide masks, solved at one word when the function's registers fit
+/// it: most do, and a word's solve costs a fraction of a set's.
+pub(crate) fn analyze_wide(
+    function: &Function, transfers: &[(RegisterSet, RegisterSet)], successors: &crate::bytecode::Successors,
+) -> Vec<RegisterSet> {
+    if usize::from(function.registers) > u64::BITS as usize {
+        return analyze_successors(function, transfers, successors);
+    }
+    let words: Vec<(u64, u64)> = transfers.iter().map(|(read, written)| (read.word(0), written.word(0))).collect();
+    analyze_successors(function, &words, successors).into_iter().map(RegisterSet::from).collect()
+}
+
 /// `analyze_transfers` over the function's successor table, `successors`.
 pub(crate) fn analyze_successors<M: LiveMask>(
     function: &Function, transfers: &[(M, M)], successors: &crate::bytecode::Successors,
@@ -124,4 +136,33 @@ pub(crate) fn add_suspended_exception_roots<M: LiveMask>(function: &Function, li
             live[pc + 1] |= handler_live;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::{Instr, Successors};
+
+    #[test]
+    fn a_word_solve_equals_the_wide_solve_it_stands_for() {
+        let bit = RegisterSet::bit;
+        // A loop that reads a register before writing it: the live sets need a second sweep.
+        let transfers = [(bit(0), bit(1)), (bit(1), bit(2)), (RegisterSet::default(), RegisterSet::default())];
+        let mut program = crate::Engine::specialize_unspecialized("", "wide-solve.js").unwrap();
+        let function = &mut program.functions[0];
+        function.code = vec![
+            Instr::new(Op::Move, 1, 0, 0, 0),
+            Instr::new(Op::Move, 2, 1, 0, 0),
+            Instr::new(Op::Jump, 0, 0, 0, 0),
+        ];
+        for registers in [3, u64::BITS as u16, u64::BITS as u16 + 1] {
+            function.registers = registers;
+            let successors = Successors::of_code(function);
+            assert_eq!(
+                analyze_wide(function, &transfers, &successors),
+                analyze_successors(function, &transfers, &successors),
+                "{registers} registers"
+            );
+        }
+    }
 }
