@@ -392,15 +392,15 @@ pub(super) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
 
 impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn int_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
-        miss: ir::Block) -> ir::Value {
-        operand_int(stage.builder, self.registers, self.state, self.constants, operand, miss)
-            .expect("a numeric operand is a register or an immediate")
+        miss: ir::Block) -> Option<ir::Value> {
+        Some(operand_int(stage.builder, self.registers, self.state, self.constants, operand, miss)
+            .expect("a numeric operand is a register or an immediate"))
     }
 
     fn number_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
-        miss: ir::Block) -> ir::Value {
-        operand_number(stage.builder, self.registers, self.state, self.constants, operand, miss)
-            .expect("a numeric operand is a register or an immediate")
+        miss: ir::Block) -> Option<ir::Value> {
+        Some(operand_number(stage.builder, self.registers, self.state, self.constants, operand, miss)
+            .expect("a numeric operand is a register or an immediate"))
     }
 
     fn prove_number(&mut self, stage: &mut Emit<'_, '_>, register: Register, miss: ir::Block) -> Option<()> {

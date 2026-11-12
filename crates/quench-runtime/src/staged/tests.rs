@@ -137,13 +137,13 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
 impl GlobalFrame<Concrete> for ConcreteFrame<'_> {}
 
 impl NumericFrame<Concrete> for ConcreteFrame<'_> {
-    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
+    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let register = operand.register_index().expect("a numeric operand is a register");
-        u64::from(Value::from_bits(self.read(stage, register)).as_int().expect("a proved int") as u32)
+        Some(u64::from(Value::from_bits(self.read(stage, register)).as_int().expect("a proved int") as u32))
     }
-    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
+    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let register = operand.register_index().expect("a numeric operand is a register");
-        Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number").to_bits()
+        Some(Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number").to_bits())
     }
     fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
         Value::from_bits(self.read(stage, register)).as_number().map(|_| ())

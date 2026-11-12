@@ -124,10 +124,12 @@ fn check_transfer(row: &str, code: &[u8], at: usize) {
 
 /// Every file whose change must recompile the stencils: the stencil sources and the runtime's
 /// staged rows they include, and nothing else.
-const SOURCES: [&str; 10] = [
+const SOURCES: [&str; 15] = [
     "stencils", "../quench-runtime/src/staged/stage.rs", "../quench-runtime/src/staged/value.rs",
     "../quench-runtime/src/staged/object.rs", "../quench-runtime/src/staged/elements.rs",
-    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "../quench-runtime/src/staged/frame.rs", "build.rs", "src/numeric.rs",
+    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "../quench-runtime/src/staged/frame.rs", "../quench-runtime/src/staged/numeric.rs",
+    "../quench-runtime/src/staged/register_frame.rs", "../quench-runtime/src/staged/effects.rs", "../quench-runtime/src/staged/global.rs",
+    "../quench-runtime/src/vm/operations/number_rows.rs", "build.rs", "src/numeric.rs",
 ];
 
 fn main() {
@@ -197,8 +199,10 @@ fn relocations(elf: &Elf, symbols: &[(String, usize, usize, u8)], data: &[u8], n
     relocs
 }
 
+/// Whether the code ends in `ret`; a final `c3` that is the displacement of a short `jmp` or
+/// `jcc` (`eb c3`, `7x c3`) is a branch, not a return.
 fn ends_with_ret(code: &[u8]) -> bool {
-    matches!(code.last(), Some(0xc3))
+    matches!(code, [.., 0xc3]) && !matches!(code, [.., 0xeb | 0x70..=0x7f, 0xc3])
 }
 
 /// The class (0: absolute 32-bit field, 1: pc-relative 32-bit successor, 2: absolute 64-bit) and

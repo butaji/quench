@@ -1,9 +1,14 @@
 #[path = "../../quench-runtime/src/staged/stage.rs"] mod stage;
 pub(crate) use stage::{Stage, Table};
 pub(crate) type Concrete = crate::stage::StencilStage;
-pub(crate) mod effects {
-    #[derive(Clone, Copy)] pub(crate) enum Region { Frame, ObjectSlots, ShapeWord, Elements, HeapMeta, MissCounters }
-}
+#[path = "../../quench-runtime/src/staged/effects.rs"] pub(crate) mod effects;
+#[path = "../../quench-runtime/src/staged/register_frame.rs"] mod register_frame;
+pub(crate) use register_frame::{Constant, Frame, Step};
+pub(crate) use crate::bytecode::Register;
+#[path = "../../quench-runtime/src/staged/global.rs"] mod global;
+pub(crate) use global::GlobalFrame;
+#[path = "../../quench-runtime/src/staged/numeric.rs"] pub(crate) mod numeric;
+pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 #[path = "../../quench-runtime/src/staged/value.rs"] pub(crate) mod value;
 #[path = "../../quench-runtime/src/staged/object.rs"] pub(crate) mod object;
 #[path = "../../quench-runtime/src/staged/elements.rs"] pub(crate) mod elements;

@@ -58,3 +58,7 @@ pub const fn is_bitwise(kind: u8) -> bool {
 pub const fn is_compare(kind: u8) -> bool {
     LT <= kind && kind <= NE
 }
+/// Whether a destination holds an int32 only: a pinned register or an int slot.
+pub const fn holds_int(place: u8) -> bool {
+    matches!(place, PIN..=LAST_INT_PIN | MEMINT)
+}

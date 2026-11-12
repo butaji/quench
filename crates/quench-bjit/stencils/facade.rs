@@ -86,6 +86,30 @@ pub(crate) mod heap {
     pub(crate) struct Heap;
 }
 
+/// The Number operation rows, the runtime's own file: `crate::vm::operations` to the shared
+/// rows, which name nothing else of the runtime.
+#[path = "../../quench-runtime/src/vm/operations/number_rows.rs"]
+pub(crate) mod operations;
+
 pub(crate) mod vm {
+    pub(crate) use super::operations;
     pub(crate) use crate::layout::NATIVE_FIELD_CACHE_LAYOUT;
+}
+
+/// The register and operand names the staged numeric rows take. Only a register operand exists
+/// here: a row names its places by register.
+pub(crate) mod bytecode {
+    pub(crate) type Register = u16;
+
+    #[derive(Clone, Copy)]
+    pub(crate) struct Operand(Register);
+
+    impl Operand {
+        pub(crate) fn register(value: Register) -> Self {
+            Self(value)
+        }
+        pub(crate) fn register_index(self) -> Option<Register> {
+            Some(self.0)
+        }
+    }
 }
