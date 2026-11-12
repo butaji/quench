@@ -181,6 +181,10 @@ pub(in crate::vm) struct Wasm {
 /// the generic case: the width of every polymorphic cache and of each guarded switch a tier
 /// specializes a site into. One bound for every lattice of site feedback.
 pub(in crate::vm) const POLYMORPHISM: usize = 4;
+/// The trips a loop is assumed to take, in weighing the call sites it holds (`lane_unit`'s
+/// inlining plan), before a native run of it has measured its mean: enough that a site in a loop
+/// outweighs one outside it, and that nesting orders deeper sites first.
+pub(in crate::vm) const ASSUMED_LOOP_TRIP: u64 = 8;
 /// The bodies a field site's leaves may have named (`Vm::field_site_leaves`) before a plan reads
 /// it as a probed read rather than a shape proof: a site that left in one body may have met its
 /// second shape by chance.

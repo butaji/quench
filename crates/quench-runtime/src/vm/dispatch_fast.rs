@@ -8181,7 +8181,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
             return outcome;
         }
         let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
-        let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), &direct, work, None);
+        let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|function, header| lane_unit_trips(cx, function, header), &|callee| lane_callee_captures(cx, callee), &direct, work, None);
         if diagnostics && let super::compiled::LaneBodyOutcome::Published(method) = &outcome {
             if let Some(method) = method.lease() { own.body_stats.compiled(function, &method.inlined); }
         }
@@ -14946,6 +14946,14 @@ fn lane_unit_targets<H: Host>(cx: *mut LaneContext<H>, function: u32, pc: u32) -
         return Vec::new();
     };
     lane_site_targets(unsafe { vm(cx) }, view, pc)
+}
+
+/// The mean trips of the loop at `header` of any function of the running program per native
+/// run of it (`LoopTier::mean_trip`): what its call sites are weighed by (`lane_unit::with_trips`).
+fn lane_unit_trips<H: Host>(cx: *mut LaneContext<H>, function: u32, header: u32) -> Option<u64> {
+    // SAFETY: the program's views outlive the lane run.
+    let view = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)?;
+    view.loops.iter().find(|site| site.header == header)?.tier.borrow().mean_trip()
 }
 
 /// The dense capture slots of `callee`'s environment (`Vm::lane_callee_captures`).
