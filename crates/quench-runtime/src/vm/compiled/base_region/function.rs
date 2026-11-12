@@ -190,7 +190,7 @@ pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, (function,
 
 /// Whether the row runs a call or a helper step, which may run guest code that changes a Stable fact.
 fn makes_calls(row: &Decoded) -> bool {
-    matches!(row.step, Some(Step::Call(_) | Step::Helper))
+    matches!(row.step, Some(Step::Call(_))) || row.step.is_some_and(Step::runs_helper)
 }
 
 fn assemble_body(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEEN], mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {

@@ -232,18 +232,20 @@ fn routine_index(layout: &Layout, routines: &mut Vec<(Vec<Pin>, Vec<Pin>, Vec<u8
     Ok(routines.len() - 1)
 }
 
-/// The target of each exit of each body row, and the routines the stubs enter. `leaf_base` is the
-/// index of the first leave row among the placed rows.
-fn exit_targets(layout: &Layout, body: &[&Planned], leaves: &mut Leaves, leaf_base: usize) -> Result<(Vec<Vec<Target>>, Vec<Vec<u8>>), String> {
+/// The target of each exit of each body row, and the routines the stubs enter. `entry` is the number
+/// of entry rows, which precede the body, and `leaf_base` the index of the first leave row among the
+/// placed rows.
+fn exit_targets(layout: &Layout, body: &[&Planned], (entry, leaf_base): (usize, usize), leaves: &mut Leaves) -> Result<(Vec<Vec<Target>>, Vec<Vec<u8>>), String> {
     let mut routines = Vec::new();
     let mut targets = Vec::with_capacity(body.len());
-    for row in body {
+    for (at, row) in body.iter().enumerate() {
         let mut row_targets = Vec::with_capacity(row.exits.len());
         for exit in &row.exits {
             row_targets.push(match *exit {
                 Exit::Spilling(pc) => Target::Stub { pc, routine: routine_index(layout, &mut routines, pc)? },
                 Exit::At(pc) => Target::Row(leaf_base + leaves.index(layout, Leave::Word(u64::from(pc)))?),
                 Exit::Status => Target::Row(leaf_base + leaves.index(layout, Leave::Status)?),
+                Exit::Ahead(parts) => Target::Row(entry + at + parts),
             });
         }
         targets.push(row_targets);
@@ -297,7 +299,7 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<Vec<u8>, Stri
     let (g, n) = (entry.len(), body.len());
     let (mut leaves, failed) = Leaves::open(layout)?;
     let targets = parts.iter().map(|part| branch_target(layout, &mut leaves, &starts, *part, n, g)).collect::<Result<Vec<_>, _>>()?;
-    let (body_exits, routines) = exit_targets(layout, &body, &mut leaves, g + n)?;
+    let (body_exits, routines) = exit_targets(layout, &body, (g, g + n), &mut leaves)?;
     let mut holes: Vec<[u64; HOLES]> = entry.iter().map(|(_, holes)| *holes).collect();
     holes.extend(body.iter().map(|row| row.holes));
     holes.extend(std::iter::repeat_n([0; HOLES], leaves.0.len()));

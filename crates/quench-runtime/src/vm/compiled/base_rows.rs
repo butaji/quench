@@ -67,6 +67,12 @@ pub(super) enum Heap {
     /// Leaves unless the invalidation word at the address in hole 1 is zero (`code_dependencies::Invalidation`):
     /// the check before a row that holds a Stable fact where a call may have changed it.
     Live,
+    /// The fast arm of `RequireIteratorResult` (`staged::iteration`): the register at the frame offset
+    /// of hole 1 holds a direct object or array record, else the row leaves into the helper step after it.
+    Object,
+    /// The fast arm of `ToPropertyKey`: the register at hole 1 holds a direct string, which is copied to
+    /// the register at hole 0, else the row leaves into the helper step after it.
+    Key,
 }
 
 /// A heap row: its operation and where its operands and destination live.
@@ -102,6 +108,8 @@ impl Heap {
             Heap::Identity => library::IDENTITY_ROW,
             Heap::Held | Heap::ThisHeld => library::HELD_ROW,
             Heap::Live => library::LIVE_ROW,
+            Heap::Object => library::OBJECT_ROW,
+            Heap::Key => library::KEY_ROW,
         }
     }
 
@@ -109,7 +117,7 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live)
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key)
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value

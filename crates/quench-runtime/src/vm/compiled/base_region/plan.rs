@@ -68,6 +68,9 @@ pub(super) enum Exit {
     At(u32),
     /// `LEAVE_STATUS`: the (status, word) the row left with.
     Status,
+    /// The part this many parts after the row's own in its run: a fast arm's miss into the helper
+    /// step laid out behind it, where nothing has been written back or changed.
+    Ahead(usize),
 }
 
 /// A row that leaves the function at `pc`, or completes the activation with the register slot

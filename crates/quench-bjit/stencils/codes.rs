@@ -73,6 +73,12 @@ pub const THIS_STORE_ROW: u8 = 14;
 pub const HELD_ROW: u8 = 15;
 /// Leaves unless the invalidation word at the address in hole 1 is zero.
 pub const LIVE_ROW: u8 = 16;
+/// A fast arm of an instruction whose full operation a helper step makes (`staged::iteration`): the
+/// frame slot at hole 1 holds a direct object or array record (`RequireIteratorResult`), or a direct
+/// string, which is copied to the slot at hole 0 (`ToPropertyKey`). A hit continues at TAKEN, past the
+/// helper step laid out after the row; a miss leaves through EXIT0 into it.
+pub const OBJECT_ROW: u8 = 17;
+pub const KEY_ROW: u8 = 18;
 /// Bits below the prototype link in a folded read's hole 1, which carries the receiver's exact shape beneath it.
 pub const HELD_LINK_AT: u32 = 32;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries

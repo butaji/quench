@@ -12,6 +12,11 @@
 //!    interpreter. A step that jumps (`ForInNext`) has its target as the row's branch: the helper
 //!    answers branched where the interpreter's step took it, which continues at the reloads of the
 //!    registers live at the target (`branching`).
+//!    Where the instruction's meaning has a fast arm that a register's own word decides
+//!    (`staged::iteration`: `RequireIteratorResult`, `ToPropertyKey`), the run is that arm's heap row
+//!    first (`Step::Fast`, `plan_fast`): its hit hops past the helper step to the next instruction,
+//!    and its miss enters the helper step laid out behind it, the slow arm, so the generic step is
+//!    only the operation's remainder.
 //! 3. A leave (`CallRow::Here`): the region ends at the instruction and the interpreter runs it,
 //!    for every other instruction: jumps and branches the rows do not take, throws,
 //!    suspensions, scope entries, and any instruction that carries result flags, which a helper
@@ -38,6 +43,9 @@ use quench_bjit::call::{self, CallRow};
 pub(super) enum Step {
     /// `LaneHelper::Step` makes the record in place and the region continues.
     Helper,
+    /// The heap row is the record's fast arm over its operand's frame slot, with `Helper` behind it
+    /// as the slow arm.
+    Fast(Heap),
     /// The region leaves at the record.
     Leave,
     /// The activation completes with the register the row reads (a body's `Return`).
@@ -47,6 +55,12 @@ pub(super) enum Step {
 }
 
 impl Step {
+    /// Whether the run makes the step helper's call, alone or as the slow arm of a fast row: the
+    /// helper may allocate or run guest code, which no heap snapshot a region took sees.
+    pub(super) fn runs_helper(self) -> bool {
+        matches!(self, Self::Helper | Self::Fast(_))
+    }
+
     /// Whether control continues at the next instruction: a leave and a return end the run.
     pub(super) fn falls(self) -> bool {
         !matches!(self, Self::Leave | Self::Return)
@@ -85,34 +99,50 @@ fn steps_in_place(instruction: WideInstruction) -> bool {
     instruction.op().traits().has(Traits::LANE_IN_PLACE) && instruction.result_flags() == 0 && instruction.written_registers().count() <= 1
 }
 
-/// The lowering of `instruction`, where helpers are `helpers`: a helper step where the helper
-/// table has the step helper's address, else the leave.
+/// The heap row that is the fast arm of `instruction`, where its meaning has one its operand
+/// register's word decides (`staged::iteration`); both read register B.
+fn fast_arm(instruction: WideInstruction) -> Option<Heap> {
+    match instruction.op().class() {
+        Class::RequireIteratorResult => Some(Heap::Object),
+        Class::ToPropertyKey => Some(Heap::Key),
+        _ => None,
+    }
+}
+
+/// The lowering of `instruction`, where helpers are `helpers`: a helper step (behind its fast
+/// arm, where it has one) where the helper table has the step helper's address, else the leave.
 pub(super) fn lowering(instruction: WideInstruction, helpers: LaneHelpers) -> Step {
     let addressed = call_plan::helper_address(helpers, LaneHelper::Step).is_some();
-    if addressed && steps_in_place(instruction) { Step::Helper } else { Step::Leave }
+    match fast_arm(instruction) {
+        _ if !(addressed && steps_in_place(instruction)) => Step::Leave,
+        Some(fast) => Step::Fast(fast),
+        None => Step::Helper,
+    }
 }
 
 /// The row of an instruction at `pc` that has no numeric or heap row: a `Nop` is the jump to the
-/// next instruction, the rest their step. A helper step names the register it writes.
+/// next instruction, the rest their step. A helper step names the register it writes, and a fast
+/// arm the register it reads.
 pub(super) fn decode_step(pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     match instruction.op().class() {
         Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
         _ => {
             let step = lowering(instruction, helpers);
-            let helped = step == Step::Helper;
+            let helped = step.runs_helper();
             let written = if helped { instruction.written_registers().next() } else { None };
             let target = (helped && instruction.op().control_flow_layout().jumps()).then(|| instruction.jump_target());
-            Decoded { target, ..Decoded::step(step, written) }
+            let read = matches!(step, Step::Fast(_)).then(|| Source::Register(instruction.register_b()));
+            Decoded { target, a: read, ..Decoded::step(step, written) }
         }
     }
 }
 
-/// A helper step may write any heap value, which the snapshots a heap row reads (the entry
+/// A helper step, alone or behind a fast arm, may write any heap value, which the snapshots a heap row reads (the entry
 /// record's captures, fields and array views) would not see: where the region has a heap row its
 /// helper steps leave instead.
 pub(super) fn settle(decoded: &mut [Decoded]) {
     if decoded.iter().any(|row| row.heap.is_some_and(Heap::reads_snapshot)) {
-        decoded.iter_mut().filter(|row| row.step == Some(Step::Helper)).for_each(|row| row.step = Some(Step::Leave));
+        decoded.iter_mut().filter(|row| row.step.is_some_and(Step::runs_helper)).for_each(|row| row.step = Some(Step::Leave));
     }
 }
 
@@ -141,12 +171,13 @@ fn chained(parts: Vec<CallPart>, spills: usize, owned: Option<Box<quench_bjit::c
     Ok(row)
 }
 
-/// The plan of a step at `pc`: the leave row, the helper chain, the completion of the activation
-/// or the call's chain.
+/// The plan of a step at `pc`: the leave row, the helper chain, a fast arm's run, the completion of
+/// the activation or the call's chain.
 pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     match decoded.step.ok_or("plan_step: no step")? {
         Step::Leave => Ok(Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, Some(pc))),
         Step::Helper => plan_helper(layout, pc, decoded.target, helpers),
+        Step::Fast(fast) => plan_fast(decoded, fast, layout, pc, helpers),
         Step::Return => {
             let slot = operand(&layout.homes, decoded.a).1;
             Ok(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) })
@@ -166,6 +197,38 @@ fn plan_helper(layout: &Layout, pc: u32, target: Option<u32>, helpers: LaneHelpe
         Some(target) => branching(row, layout, (pc, target)),
         None => Ok(row),
     }
+}
+
+/// The run of a fast arm at `pc`: the heap row `fast` over the operand's frame slot, whose hit hops
+/// past the rest of the run to the next instruction, and behind it the helper step the row leaves
+/// into where its proof fails. An operand or result held outside its frame slot (a pinned register
+/// holds a Number, which no fast arm takes) has the helper step alone.
+fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
+    let slow = plan_helper(layout, pc, None, helpers)?;
+    let homes = &layout.homes;
+    let ((read, read_hole), (written, written_hole)) = (operand(homes, decoded.a), operand(homes, decoded.dst.map(Source::Register)));
+    if read != Place::Mem || written != Place::Mem {
+        return Ok(slow);
+    }
+    let row = HeapRow { heap: fast, dst: written, a: read, b: Place::Mem, entry: false };
+    let mut run = Planned::single(base_rows::stencil(row)?, [written_hole, read_hole, 0], Some(pc + 1), None);
+    run.exits = vec![Exit::Ahead(1)];
+    Ok(behind(run, slow))
+}
+
+/// `fast` with the run `slow` laid out behind it: the slow run's parts follow the fast row, so the
+/// parts that name another part of their run are renumbered past it.
+fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
+    let (lead, tail) = (std::mem::take(&mut slow.pre), std::mem::take(&mut slow.post));
+    fast.owned = slow.owned.take();
+    fast.post = lead.into_iter().chain(std::iter::once(slow)).chain(tail).map(|mut part| {
+        part.branch = part.branch.map(|branch| match branch {
+            Branch::Part(index) => Branch::Part(index + 1),
+            pc @ Branch::Pc(_) => pc,
+        });
+        part
+    }).collect();
+    fast
 }
 
 /// The jump to `pc`, a part of a run whose NEXT is not where the run goes on.
@@ -221,9 +284,9 @@ mod tests {
         for index in 0..Op::COUNT {
             let op = Op::from_index(index).expect("an opcode");
             let step = lowering(instruction(op), process);
-            counts[usize::from(step == Step::Helper)] += 1;
+            counts[usize::from(step.runs_helper())] += 1;
             if op.traits().has(Traits::LANE_IN_PLACE) && instruction(op).written_registers().count() <= 1 {
-                assert_eq!(step, Step::Helper, "{op:?}");
+                assert!(step.runs_helper(), "{op:?}");
             }
         }
         assert_eq!(counts[0] + counts[1], Op::COUNT);
@@ -240,14 +303,46 @@ mod tests {
         }
     }
 
-    /// The opcodes whose only lowering is the generic helper step: no staged fast arm exists for
-    /// them (each allocates, runs guest code, or edits VM-held state no row reads), so the helper
+    /// The opcodes whose only lowering is the generic helper step, each for the reason beside it:
+    /// no fast arm a register's word, a shape or a backing the row can read decides, so the helper
     /// is their whole operation, not a slow arm.
-    const RESIDUAL: [Op; 20] = [
-        Op::DefineField, Op::DefineComputedField, Op::DefinePrivateField, Op::CheckPrivate, Op::PrivateIn, Op::MarkPrivateName,
-        Op::SetFunctionName, Op::SetFunctionNameKey, Op::SetFunctionDebugName, Op::DefineArrayElement, Op::AppendArray,
-        Op::ToPropertyKey, Op::CopyDataProperties, Op::GetIterator, Op::ForInStart, Op::ForInNext, Op::RequireIteratorResult,
-        Op::IteratorClose, Op::IteratorCleanupPush, Op::IteratorCleanupPop,
+    const RESIDUAL: [Op; 18] = [
+        // The define adds a property: a shape transition and a storage append the object's barrier and shape readers observe (`Object::append_plain`).
+        Op::DefineField,
+        // The key is converted (guest code) and the property defined through the shape's slow path.
+        Op::DefineComputedField,
+        // The brand is the home's VM-held private-name table, not a shape or a register fact.
+        Op::DefinePrivateField,
+        // The brand check reads the home's VM-held private-name table.
+        Op::CheckPrivate,
+        // The brand test reads the home's VM-held private-name table.
+        Op::PrivateIn,
+        // Writes the VM-held private-name table.
+        Op::MarkPrivateName,
+        // The inferred-name slot write also records the function's name in VM-held provenance (`capture_function_name_for_atom`).
+        Op::SetFunctionName,
+        // Builds the name string from a key and a prefix: allocates.
+        Op::SetFunctionNameKey,
+        // Edits VM-held function provenance only.
+        Op::SetFunctionDebugName,
+        // Defines through the sparse-or-dense element store, which allocates and grows the backing.
+        Op::DefineArrayElement,
+        // The room past the length is proved only by a VM reserve (`LaneHelper::AppendRoom`): the backing header holds no capacity.
+        Op::AppendArray,
+        // Enumerates the source's keys and runs guest code (getters, proxies).
+        Op::CopyDataProperties,
+        // Allocates the iterator record and may run guest code.
+        Op::GetIterator,
+        // Takes the key snapshot: allocates the state, memoized by VM-held for-in state.
+        Op::ForInStart,
+        // The step's fast arm reads VM-held memo state (the snapshot's epoch and shape), not a layout fact.
+        Op::ForInNext,
+        // Calls `return` on the iterator: guest code.
+        Op::IteratorClose,
+        // Pushes onto the frame's VM-held active-iterator stack.
+        Op::IteratorCleanupPush,
+        // Pops the frame's VM-held active-iterator stack.
+        Op::IteratorCleanupPop,
     ];
 
     /// No function of the lane fixtures holds a generic helper step beyond the listed residual
