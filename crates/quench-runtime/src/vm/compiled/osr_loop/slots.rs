@@ -7,6 +7,8 @@ use super::Definition;
 
 /// The definitions an instruction owns: its result, then its second register.
 pub(super) const SLOTS_PER_INSTRUCTION: usize = 2;
+/// The slot of an instruction's second definition.
+const SECOND_SLOT: usize = 1;
 
 /// A definition id resolved: the instruction offset it belongs to, and whether it is that
 /// instruction's second definition.
@@ -19,6 +21,11 @@ pub(super) struct Slot {
 /// The definition id of the instruction at `offset`'s result.
 pub(super) fn result(entry_count: usize, offset: usize) -> Definition {
     entry_count + SLOTS_PER_INSTRUCTION * offset
+}
+
+/// The definition id of the instruction at `offset`'s second register.
+pub(super) fn second(entry_count: usize, offset: usize) -> Definition {
+    entry_count + SLOTS_PER_INSTRUCTION * offset + SECOND_SLOT
 }
 
 /// `definition` resolved to its instruction, or `None` for an entry definition.

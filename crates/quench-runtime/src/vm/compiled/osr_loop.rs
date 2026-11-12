@@ -659,7 +659,7 @@ fn tagged_registers_with_failure(
                 .is_none()
                 .then_some(instruction.result_register())
         }))
-        .chain(held.iter().copied())
+        .chain(held.iter().copied().chain(name_calls::tagged_registers(instructions)))
         // A field receiver the region's field reads give holds an object.
         .chain(instructions.iter().filter(|instruction| instruction.op().is_get_field()).filter_map(|instruction| {
             let receiver = object_reads(*instruction)?;
@@ -899,51 +899,6 @@ fn object_reads(instruction: WideInstruction) -> Option<Register> {
         _ => instruction.field_store_register(),
     }
 }
-
-/// Whether `register` has definitions in `instructions` and every one is a field read, which
-/// may give an object.
-fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
-    let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(register)).peekable();
-    definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())
-}
-
-/// The register an indexed access, or the coercibility check before one, reads as its array.
-fn array_read(instruction: WideInstruction) -> Option<Register> {
-    match instruction.op().class() {
-        Class::GetIndex => instruction.operand_b().register_index(),
-        Class::SetIndex | Class::RequireObjectCoercible => Some(instruction.register_b()),
-        _ => None,
-    }
-}
-
-/// Whether a loop region admits `op` as a named field store: every one the opcode table
-/// names (`Op::field_store`) but a strict store to `this`.
-fn admitted_store(op: Op) -> bool {
-    op.field_store().is_some_and(|store| !(store.strict && store.receiver == crate::bytecode::StoreReceiver::This))
-}
-
-/// Whether `instruction` names `register` (a read or a write); an instruction `renamed`
-/// cannot rename names every register.
-fn mentions(instruction: WideInstruction, register: Register, sites: &[FieldSite]) -> bool {
-    // Only a GetField carries a field lookup immediate, so the op is checked first.
-    if instruction.op().is_get_field() && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) {
-        return instruction.result_register() == register
-            || field_base(instruction, sites).is_none_or(|base| base.register_index() == Some(register));
-    }
-    let named = std::cell::Cell::new(false);
-    let rename = |name: Register| {
-        named.set(named.get() || name == register);
-        name
-    };
-    renamed(instruction, &rename, register, &|target| Some(target)).is_none() || named.get()
-}
-
-/// The ops a call's argument setup may run between reading its callee and the call: none
-/// has an effect a second run could repeat, so leaving among them resumes at the read.
-fn pure_setup(op: Op) -> bool {
-    op.traits().has(crate::bytecode::Traits::PURE_SETUP)
-}
-
 
 /// The region of the loop from `header` to `backedge` with each `Call` in it inlined: the
 /// call's callee (`resolve` of the cached field it is read from) runs in place, its registers
@@ -2332,7 +2287,7 @@ fn admit(
                 admission.number(instruction.register_b())?;
             }
         }
-        Class::LoadCapture => { admission.admit_capture(instruction, &tagged)?; }
+        Class::LoadCapture | Class::LoadNameCall => { admission.admit_capture(instruction, &tagged)?; }
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
             if number_comparison(instruction).is_some() {
                 (instruction.result_flags() == 0).then_some(())?;
@@ -2594,6 +2549,11 @@ impl Webs {
     fn defined(&self, region: &LoopRegion, pc: u32) -> Definition {
         self.find(slots::result(region.entry_count(), (pc - region.header) as usize))
     }
+
+    /// The web of the instruction at `pc`'s second definition, if it has one.
+    fn defined_second(&self, region: &LoopRegion, pc: u32) -> Option<Definition> {
+        name_calls::defined_second(self, region, pc)
+    }
 }
 
 /// The Number registers an instruction reads.
@@ -2661,13 +2621,6 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
     .then(|| instruction.result_register())
 }
 
-/// The second register an instruction defines: a by-name call's receiver (`undefined`),
-/// written by the loader beside its callee. No row has one yet.
-fn second_definition(instruction: WideInstruction) -> Option<Register> {
-    let _ = instruction;
-    None
-}
-
 /// The instructions this tier lowers to native code (`admit`, `Lowering::instruction`).
 /// Every other one leaves at its exact PC before its effects and the interpreter runs its own
 /// definition, so the tier covers every opcode; analysis and emission keep that boundary.
@@ -2675,7 +2628,7 @@ fn lowered_natively(op: Op) -> bool {
     use Op::*;
     admitted_store(op) || matches!(op, LoadConst | Move | LoadCapture | Binary | NumericAdd | NumericMultiply
         | ToNumeric | IncDec | Unary | RequireObjectCoercible | GetIndex | GetField | SetIndex | LoadEnvLocal
-        | Return | Jump | JumpBinaryFalse | JumpFalse | JumpTrue)
+        | LoadNameCall | Return | Jump | JumpBinaryFalse | JumpFalse | JumpTrue)
 }
 
 fn exits_before_effects(op: Op) -> bool { !lowered_natively(op) }
@@ -2723,8 +2676,8 @@ fn webs(region: &LoopRegion) -> Webs {
             }
             let pc = region.header + offset as u32;
             let mut out = reaching[offset].clone();
-            if let Some(register) = number_definition(region.instructions[offset]) {
-                out.insert(register, BTreeSet::from([slots::result(entries, offset)]));
+            for (register, definition) in name_calls::definitions(entries, offset, region.instructions[offset]) {
+                out.insert(register, BTreeSet::from([definition]));
             }
             for successor in successors(region, pc).into_iter().filter(|pc| inside(*pc)) {
                 let target = &mut reaching[(successor - region.header) as usize];
@@ -2775,10 +2728,10 @@ fn webs(region: &LoopRegion) -> Webs {
         // resumes the lane where a jump leaves the region; each writes back what is live.
         let leave = |webs: &mut Webs, at: u32, after: bool, reads: &mut Vec<Definition>| {
             for register in region.entry_registers().filter(|register| region.is_live(at, *register)) {
-                let mut definitions = if after && number_definition(instruction) == Some(register) {
-                    BTreeSet::from([slots::result(entries, offset)])
-                } else {
-                    webs.reaching[offset].get(&register).cloned().unwrap_or_default()
+                let written = after.then(|| name_calls::definition_of(entries, offset, instruction, register)).flatten();
+                let mut definitions = match written {
+                    Some(definition) => BTreeSet::from([definition]),
+                    None => webs.reaching[offset].get(&register).cloned().unwrap_or_default(),
                 };
                 if let Some(previous) = webs.leaves.get(&(at, register)) {
                     definitions.insert(*previous);
@@ -2857,7 +2810,7 @@ fn representations(
         })
         .collect();
     let entry = EntryRepresentations { captures, fields };
-    let mut webs_representation = vec![Representation::Int32; webs.parent.len()];
+    let mut webs_representation = name_calls::web_representations(region, webs);
     for (entry, register) in region.entry_registers().enumerate() {
         let representation = if region.tagged_entry(register) {
             Representation::Tagged
@@ -3003,11 +2956,7 @@ pub(super) fn verify_region<'a>(
     for (index, _) in region.entry_registers().enumerate() {
         if webs.entry_read[index] { definition_counts[webs.find(index)] += 1; }
     }
-    for (offset, instruction) in region.instructions.iter().copied().enumerate() {
-        if webs.reachable[offset] && number_definition(instruction).is_some() {
-            definition_counts[webs.defined(region, region.header + offset as u32)] += 1;
-        }
-    }
+    name_calls::note_definitions(region, &webs, &mut definition_counts, &mut definition_types, &mut values);
     let mut registers = vec![None; region.entry_count()];
     let mut obligations = vec![DefinitionObligation::None; region.instructions.len()];
     for (index, _) in region.entry_registers().enumerate() {
@@ -5749,6 +5698,19 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.guard(self.pc, changed);
         }
         let web = self.webs.defined(self.region, self.pc);
+        self.define_web(register, web, value);
+    }
+
+    /// Writes the instruction being lowered's second definition, `value`, in its web's
+    /// representation; a by-name call's receiver is `undefined`.
+    fn define_second(&mut self, register: Register, value: Typed) {
+        let web = self.webs.defined_second(self.region, self.pc).expect("a second definition");
+        self.define_web(register, web, value);
+    }
+
+    /// Writes `value` into `web`'s view of `register`; `define` and `define_second` name the
+    /// two definitions of one instruction.
+    fn define_web(&mut self, register: Register, web: Definition, value: Typed) {
         let fact = self.values[web].expect("verified SSA definition");
         let representation = fact.representation;
         if !value.ty.is_subtype(fact.ty) || !representation.can_receive(value.representation) {
@@ -6380,12 +6342,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
-            Class::LoadCapture => {
-                let index = capture_index(self.region, instruction)?;
-                let value = self.capture(index);
-                self.define(instruction.result_register(), value);
-                self.fall_through(pc)
-            }
+            Class::LoadCapture | Class::LoadNameCall => self.capture_read(pc, instruction),
             Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
@@ -6891,6 +6848,12 @@ mod calls;
 mod renames;
 #[path = "osr_loop/slots.rs"]
 mod slots;
+#[path = "osr_loop/ops.rs"]
+mod ops;
+#[path = "osr_loop/name_calls.rs"]
+mod name_calls;
+use name_calls::second_definition;
+use ops::{admitted_store, array_read, field_reads_alone_define, mentions, pure_setup};
 #[path = "osr_loop/array_roots.rs"]
 mod array_roots;
 use globals::{capture_index, rewrite_entry_reads};

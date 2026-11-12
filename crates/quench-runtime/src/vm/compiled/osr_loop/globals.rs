@@ -29,18 +29,39 @@ pub(super) fn rewrite_entry_reads(
             return WideInstruction::new(Op::LoadCapture, instruction.a(), 0, 0,
                 ImmediateLayout::capture_immediate(0, THIS_CAPTURE));
         }
+        // A by-name call reads the same global binding; it keeps its instruction, whose
+        // receiver write is a definition of its own.
+        if instruction.op().class() == Class::LoadNameCall {
+            global_slot(&mut globals, *instruction);
+            return *instruction;
+        }
         if instruction.op().class() != Class::LoadName {
             return *instruction;
         }
-        let site = (instruction.atom_index(), instruction.cache_site_index());
-        let index = globals.iter().position(|global| *global == site).unwrap_or_else(|| {
-            globals.push(site);
-            globals.len() - 1
-        });
-        WideInstruction::new(Op::LoadCapture, instruction.a(), 0, site.1,
-            ImmediateLayout::capture_immediate(usize::from(GLOBAL_DEPTH), u16::try_from(index).unwrap_or(u16::MAX)))
+        let slot = global_slot(&mut globals, *instruction).unwrap_or(u16::MAX);
+        WideInstruction::new(Op::LoadCapture, instruction.a(), 0, instruction.cache_site_index(),
+            ImmediateLayout::capture_immediate(usize::from(GLOBAL_DEPTH), slot))
     }).collect();
     (rewritten, globals)
+}
+
+/// The entry-capture slot of `instruction`'s global binding in `globals`, pushed unless an
+/// earlier read named it: `None` past `MAX_REGION_GLOBALS` names a slot the entry cannot
+/// carry.
+fn global_slot(
+    globals: &mut Vec<(crate::bytecode::Atom, u16)>,
+    instruction: WideInstruction,
+) -> Option<u16> {
+    let site = (instruction.atom_index(), instruction.cache_site_index());
+    let index = match globals.iter().position(|global| *global == site) {
+        Some(index) => index,
+        None => {
+            (globals.len() < MAX_REGION_GLOBALS).then_some(())?;
+            globals.push(site);
+            globals.len() - 1
+        }
+    };
+    u16::try_from(index).ok()
 }
 
 /// The entry-capture index a `LoadCapture` reads: an environment slot at depth 0, or a
@@ -57,9 +78,23 @@ pub(super) fn capture_index(region: &LoopRegion, instruction: WideInstruction) -
 }
 
 impl Admission<'_> {
+    /// Admits the entry capture of the global `site`, pushed unless an earlier read named it.
+    pub(super) fn global_capture(&mut self, site: (crate::bytecode::Atom, u16)) -> Option<usize> {
+        let slot = u16::try_from(self.globals.iter().position(|global| *global == site)?).ok()?;
+        if let Some(index) = self.capture_globals.iter().position(|known| *known == Some(site)) {
+            return Some(index);
+        }
+        self.captures.push(slot);
+        self.capture_globals.push(Some(site));
+        Some(self.captures.len() - 1)
+    }
+
     /// Admits a `LoadCapture`: an environment slot at depth 0, or a rewritten `LoadName` at
     /// `GLOBAL_DEPTH` whose atom the entry record materializes.
     pub(super) fn admit_capture(&mut self, instruction: WideInstruction, tagged: &std::collections::BTreeSet<Register>) -> Option<()> {
+        if instruction.op().class() == Class::LoadNameCall {
+            return self.admit_name_call(instruction);
+        }
         instruction.result_flags().eq(&0).then_some(())?;
         let depth = instruction.capture_depth();
         (depth == 0 || depth == GLOBAL_DEPTH).then_some(())?;
@@ -70,12 +105,8 @@ impl Admission<'_> {
         }
         let slot = instruction.capture_slot();
         if depth == GLOBAL_DEPTH {
-            (usize::from(slot) < MAX_REGION_GLOBALS).then_some(())?;
             let site = *self.globals.get(usize::from(slot))?;
-            if !self.capture_globals.iter().any(|known| *known == Some(site)) {
-                self.captures.push(slot);
-                self.capture_globals.push(Some(site));
-            }
+            self.global_capture(site)?;
         } else if !self.captures.iter().zip(&self.capture_globals)
             .any(|(capture, global)| *capture == slot && global.is_none())
         {
