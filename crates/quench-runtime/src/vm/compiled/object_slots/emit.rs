@@ -11,6 +11,17 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
     /// The property arena's value base (`Table::PropertyValues`), where the operation
     /// addresses a run; a read through a proved layout already holds its address.
     pub(in crate::vm::compiled) property_values: Option<ir::Value>,
+    /// What a store's barrier test depends on, where the operation stores.
+    pub(in crate::vm::compiled) gate: Option<StoreGate>,
+}
+
+/// The facts a store's barrier decision (`Stage::store_gate`) is made from: the dispatch payload
+/// that holds the object marks, and the semantic type of the stored value, which is known where
+/// the specializer proved it (a Number is immediate and needs no barrier).
+#[derive(Clone, Copy)]
+pub(in crate::vm::compiled) struct StoreGate {
+    pub(in crate::vm::compiled) payload: ir::Value,
+    pub(in crate::vm::compiled) ty: crate::typed_ir::Type,
 }
 
 /// An immediate of the Cranelift stage: a constant, or a value the caller holds as one (a stencil's
@@ -104,9 +115,22 @@ impl Stage for Emit<'_, '_> {
     fn store_u64(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
         self.builder.ins().store(MemFlagsData::trusted(), value, base, offset);
     }
-    fn store_gate(&mut self, record_id: ir::Value, _value: ir::Value) -> ir::Value {
-        // Native code keeps the helper for stores: an id is never below itself.
-        self.ult(record_id, record_id)
+    /// Whether the store needs no barrier log: a static fact folds the decision (an immediate
+    /// type emits no test), otherwise the shared tag and mark test decides. A stage with no
+    /// gate facts answers no, and the store leaves at its miss.
+    fn store_gate(&mut self, record_id: ir::Value, value: ir::Value) -> ir::Value {
+        let Some(StoreGate { payload, ty }) = self.gate else { return self.ult(record_id, record_id) };
+        if ty.is_subtype(crate::typed_ir::Type::NUMBER) { return self.builder.ins().iconst(types::I8, 1); }
+        let (logged, join) = (self.builder.create_block(), self.builder.create_block());
+        let open = self.builder.append_block_param(join, types::I8);
+        super::super::emit_unlogged_property_store_guard(self.builder, payload, record_id, value, ty, logged);
+        let yes = self.builder.ins().iconst(types::I8, 1);
+        self.builder.ins().jump(join, &[ir::BlockArg::Value(yes)]);
+        self.builder.switch_to_block(logged);
+        let no = self.builder.ins().iconst(types::I8, 0);
+        self.builder.ins().jump(join, &[ir::BlockArg::Value(no)]);
+        self.builder.switch_to_block(join);
+        open
     }
     fn number_operator(&mut self, _operator: EmitImm, _passed: ir::Value, _constant: ir::Value) -> (ir::Value, ir::Value) {
         // Native arithmetic for computed initializer fields is the construct lowering's (thread 13): until it lands the field leaves.
@@ -253,7 +277,7 @@ mod tests {
         builder.switch_to_block(entry);
         let [record, base] = builder.block_params(entry).try_into().unwrap();
         let miss = builder.create_block();
-        let mut stage = Emit { builder: &mut builder, property_values: Some(base) };
+        let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None };
         let inline = crate::staged::object::inline_storage(&mut stage, record);
         let layout = crate::staged::own_layout(&mut stage, record, inline, form,
             usize::from(slot) + 1, PackedAccess::Reload, miss).unwrap();

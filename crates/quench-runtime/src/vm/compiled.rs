@@ -932,7 +932,7 @@ pub(super) fn emit_dense_array_view(
 ) -> DenseArrayView {
     let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
         std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
     let backing = crate::staged::elements::array_backing(&mut stage, record_base, base, fallback)
         .expect("the emit stage continues past its guards");
     let crate::staged::elements::Backing { values, length, .. } = backing;
@@ -969,7 +969,7 @@ pub(super) fn emit_dense_element(
     index: ir::Value,
     fallback: ir::Block,
 ) -> (ir::Value, ir::Value) {
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
     crate::staged::elements::dense_element(&mut stage, view.values, view.length, index, fallback)
         .expect("the emit stage continues past its guards")
 }
@@ -986,7 +986,7 @@ pub(super) fn emit_dense_element_replace(
     value: ir::Value,
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
     if view.uncounted {
         crate::staged::elements::replace_uncounted_element(&mut stage, address, value);
     } else {
@@ -1709,7 +1709,7 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
         }
     };
     let narrow = builder.ins().uextend(types::I64, narrow);
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
     let encoded = crate::staged::object::decode_narrow_through(&mut stage, narrow, table);
     builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
 }

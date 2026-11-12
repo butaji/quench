@@ -80,6 +80,14 @@ pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::
     let shape = stage.site(u64::from(shape));
     let same = stage.eq_imm(exact, shape);
     stage.guard(same, miss)?;
+    own_store_proved(stage, record, record_id, slot, value, miss)
+}
+
+/// `own_store` for a record whose exact shape the caller proved: the same gate and storage
+/// decisions, leaving the shape test to whoever holds its proof (`property::own_store_row`).
+#[inline(always)]
+pub(crate) fn own_store_proved<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, slot: u16,
+    value: S::Word, miss: S::Miss) -> Option<()> {
     let open = stage.store_gate(record_id, value);
     stage.guard(open, miss)?;
     let payload = stage.load_u64(record, OBJECT.payload_offset as i32);

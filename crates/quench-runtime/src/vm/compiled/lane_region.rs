@@ -21,7 +21,7 @@ use crate::bytecode::Class;
 use super::*;
 use super::super::specializer::Specializer;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
-use super::object_slots::{CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable, PackedAccess};
+use super::object_slots::{CheckedObject, CheckedObjectTable, Emit, StoreGate, ObjectHeader, ObjectRecord, ObjectTable, PackedAccess};
 use crate::typed_ir::Division;
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
@@ -3074,7 +3074,8 @@ impl Lowering<'_, '_> {
         access: Option<(&LanePlans<'_>, HeldRead)>) -> crate::staged::Step<ir::Value, ()> {
         let locals = self.completion != Completion::Number;
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
-        let mut stage = Emit { builder: &mut self.builder, property_values };
+        let gate = access.and_then(|(_, held)| held.store_ty).map(|ty| StoreGate { payload: self.payload, ty });
+        let mut stage = Emit { builder: &mut self.builder, property_values, gate };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held, registers_base: self.registers_base,
             stable: StableHold { uses: &mut self.stable, online: self.vm.online, at: self.at } });
@@ -4437,7 +4438,7 @@ impl Lowering<'_, '_> {
         // an object retires, as another register may name it, and `this`'s facts are read
         // again.
         if self.generic.contains(&pc) && self.completion.status_and_pc() {
-            self.store_through_vm(state, (source, register), instruction, StorePlan::Add, exit)?;
+            self.store_through_vm(state, (source, register), (instruction, ty), StorePlan::Add, exit)?;
             self.forget_append_rooms(self.at);
             self.reshaped(state);
             self.reload_receiver();
@@ -4448,9 +4449,9 @@ impl Lowering<'_, '_> {
                 .is_some_and(|header| header.record == slot.header.record));
         if let Some(slot) = projected {
             self.loop_slot_store(state, instruction, slot, (value, exit));
-        } else if self.stores_through_vm(instruction) {
+        } else if let Some(plan) = self.direct_store_plan(instruction, ty) {
             state.proofs.write_field(instruction.atom_index());
-            self.store_through_vm(state, (source, register), instruction, StorePlan::Host, exit)?;
+            self.store_through_vm(state, (source, register), (instruction, ty), plan, exit)?;
             state.proofs.stable = false;
             self.forget_append_rooms(self.at);
         } else {
@@ -4497,23 +4498,32 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(done);
     }
 
-    /// Whether the store at `instruction` folds no own shape of its site and binds no slot at
-    /// entry, so the VM's store is all it makes (`store_field`'s own-shape cases need a shape).
-    fn stores_through_vm(&self, instruction: WideInstruction) -> bool {
+    /// The plan of a store that the `SetField` row makes: in place where the site's one own shape
+    /// folds and the value's type fits its slot (the barrier decision is the stage's, from the
+    /// value's type), by the VM where the site folds no own shape and binds no slot at entry.
+    /// `None` leaves the store to `store_field`: a value the slot's type may not hold, several
+    /// shapes, a run that calls, a bound slot.
+    fn direct_store_plan(&self, instruction: WideInstruction, ty: Type) -> Option<StorePlan> {
         let site = instruction.cache_site_index();
-        let own = self.fields.get(&site).is_some_and(|loads| loads.iter().any(|load| load.holder.is_none()));
+        let own: Vec<&NativeFieldLoad> = self.fields.get(&site).into_iter().flatten().filter(|load| load.holder.is_none()).collect();
         let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
-        !own && !bound
+        match own.as_slice() {
+            [] if !bound => Some(StorePlan::Host),
+            [field] if !bound && !self.native_calls && field.valid() && ty.is_subtype(field.ty) =>
+                Some(StorePlan::Own { shape: field.shape, slot: field.slot }),
+            _ => None,
+        }
     }
 
-    /// The store of the `source` register's value to `instruction`'s field of `register`'s
-    /// object (`this` for `None`) by the VM, as one `SetField` row under `plan`.
+    /// The store of the `source` register's value, of type `ty`, to `instruction`'s field of
+    /// `register`'s object (`this` for `None`) as one `SetField` row under `plan`.
     fn store_through_vm(&mut self, state: &mut State, (source, register): (Register, Option<Register>),
-        instruction: WideInstruction, plan: StorePlan, exit: ir::Block) -> Option<()> {
+        (instruction, ty): (WideInstruction, Type), plan: StorePlan, exit: ir::Block) -> Option<()> {
         let operation = crate::staged::Operation::SetField { value: source, base: register,
             atom: instruction.atom_index(), site: instruction.cache_site_index() };
         let plans = LanePlans { store: Some(plan), ..LanePlans::NONE };
-        match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, HeldRead::default())) {
+        let held = HeldRead { store_ty: Some(ty), ..HeldRead::default() };
+        match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, held)) {
             crate::staged::Step::Value(_) => Some(()),
             _ => None,
         }
@@ -5524,6 +5534,32 @@ mod tests {
             assert_eq!(barrier, ty == Type::ANY,
                 "only the admitted integer excludes a heap edge:\n{native}");
         }
+    }
+
+    /// The loads of the object mark blocks (the store barrier's test) in the lowering of
+    /// `source`'s `write`, whose one store site folds an own slot of type `slot`.
+    fn barrier_tests(source: &str, slot: Type) -> usize {
+        let program = crate::Engine::specialize(source, "store-barrier.js").unwrap();
+        let function = program.function(1);
+        let fields: BTreeMap<_, _> = function.instructions().filter(|instruction| instruction.op().is_set_field())
+            .map(|instruction| (instruction.cache_site_index(), vec![NativeFieldLoad {
+                shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: slot, inherited: None, function_shape: false,
+            }])).collect();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
+        let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+        let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
+            &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[],
+            Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+        let native = region.function;
+        native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+            .filter(|instruction| matches!(native.dfg.insts[*instruction], ir::InstructionData::Load { offset, .. }
+                if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, object_mark_blocks) as i32)).count()
+    }
+
+    #[test]
+    fn a_number_store_emits_no_barrier_and_a_heap_value_store_emits_one() {
+        assert_eq!(barrier_tests("function write(o) { o.value=1; }", Type::INT32), 0, "an int32 fact folds the barrier away");
+        assert_eq!(barrier_tests("function write(o, v) { o.value=v; }", Type::ANY), 1, "an unknown value is tested once");
     }
 
     #[test]

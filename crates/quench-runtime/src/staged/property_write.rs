@@ -1,7 +1,7 @@
 //! The named store as a staged row: the plan a site proved decides whether the value goes to
-//! the VM's adding store or to its general one.
+//! an own slot in place, to the VM's adding store, or to its general one.
 
-use super::property::{base_word, PlanSource, PropertyFrame, StorePlan};
+use super::property::{base_word, own_store_row, Owner, PlanSource, PropertyFrame, StorePlan};
 use super::Stage;
 use crate::bytecode::{FieldBase, Register};
 
@@ -15,6 +15,8 @@ pub(super) fn set_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     let object = base_word(stage, frame, base, miss)?;
     let value = frame.tagged(stage, value);
     match plan {
+        StorePlan::Own { shape, slot } =>
+            own_store_row(stage, frame, Owner::of(base)?, object, (shape, slot), (atom, site), value, miss)?,
         StorePlan::Add => frame.field_add(stage, object, atom, site, value, miss)?,
         StorePlan::Host => frame.field_store_host(stage, object, atom, site, value, miss)?,
     }

@@ -148,7 +148,7 @@ impl ObjectHeader {
 
 /// The stage whose residual `staged` operations that address no arena emit into `builder`.
 pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
-    Emit { builder, property_values: None }
+    Emit { builder, property_values: None, gate: None }
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.
@@ -447,7 +447,7 @@ mod tests {
 pub(super) use crate::staged::PackedAccess;
 use crate::staged::{Form, Layout, Slots};
 mod emit;
-pub(super) use emit::Emit;
+pub(super) use emit::{Emit, StoreGate};
 
 /// A projection for a guarded receiver and exact shape: `staged::own_layout`'s residual. It may
 /// only be reused while no admitted effect can change its layout, arena base or object lifetime.
@@ -485,7 +485,7 @@ impl CheckedObject {
         miss: ir::Block,
     ) -> Option<Self> {
         if !plan.valid() { return None; }
-        let mut stage = Emit { builder, property_values: Some(base) };
+        let mut stage = Emit { builder, property_values: Some(base), gate: None };
         crate::staged::own_layout(&mut stage, record, inline, Form::of(plan.storage, plan.storage_len),
             plan.storage_len, access, miss).map(Self)
     }

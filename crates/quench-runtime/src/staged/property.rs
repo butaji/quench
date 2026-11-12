@@ -71,6 +71,9 @@ pub(crate) enum FieldPlan<'a> {
 /// How a named store site writes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum StorePlan {
+    /// An own data field of an object whose exact shape is `shape`, at `slot`: stored in place
+    /// where the shape, the barrier and the storage admit it, else by the VM's store.
+    Own { shape: u32, slot: u16 },
     /// A store that may add the property or change the shape: the VM's adding entry.
     Add,
     /// A setter, a read-only or dictionary property, a proxy: the VM's store.
@@ -195,6 +198,21 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
     /// The VM's own-field store hit (`LaneHelper::FieldSet`); a failure leaves at `miss`.
     #[inline(always)]
     fn field_store_host(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word, _miss: S::Miss) -> Option<()> { None }
+
+    /// Continues where the run admits a direct store of `atom` (no method cache names it).
+    #[inline(always)]
+    fn store_admitted(&mut self, _stage: &mut S, _atom: u32, _miss: S::Miss) -> Option<()> { Some(()) }
+
+    /// What `fast` stores, which leaves at the edge it is given; where it misses, the VM's store
+    /// instead (`field_store_host`), and past the join only what both prove holds.
+    #[inline(always)]
+    fn stored(&mut self, stage: &mut S, _owner: Owner, object: S::Word, (atom, site): (u32, u16), value: S::Word,
+        miss: S::Miss, fast: impl FnOnce(&mut S, &mut Self, S::Miss) -> Option<()>) -> Option<()> {
+        match fast(stage, self, miss) {
+            Some(()) => Some(()),
+            None => self.field_store_host(stage, object, atom, site, value, miss),
+        }
+    }
 
     /// `delete base[key]` where `strict` throws on a refusal: the boolean word, or a leave
     /// at `miss`.
@@ -329,6 +347,20 @@ fn chain<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, first: (Ow
         from = (Owner::Temporary, true);
     }
     Some(object)
+}
+
+/// The store of `value` to the own slot `slot` of `owner`'s `object` of exact `shape`: the
+/// owner's shape proof, the method-cache admission, then the shared own store, whose barrier
+/// and storage decisions are the stage's. Anything it cannot do stores through the VM.
+pub(super) fn own_store_row<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owner: Owner, object: S::Word,
+    (shape, slot): (u32, u16), (atom, site): (u32, u16), value: S::Word, miss: S::Miss) -> Option<()> {
+    frame.stored(stage, owner, object, (atom, site), value, miss, |stage, frame, miss| {
+        frame.store_admitted(stage, atom, miss)?;
+        let at = frame.receiver_record(stage, owner, object, false, miss)?;
+        guard_receiver_shape(stage, frame, (owner, true), &at, shape, miss)?;
+        let id = stage.and_imm(object, u64::from(u32::MAX));
+        super::store::own_store_proved(stage, at.record, id, slot, value, miss)
+    })
 }
 
 /// `GetField`: `base`'s value, as the loop's entry or the record of an OSR region already

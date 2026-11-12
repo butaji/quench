@@ -37,6 +37,8 @@ pub(super) struct HeldRead {
     pub(super) entry_word: Option<u32>,
     /// The value an earlier read of the first field proved (`LocalProofs::fields`).
     pub(super) known: Option<ir::Value>,
+    /// The semantic type of a stored value, which decides whether its store needs a barrier.
+    pub(super) store_ty: Option<Type>,
 }
 
 /// The Stable facts a lowering takes, and where it takes them.
@@ -184,6 +186,34 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     fn field_store_host(&mut self, stage: &mut Emit<'b, 'c>, object: ir::Value, atom: u32, site: u16,
         value: ir::Value, miss: ir::Block) -> Option<()> {
         calls::field_store_miss(self, stage, object, atom, site, value, EmitProof::FieldStoreMiss { miss })
+    }
+
+    /// The entry's test that no method cache names `atom`, which a run that calls nothing makes once.
+    fn store_admitted(&mut self, stage: &mut Emit<'b, 'c>, atom: u32, miss: ir::Block) -> Option<()> {
+        let entry = self.entry().filter(|_| !self.fields.as_ref()?.native_calls)?;
+        let admitted = stage.builder.use_var(*entry.store_atoms.get(&atom)?);
+        emit_js_guard(stage.builder, admitted, miss);
+        Some(())
+    }
+
+    /// The direct store, and where it declines (a shape, the barrier or the storage does not
+    /// admit it) the VM's store, which logs what it must; past the join only the proofs that
+    /// held before the store do.
+    fn stored(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, (atom, site): (u32, u16),
+        value: ir::Value, miss: ir::Block, fast: impl FnOnce(&mut Emit<'b, 'c>, &mut Self, ir::Block) -> Option<()>) -> Option<()> {
+        let (general, done) = (stage.builder.create_block(), stage.builder.create_block());
+        stage.builder.set_cold_block(general);
+        let before = self.state.clone();
+        match fast(stage, self, general) {
+            Some(()) => { stage.builder.ins().jump(done, &[]); }
+            None => { stage.builder.ins().jump(general, &[]); }
+        }
+        stage.builder.switch_to_block(general);
+        self.field_store_host(stage, object, atom, site, value, miss)?;
+        stage.builder.ins().jump(done, &[]);
+        stage.builder.switch_to_block(done);
+        self.retire_fast_proofs(owner, &before);
+        Some(())
     }
 
     /// The VM's own field-cache read (`Vm::cached_field_hit`), prototype holders included,
