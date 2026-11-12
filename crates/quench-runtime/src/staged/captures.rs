@@ -11,7 +11,7 @@ use super::{NumericFrame, NumericStage, Operation, Step};
 pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        Operation::LoadCapture { destination, depth, slot } => match frame.capture_slot(stage, depth, slot) {
+        Operation::LoadCapture { destination, depth, slot, root } => match frame.capture_slot(stage, depth, slot, root) {
             Some((value, fact)) => {
                 frame.write(stage, destination, value, fact);
                 Step::Value(value)
@@ -70,8 +70,8 @@ mod tests {
         }
         fn jump(&mut self, _stage: &mut Concrete) -> Edge { Edge::Target }
         fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) { (Value::boolean(condition).to_bits(), ()) }
-        fn capture_slot(&mut self, _stage: &mut Concrete, depth: u16, slot: u16) -> Option<(u64, ())> {
-            self.bound(depth, slot).map(|at| (self.slots[at], ()))
+        fn capture_slot(&mut self, _stage: &mut Concrete, depth: u16, slot: u16, root: bool) -> Option<(u64, ())> {
+            self.bound(depth, slot).filter(|_| !root).map(|at| (self.slots[at], ()))
         }
         fn store_capture(&mut self, _stage: &mut Concrete, depth: u16, slot: u16, value: u64) -> Option<()> {
             self.bound(depth, slot).map(|at| self.slots[at] = value)
@@ -110,7 +110,7 @@ mod tests {
         for (depth, slot) in [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0)] {
             let mut capture = frame(&slots);
             let probe = (depth == 0).then(|| slots.get(usize::from(slot)).copied()).flatten().filter(|value| !value.is_internal_marker());
-            let step = run(&mut capture, Operation::LoadCapture { destination: 1, depth, slot });
+            let step = run(&mut capture, Operation::LoadCapture { destination: 1, depth, slot, root: false });
             match (step, probe) {
                 (Step::Value(word), Some(expected)) => {
                     assert_eq!(word, expected.to_bits(), "slot {slot} depth {depth}");
@@ -120,6 +120,17 @@ mod tests {
                 _ => panic!("slot {slot} depth {depth} disagrees with the probe"),
             }
         }
+    }
+
+    /// A root read is the frame's to answer: a frame with no projected binding declines it, and
+    /// the same slot read as a function's own capture defines its register.
+    #[test]
+    fn a_root_capture_read_asks_the_frame_for_the_root_binding() {
+        let mut capture = frame(&[Value::number(2.5)]);
+        let read = |root| Operation::LoadCapture { destination: 1, depth: 0, slot: 0, root };
+        assert!(matches!(run(&mut capture, read(true)), Step::Unresolved));
+        assert_eq!(capture.registers[1], 0, "a declined root read defines nothing");
+        assert!(matches!(run(&mut capture, read(false)), Step::Value(word) if word == Value::number(2.5).to_bits()));
     }
 
     #[test]
@@ -138,7 +149,7 @@ mod tests {
     fn the_capture_opcodes_decode_to_their_rows() {
         let imm = crate::bytecode::ImmediateLayout::capture_immediate(1, 4);
         let load = Operation::<u64, ()>::decode(WideInstruction::new(Op::LoadCapture, 2, 0, 0, imm), |_| None);
-        assert!(matches!(load, Some(Operation::LoadCapture { destination: 2, depth: 1, slot: 4 })));
+        assert!(matches!(load, Some(Operation::LoadCapture { destination: 2, depth: 1, slot: 4, root: false })));
         let store = Operation::<u64, ()>::decode(WideInstruction::new(Op::StoreCapture, 3, 0, 0, imm), |_| None);
         assert!(matches!(store, Some(Operation::StoreCapture { source: 3, depth: 1, slot: 4 })));
         let returning = WideInstruction::new(Op::LoadCapture, 2 | crate::bytecode::RETURN_REGISTER, 0, 0, imm);

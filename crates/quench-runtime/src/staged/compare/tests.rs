@@ -369,3 +369,37 @@ fn an_instanceof_jump_is_the_vms_decision() {
     assert!(matches!(crate::staged::step(&mut stage, &mut frame, operation), Step::Unresolved));
     assert!(frame.calls.is_empty(), "a constant operand is no register the VM can read");
 }
+
+/// The operator names the comparison a `JumpBinaryFalse` decodes to, which a tier with the
+/// operator alone (an interpreter record) asks for directly.
+#[test]
+fn an_operator_names_the_comparison_a_jump_decodes_to() {
+    for operator in [BinaryOperator::LessThan, BinaryOperator::GreaterEqual, BinaryOperator::Equality,
+        BinaryOperator::StrictInequality, BinaryOperator::BitwiseAnd, BinaryOperator::ShiftLeft,
+        BinaryOperator::Instanceof, BinaryOperator::In] {
+        let (left, right) = (Operand::register(1).0, Operand::register(2).0);
+        let instruction = WideInstruction::new(Op::JumpBinaryFalse, operator as u16, left, right, 9);
+        let Some(Operation::CompareJump { comparison, .. }) = Operation::<u64, ()>::decode(instruction, |_| None)
+            else { panic!("a comparison jump decodes") };
+        assert_eq!(comparison, Comparison::of_operator(operator as u32), "{operator:?}");
+    }
+}
+
+/// A Boolean test is identity with its constant, whichever side the jump negates, and asks the VM
+/// nothing.
+#[test]
+fn a_boolean_test_is_identity_with_its_constant() {
+    let values = [Value::TRUE, Value::FALSE, Value::UNDEFINED, Value::integer(1), Value::number(0.5)];
+    for expected in [true, false] {
+        for (negated, negate) in [(false, false), (false, true), (true, false), (true, true)] {
+            for value in values {
+                let mut frame = Probe::of(&[value, Value::boolean(expected)]);
+                let step = run(&mut frame, Comparison::Boolean { expected, negated }, negate);
+                let holds = (value == Value::boolean(expected)) != negated;
+                assert!(matches!(step, Step::Control(edge) if edge == if holds != negate { Edge::Target } else { Edge::Following }),
+                    "{expected} {negated} {negate} {value:?}");
+                assert!(frame.calls.is_empty());
+            }
+        }
+    }
+}

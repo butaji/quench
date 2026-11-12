@@ -1,6 +1,7 @@
 //! The interpreter's register frame: `staged` moves and constants over the live file.
 
 use super::*;
+use super::lane_reads::{RecordOperand, Reads};
 use crate::bytecode::{Operand, Register};
 use crate::staged::{CallOut, Comparison, Concrete, Constant, Edge, Frame, NumberOperation, NumericFrame, Operation, Step};
 
@@ -63,19 +64,23 @@ struct LaneFrame<const ACC: u8> {
     decisions: Option<Decisions>,
     /// The slots the running function's captures read from (`capture_reads`), for a staged capture read.
     capture_slots: Option<*const usize>,
+    /// The constants, local slots and outer captures the staged row's operands name.
+    reads: Reads,
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame for an operation that reads no `this`.
     #[inline(always)]
     fn new(registers: Registers, view: Carried) -> Self {
-        Self { registers, view, this: Value::DELETED, locals: None, captures: None, decisions: None, capture_slots: None }
+        Self { registers, view, this: Value::DELETED, locals: None, captures: None, decisions: None, capture_slots: None,
+            reads: Reads::NONE }
     }
 
     /// A frame that may read and write the activation's local slots.
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
-        Self { registers, view, this, locals: Some((locals, len)), captures: None, decisions: None, capture_slots: None }
+        Self { registers, view, this, locals: Some((locals, len)), captures: None, decisions: None, capture_slots: None,
+            reads: Reads::NONE }
     }
 }
 
@@ -159,11 +164,13 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn capture_slot(&mut self, _stage: &mut Concrete, depth: u16, slot: u16) -> Option<(u64, ())> {
-        let slots = self.capture_slots.filter(|_| depth == 0)?;
+    fn capture_slot(&mut self, _stage: &mut Concrete, depth: u16, slot: u16, root: bool) -> Option<(u64, ())> {
+        let own = self.capture_slots.filter(|_| depth == 0 && !root);
         // SAFETY: null or the running function's dense storage, found this run
         // (`LaneContext::capture`); the scoped read retains the bounds and marker checks.
-        unsafe { crate::heap::EnvironmentSlots::read_storage(slots, slot) }.map(|value| (value.to_bits(), ()))
+        let value = own.and_then(|slots| unsafe { crate::heap::EnvironmentSlots::read_storage(slots, slot) })
+            .or_else(|| self.reads.capture(depth, slot, root))?;
+        Some((value.to_bits(), ()))
     }
 
     #[inline(always)]
@@ -182,14 +189,29 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
 }
 
 impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
+    /// A register's word, or the constant or local the record names.
+    #[inline(always)]
+    fn operand_word(&mut self, stage: &mut Concrete, operand: Operand) -> Option<u64> {
+        match operand.register_index() {
+            Some(register) => Some(self.read(stage, register)),
+            None => self.reads.word(operand).map(Value::to_bits),
+        }
+    }
+
     fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
-        let register = operand.register_index().expect("a staged numeric operand is a register");
-        u64::from(Value::from_bits(self.read(stage, register)).as_int().expect("a proved int operand") as u32)
+        let word = self.operand_word(stage, operand).expect("a staged numeric operand is one the frame reads");
+        u64::from(Value::from_bits(word).as_int().expect("a proved int operand") as u32)
     }
 
     fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
-        let register = operand.register_index().expect("a staged numeric operand is a register");
-        Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number operand").to_bits()
+        let word = self.operand_word(stage, operand).expect("a staged numeric operand is one the frame reads");
+        Value::from_bits(word).as_number().expect("a proved Number operand").to_bits()
+    }
+
+    /// ToInt32 of a Number operand, as the bitwise operators read it.
+    fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+        let number = Value::from_bits(self.operand_word(stage, operand)?).as_number()?;
+        Some(u64::from(crate::value::number_to_u32(number)))
     }
 
     fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
@@ -308,10 +330,40 @@ pub(super) fn staged_store_capture<H: Host>(cx: *mut LaneContext<H>, r: Register
 #[inline(always)]
 pub(super) fn staged_compare_jump<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
     comparison: Comparison, [left, right]: [u16; 2]) -> Option<Edge> {
+    staged_comparison_jump::<H>(cx, r, view, comparison, [RecordOperand::Register(left), RecordOperand::Register(right)])
+}
+
+/// The comparison `operator` makes of the observed `values`: two Numbers decide a relation as
+/// binary64 (the static arm the handler selects), and any other relation is no Number relation,
+/// which the handler's cold path decides.
+#[inline(always)]
+fn observed(operator: u32, [left, right]: [Value; 2]) -> Comparison {
+    match Comparison::of_operator(operator) {
+        Comparison::Relation { .. } if left.as_number().is_none() || right.as_number().is_none() => Comparison::Operator(operator),
+        comparison => comparison,
+    }
+}
+
+/// The edge the staged jump of `operator` over the record's `operands` takes: the comparison the
+/// observed operands select (`observed`), or `None` where the interpreter's cold path decides it.
+#[inline(always)]
+pub(super) fn staged_record_jump<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried, operator: u32,
+    operands: [RecordOperand; 2]) -> Option<Edge> {
+    let values = [operands[0].value(cx, r)?, operands[1].value(cx, r)?];
+    staged_comparison_jump::<H>(cx, r, view, observed(operator, values), operands)
+}
+
+/// The edge the staged jump of `comparison` over the record's `operands` takes, or `None` where
+/// the interpreter's own path decides it.
+#[inline(always)]
+pub(super) fn staged_comparison_jump<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried, comparison: Comparison,
+    operands: [RecordOperand; 2]) -> Option<Edge> {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     frame.decisions = Some(Decisions::of(cx));
-    let operation = Operation::CompareJump { comparison, left: Operand::register(left), right: Operand::register(right), negate: true };
+    let ([left, right], reads) = RecordOperand::staged_pair::<H>(cx, operands);
+    frame.reads = reads;
+    let operation = Operation::CompareJump { comparison, left, right, negate: true };
     match crate::staged::step(&mut stage, &mut frame, operation) {
         Step::Control(edge) => Some(edge),
         Step::Unresolved => None,
@@ -319,15 +371,17 @@ pub(super) fn staged_compare_jump<H: Host>(cx: *mut LaneContext<H>, r: Registers
     }
 }
 
-/// `LoadCapture` of the capture at `depth` and `slot` of the running function's own slots into
-/// `destination`, by the staged operation; false, writing nothing, where they hold no such value.
+/// `LoadCapture` of the capture at `depth` and `slot` into `destination` (of the root's projected
+/// binding where `root`), by the staged operation: the running function's own slots, else the lane's
+/// remembered walks; false, writing nothing, where they hold no such value.
 #[inline(always)]
 pub(super) fn staged_load_capture<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
-    destination: u16, (depth, slot): (u16, u16)) -> bool {
+    destination: u16, (depth, slot): (u16, u16), root: bool) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     frame.capture_slots = Some(capture_reads(unsafe { (*cx).capture }));
-    matches!(crate::staged::step(&mut stage, &mut frame, Operation::LoadCapture { destination, depth, slot }), Step::Value(_))
+    frame.reads = Reads::of_captures::<H>(cx);
+    matches!(crate::staged::step(&mut stage, &mut frame, Operation::LoadCapture { destination, depth, slot, root }), Step::Value(_))
 }
 
 /// The edge a staged unconditional jump takes.

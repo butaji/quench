@@ -2780,6 +2780,8 @@ lane_handler! {
 
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
+mod lane_reads;
+use lane_reads::RecordOperand;
 mod loop_body;
 use loop_body::{lane_loop_body, LoopBody};
 use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_object_coercible, staged_to_numeric};
@@ -4903,7 +4905,7 @@ script_handler! {
         // Deeper reads take `lane_load_outer_capture` (`specialize_captures`).
         debug_assert_eq!(ImmediateLayout::capture_depth(imm), 0);
         let at = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
-        if !lane_frame::staged_load_capture::<H>(cx, r, view, i.a, at) {
+        if !lane_frame::staged_load_capture::<H>(cx, r, view, i.a, at, false) {
             sibling!(lane_load_capture_walk::<H>, r, ip, view)
         }
         next!(cx, r, following(ip), view)
@@ -4912,79 +4914,19 @@ script_handler! {
 
 script_handler! {
     /// `lane_load_capture` of a capture past the running function's own scope
-    /// (`specialize_captures`). An activation's read through the walk it read last
-    /// (`LaneContext::outer`) runs here, saving no registers; a frame's read takes
-    /// `lane_load_frame_outer_capture`, any other `lane_load_outer_capture_walk`.
+    /// (`specialize_captures`): the staged read through the walk the lane remembers (a frame's
+    /// remembered walk, an activation's `LaneContext::outer`) or a new walk it then remembers;
+    /// any other read takes `lane_load_capture_walk`.
     fn lane_load_outer_capture<>(cx, r, ip, i, view) {
         let imm = i.imm();
-        let env = unsafe { (*cx).env };
-        if env.is_deleted() {
-            sibling!(lane_load_frame_outer_capture::<H>, r, ip, view)
-        }
-        let depth = ImmediateLayout::capture_depth(imm);
-        let walk = unsafe { (*cx).outer };
-        let value = if walk.env == env && walk.depth == depth {
-            // SAFETY: as `OuterWalk`.
-            unsafe { &*walk.slots }.dense().and_then(|slots| slots.dense_plain(usize::from(ImmediateLayout::capture_slot(imm))))
-        } else {
-            None
-        };
-        let Some(value) = value else {
+        let at = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
+        if !lane_frame::staged_load_capture::<H>(cx, r, view, i.a, at, false) {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::capture(super::lane_exits::CaptureEvent::LaneMiss);
-            sibling!(lane_load_outer_capture_walk::<H>, r, ip, view)
-        };
+            sibling!(lane_load_capture_walk::<H>, r, ip, view)
+        }
         #[cfg(feature = "profile-lane-exits")]
         super::lane_exits::capture(super::lane_exits::CaptureEvent::LaneHit);
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-script_handler! {
-    /// `lane_load_outer_capture` in an activation through another walk: the walk from its
-    /// environment this lane run or an earlier one remembered, or walked now and remembered
-    /// (`Vm::walked_capture_slots`), ending at a function's dense slot, which the context
-    /// then reads through (`LaneContext::outer`); any other read takes
-    /// `lane_load_capture_walk`.
-    #[inline(never)]
-    fn lane_load_outer_capture_walk<>(cx, r, ip, i, view) {
-        let imm = i.imm();
-        let vm = unsafe { vm(cx) };
-        let (env, depth) = (unsafe { (*cx).env }, ImmediateLayout::capture_depth(imm));
-        let walked = vm.walked_capture_slots(env, false, depth);
-        // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
-        let value = walked.and_then(|(slots, root)| {
-            let value = root
-                .is_none()
-                .then(|| unsafe { &*slots }.dense()?.dense_plain(usize::from(ImmediateLayout::capture_slot(imm))))
-                .flatten()?;
-            unsafe { (*cx).outer = OuterWalk { env, depth, slots } };
-            Some(value)
-        });
-        let Some(value) = value else {
-            sibling!(lane_load_capture_walk::<H>, r, ip, view)
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-script_handler! {
-    /// `lane_load_outer_capture` in a frame's run: the walk remembered from the frame's
-    /// environment, or the walk.
-    #[inline(never)]
-    fn lane_load_frame_outer_capture<>(cx, r, ip, i, view) {
-        let imm = i.imm();
-        let vm = unsafe { vm(cx) };
-        let frame = &vm.frames[unsafe { (*cx).frame }];
-        let depth = ImmediateLayout::capture_depth(imm);
-        let Some(value) =
-            vm.remembered_capture(frame.env, frame.captured, depth, ImmediateLayout::capture_slot(imm))
-        else {
-            sibling!(lane_load_capture_walk::<H>, r, ip, view)
-        };
-        r.set(i.a, value);
         next!(cx, r, following(ip), view)
     }
 }
@@ -5130,10 +5072,14 @@ script_handler! {
                 env.is_deleted(),
             ));
         }
-        let Some(value) = value.or_else(|| lane_projected_capture(cx, depth, slot)) else {
+        if let Some(value) = value {
+            r.set(i.a, value);
+            next!(cx, r, following(ip), view)
+        }
+        // A capture of a root environment's global var or lexical: the staged row's root read.
+        if !lane_frame::staged_load_capture::<H>(cx, r, view, i.a, (depth, slot), true) {
             return exit(ip);
-        };
-        r.set(i.a, value);
+        }
         next!(cx, r, following(ip), view)
     }
 }
@@ -7431,20 +7377,42 @@ script_handler! {
 }
 
 script_handler! {
-    /// Number comparisons, as on the general path's fast path.
+    /// The comparison of the record's operator over its register, constant and local operands, by
+    /// the staged step on the interpreter's stage: two observed Numbers decide a relation, the
+    /// words and the lane's strict decision an equality. Any other pair takes
+    /// `lane_jump_binary_false_chain`.
     fn lane_jump_binary_false<BACKWARD: bool>(cx, r, ip, i, view) {
+        let (Some(left), Some(right)) = (RecordOperand::encoded(i.b), RecordOperand::encoded(i.c)) else {
+            return exit(ip);
+        };
+        let Some(edge) = lane_frame::staged_record_jump::<H>(cx, r, view, u32::from(i.a), [left, right]) else {
+            sibling!(lane_jump_binary_false_chain::<H, BACKWARD>, r, ip, Carried::script(cx))
+        };
+        jump_on_edge!(cx, r, ip, BACKWARD, edge)
+    }
+}
+
+/// The edge a decided comparison takes: the jump is taken where it fails.
+#[inline(always)]
+const fn holds_edge(holds: bool) -> crate::staged::Edge {
+    if holds { crate::staged::Edge::Following } else { crate::staged::Edge::Target }
+}
+
+script_handler! {
+    /// `lane_jump_binary_false` of a pair the staged step leaves: the relations the lane decides
+    /// without guest code (`lane_relation_other`); any other takes the general path. Out of line,
+    /// so the staged case keeps few values live.
+    #[inline(never)]
+    fn lane_jump_binary_false_chain<BACKWARD: bool>(cx, r, ip, i, view) {
         let (Some(left), Some(right)) =
             (lane_operand_value(cx, r, i.b), lane_operand_value(cx, r, i.c))
         else {
             return exit(ip);
         };
-        let Some(holds) = lane_relation::<H>(u32::from(i.a), left, right) else {
+        let Some(holds) = lane_relation_other::<H>(u32::from(i.a), left, right) else {
             return exit(ip);
         };
-        if !holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
+        jump_on_edge!(cx, r, ip, BACKWARD, holds_edge(holds))
     }
 }
 
@@ -7582,18 +7550,21 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_jump_binary_false_registers` of operands other than two integers: the relations
-    /// the lane decides without guest code (`lane_relation`); any other takes the general
-    /// path. Out of line, so the integer case keeps few values live.
+    /// `lane_jump_binary_false_registers` of operands other than two integers: the staged step
+    /// over the observed operands (two Numbers, an equality), else the relations the lane decides
+    /// without guest code (`lane_relation_other`); any other takes the general path. Out of line, so the integer case keeps few values live.
     #[inline(never)]
     fn lane_jump_binary_false_registers_other<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
-        let Some(holds) = lane_relation::<H>(relation_operator::<OP>(i), r.get(i.b), r.get(i.c)) else {
-            return exit(ip);
+        let operator = relation_operator::<OP>(i);
+        let operands = [RecordOperand::Register(i.b), RecordOperand::Register(i.c)];
+        let edge = match lane_frame::staged_record_jump::<H>(cx, r, view, operator, operands) {
+            Some(edge) => edge,
+            None => match lane_relation_other::<H>(operator, r.get(i.b), r.get(i.c)) {
+                Some(holds) => holds_edge(holds),
+                None => return exit(ip),
+            },
         };
-        if !holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
+        jump_on_edge!(cx, r, ip, BACKWARD, edge)
     }
 }
 
@@ -7613,37 +7584,39 @@ fn lane_small_constant<H: Host, const TABLE: bool>(cx: *mut LaneContext<H>, i: &
 script_handler! {
     /// `lane_jump_binary_false` of a register and an integer constant small enough for the
     /// record's `c` field, both decoded when the view was derived
-    /// (`specialize_register_operands`): Number comparison of an integer register
-    /// (`integer_relation`); any other takes `lane_jump_binary_false_small_other`.
+    /// (`specialize_register_operands`): the staged integer comparison of an integer register;
+    /// any other takes `lane_jump_binary_false_small_other`.
     fn lane_jump_binary_false_small<BACKWARD: bool, OP: u32, TABLE: bool>(cx, r, ip, i, view) {
         let right = lane_small_constant::<H, TABLE>(cx, i);
-        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(i), r.get(i.b), right) else {
+        let Some(comparison) = lane_integer_comparison(relation_operator::<OP>(i), r.get(i.b), right) else {
             sibling!(lane_jump_binary_false_small_other::<H, BACKWARD, TABLE>, r, ip, view)
         };
-        if !holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, view, None));
-        }
-        next!(cx, r, following(ip), view)
+        let operands = [RecordOperand::Register(i.b), RecordOperand::Immediate(right)];
+        let edge = lane_frame::staged_comparison_jump::<H>(cx, r, view, comparison, operands)
+            .expect("two integers decide a relation");
+        jump_on_edge!(cx, r, ip, BACKWARD, edge)
     }
 }
 
 script_handler! {
     /// `lane_jump_binary_false_small` of an operator or register value other than an integer
-    /// comparison: a Number comparison (`number_relation`), else the truth of a Number
-    /// operator's result (`if (x & MASK)`) or another relation (`lane_relation_other`). Out of
-    /// line, so the integer case keeps few values live and makes no call.
+    /// comparison: the staged step over the observed operands (a Number comparison, the truth of a
+    /// bitwise operator's result `if (x & MASK)`), else another relation
+    /// (`lane_relation_other`). Out of line, so the integer case keeps few values live and makes
+    /// no call.
     #[inline(never)]
     fn lane_jump_binary_false_small_other<BACKWARD: bool, TABLE: bool>(cx, r, ip, i, view) {
         let right = lane_small_constant::<H, TABLE>(cx, i);
-        let Some(holds) = super::operations::number_relation(u32::from(i.a), r.get(i.b), right)
-            .or_else(|| lane_relation_other::<H>(u32::from(i.a), r.get(i.b), right))
-        else {
-            return exit(ip);
+        let operator = u32::from(i.a);
+        let operands = [RecordOperand::Register(i.b), RecordOperand::Immediate(right)];
+        let edge = match lane_frame::staged_record_jump::<H>(cx, r, view, operator, operands) {
+            Some(edge) => edge,
+            None => match lane_relation_other::<H>(operator, r.get(i.b), right) {
+                Some(holds) => holds_edge(holds),
+                None => return exit(ip),
+            },
         };
-        if !holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
+        jump_on_edge!(cx, r, ip, BACKWARD, edge)
     }
 }
 
@@ -7651,18 +7624,30 @@ script_handler! {
     /// `lane_jump_binary_false` of a register under strict (in)equality against a heap
     /// constant (a string or BigInt), both decoded when the view was derived
     /// (`specialize_register_operands`): equal exactly when identical or of equal contents
-    /// (`Vm::strict_equal`), with no Number or `instanceof` test on the way.
+    /// (`Vm::strict_equal`), with no Number or `instanceof` test on the way: the staged equality
+    /// decides identity, and `lane_jump_strict_constant_contents` the contents.
     fn lane_jump_strict_constant_false<BACKWARD: bool>(cx, r, ip, i, view) {
+        let operands = [RecordOperand::Register(i.b), RecordOperand::Constant(i.c)];
+        let Some(edge) = lane_frame::staged_record_jump::<H>(cx, r, view, u32::from(i.a), operands) else {
+            sibling!(lane_jump_strict_constant_contents::<H, BACKWARD>, r, ip, Carried::script(cx))
+        };
+        jump_on_edge!(cx, r, ip, BACKWARD, edge)
+    }
+}
+
+script_handler! {
+    /// `lane_jump_strict_constant_false` of a value the words leave (identity and two integers
+    /// decide the rest): a heap value of equal contents to the heap constant
+    /// (`Vm::heap_values_strictly_equal`) is equal, any other is not.
+    #[inline(never)]
+    fn lane_jump_strict_constant_contents<BACKWARD: bool>(cx, r, ip, i, view) {
         let value = r.get(i.b);
         // SAFETY: the run's program keeps its constants (`LaneContext::constants`), and the
         // view was derived with `c` indexing one.
         let constant = unsafe { *(&*(*cx).constants).get_unchecked(usize::from(i.c)) };
         let negated = u32::from(i.a) == STRICT_INEQUALITY_OPERATOR;
-        let equal = strictly_equal_constant(unsafe { vm(cx) }, value, constant);
-        if equal == negated {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
+        let equal = constant.is_heap() && value.is_heap() && unsafe { vm(cx) }.heap_values_strictly_equal(value, constant);
+        jump_on_edge!(cx, r, ip, BACKWARD, holds_edge(equal != negated))
     }
 }
 
@@ -7736,11 +7721,11 @@ script_handler! {
     /// compiled code: a boolean strictly equals only itself, which has one encoding, so the
     /// test is the register's identity with the instantiation's constant (`TRUE`).
     fn lane_jump_boolean_false<BACKWARD: bool, NEGATED: bool, TRUE: bool>(cx, r, ip, i, view) {
-        let equal = r.get(i.b) == if TRUE { Value::TRUE } else { Value::FALSE };
-        if equal == NEGATED {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
+        let comparison = crate::staged::Comparison::Boolean { expected: TRUE, negated: NEGATED };
+        let operands = [RecordOperand::Register(i.b), RecordOperand::Immediate(Value::boolean(TRUE))];
+        let edge = lane_frame::staged_comparison_jump::<H>(cx, r, view, comparison, operands)
+            .expect("identity with a Boolean always decides");
+        jump_on_edge!(cx, r, ip, BACKWARD, edge)
     }
 }
 

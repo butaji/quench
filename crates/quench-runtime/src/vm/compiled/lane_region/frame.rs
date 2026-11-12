@@ -159,10 +159,10 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         call_out::vm_step(self, stage, operation, result)
     }
 
-    /// A capture read: the site's fast and slow cases (`captures::read_capture`); a miss leaves
-    /// at the step's miss edge.
+    /// A capture read: the site's fast and slow cases (`captures::read_capture`), whose slow case
+    /// finds a root's projected binding itself; a miss leaves at the step's miss edge.
     #[inline(always)]
-    fn capture_slot(&mut self, stage: &mut Emit<'_, '_>, depth: u16, slot: u16) -> Option<(ir::Value, RegisterFact)> {
+    fn capture_slot(&mut self, stage: &mut Emit<'_, '_>, depth: u16, slot: u16, _root: bool) -> Option<(ir::Value, RegisterFact)> {
         let site = self.capture?;
         let Edges::ValueGuarded { miss } = self.edges else { return None };
         let value = super::captures::read_capture(stage.builder, (self.payload, self.helpers), site, (depth, slot), miss);

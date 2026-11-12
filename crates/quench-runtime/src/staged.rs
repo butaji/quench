@@ -209,11 +209,13 @@ pub(crate) trait Frame<S: Stage> {
     fn vm_step(&mut self, _stage: &mut S, _operation: CallOut, _result: Option<Register>)
         -> Option<(S::Word, Self::Fact)> { None }
 
-    /// Read the capture `slot`, `depth` scopes out, with the fact the frame keeps of it; `None`
+    /// Read the capture `slot`, `depth` scopes out (a static operand: the walk's length), with the
+    /// fact the frame keeps of it; `root` reads the root environment's projected binding (a
+    /// script's global var or lexical) the walk ends at instead of a function's slots. `None`
     /// where the frame cannot (an uninitialized or shared binding, no captures), leaving the
     /// read to the interpreter.
     #[inline(always)]
-    fn capture_slot(&mut self, _stage: &mut S, _depth: u16, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
+    fn capture_slot(&mut self, _stage: &mut S, _depth: u16, _slot: u16, _root: bool) -> Option<(S::Word, Self::Fact)> { None }
 
     /// Store `value` to the capture `slot`, `depth` scopes out; `None` where the binding does
     /// not take the direct store (a `const`, an uninitialized `let`).
@@ -355,8 +357,10 @@ pub(crate) enum Operation<W, P> {
     Delete { base: Register, key: Register, strict: bool },
     /// `base[key]` past the dense and typed element reads (`PropertyFrame::index_get_host`).
     IndexGetHost { base: W, key: W },
-    /// Define `destination` from the capture `slot`, `depth` scopes out (`Frame::capture_slot`).
-    LoadCapture { destination: Register, depth: u16, slot: u16 },
+    /// Define `destination` from the capture `slot`, `depth` scopes out, or from the root
+    /// environment's projected binding where `root` (`Frame::capture_slot`). The decode never
+    /// names a root: only a tier that found the walk end at one does.
+    LoadCapture { destination: Register, depth: u16, slot: u16, root: bool },
     /// Store `source` to the capture `slot`, `depth` scopes out (`Frame::store_capture`).
     StoreCapture { source: Register, depth: u16, slot: u16 },
     /// `left` compared with `right` (`Comparison`), jumping to the target when the comparison
@@ -434,7 +438,8 @@ impl<W, P> Operation<W, P> {
             Op::Unary if instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Void as u32
                 && !instruction.returns_from_frame() => Self::Void { destination: instruction.result_register() },
             Op::LoadCapture if instruction.result_flags() == 0 => Self::LoadCapture {
-                destination: instruction.result_register(), depth: instruction.capture_depth(), slot: instruction.capture_slot() },
+                destination: instruction.result_register(), depth: instruction.capture_depth(), slot: instruction.capture_slot(),
+                root: false },
             Op::StoreCapture => Self::StoreCapture {
                 source: instruction.register_a(), depth: instruction.capture_depth(), slot: instruction.capture_slot() },
             _ => return None,

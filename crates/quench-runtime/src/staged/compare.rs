@@ -40,8 +40,10 @@ const INSTANCEOF_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::Instanceof as u32
 /// What a `CompareJump` compares.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Comparison {
-    /// A Number relation of two operands the tier proved Numbers, in the `domain` it proved;
-    /// the decode names the widest, `Float64`.
+    /// A Number relation of two operands the frame proves Numbers, in the `domain` it proves (the
+    /// decode names the widest, `Float64`): statically where its facts do, else by the tag test
+    /// `NumericFrame::number_operand` makes once at the miss edge, so an operand that is no Number
+    /// leaves the row.
     Relation { relation: NumberRelation, domain: Domain },
     /// `==` or `===` (`strict`), negated for `!=` and `!==`, of operands of any type: the words
     /// decide the common pairs and the VM the rest.
@@ -53,6 +55,9 @@ pub(crate) enum Comparison {
     /// The truth of a bitwise operator's result of two Numbers (`if (flags & MASK)`): its int32
     /// bits are nonzero, so the Number the operator would make is never made.
     Bitwise(NumberBitwise),
+    /// `===` or `!==` (`negated`) of the tested operand (the row's `left`) and the Boolean
+    /// `expected`: a Boolean has one encoding, so identity decides it.
+    Boolean { expected: bool, negated: bool },
     /// `value instanceof constructor` of two registers: its prototype-chain walk is no word test,
     /// so the VM decides it (`CallOut::Decide`), guest code (`@@hasInstance`, a proxy) included.
     Instanceof,
@@ -66,32 +71,39 @@ impl Comparison {
     /// which no VM step decides.
     pub(crate) fn operator(self) -> Option<u32> {
         match self {
-            Self::Relation { .. } | Self::Nullish { .. } | Self::Bitwise(_) => None,
+            Self::Relation { .. } | Self::Nullish { .. } | Self::Boolean { .. } | Self::Bitwise(_) => None,
             Self::Equality { strict, negated } => Some(equality_binary_operator(strict, negated)),
             Self::Instanceof => Some(INSTANCEOF_OPERATOR),
             Self::Operator(operator) => Some(operator),
         }
     }
 
+    /// The comparison `operator` names (a `JumpBinaryFalse`'s operator field): the widest Number
+    /// relation, an equality, a bitwise test, `instanceof`, else the operator itself. A tier with
+    /// more facts than the operator narrows it (the observed Numbers, the proved domain).
+    pub(crate) fn of_operator(operator: u32) -> Self {
+        equality_operator(operator)
+            .map(|(strict, negated)| Self::Equality { strict, negated })
+            .or_else(|| NumberRelation::from_operator(operator)
+                .map(|relation| Self::Relation { relation, domain: Domain::Float64 }))
+            .or_else(|| NumberBitwise::from_operator(operator).map(Self::Bitwise))
+            .or_else(|| (operator == INSTANCEOF_OPERATOR).then_some(Self::Instanceof))
+            .unwrap_or(Self::Operator(operator))
+    }
+
     /// Whether deciding it may run guest code (a conversion, a trap), which retires what a
     /// tier proved of objects: every comparison but a Number relation, a bitwise test of Numbers,
     /// a nullish test and a strict equality.
     pub(crate) const fn runs_guest_code(self) -> bool {
-        !matches!(self, Self::Relation { .. } | Self::Bitwise(_) | Self::Nullish { .. } | Self::Equality { strict: true, .. })
+        !matches!(self, Self::Relation { .. } | Self::Bitwise(_) | Self::Nullish { .. } | Self::Boolean { .. }
+            | Self::Equality { strict: true, .. })
     }
 }
 
 impl<W, P> Operation<W, P> {
     /// The `JumpBinaryFalse` row: it jumps where the comparison fails.
     pub(super) fn decode_compare(instruction: WideInstruction) -> Self {
-        let operator = instruction.binary_operator_field();
-        let comparison = equality_operator(operator)
-            .map(|(strict, negated)| Comparison::Equality { strict, negated })
-            .or_else(|| NumberRelation::from_operator(operator)
-                .map(|relation| Comparison::Relation { relation, domain: Domain::Float64 }))
-            .or_else(|| NumberBitwise::from_operator(operator).map(Comparison::Bitwise))
-            .or_else(|| (operator == INSTANCEOF_OPERATOR).then_some(Comparison::Instanceof))
-            .unwrap_or(Comparison::Operator(operator));
+        let comparison = Comparison::of_operator(instruction.binary_operator_field());
         Self::CompareJump { comparison, left: instruction.operand_b(), right: instruction.operand_c(), negate: true }
     }
 }
@@ -120,6 +132,7 @@ fn outcome<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, co
             let equal_edge = if negated == negate { Edge::Target } else { Edge::Following };
             nullish(stage, frame, left, (expected, strict), equal_edge)
         }
+        Comparison::Boolean { expected, negated } => identity(stage, frame, left, Value::boolean(expected), negated),
         Comparison::Bitwise(operation) => bitwise(stage, frame, [left, right], operation),
         Comparison::Instanceof => instanceof(stage, frame, [left, right]),
         Comparison::Operator(_) => None,
@@ -148,6 +161,16 @@ fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [
         }
     };
     Some(stage.eq_imm(value, Value::TRUE.to_bits()))
+}
+
+/// Whether the tested operand is the one-encoding constant `expected` (not, for `negated`), by
+/// identity.
+#[inline(always)]
+fn identity<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, tested: Operand, expected: Value,
+    negated: bool) -> Option<S::Cond> {
+    let word = frame.operand_word(stage, tested)?;
+    let same = stage.eq_imm(word, expected.to_bits());
+    Some(if negated { stage.not(same) } else { same })
 }
 
 /// Whether `value instanceof constructor` holds, as the VM decides it; `None` where an operand is
