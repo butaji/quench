@@ -120,7 +120,8 @@ fn products(places: &Places, rows: &mut BTreeSet<Code>) {
     }
 }
 
-/// Jumps, entry tagging, guards and spills.
+/// Jumps, entry tagging, guards and spills (of a pinned double to a canonical word, of a pinned
+/// int32 back to a tagged int word).
 fn control(places: &Places, rows: &mut BTreeSet<Code>) {
     for kind in [JUMP, JUMP_POLL, TAG_INIT] {
         rows.insert(canonical((kind, MEM, MEM, MEM, true)));
@@ -128,7 +129,7 @@ fn control(places: &Places, rows: &mut BTreeSet<Code>) {
     for &dst in places.floats_dst.iter().chain(&places.ints_dst) {
         rows.insert(canonical((GUARD, dst, MEM, MEM, true)));
     }
-    for &a in &places.floats_pins {
+    for a in int_pins().chain(double_pins()) {
         rows.insert(canonical((SPILL, MEM, a, MEM, true)));
     }
 }

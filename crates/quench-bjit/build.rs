@@ -118,7 +118,8 @@ fn check_transfer(row: &str, code: &[u8], at: usize) {
     let before = &code[..at];
     let jmp = matches!(before, [.., 0xe9]);
     let jcc = matches!(before, [.., 0x0f, 0x80..=0x8f]);
-    assert!(jmp || jcc, "stencil {row}: relocation at {at} is not a jmp or jcc (a `call`?)");
+    let call = row.starts_with("entry_") && matches!(before, [.., 0xe8]);
+    assert!(jmp || jcc || call, "stencil {row}: relocation at {at} is not a jmp or jcc (a `call`?)");
 }
 
 /// Every file whose change must recompile the stencils: the stencil sources and the runtime's
@@ -168,7 +169,7 @@ fn stencil_table(data: &[u8]) -> String {
         assert_eq!(*value, 0, "{name}: one function per section");
         let section_data = &elf.sections[*section];
         let code = &data[section_data.offset..section_data.offset + section_data.size];
-        let returns = name.starts_with("leave_");
+        let returns = name.starts_with("leave_") || name.starts_with("entry_");
         assert!(returns || !ends_with_ret(code), "stencil {name} ends with `ret`");
         let relocs = relocations(&elf, &symbols, data, name, *section, code);
         rows.push((name.clone(), format!("    RawStencil {{ name: {name:?}, code: &{code:?}, relocs: &{relocs:?} }},\n")));

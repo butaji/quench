@@ -14,7 +14,7 @@ pub(crate) const HOLE_A: u8 = 1;
 pub(crate) const HOLE_B: u8 = 2;
 
 unsafe extern "C" {
-    static HOLE_V0: u8;
+    pub(crate) static HOLE_V0: u8;
     static HOLE_V1: u8;
     static HOLE_V2: u8;
 }

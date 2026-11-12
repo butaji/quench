@@ -1,80 +1,46 @@
 use super::*;
 use quench_bjit::HOLES;
 
-/// `mov r11d, reg32` for the pinned registers r14, r15, rdi and rsi (the b-jit convention: frame
-/// in r12, context in r13): the raw int32 to tag.
-pub(super) const PIN_TO_R11: [[u8; 3]; PINNED] = [[0x45, 0x89, 0xf3], [0x45, 0x89, 0xfb], [0x41, 0x89, 0xfb], [0x41, 0x89, 0xf3]];
-/// `movabs r10, imm64` (the int tag), `or r11, r10`, and `mov [r12+disp32], r11`.
-pub(super) const MOVABS_R10: [u8; 2] = [0x49, 0xba];
-pub(super) const OR_R11_R10: [u8; 3] = [0x4d, 0x09, 0xd3];
-pub(super) const STORE_R11: [u8; 4] = [0x4d, 0x89, 0x9c, 0x24];
-/// The int tag a pinned int32 takes back into a register slot.
-pub(super) const INT_TAG: u64 = 0x7ffd_0000_0000_0000;
-/// The callee-saved registers the thunk preserves (rows save none, and use rbx and r12-r15):
-/// push rbp, rbx, r12-r15 and r8 (the result pointer), in order.
-pub(super) const PROLOGUE: [u8; 12] = [0x55, 0x53, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x41, 0x50];
-/// `mov r13, rdi; mov r12, rcx`: the entry ABI's context and registers to the stencil convention
-/// (the thunk saved r12 and r13 already).
-pub(super) const MOVE_ARGUMENTS: [u8; 6] = [0x49, 0x89, 0xfd, 0x49, 0x89, 0xcc];
-pub(super) const CALL_OPCODE: u8 = 0xe8;
-/// `pop r8; mov [r8], rax; pop r15..r12, rbx, rbp; xor eax, eax; ret`.
-pub(super) const EPILOGUE: [u8; 18] =
-    [0x41, 0x58, 0x49, 0x89, 0x00, 0x41, 0x5f, 0x41, 0x5e, 0x41, 0x5d, 0x41, 0x5c, 0x5b, 0x5d, 0x31, 0xc0, 0xc3];
-pub(super) const MOV_EAX: u8 = 0xb8;
-pub(super) const MOVABS_RAX: [u8; 2] = [0x48, 0xb8];
-
-/// The entry thunk: saves the callee-saved registers, calls the first row at `rows_at`, stores
-/// the word the chain returned through the result pointer and returns status 0.
-pub(super) fn thunk(rows_at: usize) -> Vec<u8> {
-    let mut code = PROLOGUE.to_vec();
-    code.extend(MOVE_ARGUMENTS);
-    code.push(CALL_OPCODE);
-    let call_end = code.len() + std::mem::size_of::<i32>();
-    code.extend((rows_at as i64 - call_end as i64).to_le_bytes()[..std::mem::size_of::<i32>()].iter());
-    code.extend(EPILOGUE);
-    code
-}
-
-/// The code that tags the pinned registers back into the register file.
-pub(super) fn tag_back(pins: &[Pin]) -> Vec<u8> {
-    let mut code = Vec::new();
-    if !pins.is_empty() {
-        code.extend(MOVABS_R10);
-        code.extend(INT_TAG.to_le_bytes());
-    }
-    for (pin, register) in pins {
-        code.extend(PIN_TO_R11[*pin]);
-        code.extend(OR_R11_R10);
-        code.extend(STORE_R11);
-        code.extend((u32::from(*register) * SLOT as u32).to_le_bytes());
-    }
-    code
-}
-
-/// A stub that tags the pinned registers back into the register file and returns `word`.
-pub(super) fn stub(pins: &[Pin], word: u64) -> Vec<u8> {
-    let mut code = tag_back(pins);
-    match u32::try_from(word) {
-        Ok(small) => {
-            code.push(MOV_EAX);
-            code.extend(small.to_le_bytes());
-        }
-        Err(_) => {
-            code.extend(MOVABS_RAX);
-            code.extend(word.to_le_bytes());
-        }
-    }
-    code.push(quench_bjit::RET);
-    code
-}
-
-/// `pop rax; ret`: the shared exit routine returns the PC its stub pushed.
-pub(super) const POP_RET: [u8; 2] = [0x58, quench_bjit::RET];
 /// `push imm32` and `jmp rel32`: a row's exit stub, which names its PC and the routine that
 /// writes the live registers back.
 pub(super) const PUSH_IMM32: u8 = 0x68;
 pub(super) const JMP_REL32: u8 = 0xe9;
 pub(super) const EXIT_STUB_LEN: usize = 2 * (1 + std::mem::size_of::<u32>());
+
+/// A routine of the stencil build (`quench-bjit/stencils/entry.rs`) by name.
+fn routine(name: &str) -> Result<Stencil, String> {
+    quench_bjit::rustc::stencil(name).ok_or_else(|| format!("no stencil routine {name}"))
+}
+
+/// The entry thunk, its call to the first row (at `rows_at`) patched.
+pub(super) fn thunk(rows_at: usize) -> Result<Vec<u8>, String> {
+    let stencil = routine("entry_thunk")?;
+    let mut code = stencil.code.clone();
+    for reloc in &stencil.relocs {
+        let at = reloc.offset as usize;
+        let displacement = rows_at as i64 + reloc.addend - at as i64;
+        code[at..at + std::mem::size_of::<i32>()].copy_from_slice(&(displacement as i32).to_le_bytes());
+    }
+    Ok(code)
+}
+
+/// The code that writes `spills` back to the register file (a pinned double as a canonical
+/// word, a pinned int32 tagged) and ends in the leave routine `tail`, given `word` in hole 0.
+pub(super) fn leave_chain(spills: &[(Place, Register)], tail: &str, word: u64) -> Result<Vec<u8>, String> {
+    let mut chain = Vec::new();
+    for (place, register) in spills {
+        let row = numeric::Row { kind: Kind::Spill, dst: Place::Mem, a: *place, b: Place::Mem, speculate: false };
+        chain.push((numeric::stencil(row)?.clone(), [u64::from(*register) * SLOT, 0, 0]));
+    }
+    chain.push((routine(tail)?, [word, 0, 0]));
+    let hole_fns: Vec<Box<dyn Fn(u32) -> u64 + '_>> = chain.iter().map(|(_, h)| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
+    let rows: Vec<Placed> = chain.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil, hole: &*hole_fns[k], taken: None }).collect();
+    let mut code = vec![0u8; rows.iter().map(|row| row.stencil.code.len()).sum()];
+    // SAFETY: `code` has room for every stencil's full length, which bounds the chain.
+    let (len, _) = unsafe { quench_bjit::copy_patch(&rows, code.as_mut_ptr(), |_, _| 0) };
+    code.truncate(len);
+    Ok(code)
+}
 
 /// What the linker needs of the region: its span, the registers live at a PC, and the entry
 /// loads.
@@ -102,41 +68,20 @@ impl Layout<'_> {
         homes.iter().filter(|(_, web)| live.contains(&usize::from(*web))).map(|(pin, web)| (*pin, self.homes.orig[usize::from(*web)])).collect()
     }
 
-    /// The code that leaves with `word`: spills the live pinned doubles (canonical words), tags
-    /// the live pinned int32s back, and returns.
+    /// The registers a leave at `pc` writes back: the live pinned doubles, then the ints.
+    fn spills(&self, pc: u32) -> Vec<(Place, Register)> {
+        let doubles = self.live_floats(pc).into_iter().map(|(pin, register)| (Place::PinF(pin as u8), register));
+        doubles.chain(self.live_pins(pc).into_iter().map(|(pin, register)| (Place::Pin(pin as u8), register))).collect()
+    }
+
+    /// The code that leaves with `word`: writes the live pinned registers back, and returns.
     pub(super) fn exit_code(&self, pc: u32, word: u64) -> Result<Vec<u8>, String> {
-        self.chain(pc, stub(&self.live_pins(pc), word))
+        leave_chain(&self.spills(pc), "leave_word", word)
     }
 
     /// The routine a row's exit stub jumps to: as `exit_code`, returning the PC on the stack.
     pub(super) fn routine(&self, pc: u32) -> Result<Vec<u8>, String> {
-        let mut tail = tag_back(&self.live_pins(pc));
-        tail.extend(POP_RET);
-        self.chain(pc, tail)
-    }
-
-    pub(super) fn chain(&self, pc: u32, ending: Vec<u8>) -> Result<Vec<u8>, String> {
-        let tail = leave_row(ending);
-        let spills = self.live_floats(pc);
-        let mut chain = Vec::new();
-        for (pin, register) in &spills {
-            let row = numeric::Row { kind: Kind::Spill, dst: Place::Mem, a: Place::PinF(*pin as u8), b: Place::Mem, speculate: false };
-            chain.push((numeric::stencil(row)?, [u64::from(*register) * SLOT, 0, 0]));
-        }
-        let holes: Vec<_> = chain.iter().map(|(_, holes)| *holes).chain([[0; HOLES]]).collect();
-        let hole_fns: Vec<Box<dyn Fn(u32) -> u64 + '_>> = holes.iter().map(|h| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
-        let rows: Vec<Placed> = chain
-            .iter()
-            .map(|(stencil, _)| *stencil)
-            .chain([&tail])
-            .enumerate()
-            .map(|(k, stencil)| Placed { stencil, hole: &*hole_fns[k], taken: None })
-            .collect();
-        let mut code = vec![0u8; rows.iter().map(|row| row.stencil.code.len()).sum()];
-        // SAFETY: `code` has room for every stencil's full length, which bounds the chain.
-        let (len, _) = unsafe { quench_bjit::copy_patch(&rows, code.as_mut_ptr(), |_, _| 0) };
-        code.truncate(len);
-        Ok(code)
+        leave_chain(&self.spills(pc), "leave_pop", 0)
     }
 }
 
@@ -217,7 +162,7 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<Vec<u8>, Stri
     // back), then each branch target outside the region.
     let mut leaves: Vec<(u64, Vec<u8>)> = vec![
         (u64::from(backedge) + 1, layout.exit_code(backedge + 1, u64::from(backedge) + 1)?),
-        (super::super::LaneExit::Entry.word(), stub(&[], super::super::LaneExit::Entry.word())),
+        (super::super::LaneExit::Entry.word(), leave_chain(&[], "leave_word", super::super::LaneExit::Entry.word())?),
     ];
     let (g, n) = (entry.len(), body.len());
     let mut targets: Vec<Option<usize>> = Vec::with_capacity(n);
@@ -255,7 +200,7 @@ pub(super) fn leaf_index(layout: &Layout, leaves: &mut Vec<(u64, Vec<u8>)>, pc: 
 /// row's exit to its stub; the code is position independent, so the buffer can move to
 /// executable memory.
 pub(super) fn place_rows(rows: &[Placed], exits: &[(usize, u32, usize)], routines: &[Vec<u8>]) -> Result<Vec<u8>, String> {
-    let head = thunk(0).len();
+    let head = thunk(0)?.len();
     let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();
     let tail: usize = routines.iter().map(Vec::len).sum::<usize>() + exits.len() * EXIT_STUB_LEN;
     let mut code = vec![0u8; head + bound + tail];
@@ -279,7 +224,7 @@ pub(super) fn place_rows(rows: &[Placed], exits: &[(usize, u32, usize)], routine
     }
     // SAFETY: as above; the stubs lie after the copied code inside `code`.
     unsafe { quench_bjit::copy_patch(rows, base.add(head), |row, _| addresses[row]) };
-    let thunk_bytes = thunk(head);
+    let thunk_bytes = thunk(head)?;
     code[..head].copy_from_slice(&thunk_bytes);
     code.truncate(at);
     Ok(code)

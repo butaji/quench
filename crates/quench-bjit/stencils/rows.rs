@@ -11,6 +11,7 @@
 extern crate core as std;
 
 mod codes;
+mod entry;
 mod facade;
 mod heap_rows;
 mod layout;

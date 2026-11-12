@@ -163,6 +163,9 @@ mod rustc_tests {
             assert_eq!(library::canonical(code), code);
             assert!(rustc::stencil(&library::name(code)).is_some(), "{code:?}");
         }
+        for name in ["entry_thunk", "leave_word", "leave_pop"] {
+            assert!(rustc::stencil(name).is_some(), "{name}");
+        }
         for code in library::heap_library() {
             assert_eq!(library::heap_canonical(code), code);
             assert!(rustc::stencil(&library::heap_name(code)).is_some(), "{code:?}");

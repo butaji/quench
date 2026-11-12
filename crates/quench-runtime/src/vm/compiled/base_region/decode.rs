@@ -197,7 +197,7 @@ pub(super) const HALF: u32 = 32;
 /// What a compile observed of its registers: the ints and the doubles.
 pub(super) const SEEN: usize = 2;
 /// The high 32 bits of an int word.
-pub(super) const INT_HIGH: u64 = INT_TAG >> HALF;
+pub(super) const INT_HIGH: u64 = crate::value::ValueLayout::INT_TAG >> HALF;
 
 pub(super) fn register_of(source: Source) -> Option<Register> {
     match source {
