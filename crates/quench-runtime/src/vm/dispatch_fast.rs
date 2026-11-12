@@ -863,6 +863,8 @@ enum LaneBody {
         /// Its runs a native caller's leave ended inside it (`LaneView::note_native_leave`): the
         /// runs `note_lane_body_end` never sees, as no handler entered them.
         native_leaves: std::cell::Cell<u32>,
+        /// Its leaves at a call whose callee was compiling (`LaneView::wait_for_callee`).
+        callee_leaves: std::cell::Cell<u32>,
         recompiles: u8,
         /// Its predecessor's few leaves, where it left only there.
         stuck: LaneLeaves,
@@ -2216,6 +2218,10 @@ struct LaneContext<H: Host> {
     /// toward one (`lane_body_activate`): its caller's leave says nothing of the caller's own
     /// specialization (`lane_leave_counts`).
     callee_warming: bool,
+    /// Whether the body's call helper refused a call because its target's body is compiling
+    /// while native frames are active (`lane_body_call`): the leave waits for that compile
+    /// (`LaneView::wait_for_callee`).
+    callee_compiling: bool,
     /// The leaf call whose records run (`lane_script_call_leaf`), which holds what its
     /// activation would until its return or materialization; `NO_LEAF_CALL` for none.
     leaf: LeafCall,
@@ -14810,6 +14816,8 @@ macro_rules! lane_body_conclude {
         if counts {
             own.note_lane_body_end(feedback, false, |left| lane_note_leave(cx, function, left));
         }
+        // SAFETY: the running lane's context, read and reset by the run that ended.
+        if unsafe { std::mem::take(&mut (*cx).callee_compiling) } { own.wait_for_callee(); }
         match resumed {
             LaneBodyLeft::Terminated => return self::exit(ip),
             LaneBodyLeft::Resume(_, resume, _) if body_calls::left_lane(resume) => return resume,
@@ -15372,7 +15380,11 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     // SAFETY: as `lane_call_read`.
     if target.entry.answered_by_read() { return unsafe { lane_body_read_call(cx, r, ip, target, argc, this) }; }
     // An activation above native windows would need shadow frames beneath it on a leave.
-    if shadowed { return lane_body_stats::miss(lane_body_stats::Miss::CallShadowActive); }
+    if shadowed {
+        // SAFETY: a resolved target's view outlives its program; the context is the running lane's.
+        unsafe { (*cx).callee_compiling = (*target.view).compiling() };
+        return lane_body_stats::miss(lane_body_stats::Miss::CallShadowActive);
+    }
     let Some(how) = lane_call_activation(target, argc, ImmediateLayout::call_window_base(i.imm())) else {
         return lane_body_stats::miss(lane_body_stats::Miss::CallEntryNotActivation);
     };
@@ -15599,6 +15611,8 @@ fn lane_body_activate<H: Host>(
     if lane_leave_counts(cx, exit) {
         own.note_lane_body_end(feedback, false, |left| lane_note_leave(cx, target.function, left));
     }
+    // SAFETY: as `lane_body_conclude`.
+    if unsafe { std::mem::take(&mut (*cx).callee_compiling) } { own.wait_for_callee(); }
     match resumed {
         LaneBodyLeft::Terminated => LANE_CALL_TERMINATED,
         LaneBodyLeft::Resume(_, resume, carried) => leave(resume, unsafe { carried.acc.get() }),
@@ -21269,6 +21283,7 @@ impl<H: Host> Vm<H> {
             resumed_acc: Slot::of(Value::UNDEFINED),
             callee_resume: std::ptr::null(),
             callee_warming: false,
+            callee_compiling: false,
             leaf: NO_LEAF_CALL,
             callee_acc: Value::UNDEFINED,
             backedges_left: self

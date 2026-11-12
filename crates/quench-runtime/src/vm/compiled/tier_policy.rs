@@ -17,6 +17,9 @@ pub(in crate::vm) struct Tiers {
 /// Parts per thousand, the unit of a prior's share.
 pub(in crate::vm) const PER_MILLE: u64 = 1000;
 
+/// The bytes of machine code one IR instruction becomes, which sizes a published body's compile cost.
+pub(in crate::vm) const CODE_BYTES_PER_IR: u64 = 4;
+
 /// The priors the tier model starts from, each a statement about the world until the engine's own
 /// measurements replace it (`tier-decision-rule-v1`): nothing here is fitted to a benchmark row.
 pub(in crate::vm) struct Priors {
@@ -35,6 +38,8 @@ pub(in crate::vm) struct Priors {
     /// Nanoseconds entering a loop region from the lane costs per call, and a body's entry.
     pub(in crate::vm) region_entry_ns: u64,
     pub(in crate::vm) body_entry_ns: u64,
+    /// Nanoseconds one leave of a body costs: the handler's re-entry of the call it left at.
+    pub(in crate::vm) body_leave_ns: u64,
     /// The divisor of the entries so far that gives the credible lower bound of the entries to come.
     pub(in crate::vm) remaining_divisor: u64,
 }
@@ -205,7 +210,7 @@ const FLOOR: Tiers = Tiers {
     lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
-    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
+    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, body_leave_ns: 400, remaining_divisor: 1 },
 };
 
 /// The base a share in percent is a share of.
@@ -241,7 +246,7 @@ const MEASURED: Tiers = Tiers {
         general_entry_overhead: 32,
     },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
-    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
+    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, body_leave_ns: 400, remaining_divisor: 1 },
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)

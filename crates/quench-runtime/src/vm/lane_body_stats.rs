@@ -19,6 +19,10 @@ pub(in crate::vm) struct LaneBodyStats {
     leaves: std::cell::RefCell<Vec<(String, u32)>>,
     /// Entries of the specialized body that ran in the lane instead (`lane_body_admits`).
     pub(in crate::vm) refused: std::cell::Cell<u32>,
+    /// Withdrawals of its body at a call whose callee was compiling (`LaneView::wait_for_callee`),
+    /// and the compile attempts deferred while a callee compiled (`start_gate`).
+    pub(in crate::vm) waits: std::cell::Cell<u32>,
+    pub(in crate::vm) deferred: std::cell::Cell<u32>,
     /// Why its body declined (`decline`).
     pub(in crate::vm) declined: std::cell::Cell<&'static str>,
 }
@@ -80,8 +84,8 @@ impl LaneBodyStats {
                 format!("[\"{place}\",{count}]")
             }).collect::<Vec<_>>().join(",");
             format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"compiled_at\":{:?},\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
-                self.compiles.get(), self.frames.get(), self.shape.borrow(), self.compiled_at.borrow(), self.refused.get(),
+                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"compiled_at\":{:?},\"state\":\"{state}\",\"refused\":{},\"waits\":{},\"deferred\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
+                self.compiles.get(), self.frames.get(), self.shape.borrow(), self.compiled_at.borrow(), self.refused.get(), self.waits.get(), self.deferred.get(),
             )
         })
     }

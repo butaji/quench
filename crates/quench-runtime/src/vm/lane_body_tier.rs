@@ -118,6 +118,24 @@ impl LaneView {
         self.retire_body(body, next);
     }
 
+    /// A run of its body left at a call whose callee's body is compiling (`LaneContext::callee_compiling`):
+    /// once such leaves have cost what compiling it again will, the body is withdrawn and its function warms again, so its entries run in the lane while
+    /// that compile lasts (`start_gate` defers its compile until the callee is no longer
+    /// compiling) rather than each entering the body and leaving at the call. Under
+    /// QUENCH_TRACE=js-jit each withdrawal is reported.
+    pub(super) fn wait_for_callee(&self) {
+        let body = unsafe { &mut *self.tier_lane.get() };
+        let LaneBody::Specialized { recompiles, stuck, callee_leaves, method, .. } = body else { return };
+        callee_leaves.set(callee_leaves.get().saturating_add(1));
+        // Withdrawn once the leaves have cost what compiling the body again will.
+        let priors = &TIERS.priors;
+        let compile_ns = method.lease().map_or(0, |body| body.code_bytes() as u64) / super::compiled::tier_policy::CODE_BYTES_PER_IR * priors.compile_ns_per_ir;
+        if u64::from(callee_leaves.get()) * priors.body_leave_ns < compile_ns { return; }
+        self.body_stats.waits.set(self.body_stats.waits.get() + 1);
+        let next = LaneBody::Unspecialized { entries: TIERS.lane_body.warmup_entries - 1, recompiles: *recompiles, stuck: *stuck };
+        self.retire_body(body, next);
+    }
+
     /// Counts a leave inside this function's body that a native caller's run made, which no
     /// handler entry notes (`lane_materialize_frames`).
     pub(super) fn note_native_leave(&self) {
@@ -316,7 +334,7 @@ impl LaneView {
             self.entry.publish(&method);
         }
         LaneBody::Specialized { method, tier_prologue, completions: Cell::new(0), exits: Cell::new(0),
-            leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), native_leaves: Cell::new(0), recompiles, stuck }
+            leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), native_leaves: Cell::new(0), callee_leaves: Cell::new(0), recompiles, stuck }
     }
 
     /// `--b-jit` compiles no function body: the view's body is declined, once.
@@ -394,6 +412,7 @@ impl LaneView {
                 LaneBody::Unspecialized { entries: 0, recompiles, stuck }
             }
             super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
+            super::super::compiled::LaneBodyOutcome::Waiting => LaneBody::Unspecialized { entries, recompiles, stuck },
             // Its entries decide when it looks again (`attempts_at`), no hot loop's skip.
             super::super::compiled::LaneBodyOutcome::Unpaid => {
                 self.history.set(LaneBodyHistory { unpaid: true, ..self.history.get() });
@@ -461,7 +480,10 @@ pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, bod
                 target.program == vm.active_program && !target.view.is_null() && !std::ptr::eq(target.view, view) && pending(unsafe { &*target.view })
             })
     });
-    (calls(LaneView::compiling) || (calls(LaneView::demand_body) && view.waits_for_callees())).then_some(LaneBodyOutcome::Deferred)
+    let outcome = if calls(LaneView::compiling) { Some(LaneBodyOutcome::Waiting) }
+        else { (calls(LaneView::demand_body) && view.waits_for_callees()).then_some(LaneBodyOutcome::Deferred) };
+    if outcome.is_some() { view.body_stats.deferred.set(view.body_stats.deferred.get() + 1); }
+    outcome
 }
 
 /// Whether a compiling `body` lets this entry pass without looking for its code, counting it

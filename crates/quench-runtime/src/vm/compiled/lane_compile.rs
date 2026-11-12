@@ -79,6 +79,9 @@ pub(in crate::vm) enum LaneBodyOutcome {
     /// Its function has not run long enough to pay for the compile, or callees it would call
     /// directly still warm toward their bodies: it counts on.
     Deferred,
+    /// A callee its call sites resolved is compiling: it looks again at its next entry, which
+    /// ends with that compile (`LaneBody::Compiling` is the one state that decides how long).
+    Waiting,
     /// Its function's entries have not yet paid for the compile (`pays_compile`).
     Unpaid,
     /// Its unit is too short to amortize an entry and no body calls it: declined until a caller's
@@ -431,7 +434,7 @@ impl LanePlan {
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, inlined: self.unit.frames,
             scratch_width, caller_registers,
-            amortizes, direct: self.direct, closed: self.closed,
+            amortizes, direct: self.direct, closed: self.closed, code_bytes: code.len(),
         })
     }
 }

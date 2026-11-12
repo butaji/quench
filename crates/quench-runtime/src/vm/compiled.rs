@@ -6638,9 +6638,12 @@ pub(super) struct LaneMethod {
     /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
     /// a body is called directly.
     closed: bool,
+    /// Bytes of its code, which size what compiling it again costs (`LaneView::wait_for_callee`).
+    code_bytes: usize,
 }
 
 impl LaneMethod {
+    pub(super) fn code_bytes(&self) -> usize { self.code_bytes }
     pub(super) fn recovery_space(&self) -> super::dispatch_fast::LaneRecoverySpace { self.recovery_space }
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {
