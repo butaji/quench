@@ -32,3 +32,35 @@ fn a_polymorphic_site_with_an_unbodied_target_keeps_its_call_after_the_last_alte
     let planned = unit(&program, caller as u32, program.function(caller), &few, &|id| program.function_get(id as usize)).unwrap();
     assert!(planned.instructions.iter().any(|instruction| instruction.op().class().eq(Class::Call)), "several linked targets keep the call");
 }
+
+#[test]
+fn a_budget_for_one_callee_inlines_the_heavier_call_site() {
+    use super::lane_unit::{with_budget, with_trips};
+    // The cold site comes first in program order; the hot one is in a loop.
+    let source = "class A{p(x){return x+1;}} class B{q(x){return x+2;}} \
+        function caller(a,b){let r=a.p(1);let s=0;for(let i=0;i<100;i++){s=s+b.q(i);}return r+s;}";
+    let program = crate::Engine::specialize(source, "site-weights.js").unwrap();
+    let id_of = |name: &str| program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap() as u32;
+    let (caller, cold, hot) = (id_of("caller"), id_of("p"), id_of("q"));
+    let calls: Vec<u32> = program.function(caller as usize).code.iter().enumerate().filter(|(_, packed)|
+        super::super::dispatch_fast::decoded_instruction(program.function(caller as usize), **packed).op().class().eq(Class::Call))
+        .map(|(pc, _)| pc as u32).collect();
+    assert_eq!(calls.len(), 2);
+    let targets = |function: u32, pc: u32| match (function == caller, pc) {
+        (true, pc) if pc == calls[0] => vec![CallTarget { function: cold, callee: CalleeBinding::Function }],
+        (true, pc) if pc == calls[1] => vec![CallTarget { function: hot, callee: CalleeBinding::Function }],
+        _ => Vec::new(),
+    };
+    let body = |id: u32| program.function_get(id as usize);
+    let budget = program.function(cold as usize).code.len();
+    assert_eq!(program.function(hot as usize).code.len(), budget, "the callees cost alike");
+    let planned = with_budget(&program, caller, program.function(caller as usize), budget, &targets, &body).unwrap();
+    assert_eq!(planned.frames.iter().map(|frame| frame.target.function).collect::<Vec<_>>(), [hot], "the loop's site takes the budget");
+    // With room for both, program order and weight agree: both inline.
+    let planned = with_budget(&program, caller, program.function(caller as usize), 2 * budget, &targets, &body).unwrap();
+    assert_eq!(planned.frames.len(), 2);
+    // A measured loop that took one trip weighs no more than the site before it: the earlier site wins the tie.
+    let planned = with_trips(&program, caller, program.function(caller as usize), budget, &targets, &|_, _| Some(1), &body).unwrap();
+    assert_eq!(planned.frames.iter().map(|frame| frame.target.function).collect::<Vec<_>>(), [cold]);
+}

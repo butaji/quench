@@ -13,6 +13,7 @@
 use crate::bytecode::{Class, FieldLookup, ImmediateLayout, Op, Register, Traits, WideInstruction};
 use crate::bytecode::Function;
 use crate::value::Value;
+#[path = "lane_unit/weights.rs"] mod weights;
 #[cfg(feature = "aot")] #[path = "lane_unit/static_hints.rs"] mod static_hints;
 #[cfg(feature = "aot")] pub(crate) use static_hints::{static_call_targets, StaticTargets};
 
@@ -214,15 +215,18 @@ impl Unit {
     }
 }
 
-/// The longest callee body the unit inlines: each copy of it costs code and compile time at
-/// every call site, and short bodies (accessors, field updates) are where a call costs most
-/// relative to its work.
-const MAX_INLINED_INSTRUCTIONS: usize = 96;
-/// The callee instructions one unit inlines in all, the region's budget: a hot loop's call
-/// graph, inlined, is the region an optimizing tier compiles as one function. Its compile
-/// cost grows with it (Richards' 600-instruction units cost ~63M instructions to compile),
-/// so it is TurboFan's cumulative inlining budget (`max_inlined_bytecode_size_cumulative`).
-pub(super) const MAX_UNIT_INLINED_INSTRUCTIONS: usize = 920;
+/// The longest callee copy the unit inlines, in code bytes (three pages): each copy costs code
+/// and compile time at every call site, and short bodies (accessors, field updates) are where
+/// a call costs most relative to its work.
+const MAX_INLINED_CALLEE_BYTES: usize = 12 * 1024;
+const MAX_INLINED_INSTRUCTIONS: usize = MAX_INLINED_CALLEE_BYTES / super::lane_region::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
+/// The callee instructions one unit inlines in all, the region's budget: what a lane body's
+/// code-size budget holds (`lane_region::LANE_BODY_MAX_CODE_BYTES`), TurboFan's cumulative
+/// inlining budget (`max_inlined_bytecode_size_cumulative`). The planner spends it on the call
+/// sites by weight per instruction (`weights::select`).
+pub(super) const MAX_UNIT_INLINED_INSTRUCTIONS: usize =
+    super::lane_region::LANE_BODY_MAX_CODE_BYTES / super::lane_region::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
+const _: () = assert!(MAX_INLINED_INSTRUCTIONS <= MAX_UNIT_INLINED_INSTRUCTIONS);
 /// How deep calls nest inside a unit: JSC's inlining depth (`maximumInliningDepth`).
 const MAX_INLINING_DEPTH: usize = 5;
 
@@ -371,6 +375,13 @@ struct Planner<'t, 'f> {
     body: &'t dyn Fn(u32) -> Option<&'f Function>,
     registers: u32,
     budget: usize,
+    /// The loop trip counts the caller's run observed, by function and loop header.
+    trips: &'t dyn Fn(u32, u32) -> Option<u64>,
+    /// The expected executions of the call being planned, relative to the caller's entry.
+    weight: u64,
+    /// The calls from the caller to the one being planned, by PC and callee.
+    path: weights::SitePath,
+    choice: weights::Choice,
 }
 
 impl Planner<'_, '_> {
@@ -380,6 +391,7 @@ impl Planner<'_, '_> {
         let mut blocked = false;
         let mut through_call = vec![None; code.len()];
         let mut called = Vec::new();
+        let site_weights = weights::loop_weights(&code, &|header| (self.trips)(function, header));
         let calls = code
             .iter()
             .enumerate()
@@ -391,7 +403,7 @@ impl Planner<'_, '_> {
                 let (calls, ran) = if instruction.op().class().eq(Class::Call) && instruction.returns_from_frame()
                     && (strict || (depth == 0 && terminal_return(&code).is_none())) {
                     (Vec::new(), true)
-                } else { self.inline(function, pc as u32, through.map_or(*instruction, |(call, _)| call), depth, through.is_some()) };
+                } else { self.inline(function, pc as u32, through.map_or(*instruction, |(call, _)| call), depth, through.is_some(), self.weight.saturating_mul(site_weights[pc])) };
                 blocked |= calls.is_empty() && ran;
                 if let Some((call, native)) = through.filter(|_| !calls.is_empty()) {
                     called.push((pc, call));
@@ -423,7 +435,7 @@ impl Planner<'_, '_> {
     /// The callees the call at `pc` of `function` inlines: each target its site linked that
     /// inlines within the budget, as the call's switch; any other callee takes the call.
     /// With whether the call has run: a call the plan may not inline counts as run.
-    fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize, forwarded: bool) -> (Vec<InlinedPlan>, bool) {
+    fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize, forwarded: bool, weight: u64) -> (Vec<InlinedPlan>, bool) {
         if !instruction.op().class().eq(Class::Call) {
             return (Vec::new(), false);
         }
@@ -437,18 +449,22 @@ impl Planner<'_, '_> {
             CalleeBinding::Forwarded { callee, .. } => forwarded.then_some(CallTarget { callee: CalleeBinding::Identity(callee), ..target }),
             _ => (!forwarded).then_some(target),
         }).collect();
-        let (ran, targets, reserved) = (!found.is_empty(), found.len(), (self.registers, self.budget));
+        let (ran, targets, reserved, mark) = (!found.is_empty(), found.len(), (self.registers, self.budget), self.survey_len());
+        // The alternatives share the site's executions equally: the record keeps no split.
+        let share = (weight / (targets.max(1) as u64)).max(1);
         // A target that does not inline gives back what it reserved (`inline_target`).
-        let alternatives: Vec<_> = found.into_iter().filter_map(|target| self.inline_target(target, instruction, depth)).collect();
+        let alternatives: Vec<_> = found.into_iter().filter_map(|target| self.inline_target(target, pc, instruction, depth, share)).collect();
         // A site of a callee that misses a target would leave the unit there: its callee stays its own unit.
         if depth > 0 && alternatives.len() < targets {
             (self.registers, self.budget) = reserved;
+            self.forget_after(mark);
             return (Vec::new(), true);
         }
         (alternatives, ran)
     }
 
-    fn inline_target(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
+    /// The callee of `target`, whole, if it inlines within the budget (`inline_target` chooses).
+    fn inline_body(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
         let callee = (self.body)(target.function)?;
         let code = decoded(callee);
         if code.len() > MAX_INLINED_INSTRUCTIONS
@@ -654,9 +670,24 @@ pub(crate) fn with_budget<'f>(
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
+    with_trips(program, function_id, function, budget, targets, &|_, _| None, body)
+}
+
+/// `with_budget` weighing each call site by the loop trip counts `trips` gives (by function
+/// and loop header; `None` where the loop has not run), which `weights` spends the budget by.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn with_trips<'f>(
+    program: &crate::ResidualProgram,
+    function_id: u32,
+    function: &Function,
+    budget: usize,
+    targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
+    trips: &dyn Fn(u32, u32) -> Option<u64>,
+    body: &dyn Fn(u32) -> Option<&'f Function>,
+) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets: &|function, pc| targets(function, pc).into_iter().filter(|target| target.function != function_id).collect(), body, registers: u32::from(caller_registers), budget };
-    let plan = planner.plan(function_id, decoded(function), function.strict, 0);
+    let mut planner = Planner { program, targets: &|function, pc| targets(function, pc).into_iter().filter(|target| target.function != function_id).collect(), body, registers: u32::from(caller_registers), budget, trips, weight: 1, path: Vec::new(), choice: weights::Choice::default() };
+    let plan = planner.plan_weighted(function_id, function, budget);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {
         unit: Unit {

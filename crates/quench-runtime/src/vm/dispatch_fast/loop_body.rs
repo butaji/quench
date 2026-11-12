@@ -112,7 +112,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
         None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, called: false, caller: own, arrays: &arrays },
     };
     let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc),
-        &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header));
+        &|function, header| lane_unit_trips(cx, function, header), &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header));
     *body = LoopBody::after(outcome, stuck, attempts);
 }
 

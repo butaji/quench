@@ -193,6 +193,14 @@ pub(in crate::vm) struct Speculation {
 /// instructions of the leave.
 pub(in crate::vm) const SPECULATION: Speculation =
     Speculation { guard_read_ns: 1, probe_read_ns: 6, guard_exit_ns: 200, lower_quantile_z: 1.645 };
+/// The trips a loop is assumed to take, in weighing the call sites it holds (`lane_unit`'s
+/// inlining plan), before a native run of it has measured its mean: enough that a site in a loop
+/// outweighs one outside it, and that nesting orders deeper sites first.
+pub(in crate::vm) const ASSUMED_LOOP_TRIP: u64 = 8;
+/// The bodies a field site's leaves may have named (`Vm::field_site_leaves`) before a plan reads
+/// it as a probed read rather than a shape proof: a site that left in one body may have met its
+/// second shape by chance.
+pub(in crate::vm) const UNSTABLE_SITE_LEAVES: u8 = 2;
 
 /// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
 /// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
