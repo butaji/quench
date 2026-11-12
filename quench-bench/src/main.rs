@@ -1,6 +1,8 @@
 mod analysis;
 mod contention;
 mod jetstream;
+mod subcommand;
+mod tier_invariant;
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -585,17 +587,11 @@ struct Options {
 
 fn main() {
     let args = env::args().skip(1).collect::<Vec<_>>();
-    if args.first().is_some_and(|arg| arg == "--analyze") {
-        if let Err(error) = analysis::run(&args[1..]) {
-            eprintln!("{error}");
-            std::process::exit(2);
-        }
-        return;
+    if let Some(status) = subcommand::run(&args) {
+        std::process::exit(status);
     }
     let options = parse_options();
-    if env::var_os("QUENCH_EXEC_TRACE").is_some() {
-        fail("scored runs must not inherit QUENCH_EXEC_TRACE");
-    }
+    subcommand::reject_exec_trace();
     let engines = if options.fixed_work && options.quench_peer.is_some() {
         prepare_quench_pair(&options)
     } else {
@@ -2894,7 +2890,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [--fixed-work] [--tier-invariant [--tier-tolerance FRACTION] [--tier-q-jit]] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
