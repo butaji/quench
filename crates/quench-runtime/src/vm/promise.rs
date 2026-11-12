@@ -4906,9 +4906,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         if self.is_promise(value) {
-            let constructor_atom = self.runtime_atoms.constructor;
-            let observed = self.plain_named_load(value, constructor_atom)?;
-            return (observed == receiver).then_some(value);
+            return self.promise_constructor_is_intrinsic(value, receiver).then_some(value);
         }
         let then = self.plain_resolution_then(value)?;
         let promise = self.promise_object_with_parent(None).ok()?;
@@ -4951,6 +4949,27 @@ impl<H: Host> Vm<H> {
             return true;
         }
         self.promise_settle(p, promise, PromiseState::Fulfilled, value).is_ok()
+    }
+
+    /// Whether `promise`'s `constructor` reads as `receiver`, this realm's `%Promise%`, without
+    /// running guest code: by the `PromiseSpeciesProof`, which holds exactly that for the
+    /// receivers of its shape, or by the plain read, which records the proof for them when the
+    /// constructor's `@@species` is still intrinsic. `false` leaves the read to [[Get]].
+    fn promise_constructor_is_intrinsic(&mut self, promise: Value, receiver: Value) -> bool {
+        if self.promise_species_proved(promise) {
+            return true;
+        }
+        let constructor_atom = self.runtime_atoms.constructor;
+        let Some(observed) = self.plain_named_load(promise, constructor_atom) else {
+            return false;
+        };
+        if observed != receiver {
+            return false;
+        }
+        if self.has_intrinsic_species_getter(observed) {
+            self.record_promise_species_proof(promise, observed);
+        }
+        true
     }
 
     /// Whether `promise`'s species steps provably answer the intrinsic `%Promise%`: its
