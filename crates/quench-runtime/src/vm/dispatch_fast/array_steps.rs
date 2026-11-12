@@ -23,6 +23,10 @@ pub(super) struct LaneArrayStep {
     pub(super) element: Value,
     pub(super) index: usize,
     pub(super) entry: PreparedEntry,
+    /// Whether the iteration is a lane body's call (`lane_body_array_iteration`), whose
+    /// completion ends the nested run the body made (`lane_array_complete`) instead of
+    /// continuing the lane at the next record.
+    pub(super) to_body: bool,
 }
 
 /// An array callback method's callback and `thisArg` among the values it was passed; a
@@ -149,12 +153,12 @@ pub(super) fn lane_begin_array_iteration<H: Host>(
     {
         // SAFETY: the admission pushed the activation over the window.
         let start = unsafe { lane_enter_array_step::<H, false>(cx, &entry, &iteration, element, index, window) };
-        vm.lane_stack.steps.push(LaneArrayStep { iteration, element, index, entry });
+        vm.lane_stack.steps.push(LaneArrayStep { iteration, element, index, entry, to_body: false });
         // SAFETY: the entry made the callback's registers the context's.
         return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
     }
     iteration.visited -= 1;
-    Some(lane_resume_array_iteration(cx, ip, iteration))
+    Some(lane_resume_array_iteration(cx, ip, iteration, false))
 }
 
 /// `lane_begin_array_iteration`'s setup: the iteration, with a reducer's accumulator, and
@@ -217,12 +221,29 @@ fn lane_resume_array_iteration<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
     iteration: super::super::array_indexed::ArrayIteration,
+    to_body: bool,
 ) -> Resumed {
     if iteration.visited == iteration.length {
-        // SAFETY: `ip` is the call record of the running function's view.
-        return lane_native_complete(cx, ip, unsafe { &*ip }, Some(iteration.completion()));
+        return lane_array_complete(cx, ip, to_body, Some(iteration.completion()));
     }
-    lane_run_array_iteration_from_frame(cx, ip, iteration)
+    lane_run_array_iteration_from_frame(cx, ip, iteration, to_body)
+}
+
+/// The call at `ip` of an array callback method completed with `value` (`None`: it raised):
+/// the lane continues at the next record, or, for a lane body's call (`to_body`), the nested
+/// run the body made ends with the value in the call's register, as a body's callee's return
+/// ends it (`body_calls::ends_run`).
+#[inline(always)]
+fn lane_array_complete<H: Host>(cx: *mut LaneContext<H>, ip: Ip, to_body: bool, value: Option<Value>) -> Resumed {
+    // SAFETY: `ip` is the call record of the running function's view.
+    let i = unsafe { &*ip };
+    if !to_body {
+        return lane_native_complete(cx, ip, i, value);
+    }
+    let Some(value) = value else { return Resumed::Exit(exit(ip)) };
+    unsafe { (*cx).registers }.set(i.a, value);
+    unsafe { vm(cx) }.lane_native_returned = Some(value);
+    Resumed::Exit(exit(ip))
 }
 
 /// `lane_resume_array_iteration` of an iteration with elements left: the native's loop.
@@ -231,10 +252,44 @@ fn lane_run_array_iteration_from_frame<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
     mut iteration: super::super::array_indexed::ArrayIteration,
+    to_body: bool,
 ) -> Resumed {
     let value = lane_call_from_frame(cx, ip, |vm, code| vm.array_iteration_run(code, &mut iteration));
     // SAFETY: `ip` is the call record of the running function's view.
-    lane_native_complete(cx, ip, unsafe { &*ip }, value)
+    let i = unsafe { &*ip };
+    if !to_body {
+        return lane_native_complete(cx, ip, i, value);
+    }
+    // The loop made the body's activations frames, which the general path continues after
+    // the call.
+    let Some(value) = value else { return Resumed::Exit(exit(ip)) };
+    unsafe { (*cx).registers }.set(i.a, value);
+    Resumed::Exit(exit(following(ip)))
+}
+
+/// `lane_begin_array_iteration` for a lane body's call of the array callback method `native` at
+/// `ip` (`native_calls::lane_body_native_out`): the first element's callback is an activation
+/// above the body, run nested (`body_calls::finish_array_iteration`) until the iteration
+/// completes, which writes the call's register, so the body continues after the call. `None`
+/// leaves the call to the native's call out: what the lane iteration declines, an empty array,
+/// a hole at the first element, or no native stack for a nested run.
+pub(super) fn lane_body_array_iteration<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    native: Native,
+    receiver: Value,
+    args: &[Value],
+) -> Option<u64> {
+    let _stack = crate::stack::StackGuard::enter().ok()?;
+    let (mut iteration, shape, entry) = lane_array_iteration_setup(cx, ip, native, receiver, args)?;
+    let vm = unsafe { vm(cx) };
+    let index = iteration.advance()?;
+    let element = lane_dense_element(vm, receiver, index)?;
+    let window = lane_admit_prepared(cx, &shape.activation, shape.room)?;
+    // SAFETY: the admission pushed the activation over the window.
+    let start = unsafe { lane_enter_array_step::<H, false>(cx, &entry, &iteration, element, index, window) };
+    vm.lane_stack.steps.push(LaneArrayStep { iteration, element, index, entry, to_body: true });
+    Some(body_calls::finish_array_iteration(cx, start))
 }
 
 /// The return of an array callback method's callback `activation` with `mapped`, its
@@ -317,13 +372,11 @@ fn lane_retire_array_step<H: Host>(cx: *mut LaneContext<H>, applied: Option<Valu
 fn lane_finish_array_step<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, applied: Option<Value>) -> Resumed {
     let vm = unsafe { vm(cx) };
     let depth = vm.lane_stack.steps.len() - 1;
-    let iteration = vm.lane_stack.steps[depth].iteration;
+    let LaneArrayStep { iteration, to_body, .. } = vm.lane_stack.steps[depth];
     vm.lane_stack.steps.truncate(depth);
-    // SAFETY: the call record lies in the restored caller's view.
-    let i = unsafe { &*activation.call };
     match applied {
-        None => lane_resume_array_iteration(cx, activation.call, iteration),
-        value => lane_native_complete(cx, activation.call, i, value),
+        None => lane_resume_array_iteration(cx, activation.call, iteration, to_body),
+        value => lane_array_complete(cx, activation.call, to_body, value),
     }
 }
 

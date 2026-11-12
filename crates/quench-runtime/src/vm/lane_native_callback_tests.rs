@@ -22,8 +22,35 @@ const CALLBACK_SOURCE: &str = r#"
     print(result);
 "#;
 
+/// A function calling each array callback method and the collections' `forEach` with
+/// callbacks, run until it compiles.
+const ITERATION_SOURCE: &str = r#"
+    function run(array, set, map, seed) {
+      let total = 0;
+      array.forEach((item, index) => { total += item * index; });
+      total += array.map((item) => item + seed).reduce((sum, item) => sum + item, 0);
+      total += array.filter((item) => item % 2).reduceRight((sum, item) => sum * 2 + item);
+      total += array.flatMap((item) => [item, seed]).length;
+      if (array.some((item) => item > 8) && array.every((item) => item > 0)) total += 1;
+      total += array.find((item) => item > 4) + array.findIndex((item) => item > 4);
+      set.forEach((value) => { total += value; });
+      map.forEach((value, key) => { total += value - key; });
+      return total + array.slice().sort((left, right) => left - right)[1];
+    }
+    const array = [5, 3, 9, 1, 7];
+    const set = new Set([4, 6]);
+    const map = new Map([[1, 10], [2, 20]]);
+    let result = 0;
+    for (let repeat = 0; repeat < 600; repeat++) result += run(array, set, map, repeat);
+    print(result);
+"#;
+
 fn run_in(mode: crate::ExecutionMode) -> (Vec<String>, Vm<TestHost>) {
-    let program = Engine::specialize(&format!("(function(){{{CALLBACK_SOURCE}}})();"), "lane-native-callbacks.js").unwrap();
+    run_source(mode, CALLBACK_SOURCE)
+}
+
+fn run_source(mode: crate::ExecutionMode, source: &str) -> (Vec<String>, Vm<TestHost>) {
+    let program = Engine::specialize(&format!("(function(){{{source}}})();"), "lane-native-callbacks.js").unwrap();
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(mode);
@@ -36,8 +63,20 @@ fn run_in(mode: crate::ExecutionMode) -> (Vec<String>, Vm<TestHost>) {
 
 #[test]
 fn a_compiled_body_calls_natives_that_call_back_without_leaving() {
-    let (interpreted, _) = run_in(crate::ExecutionMode::Interpreted);
-    let (compiled, vm) = run_in(crate::ExecutionMode::Compiled);
+    assert_body_stays(CALLBACK_SOURCE);
+}
+
+/// Array callback methods called from a compiled body run their callbacks as lane
+/// activations (`array_steps::lane_body_array_iteration`) and the body continues after the
+/// iteration: the output equals the interpreter's and no call leaves the body.
+#[test]
+fn a_compiled_body_iterates_arrays_and_collections_without_leaving() {
+    assert_body_stays(ITERATION_SOURCE);
+}
+
+fn assert_body_stays(source: &str) {
+    let (interpreted, _) = run_source(crate::ExecutionMode::Interpreted, source);
+    let (compiled, vm) = run_source(crate::ExecutionMode::Compiled, source);
     assert_eq!(interpreted, compiled);
     let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
     let reports: Vec<String> = views.iter()

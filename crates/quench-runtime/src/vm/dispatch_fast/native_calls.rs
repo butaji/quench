@@ -149,6 +149,10 @@ pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, r: Registe
 fn lane_body_native_out<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, native: Native, callee: Value, args: &[Value]) -> u64 {
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT};
     let i = unsafe { &*ip };
+    // An array callback method's callbacks are activations of the lane (`lane_begin_array_iteration`).
+    if native.is_array_callback() && let Some(status) = lane_body_array_iteration(cx, ip, native, r.get(i.c), args) {
+        return status;
+    }
     let Some(value) = lane_call_native(cx, ip, native, callee, r.get(i.c), args) else {
         return super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeNotCompleted);
     };

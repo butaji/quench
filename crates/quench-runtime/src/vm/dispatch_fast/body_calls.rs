@@ -73,12 +73,26 @@ fn leave<H: Host>(cx: *mut LaneContext<H>, resume: Ip, acc: Value) -> u64 {
 /// too, at the record the lane left at (`left_lane`), as does a call no nested run takes:
 /// one below such a leave, or without native stack.
 pub(super) fn finish<H: Host>(cx: *mut LaneContext<H>, depth: usize, resume: Ip, acc: Value, constructs: bool) -> u64 {
-    let vm = unsafe { vm(cx) };
     let (plain, nested) = if constructs { (Completion::Constructs, Completion::ConstructsToBody) } else { (Completion::Plain, Completion::ReturnsToBody) };
     let Ok(_stack) = crate::stack::StackGuard::enter() else { return leave(cx, resume, acc) };
     if left_lane(resume) || !recomplete(cx, depth, plain, nested) {
         return leave(cx, resume, acc);
     }
+    let left = run_nested(cx, resume, acc);
+    recomplete(cx, depth, nested, plain);
+    ended(cx, left)
+}
+
+/// The status of a body's call whose nested run ended as `run_nested` says.
+fn ended<H: Host>(cx: *mut LaneContext<H>, left: Option<Ip>) -> u64 {
+    left.map_or(LANE_CALL_COMPLETED, |left| leave(cx, exit(left), Value::UNDEFINED))
+}
+
+/// The lane run from `resume` with accumulator `acc`, nested under the running body: `None`
+/// where it ended with a value for the body's call (`ends_run`), else the record the lane
+/// left at.
+fn run_nested<H: Host>(cx: *mut LaneContext<H>, resume: Ip, acc: Value) -> Option<Ip> {
+    let vm = unsafe { vm(cx) };
     unsafe {
         (*cx).resumed_acc = Slot::of(acc);
         (*cx).memory = MemoryView::script(cx);
@@ -86,9 +100,13 @@ pub(super) fn finish<H: Host>(cx: *mut LaneContext<H>, depth: usize, resume: Ip,
     let outer = vm.lane_stack.body_boundary.take();
     let left = lane_dispatch(cx, resume);
     vm.lane_stack.body_boundary = outer;
-    recomplete(cx, depth, nested, plain);
-    if vm.lane_native_returned.take().is_some() {
-        return LANE_CALL_COMPLETED;
-    }
-    leave(cx, exit(left), Value::UNDEFINED)
+    vm.lane_native_returned.take().is_none().then_some(left)
+}
+
+/// A body's call of an array callback method whose first callback's activation the body made
+/// (`array_steps::lane_body_array_iteration`), its record `resume`: run in the lane until the
+/// iteration completes the call (`LANE_CALL_COMPLETED`); a run that leaves the lane for the
+/// general path leaves the body at the record it left at.
+pub(super) fn finish_array_iteration<H: Host>(cx: *mut LaneContext<H>, resume: Ip) -> u64 {
+    ended(cx, run_nested(cx, resume, Value::UNDEFINED))
 }
