@@ -18,8 +18,8 @@ pub(crate) enum GeneratorLife {
     /// here: a yield suspends it from here and a materialization takes it for its frame
     /// (`take_windowed`).
     Windowed(Box<GeneratorFrame>),
-    /// An async generator busy awaiting a `yield`'s value or a `return`'s, its continuation
-    /// still parked here: requests queue.
+    /// An async generator busy awaiting a `yield`'s value, a `return`'s, or inside its body,
+    /// its continuation still parked here: requests queue.
     Busy(Continuation),
     /// Not running and not finished, but with no frame to resume: a run left none, or an
     /// unstarted generator is being closed. Resuming it is an error.
@@ -207,8 +207,9 @@ impl GeneratorRecord {
         self.life = GeneratorLife::Suspended(continuation);
     }
 
-    /// An async generator yielded and awaits the value: it is busy, its continuation parked.
-    pub(crate) fn await_yield(&mut self, continuation: Continuation) {
+    /// An async generator awaits, a yielded value or inside its body: it is busy, its
+    /// continuation parked here for the await's reaction to resume (`resume`).
+    pub(crate) fn await_with(&mut self, continuation: Continuation) {
         debug_assert!(matches!(self.life, GeneratorLife::Executing | GeneratorLife::Busy(_)));
         self.life = GeneratorLife::Busy(continuation);
     }

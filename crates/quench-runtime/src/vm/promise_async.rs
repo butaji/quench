@@ -207,8 +207,8 @@ impl<H: Host> Vm<H> {
 
     /// Suspends the activation `kind` holds on `source`: one `AwaitState` cell holds it and
     /// is both handlers of the await's reaction, so it lives exactly as long as that
-    /// reaction. An async generator's `yield` holds no frame, whose continuation stays in
-    /// its generator's record (`async_generator_yield`).
+    /// reaction. An async generator's await holds no frame, whose continuation stays in its
+    /// generator's record (`async_generator_await`, `async_generator_yield`).
     pub(super) fn enqueue_async_resume(
         &mut self,
         p: &ResidualProgram,
@@ -218,7 +218,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let generator = match &kind {
             AwaitKind::AsyncFunction(_) => None,
-            AwaitKind::AsyncGeneratorAwait { generator, .. }
+            AwaitKind::AsyncGeneratorAwait { generator }
             | AwaitKind::AsyncGeneratorYield { generator } => Some(*generator),
         };
         let state = self.heap.alloc_await_state(AwaitState::arm(kind, self.realm.globals, promise));
@@ -363,6 +363,10 @@ impl<H: Host> Vm<H> {
                 }
                 self.generator_record_mut(generator).and_then(|record| record.resume())
             }
+            // An await inside the body left its frame in the record too.
+            (None, AwaitRole::AsyncGeneratorAwait(generator)) => {
+                self.generator_record_mut(generator).and_then(|record| record.resume())
+            }
             (continuation, _) => continuation,
         };
         let Some(continuation) = continuation else {
@@ -457,12 +461,7 @@ impl<H: Host> Vm<H> {
                     let AwaitRole::AsyncGeneratorAwait(generator) = resume.role else {
                         unreachable!("an await inside an async generator body resumes its generator");
                     };
-                    self.enqueue_async_resume(
-                        p,
-                        AwaitKind::generator_await(generator, continuation),
-                        resume.promise,
-                        value,
-                    )?;
+                    self.async_generator_await(p, generator, resume.promise, continuation, value)?;
                 }
             }
             super::FrameOutcome::Await {

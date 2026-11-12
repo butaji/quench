@@ -6,6 +6,8 @@ use super::promise::{PromiseReaction, PromiseState};
 use super::*;
 mod in_place_steps;
 mod window_steps;
+#[cfg(test)]
+mod async_await_tests;
 
 /// How a generator's resumption stopped (`Vm::resume_generator_step`).
 pub(super) enum GeneratorStep {
@@ -1204,7 +1206,7 @@ impl<H: Host> Vm<H> {
                 Ok((rejected, promise))
             })
         })?;
-        self.enqueue_async_resume(p, AwaitKind::generator_await(generator, continuation), promise, rejected)?;
+        self.async_generator_await(p, generator, promise, continuation, rejected)?;
         Ok(promise)
     }
 
@@ -1673,7 +1675,7 @@ impl<H: Host> Vm<H> {
                         Some(destination),
                         promise,
                     );
-                    vm.enqueue_async_resume(p, AwaitKind::generator_await(generator, continuation), promise, value)?;
+                    vm.async_generator_await(p, generator, promise, continuation, value)?;
                 }
                 Ok(_) => {
                     vm.pool_frame(frame);
@@ -1687,6 +1689,23 @@ impl<H: Host> Vm<H> {
             }
             Ok(promise)
         })
+    }
+
+    /// An async generator whose activation awaits `value` inside its body, or is resumed with a
+    /// rejection through an await: its frame parks in the record, busy, and the reaction
+    /// holds the generator (`AwaitKind::generator_await`).
+    pub(super) fn async_generator_await(
+        &mut self,
+        p: &ResidualProgram,
+        generator: Value,
+        promise: Value,
+        continuation: Continuation,
+        value: Value,
+    ) -> Result<(), JsError> {
+        if let Some(record) = self.generator_record_mut(generator) {
+            record.await_with(continuation);
+        }
+        self.enqueue_async_resume(p, AwaitKind::generator_await(generator), promise, value)
     }
 
     pub(super) fn async_generator_yield(
@@ -1709,7 +1728,7 @@ impl<H: Host> Vm<H> {
             if delegated {
                 record.suspend(continuation);
             } else {
-                record.await_yield(continuation);
+                record.await_with(continuation);
             }
         }
         if delegated {
