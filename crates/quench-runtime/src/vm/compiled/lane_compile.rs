@@ -99,6 +99,7 @@ const REPLAN_BUDGET_DIVISOR: usize = 2;
 /// on richards and deltablue.
 const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
 
+#[cfg(test)] #[path = "lane_compile/ahead.rs"] mod ahead;
 /// The code of one lane body, compiled on the calling thread.
 fn lane_code(function: ir::Function, level: super::jit_backend::CompileLevel) -> LaneCode {
     let level = match level {
