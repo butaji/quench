@@ -7187,20 +7187,17 @@ impl<H: Host> Vm<H> {
 
     /// The native frames the last run left inside, outermost first, which the lane now
     /// materializes (`ShadowFrame`); none once taken.
-    pub(super) fn take_shadow_frames() -> &'static [ShadowFrame] {
+    pub(super) fn take_shadow_frames() -> ShadowFrames {
         let frame = lane_frame();
         // SAFETY: no lane body runs while the lane reads the frame; the frames sit past the
-        // activations' end, which the lane's own pushes (materialization) then overwrite in
-        // order, so their native prefixes are copied out first.
+        // activations' end, which the lane's own pushes (materialization) overwrite in
+        // order, each after the frame it replaces was read (`ShadowFrames::get`).
         unsafe {
             let base = (*frame).dispatch.shadow_base as *const Activation;
             let top = (*frame).dispatch.shadow_top as *const Activation;
             let count = if top.is_null() { 0 } else { top.offset_from(base) as usize };
             (*frame).dispatch.shadow_top = base.addr();
-            for index in 0..count {
-                (*frame).leaving[index] = (*base.add(index)).native;
-            }
-            std::slice::from_raw_parts((*frame).leaving.as_ptr(), count)
+            ShadowFrames { base, count }
         }
     }
 
@@ -7284,6 +7281,22 @@ impl<H: Host> Vm<H> {
 /// machine stack each costs a frame; the bound keeps a native recursion within it.
 const SHADOW_FRAMES: usize = 64;
 
+/// The native frames a leave took (`Vm::take_shadow_frames`): the prefixes of `count` activations
+/// at `base`, in the activations' spare room, where materialization makes the activations in place.
+#[derive(Clone, Copy)]
+pub(super) struct ShadowFrames {
+    base: *const Activation,
+    pub(super) count: usize,
+}
+
+impl ShadowFrames {
+    /// Frame `index`, outermost first, read before the activation that replaces it is pushed.
+    pub(super) fn get(&self, index: usize) -> ShadowFrame {
+        // SAFETY: `index < count` frames were pushed in place by the run that left.
+        unsafe { (*self.base.add(index)).native }
+    }
+}
+
 /// `shadow_base` before any lane body ran on the frame: no frame word equals it, so a helper
 /// a loop region calls then sees native frames (`lane_shadow_active`) and its call leaves.
 const NO_LANE_RUN: usize = usize::MAX;
@@ -7328,9 +7341,6 @@ struct LaneFrame {
     dispatch: JsStepDispatch,
     /// The registers of an inlined callee its lane body left inside.
     scratch: Vec<Value>,
-    /// The native prefixes of the frames a leave took out of the activations' spare room, outermost
-    /// first (`Vm::take_shadow_frames`).
-    leaving: Box<[ShadowFrame; SHADOW_FRAMES]>,
 }
 
 impl LaneFrame {
@@ -7390,7 +7400,6 @@ impl LaneFrame {
                 outcome: None,
             },
             scratch: Vec::new(),
-            leaving: Box::new([ShadowFrame::EMPTY; SHADOW_FRAMES]),
         }
     }
 }
