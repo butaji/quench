@@ -1590,9 +1590,6 @@ dependencies = [
 name = "quench-bjit"
 version = "0.1.0"
 dependencies = [
- "cranelift-codegen",
- "cranelift-frontend",
- "cranelift-native",
  "libc",
 ]
 
