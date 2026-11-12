@@ -10,7 +10,7 @@ impl Lowering<'_, '_> {
     /// call does (`dispatch_fast::lane_body_construct`): the callee's plan, else its activation.
     pub(super) fn construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
-        if self.completion == Completion::StatusAndPc
+        if self.completion.status_and_pc()
             && matches!(self.unit.origins.get(pc), Some(super::super::lane_unit::Origin::Caller(_)))
             && window.base + window.count <= self.unit.caller_registers
             && matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER) {
@@ -19,7 +19,7 @@ impl Lowering<'_, '_> {
         let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
             (false, _) if instruction.result_flags() == 0 => None,
             // A static region returns its source PC alone, so the frame's return stays its own.
-            (true, Some(super::super::lane_unit::Origin::Caller(record))) if self.completion == Completion::StatusAndPc
+            (true, Some(super::super::lane_unit::Origin::Caller(record))) if self.completion.status_and_pc()
                 && instruction.result_flags() == crate::bytecode::RETURN_REGISTER => Some(record),
             _ => return None,
         };
@@ -46,7 +46,7 @@ impl Lowering<'_, '_> {
     /// write, passes from the native stack.
     fn construct_arguments(&mut self, state: &mut State, window: crate::bytecode::RegisterWindow) -> ir::Value {
         let registers = window.base..window.base + window.count;
-        if self.completion == Completion::StatusAndPc && registers.end <= self.unit.caller_registers {
+        if self.completion.status_and_pc() && registers.end <= self.unit.caller_registers {
             let base = self.registers_base;
             for register in registers {
                 let bits = self.tagged(state, register);

@@ -21,15 +21,15 @@ pub(in crate::vm) struct EntryCell {
 }
 
 /// The entry no body backs: it enters nothing.
-unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *const u64, _: *mut u64) -> u32 {
-    LANE_BODY_NOT_ENTERED
+unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *const u64) -> BodyReturn {
+    BodyReturn { status: LANE_BODY_NOT_ENTERED, value: 0 }
 }
 
 /// The recovery space the stub's cell names: no body, nothing to recover.
 static NO_RECOVERY: LaneRecoverySpace = LaneRecoverySpace { values: 0, activations: 0 };
 
 impl EntryCell {
-    pub(in crate::vm) fn stub() -> usize { lane_entry_stub as Entry as usize }
+    pub(in crate::vm) fn stub() -> usize { lane_entry_stub as BodyEntry as usize }
 
     pub(in crate::vm) fn new() -> Self {
         Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default() }
