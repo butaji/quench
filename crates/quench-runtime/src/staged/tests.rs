@@ -81,7 +81,8 @@ fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_form(
 fn window_values(allocation: Allocation) -> i32 {
     match allocation {
         Allocation::ObjectLiteral { window, .. } | Allocation::Concat { window } => i32::from(window.count),
-        Allocation::Closure { .. } | Allocation::Template { .. } => 0,
+        Allocation::ObjectPair { .. } => 2,
+        Allocation::Empty | Allocation::ConstArray { .. } | Allocation::Closure { .. } | Allocation::Template { .. } => 0,
     }
 }
 
@@ -369,7 +370,7 @@ fn an_allocation_is_a_staged_operation_with_a_host_boundary() {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = ConcreteFrame { registers: vec![0; 3], heap: None };
     for operation in [
-        Operation::MakeObject { destination: 0, proof: () },
+        Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () },
         Operation::MakeArray { destination: 0, length: 0, elements: 0, proof: () },
     ] {
         assert!(matches!(step(&mut stage, &mut frame, operation), Step::Unresolved));
@@ -388,6 +389,9 @@ fn an_allocation_row_defines_its_destination_through_the_frame_or_declines() {
         (Allocation::Concat { window }, 2),
         (Allocation::Closure { function: 1 }, 0),
         (Allocation::Template { template: 0 }, 0),
+        (Allocation::Empty, 0),
+        (Allocation::ConstArray { constant: 0, count: 2 }, 0),
+        (Allocation::ObjectPair { site: 1, first: 1, second: 2 }, 2),
     ];
     let heap = Heap::new();
     let mut stage = Concrete::new(std::ptr::null());
@@ -455,7 +459,7 @@ fn every_host_callout_operation_has_a_concrete_reading() {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = ConcreteFrame { registers: vec![0; 4], heap: None };
     let declines = [
-        Operation::MakeObject { destination: 0, proof: () },
+        Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () },
         Operation::MakeArray { destination: 0, length: 0, elements: 0, proof: () },
         Operation::Allocate { destination: 0, allocation: Allocation::Closure { function: 0 }, proof: () },
         Operation::IndexSetHelper { base: 0, key: 1, value: 2, proof: () },

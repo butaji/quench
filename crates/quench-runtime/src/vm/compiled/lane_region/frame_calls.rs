@@ -76,12 +76,20 @@ fn window_arguments(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, window:
     [window_words(frame, stage, window), immediate(stage, i64::from(window.count))]
 }
 
-/// An allocation row by the lane's own allocator of it (`LaneHelper::NewObjectLiteral`,
-/// `NewClosure`, `NewTemplate`, `NewConcat`): each leaves for a due collection first, and a
+/// An allocation row by the lane's own allocator of it (`LaneHelper::NewObject`, `NewConstArray`,
+/// `NewObjectPair`, `NewObjectLiteral`, `NewClosure`, `NewTemplate`, `NewConcat`): each leaves for a due collection first, and a
 /// DELETED answer leaves at the proof's miss edge.
 pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     allocation: Allocation, proof: EmitProof) -> Option<ir::Value> {
     let (helper, arguments) = match allocation {
+        Allocation::Empty => (LaneHelper::NewObject, vec![]),
+        Allocation::ConstArray { constant, count } =>
+            (LaneHelper::NewConstArray, vec![immediate(stage, i64::from(constant)), immediate(stage, i64::from(count))]),
+        Allocation::ObjectPair { site, first, second } => {
+            let first = <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, first);
+            let second = <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, second);
+            (LaneHelper::NewObjectPair, vec![immediate(stage, i64::from(site)), first, second])
+        }
         Allocation::ObjectLiteral { site, window } => {
             let [parts, count] = window_arguments(frame, stage, window);
             (LaneHelper::NewObjectLiteral, vec![immediate(stage, i64::from(site)), parts, count])

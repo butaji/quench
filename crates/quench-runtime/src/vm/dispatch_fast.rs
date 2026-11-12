@@ -3296,14 +3296,13 @@ script_handler! {
         };
         // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
         // running function's view.
-        let (code, pc, program) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize, (*cx).program) };
+        let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
         let body = code.function(function as usize);
         let wide = decoded_instruction(body, body.code[pc]);
-        let Some(value) = vm.const_array_value(program, wide.constant_index(), usize::from(wide.element_count())) else {
+        let (_, allocation) = Allocation::decode(wide).expect("a constant array decodes");
+        if !staged_allocate(cx, r, i.a, allocation) {
             return exit(ip);
-        };
-        note_allocation(vm);
-        r.set(i.a, value);
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -5388,8 +5387,9 @@ fn lane_regexp_literal_value<H: Host>(
 script_handler! {
     /// `MakeObject2`: a two-property literal allocates and runs no guest code.
     fn lane_make_object2<>(cx, r, ip, i, view) {
-        let value = lane_object_pair(cx, r, i);
-        r.set(i.a, value);
+        if !staged_allocate(cx, r, i.a, Allocation::ObjectPair { site: i.imm(), first: i.b, second: i.c }) {
+            return exit(ip);
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -5430,7 +5430,9 @@ fn lane_object_literal_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, sit
 script_handler! {
     /// `MakeObject`: an empty ordinary object (`Vm::object`), as the general loop makes it.
     fn lane_make_object<>(cx, r, ip, i, view) {
-        r.set(i.a, lane_new_object(unsafe { vm(cx) }));
+        if !staged_allocate(cx, r, i.a, Allocation::Empty) {
+            return exit(ip);
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -5484,17 +5486,12 @@ fn lane_new_hole_array<H: Host>(vm: &mut Vm<H>, length: usize) -> Value {
     value
 }
 
-/// The object a `MakeObject2` record makes (`Vm::object_pair`).
+/// The object of literal `site`'s shape holding registers `first` and `second` (`Vm::object_pair`).
 #[inline(always)]
-fn lane_object_pair<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Value {
+fn lane_object_pair<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: u32, [first, second]: [u16; 2]) -> Value {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
-    let value = vm.object_pair(
-        unsafe { &*(*cx).code },
-        i.imm() as usize,
-        r.get(i.b),
-        r.get(i.c),
-    );
+    let value = vm.object_pair(unsafe { &*(*cx).code }, site as usize, r.get(first), r.get(second));
     note_allocation(vm);
     value
 }
@@ -17489,7 +17486,7 @@ script_handler! {
                 },
                 RETURNING_UNARY => lane_unary_value(cx, r, i),
                 RETURNING_BINARY => lane_returning_binary_value(cx, r, i),
-                RETURNING_OBJECT => Some(lane_object_pair(cx, r, i)),
+                RETURNING_OBJECT => Some(lane_object_pair(cx, r, i.imm(), [i.b, i.c])),
                 RETURNING_OBJECT_LITERAL => Some(lane_object_literal_value(cx, r, i.imm(), lane_literal_window(i))),
                 _ => lane_literal_value(cx, r, i),
             }

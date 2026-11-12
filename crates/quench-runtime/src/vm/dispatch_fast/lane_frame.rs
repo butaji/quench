@@ -311,6 +311,9 @@ lane_handler! {
 unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Allocation) -> Option<Value> {
     let cx = cx.cast::<LaneContext<H>>();
     match allocation {
+        Allocation::Empty => Some(lane_new_object(unsafe { vm(cx) })),
+        Allocation::ConstArray { constant, count } => lane_const_array_value(cx, constant, count),
+        Allocation::ObjectPair { site, first, second } => Some(lane_object_pair(cx, r, site, [first, second])),
         Allocation::ObjectLiteral { site, window } => Some(lane_object_literal_value(cx, r, site, window)),
         Allocation::Closure { function } => lane_closure_value_of(cx, function),
         Allocation::Template { template } => lane_template_value(cx, template),
@@ -333,6 +336,17 @@ unsafe fn lane_delete_value<H: Host>(cx: *mut (), base: Value, key: Value) -> Op
         && vm.heap.string(key).is_some()
         && vm.object_data(base).is_some_and(|data| !data.is_module_namespace() && !data.is_arguments_object());
     (plain && vm.object_delete_property(code, &[base, key]).is_ok_and(|deleted| deleted == Value::TRUE)).then_some(Value::TRUE)
+}
+
+/// The array of the `count` program constants from `constant` (`Vm::const_array_value`);
+/// `None` where the range is outside the program's constants.
+#[inline(never)]
+fn lane_const_array_value<H: Host>(cx: *mut LaneContext<H>, constant: u32, count: u16) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let value = vm.const_array_value(unsafe { (*cx).program }, constant as usize, usize::from(count))?;
+    note_allocation(vm);
+    Some(value)
 }
 
 /// The value of literal template `template` in a frame's own lane run (`Vm::literal_template`);

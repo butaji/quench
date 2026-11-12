@@ -443,7 +443,6 @@ op_predicates! {
     is_call => Call,
     is_call_array => CallArray,
     is_load_name_call => LoadNameCall,
-    is_make_object => MakeObject,
     is_store_capture => StoreCapture,
     is_wasm_jump_i32_non_zero => WasmJumpI32NonZero,
     is_wasm_memory_copy => WasmMemoryCopy,

@@ -170,12 +170,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         calls::safepoint(self, stage, proof)
     }
 
-    /// An object literal: the lane's allocator, whose DELETED answer (a due collection) leaves at the miss edge.
-    #[inline(always)]
-    fn allocate_object(&mut self, stage: &mut Emit<'_, '_>, destination: Register, proof: EmitProof) -> Option<ir::Value> {
-        self.allocate(stage, LaneHelper::NewObject, destination, &[], proof)
-    }
-
     /// An array literal: the lane's own allocator, with its holes or its written elements.
     #[inline(always)]
     fn allocate_array(&mut self, stage: &mut Emit<'_, '_>, destination: Register, length: ir::Value,
@@ -183,22 +177,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         self.allocate(stage, LaneHelper::NewArray, destination, &[length, elements], proof)
     }
 
-    /// An array literal of program constants (`lane_new_const_array`).
-    #[inline(always)]
-    fn allocate_const_array(&mut self, stage: &mut Emit<'_, '_>, destination: Register, constant: ir::Value,
-        count: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        self.allocate(stage, LaneHelper::NewConstArray, destination, &[constant, count], proof)
-    }
-
-    /// A two-property object literal (`lane_new_object_pair`).
-    #[inline(always)]
-    fn allocate_object_pair(&mut self, stage: &mut Emit<'_, '_>, destination: Register, site: u32, first: ir::Value,
-        second: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        let site = stage.builder.ins().iconst(types::I64, i64::from(site));
-        self.allocate(stage, LaneHelper::NewObjectPair, destination, &[site, first, second], proof)
-    }
-
-    /// A window object literal, closure, template or concatenation: the lane's own allocator.
+    /// An empty object, object literal, constant array, closure, template or concatenation: the lane's own allocator.
     #[inline(always)]
     fn allocate_value(&mut self, stage: &mut Emit<'_, '_>, destination: Register, allocation: crate::staged::Allocation,
         proof: EmitProof) -> Option<ir::Value> { calls::allocate_value(self, stage, destination, allocation, proof) }

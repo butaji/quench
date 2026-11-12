@@ -1,5 +1,6 @@
-//! The allocation rows whose operands the instruction alone fixes: an object literal over a
-//! register window, a closure, a literal template and a string concatenation. Each makes a
+//! The allocation rows whose operands the instruction alone fixes: an empty object, an object
+//! literal over a register window or of two registers, a constant array, a closure, a literal
+//! template and a string concatenation. Each makes a
 //! heap value, so the frame's heap decides how (`Frame::allocate_value`): the interpreter
 //! allocates in place, a specializer calls out to an allocator that leaves for a due
 //! collection first.
@@ -11,6 +12,12 @@ use crate::bytecode::{Op, Register, RegisterWindow, WideInstruction};
 /// a window, never passed as words, so each tier reads them from its own register homes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Allocation {
+    /// An empty ordinary object (`Vm::object`).
+    Empty,
+    /// The array of the `count` program constants from constant `constant`.
+    ConstArray { constant: u32, count: u16 },
+    /// An ordinary object of literal `site`'s shape holding registers `first` and `second`.
+    ObjectPair { site: u32, first: Register, second: Register },
     /// An ordinary object of literal `site`'s shape holding the registers of `window`.
     ObjectLiteral { site: u32, window: RegisterWindow },
     /// The closure of function `function` over the activation's environment, which the first
@@ -27,6 +34,11 @@ impl Allocation {
     /// that makes no such value.
     pub(crate) fn decode(instruction: WideInstruction) -> Option<(Register, Self)> {
         let allocation = match instruction.op() {
+            Op::MakeObject => Self::Empty,
+            Op::MakeConstArray => Self::ConstArray {
+                constant: u32::try_from(instruction.constant_index()).ok()?, count: instruction.element_count() },
+            Op::MakeObject2 => Self::ObjectPair { site: u32::try_from(instruction.object_site_index()).ok()?,
+                first: instruction.register_b(), second: instruction.register_c() },
             Op::MakeObjectLiteral => Self::ObjectLiteral {
                 site: u32::try_from(instruction.object_site_index()).ok()?, window: instruction.register_window() },
             Op::MakeClosure => Self::Closure { function: instruction.closure_function_index() },
@@ -41,12 +53,9 @@ impl Allocation {
 
 impl<W, P> Operation<W, P> {
     /// The allocation operation `instruction` denotes under `proof`, the one the frame's heap
-    /// proves (an exit for a due collection). The array and pair literals carry word operands
-    /// a tier reads itself, so it builds those.
+    /// proves (an exit for a due collection). The array literal carries word operands a tier
+    /// reads itself, so it builds that one.
     pub(crate) fn decode_allocation(instruction: WideInstruction, proof: P) -> Option<Self> {
-        if instruction.op() == Op::MakeObject {
-            return Some(Self::MakeObject { destination: instruction.result_register(), proof });
-        }
         let (destination, allocation) = Allocation::decode(instruction)?;
         Some(Self::Allocate { destination, allocation, proof })
     }
@@ -74,10 +83,14 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_object_decodes_to_its_own_row_and_the_rest_to_allocate() {
-        let make = |op| Operation::<u64, ()>::decode_allocation(WideInstruction::new(op, 3, 1, 1, 0), ());
-        assert!(matches!(make(Op::MakeObject), Some(Operation::MakeObject { destination: 3, .. })));
-        assert!(matches!(make(Op::StringConcat), Some(Operation::Allocate { destination: 3, .. })));
-        assert!(make(Op::Jump).is_none());
+    fn the_empty_object_pair_and_constant_array_decode_to_allocate() {
+        let make = |op, b, c, imm| Operation::<u64, ()>::decode_allocation(WideInstruction::new(op, 3, b, c, imm), ());
+        assert!(matches!(make(Op::MakeObject, 0, 0, 0), Some(Operation::Allocate { destination: 3, allocation: Allocation::Empty, .. })));
+        assert!(matches!(make(Op::MakeObject2, 1, 2, 5), Some(Operation::Allocate {
+            allocation: Allocation::ObjectPair { site: 5, first: 1, second: 2 }, .. })));
+        assert!(matches!(make(Op::MakeConstArray, 2, 0, 5), Some(Operation::Allocate {
+            allocation: Allocation::ConstArray { constant: 5, count: 2 }, .. })));
+        assert!(matches!(make(Op::StringConcat, 1, 1, 0), Some(Operation::Allocate { destination: 3, .. })));
+        assert!(make(Op::Jump, 0, 0, 0).is_none());
     }
 }
