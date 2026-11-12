@@ -53,7 +53,9 @@ pub(super) enum Heap {
     This,
     /// The activation's local slot `slot`, whose number is hole 1.
     LoadLocal(u16),
-    /// The first operand written to the activation's local slot `slot`, whose number is hole 2.
+    /// The first operand written to the activation's local slot `slot`, whose number is hole 2. It continues at TAKEN
+    /// (`continues_at_taken`): as a fast arm it hops past the helper step, in a loop region it branches to the next
+    /// instruction.
     StoreLocal(u16),
     /// The fast arm of a `LoadLocal` of a frame-owned slot (`staged::read_initialized_local`): slot `slot`
     /// (hole 1) into the register at hole 0 where its binding is initialized, else the row leaves into the
@@ -140,6 +142,12 @@ impl Heap {
             Heap::TypeofIs { negated: false, .. } => library::TYPEOF_IS_ROW,
             Heap::TypeofIs { negated: true, .. } => library::TYPEOF_ISNOT_ROW,
         }
+    }
+
+    /// Whether a hit continues at the row's TAKEN exit, not its NEXT: the rows of one convention with the fast arms, whose
+    /// hit hops past the step laid out after them (`base_region::steps::plan_fast`).
+    pub(super) fn continues_at_taken(self) -> bool {
+        matches!(self, Heap::StoreLocal(_))
     }
 
     /// Whether the row reads a snapshot of the heap the loop's entry took (the record's captures,

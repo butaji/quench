@@ -308,12 +308,13 @@ fn load_local_row<const D: u8>(s: S) -> Out {
     finish(frame, done)
 }
 
-/// A local slot write of the first operand: the slot number is hole 2 (`staged::write_local`).
+/// A local slot write of the first operand: the slot number is hole 2 (`staged::write_local`). A hit continues at
+/// TAKEN, as every row that has a helper step behind it does (`finish_fast`).
 #[inline(always)]
 fn store_local_row<const A: u8>(s: S) -> Out {
     let mut frame = Places::<MEM, A, MEM>::new(s);
     let done = write_local(&mut StencilStage::from_hole(0), &mut frame, LEFT, hole::<HOLE_B>() as u16, Some(())).is_some();
-    finish(frame, done)
+    finish_fast(frame, done)
 }
 
 /// A fast arm's local slot read that leaves into the helper step for a binding in its temporal dead zone:

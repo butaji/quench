@@ -183,7 +183,7 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
     let entry = heap_variant(heap, decoded.hole);
     let holes = heap_holes(decoded, homes, heap, entry, [dst_hole, a_hole, b_hole]);
     // The row's stencil reads pinned operands and delivers a pinned result itself.
-    Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
+    Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, heap.continues_at_taken().then_some(pc + 1), Some(pc)))
 }
 
 /// The row of `decoded` at `pc`; a backward jump takes the poll row the layout's ending names.
