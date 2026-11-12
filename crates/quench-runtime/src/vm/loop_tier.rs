@@ -151,7 +151,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     region: &super::super::compiled::LoopRegion,
     tier: &mut LoopTier,
     number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
-    int_entries: &[crate::bytecode::Register],
+    int_entries: &[(crate::bytecode::Register, crate::typed_ir::IntRange)],
     typed_captures: &[u16],
     int_captures: &[u16],
 ) {
@@ -331,8 +331,10 @@ pub(super) fn sample_array<H: Host>(vm: &Vm<H>, value: Value) -> Option<crate::t
     else { sample.iter().all(|value| value.as_number().is_some()).then_some(Type::NUMBER) }
 }
 
-/// The registers of the running activation that hold int32s at entry and that the loop writes:
-/// an observation the compiled code's entry contract checks, as `number_arrays`'.
-pub(super) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<Register> {
-    region.entry_registers().filter(|register| r.get(*register).as_int().is_some()).collect()
+/// The registers of the running activation that hold int32s at entry and that the loop writes,
+/// each with the range its value gives the entry (`IntRange::entering`): an observation the
+/// compiled code's entry contract checks, as `number_arrays`'.
+pub(super) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<(Register, crate::typed_ir::IntRange)> {
+    region.entry_registers().filter_map(|register| r.get(register).as_int()
+        .map(|value| (register, crate::typed_ir::IntRange::entering(value)))).collect()
 }

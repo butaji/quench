@@ -4,7 +4,11 @@
 use super::*;
 
 /// The function `name` of `source`, lowered as a whole unit with the dense element views.
-fn lowered(source: &str, name: &str) -> ir::Function {
+fn lowered(source: &str, name: &str) -> ir::Function { lowered_entered(source, name, None) }
+
+/// As `lowered`, or, given the range the loop's entry observed of every register that holds an
+/// int32 there, its loop entered natively at its header as an OSR region is.
+fn lowered_entered(source: &str, name: &str, entering: Option<IntRange>) -> ir::Function {
     let program = crate::Engine::specialize(source, "int-ranges.cjs").unwrap();
     let caller = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
@@ -12,9 +16,18 @@ fn lowered(source: &str, name: &str) -> ir::Function {
         &|_, _| Vec::new(), &|id| program.function_get(id as usize)).unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
+    let (coverage, observed) = match entering {
+        None => (Coverage::Full, Vec::new()),
+        Some(range) => {
+            let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|
+                successors(pc, *instruction).into_iter().flatten().find(|target| *target <= pc).map(|target| (target, pc)))
+                .expect("the function has a loop");
+            (Coverage::Loop { header, backedge, poll: false }, (0..unit.registers).map(|register| (register, range)).collect())
+        }
+    };
     let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
         &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS,
-        &[], &[], &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).expect("loop region");
+        &[], &observed, &[], &[], coverage, Completion::StatusAndPc, ElementViews::Dense).expect("loop region");
     cranelift_codegen::verify_function(&region.function, &*isa).unwrap();
     region.function
 }
@@ -74,4 +87,12 @@ fn a_store_through_the_array_retires_the_length_proof_of_later_accesses() {
     let before_store = bounds_tests(&lowered(
         "function run(a){let s;for(let i=0;i<a.length;i++){s=a[i];a[i]=i;}return s;}", "run"));
     assert!(after_store > before_store, "an element store may resize an array: {after_store} vs {before_store}");
+}
+
+#[test]
+fn an_osr_entered_loop_takes_its_counters_sign_from_the_entry() {
+    let source = "function run(a){let s;for(let i=0;i<a.length;i++){s=a[i];}return s;}";
+    let unknown = bounds_tests(&lowered_entered(source, "run", Some(IntRange::FULL)));
+    let guarded = bounds_tests(&lowered_entered(source, "run", Some(IntRange::NON_NEGATIVE)));
+    assert_eq!(guarded + 1, unknown, "a non-negative entering `i` under `i < a.length` needs no bounds guard");
 }

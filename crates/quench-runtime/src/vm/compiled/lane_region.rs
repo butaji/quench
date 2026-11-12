@@ -461,7 +461,7 @@ struct Lowering<'a, 'f> {
     /// The element reads observed to hold Numbers (`RegionSpecializer::number_reads`).
     observed: super::facts::Observed<'a>,
     /// The registers observed to hold int32s at entry (`RegionSpecializer::int_entries`).
-    int_entries: &'a [Register],
+    int_entries: &'a [(Register, IntRange)],
     /// The capture slots observed to hold int32s (`RegionSpecializer::int_captures`).
     int_captures: &'a [u16],
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
@@ -551,6 +551,9 @@ struct Lowering<'a, 'f> {
     /// The unit's integer ranges, computed once before lowering (`int_ranges::analyze`): the
     /// arithmetic that cannot overflow and the hoisted element accesses within their array.
     ranges: int_ranges::IntRanges,
+    /// The registers whose int32 range the entry guards once and the ranges pass takes as
+    /// the entry state (`Lowering::entering_ranges`).
+    entering: Vec<(Register, IntRange)>,
     /// The PC being lowered, whose edges to a header enter its loop or close it.
     at: usize,
     /// Per block leader, its forward edges (`forward_edges`), and the states the lowered
@@ -1385,7 +1388,7 @@ pub(super) struct RegionSpecializer<'p> {
     pub(super) number_reads: &'p [super::facts::ObservedRead],
     /// The registers whose values at entry were int32s: candidates for an int32 entry contract
     /// (`refine_inductive_inputs`), kept where every definition in the loop yields an int32.
-    pub(super) int_entries: &'p [Register],
+    pub(super) int_entries: &'p [(Register, IntRange)],
     /// The capture slots that held typed arrays at compilation (`Observation::typed_captures`).
     pub(super) typed_captures: &'p [u16],
     /// The capture slots that held int32s at compilation (`Observation::int_captures`).
@@ -1453,7 +1456,7 @@ pub(super) fn lower(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     entry_fields: &BTreeMap<usize, u32>,
     number_reads: &[super::facts::ObservedRead],
-    int_entries: &[Register],
+    int_entries: &[(Register, IntRange)],
     typed_captures: &[u16],
     int_captures: &[u16],
     coverage: Coverage,
@@ -1611,6 +1614,7 @@ pub(super) fn lower(
         loop_fields: Vec::new(),
         loop_stores: BTreeMap::new(),
         ranges: int_ranges::IntRanges::new(0),
+        entering: Vec::new(),
         at: 0,
         forward: Vec::new(), sealable: CompoundBitSet::new(),
         arrived: BTreeMap::new(),
@@ -1726,7 +1730,8 @@ pub(super) fn lower(
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && instructions[at].op().class().eq(Class::LoadCapture))),
         lowering.views, typed_captures);
-    lowering.ranges = int_ranges::analyze(program, unit, &lowering.facts, entry_pc, generic, &|pc| lowering.dense_loop_access(pc));
+    lowering.entering = lowering.entering_ranges(entry_pc);
+    lowering.ranges = int_ranges::analyze(program, unit, &lowering.facts, entry_pc, &lowering.entering, generic, &|pc| lowering.dense_loop_access(pc));
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
         lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner), rooted: false });
@@ -2517,6 +2522,26 @@ impl Lowering<'_, '_> {
         self.proving_entry = matches!(coverage, Coverage::Prefix) && self.completion.status_and_pc();
         self.conform(state, pc);
         self.proving_entry = false;
+        self.guard_entering_ranges(state, pc);
+    }
+
+    /// The observed int32 entries whose range is narrower than int32 and whose entry fact is
+    /// int32: what the entry guards once (`guard_entering_ranges`) and the pass assumes.
+    fn entering_ranges(&self, entry: usize) -> Vec<(Register, IntRange)> {
+        let types = self.facts.at(entry);
+        self.int_entries.iter().copied().filter(|&(register, range)| range != IntRange::FULL
+            && types.and_then(|types| types.get(usize::from(register))).is_some_and(|ty| ty.is_subtype(Type::INT32))).collect()
+    }
+
+    /// Leaves at `pc` where an entering register is below its range's minimum: the one guard
+    /// the ranges pass's entry state relies on (the range's maximum is int32's).
+    fn guard_entering_ranges(&mut self, state: &mut State, pc: usize) {
+        for (register, range) in self.entering.clone() {
+            let exit = self.guard_exit(state, pc as u32);
+            let value = self.int(state, register, exit);
+            let within = self.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, value, i64::from(range.min));
+            emit_js_guard(&mut self.builder, within, exit);
+        }
     }
 
     /// The guards' leaves to fill, once the entry's shared leave (`entry_conform`) is filled:
@@ -3614,7 +3639,7 @@ impl Lowering<'_, '_> {
     /// Whether a loop definition of `register` of type `ty` makes it a candidate for an int32
     /// entry contract: the definition yields an int32, or the register held one at entry.
     fn int32_candidate(&self, register: Register, ty: Type) -> bool {
-        ty == Type::INT32 || self.int_entries.contains(&register)
+        ty == Type::INT32 || self.int_entries.iter().any(|(entry, _)| *entry == register)
     }
 
     /// An unchanged arm preserves a checked entry hypothesis. Every definition

@@ -2561,7 +2561,7 @@ pub(crate) struct Observation<'a> {
     pub(crate) abandoned: &'a [usize],
     /// The registers holding int32s at entry, whose loop may keep them as int32s where every
     /// definition in it yields one (`RegionSpecializer::int_entries`).
-    pub(crate) int_entries: &'a [Register],
+    pub(crate) int_entries: &'a [(Register, crate::typed_ir::IntRange)],
     /// The depth-zero capture slots holding typed arrays when compiled: a loop's array read
     /// through such a capture is viewed as a typed array (`LoopArray::views`).
     pub(crate) typed_captures: &'a [u16],

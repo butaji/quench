@@ -9,6 +9,11 @@ pub(crate) struct IntRange {
 impl IntRange {
     pub(crate) const FULL: Self = Self { min: i32::MIN, max: i32::MAX };
 
+    pub(crate) const NON_NEGATIVE: Self = Self { min: 0, max: i32::MAX };
+
+    /// What an int32 observed to be `value` gives a later entry to guard once: its sign.
+    pub(crate) const fn entering(value: i32) -> Self { if value >= 0 { Self::NON_NEGATIVE } else { Self::FULL } }
+
     pub(crate) const fn singleton(value: i32) -> Self { Self { min: value, max: value } }
 
     pub(crate) fn packed() -> Self {

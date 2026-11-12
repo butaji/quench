@@ -50,6 +50,7 @@ struct Analysis<'a> {
     unit: &'a super::super::lane_unit::Unit,
     facts: &'a super::super::facts::Facts,
     entry: usize,
+    entering: &'a [(Register, IntRange)],
     headers: CompoundBitSet,
     generic: &'a [usize],
     /// Whether the element access at a PC reads or writes a hoisted dense view, whose miss
@@ -60,15 +61,16 @@ struct Analysis<'a> {
 type Assumptions = BTreeMap<usize, Vec<(Register, IntRange)>>;
 type Relaxed = BTreeMap<(usize, Register), Widening>;
 
-/// The ranges of `unit` entered at `entry`: `generic` are the PCs that run guest code natively.
+/// The ranges of `unit` entered at `entry`, where each `entering` register is guarded to its
+/// range by the entry: `generic` are the PCs that run guest code natively.
 pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
-    facts: &super::super::facts::Facts, entry: usize, generic: &[usize],
+    facts: &super::super::facts::Facts, entry: usize, entering: &[(Register, IntRange)], generic: &[usize],
     hoisted_dense: &dyn Fn(usize) -> bool) -> IntRanges {
     let mut headers = CompoundBitSet::with_capacity(unit.instructions.len());
     for (pc, instruction) in unit.instructions.iter().enumerate() {
         for target in successors(pc, *instruction).into_iter().flatten().filter(|target| *target <= pc) { headers.insert(target); }
     }
-    let analysis = Analysis { program, unit, facts, entry, headers, generic, hoisted_dense };
+    let analysis = Analysis { program, unit, facts, entry, entering, headers, generic, hoisted_dense };
     let mut relaxed = Relaxed::new();
     for _ in 0..WIDENING_ROUNDS {
         match analysis.pass(&relaxed) {
@@ -125,7 +127,8 @@ impl Analysis<'_> {
         if !header && pc != self.entry { return pre; }
         let fresh = self.fresh(pc);
         let incoming = match pre {
-            Some(mut pre) if pc == self.entry => { pre.join(fresh.clone()); Some(pre) }
+            Some(mut pre) if pc == self.entry => { pre.join(self.entry_state(&fresh)); Some(pre) }
+            None if pc == self.entry => Some(self.entry_state(&fresh)),
             other => other,
         };
         let Some(mut state) = incoming else { return Some(fresh) };
@@ -146,6 +149,16 @@ impl Analysis<'_> {
         state.relations = fresh.relations;
         assumed.insert(pc, carried);
         Some(state)
+    }
+
+    /// What the entry proves beyond the types: the guarded ranges of the entering registers.
+    fn entry_state(&self, fresh: &State) -> State {
+        let mut state = fresh.clone();
+        for &(register, range) in self.entering {
+            let slot = &mut state.ranges[usize::from(register)];
+            *slot = slot.and_then(|known| known.intersect(range));
+        }
+        state
     }
 
     /// Records the assumptions of header `target` that the back edge's `next` state breaks.
