@@ -134,7 +134,7 @@ mod tests {
         assert_eq!(bytes, unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize);
         interrupt.request_termination();
         for guard in [false, true] {
-            let mut context = CallContext::native_adapter(std::ptr::null_mut(), interrupt.atomic_flag(),
+            let mut context = CallContext::native_adapter(std::ptr::null_mut(), interrupt.attention_flag(),
                 (!guard).then_some((page, bytes)));
             if guard { context.guard_start = page; context.guard_end = page + bytes; }
             let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut context));
@@ -187,7 +187,7 @@ mod tests {
         let interrupt = crate::ExecutionInterrupt::default();
         let (page, bytes) = interrupt.poll_page().unwrap();
         interrupt.request_termination();
-        let mut context = CallContext::native_adapter(std::ptr::null_mut(), interrupt.atomic_flag(), None);
+        let mut context = CallContext::native_adapter(std::ptr::null_mut(), interrupt.attention_flag(), None);
         let before = ACTIVE_CONTEXT.with(std::cell::Cell::get);
         let mut result = 0;
         let status = unsafe { super::super::enter_native(&mut context, page as u64, bytes as u64,

@@ -53,6 +53,11 @@ impl LoopTier {
         self.iterations.checked_div(u64::from(self.runs))
     }
 
+    /// Whether the site's published code is UltraJIT's, which the loop's body does not pass.
+    pub(super) fn is_ultra(&self) -> bool {
+        self.code.as_ref().and_then(|code| code.lease()).is_some_and(|region| region.is_ultra())
+    }
+
     pub(super) fn is_published(&self) -> bool {
         self.code.as_ref().is_some_and(|code| code.is_published())
     }

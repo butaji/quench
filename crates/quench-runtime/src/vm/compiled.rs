@@ -4449,7 +4449,7 @@ impl CallContext {
         let poll = interrupt.poll_page();
         Self {
             stack_limit: 0,
-            interrupt: interrupt.atomic_flag(),
+            interrupt: interrupt.attention_flag(),
             table: std::ptr::null(),
             vm: std::ptr::null_mut(),
             env: Value::NULL,
@@ -6085,6 +6085,9 @@ impl CompiledOsrRegion {
         (thunk, base as u64 + stub as u64)
     }
 
+    /// Whether Cranelift made the region (UltraJIT), not BaseJIT's stencils.
+    pub(super) fn is_ultra(&self) -> bool { self.crossing == Crossing::General }
+
     /// A miss at the cache site of `pc` met `load`'s shape: points the site's one entry at it by
     /// rewriting its shape and slot in the published code (through the code heap's write view),
     /// where the entry's slot type and dependencies allow and the site has patches left.
@@ -7170,7 +7173,7 @@ impl<H: Host> Vm<H> {
             ((*dispatch).shadow_top, (*dispatch).shadow_end) = (shadow.addr(), shadow.add(frames).addr());
             let context = &raw mut (*frame).context;
             (*context).adapter_payload = dispatch.cast();
-            (*context).interrupt = self.execution_interrupt.atomic_flag() as *const _;
+            (*context).interrupt = self.execution_interrupt.attention_flag() as *const _;
             (*context).interrupt_owner = &self.execution_interrupt;
             context
         };
@@ -7182,7 +7185,7 @@ impl<H: Host> Vm<H> {
             // entries checkpoint it in `run_nested_lane_method`.
             let context = unsafe { &mut *context };
             context.bind_native_adapter(context.adapter_payload,
-                self.execution_interrupt.atomic_flag() as *const _, poll);
+                self.execution_interrupt.attention_flag() as *const _, poll);
             unsafe { enter_body(context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast(), method.entry) }
         } else {
             unsafe { (method.entry)(&mut *context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast()) }
@@ -12404,7 +12407,7 @@ fn run_native_entry(
         return run_leaf(std::ptr::null_mut(), arguments.as_ptr().cast::<u64>(), entry);
     }
     let flag = poll_page.map_or_else(
-        || std::ptr::from_ref(interrupt.atomic_flag()),
+        || std::ptr::from_ref(interrupt.attention_flag()),
         |(start, _)| start as *const std::sync::atomic::AtomicBool,
     );
     let mut context = CallContext::native_adapter(std::ptr::null_mut(), flag, poll_page);
@@ -12951,7 +12954,7 @@ impl<H: Host> Vm<H> {
             // overwrite this with the exact failing PC before invoking VM semantics.
             vm.frames[frame].pc = start_pc;
             vm.frames[frame].pc_is_resume = false;
-            let interrupt = vm.execution_interrupt.atomic_flag();
+            let interrupt = vm.execution_interrupt.attention_flag();
             let interrupt = interrupt as *const std::sync::atomic::AtomicBool;
             let poll_page = vm.compiled_poll_page();
             let outcome = compiled.run_general_dispatch(
@@ -14045,7 +14048,7 @@ impl<H: Host> Vm<H> {
             let poll = self.execution_interrupt.poll_page();
             let mut context = CallContext {
                 stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
-                interrupt: self.execution_interrupt.atomic_flag(),
+                interrupt: self.execution_interrupt.attention_flag(),
                 table: compiled.table.as_ptr(),
                 vm: (self as *mut Self).cast(),
                 env,
@@ -14407,7 +14410,7 @@ impl<H: Host> Vm<H> {
             // SAFETY: NativeJsProgram's constructor binds this function to H and the
             // shared ABI; the opaque and internal context pointers have the same ABI.
             let entry = unsafe { std::mem::transmute::<super::native_program::NativeJsFunctionEntry, Entry>(entry) };
-            let interrupt = vm.execution_interrupt.atomic_flag() as *const _;
+            let interrupt = vm.execution_interrupt.attention_flag() as *const _;
             let poll_page = vm.compiled_poll_page();
             let exited = run_js_native_entry(entry, vm as *mut Self, program,
                 (dispatch as *mut JsStepDispatch).cast(), interrupt, poll_page, &[]);
@@ -17489,7 +17492,7 @@ mod tests {
         let page = native_poll_page(&vm.execution_interrupt).expect("owned poll page");
         let context = unsafe { &mut (*frame).context };
         context.bind_native_adapter(context.adapter_payload,
-            vm.execution_interrupt.atomic_flag(), Some(page));
+            vm.execution_interrupt.attention_flag(), Some(page));
         let mut out = 0;
         let status = unsafe { enter_native(context, 0, 0, inputs.as_ptr(), &mut out,
             NativeEntryMode::Resumable, outer) };
@@ -17629,7 +17632,7 @@ mod tests {
             let dispatch = &mut activation.dispatch;
             let mut context = CallContext::native_adapter(
                 (dispatch as *mut JsStepDispatch).cast(),
-                vm.execution_interrupt.atomic_flag(), None,
+                vm.execution_interrupt.attention_flag(), None,
             );
             let vm = vm as *mut Vm<crate::test_host::TestHost>;
             context.vm = vm.cast();
@@ -17778,7 +17781,7 @@ mod tests {
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
                 let dispatch = &mut activation.dispatch;
-                let interrupt = vm.execution_interrupt.atomic_flag() as *const _;
+                let interrupt = vm.execution_interrupt.attention_flag() as *const _;
                 run_js_native_entry(report_panic, vm, ProgramId::MAIN,
                     (dispatch as *mut JsStepDispatch).cast(), interrupt, None, &[])
             })
@@ -17788,7 +17791,7 @@ mod tests {
         let (_memory, entry, _operands) = live_native_graph(&vm);
         JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
             let dispatch = &mut activation.dispatch;
-            let interrupt = vm.execution_interrupt.atomic_flag() as *const _;
+            let interrupt = vm.execution_interrupt.attention_flag() as *const _;
             let (status, _) = run_js_native_entry(entry, vm, ProgramId::MAIN,
                 (dispatch as *mut JsStepDispatch).cast(), interrupt, None, &[]).unwrap();
             assert_eq!(status, NATIVE_JS_STOPPED);
