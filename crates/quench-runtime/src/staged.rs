@@ -24,6 +24,7 @@ mod global;
 mod names;
 mod callout;
 mod admission;
+mod type_name;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::CallOut;
@@ -291,6 +292,9 @@ pub(crate) enum Operation<W, P> {
     GlobalRead { destination: Register, atom: u32, site: u16, binding: GlobalBinding, proof: P },
     /// Define `destination` as `undefined` (`void`).
     Void { destination: Register },
+    /// Define `destination` with the index in `bytecode::TYPEOF_NAMES` of the name `typeof
+    /// source` is (`type_name::step`).
+    Typeof { destination: Register, source: Register },
     /// ToPropertyKey of a string `source`, which is its own key; any other value leaves at the
     /// miss edge, where the VM converts it (`Vm::to_property_key`: a Number allocates, an object
     /// runs guest code).
@@ -412,6 +416,9 @@ impl<W, P> Operation<W, P> {
                     destination: instruction.result_register(), source: instruction.register_b() },
             Op::Unary if instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Void as u32
                 && !instruction.returns_from_frame() => Self::Void { destination: instruction.result_register() },
+            Op::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
+                && !instruction.returns_from_frame() => Self::Typeof {
+                    destination: instruction.result_register(), source: instruction.register_b() },
             _ => return None,
         })
     }

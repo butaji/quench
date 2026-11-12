@@ -200,6 +200,15 @@ pub(super) fn staged_property_key(r: Registers, view: Carried, destination: u16,
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::PropertyKey { destination, source }), Step::Value(_))
 }
 
+/// `typeof source`'s name index into `destination`, by the staged operation; false, writing
+/// nothing, where the value is a heap value, whose cell the VM reads.
+#[inline(always)]
+pub(super) fn staged_typeof(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
+    matches!(crate::staged::step(&mut stage, &mut frame, Operation::Typeof { destination, source }), Step::Value(_))
+}
+
 /// The activation's `this` into `destination` by the staged LoadThis; false, writing
 /// nothing, where the lane does not hold it (`this` is `Value::DELETED`).
 #[inline(always)]

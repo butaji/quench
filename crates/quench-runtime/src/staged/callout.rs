@@ -16,6 +16,7 @@ pub(crate) const TAG_STORE_ENV_LOCAL: u8 = 6;
 pub(crate) const TAG_ARGUMENTS_LENGTH: u8 = 7;
 pub(crate) const TAG_GLOBAL_WRITE: u8 = 8;
 pub(crate) const TAG_GLOBAL_TYPEOF: u8 = 9;
+pub(crate) const TAG_TYPEOF: u8 = 10;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -47,6 +48,9 @@ pub(crate) enum CallOut {
     GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool } = TAG_GLOBAL_WRITE,
     /// The `typeof` name of the global `atom` through cache `site`.
     GlobalTypeof { atom: u32, site: u16 } = TAG_GLOBAL_TYPEOF,
+    /// The name index of `typeof source` for a heap value, whose cell decides it
+    /// (`Vm::typeof_index_value`).
+    Typeof { source: Register } = TAG_TYPEOF,
 }
 
 impl CallOut {
@@ -55,7 +59,7 @@ impl CallOut {
     pub(crate) fn operands(self) -> [Option<Register>; 2] {
         match self {
             Self::Equality { left, right, .. } | Self::Binary { left, right, .. } => [Some(left), Some(right)],
-            Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
+            Self::PropertyKey { source: operand } | Self::Typeof { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } => [None, None],
             Self::Protocol { operands, .. } => operands,

@@ -29,6 +29,7 @@ impl<H: Host> Vm<H> {
             }
             CallOut::Binary { operator, .. } =>
                 self.binary(p, operator, first.expect("a binary names its left operand"), operand).map(Some),
+            CallOut::Typeof { .. } => Ok(Some(self.typeof_index_value(operand))),
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
             CallOut::Protocol { step, .. } => self.protocol_step(p, step, first, second),
             _ => self.name_step(p, site, operation, first),

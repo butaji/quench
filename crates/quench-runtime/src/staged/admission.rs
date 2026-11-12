@@ -9,7 +9,7 @@ impl<W, P> Operation<W, P> {
     /// must hold in its window to step it; `None` for any other row.
     pub(crate) const fn registers(&self) -> Option<[Option<Register>; 2]> {
         Some(match *self {
-            Self::Move { destination, source } | Self::LogicalNot { destination, source }
+            Self::Move { destination, source } | Self::LogicalNot { destination, source } | Self::Typeof { destination, source }
                 | Self::Number(NumberOperation::ToNumeric { destination, source } | NumberOperation::IncDec { destination, source, .. }) =>
                 [Some(destination), Some(source)],
             Self::LoadLocalPlain { destination, .. } | Self::LoadThis { destination } | Self::Void { destination } =>
@@ -56,6 +56,9 @@ mod tests {
         let step: Row = Operation::Number(NumberOperation::IncDec { destination: 8, source: 8, decrement: false,
             overflow: super::super::Overflow::Exit });
         assert_eq!(step.registers(), Some([Some(8), Some(8)]));
+        let name: Row = Operation::Typeof { destination: 9, source: 10 };
+        assert_eq!(name.registers(), Some([Some(9), Some(10)]));
+        assert!(name.leaves() && !name.uses_locals());
         assert_eq!(Row::Jump.registers(), None);
     }
 }

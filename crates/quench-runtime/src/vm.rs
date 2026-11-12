@@ -127,6 +127,7 @@ mod call_printer;
 pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};
 mod call_out;
 mod coercion;
+pub(crate) use coercion::typeof_name_index;
 mod collections;
 mod construction;
 mod data_view;
