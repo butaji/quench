@@ -48,9 +48,10 @@ pub(super) fn result_repr(row: &Decoded, reprs: &Reprs, widened: bool, numbers: 
     }
 }
 
-/// Whether the row at `pc` is widened: named by a leave, or a loaded value among widened ones.
-fn row_widened(widened: &[usize], pc: usize, with_loads: bool) -> bool {
-    with_loads || widened.contains(&pc)
+/// Whether the row at `pc` is widened: named by a leave, recorded as declining its int32 step
+/// (`kinds`), or a loaded value among widened ones.
+fn row_widened(widened: &[usize], pc: usize, with_loads: bool, kinds: Option<&OperandKinds>) -> bool {
+    with_loads || widened.contains(&pc) || kinds.is_some_and(|kinds| kinds.declined_int32())
 }
 
 /// Whether a loaded value (a heap row) is among the widened PCs.
@@ -59,8 +60,10 @@ fn loads_widened(decoded: &[Decoded], header: u32, widened: &[usize]) -> bool {
 }
 
 /// The representation of every register the region names, to a fixed point: where the
-/// compile began (`ints`, `doubles`; dead at the header: none yet), then each writer's result.
-pub(super) fn representations(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN], webs: &Webs) -> Reprs {
+/// compile began (`seen`, the live registers' sample; dead at the header: none yet), then each
+/// writer's result, which the sites' feedback (`kinds`, per row) widens where it recorded a
+/// declined int32 step.
+pub(super) fn representations(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN], kinds: &[OperandKinds], webs: &Webs) -> Reprs {
     let header = region.header;
     // One loaded value that left for its int32 speculation widens every loaded value at once: the
     // next compile need not discover them one leave at a time.
@@ -84,7 +87,7 @@ pub(super) fn representations(region: &LoopRegion, decoded: &[Decoded], widened:
         changed = false;
         for (k, row) in decoded.iter().enumerate() {
             let Some(dst) = row.dst else { continue };
-            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some()), region.number_registers().contains(&webs.orig[usize::from(dst)]));
+            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some(), kinds.get(k)), region.number_registers().contains(&webs.orig[usize::from(dst)]));
             if reprs[&dst] < result {
                 reprs.insert(dst, result);
                 changed = true;

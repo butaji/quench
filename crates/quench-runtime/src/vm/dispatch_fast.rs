@@ -305,7 +305,7 @@ type Ip = *const LaneInstruction;
 /// register exactly.
 pub(super) struct LaneView {
     /// A record's handler may change while the lane runs (`requicken`); its other fields do not.
-    records: Box<[std::cell::UnsafeCell<LaneInstruction>]>,
+    records: Records,
     /// Per instruction, whether the general loop enters the lane there: the
     /// straight-line lane run from it is long enough to repay the lane's
     /// entry cost, and its record does not read the accumulator. Kept apart
@@ -465,7 +465,7 @@ impl LaneView {
             CAPTURE_LEAF => forms!(CAPTURE_LEAF),
             _ => forms!(PLAIN_LEAF),
         };
-        for record in &self.records {
+        for record in self.records.iter() {
             // SAFETY: as `requicken`: the lane runs on the view's thread, and no reference to
             // the handler field is live.
             let record = unsafe { &mut *record.get() };
@@ -644,6 +644,9 @@ pub(super) mod lane_body_stats;
 mod body_calls;
 #[path = "lane_leaves.rs"]
 mod lane_leaves;
+#[path = "operand_feedback.rs"]
+pub(super) mod operand_feedback;
+use operand_feedback::{has_operand_feedback, note_first_miss, note_operands, Records};
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
 #[path = "loop_tier.rs"]
@@ -1030,7 +1033,7 @@ impl LaneView {
     }
 
     #[inline] pub(super) fn records(&self) -> Ip {
-        std::cell::UnsafeCell::raw_get(self.records.as_ptr()).cast_const()
+        self.records.base()
     }
 
     /// The record a frameless activation starts at: the first, or the tier prologue.
@@ -4200,6 +4203,8 @@ script_handler! {
     /// registers; the first other operand switches the record to `lane_operator_numbers`.
     fn lane_operator<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), r.get(i.c)) else {
+            // SAFETY: the record is an arithmetic record of the running view.
+            unsafe { note_first_miss(cx, ip, r.get(i.b), r.get(i.c)) };
             requicken::<H>(ip, lane_operator_numbers::<H, OP>);
             sibling!(lane_operator_numbers::<H, OP>, r, ip, Carried::script(cx))
         };
@@ -4231,6 +4236,8 @@ script_handler! {
     #[inline(never)]
     fn lane_relation_value_other<CONSTANT: bool>(cx, r, ip, i, view) {
         let (operator, left, right) = lane_relation_operands::<CONSTANT>(r, i);
+        // SAFETY: the record is a comparison record of the running view.
+        unsafe { note_operands(cx, ip, left, right) };
         let Some(holds) = lane_relation::<H>(operator, left, right) else {
             return exit(ip);
         };
@@ -4272,6 +4279,8 @@ script_handler! {
     /// BigInt arithmetic in place; anything else takes the general path.
     #[inline(never)]
     fn lane_operator_other<OP: u32>(cx, r, ip, i, view) {
+        // SAFETY: the record is an arithmetic record of the running view.
+        unsafe { note_operands(cx, ip, r.get(i.b), r.get(i.c)) };
         let Some(value) = lane_other_operator_value(cx, OP, r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
@@ -4340,6 +4349,8 @@ script_handler! {
     fn lane_operator_constant<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), i.constant())
         else {
+            // SAFETY: the record is an arithmetic record of the running view.
+            unsafe { note_first_miss(cx, ip, r.get(i.b), i.constant()) };
             requicken::<H>(ip, lane_operator_constant_numbers::<H, OP>);
             sibling!(lane_operator_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
         };
@@ -4355,6 +4366,8 @@ script_handler! {
     fn lane_operator_integer_constant<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::integer_constant_operator::<OP>(r.get(i.b), i.imm() as i32)
         else {
+            // SAFETY: the record is an arithmetic record of the running view.
+            unsafe { note_first_miss(cx, ip, r.get(i.b), Value::integer(i.imm() as i32)) };
             requicken::<H>(ip, lane_operator_integer_constant_numbers::<H, OP>);
             sibling!(lane_operator_integer_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
         };
@@ -4370,6 +4383,8 @@ script_handler! {
     fn lane_operator_integer_constant_numbers<OP: u32>(cx, r, ip, i, view) {
         let (left, right) = (r.get(i.b), Value::integer(i.imm() as i32));
         let value = super::operations::number_value_operator::<OP>(left, right).or_else(|| {
+            // SAFETY: the record is an arithmetic record of the running view.
+            unsafe { note_operands(cx, ip, left, right) };
             (OP == super::operations::ADDITION).then(|| lane_concatenation(cx, left, right)).flatten()
         });
         let Some(value) = value else {
@@ -4452,6 +4467,8 @@ script_handler! {
     /// record's constant.
     #[inline(never)]
     fn lane_operator_constant_other<OP: u32>(cx, r, ip, i, view) {
+        // SAFETY: the record is an arithmetic record of the running view.
+        unsafe { note_operands(cx, ip, r.get(i.b), i.constant()) };
         let Some(value) = lane_other_operator_value(cx, OP, r.get(i.b), i.constant()) else {
             return exit(ip);
         };
@@ -7422,6 +7439,8 @@ script_handler! {
         else {
             return exit(ip);
         };
+        // SAFETY: the record is a comparison record of the running view.
+        unsafe { note_operands(cx, ip, left, right) };
         let Some(holds) = lane_relation::<H>(u32::from(i.a), left, right) else {
             return exit(ip);
         };
@@ -7579,6 +7598,8 @@ script_handler! {
     /// path. Out of line, so the integer case keeps few values live.
     #[inline(never)]
     fn lane_jump_binary_false_registers_other<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
+        // SAFETY: the record is a comparison record of the running view.
+        unsafe { note_operands(cx, ip, r.get(i.b), r.get(i.c)) };
         let Some(holds) = lane_relation::<H>(relation_operator::<OP>(i), r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
@@ -7627,6 +7648,8 @@ script_handler! {
     #[inline(never)]
     fn lane_jump_binary_false_small_other<BACKWARD: bool, TABLE: bool>(cx, r, ip, i, view) {
         let right = lane_small_constant::<H, TABLE>(cx, i);
+        // SAFETY: the record is a comparison record of the running view.
+        unsafe { note_operands(cx, ip, r.get(i.b), right) };
         let Some(holds) = super::operations::number_relation(u32::from(i.a), r.get(i.b), right)
             .or_else(|| lane_relation_other::<H>(u32::from(i.a), r.get(i.b), right))
         else {
@@ -19749,9 +19772,8 @@ fn derive_lane_view<'live, H: Host>(
     };
     let (field_records, name_records) = (hinted_records(false), hinted_records(true));
     let string_case_filters = string_case_filter::specialize::<H>(heap, constants, &decoded, &mut records);
-    let records: Box<[std::cell::UnsafeCell<LaneInstruction>]> =
-        records.into_iter().map(std::cell::UnsafeCell::new).collect();
-    let first = std::cell::UnsafeCell::raw_get(records.as_ptr()).cast_const();
+    let records = Records::new(records, decoded.iter().any(|instruction| has_operand_feedback(instruction.op())));
+    let first = records.base();
     LaneView {
         records,
         entries,

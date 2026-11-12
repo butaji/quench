@@ -312,7 +312,7 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usiz
         return base_only.then_some(None);
     }
     let built = super::base_region::build(region, views == super::ElementViews::Dense, widened,
-        [observation.int_registers, observation.double_registers]);
+        [observation.int_registers, observation.double_registers], observation.operand_kinds);
     let Ok((code, bare)) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, region.header, &code, None, "");
