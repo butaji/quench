@@ -275,9 +275,22 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, dense): (Ending, 
     built
 }
 
-/// The rows whose int32 speculation failed: those of the caller's instructions at the `widened` PCs.
-fn widened_rows(origins: &[Origin], widened: &[usize]) -> Vec<usize> {
-    let widens = |origin: &Origin| matches!(origin, Origin::Caller(pc) if widened.contains(&(*pc as usize)));
+/// The bit of a widened key that says the instruction is an inlined callee's (`inlined_exit_key`).
+const INLINED_KEY: usize = 1 << (usize::BITS - 1);
+
+/// The key a leave inside an inlined callee is counted and widened by: the callee's instruction `pc`
+/// of the frame whose call is at the caller's PC `call`.
+pub(in crate::vm) fn inlined_exit_key(call: u32, pc: u32) -> usize {
+    INLINED_KEY | (call as usize) << u32::BITS | pc as usize
+}
+
+/// The rows whose int32 speculation failed: those of the caller's instructions at the `widened` PCs,
+/// and of the inlined callees' at the `widened` keys (`inlined_exit_key`).
+fn widened_rows(origins: &[Origin], frames: &[InlinedCall], widened: &[usize]) -> Vec<usize> {
+    let widens = |origin: &Origin| match origin {
+        Origin::Caller(pc) => widened.contains(&(*pc as usize)),
+        Origin::Inlined { frame, pc } => widened.contains(&inlined_exit_key(frames[*frame].call, *pc)),
+    };
     origins.iter().enumerate().filter(|(_, origin)| widens(origin)).map(|(k, _)| k).collect()
 }
 
@@ -314,7 +327,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     }
     let unreached = |row: Decoded, reached: &bool| if *reached { row } else { Decoded::step(Step::Leave, None) };
     let rows: Vec<Decoded> = stitched.rows.into_iter().zip(&reached).map(|(row, reached)| unreached(row, reached)).collect();
-    let (reprs, homes, webs, decoded) = analyze(&span, &rows, &widened_rows(&stitched.origins, spec.widened), spec.seen);
+    let (reprs, homes, webs, decoded) = analyze(&span, &rows, &widened_rows(&stitched.origins, &stitched.frames, spec.widened), spec.seen);
     let invalidation = spec.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(Decoded::makes_calls));
     let realm = (!stitched.frames.is_empty()).then_some(spec.realm);
     let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, invalidation, realm };

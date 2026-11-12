@@ -30,6 +30,7 @@ mod call_plan;
 pub(in crate::vm::compiled) mod callees;
 mod decode;
 pub(in crate::vm::compiled) mod function;
+pub(in crate::vm) use function::inlined_exit_key;
 mod link;
 mod plan;
 mod repr;
