@@ -96,13 +96,26 @@ impl FunctionCompiler<'_, '_> {
     /// `ToString`) right after it is evaluated, which is when the nested `+` would convert it,
     /// and `StringConcat` joins the parts once instead of building every intermediate string.
     pub(super) fn string_chain(&mut self, value: &BinaryExpression<'_>) -> Option<Register> {
-        let (leading, rights) = addition_chain(value)?;
+        if self.chain_miss == Some(value.span.start) {
+            return None;
+        }
+        let (leading, rights) = match addition_chain(value) {
+            Ok(chain) => chain,
+            Err(miss) => {
+                self.chain_miss = miss.then_some(value.span.start);
+                return None;
+            }
+        };
         let mut parts = vec![(None, Some(super::string::constant(leading)))];
         for part in rights {
             let text = self.static_value(part).filter(|constant| matches!(constant, Constant::String(_)));
             parts.push((Some(part), text));
         }
         let dynamic = parts.iter().filter(|(_, text)| text.is_none()).count();
+        if dynamic == 0 {
+            // Every chain below it, starting here, has only some of these static parts.
+            self.chain_miss = Some(value.span.start);
+        }
         (parts.len() >= CHAIN_MIN_PARTS && dynamic > 0).then(|| self.concat_parts(parts))
     }
 
@@ -218,24 +231,26 @@ impl FunctionCompiler<'_, '_> {
 const CHAIN_MIN_PARTS: usize = 3;
 
 /// The leading string literal and the right operands, in order, of a left-nested `+` chain
-/// that starts with a string literal.
+/// that starts with a string literal. Otherwise whether the chain was all `+` down to a
+/// leftmost operand that is no string literal: then every chain below it, which starts at the
+/// same place, misses too (`string_chain` remembers that, so a long chain is walked once).
 fn addition_chain<'e, 'a>(
     value: &'e BinaryExpression<'a>,
-) -> Option<(&'e oxc_ast::ast::StringLiteral<'a>, Vec<&'e Expression<'a>>)> {
+) -> Result<(&'e oxc_ast::ast::StringLiteral<'a>, Vec<&'e Expression<'a>>), bool> {
     let mut rights = Vec::new();
     let mut head = value;
     loop {
         if head.operator != BinaryOperator::Addition {
-            return None;
+            return Err(false);
         }
         rights.push(&head.right);
         match &head.left {
             Expression::BinaryExpression(inner) => head = inner,
             Expression::StringLiteral(text) => {
                 rights.reverse();
-                return Some((text, rights));
+                return Ok((text, rights));
             }
-            _ => return None,
+            _ => return Err(true),
         }
     }
 }

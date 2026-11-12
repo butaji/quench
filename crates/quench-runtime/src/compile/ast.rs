@@ -131,6 +131,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     controls: Vec<ControlTarget>,
     /// How many loop statements (heads and bodies) enclose the code being compiled.
     pub(super) loop_depth: u32,
+    /// The start of the last left-nested `+` chain found not to join dynamic parts to a leading
+    /// string literal; the chains below it, which start at the same place, miss too.
+    pub(super) chain_miss: Option<u32>,
     iterator_closures: Vec<IteratorClosure>,
     pub(super) iterator_close_ranges: Vec<(u32, u32)>,
     iterator_close_exclusions: Vec<Vec<(u32, u32)>>,
@@ -245,6 +248,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             clone_plans: Default::default(),
             controls: vec![],
             loop_depth: 0,
+            chain_miss: None,
             iterator_closures: vec![],
             iterator_close_ranges: vec![],
             iterator_close_exclusions: vec![],

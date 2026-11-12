@@ -1696,6 +1696,19 @@ fn unicode_regexp_last_index_inside_a_surrogate_pair_starts_at_its_lead() {
 }
 
 #[test]
+fn long_left_nested_chains_compile_and_run() {
+    // Chains of thousands of terms (as generated code has) stay within the transition budget
+    // and walk once, not once per level.
+    let source = r#"
+let sum = "1", text = '"x"', mixed = '"p"';
+for (let i = 0; i < 3000; i++) { sum += "+" + i; text += '+"y"'; mixed += "+v"; }
+const v = 1;
+print([eval(sum), eval(text).length, eval(mixed).length].join());
+"#;
+    assert_eq!(output(source), ["4498501,3001,3001"]);
+}
+
+#[test]
 fn class_clones_environment_only_inside_loops() {
     // A class evaluated once per activation shares the scope; one in a loop gets a copy per
     // evaluation so its methods keep that iteration's bindings.

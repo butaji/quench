@@ -10,7 +10,7 @@ pub const WORKER_STACK_SIZE: usize = STACK_BUDGET_BYTES + STACK_HEADROOM_BYTES;
 
 // Some parsers and traversals grow structured work without retaining Rust
 // frames. This derived transition ceiling bounds those paths as well.
-const STACK_TRANSITION_RESERVE_BYTES: usize = 64 * 1024;
+const STACK_TRANSITION_RESERVE_BYTES: usize = 4 * 1024;
 const MAX_RECURSIVE_TRANSITIONS: usize = STACK_BUDGET_BYTES / STACK_TRANSITION_RESERVE_BYTES;
 /// The share of the transitions and stack distance an optional transition may reach
 /// (`StackGuard::enter_optional`): the rest stays for the transitions execution requires.
