@@ -104,6 +104,16 @@ impl<H: Host> Vm<H> {
             .iter()
             .rposition(|frame| self.frame_owns_arguments(frame, object))
         else {
+            // A suspended function's lane activation holds the parameters in its window.
+            let window = self
+                .programs
+                .residual(self.active_program)
+                .and_then(|code| self.lane_stack.window_locals(code, object));
+            if let Some(locals) = window {
+                // SAFETY: the running activation's window holds a local for each slot a
+                // mapping names (`Function::arguments_ride_window`).
+                unsafe { *locals.add(slot) = value };
+            }
             return;
         };
         if self.frames[owner].captured {

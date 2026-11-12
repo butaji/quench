@@ -2329,19 +2329,16 @@ impl Function {
 
     /// Whether the `arguments` object a suspending function made on entry rides its window as
     /// the local it was stored in, which the lane reads in place (`lane_frame_arguments`): no
-    /// closure captures the binding, and a mapped object (`arguments_alias_parameters`) aliases
-    /// parameters that nothing else reads, so the object holds each element's one value: no
-    /// instruction addresses a parameter and no closure captures one.
+    /// closure captures the binding. A mapped object (`arguments_alias_parameters`) aliases
+    /// parameters that live in the window's locals as well, none of them captured: the window's
+    /// parameter reads and writes go through the object (`lane_load_mapped_parameter`), whose
+    /// element writes reach the local (`LaneStack::window_locals`).
     pub(crate) fn arguments_ride_window(&self) -> bool {
-        let parameters = usize::from(self.params);
         self.arguments_slot.is_some_and(|slot| {
             self.suspends_in_record()
                 && !self.local_slot_uses_environment(usize::from(slot))
                 && (!self.arguments_alias_parameters()
-                    || ((0..parameters).all(|parameter| !self.local_slot_uses_environment(parameter))
-                        && self.instructions().all(|instruction| {
-                            instruction.addressed_local_slots().all(|addressed| usize::from(addressed) >= parameters)
-                        })))
+                    || (0..usize::from(self.params)).all(|parameter| !self.local_slot_uses_environment(parameter)))
         })
     }
 

@@ -2902,6 +2902,7 @@ fn frame_window_local<H: Host>(vm: &Vm<H>, frame: usize, slot: usize, environmen
 }
 
 mod capture_append;
+mod mapped_windows;
 mod string_case_filter;
 
 script_handler! {
@@ -14704,7 +14705,8 @@ script_handler! {
 
 /// `ArgumentsLength` or `ArgumentGet` in the window of a suspended function: the `arguments`
 /// object it made on entry is the window's local `i.imm()` (`Function::arguments_ride_window`),
-/// read as a materialized object is. `None` takes the general path.
+/// read as a materialized object is, a mapped element too: the window's writes to its parameter
+/// reach it (`lane_store_mapped_parameter`). `None` takes the general path.
 #[inline(always)]
 fn window_arguments<H: Host, const GET: bool>(vm: &Vm<H>, r: Registers, i: &LaneInstruction, body: &Function) -> Option<Value> {
     let binding = r.get(body.registers + WINDOW_LOCALS + i.imm() as u16);
@@ -14712,7 +14714,7 @@ fn window_arguments<H: Host, const GET: bool>(vm: &Vm<H>, r: Registers, i: &Lane
         return vm.arguments_object_length(binding);
     }
     let index = usize::try_from(r.get(i.b).as_int()?).ok()?;
-    vm.plain_arguments_element(binding, index)
+    vm.stored_arguments_element(binding, index)
 }
 
 /// The frameless target of a lane call to `callee`, resolved on first use.
@@ -20778,7 +20780,8 @@ fn specialize_environment_window<H: Host>(
             return None;
         }
         let environment = !op.captures_environment() && function.local_slot_uses_environment(own as usize);
-        let handler: Handler = match (op.class(), environment) {
+        let mapped = mapped_windows::mapped_parameter_handler::<H>(function, op.class(), own as usize);
+        let handler: Handler = mapped.unwrap_or(match (op.class(), environment) {
             (Class::MakeClosure, _) => lane_make_window_closure::<H>,
             (Class::CloneEnv, _) => lane_clone_window_env::<H>,
             (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, true) => lane_load_window_local::<H, true>,
@@ -20787,7 +20790,7 @@ fn specialize_environment_window<H: Host>(
             (Class::InitializeTdz, false) => lane_initialize_window_tdz::<H, false>,
             (_, true) => lane_store_window_local::<H, true>,
             (_, false) => lane_store_window_local::<H, false>,
-        };
+        });
         replacements.push((pc, handler, own | u32::from(registers) << ENVIRONMENT_WINDOW_SHIFT));
     }
     for (pc, handler, imm) in replacements {

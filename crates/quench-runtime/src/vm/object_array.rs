@@ -103,15 +103,30 @@ impl<H: Host> Vm<H> {
     /// any prototype. `None` for a mapped, absent, accessor or redefined element, or any other
     /// value.
     pub(super) fn plain_arguments_element(&self, target: Value, index: usize) -> Option<Value> {
+        if self.heap.object(target)?.mapped_argument_slot(index).is_some() {
+            return None;
+        }
+        self.stored_arguments_element(target, index)
+    }
+
+    /// `plain_arguments_element` of an element a parameter may map: the stored element, which
+    /// every write to the parameter reaches while the mapping holds, as the general path's
+    /// stores do (`Vm::mapped_argument_store`).
+    pub(super) fn stored_arguments_element(&self, target: Value, index: usize) -> Option<Value> {
         let object = self.heap.object(target)?;
-        if !object.is_arguments_object()
-            || object.has_indexed_descriptors()
-            || object.mapped_argument_slot(index).is_some()
-        {
+        if !object.is_arguments_object() || object.has_indexed_descriptors() {
             return None;
         }
         let value = *self.heap.array_elements(target)?.get(index)?;
         (!value.is_deleted()).then_some(value)
+    }
+
+    /// The element of `arguments` that parameter `slot` aliases, while the mapping holds: its
+    /// stored element, which writes to the parameter update (`stored_arguments_element`).
+    pub(super) fn mapped_window_element(&self, arguments: Value, slot: usize) -> Option<Value> {
+        (self.heap.object(arguments)?.mapped_argument_slot(slot) == Some(slot))
+            .then(|| self.stored_arguments_element(arguments, slot))
+            .flatten()
     }
 
     pub(super) fn has_own_array_index(&self, target: Value, index: usize) -> bool {
