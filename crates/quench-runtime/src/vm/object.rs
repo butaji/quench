@@ -6,6 +6,13 @@ use crate::value::HeapReference;
 mod mru_chain;
 pub(super) use mru_chain::MRU_CHAIN_END;
 use mru_chain::record_mru_entry;
+/// The slot word of a stored field entry: the slot in the low half, a store class in byte 2
+/// (`general_store`), and in byte 3 how many places of a lane body's leaves named the site
+/// (`Vm::note_field_leave`), written on that path only and kept across refills.
+pub(super) const FIELD_LEAVES_WORD: usize = 2;
+pub(super) const FIELD_LEAVES_SHIFT: u32 = 24;
+pub(super) const FIELD_CLASS_BYTE: usize = 2;
+pub(super) const FIELD_BYTE: u32 = 0xff;
 
 #[cfg(all(test, feature = "aot"))]
 mod tests {
@@ -4627,6 +4634,16 @@ impl<H: Host> Vm<H> {
                 .and_then(|object| self.heap.property_get(object, slot))
                 .is_some_and(|old| self.is_function(old))
     }
+    /// How many runs of a lane body left at the site since its record was last reset,
+    /// saturating at 255: the site's instability (byte 3 of its slot word, `FIELD_LEAVES_SHIFT`).
+    pub(super) fn field_site_leaves(&self, site: usize) -> u8 {
+        (self.field_caches.stored(site)[FIELD_LEAVES_WORD] >> FIELD_LEAVES_SHIFT) as u8
+    }
+    pub(super) fn record_field_leave(&mut self, site: usize) {
+        if !self.field_cache_records(site) { return; }
+        let word = &mut self.field_caches.stored_mut(site)[FIELD_LEAVES_WORD];
+        if *word >> FIELD_LEAVES_SHIFT != FIELD_BYTE { *word += 1 << FIELD_LEAVES_SHIFT; }
+    }
     pub(super) fn record_field_cache(&mut self, site: usize, cache: FieldCache) {
         if !self.field_cache_records(site) {
             return;
@@ -4647,7 +4664,11 @@ impl<H: Host> Vm<H> {
         if (entry.receiver == cache.receiver && entry.holder == cache.holder)
             || entry.receiver == NO_FIELD_RECEIVER
         {
+            let leaves = self.field_site_leaves(site);
             self.field_caches.set(site, cache);
+            if leaves != 0 {
+                self.field_caches.stored_mut(site)[FIELD_LEAVES_WORD] |= u32::from(leaves) << FIELD_LEAVES_SHIFT;
+            }
             return;
         }
         let table_index = self.megamorphic_fields.len() as u32;
