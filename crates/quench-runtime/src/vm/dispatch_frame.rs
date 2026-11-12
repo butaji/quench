@@ -2867,10 +2867,11 @@ impl<H: Host> Vm<H> {
             error.capture_source_location(program, function as u32, throwing_pc);
             return Err(error);
         };
-        self.unwind_handler_scopes(frame, handler);
+        let home = super::handler_entry::HandlerHome::Frame(frame);
+        self.unwind_handler_scopes(home, handler);
         if let Some(slot) = handler.slot {
             let value = self.thrown_value_for(program, error);
-            self.bind_thrown_value(program, frame, slot, value)?;
+            self.bind_thrown_value(program, home, slot, value)?;
         }
         Ok(handler.target as usize)
     }

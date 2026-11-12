@@ -32,6 +32,27 @@ fn a_catch_in_a_generator_window_binds_the_thrown_value_there() {
 }
 
 #[test]
+fn a_catch_in_a_hot_ordinary_function_binds_the_thrown_value_in_its_window() {
+    // The function's body runs natively once hot, over the environment window its activation has:
+    // the catch's captured binding gets a fresh environment per entry, as a frame's does.
+    let lines = agree(
+        r#"
+        function pick(n) {
+            const fns = [];
+            for (let i = 0; i < n; i++) {
+                try { if (i % 2) throw i; } catch (e) { fns.push(() => e); }
+            }
+            return fns.reduce((sum, f) => sum + f(), 0);
+        }
+        let total = 0;
+        for (let round = 0; round < 2000; round++) total += pick(10);
+        print(String(total));
+        "#,
+    );
+    assert_eq!(lines, ["50000"]);
+}
+
+#[test]
 fn a_captured_parameter_rides_the_window_across_yields_beside_a_mapped_arguments_object() {
     let source = r#"
         function* g(a, b) {
