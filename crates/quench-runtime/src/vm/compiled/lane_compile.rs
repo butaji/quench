@@ -256,11 +256,10 @@ impl<H: Host> Vm<H> {
         let (plan, native) = self.plan_lane_method_sized(program, function, targets, captures, direct, generic, budget, entry, arrays)
             .ok_or(Unstarted::Declined)?;
         // A body that cannot amortize a lane entry would serve native callers only
-        // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
-        // than compile code no caller may ever run.
+        // (`LaneView::specialized`), which the lane's warm-up is not: it declines here.
         if entry.is_none() && !called && !amortizes_entry(&plan.unit, function, &plan.direct) { plan_miss(Miss::PlanNotAmortized); return Err(Unstarted::Short); }
         bind_callees(&plan.direct, caller);
-        let level = caller.compile_level();
+        let level = caller.compile_level(plan.fields.values().map(Vec::len).sum(), observed.unwrap_or(TIERS.lane_body.warmup_entries.into()));
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays) ^ u64::from(level == super::jit_backend::CompileLevel::Quick));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
         if let Some(entries) = observed && !pays_compile(program, function, entries, native.dfg.num_insts(), caller, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }

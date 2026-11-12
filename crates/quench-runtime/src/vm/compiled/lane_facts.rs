@@ -132,6 +132,34 @@ pub(in crate::vm) fn promotion_completions() -> u32 {
     u32::try_from(extra * super::tier_policy::PER_MILLE / saved).unwrap_or(u32::MAX)
 }
 
+thread_local! {
+    /// The field sites of bodies that held and the bodies that failed to, this run (`note_site_outcome`).
+    static SITE_OUTCOMES: std::cell::Cell<(u32, u32)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// Books a body's outcome for the model's learned site stability: held, every site of its
+/// plan succeeded; failed, at least one site did.
+pub(in crate::vm) fn note_site_outcome(sites: u32, held: bool) {
+    SITE_OUTCOMES.with(|cell| {
+        let (ok, bad) = cell.get();
+        cell.set(if held { (ok.saturating_add(sites), bad) } else { (ok, bad.saturating_add(1)) });
+    });
+}
+
+/// The level a first body compiles at: Quick where the expected waste of an Optimized compile,
+/// that the plan's `sites` do not hold with probability `p_site^sites` (a Beta posterior over
+/// this run's outcomes from the prior), exceeds the Quick body's loss over the `entries` it
+/// has seen again (the body's size cancels from both).
+pub(in crate::vm) fn level_for_plan(sites: usize, entries: u32) -> super::jit_backend::CompileLevel {
+    let priors = &TIERS.priors;
+    let (ok, bad) = SITE_OUTCOMES.with(std::cell::Cell::get);
+    let (held, failed) = (u64::from(priors.site_prior.0 + ok), u64::from(priors.site_prior.1 + bad));
+    let p_site = held as f64 / (held + failed) as f64;
+    let waste_ns = (1.0 - p_site.powi(i32::try_from(sites).unwrap_or(i32::MAX))) * (priors.compile_ns_per_ir - priors.quick_compile_ns_per_ir) as f64 * compile_wall_permille() as f64 / super::tier_policy::PER_MILLE as f64;
+    let loss_ns = f64::from(entries.max(1)) * priors.body_ns_per_ir_permille as f64 / super::tier_policy::PER_MILLE as f64 * priors.ultra_saving_permille as f64 / super::tier_policy::PER_MILLE as f64;
+    if waste_ns > loss_ns { super::jit_backend::CompileLevel::Quick } else { super::jit_backend::CompileLevel::Optimized }
+}
+
 const SINGLE_CORE: usize = 1;
 
 fn compile_wall_permille() -> u64 {
