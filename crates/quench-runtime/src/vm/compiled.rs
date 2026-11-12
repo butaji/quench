@@ -1835,12 +1835,12 @@ lane_helper_inventory! { H;
     FieldAdd => lane_field_add::<H>,
     /// A loop's hoisted typed array view (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
-    /// A value step the interpreter defines (`dispatch_fast::lane_body_value_step`).
-    ValueStep => super::dispatch_fast::lane_body_value_step::<H>,
     /// `+` of strings (`dispatch_fast::lane_body_string_concat`), named by the b-jit call planner
     /// (`base_region::call_plan`), which the whole-function planner will consume.
     #[allow(dead_code)]
     StringConcat => super::dispatch_fast::lane_body_string_concat::<H>,
+    /// A VM operation a staged row calls out for (`dispatch_fast::lane_vm_step`).
+    VmStep => super::dispatch_fast::lane_vm_step::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
     /// The array storage proofs a shorter array falsifies (`lane_retire_array_proofs`).

@@ -14,6 +14,11 @@
 //! (`note_global_shadowed`), and a lexical binding's assignment its own (`Vm::bind_global_lexical`).
 //! The code holding a cell therefore checks nothing per read. Guest heaps and their native
 //! publications are thread-confined, as `prototype_values` is.
+//!
+//! Code that stores to a slot, or reads its `typeof`, holds the global object's layout instead
+//! (`GlobalLayoutFact`): the slot stays a data property at its index until the object's shape,
+//! integrity or prototype use changes (`Object::note_global_layout_change`) or a lexical
+//! declaration shadows the name (`note_global_shadowed`), either of which retires it.
 
 use crate::code_dependencies::{CodeReaders, DependentCode};
 use std::rc::Rc;
@@ -53,6 +58,18 @@ pub(crate) struct GlobalFact {
     epoch: u32,
 }
 
+/// The Stable fact code took by holding the layout of the global object of `table`: every
+/// own property where its slot was when the code was compiled. Its publication revalidates it
+/// before it subscribes (`subscribe_global_layout`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct GlobalLayoutFact {
+    pub(crate) table: u32,
+    epoch: u32,
+}
+
+/// The owner a table's layout holders subscribe under: a layout is one subject.
+const LAYOUT_OWNER: u32 = 0;
+
 /// One kind of cell of a table: who holds each, and how often each was written.
 #[derive(Default)]
 struct Cells {
@@ -81,6 +98,10 @@ struct Table {
     bindings: Cells,
     /// Advanced by each lexical declaration that may shadow a slot's property.
     epoch: u32,
+    /// The code that holds the global object's layout, and how often that layout changed or
+    /// was shadowed.
+    layout: crate::code_dependencies::CodeReaders,
+    layout_epoch: u32,
 }
 
 impl Table {
@@ -145,6 +166,28 @@ pub(crate) fn note_global_shadowed(table: u32) {
     with_table(table, |held| {
         held.epoch = held.epoch.wrapping_add(1);
         held.slots.readers.reset();
+        held.layout_epoch = held.layout_epoch.wrapping_add(1);
+        held.layout.retire(LAYOUT_OWNER);
+    });
+}
+
+/// The fact code takes by holding the layout of `table`'s global object now.
+pub(crate) fn global_layout_fact(table: u32) -> Option<GlobalLayoutFact> {
+    with_table(table, |held| GlobalLayoutFact { table, epoch: held.layout_epoch })
+}
+
+/// Makes `code` retire when the layout `fact` names changes or a declaration shadows a name;
+/// `false` where it changed since the fact was taken or the reader table is full.
+pub(crate) fn subscribe_global_layout(fact: GlobalLayoutFact, code: &Rc<dyn DependentCode>) -> bool {
+    with_table(fact.table, |held| held.layout_epoch == fact.epoch && held.layout.subscribe(LAYOUT_OWNER, code))
+        .unwrap_or(false)
+}
+
+/// The layout of the global object of `table` changed: its holders retire.
+fn note_global_layout(table: u32) {
+    with_table(table, |held| {
+        held.layout_epoch = held.layout_epoch.wrapping_add(1);
+        held.layout.retire(LAYOUT_OWNER);
     });
 }
 
@@ -187,6 +230,15 @@ impl super::Object {
     /// The table code that read this global object's values made, if any.
     pub(crate) fn global_values(&self) -> Option<u32> {
         self.extras()?.global_values.as_ref().map(|values| values.table)
+    }
+
+    /// A change of this object's shape, integrity or prototype use: where it is a global object
+    /// by name, the code that holds its layout retires.
+    #[inline(always)]
+    pub(crate) fn note_global_layout_change(&self) {
+        if let Some(table) = self.global_values() {
+            note_global_layout(table);
+        }
     }
 
     /// Whether code holds what this object's slots hold, so a raw store that skips
@@ -239,6 +291,23 @@ mod tests {
         note_global_write(table, slot);
         assert!(global_value_fact(table, slot).is_none(), "written twice, read at run time");
         assert!(!subscribe_global_value(once, &published().1));
+    }
+
+    #[test]
+    fn a_layout_change_or_shadowing_retires_the_layout_holders_and_stales_older_facts() {
+        let table = new_table();
+        let fact = global_layout_fact(table).unwrap();
+        let (code, reader) = published();
+        assert!(subscribe_global_layout(fact, &reader));
+        note_global_layout(table);
+        assert!(!code.is_published(), "a layout change retires its holders");
+        assert!(!subscribe_global_layout(fact, &published().1), "a fact taken before the change is stale");
+        let fact = global_layout_fact(table).unwrap();
+        let (shadowed, shadowed_reader) = published();
+        assert!(subscribe_global_layout(fact, &shadowed_reader));
+        note_global_shadowed(table);
+        assert!(!shadowed.is_published(), "a declaration that may shadow a name retires the layout holders");
+        assert!(global_layout_fact(table).is_some_and(|taken| taken != fact));
     }
 
     #[test]

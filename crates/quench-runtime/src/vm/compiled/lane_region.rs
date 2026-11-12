@@ -69,6 +69,7 @@ use captures::RootedRead;
 #[path = "lane_region/direct_calls.rs"] mod direct_calls;
 #[path = "lane_region/direct_admission.rs"] mod direct_admission;
 #[path = "lane_region/direct_enter.rs"] mod direct_enter;
+#[path = "lane_region/call_outs.rs"] mod call_outs;
 use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
@@ -603,6 +604,9 @@ struct Lowering<'a, 'f> {
     leave: ir::Block,
     /// The stop at a record: it writes its result word parameter and leaves stopped.
     stop: ir::Block,
+    /// The block the call-outs' statuses of a leave in a callee, or a termination, reach with the
+    /// status, made at the first and filled at the region's end (`call_outs`).
+    call_out_stop: Option<ir::Block>,
 }
 
 enum Liveness<'a> {
@@ -1633,6 +1637,7 @@ pub(super) fn lower(
         native: 0,
         backedge: false,
         pending: Vec::new(),
+        call_out_stop: None,
         // A static typed region's calls are guarded leaves (`guarded_call_instruction`); here any call-like one is native.
         native_calls: completion.status_and_pc()
             && unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call),
@@ -1894,6 +1899,7 @@ pub(super) fn lower(
         }
         lowering.leave(&mut leaving, pc);
     }
+    lowering.fill_call_out_stop();
     lowering.fill_exits()?;
     lowering.builder.switch_to_block(stop);
     let word = lowering.builder.block_params(stop)[0];
@@ -2520,7 +2526,7 @@ impl Lowering<'_, '_> {
             Class::Return if plain && self.completion.status_and_pc() && instruction.register_a() < self.unit.registers => {
                 Some(self.complete(state, pc, instruction.register_a()))
             }
-            _ if self.is_value_step(instruction) => Some(self.value_step(state, pc, instruction)),
+            _ if self.is_call_out(instruction) => Some(self.call_out_step(state, pc, instruction)),
             Class::Call if self.completion.status_and_pc()
                 && (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
@@ -2608,7 +2614,7 @@ impl Lowering<'_, '_> {
                 .iter().all(|register| *register < self.unit.registers) => Some(self.element_store(state, pc32, instruction)),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
             _ if instruction.op().js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
-                self.operator(state, pc, instruction)
+                self.operator(state, pc, instruction).or_else(|| self.binary_call_out(state, pc, instruction))
             }
             Class::Unary if plain && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::LogicalNot as u32
                 && instruction.register_b() < self.unit.registers => {
@@ -2617,6 +2623,10 @@ impl Lowering<'_, '_> {
                     .expect("logical not decodes");
                 self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 Some(true)
+            }
+            // `void`: the staged operation defines `undefined`; its operand was evaluated already.
+            Class::Unary if plain && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Void as u32 => {
+                self.operation_step(state, pc32, instruction, false)
             }
             Class::Unary if plain && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
                 && instruction.register_b() < self.unit.registers => self.typeof_index(state, pc, instruction),
@@ -2794,6 +2804,12 @@ impl Lowering<'_, '_> {
         let miss = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_MISSED as i64);
         self.ins().brif(miss, missed, &[], left, &[]);
         self.builder.switch_to_block(left);
+        self.stop_by_status(status);
+    }
+
+    /// The end of a body whose helper neither completed nor missed: a termination stops with its
+    /// status, and any other `status` is a leave in a callee.
+    fn stop_by_status(&mut self, status: ir::Value) {
         let terminated = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_TERMINATED as i64);
         let stopped = self.builder.create_block();
         let callee = self.builder.create_block();
@@ -2816,32 +2832,6 @@ impl Lowering<'_, '_> {
         Some(true)
     }
 
-    /// Whether `instruction` is a plain value step the lane's helper makes (`Lowering::value_step`).
-    fn is_value_step(&self, instruction: WideInstruction) -> bool {
-        instruction.result_flags() == 0 && self.completion.status_and_pc()
-            && instruction.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP)
-    }
-
-    /// An opcode whose step the interpreter defines (`Vm::value_step`), by the lane's helper
-    /// of it (`dispatch_fast::lane_body_value_step`): the registers it reads are written to
-    /// the lane's, the helper runs, and its result is read back; a raised error leaves at `pc`.
-    fn value_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        let Some(super::lane_unit::Origin::Caller(call_pc)) = self.unit.origins.get(pc).copied() else {
-            self.exit(state, pc as u32);
-            return false;
-        };
-        let missed = self.guard_exit(state, pc as u32);
-        self.home_written(state, pc);
-        let completed = self.builder.create_block();
-        let status = self.record_helper(LaneHelper::ValueStep, call_pc);
-        self.helper_status(status, completed, missed);
-        self.builder.switch_to_block(completed);
-        state.call_effect();
-        self.reload_property_arena();
-        if let Some(destination) = crate::vm::dispatch::value_step_result(instruction) { self.reload_result(state, destination); }
-        true
-    }
-
     /// A lane helper of the record at `call_pc`, by the lane's context: its status word.
     fn record_helper(&mut self, helper: LaneHelper, call_pc: u32) -> ir::Value {
         let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
@@ -2857,15 +2847,19 @@ impl Lowering<'_, '_> {
         state.proofs.homed.insert(usize::from(destination));
     }
 
+    /// The registers the body wrote that are live at `pc`: what a helper reads from the lane's file.
+    fn spilled(&self, pc: usize) -> Vec<Register> {
+        self.written.iter().map(|register| register as Register)
+            .take_while(|register| *register < self.unit.caller_registers)
+            .filter(|register| self.is_live(pc, *register)).collect()
+    }
+
     /// The live registers the body wrote since their last write-back, stored to the lane's registers for a
     /// helper to read. A register whose slot is current (`LocalProofs::homed`) is neither boxed nor stored.
     fn home_written(&mut self, state: &mut State, pc: usize) {
-        let caller_registers = self.unit.caller_registers;
-        let written: Vec<Register> = self.written.iter().map(|register| register as Register)
-            .take_while(|register| *register < caller_registers).collect();
-        for register in written {
+        for register in self.spilled(pc) {
             let index = usize::from(register);
-            if !self.is_live(pc, register) || state.proofs.homed.contains(index) { continue; }
+            if state.proofs.homed.contains(index) { continue; }
             let bits = self.tagged(state, register);
             let base = self.registers_base;
             self.ins().store(regions::frame(), bits, base, register_offset(register));
@@ -2989,18 +2983,20 @@ impl Lowering<'_, '_> {
     /// no step is left unresolved.
     fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>)
         -> crate::staged::Step<ir::Value, ()> {
-        self.step_with_captures(state, edges, None, operation)
+        self.step_with(state, edges, None, None, operation)
     }
 
-    /// `step` where the running scope's dense capture run is `captures` (`Frame::capture`).
-    fn step_with_captures(&mut self, state: &mut State, edges: frame::Edges, captures: Option<(ir::Value, ir::Value)>,
+    /// `step` where the running scope's dense capture run is `captures` (`Frame::capture`) and the
+    /// operation's slow case calls the VM through `call_out` (the record and what its helper needs).
+    fn step_with(&mut self, state: &mut State, edges: frame::Edges, captures: Option<(ir::Value, ir::Value)>,
+        call_out: Option<&frame::call_out::CallOutSite>,
         operation: crate::staged::Operation<ir::Value, EmitProof>) -> crate::staged::Step<ir::Value, ()> {
         let locals = self.completion != Completion::Number;
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls,
-            roots: &mut self.stable.roots, captures, number_returns: &mut self.number_returns };
+            roots: &mut self.stable.roots, captures, number_returns: &mut self.number_returns, call_out };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step

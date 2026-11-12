@@ -170,6 +170,20 @@ pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Co
     Some(Layout { slots: plain_slots(stage, payload, packed, inline, form, miss)?, storage_len })
 }
 
+/// The layout of the object record at `record` whose `storage_len` values the arena holds behind
+/// its extras (`Object::extras_storage_start`), as a global object by name does, `inline` being
+/// its `inline_storage`: a record without extras, or with its values inline, leaves at `miss`.
+#[inline(always)]
+pub(crate) fn arena_extras_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Cond, storage_len: usize,
+    miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+    let extras = has_extras(stage, payload);
+    stage.guard(extras, miss)?;
+    let flat = stage.not(inline);
+    stage.guard(flat, miss)?;
+    Some(Layout { slots: extras_slots(stage, payload, inline), storage_len })
+}
+
 /// The slots of an object whose payload word points at its extras, which hold the inline
 /// values wide or the run's start (`Object::extras_storage_start`).
 fn extras_slots<S: Stage>(stage: &mut S, payload: S::Word, inline: S::Cond) -> Slots<S::Word, S::Cond> {

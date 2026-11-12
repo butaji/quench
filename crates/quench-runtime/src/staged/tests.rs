@@ -79,9 +79,9 @@ fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_form(
 
 /// A concrete register frame: the interpreter keeps no facts about its registers. A heap
 /// value whose cell decides its truthiness reads the cell through `heap`, as the lane does.
-struct ConcreteFrame<'a> {
-    registers: Vec<u64>,
-    heap: Option<&'a Heap>,
+pub(super) struct ConcreteFrame<'a> {
+    pub(super) registers: Vec<u64>,
+    pub(super) heap: Option<&'a Heap>,
 }
 
 impl Frame<Concrete> for ConcreteFrame<'_> {
@@ -247,10 +247,11 @@ fn every_staged_opcode_decodes_to_one_operation() {
     let constants = [Constant::untyped(Value::number(1.0))];
     let staged = [Op::Move, Op::LoadConst, Op::LoadLocalPlain, Op::StoreLocalPlain,
         Op::Jump, Op::JumpFalse, Op::JumpTrue, Op::LoadThis, Op::RequireObjectCoercible,
-        Op::ToNumeric, Op::LoadCapture, Op::Return];
+        Op::ToNumeric, Op::ToPropertyKey, Op::LoadEnvLocal, Op::StoreEnvLocal, Op::ArgumentsLength, Op::LoadNameTypeof,
+        Op::StoreName, Op::ForInNext, Op::ForInStart, Op::GetIterator, Op::IteratorClose, Op::AppendArray, Op::LoadCapture, Op::Return];
     for op in staged {
         assert_eq!(op.semantics(), Semantics::Staged, "{op:?}");
-        let instruction = WideInstruction::new(op, 1, 2, 3, 0);
+        let instruction = WideInstruction::new(op, 1, 1, 1, 0);
         assert!(Operation::<u64, ()>::decode(instruction, |index| constants.get(index).copied()).is_some(),
             "{op:?} must decode to a staged operation");
     }

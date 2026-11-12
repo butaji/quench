@@ -36,7 +36,8 @@ impl<H: Host> Vm<H> {
         let members: Vec<(usize, GlobalRead)> = reads.iter().filter_map(|(pc, read)| self.native_member(unit, *pc, read)).collect();
         let methods: Vec<(usize, GlobalRead)> = unit.instructions.iter().enumerate()
             .filter_map(|(pc, instruction)| Some((pc, self.method_native(instruction)?))).collect();
-        reads.into_iter().chain(members).chain(methods).collect()
+        let slots = self.lane_global_slots(program, function, unit);
+        reads.into_iter().chain(members).chain(methods).chain(slots).collect()
     }
 
     /// The field read `instruction` of a method of strings or arrays that a call runs inline
@@ -55,6 +56,28 @@ impl<H: Host> Vm<H> {
         let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(held), .. } = self.heap.function(value)? else { return None };
         let native = *native;
         (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder })
+    }
+
+    /// The PCs of `unit` whose `StoreName` (not a declaration's) or `LoadNameTypeof` reaches the
+    /// global scope as `lane_global_reads` decides for a load, each with the global object's
+    /// slot it holds (`Vm::stable_global_slot`), where it holds one.
+    fn lane_global_slots(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, GlobalRead)> {
+        let sites: Vec<(usize, crate::bytecode::Atom, bool)> = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
+            let store = match instruction.op() {
+                crate::bytecode::Op::StoreName if instruction.boolean_field(crate::bytecode::InstructionField::B) == Some(false) => true,
+                crate::bytecode::Op::LoadNameTypeof => false,
+                _ => return None,
+            };
+            let function = match unit.origins[pc] {
+                lane_unit::Origin::Caller(_) => function,
+                lane_unit::Origin::Inlined { frame, .. } => unit.frames[frame].target.function,
+            };
+            let statically_global = program.function_get(function as usize).is_some_and(|body| body.names_resolve_statically(program))
+                && self.programs.names_are_global(self.active_program);
+            (statically_global && !self.atom_class(instruction.atom_index()).contains(super::super::object::AtomClass::INTERNAL))
+                .then_some((pc, instruction.atom_index(), store))
+        }).collect();
+        sites.into_iter().filter_map(|(pc, atom, store)| Some((pc, GlobalRead::Slot(self.stable_global_slot(atom, store)?)))).collect()
     }
 
     /// The field read that follows the global read `read` at `pc` and reads its register, where

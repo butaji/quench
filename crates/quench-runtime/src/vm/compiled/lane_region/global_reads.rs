@@ -1,6 +1,6 @@
 //! By-name loads that read the global scope (`Vm::lane_global_reads`).
 use super::*;
-use crate::vm::global_facts::GlobalRead;
+use crate::vm::global_facts::{GlobalRead, GlobalSlot};
 use crate::staged::GlobalBinding;
 
 impl Lowering<'_, '_> {
@@ -34,9 +34,25 @@ impl Lowering<'_, '_> {
             GlobalRead::Stable { value, ty, fact, global, realm_offset } =>
                 (GlobalBinding::Held { value, ty }, Some((fact, global, realm_offset))),
             GlobalRead::Frozen { value, ty } => (GlobalBinding::Frozen { value, ty }, None),
-            GlobalRead::Dynamic | GlobalRead::NativeMember { .. } => (GlobalBinding::Dynamic, None),
+            GlobalRead::Slot(_) | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } => (GlobalBinding::Dynamic, None),
         };
         if self.division().folds(binding.time()) { (binding, held) } else { (GlobalBinding::Dynamic, None) }
+    }
+
+    /// The global slot a `StoreName` or `LoadNameTypeof` at `pc` holds directly
+    /// (`Vm::stable_global_slot`), after taking its dependencies: the layout and the slot's
+    /// type, and the realm that names the global object (`hold_global_slot`); a store also holds
+    /// that no method cache names its atom (`emit_store_atom_admitted`).
+    pub(super) fn global_cell(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, exit: ir::Block)
+        -> Option<GlobalSlot> {
+        let GlobalRead::Slot(slot) = *self.global_reads.get(&pc)? else { return None };
+        if !self.division().folds(BindingTime::Stable) { return None; }
+        self.hold_global_slot(state, exit, slot);
+        if instruction.op() == crate::bytecode::Op::StoreName {
+            let admitted = self.emit_store_atom_admitted(instruction.atom_index());
+            emit_js_guard(&mut self.builder, admitted, exit);
+        }
+        Some(slot)
     }
 
     /// Defines `register` as the immediate `value`, of its own type.

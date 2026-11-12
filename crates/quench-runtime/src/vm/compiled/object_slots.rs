@@ -493,6 +493,15 @@ impl CheckedObject {
             plan.storage_len, access, miss).map(Self)
     }
 
+    /// The projection of the record `record` whose `storage_len` values the arena at `base` holds
+    /// behind its extras (`staged::arena_extras_layout`), as a global object by name does: its
+    /// shape is held by a dependency, so only the representation is tested.
+    pub(super) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value, inline: ir::Value,
+        base: ir::Value, storage_len: usize, miss: ir::Block) -> Option<Self> {
+        let mut stage = Emit { builder, property_values: Some(base) };
+        crate::staged::arena_extras_layout(&mut stage, record, inline, storage_len, miss).map(Self)
+    }
+
     /// Read fresh contents using only the established layout and slot bound.
     pub(super) fn read(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> ir::Value {
         crate::staged::read_slot(&mut Emit { builder, property_values: None }, self.0, slot)

@@ -34,7 +34,7 @@ impl Lowering<'_, '_> {
             Some((values, len)) => {
                 let operation = crate::staged::Operation::decode(instruction, |_| None).expect("a capture decodes");
                 let edges = super::frame::Edges::ValueGuarded { miss: slow };
-                let crate::staged::Step::Value(read) = self.step_with_captures(state, edges, Some((values, len)), operation) else {
+                let crate::staged::Step::Value(read) = self.step_with(state, edges, Some((values, len)), None, operation) else {
                     unreachable!("the emit stage reads the dense run it was given")
                 };
                 self.ins().jump(join, &[ir::BlockArg::Value(read)]);
