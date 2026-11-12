@@ -21,7 +21,9 @@ mod concrete;
 pub(crate) mod numeric;
 mod heap;
 mod global;
+mod names;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
+pub(crate) use names::Protocol;
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
@@ -179,6 +181,33 @@ pub(crate) trait Frame<S: Stage> {
     #[allow(dead_code)]
     fn ret(&mut self, _stage: &mut S, _value: S::Word) -> Option<Self::Control> { None }
 
+    /// The activation's environment storage word and the fact its slot reads carry
+    /// (`environment::environment_slot`); `None` where the frame holds no environment.
+    #[inline(always)]
+    fn environment(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Store `value` to environment slot `slot`; `None` where the frame cannot, leaving the
+    /// binding rules (an uninitialized or constant binding, a `with` scope) to the host.
+    #[inline(always)]
+    fn environment_write(&mut self, _stage: &mut S, _slot: u16, _value: S::Word) -> Option<()> { None }
+
+    /// The count of the arguments binding in local `slot`, an int32 word; `None` where the
+    /// binding is not one only kept values answer.
+    #[inline(always)]
+    fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// The iteration or spread `step` over its operand words (`Protocol`), which may run guest
+    /// code: the word it defines, `Some(None)` where it defines none, `None` where it raised
+    /// or the frame has no host, leaving the instruction to the interpreter.
+    #[inline(always)]
+    fn protocol(&mut self, _stage: &mut S, _step: Protocol, _operands: [Option<S::Word>; 2])
+        -> Option<Option<(S::Word, Self::Fact)>> { None }
+
+    /// Define `destination` with the next key of the for-in state `state` unless none is
+    /// left; the condition that none is. `None` where the frame has no host.
+    #[inline(always)]
+    fn for_in_next(&mut self, _stage: &mut S, _destination: Register, _state: S::Word) -> Option<S::Cond> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -265,6 +294,25 @@ pub(crate) enum Operation<W, P> {
     /// The global-name read of `atom` through cache `site`, defined into `destination` as
     /// `binding` says; a miss leaves at the proof's edge.
     GlobalRead { destination: Register, atom: u32, site: u16, binding: GlobalBinding, proof: P },
+    /// Define `destination` from environment slot `slot` (`environment::environment_slot`); a
+    /// sparse storage or an internal marker leaves at the frame's miss edge.
+    LoadEnvLocal { destination: Register, slot: u16 },
+    /// Write `source` to environment slot `slot`, and to `result` where the instruction has one.
+    StoreEnvLocal { source: Register, slot: u16, result: Option<Register> },
+    /// Define `destination` with the length of the arguments binding in local `slot`.
+    ArgumentsLength { destination: Register, slot: u16 },
+    /// Define `destination` with the `typeof` name of the global `atom` through cache `site`
+    /// (the lane's own read); an unresolvable name is `undefined`, not an error.
+    GlobalTypeof { destination: Register, atom: u32, site: u16 },
+    /// The global-name store of `source` to `atom` through cache `site`, an initialization
+    /// where `initialize`; a binding the lane's store does not take leaves at the miss edge.
+    GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool },
+    /// An iteration or spread step (`Protocol`) over the `operands` registers, defining
+    /// `destination` where it has one; the generic protocol runs guest code, a callout.
+    Protocol { step: Protocol, destination: Option<Register>, operands: [Option<Register>; 2] },
+    /// Define `destination` with the next key of the for-in state in register `state`; continue
+    /// at the jump target once none is left.
+    ForInNext { destination: Register, state: Register },
     /// The VM field-store helper for `object.atom = value` through cache `site`.
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
 }
@@ -288,7 +336,7 @@ impl<W, P> Operation<W, P> {
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
             Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary => return Self::decode_value(instruction),
-            _ => return None,
+            _ => return names::decode(instruction),
         })
     }
 
