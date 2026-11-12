@@ -4,18 +4,27 @@
 use super::{Concrete, Stage};
 
 /// Element `index` of the dense backing of `length` values at `values`, with its address:
-/// `None` (leaving at `miss`) past the backing or at a hole (`Value::DELETED`), which the
-/// caller resolves the long way. `index` and `length` share one width; the address widens
-/// the index first, as an in-bounds int32 index's byte offset can pass `u32::MAX`.
+/// `None` (leaving at `miss`) past the backing, where the hole (`Value::DELETED`) is a value like
+/// another, which the caller's proof rejects (`DenseView::packed`). `index` and `length` share
+/// one width; the address widens the index first, as an in-bounds int32 index's byte offset can
+/// pass `u32::MAX`.
 #[inline(always)]
-pub(crate) fn dense_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, index: S::Word,
+pub(crate) fn packed_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, index: S::Word,
     miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let in_bounds = stage.ult(index, length);
     stage.guard(in_bounds, miss)?;
     let offset = stage.uextend32(index);
     let offset = stage.mul_imm(offset, std::mem::size_of::<crate::Value>() as u64);
     let address = stage.add(values, offset);
-    let value = stage.load_u64(address, 0);
+    Some((address, stage.load_u64(address, 0)))
+}
+
+/// `packed_element` of a present element: `None` (leaving at `miss`) also at a hole, which the
+/// caller resolves the long way.
+#[inline(always)]
+pub(crate) fn dense_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, index: S::Word,
+    miss: S::Miss) -> Option<(S::Word, S::Word)> {
+    let (address, value) = packed_element(stage, values, length, index, miss)?;
     let present = stage.ne_imm(value, crate::Value::DELETED.to_bits());
     stage.guard(present, miss)?;
     Some((address, value))
@@ -27,6 +36,10 @@ pub(crate) fn dense_element<S: Stage>(stage: &mut S, values: S::Word, length: S:
 pub(crate) struct DenseView<W> {
     pub(crate) values: W,
     pub(crate) length: W,
+    /// Whether a read needs no hole test of its own: the access consumes the element through a
+    /// proof that rejects a hole's bits (a Number read, whose proof sees a NaN pattern and
+    /// leaves). A fact of the proof, known before any run, so the read compiles without the test.
+    pub(crate) packed: bool,
 }
 
 /// The view of the direct array `base` among the array records at `records`, writable where
@@ -36,14 +49,17 @@ pub(crate) fn prove_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Wor
     miss: S::Miss) -> Option<DenseView<S::Word>> {
     let backing = array_backing(stage, records, base, miss)?;
     if writable { writable_backing(stage, backing, miss)?; }
-    Some(DenseView { values: backing.values, length: backing.length })
+    Some(DenseView { values: backing.values, length: backing.length, packed: false })
 }
 
-/// The present element `index` of `view`: `None` (leaving at `miss`) past the backing or at a hole.
+/// The element `index` of `view`: `None` (leaving at `miss`) past the backing or, unless the view is
+/// packed, at a hole.
 #[inline(always)]
 pub(crate) fn read_element<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
-    dense_element(stage, view.values, view.length, index, miss).map(|(_, value)| value)
+    let (_, value) = if view.packed { packed_element(stage, view.values, view.length, index, miss)? }
+        else { dense_element(stage, view.values, view.length, index, miss)? };
+    Some(value)
 }
 
 /// Replaces the present element `index` of `view` with `value`, which the caller proved needs
@@ -220,6 +236,17 @@ mod tests {
         assert_eq!(read(1), None, "a hole leaves");
         assert_eq!(read(2), Some(Value::UNDEFINED.to_bits()));
         assert_eq!(read(3), None, "past the backing leaves");
+    }
+
+    #[test]
+    fn a_packed_view_reads_a_hole_as_the_value_its_consumer_rejects_and_still_leaves_past_the_backing() {
+        let elements = [Value::number(1.5), Value::DELETED];
+        let view = |packed| DenseView { values: elements.as_ptr() as u64, length: elements.len() as u64, packed };
+        let read = |packed, index| read_element(&mut Concrete::new(std::ptr::null()), view(packed), index, ());
+        assert_eq!(read(false, 1), None, "an unpacked read leaves at a hole");
+        assert_eq!(read(true, 1), Some(Value::DELETED.to_bits()), "a packed read has no hole test");
+        assert_eq!(read(true, 0), Some(Value::number(1.5).to_bits()));
+        assert_eq!(read(true, 2), None, "past the backing leaves either way");
     }
 
     /// `append_element` on `Concrete` over `elements`' own backing, with its room.

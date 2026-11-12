@@ -15,7 +15,8 @@ use crate::staged::{ElementFrame, Stage};
 /// entering edge proved once: a dense array's backing, or a typed array's elements.
 #[derive(Clone, Copy)]
 pub(super) enum Held {
-    Dense(super::super::DenseArrayView),
+    /// A dense array's view, and whether its read proves the element (`DenseView::packed`).
+    Dense(super::super::DenseArrayView, bool),
     Typed(TypedView<ir::Value>),
 }
 
@@ -64,12 +65,12 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     fn kept_view(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, writable: bool) -> Option<ElementView<ir::Value>> {
         let held = match self.held {
             Some(Held::Typed(view)) => return Some(ElementView::Typed(view)),
-            Some(Held::Dense(view)) => Some(view),
+            Some(Held::Dense(view, packed)) => Some((view, packed)).filter(|(view, _)| view.writable || !writable),
             None => None,
         };
-        let view = held.filter(|view| view.writable || !writable).or_else(|| self.state.proofs.arrays.iter()
-            .find(|(known, view)| *known == base && (view.writable || !writable)).map(|(_, view)| *view))?;
-        Some(ElementView::Dense(DenseView { values: view.values, length: stage.uextend32(view.length) }))
+        let (view, packed) = held.or_else(|| self.state.proofs.arrays.iter()
+            .find(|(known, view)| *known == base && (view.writable || !writable)).map(|(_, view)| (*view, false)))?;
+        Some(ElementView::Dense(DenseView { values: view.values, length: stage.uextend32(view.length), packed }))
     }
 
     fn keep_view(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, writable: bool, view: DenseView<ir::Value>) {

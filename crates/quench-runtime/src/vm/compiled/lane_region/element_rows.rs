@@ -39,7 +39,10 @@ impl Lowering<'_, '_> {
     fn element_read(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, crate::bytecode::Operand)) -> bool {
         let exit = self.guard_exit(state, pc as u32);
         let array = self.loop_array(pc, Some(base));
-        self.held_view = array.map(|array| self.held_array(array));
+        // An element read as a Number (`number_reads`) needs no hole test of its own: a hole is a NaN
+        // pattern, which the Number proof's one NaN test sends to the tag check that leaves.
+        let packed = self.observed.at(pc).is_some();
+        self.held_view = array.map(|array| self.held_array(array, packed));
         let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key })
             else { unreachable!("an element read yields a value or leaves at its miss edge") };
         if array.is_some_and(|array| array.views == ElementViews::Typed) {
@@ -56,11 +59,11 @@ impl Lowering<'_, '_> {
     }
 
     /// The view the hoisted `array`'s entering edge proved, which its element rows read and write through.
-    fn held_array(&mut self, array: LoopArray) -> frame_elements::Held {
+    fn held_array(&mut self, array: LoopArray, packed: bool) -> frame_elements::Held {
         let (values, length) = self.hoisted_view(array);
         match array.views {
             ElementViews::Dense => frame_elements::Held::Dense(super::super::DenseArrayView {
-                values, length, writable: array.writable, uncounted: array.writable }),
+                values, length, writable: array.writable, uncounted: array.writable }, packed),
             ElementViews::Typed => frame_elements::Held::Typed(TypedView { values, length, kind: self.hoisted_kind(array) }),
         }
     }
@@ -83,7 +86,7 @@ impl Lowering<'_, '_> {
             Some(array) if array.views == ElementViews::Dense && self.left_here =>
                 self.dense_element_write(state, array, pc as u32, instruction, exit),
             held => {
-                self.held_view = held.map(|array| self.held_array(array));
+                self.held_view = held.map(|array| self.held_array(array, false));
                 self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementWrite { value, base, key });
                 self.reload_dense_arrays(pc);
             }

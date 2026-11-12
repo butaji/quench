@@ -64,6 +64,7 @@ use captures::RootedRead;
 #[path = "lane_region/call_outs.rs"] mod call_outs;
 #[path = "lane_region/register_rows.rs"] mod register_rows;
 #[path = "lane_region/element_rows.rs"] mod element_rows;
+#[cfg(test)] #[path = "lane_region/element_tests.rs"] mod element_tests;
 use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
