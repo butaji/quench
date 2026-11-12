@@ -131,7 +131,7 @@ mod construction;
 mod data_view;
 mod date;
 mod dispatch;
-mod dispatch_fast;
+mod dispatch_fast; mod lane_values;
 mod dispatch_frame;
 mod dispatch_wasm;
 mod dynamic_strings;

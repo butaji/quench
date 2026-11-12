@@ -61,7 +61,7 @@ macro_rules! enter_wasm_function {
             && stack.activations.len() < stack.activation_limit.get()
             && vm.frames.len() + stack.activations.len()
                 < super::dispatch_frame::WASM_ACTIVATION_LIMIT
-            && stack.values.capacity() - stack.values.len()
+            && stack.values.room()
                 >= fill_room::<ACTIVATION_FILL_BLOCK>(usize::from(shape.registers))
         {
             let window = stack.values.len();
@@ -86,15 +86,15 @@ macro_rules! enter_wasm_function {
             };
             // SAFETY: capacity holds the activation.
             unsafe {
+                let at = stack.values.as_mut_ptr().wrapping_add(window);
                 stack.push_activation(Activation {
                     native: crate::vm::compiled::ShadowFrame::EMPTY, function: u32::from($function),
                     call: ip,
                     caller_base: (*cx).base,
                     caller_registers: r,
-                    window,
                     caller_program: (*cx).program,
                     kind: ActivationKind::Wasm { memory: view.memory, frame_storage_bytes },
-                });
+                }, at);
             }
             // A fresh activation's memory register holds no memory until
             // the function's instance binding loads it.
