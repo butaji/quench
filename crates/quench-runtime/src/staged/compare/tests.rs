@@ -60,7 +60,11 @@ impl PropertyFrame<Concrete> for Probe {
 }
 
 impl NumericFrame<Concrete> for Probe {
-    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no Number operand") }
+    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no int operand") }
+    fn int32_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+        let number = Value::from_bits(self.registers[usize::from(operand.register_index()?)]).as_number()?;
+        Some(u64::from(crate::value::number_to_u32(number)))
+    }
     fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no Number operand") }
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
     fn miss(&self) {}
@@ -283,4 +287,59 @@ fn only_null_and_undefined_are_nullish_constants() {
     assert_eq!(Nullish::of(Value::NULL), Some(Nullish::Null));
     assert_eq!(Nullish::of(Value::UNDEFINED), Some(Nullish::Undefined));
     assert_eq!(Nullish::of(Value::FALSE), None);
+}
+
+/// The int32 bits the language's own operators make of two int32 values, independent of the staged ones.
+fn bits(operation: NumberBitwise, left: i32, right: i32) -> i32 {
+    let count = right as u32 & 31;
+    match operation {
+        NumberBitwise::And => left & right,
+        NumberBitwise::Or => left | right,
+        NumberBitwise::Xor => left ^ right,
+        NumberBitwise::ShiftLeft => left.wrapping_shl(count),
+        NumberBitwise::ShiftRight => left >> count,
+        NumberBitwise::ShiftRightUnsigned => ((left as u32) >> count) as i32,
+    }
+}
+
+/// A bitwise test jumps where the operator's bits are zero, whether its operands are int32s or
+/// Numbers truncated modulo 2^32; an operand that is no Number leaves the row, and the Number the
+/// operator would make is never made (no VM decision either).
+#[test]
+fn a_bitwise_jump_tests_the_bits_the_operator_makes_of_the_truncated_operands() {
+    let operations = [NumberBitwise::And, NumberBitwise::Or, NumberBitwise::Xor, NumberBitwise::ShiftLeft,
+        NumberBitwise::ShiftRight, NumberBitwise::ShiftRightUnsigned];
+    let operands = [(Value::integer(0), 0), (Value::integer(1), 1), (Value::integer(-1), -1), (Value::integer(5), 5),
+        (Value::integer(i32::MIN), i32::MIN), (Value::integer(32), 32), (Value::integer(33), 33),
+        (Value::number(4294967297.0), 1), (Value::number(-4294967296.0), 0), (Value::number(2.5), 2)];
+    for operation in operations {
+        for (left, left_bits) in operands {
+            for (right, right_bits) in operands {
+                let mut frame = Probe::of(&[left, right]);
+                let nonzero = bits(operation, left_bits, right_bits) != 0;
+                let step = run(&mut frame, Comparison::Bitwise(operation), true);
+                assert!(matches!(step, Step::Control(edge) if edge == if nonzero { Edge::Following } else { Edge::Target }),
+                    "{operation:?} {left:?} {right:?}");
+                assert!(frame.calls.is_empty());
+            }
+        }
+        let mut frame = Probe::of(&[Value::TRUE, Value::integer(1)]);
+        assert!(matches!(run(&mut frame, Comparison::Bitwise(operation), true), Step::Unresolved), "a Boolean is no Number");
+    }
+}
+
+/// The bitwise operators decode to their test; the shifts too, and `Comparison::operator` names no
+/// VM operator for a test no VM step decides.
+#[test]
+fn a_bitwise_operator_decodes_to_the_bits_test() {
+    for (operator, operation) in [(BinaryOperator::BitwiseAnd, NumberBitwise::And), (BinaryOperator::BitwiseOR, NumberBitwise::Or),
+        (BinaryOperator::BitwiseXOR, NumberBitwise::Xor), (BinaryOperator::ShiftLeft, NumberBitwise::ShiftLeft),
+        (BinaryOperator::ShiftRight, NumberBitwise::ShiftRight), (BinaryOperator::ShiftRightZeroFill, NumberBitwise::ShiftRightUnsigned)] {
+        let (left, right) = (Operand::register(1).0, Operand::register(2).0);
+        let instruction = WideInstruction::new(Op::JumpBinaryFalse, operator as u16, left, right, 9);
+        let Some(Operation::CompareJump { comparison, .. }) = Operation::<u64, ()>::decode(instruction, |_| None)
+            else { panic!("a comparison jump decodes") };
+        assert_eq!(comparison, Comparison::Bitwise(operation));
+        assert_eq!(comparison.operator(), None);
+    }
 }

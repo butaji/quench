@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::staged::{Domain, NumericStage, Stage, Table};
-use crate::vm::operations::{NumberArithmetic, NumberRelation};
+use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
 /// The specializer's stage (`crate::staged`): each operation emits its residual as Cranelift
 /// IR into `builder`, where a guard's failure jumps to its miss block.
@@ -208,6 +208,9 @@ impl NumericStage for Emit<'_, '_> {
     }
     fn i32_constant(&mut self, value: i32) -> ir::Value { self.builder.ins().iconst(types::I32, i64::from(value)) }
     fn i32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fcvt_from_sint(types::F64, a) }
+    fn int_bitwise(&mut self, operation: NumberBitwise, left: ir::Value, right: ir::Value) -> ir::Value {
+        emit_number_bitwise_bits(self.builder, operation, left, right)
+    }
     fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, 0) }
     fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, a, 0) }
     fn both(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().band(a, b) }

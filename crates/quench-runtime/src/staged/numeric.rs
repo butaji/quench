@@ -3,8 +3,8 @@
 use super::{Frame, Stage, Step};
 use crate::bytecode::{Operand, Register};
 use crate::vm::operations::{
-    CheckedInt32Stage, NumberArithmetic, NumberArithmeticStage, NumberF64Stage, NumberRelation,
-    NumberUnary, PartialOrderStage,
+    int32_bitwise_bits, CheckedInt32Stage, NumberArithmetic, NumberArithmeticStage, NumberBitwise, NumberF64Stage,
+    NumberRelation, NumberUnary, PartialOrderStage,
 };
 
 /// The representation both operands and the result of a Number operation have.
@@ -47,6 +47,8 @@ pub(crate) trait NumericStage: Stage {
     /// The int32 word holding `value`.
     fn i32_constant(&mut self, value: i32) -> Self::Word;
     fn i32_to_f64(&mut self, value: Self::Word) -> Self::Word;
+    /// The int32 word `operation` makes of two int32 words (a shift takes its count modulo 32).
+    fn int_bitwise(&mut self, operation: NumberBitwise, left: Self::Word, right: Self::Word) -> Self::Word;
     fn i32_is_zero(&mut self, value: Self::Word) -> Self::Cond;
     fn i32_is_negative(&mut self, value: Self::Word) -> Self::Cond;
     fn both(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
@@ -72,6 +74,14 @@ pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + supe
     #[inline(always)]
     fn operand_word(&mut self, stage: &mut S, operand: Operand) -> Option<S::Word> {
         operand.register_index().map(|register| self.tagged(stage, register))
+    }
+
+    /// `operand`'s ToInt32, as a bitwise operator reads it: an int32 as it is, a Number by
+    /// truncation; `None` where it is no Number, which leaves the row to the interpreter. A frame
+    /// that proves int32 operands only reads them as such.
+    #[inline(always)]
+    fn int32_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word> {
+        Some(self.int_operand(stage, operand, miss))
     }
 
     /// Whether an IsHTMLDDA object can exist (the host provides one): a heap cell other than an
@@ -358,6 +368,9 @@ impl NumericStage for super::Concrete {
     }
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
     fn i32_to_f64(&mut self, value: u64) -> u64 { f64::from(int32(value)).to_bits() }
+    fn int_bitwise(&mut self, operation: NumberBitwise, left: u64, right: u64) -> u64 {
+        u64::from(int32_bitwise_bits(operation, int32(left), int32(right)) as u32)
+    }
     fn i32_is_zero(&mut self, value: u64) -> bool { int32(value) == 0 }
     fn i32_is_negative(&mut self, value: u64) -> bool { int32(value) < 0 }
     fn both(&mut self, a: bool, b: bool) -> bool { a && b }

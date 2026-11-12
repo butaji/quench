@@ -1,8 +1,7 @@
 //! The conditional jump on two values (`Operation::CompareJump`, the `JumpBinaryFalse` row),
-//! lowered by its comparison and by what the facts prove of its operands: a bitwise test by its
-//! bits, a test against `null` or `undefined`, an ordering or an equality by the staged step
-//! (whose answer picks the edge through `Frame::branch`), and any other by the lane's own
-//! relation.
+//! lowered by its comparison and by what the facts prove of its operands: a test against `null`
+//! or `undefined`, a bitwise test, an ordering or an equality by the staged step (whose answer
+//! picks the edge through `Frame::branch`), and any other by the lane's own relation.
 use super::*;
 use crate::staged::{Comparison, Domain, Nullish, Operation};
 use crate::vm::operations::NumberRelation;
@@ -29,7 +28,7 @@ impl Lowering<'_, '_> {
             self.staged_jump(state, pc, instruction, comparison, operands);
             return true;
         }
-        self.bitwise_jump(state, pc, instruction) || self.relation_jump(state, pc, instruction, comparison)
+        self.relation_jump(state, pc, instruction, comparison)
     }
 
     /// The nullish test the facts settle on: an equality of a register with an operand typed exactly
@@ -47,24 +46,6 @@ impl Lowering<'_, '_> {
     fn polled_branch(&mut self, state: &mut State, pc: usize, target: usize, taken: ir::Value) {
         if target <= pc { self.interrupt_check(state, pc as u32); }
         self.branch(state, pc, target, taken);
-    }
-
-    /// A test of a bitwise result of Numbers (`if (flags & MASK)`): the operator's bits are zero
-    /// exactly when the test is false, so the Boolean is never made. Whether it lowered.
-    fn bitwise_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        let (left, right) = (instruction.operand_b(), instruction.operand_c());
-        let Some(operation) = super::super::operations::NumberBitwise::from_operator(instruction.binary_operator_field())
-            else { return false };
-        if !(self.numbers_supported(left, right) && self.operand_supported(left) && self.operand_supported(right)) {
-            return false;
-        }
-        let exit = self.guard_exit(state, pc as u32);
-        let left = self.operand_to_int32(state, left, exit).expect("supported numeric operand");
-        let right = self.operand_to_int32(state, right, exit).expect("supported numeric operand");
-        let bits = emit_number_bitwise_bits(&mut self.builder, operation, left, right);
-        let taken = self.ins().icmp_imm_u(IntCC::Equal, bits, 0);
-        self.polled_branch(state, pc, instruction.jump_target() as usize, taken);
-        true
     }
 
     /// Whether neither constant operand is anything but a Number: a register's type is for the
@@ -99,6 +80,7 @@ impl Lowering<'_, '_> {
             Comparison::Equality { negated, .. } if self.numbers_typed(state, left, right) => domain.map(|domain|
                 Comparison::Relation { relation: if negated { NumberRelation::NotEqual } else { NumberRelation::Equal }, domain }),
             Comparison::Equality { .. } => Some(comparison),
+            Comparison::Bitwise(_) if self.numbers_supported(left, right) => Some(comparison),
             _ => None,
         }
     }

@@ -4,7 +4,7 @@ use super::*;
 #[path = "frame_call_out.rs"] pub(super) mod call_out;
 #[path = "frame_truthiness.rs"] mod truthiness;
 #[path = "frame_operands.rs"] mod operands;
-pub(in crate::vm) use operands::{operand_int, operand_number, register_int_value, register_number_value};
+pub(in crate::vm) use operands::{operand_int, operand_number, operand_to_int32, register_int_value, register_number_value};
 use truthiness::register_truthiness;
 
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
@@ -447,6 +447,11 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
         miss: ir::Block) -> ir::Value {
         operand_number(stage.builder, self.registers, self.state, self.constants, operand, miss)
             .expect("a numeric operand is a register or an immediate")
+    }
+
+    fn int32_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
+        miss: ir::Block) -> Option<ir::Value> {
+        operand_to_int32(stage.builder, self.registers, self.state, self.constants, operand, miss)
     }
 
     fn prove_number(&mut self, stage: &mut Emit<'_, '_>, register: Register, miss: ir::Block) -> Option<()> {

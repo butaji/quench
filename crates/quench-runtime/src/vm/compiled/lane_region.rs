@@ -1992,45 +1992,9 @@ pub(super) fn lower(
 }
 
 impl Lowering<'_, '_> {
-    /// A bitwise operand's ToInt32: an int32 as it is, a number by truncation modulo 2^32. A
-    /// double of magnitude 2^63 or more, an infinity or NaN leaves (`EXACT_I64_TRUNCATION_LIMIT`).
+    /// A bitwise operand's ToInt32 (`frame::operand_to_int32`).
     fn operand_to_int32(&mut self, state: &mut State, operand: Operand, exit: ir::Block) -> Option<ir::Value> {
-        let integral = match operand.kind()? {
-            OperandKind::Register => state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
-            OperandKind::Constant => self.program.constants.get(usize::from(operand.payload()))
-                .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
-            OperandKind::Field | OperandKind::Local => return None,
-        };
-        if integral {
-            return self.operand_int(state, operand, exit);
-        }
-        // A register only its tag types is its int where the tag says so, else its Number's
-        // ToInt32; neither path proves a fact the other does not.
-        let tagged = operand.kind() == Some(OperandKind::Register)
-            && state.values[usize::from(operand.payload())].value.representation == Representation::Tagged;
-        if !tagged {
-            let number = self.operand_number(state, operand, exit)?;
-            return Some(self.number_to_int32(number, exit));
-        }
-        let bits = self.operand_tagged(state, operand)?;
-        if let Some((_, int32)) = state.proofs.int32_projections.iter().find(|(source, _)| *source == bits) {
-            #[cfg(test)] INT32_PROJECTION_REUSES.with(|count| count.set(count.get() + 1));
-            return Some(*int32);
-        }
-        let integer = is_int_tagged(&mut self.builder, bits);
-        let (int_block, number_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
-        let int32 = self.builder.append_block_param(join, types::I32);
-        self.ins().brif(integer, int_block, &[], number_block, &[]);
-        self.builder.switch_to_block(int_block);
-        let int = self.ins().ireduce(types::I32, bits);
-        self.ins().jump(join, &[ir::BlockArg::Value(int)]);
-        self.builder.switch_to_block(number_block);
-        let number = emit_js_tagged_number(&mut self.builder, bits, exit);
-        let truncated = self.number_to_int32(number, exit);
-        self.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
-        self.builder.switch_to_block(join);
-        state.proofs.int32_projections.push((bits, int32));
-        Some(int32)
+        frame::operand_to_int32(&mut self.builder, &mut self.registers, state, &self.program.constants, operand, exit)
     }
 
     /// Whether the increment at `pc` of `source` into `register` is a loop's induction that its

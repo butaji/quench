@@ -8,7 +8,7 @@ use super::{CallOut, Domain, Edge, NumericFrame, NumericStage, Operation, Step};
 use crate::bytecode::{Operand, WideInstruction};
 use crate::typed_ir::Type;
 use crate::value::ValueLayout;
-use crate::vm::operations::{equality_binary_operator, equality_operator, NumberRelation};
+use crate::vm::operations::{equality_binary_operator, equality_operator, NumberBitwise, NumberRelation};
 use crate::{Value, ValueType};
 
 /// The `null` or `undefined` a nullish test compares with.
@@ -47,9 +47,11 @@ pub(crate) enum Comparison {
     /// `left`) and `expected`, a constant the tier proved the other operand is: a tag decides it,
     /// and the register's type where it already does.
     Nullish { expected: Nullish, strict: bool, negated: bool },
-    /// Any other operator (`instanceof`, `in`, a bitwise test): no Number relation names it, so
-    /// a tier decides it by the operator, and the step is `Unresolved` for the interpreter's
-    /// exact path.
+    /// The truth of a bitwise operator's result of two Numbers (`if (flags & MASK)`): its int32
+    /// bits are nonzero, so the Number the operator would make is never made.
+    Bitwise(NumberBitwise),
+    /// Any other operator (`instanceof`, `in`): no Number relation names it, so a tier decides it
+    /// by the operator, and the step is `Unresolved` for the interpreter's exact path.
     Operator(u32),
 }
 
@@ -58,17 +60,17 @@ impl Comparison {
     /// which no VM step decides.
     pub(crate) fn operator(self) -> Option<u32> {
         match self {
-            Self::Relation { .. } | Self::Nullish { .. } => None,
+            Self::Relation { .. } | Self::Nullish { .. } | Self::Bitwise(_) => None,
             Self::Equality { strict, negated } => Some(equality_binary_operator(strict, negated)),
             Self::Operator(operator) => Some(operator),
         }
     }
 
     /// Whether deciding it may run guest code (a conversion, a trap), which retires what a
-    /// tier proved of objects: every comparison but a Number relation, a nullish test and a
-    /// strict equality.
+    /// tier proved of objects: every comparison but a Number relation, a bitwise test of Numbers,
+    /// a nullish test and a strict equality.
     pub(crate) const fn runs_guest_code(self) -> bool {
-        !matches!(self, Self::Relation { .. } | Self::Nullish { .. } | Self::Equality { strict: true, .. })
+        !matches!(self, Self::Relation { .. } | Self::Bitwise(_) | Self::Nullish { .. } | Self::Equality { strict: true, .. })
     }
 }
 
@@ -80,6 +82,7 @@ impl<W, P> Operation<W, P> {
             .map(|(strict, negated)| Comparison::Equality { strict, negated })
             .or_else(|| NumberRelation::from_operator(operator)
                 .map(|relation| Comparison::Relation { relation, domain: Domain::Float64 }))
+            .or_else(|| NumberBitwise::from_operator(operator).map(Comparison::Bitwise))
             .unwrap_or(Comparison::Operator(operator));
         Self::CompareJump { comparison, left: instruction.operand_b(), right: instruction.operand_c(), negate: true }
     }
@@ -109,6 +112,7 @@ fn outcome<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, co
             let equal_edge = if negated == negate { Edge::Target } else { Edge::Following };
             nullish(stage, frame, left, (expected, strict), equal_edge)
         }
+        Comparison::Bitwise(operation) => bitwise(stage, frame, [left, right], operation),
         Comparison::Operator(_) => None,
     }
 }
@@ -135,6 +139,18 @@ fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [
         }
     };
     Some(stage.eq_imm(value, Value::TRUE.to_bits()))
+}
+
+/// Whether the bits `operation` makes of the operands' ToInt32 are nonzero (`if (flags & MASK)`).
+/// An operand that is no Number leaves the row.
+#[inline(always)]
+fn bitwise<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [left, right]: [Operand; 2],
+    operation: NumberBitwise) -> Option<S::Cond> {
+    let miss = frame.miss();
+    let (left, right) = (frame.int32_operand(stage, left, miss)?, frame.int32_operand(stage, right, miss)?);
+    let bits = stage.int_bitwise(operation, left, right);
+    let zero = stage.i32_is_zero(bits);
+    Some(stage.not(zero))
 }
 
 /// Whether the tested operand is `expected` (or, loosely, either nullish value): a type that
