@@ -245,7 +245,7 @@ impl LaneView {
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
     }
 
-    /// `--f-jit` compiles no function body: the view's body is declined, once.
+    /// `--b-jit` compiles no function body: the view's body is declined, once.
     fn declined_by_mode(&self) -> bool {
         let declined = !crate::jit_mode::function_tiers();
         if declined {

@@ -655,7 +655,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         Some("--help") | Some("-h") => {
             print_cli_help();
             // Quench's own options follow Node's.
-            println!("quench-node [--no-jit|--f-jit|--u-jit] [{}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG);
+            println!("quench-node [--no-jit|--b-jit|--u-jit] [{}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG);
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
@@ -681,7 +681,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            flag @ ("--no-jit" | "--f-jit" | "--u-jit" | "--jit") => if let Err(message) = quench_runtime::JitMode::select(&mut jit_mode, flag) { return Ok(cli_usage_error(message)); },
+            flag @ ("--no-jit" | "--f-jit" | "--b-jit" | "--u-jit" | "--jit") => if let Err(message) = quench_runtime::JitMode::select(&mut jit_mode, flag) { return Ok(cli_usage_error(message)); },
             "--env-file" | "--env-file-if-exists" => {
                 let Some(path) = args.get(index + 1) else {
                     return Ok(cli_usage_error(&format!(

@@ -156,7 +156,7 @@ pub(crate) fn pop_record<S: Stage>(stage: &mut S, top: S::Word) -> (S::Word, Rec
 }
 
 /// The entry cell, one 64-byte line per function, the one definition every projection reads
-/// (`entry-cell-contract.md`): the interpreter's lane call, the u-jit's native call and the f-jit's
+/// (`entry-cell-contract.md`): the interpreter's lane call, the u-jit's native call and the b-jit's
 /// call stencil. `entry` is also the native validity (the stub means not entered); the
 /// interpreter's validity is `epoch` (generation and program, a never-matching value once
 /// retired), compared once against the lane's expected word. `facts` packs registers, room,

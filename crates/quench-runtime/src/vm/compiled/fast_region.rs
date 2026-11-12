@@ -1,5 +1,5 @@
-//! A Number loop region built from FastJIT stencils (`quench-fastjit`) instead of Cranelift IR,
-//! behind `QUENCH_DEV=fastjit`. The registers the region touches most live in pinned machine
+//! A Number loop region built from BaseJIT stencils (`quench-fastjit`) instead of Cranelift IR,
+//! behind `QUENCH_DEV=bjit`. The registers the region touches most live in pinned machine
 //! registers through the whole chain of stencils and the rest stay tagged `Value` words in the
 //! activation's register file; every exit writes the pinned registers back first, so it leaves
 //! the lane's state canonical. A region with an instruction that is no row of the stencil
@@ -52,7 +52,7 @@ static LEAVES: Mutex<BTreeMap<(u32, u32), (crate::bytecode::Op, u64)>> = Mutex::
 static REPORT: std::sync::Once = std::sync::Once::new();
 
 /// What a loop site did in the lane, counted under `QUENCH_TRACE=js-jit` (printed with the totals): the
-/// cost of the tier machinery around the regions, which `--f-jit` pays whether or not a region exists.
+/// cost of the tier machinery around the regions, which `--b-jit` pays whether or not a region exists.
 #[derive(Clone, Copy)]
 pub(in crate::vm) enum Event {
     /// A loop site's run entered published code.
@@ -63,7 +63,7 @@ pub(in crate::vm) enum Event {
     Declined,
     /// A compilation of a loop region started (`lane_loop_compile`).
     Compiled,
-    /// A lane body compile started (a Cranelift function tier; none under `--f-jit`).
+    /// A lane body compile started (a Cranelift function tier; none under `--b-jit`).
     BodyCompile,
 }
 
@@ -74,7 +74,7 @@ const TOP_LEAVES: usize = 40;
 
 /// Counts a region run leaving at `pc` of `function` (an instruction of operation `op`), where the trace channel is on.
 pub(in crate::vm) fn leave(function: u32, pc: u32, op: crate::bytecode::Op) {
-    if !crate::trace::Channel::FjitLeave.on() {
+    if !crate::trace::Channel::BjitLeave.on() {
         return;
     }
     REPORT.call_once(|| {
@@ -102,23 +102,23 @@ extern "C" fn report() {
     let (Ok(totals), Ok(rejects)) = (TOTALS.lock(), REJECTS.lock()) else { return };
     let ops = totals.ops.max(1);
     eprintln!(
-        "fjit regions={} rejected={} ops={} bytes={} bytes_per_op={:.1} build_ns={} build_ns_per_op={:.1} stencil_gen_ns={}",
+        "bjit regions={} rejected={} ops={} bytes={} bytes_per_op={:.1} build_ns={} build_ns_per_op={:.1} stencil_gen_ns={}",
         totals.regions, totals.rejected, totals.ops, totals.bytes, totals.bytes as f64 / ops as f64, totals.nanos,
         totals.nanos as f64 / ops as f64, numeric::generation_ns()
     );
     let [entered, left, declined, compiled, bodies] = std::array::from_fn(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
-    eprintln!("fjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies}");
+    eprintln!("bjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies}");
     if let Ok(leaves) = LEAVES.lock() {
         let mut ranked: Vec<_> = leaves.iter().collect();
         ranked.sort_by(|a, b| (b.1).1.cmp(&(a.1).1).then(a.0.cmp(b.0)));
         for ((function, pc), (op, count)) in ranked.into_iter().take(TOP_LEAVES) {
-            eprintln!("fjit-leave {function}:{pc} {op:?} {count}");
+            eprintln!("bjit-leave {function}:{pc} {op:?} {count}");
         }
     }
     let mut ranked: Vec<_> = rejects.iter().collect();
     ranked.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
     for (name, count) in ranked {
-        eprintln!("fjit-reject {name} {count}");
+        eprintln!("bjit-reject {name} {count}");
     }
 }
 
@@ -187,7 +187,7 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
 
 impl<H: crate::Host> crate::vm::Vm<H> {
     /// Whether the JavaScript function tiers compile function bodies: they run (`js_tier_runs`) and the process runs
-    /// Cranelift function tiers at all (not `--f-jit`, whose loop sites are still admitted by `js_tier_runs`).
+    /// Cranelift function tiers at all (not `--b-jit`, whose loop sites are still admitted by `js_tier_runs`).
     pub(in crate::vm) fn js_function_compiles(&self) -> bool {
         self.js_tier_runs() && crate::jit_mode::function_tiers()
     }

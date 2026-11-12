@@ -17,7 +17,7 @@ const _: () = assert!(ENTRY.receiver_complement == u32::MAX && ENTRY.slot_comple
 /// names a prototype holder (or is empty), or the record's values are not plain. The entry
 /// stores each of its words complemented against the empty entry, so a holder of zero and a
 /// shape equal to the record's shape complemented are the guards.
-// Read by the f-jit stencil generator (thread 7) once it derives GetField from this row; the
+// Read by the b-jit stencil generator (thread 7) once it derives GetField from this row; the
 // tests run it on `Concrete` meanwhile.
 #[allow(dead_code)]
 #[inline(always)]

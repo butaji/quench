@@ -303,17 +303,17 @@ impl LoopPlanner<'_> {
 /// bound stays bounded by the lane plan's own admission.
 const REGION_CODE_BUDGET: usize = 2 * osr_loop::MAX_CODE_BYTES;
 
-/// The FastJIT tier's answer for `region`: `Some(code)` where it builds or (under `--f-jit`) declines the
+/// The BaseJIT tier's answer for `region`: `Some(code)` where it builds or (under `--b-jit`) declines the
 /// region, `None` where Cranelift compiles it. Number loops whose every instruction has a stencil row skip Cranelift.
 fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usize], observation: &Observation<'_>)
     -> Option<Option<PendingOsrRegion>> {
-    let fast_only = crate::jit_mode::fast_only();
-    if !crate::jit_mode::fast_regions() || region.inlining.is_some() {
-        return fast_only.then_some(None);
+    let base_only = crate::jit_mode::base_only();
+    if !crate::jit_mode::base_regions() || region.inlining.is_some() {
+        return base_only.then_some(None);
     }
     let built = super::fast_region::build(region, views == super::ElementViews::Dense, widened,
         [observation.int_registers, observation.double_registers]);
-    let Ok((code, bare)) = built else { return fast_only.then_some(None) };
+    let Ok((code, bare)) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, region.header, &code, None, "");
     }

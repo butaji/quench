@@ -8087,7 +8087,7 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
             (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
                 || matches!(op.class(), Class::LoadCapture)
                 // A FastJIT region also holds a loaded field as an int32 until it leaves there.
-                || (crate::jit_mode::fast_regions() && matches!(op.class(), Class::GetField))).then(|| op.is_get_index())
+                || (crate::jit_mode::base_regions() && matches!(op.class(), Class::GetField))).then(|| op.is_get_index())
         })
     });
     if let Some(read) = counted { site.tier.borrow_mut().left_at(pc, read); }
@@ -8607,8 +8607,8 @@ fn lane_inlining_region<H: Host>(
     r: Registers,
     site: &LoopSite,
 ) -> Option<super::compiled::LoopRegion> {
-    // `--f-jit` runs no inlining regions, so it does not analyze them.
-    if crate::jit_mode::fast_only() { return None; }
+    // `--b-jit` runs no inlining regions, so it does not analyze them.
+    if crate::jit_mode::base_only() { return None; }
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let program = unsafe { (*cx).program };

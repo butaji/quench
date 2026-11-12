@@ -45,13 +45,14 @@ fn run_flags(arguments: &[&str]) -> (bool, String) {
 
 #[test]
 fn the_jit_mode_flags_select_one_mode_and_the_old_flag_is_gone() {
-    for flag in ["--no-jit", "--f-jit", "--u-jit"] {
+    for flag in ["--no-jit", "--b-jit", "--u-jit"] {
         assert!(run_flags(&[flag]).0, "{flag} runs");
     }
-    assert!(!run_flags(&["--no-jit", "--f-jit"]).0, "two modes are an error");
-    assert!(!run_flags(&["--f-jit", "--u-jit"]).0, "two modes are an error");
+    assert!(!run_flags(&["--no-jit", "--b-jit"]).0, "two modes are an error");
+    assert!(!run_flags(&["--b-jit", "--u-jit"]).0, "two modes are an error");
     assert!(!run_flags(&["--jit"]).0, "--jit is removed");
-    assert!(compiles(&["--f-jit"]) > 0, "--f-jit: the hot number loop runs from stencils");
+    assert!(!run_flags(&["--f-jit"]).0, "--f-jit is reserved for the Cranelift fast mode and rejected");
+    assert!(compiles(&["--b-jit"]) > 0, "--b-jit: the hot number loop runs from stencils");
     assert!(compiles(&["--u-jit"]) > 0, "--u-jit: the hot loop runs compiled code");
 }
 
@@ -65,12 +66,12 @@ fn run_fixture(flag: &str, fixture: &str) -> (bool, String) {
 /// Loops whose registers hold ints, then doubles, then ints, left at every guard (widening
 /// recompiles, element and tag exits) leave the lane exactly as the interpreter has it.
 #[test]
-fn f_jit_exits_leave_the_interpreters_state() {
+fn b_jit_exits_leave_the_interpreters_state() {
     for fixture in ["fast_jit_webs.js", "fast_jit_exit_state.js"] {
         let expected = run_fixture("--no-jit", fixture);
         assert!(expected.0, "{fixture} under --no-jit");
         for _ in 0..3 {
-            assert_eq!(run_fixture("--f-jit", fixture), expected, "{fixture} under --f-jit");
+            assert_eq!(run_fixture("--b-jit", fixture), expected, "{fixture} under --b-jit");
         }
     }
 }
@@ -94,8 +95,8 @@ fn function_attempts_and_region_runs(flag: &str) -> (u64, u64) {
 }
 
 #[test]
-fn f_jit_compiles_no_function_and_runs_stencil_regions() {
-    let (attempts, runs) = function_attempts_and_region_runs("--f-jit");
-    assert_eq!(attempts, 0, "--f-jit: no Cranelift function compile is attempted");
-    assert!(runs > 0, "--f-jit: the hot loop runs its stencil region");
+fn b_jit_compiles_no_function_and_runs_base_regions() {
+    let (attempts, runs) = function_attempts_and_region_runs("--b-jit");
+    assert_eq!(attempts, 0, "--b-jit: no Cranelift function compile is attempted");
+    assert!(runs > 0, "--b-jit: the hot loop runs its stencil region");
 }
