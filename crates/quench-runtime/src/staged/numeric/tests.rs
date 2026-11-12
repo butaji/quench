@@ -64,6 +64,8 @@ impl Frame<Concrete> for NumberFrame {
     }
 }
 
+impl crate::staged::GlobalFrame<Concrete> for NumberFrame {}
+
 impl NumericFrame<Concrete> for NumberFrame {
     fn int_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
         match self.values[usize::from(operand.register_index().expect("a register operand"))] {

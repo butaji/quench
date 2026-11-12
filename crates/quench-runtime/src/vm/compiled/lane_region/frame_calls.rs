@@ -3,7 +3,7 @@
 
 use super::EmitFrame;
 use super::super::{emit_js_guard, emit_lane_helper_call, Emit, EmitProof, LaneHelper};
-use super::{RegisterFact, Representation, Type};
+use super::{BindingTime, Fact, Proof, Projection, RegisterFact, Representation, Type};
 use crate::bytecode::Register;
 use cranelift_codegen::ir;
 use crate::Value;
@@ -57,23 +57,6 @@ pub(super) fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<
         RegisterFact::definition(Type::ANY, Representation::Tagged));
 }
 
-/// The lane's own global-name read (`LaneHelper::GlobalGet`): a DELETED answer leaves at the
-/// miss edge, otherwise the value is the destination's tagged word.
-pub(super) fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
-    atom: u32, site: u16, proof: EmitProof) -> Option<()> {
-    let EmitProof::GlobalRead { miss } = proof else { return None };
-    let payload = frame.payload;
-    let atom = stage.builder.ins().iconst(types::I64, i64::from(atom));
-    let site = stage.builder.ins().iconst(types::I64, i64::from(site));
-    let get = frame.helpers.address(stage.builder.ins(), LaneHelper::GlobalGet);
-    let value = emit_lane_helper_call(stage.builder, payload, get, &[atom, site]);
-    let hit = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-    emit_js_guard(stage.builder, hit, miss);
-    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
-        RegisterFact::definition(Type::ANY, Representation::Tagged));
-    Some(())
-}
-
 /// The VM's field-store hit (`LaneHelper::FieldSet`): its false answer leaves at the miss edge.
 pub(super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value,
     atom: u32, site: u16, value: ir::Value, proof: EmitProof) -> Option<()> {
@@ -86,4 +69,71 @@ pub(super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
     let ok = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
     emit_js_guard(stage.builder, ok, miss);
     Some(())
+}
+
+/// The lane's own global-name read word (`LaneHelper::GlobalGet`): `Value::DELETED` where it misses.
+fn global_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32, site: u16) -> ir::Value {
+    let (atom, site) = (immediate(stage, i64::from(atom)), immediate(stage, i64::from(site)));
+    let get = frame.helpers.address(stage.builder.ins(), LaneHelper::GlobalGet);
+    emit_lane_helper_call(stage.builder, frame.payload, get, &[atom, site])
+}
+
+/// Leaves at `miss` unless `word` compares `cc` to `value`.
+fn guard_word(stage: &mut Emit<'_, '_>, word: ir::Value, cc: IntCC, value: Value, miss: ir::Block) {
+    let held = stage.builder.ins().icmp_imm_u(cc, word, value.to_bits() as i64);
+    emit_js_guard(stage.builder, held, miss);
+}
+
+/// The lane's own global-name read: a DELETED answer leaves at the miss edge, otherwise the
+/// value is the destination's tagged word.
+fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
+    atom: u32, site: u16, proof: EmitProof) -> Option<()> {
+    let EmitProof::GlobalRead { miss: Some(miss) } = proof else { return None };
+    let value = global_word(frame, stage, atom, site);
+    guard_word(stage, value, IntCC::NotEqual, Value::DELETED, miss);
+    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
+        RegisterFact::definition(Type::ANY, Representation::Tagged));
+    Some(())
+}
+
+/// The 64-bit immediate `bits`.
+fn immediate(stage: &mut Emit<'_, '_>, bits: i64) -> ir::Value { stage.builder.ins().iconst(types::I64, bits) }
+
+/// `value` as the tagged immediate `destination` holds under `fact`.
+fn define_immediate(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, value: Value,
+    fact: RegisterFact) -> Option<()> {
+    let bits = immediate(stage, value.to_bits() as i64);
+    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, bits, fact);
+    Some(())
+}
+
+/// An immutable global's value, defined as the immediate of its own type.
+fn global_constant(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, value: Value) -> Option<()> {
+    define_immediate(frame, stage, destination, value, RegisterFact::definition(Type::immediate(value), Representation::Tagged))
+}
+
+/// A value held as a Stable fact by its dependency, of type `ty`.
+fn global_held(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, value: Value, ty: Type) -> Option<()> {
+    let held = RegisterFact::admit(Fact { ty, representation: Representation::Tagged,
+        binding: BindingTime::Stable, proof: Proof::Dependency, projection: Projection::Exact })
+        .expect("a Stable fact's dependency proves any type");
+    define_immediate(frame, stage, destination, value, held)
+}
+
+/// A whole-program value the read checks: a changed binding leaves, then the checked constant is held.
+fn global_frozen(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
+    (atom, site): (u32, u16), (value, ty): (Value, Type), proof: EmitProof) -> Option<()> {
+    let EmitProof::GlobalRead { miss: Some(miss) } = proof else { return None };
+    let actual = global_word(frame, stage, atom, site);
+    guard_word(stage, actual, IntCC::Equal, value, miss);
+    global_held(frame, stage, destination, value, ty)
+}
+
+impl crate::staged::GlobalFrame<Emit<'_, '_>> for EmitFrame<'_> {
+    fn global_constant(&mut self, stage: &mut Emit<'_, '_>, destination: Register, value: Value) -> Option<()> { global_constant(self, stage, destination, value) }
+    fn global_held(&mut self, stage: &mut Emit<'_, '_>, destination: Register, value: Value, ty: Type) -> Option<()> { global_held(self, stage, destination, value, ty) }
+    fn global_frozen(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, value: Value, ty: Type, proof: EmitProof) -> Option<()> {
+        global_frozen(self, stage, destination, (atom, site), (value, ty), proof)
+    }
+    fn global_read(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, proof: EmitProof) -> Option<()> { global_read(self, stage, destination, atom, site, proof) }
 }
