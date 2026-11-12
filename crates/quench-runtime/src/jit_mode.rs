@@ -11,6 +11,8 @@ pub enum JitMode {
     BaseOnly,
     /// `--u-jit`: UltraJIT alone.
     UltraOnly,
+    /// `--q-jit`: QuickJIT alone: the Cranelift tiers compile every body at `CompileLevel::Quick`.
+    QuickOnly,
     /// No flag: UltraJIT and BaseJIT.
     #[default]
     Full,
@@ -23,6 +25,7 @@ impl JitMode {
             "--no-jit" => Some(Self::Interp),
             "--b-jit" => Some(Self::BaseOnly),
             "--u-jit" => Some(Self::UltraOnly),
+            "--q-jit" => Some(Self::QuickOnly),
             _ => None,
         }
     }
@@ -31,11 +34,10 @@ impl JitMode {
     /// chosen or the flag is the removed `--jit`.
     pub fn select(chosen: &mut Option<Self>, flag: &str) -> Result<(), &'static str> {
         match (chosen.is_some(), Self::from_flag(flag)) {
-            (_, None) if flag == "--q-jit" => Err("--q-jit (Cranelift quick mode) is not available yet; --b-jit selects the stencil tier"),
-            (true, _) => Err("only one of --no-jit, --b-jit and --u-jit can be used"),
+            (true, _) => Err("only one of --no-jit, --b-jit, --q-jit and --u-jit can be used"),
             (false, Some(mode)) => Ok(*chosen = Some(mode)),
             (false, None) if flag == "--jit" => Err("--jit was removed: JIT is the default, and --no-jit selects the interpreter"),
-            (false, None) => Err("unknown JIT flag: use --no-jit, --b-jit or --u-jit"),
+            (false, None) => Err("unknown JIT flag: use --no-jit, --b-jit, --q-jit or --u-jit"),
         }
     }
 
@@ -44,7 +46,7 @@ impl JitMode {
         match self {
             Self::Interp => (false, false),
             Self::BaseOnly => (true, false),
-            Self::UltraOnly => (false, true),
+            Self::UltraOnly | Self::QuickOnly => (false, true),
             Self::Full => (true, true),
         }
     }
@@ -68,7 +70,7 @@ impl JitMode {
 /// publication, the JavaScript function tiers) run: the one `tiers_enabled` fact of the process's mode,
 /// UltraJIT's half. `--b-jit` is the interpreter plus stencil regions.
 pub fn function_tiers() -> bool {
-    let mode = [JitMode::Interp, JitMode::BaseOnly, JitMode::UltraOnly, JitMode::Full]
+    let mode = [JitMode::Interp, JitMode::BaseOnly, JitMode::UltraOnly, JitMode::QuickOnly, JitMode::Full]
         .into_iter()
         .find(|mode| *mode as u8 == PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed))
         .unwrap_or_default();
@@ -81,6 +83,11 @@ static PROCESS_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::
 /// UltraJIT either.
 pub fn base_only() -> bool {
     PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed) == JitMode::BaseOnly as u8
+}
+
+/// Whether the process runs `--q-jit`: every Cranelift compile is `CompileLevel::Quick`.
+pub fn quick_only() -> bool {
+    PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed) == JitMode::QuickOnly as u8
 }
 
 /// Whether loop regions are built from BaseJIT stencils: `--b-jit`, or `QUENCH_DEV=bjit`
