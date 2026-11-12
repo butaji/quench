@@ -628,8 +628,9 @@ impl<H: Host> Vm<H> {
             Op::StoreEnvLocal => {
                 let value = self.read(f, i.register_a());
                 let initialize = i.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false);
-                self.store_env_local(p, f, i.local_slot(), value, initialize)?;
-                if let Some(register) = i.optional_register_b() {
+                if self.store_env_local(p, f, i.local_slot(), value, initialize)?
+                    && let Some(register) = i.optional_register_b()
+                {
                     self.write(f, register, value);
                 }
             }
