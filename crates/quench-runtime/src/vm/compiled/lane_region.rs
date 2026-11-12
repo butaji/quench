@@ -2524,11 +2524,12 @@ impl Lowering<'_, '_> {
         self.guard_entering_ranges(state, pc);
     }
 
-    /// The observed int32 entries whose range is narrower than int32 and whose entry fact is
+    /// The observed int32 entries live at `entry` (a dead register's value is stale, and nothing
+    /// conforms it) whose range is narrower than int32 and whose entry fact is
     /// int32: what the entry guards once (`guard_entering_ranges`) and the pass assumes.
     fn entering_ranges(&self, entry: usize) -> Vec<(Register, IntRange)> {
         let types = self.facts.at(entry);
-        self.int_entries.iter().copied().filter(|&(register, range)| range != IntRange::FULL
+        self.int_entries.iter().copied().filter(|&(register, range)| range != IntRange::FULL && self.is_live(entry, register)
             && types.and_then(|types| types.get(usize::from(register))).is_some_and(|ty| ty.is_subtype(Type::INT32))).collect()
     }
 

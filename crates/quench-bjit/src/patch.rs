@@ -177,7 +177,7 @@ mod tests {
         assert_eq!(branch_delta(patch_branch(BCOND_EQ, BRANCH19, -(1 << 20)).unwrap(), BRANCH19), -(1 << 20));
         assert_eq!(patch_branch(BCOND_EQ, BRANCH19, 1 << 20), Err(PatchError::OutOfRange(1 << 20)));
         let tbz = patch_branch(TBZ | 0x00f8_001f, BRANCH14, -8).unwrap();
-        assert_eq!(tbz, 0x36f8_7fdf);
+        assert_eq!(tbz, 0x36ff_ffdf);
         assert_eq!(branch_delta(tbz, BRANCH14), -8);
         assert_eq!(patch_branch(TBZ, BRANCH14, 1 << 15), Err(PatchError::OutOfRange(1 << 15)));
     }

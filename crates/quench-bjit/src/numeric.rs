@@ -156,7 +156,7 @@ mod supernode_tests {
     fn the_supernodes_are_built() {
         for nodes in supernodes::instances() {
             let stencil = supernode_stencil(nodes).unwrap_or_else(|| panic!("{nodes:?}"));
-            assert!(stencil.relocs.iter().any(|reloc| reloc.pc_relative), "{nodes:?}");
+            assert!(stencil.relocs.iter().any(|reloc| crate::class::is_successor(reloc.class)), "{nodes:?}");
         }
     }
 }

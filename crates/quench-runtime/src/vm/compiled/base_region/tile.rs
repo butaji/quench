@@ -283,8 +283,8 @@ mod tests {
     #[test]
     fn a_tile_is_one_stencil_that_exits_at_its_first_pc_with_the_rows_own_holes() {
         let (between, a, c, d) = (PIN, PIN + 1, PIN + 2, PIN + 3);
-        let first = planned(Node::Number((MUL, between, a, numeric::library::IMM, true)), [10, 11, 12, 0, 0, 0], Some(40), None);
-        let second = planned(Node::Number((ADD, d, c, between, true)), [20, 21, 22, 0, 0, 0], Some(41), None);
+        let first = planned(Node::Number((MUL, between, a, numeric::library::IMM, true)), [10, 11, 12], Some(40), None);
+        let second = planned(Node::Number((ADD, d, c, between, true)), [20, 21, 22], Some(41), None);
         let supernode = &supernodes::SUPERNODES[0];
         let tile = fuse(40, &first, &second, Operand::B, supernode).expect("a stencil for MUL then ADD over pins");
         assert!(tile.node.is_none() && tile.exit_pc == Some(40) && tile.target.is_none());
@@ -293,8 +293,8 @@ mod tests {
 
     #[test]
     fn the_hole_of_an_exchanged_operand_goes_with_it() {
-        let first = planned(Node::Number((MUL, PIN, PIN + 1, PIN + 2, true)), [10, 11, 12, 0, 0, 0], Some(40), None);
-        let second = planned(Node::Number((AND, PIN + 3, PIN, numeric::library::IMM, true)), [20, 21, 22, 0, 0, 0], Some(41), None);
+        let first = planned(Node::Number((MUL, PIN, PIN + 1, PIN + 2, true)), [10, 11, 12], Some(40), None);
+        let second = planned(Node::Number((AND, PIN + 3, PIN, numeric::library::IMM, true)), [20, 21, 22], Some(41), None);
         assert_eq!(joined(&first, &second, true, 0)[..3], [20, 22, 21]);
         assert_eq!(joined(&first, &second, false, 1 << 2)[..3], [20, 21, 12]);
     }
