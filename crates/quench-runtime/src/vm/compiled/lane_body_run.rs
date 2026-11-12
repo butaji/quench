@@ -38,7 +38,11 @@ impl<H: Host> Vm<H> {
         // SAFETY: the frame lives for the thread and is never moved once made; no reference
         // into it is held across the body's run, which may enter it again
         // (`run_nested_lane_method`).
+        #[cfg(test)]
+        let bound = unsafe { (*frame).run_words() };
         let context = unsafe { self.bind_body_entry(frame, run) };
+        #[cfg(test)]
+        LANE_RUN_REWRITES.with(|count| count.set(count.get() + usize::from(bound != unsafe { (*frame).run_words() })));
         let captures = entry_cell::capture_word(capture_values, capture_len);
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases bound above.
@@ -92,18 +96,30 @@ impl<H: Host> Vm<H> {
     ///
     /// # Safety
     /// As `enter_body`, for `run`'s body and the registers it names.
+    #[inline(always)]
     unsafe fn call_body(&self, run: &BodyRun, context: *mut CallContext, captures: u64) -> BodyReturn {
         let (receiver, registers) = (run.receiver.to_bits(), run.registers.cast_const().cast());
         // SAFETY: the frame's context is the one this entry owns until it returns.
         let context = unsafe { &mut *context };
-        if !run.method.fault_poll {
+        if run.method.fault_poll {
             // SAFETY: as the caller promises.
-            return unsafe { (run.method.entry)(context, receiver, captures, registers) };
+            return unsafe { self.call_polling_body(run, context, receiver, captures, registers) };
         }
-        let poll = native_poll_page(&self.execution_interrupt);
-        // SAFETY: this entry owns the TLS binding until it returns. Reentrant
-        // entries checkpoint it in `run_nested_lane_method`.
-        context.bind_native_adapter(context.adapter_payload, self.execution_interrupt.atomic_flag() as *const _, poll);
+        // SAFETY: as the caller promises.
+        unsafe { (run.method.entry)(context, receiver, captures, registers) }
+    }
+
+    /// `call_body` of a body that polls by fault: through the trampoline that resumes the fault,
+    /// which lands in the entry that owns it. Out of line, so the other bodies' call is the
+    /// entry's own.
+    ///
+    /// # Safety
+    /// As `call_body`.
+    #[inline(never)]
+    unsafe fn call_polling_body(&self, run: &BodyRun, context: &mut CallContext, receiver: u64, captures: u64, registers: *const u64) -> BodyReturn {
+        // SAFETY: this entry owns the TLS binding until it returns. Reentrant entries
+        // checkpoint it in `run_nested_lane_method`; the run bound the rest of it.
+        context.bind_poll_page(native_poll_page(&self.execution_interrupt));
         // SAFETY: as the caller promises.
         unsafe { enter_body(context, receiver, captures, registers, run.method.entry) }
     }

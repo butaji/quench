@@ -4420,6 +4420,11 @@ impl CallContext {
         self.stack_limit = native_stack_limit();
         self.interrupt = interrupt;
         self.adapter_payload = payload;
+        self.bind_poll_page(poll_page);
+    }
+
+    /// The poll page whose fault ends the entry as terminated (`guard_fault`), or none.
+    fn bind_poll_page(&mut self, poll_page: Option<(usize, usize)>) {
         self.poll_start = poll_page.map_or(0, |(start, _)| start);
         self.poll_end = poll_page.map_or(0, |(start, bytes)| start + bytes);
     }
@@ -6773,6 +6778,10 @@ pub(super) static LANE_METHODS_COMPILED: std::sync::atomic::AtomicUsize = std::s
 /// (`LaneFrame::bind_run` writing its words), for the crossing-cost test.
 #[cfg(test)]
 thread_local! { pub(super) static LANE_ENTRIES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) }; }
+/// Entries on this thread that changed a word of their run (`LaneFrame::run_words`): no more than
+/// the runs they bound.
+#[cfg(test)]
+thread_local! { pub(super) static LANE_RUN_REWRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 /// Calls of lane bodies made through their entry cells before any activation
 /// (`dispatch_fast::lane_enter_cell_body`) on this thread, for the crossing test.
 #[cfg(test)]
@@ -7347,12 +7356,24 @@ struct LaneFrame {
 }
 
 impl LaneFrame {
+    /// The words `bind_run` writes, for the test that an entry of a run rewrites none of them.
+    #[cfg(test)]
+    fn run_words(&self) -> [usize; 8] {
+        let dispatch = &self.dispatch;
+        [dispatch.vm, dispatch.program_id.raw() as usize, dispatch.lane_context, dispatch.residual,
+            dispatch.stores_specialized, dispatch.field_entries, self.context.stack_limit, self.context.adapter_payload.addr()]
+    }
+
     /// Binds the payload and context to `run`'s words, written once per run: a nested entry
     /// of the same run (`Vm::run_nested_lane_method`) and each next entry of the lane's calls
     /// find them standing. `field_entries` derives the program's field cache entries, which
     /// stand until the table moves (`Vm::rebind_lane_field_entries`). The run's VM is bound
     /// after it (`JsStepDispatch::bind_lane_storage`), so a VM that is not the last entry's
-    /// makes a new run.
+    /// makes a new run. The native stack's limit is anchored where the run binds: the lane
+    /// run's frame is at one depth for all its entries (its calls are activations, not native
+    /// frames), a deeper run (a native callback's) has its own context and so binds its own,
+    /// and the nested entries of one run (`Vm::run_nested_lane_method`) spend the run's budget.
+    /// The interrupt and the payload, whose address is the frame's, bind once per interrupt owner.
     #[inline(always)]
     fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) {
         let owner = std::ptr::from_ref(interrupt);
@@ -7360,6 +7381,7 @@ impl LaneFrame {
             #[cfg(test)]
             LANE_ENTRIES.with(|counts| counts.set((counts.get().0, counts.get().1 + 1)));
             self.dispatch.field_entries = field_entries();
+            self.context.stack_limit = native_stack_limit();
             self.dispatch.program_id = run.program_id;
             self.dispatch.lane_context = run.lane_context;
             self.dispatch.residual = run.residual;
@@ -7368,8 +7390,8 @@ impl LaneFrame {
         if self.context.interrupt_owner != owner {
             self.context.interrupt = interrupt.atomic_flag() as *const _;
             self.context.interrupt_owner = owner;
+            self.context.adapter_payload = (&raw mut self.dispatch).cast();
         }
-        self.context.adapter_payload = (&raw mut self.dispatch).cast();
     }
 
     fn new() -> Self {
