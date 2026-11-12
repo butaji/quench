@@ -111,8 +111,8 @@ const METRICS: &[Metric] = &[
     Metric {
         name: "stencil_opcodes",
         direction: Direction::Up,
-        sources: &[Source::Optional("crates/quench-bjit/stencils/library.rs")],
-        extract: Extract::Syntax(extract::stencil_kinds),
+        sources: &[Source::File("crates/quench-runtime/src/vm/compiled/base_region/decode.rs")],
+        extract: Extract::Syntax(extract::decoder_classes),
     },
 ];
 

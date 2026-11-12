@@ -35,6 +35,11 @@ impl LaneBodyStats {
         }).collect::<Vec<_>>().join(" ");
     }
 
+    /// Runs of the body, however they ended (`ends`): the tier census's entries.
+    pub(in crate::vm) fn runs(&self) -> u64 {
+        self.ends.iter().map(|end| u64::from(end.get())).sum()
+    }
+
     /// `frames`, the body's inlined calls, name the function a leave inside one was in.
     pub(in crate::vm) fn ended(&self, exit: super::super::compiled::LaneExit, frames: &[super::super::compiled::InlinedCall], line: u64) {
         let index = End::of(exit) as usize;

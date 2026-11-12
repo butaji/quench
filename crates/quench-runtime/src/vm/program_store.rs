@@ -9,6 +9,7 @@ use std::io::Write as _;
 
 pub(in crate::vm) mod lane_publication;
 mod snapshot;
+mod tier_census;
 mod wasm_tier;
 pub(super) use wasm_tier::WasmTierState;
 
@@ -974,7 +975,7 @@ impl Default for ProgramStore {
                 WasmModuleCompile::ADAPTIVE
             },
             general_baseline_priced: !(STRESS || crate::trace::Dev::JsUnpricedGeneralDispatch.on()),
-            js_jit_diagnostics: crate::trace::Channel::JsJit.on().then(FxHashMap::default),
+            js_jit_diagnostics: (crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on()).then(FxHashMap::default),
             js_jit_general_dispatch_enabled: STRESS || crate::trace::Dev::JsGeneralDispatch.on(),
             js_jit_lane_methods_enabled: STRESS,
             #[cfg(test)]
@@ -3309,6 +3310,19 @@ fn parts_per_million(part: u64, whole: u64) -> u64 {
 
 impl Drop for ProgramStore {
     fn drop(&mut self) {
+        let census = crate::trace::Channel::Census.on();
+        if census && self.js_jit_diagnostics.is_some() {
+            eprintln!("{}", self.tier_census().render());
+        }
+        if !census || crate::trace::Channel::JsJit.on() {
+            self.report_js_jit();
+        }
+    }
+}
+
+impl ProgramStore {
+    /// The `QUENCH_TRACE=js-jit` report, printed as the store drops.
+    fn report_js_jit(&self) {
         let Some(diagnostics) = &self.js_jit_diagnostics else {
             return;
         };
