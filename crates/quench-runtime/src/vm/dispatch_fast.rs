@@ -2826,24 +2826,15 @@ lane_handler! {
 
 lane_handler! {
     /// `LoadLocal` and `LoadEnvLocal` of an initialized binding a VM frame owns
-    /// (`Vm::initialized_frame_binding`); any other read takes the general path.
+    /// (`staged::read_initialized_local` over the binding, `lane_frame::staged_load_local_checked`); any other read
+    /// takes the general path.
     fn lane_load_local<>(cx, r, ip, i, view) {
-        let value = if unsafe { (*cx).env }.is_deleted()
+        let loaded = unsafe { (*cx).env }.is_deleted()
             && i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0
-        {
-            // SAFETY: the context's program outlives the lane run.
-            (unsafe { vm(cx) }).initialized_frame_binding(
-                unsafe { &*(*cx).code },
-                unsafe { (*cx).frame },
-                i.imm() as usize,
-            )
-        } else {
-            None
-        };
-        let Some(value) = value else {
+            && lane_frame::staged_load_local_checked::<H, ACC_NONE>(cx, r, view, i.a, i.imm() as usize);
+        if !loaded {
             return exit(ip);
-        };
-        r.set(i.a, value);
+        }
         next!(cx, r, following(ip), view)
     }
 }
@@ -3035,20 +3026,13 @@ fn lane_window_closure_value<H: Host>(
 
 lane_handler! {
     /// `StoreLocal` and `StoreEnvLocal` to a binding a VM frame owns that
-    /// `Vm::store_initialized_frame_binding` completes; any other store takes the general
+    /// `lane_frame::staged_store_local_checked` completes; any other store takes the general
     /// path. A `StoreEnvLocal` of a function that resolves names at run time, which may
     /// write a `with` object's binding instead, has no record (`derive_lane_view`).
     fn lane_store_local<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
-        // SAFETY: the context's program outlives the lane run.
         let stored = unsafe { (*cx).env }.is_deleted()
-            && (unsafe { vm(cx) }).store_initialized_frame_binding(
-                unsafe { &*(*cx).code },
-                unsafe { (*cx).frame },
-                i.imm() as usize,
-                value,
-                i.c != 0,
-            );
+            && lane_frame::staged_store_local_checked::<H, ACC_NONE>(cx, r, view, (i.a, i.imm() as usize), i.c != 0);
         if !stored {
             return exit(ip);
         }
