@@ -131,3 +131,18 @@ pub(super) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
     table.insert(row, stencil);
     Ok(stencil)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The field-read row's code size and relocations; with `STENCIL_DUMP=dir` its bytes are written there.
+    #[test]
+    fn field_read_row_generates() {
+        let stencil = stencil(HeapRow { heap: Heap::Field, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false }).unwrap();
+        eprintln!("field-read: {} bytes, relocs {:?}, imm32 {:?}", stencil.code.len(), stencil.relocs, stencil.imm32);
+        if let Ok(dir) = std::env::var("STENCIL_DUMP") {
+            std::fs::write(format!("{dir}/field_read_cranelift.bin"), &stencil.code).unwrap();
+        }
+    }
+}
