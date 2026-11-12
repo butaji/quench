@@ -60,7 +60,8 @@ fn initialize_this_publishes_the_receiver_to_the_rows_after_it() {
 /// A ten-deep chain of compiled calls whose inner callees make steps the helper runs in place (`instanceof`,
 /// `in`, a `typeof` string, a binary operator of a constant and a register): each runs as a native callee, where
 /// the step helper links the frames and makes the step from the activation's registers, so no callee's body is
-/// left at a step.
+/// left at a step: every run of a body completes its activation (a leave, a helper's miss in a callee included, ends a
+/// run without it), so the leaves the b-jit counted are zero.
 #[test]
 fn a_ten_deep_call_chain_makes_its_steps_in_the_callees() {
     let links: String = (1..=10).map(|depth| {
@@ -73,7 +74,8 @@ fn a_ten_deep_call_chain_makes_its_steps_in_the_callees() {
          print(t); print(link1(o, 7)); print(link1({{}}, 3));"
     ));
     assert_eq!(interpreted, compiled);
-    assert!(runs > 1000 && returns > 1000, "the bodies ran {runs} times and completed {returns}");
+    assert!(runs > 1000, "the bodies ran {runs} times");
+    assert_eq!(runs - returns, 0, "{} of {runs} body runs left for the interpreter", runs - returns);
 }
 
 /// A call that binds `this` (`super(...)` with an argument that is a call) and a direct `eval` are the helper's own
