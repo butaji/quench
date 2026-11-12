@@ -4,7 +4,8 @@
 use super::EmitFrame;
 use super::super::{emit_js_guard, emit_lane_helper_call, Emit, EmitProof, LaneHelper};
 use super::{BindingTime, Fact, Proof, Projection, RegisterFact, Representation, Type};
-use crate::bytecode::Register;
+use crate::bytecode::{Register, RegisterWindow};
+use crate::staged::Allocation;
 use cranelift_codegen::ir;
 use crate::Value;
 use cranelift_codegen::ir::{types, InstBuilder, MemFlagsData, condcodes::IntCC};
@@ -55,6 +56,43 @@ pub(super) fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<
     super::super::emit_js_guard(stage.builder, made, miss);
     <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
         RegisterFact::definition(Type::ANY, Representation::Tagged));
+}
+
+/// The address of a stack run holding the tagged words of `window`'s registers, which an
+/// allocator reads as the parts of a literal or a concatenation.
+fn window_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, window: RegisterWindow) -> ir::Value {
+    let word = types::I64.bytes();
+    let slot = stage.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
+        word * u32::from(window.count).max(1), word.trailing_zeros() as u8));
+    for part in 0..window.count {
+        let value = <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, window.base + part);
+        stage.builder.ins().stack_store(types::I64, value, slot, (word as usize * usize::from(part)) as i32);
+    }
+    stage.builder.ins().stack_addr(types::I64, slot, 0)
+}
+
+/// The parts address and count an allocator takes for `window` (`window_words`).
+fn window_arguments(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, window: RegisterWindow) -> [ir::Value; 2] {
+    [window_words(frame, stage, window), immediate(stage, i64::from(window.count))]
+}
+
+/// An allocation row by the lane's own allocator of it (`LaneHelper::NewObjectLiteral`,
+/// `NewClosure`, `NewTemplate`, `NewConcat`): each leaves for a due collection first, and a
+/// DELETED answer leaves at the proof's miss edge.
+pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
+    allocation: Allocation, proof: EmitProof) -> Option<ir::Value> {
+    let (helper, arguments) = match allocation {
+        Allocation::ObjectLiteral { site, window } => {
+            let [parts, count] = window_arguments(frame, stage, window);
+            (LaneHelper::NewObjectLiteral, vec![immediate(stage, i64::from(site)), parts, count])
+        }
+        Allocation::Closure { function } => (LaneHelper::NewClosure, vec![immediate(stage, i64::from(function))]),
+        Allocation::Template { template } => (LaneHelper::NewTemplate, vec![immediate(stage, i64::from(template))]),
+        Allocation::Concat { window } => {
+            (LaneHelper::NewConcat, window_arguments(frame, stage, window).to_vec())
+        }
+    };
+    frame.allocate(stage, helper, destination, &arguments, proof)
 }
 
 /// The VM's field-store hit (`LaneHelper::FieldSet`): its false answer leaves at the miss edge.

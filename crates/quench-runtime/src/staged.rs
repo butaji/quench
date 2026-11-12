@@ -33,6 +33,8 @@ pub(crate) mod store;
 pub(crate) mod holder;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
+mod allocation;
+pub(crate) use allocation::Allocation;
 pub(crate) mod plan_fields;
 pub(crate) mod value;
 mod steps;
@@ -155,6 +157,11 @@ pub(crate) trait Frame<S: Stage> {
     fn allocate_object_pair(&mut self, _stage: &mut S, _destination: Register, _site: u32, _first: S::Word, _second: S::Word,
         _proof: S::Proof) -> Option<S::Word> { None }
 
+    /// The heap value `allocation` makes, defined into `destination`; `None` where the frame
+    /// has no allocator for it or the value is the general path's (a due collection).
+    #[inline(always)]
+    fn allocate_value(&mut self, _stage: &mut S, _destination: Register, _allocation: Allocation, _proof: S::Proof) -> Option<S::Word> { None }
+
     /// Continue where no interrupt is requested; `None` leaves at the frame's miss edge.
     #[inline(always)]
     fn safepoint(&mut self, _stage: &mut S, _proof: S::Proof) -> Option<()> { Some(()) }
@@ -257,6 +264,10 @@ pub(crate) enum Operation<W, P> {
     /// The two-property object literal `destination` of literal `site`'s shape, holding
     /// `first` and `second`; a due collection leaves at the frame's miss edge.
     MakeObjectPair { destination: Register, site: u32, first: W, second: W, proof: P },
+    /// The object literal over a register window, closure, literal template or string
+    /// concatenation `allocation` makes, defined into `destination`; a due collection leaves
+    /// at the frame's miss edge (`Frame::allocate_value`).
+    Allocate { destination: Register, allocation: Allocation, proof: P },
     /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
     Safepoint { proof: P },
     /// The element store's host helper for `base[key] = value`, under `proof`; the frame's

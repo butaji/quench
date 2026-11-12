@@ -72,7 +72,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_new_object, lane_new_object_pair};
+use lane_allocations::{lane_binary, lane_new_array, lane_new_closure, lane_new_concat, lane_new_const_array, lane_new_object, lane_new_object_literal, lane_new_object_pair, lane_new_template};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
@@ -1822,6 +1822,14 @@ lane_helper_inventory! { H;
     ValueStep => super::dispatch_fast::lane_body_value_step::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
+    /// An object literal over a register window (`lane_new_object_literal`).
+    NewObjectLiteral => lane_new_object_literal::<H>,
+    /// A closure over the frame's environment (`lane_new_closure`).
+    NewClosure => lane_new_closure::<H>,
+    /// A literal template's value (`lane_new_template`).
+    NewTemplate => lane_new_template::<H>,
+    /// A string concatenation of pure parts (`lane_new_concat`).
+    NewConcat => lane_new_concat::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
