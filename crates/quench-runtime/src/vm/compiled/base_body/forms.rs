@@ -56,3 +56,22 @@ fn initialize_this_publishes_the_receiver_to_the_rows_after_it() {
     assert_eq!(interpreted, compiled);
     assert!(runs > 0, "no body ran");
 }
+
+/// A ten-deep chain of compiled calls whose inner callees make steps the helper runs in place (`instanceof`,
+/// `in`, a `typeof` string, a binary operator of a constant and a register): each runs as a native callee, where
+/// the step helper links the frames and makes the step from the activation's registers, so no callee's body is
+/// left at a step.
+#[test]
+fn a_ten_deep_call_chain_makes_its_steps_in_the_callees() {
+    let links: String = (1..=10).map(|depth| {
+        let inner = if depth == 10 { "0".to_string() } else { format!("link{}(o, n)", depth + 1) };
+        format!("function link{depth}(o, n) {{ const k = typeof o; return {inner} + (o instanceof Object ? 1 : 0) + ('p' in o ? 2 : 0) + k.length + (n % {depth}) + n * 3; }}\n")
+    }).collect();
+    let (interpreted, compiled, [runs, returns]) = run_both(&format!(
+        "{links}let t = 0; const o = {{ p: 1 }};
+         for (let k = 0; k < 400; k++) t = (t + link1(o, k)) | 0;
+         print(t); print(link1(o, 7)); print(link1({{}}, 3));"
+    ));
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 1000 && returns > 1000, "the bodies ran {runs} times and completed {returns}");
+}

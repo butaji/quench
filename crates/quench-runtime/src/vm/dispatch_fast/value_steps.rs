@@ -42,9 +42,11 @@ unsafe fn lane_body_value_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64
     };
     // SAFETY: the context's program outlives the lane run.
     let body = unsafe { &*(*cx).code }.function(function as usize);
-    let instruction = decoded_instruction(body, body.code[call_pc as usize]);
-    if !instruction.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP) { return LANE_CALL_MISSED; }
-    let [a, b] = super::super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
+    // A returning record (`return a + b`) is made as the step that writes its result register: the body's own
+    // `Return` row completes the activation with it.
+    let instruction = decoded_instruction(body, body.code[call_pc as usize]).without_return();
+    if !super::super::dispatch::is_value_step(instruction) { return LANE_CALL_MISSED; }
+    let Some([a, b]) = value_step_values(cx, r, instruction) else { return LANE_CALL_MISSED };
     let Some(value) = lane_in_place(cx, ip, |vm, code| vm.value_step(code, instruction, a, b)) else { return LANE_CALL_MISSED };
     // Guest code the step ran may have made the activations frames, whose registers these are.
     let after = unsafe { (*cx).registers };
@@ -54,6 +56,17 @@ unsafe fn lane_body_value_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64
     if after.0 == r.0 { return LANE_CALL_COMPLETED; }
     unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
     LANE_CALL_LEFT
+}
+
+/// The operand values of the value step `instruction`, read from the registers `r` and the program's constants:
+/// a `Binary`'s two operands, else the registers `value_step_operands` names; `None` for an operand of another
+/// kind (a local, which only a frame holds).
+fn value_step_values<H: Host>(cx: *mut LaneContext<H>, r: Registers, instruction: WideInstruction) -> Option<[Option<Value>; 2]> {
+    if instruction.op() != crate::bytecode::Op::Binary {
+        return Some(super::super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register))));
+    }
+    let [left, right] = [instruction.operand_b(), instruction.operand_c()];
+    Some([Some(lane_operand_value(cx, r, left.0)?), Some(lane_operand_value(cx, r, right.0)?)])
 }
 
 /// The record at `call_pc`, an instruction whose general step only continues, jumps or throws

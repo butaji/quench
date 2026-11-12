@@ -1842,7 +1842,8 @@ impl<H: Host> Vm<H> {
 }
 
 /// The operand registers `Vm::value_step` reads for `i`: `AppendArray`'s array and optional
-/// element, or the one operand of `ToPropertyKey` and `GetIterator`.
+/// element, or the one operand of the rest (`Binary`'s two operands are `Operand`s, which
+/// `lane_body_value_step_in` resolves).
 pub(super) fn value_step_operands(i: WideInstruction) -> [Option<crate::bytecode::Register>; 2] {
     match i.op() {
         Op::AppendArray => [Some(i.register_a()), i.optional_register_b()],
@@ -1855,8 +1856,16 @@ pub(super) fn value_step_result(i: WideInstruction) -> Option<crate::bytecode::R
     (i.op() != Op::AppendArray).then(|| i.result_register())
 }
 
+/// Whether `i` is made by `Vm::value_step` from its operand values alone: the value steps
+/// (`Traits::LANE_RESULT_STEP`) and a `Binary` or `Unary` that writes its result register, which a lane
+/// body that runs as a callee's activation, with no frame of its own to step in, makes this way.
+pub(super) fn is_value_step(i: WideInstruction) -> bool {
+    i.result_flags() == 0 && (i.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP) || matches!(i.op(), Op::Binary | Op::Unary))
+}
+
 impl<H: Host> Vm<H> {
-    /// `ToPropertyKey`, `GetIterator`, `ForInStart`, `IteratorClose` or `AppendArray` of its operand values
+    /// `ToPropertyKey`, `GetIterator`, `ForInStart`, `IteratorClose`, `AppendArray`, or a `Binary` or `Unary`
+    /// (operators on the operand values, `instanceof` and `in` among them) of its operand values
     /// (`value_step_operands`): the value it writes to its result register, if any. The
     /// general step and a frameless activation's (`lane_step_beside_activations`) share it.
     pub(super) fn value_step(
@@ -1870,6 +1879,14 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::ToPropertyKey => self.to_property_key(p, operand).map(Some),
             Op::GetIterator => self.get_iterator(p, operand).map(Some),
+            Op::Binary => {
+                let (operator, left) = (i.binary_operator(), a.expect("Binary names its left operand"));
+                match self.number_binary(operator, left, operand) {
+                    Some(value) => Ok(Some(value)),
+                    None => self.binary(p, operator, left, operand).map(Some),
+                }
+            }
+            Op::Unary => self.unary(p, i.unary_operator(), operand).map(Some),
             Op::ForInStart => self.for_in_start(p, operand).map(Some),
             Op::IteratorClose => self.iterator_close(p, operand).map(Some),
             Op::AppendArray => {
