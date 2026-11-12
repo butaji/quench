@@ -2785,7 +2785,7 @@ lane_handler! {
 mod lane_frame;
 mod loop_body;
 use loop_body::{lane_loop_body, LoopBody};
-use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_require_object_coercible, staged_to_numeric};
+use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_require_iterator_result, staged_require_object_coercible, staged_to_numeric, staged_to_property_key};
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
@@ -3130,11 +3130,13 @@ lane_handler! {
 }
 
 script_handler! {
-    /// `RequireIteratorResult` of an object, which passes; any other value takes the general
+    /// `RequireIteratorResult` of an object, which passes (the staged fast arm for a record, the
+    /// VM's `is_object_like` for any other object kind); any other value takes the general
     /// path, which throws.
     fn lane_require_iterator_result<>(cx, r, ip, i, view) {
-        let result = r.get(i.b);
-        if !result.is_record() && !(unsafe { vm(cx) }).is_object_like(result) {
+        if !staged_require_iterator_result(r, Carried::script(cx), i.b)
+            && !(unsafe { vm(cx) }).is_object_like(r.get(i.b))
+        {
             return exit(ip);
         }
         next!(cx, r, following(ip), Carried::script(cx))
@@ -3260,17 +3262,20 @@ script_handler! {
 }
 
 script_handler! {
-    /// `ToPropertyKey` of a string or symbol, which is itself, or of an integer, its decimal
-    /// string; any other value, which may run guest code or format a float, takes the
-    /// general step in place.
+    /// `ToPropertyKey` of a string, which is itself (the staged fast arm), of a symbol, which is
+    /// itself, or of an integer, its decimal string; any other value, which may run guest code
+    /// or format a float, takes the general step in place.
     fn lane_to_property_key<>(cx, r, ip, i, view) {
+        if staged_to_property_key(r, Carried::script(cx), i.a, i.b) {
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
         let vm = unsafe { vm(cx) };
         let value = r.get(i.b);
         let key = if let Some(integer) = value.as_int() {
             let key = vm.heap.alloc_string(crate::vm::wtf16::JsString::from_str(&integer.to_string()));
             note_allocation(vm);
             key
-        } else if vm.heap.is_string(value) || matches!(vm.heap.get(value), Some(Cell::Symbol(_))) {
+        } else if matches!(vm.heap.get(value), Some(Cell::Symbol(_))) {
             value
         } else {
             sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))

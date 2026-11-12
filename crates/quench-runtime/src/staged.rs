@@ -32,6 +32,7 @@ pub(crate) mod object;
 pub(crate) mod store;
 pub(crate) mod strings;
 pub(crate) mod holder;
+pub(crate) mod iteration;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
 pub(crate) mod plan_fields;
@@ -81,6 +82,13 @@ pub(crate) enum Operation<W, P> {
     RequireObjectCoercible { register: Register },
     /// Define `destination` with the logical negation of register `source`'s truthiness.
     LogicalNot { destination: Register, source: Register },
+    /// Continue where register `register` is a direct object or array record, which
+    /// `RequireIteratorResult` accepts as it is; any other value leaves at the frame's miss edge,
+    /// where the interpreter decides (`iteration`).
+    RequireIteratorResult { register: Register },
+    /// Define `destination` with register `source`'s word where it is a direct string, its own
+    /// property key; any other value leaves at the frame's miss edge (`iteration`).
+    ToPropertyKey { destination: Register, source: Register },
     /// The proven slot `slot` of `base`'s object, under `proof`, as a value (`Frame::field_read`).
     ReadField { base: Register, slot: u16, ty: Type, proof: P },
     /// Write `value` to the proven slot `slot` of `base`'s object under `proof`.
