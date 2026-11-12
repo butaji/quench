@@ -57,3 +57,19 @@ impl Lowering<'_, '_> {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The facts lattice (`facts::analyze`) joins each block entry over every incoming edge,
+    /// loop headers to a fixed point; the representation is its one function.
+    #[test]
+    fn a_join_picks_the_widest_number_domain_and_any_other_input_keeps_tagged() {
+        assert_eq!(target_representation(Type::INT32.join(Type::INT32)), Representation::Int32);
+        assert_eq!(target_representation(Type::INT32.join(Type::NUMBER)), Representation::Float64);
+        let other = Type::language(crate::ValueType::BigInt);
+        assert_eq!(target_representation(Type::INT32.join(other)), Representation::Tagged);
+        assert_eq!(target_representation(Type::NUMBER.join(Type::ANY)), Representation::Tagged);
+    }
+}
