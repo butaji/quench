@@ -24,6 +24,7 @@
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
 use tier_policy::TIERS;
+use super::dispatch_fast::Activation;
 use super::*;
 use crate::bytecode::{Class, Traits,
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
@@ -75,10 +76,8 @@ use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_n
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
-#[path = "compiled/numeric_image.rs"] mod numeric_image;
-#[path = "compiled/ahead_images.rs"] mod ahead_images;
-pub use ahead_images::AheadImages;
-pub(super) use numeric_image::compile_js_typed_numeric_region;
+#[path = "compiled/numeric_image.rs"] mod numeric_image; pub(super) use numeric_image::compile_js_typed_numeric_region;
+#[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, lane_body_signature, BodyEntry, BodyReturn};
 #[path = "compiled/general_tier_queries.rs"] mod general_tier_queries;
 #[path = "compiled/lane_facts.rs"]
@@ -1951,13 +1950,10 @@ thread_local! {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneHelpers {
-    /// A frameless Number region: no VM helper capability, and its one helper (the interrupt
-    /// owner) named by a symbol (`RelocKind::Helper`) that its loader resolves.
+    /// A frameless Number region: no VM helper capability, helpers named by symbol.
     Numeric,
     Process(&'static [*const (); LaneHelper::COUNT]),
-    /// The compile target "ahead": a lane region whose helpers, and every run-time address
-    /// `RelocKind` names, are symbols a loader resolves (`Process`, the target "live", embeds
-    /// them). It differs from `Numeric` only in having the VM helper capability.
+    /// The compile target "ahead": every run-time address `RelocKind` names is a symbol (`Process`, "live", embeds them).
     Ahead,
     #[cfg(feature = "aot")]
     Linked(u32, u32),
@@ -1987,9 +1983,8 @@ impl LaneHelpers {
         !matches!(self, Self::Process(_))
     }
 
-    /// The address of `helper`: a symbol a frameless Number region's loader resolves, else
-    /// the table's entry (`table_address`). A symbol per helper use costs lane bodies compile
-    /// time and run Ir (raytrace compile +17.5%, run-only +0.6%), so they embed it as it is now.
+    /// The address of `helper`: a symbol, or the table's entry (a symbol per use in live lane
+    /// bodies costs raytrace compile Ir +17.5%, run-only +0.6%).
     fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
         if self.names_symbols() { return lane_region::helper_symbol(builder, helper); }
         self.table_address(builder.ins(), helper)
@@ -1997,11 +1992,7 @@ impl LaneHelpers {
 
     /// Whether helpers are symbols a loader resolves, not table entries.
     fn names_symbols(self) -> bool {
-        match self {
-            Self::Numeric => true,
-            Self::Ahead => true,
-            _ => false,
-        }
+        matches!(self, Self::Numeric | Self::Ahead)
     }
 
     /// The address of `helper` in this process's table, embedded, or loaded from the bound one.
@@ -6572,6 +6563,9 @@ struct JsStepDispatch {
     /// The next free and the end of the run's shadow frames (`LaneFrame::shadow`).
     shadow_top: usize,
     shadow_end: usize,
+    /// The first native frame's address (the lane stack's activations' end); `shadow_top`
+    /// equals it while no native frame lives.
+    shadow_base: usize,
     /// The VM's cached read (`general_field_get`), which a read its site's primary row does
     /// not answer asks before the exact step, then its cached user getter (`general_getter`).
     field_get: usize, field_getter: usize,
@@ -7157,11 +7151,11 @@ impl<H: Host> Vm<H> {
             (*dispatch).bind_lane_storage(vm);
             // A run starts with no native frames; its direct calls place their callees past
             // the stack's values.
-            let (top, end, activations) = self.lane_stack_spare();
+            let (top, end, activations, shadow) = self.lane_stack_spare();
             ((*dispatch).native_top, (*dispatch).native_end) = (top.addr(), end.addr());
-            let shadow = (*frame).shadow.as_mut_ptr();
             // A run whose lane may not make the frames' activations makes no direct call.
             let frames = if direct_calls { SHADOW_FRAMES.min(activations) } else { 0 };
+            (*dispatch).shadow_base = shadow.addr();
             ((*dispatch).shadow_top, (*dispatch).shadow_end) = (shadow.addr(), shadow.add(frames).addr());
             let context = &raw mut (*frame).context;
             (*context).adapter_payload = dispatch.cast();
@@ -7194,27 +7188,25 @@ impl<H: Host> Vm<H> {
     /// materializes (`ShadowFrame`); none once taken.
     pub(super) fn take_shadow_frames() -> &'static [ShadowFrame] {
         let frame = lane_frame();
-        // SAFETY: no lane body runs while the lane reads the frame, and the frames read stay
-        // as they are until the next run, which the lane starts only after materializing them.
+        // SAFETY: no lane body runs while the lane reads the frame; the frames sit past the
+        // activations' end, which the lane's own pushes (materialization) then overwrite in
+        // order, so their native prefixes are copied out first.
         unsafe {
-            let base = (*frame).shadow.as_mut_ptr();
-            let top = (*frame).dispatch.shadow_top as *mut ShadowFrame;
+            let base = (*frame).dispatch.shadow_base as *const Activation;
+            let top = (*frame).dispatch.shadow_top as *const Activation;
             let count = if top.is_null() { 0 } else { top.offset_from(base) as usize };
             (*frame).dispatch.shadow_top = base.addr();
-            std::slice::from_raw_parts(base, count)
+            for index in 0..count {
+                (*frame).leaving[index] = (*base.add(index)).native;
+            }
+            std::slice::from_raw_parts((*frame).leaving.as_ptr(), count)
         }
     }
 
     /// The callee of the innermost native frame of the running body (`ShadowFrame`): the
     /// body a helper runs for when it runs as a direct callee; `None` in the activation's own.
     pub(super) fn innermost_direct_callee() -> Option<&'static DirectCallee> {
-        let frame = lane_frame();
-        // SAFETY: as `lane_shadow_active`; a pushed frame names the caller-owned callee.
-        unsafe {
-            let base = (*frame).shadow.as_mut_ptr();
-            let top = (*frame).dispatch.shadow_top as *const ShadowFrame;
-            (!top.is_null() && top != base.cast_const()).then(|| &*(*top.sub(1)).callee)
-        }
+        Self::innermost_shadow_frame().map(|frame| unsafe { &*frame.callee })
     }
 
     /// The innermost native frame of the running body (`ShadowFrame`), whose window and callee
@@ -7224,9 +7216,8 @@ impl<H: Host> Vm<H> {
         let frame = lane_frame();
         // SAFETY: as `lane_shadow_active`.
         unsafe {
-            let base = (*frame).shadow.as_mut_ptr();
-            let top = (*frame).dispatch.shadow_top as *const ShadowFrame;
-            (!top.is_null() && top != base.cast_const()).then(|| *top.sub(1))
+            let (base, top) = ((*frame).dispatch.shadow_base as *const Activation, (*frame).dispatch.shadow_top as *const Activation);
+            (!top.is_null() && top != base).then(|| (*top.sub(1)).native)
         }
     }
 
@@ -7236,7 +7227,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn lane_shadow_active() -> bool {
         let frame = lane_frame();
         // SAFETY: as `take_shadow_frames`; the running body wrote the top before its call.
-        unsafe { (*frame).dispatch.shadow_top != (*frame).shadow.as_mut_ptr().addr() }
+        unsafe { (*frame).dispatch.shadow_top != (*frame).dispatch.shadow_base }
     }
 
     /// `run_lane_method` from inside a running body (`dispatch_fast::lane_body_call`): the
@@ -7292,6 +7283,13 @@ impl<H: Host> Vm<H> {
 /// machine stack each costs a frame; the bound keeps a native recursion within it.
 const SHADOW_FRAMES: usize = 64;
 
+/// `shadow_base` before any lane body ran on the frame: no frame word equals it, so a helper
+/// a loop region calls then sees native frames (`lane_shadow_active`) and its call leaves.
+const NO_LANE_RUN: usize = usize::MAX;
+
+/// The stride of the native frames a run pushes: an activation record, whose first words they are.
+pub(super) const FRAME_BYTES: usize = std::mem::size_of::<Activation>();
+
 /// The words of `JsStepDispatch` one lane body entry owns (`Vm::run_lane_method`).
 #[derive(Clone, Copy)]
 struct LaneEntry {
@@ -7329,9 +7327,9 @@ struct LaneFrame {
     dispatch: JsStepDispatch,
     /// The registers of an inlined callee its lane body left inside.
     scratch: Vec<Value>,
-    /// The native frames of the bodies a run calls directly, outermost first, from
-    /// `dispatch.shadow_top` down (`ShadowFrame`).
-    shadow: Box<[ShadowFrame; SHADOW_FRAMES]>,
+    /// The native prefixes of the frames a leave took out of the activations' spare room, outermost
+    /// first (`Vm::take_shadow_frames`).
+    leaving: Box<[ShadowFrame; SHADOW_FRAMES]>,
 }
 
 impl LaneFrame {
@@ -7383,7 +7381,7 @@ impl LaneFrame {
                 native_top: 0,
                 native_end: 0,
                 shadow_top: 0,
-                shadow_end: 0,
+                shadow_end: 0, shadow_base: NO_LANE_RUN,
                 #[cfg(test)]
                 island_steps: 0,
                 #[cfg(test)]
@@ -7391,7 +7389,7 @@ impl LaneFrame {
                 outcome: None,
             },
             scratch: Vec::new(),
-            shadow: Box::new([ShadowFrame::EMPTY; SHADOW_FRAMES]),
+            leaving: Box::new([ShadowFrame::EMPTY; SHADOW_FRAMES]),
         }
     }
 }
@@ -7530,7 +7528,7 @@ impl JsNativeActivation {
             native_top: 0,
             native_end: 0,
             shadow_top: 0,
-            shadow_end: 0,
+            shadow_end: 0, shadow_base: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]

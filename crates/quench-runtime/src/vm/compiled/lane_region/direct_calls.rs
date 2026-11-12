@@ -74,9 +74,8 @@ impl Lowering<'_, '_> {
     pub(super) fn direct_window(&mut self, instruction: WideInstruction, callee: &DirectCallee, top: ir::Value) {
         let base = self.registers_base;
         let undefined = self.word_const(Value::UNDEFINED.to_bits() as i64);
-        // Only a construct names its window by `construct_arguments`; a call's is its immediate.
-        let construct = instruction.op().class().eq(Class::Construct).then(|| instruction.construct_arguments());
-        let (window, argc) = match construct {
+        let constructed = instruction.op().class().eq(Class::Construct).then(|| instruction.construct_arguments());
+        let (window, argc) = match constructed {
             Some(crate::bytecode::ConstructArguments::Registers(window)) => (window.base, window.count),
             _ => (crate::bytecode::ImmediateLayout::call_window_base(instruction.imm()), crate::bytecode::ImmediateLayout::argument_count(instruction.imm())),
         };
