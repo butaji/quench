@@ -1,6 +1,7 @@
 //! The specializer's Cranelift stage: `crate::staged` operations emitted as IR.
 
 use super::*;
+use crate::staged::region::Mutability;
 use crate::staged::{Access, Domain, NumericStage, Stage, Table};
 use crate::vm::compiled::regions;
 use crate::vm::operations::{NumberArithmetic, NumberRelation};
@@ -51,8 +52,16 @@ impl Stage for Emit<'_, '_> {
     fn shape_in_site(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value { self.shape_in(shape, shapes) }
 
     fn constant(&mut self, bits: u64) -> ir::Value { self.builder.ins().iconst(types::I64, bits as i64) }
+    /// A read-only word is a plain `load` and a `uextend`: the egraph merges and hoists only
+    /// plain loads, and the extend folds into the target's zero-extending load.
     fn load_u32(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().uload32(regions::flags(at), base, offset)
+        match at.mutability {
+            Mutability::Readonly => {
+                let word = self.builder.ins().load(types::I32, regions::flags(at), base, offset);
+                self.builder.ins().uextend(types::I64, word)
+            }
+            Mutability::Mutable => self.builder.ins().uload32(regions::flags(at), base, offset),
+        }
     }
     fn load_u64(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
         self.builder.ins().load(types::I64, regions::flags(at), base, offset)
@@ -114,6 +123,7 @@ impl Stage for Emit<'_, '_> {
     fn store_gate(&mut self, record_id: ir::Value, value: ir::Value) -> ir::Value {
         let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
         let (logged, join) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.set_cold_block(logged);
         let open = self.builder.append_block_param(join, types::I8);
         super::super::emit_unlogged_property_store_guard(self.builder, payload, record_id, value, logged);
         let yes = self.builder.ins().iconst(types::I8, 1);
@@ -317,5 +327,95 @@ mod tests {
                 }
             }
         }
+    }
+    /// A function summing the 32-bit word at offset 8 of its first parameter, read through
+    /// `Emit` in the body of a counted loop over its second.
+    fn word_summed_in_a_loop(isa: &dyn cranelift_codegen::isa::TargetIsa, at: Access) -> ir::Function {
+        let mut signature = Signature::new(isa.default_call_conv());
+        signature.params.extend([AbiParam::new(types::I64); 2]);
+        signature.returns.push(AbiParam::new(types::I64));
+        let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+        regions::declare_regions(&mut function);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let (entry, header, body, exit) =
+            (builder.create_block(), builder.create_block(), builder.create_block(), builder.create_block());
+        builder.append_block_params_for_function_params(entry);
+        let (sum, index) = (builder.append_block_param(header, types::I64), builder.append_block_param(header, types::I64));
+        let total = builder.append_block_param(exit, types::I64);
+        builder.switch_to_block(entry);
+        let [base, count] = builder.block_params(entry).try_into().unwrap();
+        let zero = builder.ins().iconst(types::I64, 0);
+        builder.ins().jump(header, &[zero.into(), zero.into()]);
+        builder.switch_to_block(header);
+        let more = builder.ins().icmp(IntCC::UnsignedLessThan, index, count);
+        builder.ins().brif(more, body, &[], exit, &[sum.into()]);
+        builder.switch_to_block(body);
+        let word = Emit { builder: &mut builder, property_values: None, gate: None }.load_u32(at, base, 8);
+        let next_sum = builder.ins().iadd(sum, word);
+        let next_index = builder.ins().iadd_imm_u(index, 1);
+        builder.ins().jump(header, &[next_sum.into(), next_index.into()]);
+        builder.switch_to_block(exit);
+        builder.ins().return_(&[total]);
+        builder.seal_all_blocks();
+        builder.finalize(isa.frontend_config());
+        function
+    }
+
+    /// The opcode and flags of every memory access of `function`.
+    fn accesses(function: &ir::Function) -> Vec<(ir::Opcode, MemFlagsData)> {
+        function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
+            .filter_map(|inst| function.dfg.insts[inst].memflags_data(&function.dfg)
+                .map(|flags| (function.dfg.insts[inst].opcode(), flags)))
+            .collect()
+    }
+
+    /// A read-only word in a loop is a plain, trusted `load` tagged with its region and
+    /// movable, the one kind of load the egraph hoists and merges.
+    #[test]
+    fn a_readonly_word_read_in_a_loop_is_a_movable_plain_load() {
+        let isa = super::super::super::super::jit_backend::target_isa().unwrap();
+        let function = word_summed_in_a_loop(&*isa, crate::staged::Region::LoopEntry.readonly());
+        cranelift_codegen::verify_function(&function, &*isa).unwrap();
+        let [(opcode, flags)] = accesses(&function)[..] else { panic!("one access") };
+        assert_eq!(opcode, ir::Opcode::Load);
+        assert!(flags.readonly() && flags.can_move() && flags.notrap() && flags.aligned());
+        assert_eq!(flags.alias_region(), regions::flags(crate::staged::Region::LoopEntry.readonly()).alias_region());
+    }
+
+    /// A word a store can change keeps its place: not movable, still tagged with its region.
+    #[test]
+    fn a_mutable_word_read_in_a_loop_stays_in_the_loop() {
+        let isa = super::super::super::super::jit_backend::target_isa().unwrap();
+        let function = word_summed_in_a_loop(&*isa, crate::staged::Region::ObjectSlots.mutable());
+        let [(opcode, flags)] = accesses(&function)[..] else { panic!("one access") };
+        assert_eq!(opcode, ir::Opcode::Uload32);
+        assert!(!flags.readonly() && !flags.can_move() && flags.notrap());
+        assert_eq!(flags.alias_region(), regions::flags(crate::staged::Region::ObjectSlots.mutable()).alias_region());
+    }
+
+    /// The barrier-log path of a store's gate is a guard failure: the only cold block the
+    /// gate adds.
+    #[test]
+    fn the_barrier_log_path_of_a_store_gate_is_cold() {
+        let isa = super::super::super::super::jit_backend::target_isa().unwrap();
+        let mut signature = Signature::new(isa.default_call_conv());
+        signature.params.extend([AbiParam::new(types::I64); 3]);
+        signature.returns.push(AbiParam::new(types::I64));
+        let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+        regions::declare_regions(&mut function);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        let [payload, record, value] = builder.block_params(entry).try_into().unwrap();
+        let open = Emit { builder: &mut builder, property_values: None, gate: Some(payload) }.store_gate(record, value);
+        let open = builder.ins().uextend(types::I64, open);
+        builder.ins().return_(&[open]);
+        builder.seal_all_blocks();
+        builder.finalize(isa.frontend_config());
+        cranelift_codegen::verify_function(&function, &*isa).unwrap();
+        assert_eq!(function.layout.blocks().filter(|block| function.layout.is_cold(*block)).count(), 1);
     }
 }

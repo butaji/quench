@@ -304,6 +304,9 @@ pub(super) fn compile_function<T>(
 mod vendor_patch_tests;
 
 #[cfg(all(test, feature = "jit"))]
+mod branch_shape_tests;
+
+#[cfg(all(test, feature = "jit"))]
 mod tests {
     use super::*;
     use cranelift_codegen::ir::{self, AbiParam, InstBuilder, types};
