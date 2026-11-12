@@ -13,6 +13,8 @@ pub(crate) struct StableFacts {
     pub(crate) atoms: Box<[Atom]>,
     /// Global cells whose values it holds (`heap::subscribe_global_value`).
     pub(crate) globals: Box<[crate::heap::GlobalFact]>,
+    /// The heap identities its code names (`Lowering::is_identity`), which its publication keeps alive.
+    pub(crate) roots: crate::folded_roots::FoldedRoots,
 }
 
 /// The Stable facts a lowering folded so far.
@@ -24,6 +26,8 @@ pub(super) struct StableUses {
     atoms: BTreeSet<Atom>,
     /// Global cells whose values the code took as constants.
     globals: BTreeSet<crate::heap::GlobalFact>,
+    /// The heap identities the code embeds: callees, prototypes' values, constants.
+    pub(super) roots: crate::folded_roots::FoldedRoots,
     /// Loops, by header and backedge, entered only through forward edges that proved the realm
     /// (`Lowering::hoist_stable`): their blocks hold the proof.
     realm_loops: Vec<(usize, usize)>,
@@ -39,7 +43,7 @@ impl StableUses {
     pub(super) fn take(&mut self) -> StableFacts {
         StableFacts { holders: std::mem::take(&mut self.holders).into_iter().collect(),
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
-            globals: std::mem::take(&mut self.globals).into_iter().collect() }
+            globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots) }
     }
 }
 
@@ -52,6 +56,18 @@ impl Lowering<'_, '_> {
             Some(_) if self.vm.frozen => Division::Frozen,
             Some(_) => Division::Online,
         }
+    }
+
+    /// Whether `held` is `identity`, a heap value the code names: a callee, a native, a folded value.
+    pub(super) fn is_identity(&mut self, held: ir::Value, identity: Value) -> ir::Value {
+        let word = self.stable.roots.embed_heap_identity(identity);
+        self.ins().icmp_imm_u(IntCC::Equal, held, word as i64)
+    }
+
+    /// `value`, a heap value or an immediate, as a constant the code names.
+    pub(super) fn identity_constant(&mut self, value: Value) -> ir::Value {
+        let word = self.stable.roots.embed_heap_identity(value);
+        self.ins().iconst(types::I64, word as i64)
     }
 
     /// The code's invalidation word, as it is now (`code_dependencies::Invalidation`).

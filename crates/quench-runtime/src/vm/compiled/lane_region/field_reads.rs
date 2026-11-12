@@ -31,9 +31,9 @@ impl Lowering<'_, '_> {
         if !self.division().folds(crate::staged::division::FROZEN_FIELD) { return false; }
         let Some(expected) = self.vm.frozen_fields.and_then(|fields| fields.get(&first.0)).copied() else { return false };
         let actual = self.base_field_read(state, register, receiver, first, exit);
-        let same = self.ins().icmp_imm_u(IntCC::Equal, actual, expected.to_bits() as i64);
+        let same = self.is_identity(actual, expected);
         emit_js_guard(&mut self.builder, same, exit);
-        let value = self.ins().iconst(types::I64, expected.to_bits() as i64);
+        let value = self.identity_constant(expected);
         self.define(state, destination, value, RegisterFact::definition(Type::immediate(expected), Representation::Tagged));
         true
     }

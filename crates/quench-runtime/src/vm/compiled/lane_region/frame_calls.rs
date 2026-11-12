@@ -79,8 +79,8 @@ fn global_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32, site:
 }
 
 /// Leaves at `miss` unless `word` compares `cc` to `value`.
-fn guard_word(stage: &mut Emit<'_, '_>, word: ir::Value, cc: IntCC, value: Value, miss: ir::Block) {
-    let held = stage.builder.ins().icmp_imm_u(cc, word, value.to_bits() as i64);
+fn guard_word(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, word: ir::Value, cc: IntCC, value: Value, miss: ir::Block) {
+    let held = stage.builder.ins().icmp_imm_u(cc, word, frame.roots.embed_heap_identity(value) as i64);
     emit_js_guard(stage.builder, held, miss);
 }
 
@@ -90,7 +90,7 @@ fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination:
     atom: u32, site: u16, proof: EmitProof) -> Option<()> {
     let EmitProof::GlobalRead { miss: Some(miss) } = proof else { return None };
     let value = global_word(frame, stage, atom, site);
-    guard_word(stage, value, IntCC::NotEqual, Value::DELETED, miss);
+    guard_word(frame, stage, value, IntCC::NotEqual, Value::DELETED, miss);
     <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
         RegisterFact::definition(Type::ANY, Representation::Tagged));
     Some(())
@@ -108,7 +108,7 @@ fn atom_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32) -> ir::
 /// `value` as the tagged immediate `destination` holds under `fact`.
 fn define_immediate(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, value: Value,
     fact: RegisterFact) -> Option<()> {
-    let bits = immediate(stage, value.to_bits() as i64);
+    let bits = immediate(stage, frame.roots.embed_heap_identity(value) as i64);
     <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, bits, fact);
     Some(())
 }
@@ -131,7 +131,7 @@ fn global_frozen(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destinatio
     (atom, site): (u32, u16), (value, ty): (Value, Type), proof: EmitProof) -> Option<()> {
     let EmitProof::GlobalRead { miss: Some(miss) } = proof else { return None };
     let actual = global_word(frame, stage, atom, site);
-    guard_word(stage, actual, IntCC::Equal, value, miss);
+    guard_word(frame, stage, actual, IntCC::Equal, value, miss);
     global_held(frame, stage, destination, value, ty)
 }
 

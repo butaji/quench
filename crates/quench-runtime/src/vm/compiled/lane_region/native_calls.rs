@@ -114,7 +114,7 @@ impl Lowering<'_, '_> {
         let passed = inline.arguments();
         let exit = self.guard_exit(state, pc as u32);
         let held = self.tagged(state, instruction.register_b());
-        let same = self.ins().icmp_imm_u(IntCC::Equal, held, callee.to_bits() as i64);
+        let same = self.is_identity(held, callee);
         emit_js_guard(&mut self.builder, same, exit);
         let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
         let numbers: Vec<ir::Value> = (window..window + passed).map(|register| self.number(state, register, exit)).collect();

@@ -21,6 +21,8 @@ pub(in crate::vm) struct OsrFacts {
     /// departure discards the compile.
     departure_shapes: Vec<u32>,
     slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
+    /// The heap identities the code names (a call's callee), which its publication keeps alive.
+    pub(in crate::vm) roots: crate::folded_roots::FoldedRoots,
 }
 
 impl OsrFacts {
@@ -239,7 +241,7 @@ impl OsrFacts {
         let mut slot_dependencies: Vec<_> = loads().filter_map(|field| field.slot_dependency()).collect();
         slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
         slot_dependencies.dedup();
-        Self { shape_dependencies, departure_shapes, slot_dependencies }
+        Self { shape_dependencies, departure_shapes, slot_dependencies, roots: Default::default() }
     }
 }
 
@@ -320,7 +322,7 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usiz
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let code = super::super::jit_backend::run_in_background(move || Ok(code));
     Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean },
-        facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new() } }))
+        facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new(), roots: Default::default() } }))
 }
 
 /// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
@@ -354,9 +356,10 @@ pub(in crate::vm) fn start_osr_region(
     // One plan lowers a loop: the region specializer, the same plan a lane body and a static
     // typed region use. A region it declines stays in the interpreter; there is no second
     // lowering with its own facts, widenings and entry record.
-    let function = lane?.function;
+    let lowered = lane?;
+    let function = lowered.function;
     let clif = native_dump_directory().map(|_| function.display().to_string());
-    let facts = OsrFacts::observed(observation);
+    let facts = OsrFacts { roots: lowered.stable.roots, ..OsrFacts::observed(observation) };
     let code = super::super::jit_backend::run_in_background(move || {
         compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
     });
@@ -368,6 +371,7 @@ impl PendingOsrRegion {
 
     /// Subscribes its watch to the facts its code names; whether they hold.
     pub(in crate::vm) fn watch(&self, heap: &mut crate::heap::Heap) -> bool {
+        self.watch.hold_roots(self.facts.roots.clone(), heap);
         let watch: Rc<dyn crate::code_dependencies::DependentCode> = self.watch.clone();
         self.facts.subscribe(&watch, heap)
     }

@@ -5,10 +5,10 @@ use super::*;
 use crate::code_dependencies::PublishedCode;
 use crate::vm::compiled::{LaneMethod, PublishedLaneMethod};
 
-/// Code that names callees by identity, which a collection that frees one retires: a
-/// published body, or a body's plan whose code still compiles (`PendingLaneMethod`), whose
-/// `watch` the poll reads. Without it a collection during the compile would leave the plan
-/// naming a freed locator a later allocation may reuse.
+/// Code that names callees by identity: a published body, or a body's plan whose code still
+/// compiles (`PendingLaneMethod`), whose `watch` the poll reads. Both hold their callees
+/// alive (`FoldedRoots`), so a collection frees none while the code can compare it; the
+/// inventory retires them at the lifecycle edges a callee's body or the realm changes at.
 pub(in crate::vm) enum NativeCallBinding {
     Published(Weak<PublishedLaneMethod>),
     Pending { watch: Weak<PublishedCode<()>>, callees: Box<[Value]> },
@@ -54,11 +54,13 @@ impl ProgramStore {
     /// Publishes a lane body under the dependencies its code took: its slots' types
     /// (`Heap::subscribe_slot`) and its Stable facts (prototype values by holder shape, unnamed
     /// method atoms in `method_atoms`). A change of any retires it and sets its invalidation word.
-    pub(in crate::vm) fn publish_lane_method(&self, method: LaneMethod, heap: &mut crate::heap::Heap,
+    pub(in crate::vm) fn publish_lane_method(&self, mut method: LaneMethod, heap: &mut crate::heap::Heap,
         method_atoms: &mut crate::code_dependencies::CodeReaders) -> Option<Rc<PublishedLaneMethod>> {
         let calls = !method.inlined.is_empty() || !method.direct.is_empty();
         let invalidation = method.invalidation.clone();
+        let roots = std::mem::take(&mut method.stable.roots);
         let published = Rc::new(PublishedLaneMethod::with_invalidation(method, invalidation));
+        published.hold_roots(roots, heap);
         let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
         let method = published.lease().expect("new publication");
         if !method.dependencies.subscribe(&method.stable, &code, heap, method_atoms) {
