@@ -4,7 +4,7 @@
 //! holds the plan constant, so the class folds and a field costs its own arm alone. A computed
 //! field (a Number operator over the argument) leaves at `miss` for its caller until its arithmetic row lands.
 
-// Read by the u-jit and f-jit construct lowering (thread 13); the interpreter keeps its field loop,
+// Read by the u-jit and b-jit construct lowering (thread 13); the interpreter keeps its field loop,
 // which measures cheaper per call than this row run on Concrete (224 against 289 Ir).
 #![allow(dead_code)]
 

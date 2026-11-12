@@ -17,7 +17,7 @@ const _: () = assert!(ENTRY.receiver_complement == u32::MAX && ENTRY.slot_comple
 /// names a prototype holder (or is empty), or the record's values are not plain. The entry
 /// stores each of its words complemented against the empty entry, so a holder of zero and a
 /// shape equal to the record's shape complemented are the guards.
-// Read by the f-jit stencil generator (thread 7) once it derives GetField from this row; the
+// Read by the b-jit stencil generator (thread 7) once it derives GetField from this row; the
 // tests run it on `Concrete` meanwhile.
 #[allow(dead_code)]
 #[inline(always)]
@@ -53,8 +53,6 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
 
 /// The word the loop entry record holds at the per-site byte `offset`: a field value the loop's
 /// entry recorded (`LoopEntry`), written before the run and never during it.
-// Read by the f-jit stencil generator (thread 7), which replaces its hand `field` with this row.
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
     stage.load_site(entry, offset)
@@ -63,8 +61,6 @@ pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm
 /// The dense backing of an array the loop entry recorded: its first value, at the per-site
 /// byte `offset` of the entry record (which never changes during a run, so the load is of an
 /// immutable table), and its length, read from the backing's header.
-// Read by the f-jit stencil generator (thread 7), which replaces its hand `entry_view` with this row.
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;

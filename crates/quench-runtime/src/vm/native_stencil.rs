@@ -295,16 +295,7 @@ fn patch(code: &mut [u8], address: u64, patch: &Patch, value: u64) -> Result<(),
 // -- Stencil shapes ---------------------------------------------------------
 
 fn hole_value(builder: &mut FunctionBuilder<'_>, isa: &dyn TargetIsa, hole: Hole) -> ir::Value {
-    let name = builder
-        .func
-        .declare_imported_user_function(ir::UserExternalName::new(HOLE_NAMESPACE, hole as u32));
-    let symbol = builder.create_global_value(ir::GlobalValueData::Symbol {
-        name: ir::ExternalName::user(name),
-        offset: ir::immediates::Imm64::new(0),
-        colocated: false,
-        tls: false,
-    });
-    builder.ins().symbol_value(isa.pointer_type(), symbol)
+    super::jit_backend::symbol_address(builder, isa.pointer_type(), HOLE_NAMESPACE, hole as u32)
 }
 
 fn continuation(builder: &mut FunctionBuilder<'_>, isa: &dyn TargetIsa, hole: Hole, with_pc: bool) -> ir::FuncRef {

@@ -56,7 +56,7 @@ impl Lowering<'_, '_> {
 
     /// The code's invalidation word, as it is now (`code_dependencies::Invalidation`).
     fn invalidation_word(&mut self, online: OnlineFacts<'_>) -> ir::Value {
-        let address = self.ins().iconst(types::I64, online.invalidation as i64);
+        let address = self.reloc(RelocKind::Invalidation, 0, online.invalidation as u64);
         self.ins().load(types::I64, MemFlagsData::trusted(), address, 0)
     }
 

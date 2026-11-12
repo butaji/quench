@@ -102,7 +102,7 @@ const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
 /// The code of one lane body, compiled on the calling thread.
 fn lane_code(function: ir::Function, level: super::jit_backend::CompileLevel) -> LaneCode {
     let level = match level {
-        super::jit_backend::CompileLevel::Optimized if function.dfg.num_insts() > LANE_BACKTRACKING_MAX_INSTS =>
+        super::jit_backend::CompileLevel::Optimized | super::jit_backend::CompileLevel::Quick if function.dfg.num_insts() > LANE_BACKTRACKING_MAX_INSTS =>
             super::jit_backend::CompileLevel::Large,
         level => level,
     };

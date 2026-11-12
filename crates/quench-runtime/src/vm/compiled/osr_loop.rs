@@ -159,6 +159,14 @@ impl LoopRegion {
     /// The function's full decoded code, which a loop unit keeps so its PCs stay the
     /// function's; only `header..=backedge` lowers.
     pub(crate) fn instructions(&self) -> &[WideInstruction] { &self.instructions }
+    /// The Number constant the region reads at pool index `index`.
+    pub(super) fn number_constant(&self, index: usize) -> Option<f64> { self.constants.get(&index).copied() }
+    /// The registers of the region for which `is_int` holds.
+    pub(crate) fn registers_where(&self, is_int: impl Fn(Register) -> bool) -> Vec<Register> {
+        self.entry_registers().filter(|register| is_int(*register)).collect()
+    }
+    /// The registers the region treats as Numbers.
+    pub(super) fn number_registers(&self) -> &[Register] { &self.numbers }
     /// The cached field reads, by offset from the header: the lane specializer's field
     /// sites, mapped from the observation's descriptors.
     pub(crate) fn field_reads(&self) -> &std::collections::BTreeMap<u32, usize> { &self.field_reads }
@@ -1333,6 +1341,13 @@ impl LoopRegion {
         // An inlining region's liveness is by its own PCs, from the header.
         let index = if self.inlining.is_some() { (pc - self.header) as usize } else { pc as usize };
         live.is_live(index, register)
+    }
+
+    /// The byte offset in the entry record of the element pointer, length and capacity of the array
+    /// `register` holds throughout the region, when the entry pushes one for it.
+    pub(crate) fn array_entry_offset(&self, register: Register) -> Option<u64> {
+        let k = self.arrays.iter().position(|array| array.register == register)?;
+        Some(((field_word(self, self.fields.len()) + k * ARRAY_WORDS) * std::mem::size_of::<u64>()) as u64)
     }
 
     /// The field whose value `register` holds at every read, when it is one the region
@@ -2539,6 +2554,10 @@ pub(crate) struct Observation<'a> {
     /// The depth-zero capture slots holding typed arrays when compiled: a loop's array read
     /// through such a capture is viewed as a typed array (`LoopArray::views`).
     pub(crate) typed_captures: &'a [u16],
+    /// The registers of the region that held an int32 where the compile began.
+    pub(crate) int_registers: &'a [Register],
+    /// The registers that held a Number that is no int32.
+    pub(crate) double_registers: &'a [Register],
     /// The depth-zero capture slots holding int32s when compiled: a read of such a capture
     /// takes the checked integer view where its uses are integer arithmetic.
     pub(crate) int_captures: &'a [u16],

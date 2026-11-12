@@ -14,7 +14,7 @@ impl Lowering<'_, '_> {
     /// stack takes `helper`. The caller wrote back its registers.
     pub(super) fn direct_call(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
         let (mut admitted, this) = self.direct_receiver(instruction, callee);
-        let cell = self.word_const(callee.cell as i64);
+        let cell = self.reloc(RelocKind::EntryCell, callee.target.function, callee.cell as u64);
         let (top, next, shadow, [fits, room]) = self.direct_room(callee, cell);
         admitted.extend([fits, room]);
         self.direct_admit(&admitted, helper);
@@ -35,7 +35,7 @@ impl Lowering<'_, '_> {
         self.direct_admit(&[same], helper);
         let receiver = self.helper_call(LaneHelper::ConstructReceiver, &[payload, constructor]);
         let built = self.word_cmp_imm(IntCC::NotEqual, receiver, Value::DELETED.to_bits() as i64);
-        let cell = self.word_const(callee.cell as i64);
+        let cell = self.reloc(RelocKind::EntryCell, callee.target.function, callee.cell as u64);
         let (top, next, shadow, [fits, room]) = self.direct_room(callee, cell);
         self.direct_admit(&[built, fits, room], helper);
         let status = self.direct_enter(instruction, callee, cell, (receiver, top, next, shadow));
