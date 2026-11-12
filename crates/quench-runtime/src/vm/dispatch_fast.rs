@@ -2768,6 +2768,7 @@ lane_handler! {
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
 mod loop_body;
+mod loop_resume;
 use loop_body::{lane_loop_body, LoopBody};
 use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
 
@@ -8066,7 +8067,7 @@ fn lane_loop_native<H: Host>(
         return LoopAttempt::Declined;
     };
     // The tier's state is borrowed only here, so the dispatch below holds no borrow.
-    let continuation = lane_loop_run(cx, r, site, region, &mut entry, views);
+    let continuation = lane_loop_run(cx, r, site, region, &mut entry, views, site.header);
     count_continuation(&continuation);
     if matches!(continuation, LoopContinuation::Jump) { site.note_decline(); }
     lane_loop_hold_header::<H>(header, site);
@@ -8285,6 +8286,7 @@ fn lane_loop_run<H: Host>(
     region: &super::compiled::LoopRegion,
     entry: &mut super::compiled::LoopEntry,
     views: super::compiled::ElementViews,
+    from: u32,
 ) -> LoopContinuation {
     use super::compiled::LoopOutcome;
     let mut tier = site.tier.borrow_mut();
@@ -8321,7 +8323,7 @@ fn lane_loop_run<H: Host>(
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
     let outcome = unsafe {
-        code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame, interrupt, cx as usize)
+        code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame, interrupt, cx as usize, from)
     };
     if site.diagnostics {
         site.native_entry_attempts
@@ -15673,16 +15675,7 @@ fn lane_body_left<H: Host>(
     let base = unsafe { (*cx).base };
     (match exit.resumed() {
         super::compiled::LaneExit::Terminated | super::compiled::LaneExit::Entry => unreachable!("termination leaves before recovery; an entry leave resumes at its first record"),
-        super::compiled::LaneExit::At(pc) => {
-            let mut carried = Carried::script(cx);
-            if let Some(&register) = own.accumulator_registers.get(pc)
-                && register != NO_ACCUMULATOR
-            {
-                carried.acc = Slot::of(r.get(register));
-            }
-            // SAFETY: the body leaves at a PC of the function, whose records are contiguous.
-            LaneBodyLeft::Resume(r, unsafe { base.add(pc) }, carried)
-        }
+        super::compiled::LaneExit::At(pc) => lane_body_resume_at(cx, r, own, pc),
         super::compiled::LaneExit::Inlined { frame, pc } => {
             let (registers, resume, carried) = lane_body_inlined_activation(cx, r, base, method, frame, pc);
             LaneBodyLeft::Resume(registers, resume, carried)
@@ -15698,6 +15691,22 @@ fn lane_body_left<H: Host>(
         // SAFETY: the record that completes the activation is one of its function's.
         super::compiled::LaneExit::Returned { pc, value } => LaneBodyLeft::Completed(unsafe { base.add(pc) }, value),
     }, feedback)
+}
+
+/// Where the lane continues after a body left at `pc` of `own`'s function on registers `r`: in
+/// the loop's published BaseJIT code where it has a resume stub for `pc` (`loop_resume`),
+/// else at the record, with the accumulator that record reads.
+fn lane_body_resume_at<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView, pc: usize) -> LaneBodyLeft {
+    let accumulator = own.accumulator_registers.get(pc).copied().filter(|&register| register != NO_ACCUMULATOR);
+    if accumulator.is_none() && let Some(left) = loop_resume::lane_loop_resume(cx, r, own, pc) {
+        return left;
+    }
+    let mut carried = Carried::script(cx);
+    if let Some(register) = accumulator {
+        carried.acc = Slot::of(r.get(register));
+    }
+    // SAFETY: the body leaves at a PC of the function, whose records are contiguous.
+    LaneBodyLeft::Resume(r, unsafe { (*cx).base.add(pc) }, carried)
 }
 
 /// Whether activating `target` leaves the running program. A target from

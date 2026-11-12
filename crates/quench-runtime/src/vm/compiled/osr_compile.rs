@@ -48,6 +48,8 @@ pub(in crate::vm) struct PendingOsrRegion {
     facts: OsrFacts,
     /// What a run of the code builds around it.
     crossing: super::Crossing,
+    /// Where a run may re-enter the code mid-region.
+    resumes: super::base_region::ResumeTable,
 }
 
 /// What a background loop-region compile came to.
@@ -315,13 +317,13 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usiz
     }
     let built = super::base_region::build(region, views == super::ElementViews::Dense, widened,
         [observation.int_registers, observation.double_registers]);
-    let Ok((code, bare)) = built else { return base_only.then_some(None) };
+    let Ok(super::base_region::BaseCode { code, bare, resumes }) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, region.header, &code, None, "");
     }
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let code = super::super::jit_backend::run_in_background(move || Ok(code));
-    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean },
+    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean }, resumes,
         facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new(), roots: Default::default() } }))
 }
 
@@ -369,7 +371,7 @@ pub(in crate::vm) fn start_osr_region(
         code
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General })
+    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General, resumes: super::base_region::ResumeTable::empty() })
 }
 
 impl PendingOsrRegion {
@@ -394,12 +396,12 @@ impl PendingOsrRegion {
             std::task::Poll::Ready(Some(Ok(code))) => code,
             std::task::Poll::Ready(_) => return Ok(OsrCompile::Failed),
         };
-        let Self { header, clif, facts, crossing, .. } = *self;
+        let Self { header, clif, facts, crossing, resumes, .. } = *self;
         let Some((memory, entry)) = publish_entry(&code) else { return Ok(OsrCompile::Failed) };
         if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
             dump_native_code(directory, header, &memory, &clif);
         }
-        Ok(OsrCompile::Done(CompiledOsrRegion { _code: memory, entry, facts, crossing }))
+        Ok(OsrCompile::Done(CompiledOsrRegion { _code: memory, entry, facts, crossing, resumes }))
     }
 }
 

@@ -157,6 +157,9 @@ pub mod rustc {
 mod rustc_tests {
     use super::{numeric::library, rustc};
 
+    /// The routines around a region's rows (`stencils/entry.rs`).
+    const ROUTINES: [&str; 4] = ["entry_thunk", "entry_resume", "leave_word", "leave_pop"];
+
     /// Every row the library names was built, and canonicalizing is idempotent.
     #[test]
     fn the_library_is_built() {
@@ -164,7 +167,7 @@ mod rustc_tests {
             assert_eq!(library::canonical(code), code);
             assert!(rustc::stencil(&library::name(code)).is_some(), "{code:?}");
         }
-        for name in ["entry_thunk", "leave_word", "leave_pop"] {
+        for name in ROUTINES {
             assert!(rustc::stencil(name).is_some(), "{name}");
         }
         for code in library::heap_library() {
@@ -178,7 +181,7 @@ mod rustc_tests {
     #[test]
     fn patch_ranges_lie_inside_the_code() {
         let names = library::library().into_iter().map(library::name).chain(library::heap_library().into_iter().map(library::heap_name));
-        for name in names.chain(["entry_thunk", "leave_word", "leave_pop"].map(String::from)) {
+        for name in names.chain(ROUTINES.map(String::from)) {
             let stencil = rustc::stencil(&name).unwrap_or_else(|| panic!("{name}"));
             for field in &stencil.imm32 {
                 assert!(field.offset as usize + 4 <= stencil.code.len() && (field.index as usize) < crate::HOLES, "{name}: {field:?}");

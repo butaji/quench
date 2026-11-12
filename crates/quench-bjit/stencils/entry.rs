@@ -8,7 +8,8 @@
 //! context to r13 and loads the frame's window of registers (`staged::frame::WINDOW`) into r12
 //! (the row convention), calls the first row
 //! (`HOLE_NEXT`), stores the word the chain returned through the result pointer and returns
-//! status `NATIVE_JS_STOPPED`, the status of every run that leaves with a word.
+//! status `NATIVE_JS_STOPPED`, the status of every run that leaves with a word. `entry_resume` is the same thunk calling the address in rdx, where a resume stub
+//! enters the chain mid-region.
 
 use crate::layout::NATIVE_JS_STOPPED;
 use crate::staged::frame;
@@ -18,35 +19,51 @@ unsafe extern "C" {
     static HOLE_NEXT: u8;
 }
 
-/// Saves rbp, rbx, r12-r15 and the result pointer r8, calls the first row, stores its word.
+/// The thunk around a call of the row chain: saves rbp, rbx, r12-r15 and the result pointer
+/// r8, calls the chain through `$call`, stores its word. Written once for both entries.
+macro_rules! thunk {
+    ($call:literal $(, $($binding:tt)*)?) => {
+        core::arch::naked_asm!(
+            "push rbp",
+            "push rbx",
+            "push r12",
+            "push r13",
+            "push r14",
+            "push r15",
+            "push r8",
+            "mov r13, rdi",
+            "mov r12, [rcx + {window}]",
+            $call,
+            "pop r8",
+            "mov [r8], rax",
+            "pop r15",
+            "pop r14",
+            "pop r13",
+            "pop r12",
+            "pop rbx",
+            "pop rbp",
+            "mov eax, {stopped}",
+            "ret",
+            window = const frame::WINDOW,
+            stopped = const NATIVE_JS_STOPPED
+            $(, $($binding)*)?
+        )
+    };
+}
+
+/// Calls the first row.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_thunk() {
-    core::arch::naked_asm!(
-        "push rbp",
-        "push rbx",
-        "push r12",
-        "push r13",
-        "push r14",
-        "push r15",
-        "push r8",
-        "mov r13, rdi",
-        "mov r12, [rcx + {window}]",
-        "call {first}",
-        "pop r8",
-        "mov [r8], rax",
-        "pop r15",
-        "pop r14",
-        "pop r13",
-        "pop r12",
-        "pop rbx",
-        "pop rbp",
-        "mov eax, {stopped}",
-        "ret",
-        first = sym HOLE_NEXT,
-        window = const frame::WINDOW,
-        stopped = const NATIVE_JS_STOPPED,
-    )
+    thunk!("call {first}", first = sym HOLE_NEXT)
+}
+
+/// Calls the address in rdx (the shared ABI's `length` argument): a resume stub of the region,
+/// which loads the pinned registers live at its PC and jumps to the PC's first row.
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn entry_resume() {
+    thunk!("call rdx")
 }
 
 /// Returns hole 0 (a word the region leaves with: a PC or a lane exit).
