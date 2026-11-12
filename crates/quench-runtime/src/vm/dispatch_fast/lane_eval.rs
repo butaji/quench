@@ -5,8 +5,10 @@
 //! window's environment into the record, as a closure made in the window would
 //! (`window_environment`), so the record, which `CallerView` reads, holds the environment,
 //! the dynamic bindings and the binding site the eval's code resolves names in. The eval's code
-//! then runs above the activation, which continues in the lane when it returns, reading what
-//! the eval declared through the promoted environment (`scoped_names`).
+//! then runs above the activation as a nested lane run (`Vm::nested_lane_run`: its frames and
+//! lane stack are its own, the activation's parked), which the activation continues from in the lane
+//! when it returns, reading what the eval declared through the promoted environment
+//! (`scoped_names`).
 use super::*;
 use super::scoped_names::window_scope;
 use super::super::activation::FrameRecord;
@@ -87,7 +89,7 @@ fn direct_eval_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip,
     // SAFETY: as `promote_window`.
     let previous_this = (!receiver.is_undefined()).then(|| unsafe { (*record).replace_this(receiver) });
     vm.eval_callers.push(EvalCaller { frames: vm.frames.len(), record });
-    let result = vm.call_value(code, callee, receiver, args);
+    let result = vm.nested_lane_run(|vm| vm.call_value(code, callee, receiver, args));
     vm.eval_callers.pop();
     (vm.direct_eval, vm.parameter_eval) = previous;
     // SAFETY: as above; the eval's stores to the locals went through the record.

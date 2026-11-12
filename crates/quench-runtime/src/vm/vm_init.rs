@@ -81,6 +81,7 @@ impl<H: Host> Vm<H> {
             pending_call_stacks: vec![],
             js_native_contexts: Vec::new(),
             lane_stack: Default::default(),
+            lane_roots: Vec::new(),
             execution_mode: ExecutionMode::default(),
             native_execution_rejections: 0,
             #[cfg(feature = "native-execution")]

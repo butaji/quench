@@ -11,12 +11,19 @@ use crate::heap::AwaitState;
 
 impl<H: Host> Vm<H> {
     /// Resumes the activation `job` names with `resume`, which its owner keeps suspended
-    /// (`job_frame`): in the lane over its frame's register file where the lane admits the
-    /// run (`run_lane_job`), a throw included, else as the frame its owner gives up, which the
-    /// general loop runs from the resume point, or, for a throw, from the handler the suspended
-    /// `await` or `yield` selects. How the run ended.
+    /// (`job_frame`): in the lane over its frame's register file (`run_lane_job`), a throw
+    /// included, as a nested run above the activations of a lane run that is live
+    /// (`nested_lane_run`); else, where its function lays out as no window, as the frame its
+    /// owner gives up, which the general loop runs from the resume point, or, for a throw, from
+    /// the handler the suspended `await` or `yield` selects. How the run ended.
     pub(in crate::vm) fn run_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> JobEnd {
-        let resume = match self.run_lane_job(code, job, resume) {
+        let nested = !self.lane_stack.activations.is_empty() || self.lane_deferred.is_some();
+        let admitted = if nested {
+            self.nested_lane_run(|vm| vm.run_lane_job(code, job, resume))
+        } else {
+            self.run_lane_job(code, job, resume)
+        };
+        let resume = match admitted {
             Ok(end) => return end,
             Err(refused) => refused,
         };
@@ -27,7 +34,7 @@ impl<H: Host> Vm<H> {
         self.resume_job_window(job, sent).expect("a job's owner keeps the frame its suspension parked");
         self.push_job_window_frame(job, std::iter::empty(), std::iter::empty());
         let frame = self.frames.len() - 1;
-        JobEnd::Frames(self.run_frame_general_with_error(code, frame, error))
+        JobEnd::Frames(self.run_frame_general_until::<false>(code, frame, None, error, None))
     }
 
     /// The frame `job`'s owner suspended: an async function's pending await's, or the frame a

@@ -71,3 +71,23 @@ fn an_eval_raising_in_the_lane_is_caught_by_the_activations_handler() {
     );
     assert_eq!(lines, ["TypeErrorSyntaxError"]);
 }
+
+#[test]
+fn a_generator_step_run_by_eval_code_is_a_nested_job_run_in_the_lane() {
+    // The eval's code runs above the generator's activation, whose lane stack parks
+    // (`Vm::nested_lane_run`); the inner generator's `next` is a job run of its own over a fresh
+    // one, in the lane: no frame is made for either generator.
+    let (lines, made) = run(
+        r#"
+        function* inner() { yield 1; yield 2; yield 3; }
+        function* outer() {
+            const it = inner();
+            yield eval("it.next().value + it.next().value");
+            yield eval("it.next().value");
+        }
+        print([...outer()].join(","));
+        "#,
+    );
+    assert_eq!(lines, ["3,3"]);
+    assert_eq!(made, 0, "a resume made a frame");
+}

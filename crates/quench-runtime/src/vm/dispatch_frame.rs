@@ -1454,16 +1454,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
     ) -> Result<FrameOutcome, JsError> {
-        self.run_frame_general_with_error(p, frame, None)
-    }
-
-    pub(super) fn run_frame_general_with_error(
-        &mut self,
-        p: &ResidualProgram,
-        frame: usize,
-        initial_error: Option<JsError>,
-    ) -> Result<FrameOutcome, JsError> {
-        self.run_frame_general_until::<false>(p, frame, None, initial_error, None)
+        self.run_frame_general_until::<false>(p, frame, None, None, None)
     }
 
     /// Runs frame `frame` on from the transition its linked native body made at its entry.

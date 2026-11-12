@@ -299,6 +299,7 @@ impl<H: Host> Vm<H> {
             pending_call_stacks: _,
             js_native_contexts: _,
             lane_stack: _,
+            lane_roots: _,
             execution_mode: _,
             native_execution_rejections: _,
             #[cfg(feature = "native-execution")]

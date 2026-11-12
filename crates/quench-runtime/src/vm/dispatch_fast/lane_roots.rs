@@ -77,13 +77,31 @@ pub(in crate::vm) enum JobEnd {
     /// The activation raised an exception no handler of it covers, which ended it in its owner
     /// (`raised_windows`): the promise or request the job settles rejects with the error.
     Threw(JsError),
-    /// The lane left the activation to the general path, or did not admit the run
-    /// (`Vm::run_job`), which ran the VM frame the activation became: the bottom one stays on
-    /// the frame stack, with this outcome.
+    /// The lane left the activation to the general path, or did not lay its function out as a
+    /// window (`Vm::run_job`), which ran the VM frame the activation became: the bottom one
+    /// stays on the frame stack, with this outcome.
     Frames(Result<FrameOutcome, JsError>),
 }
 
 impl<H: Host> Vm<H> {
+    /// Runs `run`, which starts lane runs, above the activations of the run that is live, which
+    /// it must neither see nor disturb: that run's lane stack parks on the root stack
+    /// (`Vm::lane_roots`) with its deferred native call and the native it called, while `run`
+    /// starts over a fresh one, so every run's materialization takes its own activations alone.
+    /// Collections are held off meanwhile, as no collection traces the parked windows. A job
+    /// run (`run_job`) and the code of a direct eval (`lane_eval`) start nested runs.
+    pub(in crate::vm) fn nested_lane_run<T>(&mut self, run: impl FnOnce(&mut Self) -> T) -> T {
+        let parked = std::mem::take(&mut self.lane_stack);
+        self.lane_roots.push(parked);
+        let (deferred, native) = (self.lane_deferred.take(), self.lane_native.take());
+        let held = self.heap.hold_collection();
+        let result = run(self);
+        self.heap.release_collection(held);
+        (self.lane_deferred, self.lane_native) = (deferred, native);
+        self.lane_stack = self.lane_roots.pop().expect("the lane stack this run parked");
+        result
+    }
+
     /// The context of a lane run that starts as `start` says; its other state starts empty.
     pub(super) fn lane_context(&mut self, start: LaneStart<'_>) -> LaneContext<H> {
         let LaneStart { code, program, root, registers, base, this, pending, executing, inline_calls, script_calls, script_constructs, floor } = start;
@@ -217,7 +235,7 @@ impl<H: Host> Vm<H> {
     /// the value its `await` or `yield` evaluates to, or the error it raises there, which a
     /// handler of its function catches or which ends it in its owner (`JobEnd::Threw`). `code`
     /// is the program of its function, the active one, and the realm is the one that resumed
-    /// it. `resume` back, changing nothing, where the lane does not admit it (`admit_job`).
+    /// it, starting over an empty lane stack (`Vm::nested_lane_run`). `resume` back, changing nothing, where the lane does not admit it (`admit_job`).
     pub(in crate::vm) fn run_lane_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> Result<JobEnd, JobResume> {
         let sent = match &resume {
             JobResume::Sends(sent) => *sent,
@@ -259,13 +277,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// The window `job`'s activation runs over, once the lane admits the run, and the frame's
-    /// owner has started it: no other lane's activations run, the function lays out as a window
-    /// (`window_layout`) and has a view, and the stack has room. `None` changes nothing.
+    /// owner has started it: the function lays out as a window (`window_layout`) and has a
+    /// view, and the stack has room. `None` changes nothing.
     fn admit_job(&mut self, code: &ResidualProgram, job: JobRoot, sent: Value) -> Option<JobWindow> {
-        if !self.execution_mode.allows_dynamic_execution()
-            || !self.lane_stack.activations.is_empty()
-            || self.lane_deferred.is_some()
-            || code.kind == crate::bytecode::ProgramKind::Wasm
+        if !self.execution_mode.allows_dynamic_execution() || code.kind == crate::bytecode::ProgramKind::Wasm
         {
             return None;
         }
