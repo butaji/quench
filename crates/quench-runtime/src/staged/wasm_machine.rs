@@ -11,7 +11,7 @@ use super::wasm_call::WasmTable;
 use super::wasm_float::{Float, Truncation};
 use super::wasm_instance::{Storage, WasmInstance};
 use super::wasm_memory::{Access, WasmMemory, WasmMemoryWrite};
-use crate::wasm::CanonicalSignature;
+use crate::heap::TableTarget;
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
@@ -35,11 +35,11 @@ pub(crate) struct ConcreteInstance<'a> {
     pub(crate) memory: &'a mut [u8],
 }
 
-/// A stage over a table of function references and the signature id of each; `related` says
+/// A stage over a table of function references and the row of each (`TableTarget`); `related` says
 /// whether a reference whose id is not the expected one satisfies the expected type anyway.
 pub(crate) struct ConcreteTable<'a> {
     pub(crate) elements: &'a [Value],
-    pub(crate) signatures: &'a [CanonicalSignature],
+    pub(crate) targets: &'a [TableTarget],
     pub(crate) related: &'a mut dyn FnMut(Value) -> bool,
 }
 
@@ -90,7 +90,7 @@ impl WasmTable for ConcreteTable<'_> {
     }
 
     fn element_signature(&mut self, index: u64) -> u64 {
-        self.signatures[index as usize].word()
+        self.targets[index as usize].signature.word()
     }
 
     fn table_element(&mut self, index: u64) -> u64 {

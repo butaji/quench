@@ -1992,9 +1992,6 @@ pub(crate) struct Vm<H> {
     #[cfg(feature = "native-execution")]
     native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,
-    /// Invalidates monomorphic `call_indirect` certificates after a table
-    /// mutation or collection that can change target identity.
-    wasm_reference_epoch: std::cell::Cell<u64>,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).

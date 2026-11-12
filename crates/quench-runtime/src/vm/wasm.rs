@@ -428,9 +428,9 @@ impl<H: Host> Vm<H> {
         let length = usize::try_from(ty.initial).map_err(|_| {
             JsError::validation("Wasm table size exceeds host address space".into())
         })?;
-        let signature = self.wasm_element_signature(initial);
+        let target = self.wasm_element_target(initial);
         let elements =
-            crate::heap::WasmTableElements::filled(length, ty.maximum, initial, signature)
+            crate::heap::WasmTableElements::filled(length, ty.maximum, initial, target)
                 .ok_or_else(|| JsError::validation("Wasm table allocation failed".into()))?;
         Ok(self.heap.alloc(Cell::WasmTable {
             object: Box::new(Self::empty_object(self.wasm_js.table)),
@@ -478,11 +478,11 @@ impl<H: Host> Vm<H> {
                 .heap
                 .environment_slot(environment, table_base + index)
                 .unwrap();
-            let signature = self.wasm_element_signature(initial);
+            let target = self.wasm_element_target(initial);
             let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(table) else {
                 unreachable!("allocated table")
             };
-            elements.fill(0..elements.len(), initial, signature);
+            elements.fill(0..elements.len(), initial, target);
         }
         for (index, segment) in module.elements.iter().enumerate() {
             let mut values = Vec::new();
@@ -2761,12 +2761,12 @@ mod tests {
             .compiled(program)
             .flatten()
             .expect("indirect caller compiled");
-        // The indirect call enters the eligible nine-parameter callee in
-        // native code, exercising the callout's spilled signature and
-        // argument buffers on both sides of the boundary.
-        assert_eq!(compiled.native_entries(0), Some(1));
+        // The indirect call enters the eligible nine-parameter callee in native code through
+        // its table row, spilling its arguments to the call's frame: only the caller is entered
+        // from the VM.
+        assert_eq!(compiled.native_entries(0), Some(0));
         assert_eq!(compiled.native_entries(1), Some(1));
-        assert_eq!(compiled.direct_reference_entries(0), Some(1));
+        assert_eq!(compiled.direct_reference_entries(0), Some(0));
     }
 
     #[test]
@@ -2838,9 +2838,9 @@ mod tests {
             .compiled(program)
             .flatten()
             .expect("indirect caller compiled");
-        assert_eq!(compiled.native_entries(0), Some(1));
+        assert_eq!(compiled.native_entries(0), Some(0));
         assert_eq!(compiled.native_entries(1), Some(1));
-        assert_eq!(compiled.direct_reference_entries(0), Some(1));
+        assert_eq!(compiled.direct_reference_entries(0), Some(0));
     }
 
     #[test]
@@ -2931,9 +2931,8 @@ mod tests {
             assert_eq!(baseline.native_entries(1), Some(promotion_entries as u64));
             assert_eq!(tier.native_entries(0), Some(1));
             assert_eq!(tier.direct_reference_entries(0), Some(0));
-            // The promoted target belongs to a separate artifact, so the caller
-            // must keep using the resolver instead of retaining its code pointer.
-            assert!(!baseline.reference_fast_cache_matches_target(0, 0));
+            // The promoted target belongs to a separate artifact, so the caller's code table
+            // holds no entry for it: the call stays with the VM's resolver.
             assert_eq!(
                 vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
                 Some(crate::WasmTrap::Unreachable)
@@ -3056,9 +3055,9 @@ mod tests {
             .compiled(program)
             .flatten()
             .expect("indirect caller compiled");
-        assert_eq!(compiled.native_entries(0), Some(1));
+        assert_eq!(compiled.native_entries(0), Some(0));
         assert_eq!(compiled.native_entries(1), Some(1));
-        assert_eq!(compiled.direct_reference_entries(0), Some(1));
+        assert_eq!(compiled.direct_reference_entries(0), Some(0));
     }
 
     #[test]
@@ -3138,7 +3137,7 @@ mod tests {
             .compiled(program)
             .flatten()
             .expect("indirect caller and target compiled");
-        assert_eq!(compiled.direct_reference_entries(0), Some(1));
+        assert_eq!(compiled.direct_reference_entries(0), Some(0));
     }
 
     #[test]
@@ -3360,17 +3359,13 @@ mod tests {
             .compiled(program)
             .flatten()
             .expect("diagnostic Wasm program");
+        // The compiled target is called through its row: its site never calls out.
         assert!(compiled.reference_call_site_counts().unwrap().iter().any(
             |(function, _, total, native, fallback)| {
-                *function == 2 && *total == 1 && *native == 1 && *fallback == 0
+                *function == 2 && *total == 0 && *native == 0 && *fallback == 0
             }
         ));
-        assert_eq!(compiled.same_artifact_direct_reference_hits(), Some(1));
-        assert!(compiled.reference_call_target_counts().unwrap().iter().any(
-            |(caller, _, target, total, native, same_artifact)| {
-                *caller == 2 && *target == 0 && *total == 1 && *native == 1 && *same_artifact == 1
-            }
-        ));
+        assert_eq!(compiled.same_artifact_direct_reference_hits(), Some(0));
 
         assert_eq!(
             vm.invoke_wasm(&instance, 3, &[]).unwrap_err().wasm_trap(),
@@ -3381,7 +3376,7 @@ mod tests {
                 *function == 3 && *total == 1 && *native == 0 && *fallback == 1
             }
         ));
-        assert_eq!(compiled.same_artifact_direct_reference_hits(), Some(1));
+        assert_eq!(compiled.same_artifact_direct_reference_hits(), Some(0));
         assert!(compiled.reference_call_target_counts().unwrap().iter().any(
             |(caller, _, target, total, native, same_artifact)| {
                 *caller == 3 && *target == 1 && *total == 1 && *native == 0 && *same_artifact == 0
@@ -3390,9 +3385,9 @@ mod tests {
     }
 
     #[test]
-    fn compiled_wasm_indirect_call_site_keeps_a_certificate_per_target() {
-        // One `call_indirect` site alternates between two table entries: both stay certified,
-        // as a certificate per site would hold only the last (`reference_dispatch_entries`).
+    fn compiled_wasm_indirect_call_site_calls_each_of_its_targets_through_its_row() {
+        // One `call_indirect` site alternates between two table entries: each is called
+        // through its own row, whatever the site called before, and the VM enters neither.
         let target = crate::WasmSignature {
             params: vec![],
             results: vec![crate::WasmType::I32],
@@ -3467,8 +3462,8 @@ mod tests {
             .find_shared(&module.program)
             .and_then(|program| vm.programs.compiled(program).flatten())
             .expect("compiled program");
-        assert!(compiled.reference_fast_cache_matches_target(0, 0));
-        assert!(compiled.reference_fast_cache_matches_target(1, 1));
+        assert_eq!(compiled.native_entries(0), Some(0));
+        assert_eq!(compiled.native_entries(1), Some(0));
     }
 
     #[test]
@@ -3586,10 +3581,12 @@ mod tests {
             .flatten()
             .expect("diagnostic Wasm program")
             ;
-        assert!(compiled.reference_fast_cache_matches_target(0, 0));
-        assert_eq!(
-            compiled.profiled_indirect_targets(&vm, program, env, &indirect_callers),
-            vec![0]
+        // A target the artifact compiled is called through its row, so no call reaches the VM's
+        // site profile, which only a target to promote needs.
+        assert!(
+            compiled
+                .profiled_indirect_targets(&vm, program, env, &indirect_callers)
+                .is_empty()
         );
         let table = vm.wasm_table(&instance, 0).unwrap();
         let replacement = vm.wasm_function(&instance, 3).unwrap();
@@ -3603,11 +3600,6 @@ mod tests {
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
             Some(crate::WasmValue::I32(10))
         );
-        assert!(compiled.reference_fast_cache_matches_target(0, 3));
-        assert_eq!(
-            compiled.profiled_indirect_targets(&vm, program, env, &indirect_callers),
-            vec![3]
-        );
         vm.collect_now(module.residual());
         assert_eq!(
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
@@ -3618,11 +3610,10 @@ mod tests {
             .compiled(program)
             .flatten()
             .expect("diagnostic Wasm program");
-        assert_eq!(compiled.same_artifact_direct_reference_hits(), Some(3));
-        assert!(compiled.reference_fast_cache_matches_target(0, 3));
+        assert_eq!(compiled.same_artifact_direct_reference_hits(), Some(0));
         assert!(compiled.reference_call_site_counts().unwrap().iter().any(
             |(function, _, total, native, fallback)| {
-                *function == 2 && *total == 3 && *native == 3 && *fallback == 0
+                *function == 2 && *total == 0 && *native == 0 && *fallback == 0
             }
         ));
     }

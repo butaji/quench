@@ -304,7 +304,6 @@ impl<H: Host> Vm<H> {
             #[cfg(feature = "native-execution")]
             native_program_resolver: _,
             execution_interrupt: _,
-            wasm_reference_epoch: _,
             active_call_roots,
             with_stack,
             startup_intrinsics,

@@ -524,11 +524,10 @@ impl<H: Host> Vm<H> {
                     Some(value) => self.js_to_wasm(p, *value, ty, declarations.as_ref())?,
                     None => self.wasm_table_default(ty),
                 };
-                let signature = self.wasm_element_signature(value);
+                let target = self.wasm_element_target(value);
                 if let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(this) {
-                    elements.fill(index..index + 1, value, signature);
+                    elements.fill(index..index + 1, value, target);
                 }
-                self.invalidate_wasm_reference_caches();
                 Ok(Value::UNDEFINED)
             }
             Native::WasmTableGrow => {
@@ -540,7 +539,7 @@ impl<H: Host> Vm<H> {
                     Some(value) => self.js_to_wasm(p, *value, ty, declarations.as_ref())?,
                     None => self.wasm_table_default(ty),
                 };
-                let signature = self.wasm_element_signature(value);
+                let target = self.wasm_element_target(value);
                 let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(this) else {
                     unreachable!("checked table receiver");
                 };
@@ -557,8 +556,7 @@ impl<H: Host> Vm<H> {
                     return Err(self
                         .range_error(p, "WebAssembly.Table.grow(): failed to grow table".into()));
                 };
-                elements.resize(grown, value, signature);
-                self.invalidate_wasm_reference_caches();
+                elements.resize(grown, value, target);
                 Ok(Value::number(length as f64))
             }
             Native::WasmGlobalValueGetter | Native::WasmGlobalValueOf => {

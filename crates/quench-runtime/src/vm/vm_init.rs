@@ -86,7 +86,6 @@ impl<H: Host> Vm<H> {
             #[cfg(feature = "native-execution")]
             native_program_resolver: None,
             execution_interrupt,
-            wasm_reference_epoch: std::cell::Cell::new(1),
             active_call_roots: vec![],
             with_stack: vec![],
             with_scope_entered: false,

@@ -8,6 +8,7 @@ use super::wasm_machine::ConcreteTable;
 use super::wasm_step::Step;
 use super::wasm_tests::Probe;
 use crate::bytecode::{Op, WideInstruction};
+use crate::heap::TableTarget;
 use crate::wasm::{CanonicalSignature, WasmSignatures};
 use crate::{
     Value, WasmCallableType, WasmSignature, WasmTrap, WasmType, WasmTypes,
@@ -118,11 +119,12 @@ fn the_interpreters_stage_traps_in_the_rules_order() {
     let [expected, other, foreign] = ids();
     let (acceptable, unrelated) = (Value::from_bits(0x10), Value::from_bits(0x20));
     let elements = [Value::NULL, acceptable, unrelated, acceptable];
-    let signatures = [CanonicalSignature::NULL, expected, other, foreign];
+    let targets = [CanonicalSignature::NULL, expected, other, foreign]
+        .map(|signature| TableTarget { signature, ..TableTarget::FOREIGN });
     let mut related = |reference: Value| reference == acceptable;
     let mut stage = ConcreteTable {
         elements: &elements,
-        signatures: &signatures,
+        targets: &targets,
         related: &mut related,
     };
     let verdicts = [

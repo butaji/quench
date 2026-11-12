@@ -5,26 +5,36 @@
 use super::*;
 use crate::staged::wasm_call::indirect_target;
 use crate::staged::wasm_machine::ConcreteTable;
-use crate::wasm::CanonicalSignature;
+use crate::heap::TableTarget;
 
 impl<H: Host> Vm<H> {
-    /// What a table element holding `value` presents to the check of an indirect call: the
-    /// canonical signature of a Wasm function, the null id for the null reference, the foreign
-    /// id for anything the VM compares against the expected type (a host function).
-    pub(super) fn wasm_element_signature(&self, value: Value) -> CanonicalSignature {
+    /// What a table element holding `value` presents to an indirect call (`TableTarget`): the
+    /// null row for the null reference; for a function of a module its canonical signature, its
+    /// index and its instance's environment; the foreign row for anything the VM compares against
+    /// the expected type (a host function).
+    pub(super) fn wasm_element_target(&self, value: Value) -> TableTarget {
         if value.is_null() {
-            return CanonicalSignature::NULL;
+            return TableTarget::NULL;
         }
-        match self.heap.function(value) {
-            Some(FunctionRecord {
-                kind: FunctionKind::User(program, function),
-                ..
-            }) => self
-                .programs
-                .wasm_signatures(*program)
-                .and_then(|pool| pool.defined_canonical(*function))
-                .unwrap_or(CanonicalSignature::FOREIGN),
-            _ => CanonicalSignature::FOREIGN,
+        let Some(FunctionRecord {
+            kind: FunctionKind::User(program, function),
+            env,
+            ..
+        }) = self.heap.function(value)
+        else {
+            return TableTarget::FOREIGN;
+        };
+        let Some(signature) = self
+            .programs
+            .wasm_signatures(*program)
+            .and_then(|pool| pool.defined_canonical(*function))
+        else {
+            return TableTarget::FOREIGN;
+        };
+        TableTarget {
+            signature,
+            entry: *function,
+            instance: env.to_bits(),
         }
     }
 
@@ -57,7 +67,7 @@ impl<H: Host> Vm<H> {
         };
         let mut stage = ConcreteTable {
             elements: &elements.values,
-            signatures: elements.signatures(),
+            targets: elements.targets(),
             related: &mut related,
         };
         let reference =

@@ -374,7 +374,6 @@ impl<H: Host> Vm<H> {
         self.materialize_deferred_lane();
         self.clear_call_targets();
         self.resolved_module_requests.clear();
-        self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
         if full {
             self.host.at_collection_boundary(self.memory_policy());
