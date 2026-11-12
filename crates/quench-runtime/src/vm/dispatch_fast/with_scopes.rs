@@ -24,6 +24,13 @@ impl LaneStack {
         self.with_objects.iter().filter(move |(owner, _)| *owner == depth).map(|(_, object)| *object)
     }
 
+    /// Leaves the `with` scopes of the activation at `depth`, the innermost, past the first
+    /// `entered` of its chain: what a handler's entry unwinds (`Vm::unwind_handler_scopes`).
+    pub(in crate::vm) fn unwind_with_objects(&mut self, depth: usize, entered: usize) {
+        let first = self.with_objects.partition_point(|(owner, _)| *owner < depth);
+        self.with_objects.truncate(first + entered);
+    }
+
     /// Drops the objects of the activations from index `depth` on, which returned from inside a
     /// `with` statement: the compiler emits no scope exit before a `return`.
     #[inline(always)]

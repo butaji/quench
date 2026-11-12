@@ -91,11 +91,19 @@ struct Admission<'a> {
 
 impl Admission<'_> {
     /// Whether the function runs only in a VM frame, never as a frameless activation (a
-    /// registers-only body, an environment window): the frame state a handler's entry
-    /// settles exists only there.
+    /// registers-only body, an environment window, a suspended frame's window): the frame state a
+    /// handler's entry settles exists only there.
     fn frame_bound(&self) -> bool {
         let plan = self.function.call_plan(self.program);
-        !(plan.registers_only || plan.environment_activation)
+        !(plan.registers_only || plan.environment_activation || plan.suspended_registers || plan.suspended_environment)
+    }
+
+    /// Whether the frame state a handler's entry settles is the running function's own wherever it
+    /// runs: a loop region runs in the innermost frame or activation, which the helper settles
+    /// (`dispatch_fast::lane_handler_edge`), a window's included. A body may run as a native frame
+    /// no activation names, so only a frame-bound function's has it.
+    fn settles_where_it_runs(&self) -> bool {
+        self.completion == Completion::StatusAndPc || self.frame_bound()
     }
 
     /// Whether `handler`'s entry settles frame state beyond native stores: `with` scopes the
@@ -112,7 +120,7 @@ impl Admission<'_> {
     fn bind(&self, handler: Handler) -> Option<Bind> {
         let (register, local) = slot_parts(self.unit, handler)?;
         if self.settles_frame(handler, local) {
-            return self.frame_bound().then_some(Bind::Frame(register));
+            return self.settles_where_it_runs().then_some(Bind::Frame(register));
         }
         Some(match (register, local) {
             (Some(register), _) => Bind::Register(register),
