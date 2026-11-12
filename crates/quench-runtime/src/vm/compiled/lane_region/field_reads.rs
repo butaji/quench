@@ -28,6 +28,7 @@ impl Lowering<'_, '_> {
     /// fails the guard and leaves to the shared body. False, emitting nothing, otherwise.
     pub(super) fn fold_frozen_field(&mut self, state: &mut State, (register, receiver): (Option<Register>, bool),
         first: (Atom, u16), destination: Register, exit: ir::Block) -> bool {
+        if !self.division().folds(crate::staged::division::FROZEN_FIELD) { return false; }
         let Some(expected) = self.vm.frozen_fields.and_then(|fields| fields.get(&first.0)).copied() else { return false };
         let actual = self.base_field_read(state, register, receiver, first, exit);
         let same = self.ins().icmp_imm_u(IntCC::Equal, actual, expected.to_bits() as i64);

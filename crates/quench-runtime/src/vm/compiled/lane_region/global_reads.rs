@@ -10,14 +10,8 @@ impl Lowering<'_, '_> {
     /// the lane's own read, which leaves where it misses.
     pub(super) fn global_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let register = instruction.result_register();
-        let (binding, held, exit) = match self.global_reads[&pc] {
-            GlobalRead::Constant(value) => (GlobalBinding::Constant(value), None, None),
-            GlobalRead::Stable { value, ty, fact, global, realm_offset } if self.division().folds(BindingTime::Stable) =>
-                (GlobalBinding::Held { value, ty }, Some((fact, global, realm_offset)), Some(self.guard_exit(state, pc as u32))),
-            GlobalRead::Frozen { value, ty } => (GlobalBinding::Frozen { value, ty }, None, Some(self.guard_exit(state, pc as u32))),
-            GlobalRead::Stable { .. } | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } =>
-                (GlobalBinding::Dynamic, None, Some(self.guard_exit(state, pc as u32))),
-        };
+        let (binding, held) = self.global_binding(pc);
+        let exit = (!matches!(binding, GlobalBinding::Constant(_))).then(|| self.guard_exit(state, pc as u32));
         if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
             self.hold_global(state, exit, fact, (global, realm_offset));
         }
@@ -30,6 +24,19 @@ impl Lowering<'_, '_> {
             self.define_immediate(state, instruction.register_b(), Value::UNDEFINED);
         }
         true
+    }
+
+    /// The binding `pc`'s read takes, and the fact that holds it: what the read's own binding
+    /// time (`GlobalBinding::time`) leaves this lowering's division to fold, else the lane's read.
+    fn global_binding(&self, pc: usize) -> (GlobalBinding, Option<(crate::heap::GlobalFact, Value, i32)>) {
+        let (binding, held) = match self.global_reads[&pc] {
+            GlobalRead::Constant(value) => (GlobalBinding::Constant(value), None),
+            GlobalRead::Stable { value, ty, fact, global, realm_offset } =>
+                (GlobalBinding::Held { value, ty }, Some((fact, global, realm_offset))),
+            GlobalRead::Frozen { value, ty } => (GlobalBinding::Frozen { value, ty }, None),
+            GlobalRead::Dynamic | GlobalRead::NativeMember { .. } => (GlobalBinding::Dynamic, None),
+        };
+        if self.division().folds(binding.time()) { (binding, held) } else { (GlobalBinding::Dynamic, None) }
     }
 
     /// Defines `register` as the immediate `value`, of its own type.

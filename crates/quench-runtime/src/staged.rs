@@ -21,6 +21,7 @@ mod concrete;
 pub(crate) mod numeric;
 mod heap;
 mod global;
+pub(crate) mod division;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};

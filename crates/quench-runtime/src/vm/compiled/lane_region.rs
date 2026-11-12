@@ -4569,7 +4569,7 @@ impl Lowering<'_, '_> {
     fn holder_read(&mut self, state: &mut State, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
         // A prototype that is the one compiled against, unchanged since, holds the value it
         // held then: the read is that constant (`NativeFieldLoad::inherited`).
-        if let Some(constant) = field.inherited.filter(|_| self.division().folds(BindingTime::Stable)) {
+        if let Some(constant) = field.inherited.filter(|_| self.division().folds(crate::staged::division::INHERITED_FIELD)) {
             self.hold_holder(state, exit, holder);
             // The receiver's link selects its prototype's value; one prototype's is a constant.
             let pairs: smallvec::SmallVec<[(u32, u64); 4]> = constant.values().iter().map(|(link, value)| (*link, value.to_bits())).collect();
