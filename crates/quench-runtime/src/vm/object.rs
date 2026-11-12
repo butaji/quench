@@ -1422,10 +1422,15 @@ impl<H: Host> Vm<H> {
     /// into an accessor or hide, so reading it needs no lookup.
     #[inline(always)]
     pub(super) fn array_length_field(&self, object: Value, atom: Atom) -> Option<Value> {
-        (atom == self.length_atom)
-            .then(|| self.own_array_length(object))
-            .flatten()
-            .map(Value::length)
+        if atom != self.length_atom {
+            return None;
+        }
+        // The staged row answers a direct array without extras; any other (an arguments object,
+        // sparse elements, a length past int32) is `own_array_length`'s.
+        self.heap
+            .array_record_base()
+            .and_then(|records| crate::staged::elements::concrete_array_length(records, object))
+            .or_else(|| self.own_array_length(object).map(Value::length))
     }
 
     /// `cached_field_hit` for compiled code's probe (`compiled::lane_field_get`), which also
@@ -1520,6 +1525,32 @@ impl<H: Host> Vm<H> {
         self.profile.field_primitives.hit(crate::profile::field_primitives::Path::PrimaryOwnRead);
         self.profile.field_cache_hit(0, 0);
         Some(value)
+    }
+
+    /// The two reads of a nested lookup, `base.first.second`, through the primary entries of both
+    /// sites: `primary_own_field_hit` of each, the tables proved once (`staged::entry::site_chain`).
+    #[inline(always)]
+    pub(super) fn primary_own_chain_hit(&mut self, p: &ResidualProgram, base: Value, (first, second): (u16, u16)) -> Option<Value> {
+        debug_assert!(self.specialized_operations_enabled(p));
+        let (entries, records) = (self.active_field_entries as u64, self.heap.object_record_base()? as u64);
+        let offset = |site: u16| u64::from(site) * super::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
+        // SAFETY: as `primary_own_field_hit`, for both sites.
+        let value = unsafe { crate::staged::concrete_site_chain(self.heap.arena_values_base(), (entries, records), base, (offset(first), offset(second))) }?;
+        // One hit for each of the two reads.
+        self.profile.field_cache_hit(0, 0);
+        self.profile.field_cache_hit(0, 0);
+        Some(value)
+    }
+
+    /// The store of `value` through the site's primary entry into the own data field of a direct
+    /// object, where the write barrier needs no log (`staged::entry::site_store`): the store
+    /// `primary_own_field_store_hit::<false>` makes first.
+    #[inline(always)]
+    fn primary_site_store(&mut self, object: Value, value: Value, site: u16) -> bool {
+        let Some(records) = self.heap.object_record_base() else { return false };
+        let offset = usize::from(site) as u64 * super::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
+        // SAFETY: as `primary_own_field_hit`, with the heap that owns the record table.
+        unsafe { crate::staged::concrete_site_store(&self.heap, (self.active_field_entries as u64, records as u64), object, offset, value) }
     }
 
     /// The own data field the holderless field cache entry `cache` proves for `receiver`;
@@ -1740,7 +1771,8 @@ impl<H: Host> Vm<H> {
         };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
-        if !self.store_record_field_entry::<LOGS>(record_id, cache, value, layout) {
+        let stored = (!LOGS && self.primary_site_store(object, value, site)) || self.store_record_field_entry::<LOGS>(record_id, cache, value, layout);
+        if !stored {
             return false;
         }
         #[cfg(feature = "profile-field-primitives")]

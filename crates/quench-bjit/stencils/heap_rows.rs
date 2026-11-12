@@ -25,7 +25,8 @@ use crate::layout::{
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word};
 use crate::places::{DEST, LEFT, Places, tagged_place};
 use crate::stage::StencilStage;
-use crate::staged::{Step, elements, entry, environment, load_this, read_local, value, write_local};
+use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+use crate::staged::{Stage, Step, elements, entry, environment, load_this, read_local, value, write_local};
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
@@ -58,6 +59,24 @@ pub(crate) fn payload(s: &S) -> usize {
     word_at(s.ctx, CALL_CONTEXT_ADAPTER_PAYLOAD) as usize
 }
 
+/// The word the loop entry record at `entry` holds at the per-site byte `offset`: a field value the
+/// loop's entry recorded (`LoopEntry`), written before the run and never during it.
+#[inline(always)]
+fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
+    stage.load_site(entry, offset)
+}
+
+/// The dense backing of an array the loop entry recorded: its first value, at the per-site byte
+/// `offset` of the entry record (which never changes during a run, so the load is of an immutable
+/// table), and its length, read from the backing's header.
+#[inline(always)]
+fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
+    let address = stage.add_imm(entry, offset);
+    let values = stage.load_table(address);
+    let length = stage.load_u32(values, ARRAY.header_length_offset as i32 - ARRAY.header_values_offset as i32);
+    (values, length)
+}
+
 /// The array word an `ENTRY == false` row names: the frame slot at hole `H`.
 #[inline(always)]
 fn array_word<const H: u8>(s: &S) -> u64 {
@@ -73,7 +92,7 @@ fn backing<const ENTRY: bool, const H: u8, const WRITABLE: bool>(s: &S, payload:
     if ENTRY {
         let record = word_at(payload, JS_STEP_LOOP_ENTRY);
         let offset = stage_site(&mut stage);
-        let (values, length) = entry::entry_backing(&mut stage, record, offset);
+        let (values, length) = entry_backing(&mut stage, record, offset);
         return Some((values, length, elements::Backing { record: 0, header: 0, values, length }));
     }
     let base = array_word::<H>(s);
@@ -87,7 +106,6 @@ fn backing<const ENTRY: bool, const H: u8, const WRITABLE: bool>(s: &S, payload:
 
 #[inline(always)]
 fn stage_site(stage: &mut StencilStage) -> u64 {
-    use crate::staged::Stage;
     stage.site(0)
 }
 
@@ -118,7 +136,7 @@ fn field_row<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
     let record = word_at(payload, JS_STEP_LOOP_ENTRY);
     let offset = stage_site(&mut stage);
-    deliver::<D>(s, entry::entry_word(&mut stage, record, offset))
+    deliver::<D>(s, entry_word(&mut stage, record, offset))
 }
 
 /// A field read through the site's cache entry (`entry::site_read`), or with `CHAIN` through two

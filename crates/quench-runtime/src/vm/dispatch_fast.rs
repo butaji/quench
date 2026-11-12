@@ -6399,16 +6399,30 @@ pub(super) fn nested_own_field_hit<H: Host>(
     site: &crate::bytecode::FieldSite,
     base: Value,
 ) -> Option<Value> {
+    // Two ordinary field reads are one chain row, which proves the tables once
+    // (`Vm::primary_own_chain_hit`); a single read or a `length` step is `nested_last_step`'s.
+    let Some((_, second)) = site.second.filter(|(atom, _)| *atom != vm.length_atom) else {
+        let first = vm.primary_own_field_hit(code, base, site.first.1)?;
+        return nested_last_step(vm, code, site, first);
+    };
+    let value = vm.primary_own_chain_hit(code, base, (site.first.1, second));
     #[cfg(feature = "profile-field-primitives")]
-    if site.second.is_some_and(|(atom, _)| atom != vm.length_atom) {
-        vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::NestedOwnPairAttempt);
+    pair_census(vm, code, (site.first.1, base), value.is_some());
+    value
+}
+
+/// The census of a nested pair read: its attempt, whether its first step hit (a miss of the chain
+/// reads the first step alone to attribute it) and whether both did.
+#[cfg(feature = "profile-field-primitives")]
+fn pair_census<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, (first, base): (u16, Value), hit: bool) {
+    use crate::profile::field_primitives::Path;
+    vm.profile.field_primitives.hit(Path::NestedOwnPairAttempt);
+    if hit || vm.primary_own_field_hit(code, base, first).is_some() {
+        vm.profile.field_primitives.hit(Path::NestedOwnPairFirstHit);
     }
-    let first = vm.primary_own_field_hit(code, base, site.first.1)?;
-    #[cfg(feature = "profile-field-primitives")]
-    if site.second.is_some_and(|(atom, _)| atom != vm.length_atom) {
-        vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::NestedOwnPairFirstHit);
+    if hit {
+        vm.profile.field_primitives.hit(Path::NestedOwnPairHit);
     }
-    nested_last_step(vm, code, site, first)
 }
 
 /// A nested site's last step from `first`, the first step's value: none, an array's or a

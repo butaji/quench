@@ -153,6 +153,30 @@ pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (e
     super::entry::site_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::Value::from_bits)
 }
 
+/// The value `object.first.second` reads through the field cache entries `first` and `second`
+/// (byte offsets into `entries`): `site_chain` through `Concrete`, one proof of the tables for
+/// both reads. `None` where either misses.
+///
+/// # Safety
+/// As `concrete_site_read`, for both offsets.
+#[inline(always)]
+pub(crate) unsafe fn concrete_site_chain(property_values: *const crate::Value, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
+    let mut stage = super::Concrete::new(property_values);
+    super::entry::site_chain(&mut stage, tables, object.to_bits(), offsets, ()).map(crate::Value::from_bits)
+}
+
+/// The store of `value` into the own data field the site's entry `offset` bytes into `entries`
+/// names in `object`: `site_store` through `Concrete` over `heap`, which admits it where the
+/// write barrier needs no log. False changes nothing.
+///
+/// # Safety
+/// As `concrete_site_read`, with `heap` the heap whose tables `entries` and `records` are.
+#[inline(always)]
+pub(crate) unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64, value: crate::Value) -> bool {
+    let mut stage = super::Concrete::storing(heap);
+    super::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, value.to_bits(), ()).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

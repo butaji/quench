@@ -43,7 +43,7 @@ mod operation_effects;
 pub(crate) mod trace;
 #[allow(unused_imports)] // the Stage v2 vocabulary: stencil and UltraJIT stages use the rest
 pub(crate) use effects::{CallTarget, Effects, Region, RegionSet};
-pub(crate) use ic::{concrete_own_field_hit, concrete_site_read};
+pub(crate) use ic::{concrete_own_field_hit, concrete_site_chain, concrete_site_read, concrete_site_store};
 pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
     own_layout, read_slot};
 

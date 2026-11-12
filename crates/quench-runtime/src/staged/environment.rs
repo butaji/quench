@@ -37,8 +37,6 @@ pub(crate) fn dense_capture<S: Stage>(stage: &mut S, values: S::Word, len: S::Wo
 /// `dispatch_fast::CAPTURE_STORES`), whose barrier its admission took once. `None` (leaving at
 /// `miss`) where it does not, past the run, or at an uninitialized binding, which the caller
 /// resolves the long way, nothing written.
-// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn dense_capture_store<S: Stage>(stage: &mut S, (values, len, admitted): (S::Word, S::Word, S::Word), slot: u16,
     value: S::Word, miss: S::Miss) -> Option<()> {
@@ -57,6 +55,18 @@ pub(crate) fn dense_capture_store<S: Stage>(stage: &mut S, (values, len, admitte
 pub(crate) unsafe fn concrete_dense_capture(values: *const crate::Value, len: usize, slot: u16) -> Option<crate::Value> {
     let mut stage = Concrete::new(std::ptr::null());
     dense_capture(&mut stage, values as u64, len as u64, slot, ()).map(crate::Value::from_bits)
+}
+
+/// The interpreter's `dense_capture_store` over a run whose elements start at `values`, for a caller
+/// that admitted the store and took its barrier (`CAPTURE_STORES`): whether it wrote.
+///
+/// # Safety
+/// `values` addresses `len` live environment values, none borrowed, and the environment's
+/// write authorization holds for this store.
+#[inline(always)]
+pub(crate) unsafe fn concrete_dense_capture_store(values: *mut crate::Value, len: usize, slot: u16, value: crate::Value) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    dense_capture_store(&mut stage, (values as u64, len as u64, u64::from(true)), slot, value.to_bits(), ()).is_some()
 }
 
 /// Value `slot` of the dense environment storage whose word `storage` holds: the header

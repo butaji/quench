@@ -115,19 +115,6 @@ fn holder_entry_value<S: Stage>(stage: &mut S, records: S::Word, record: S::Word
     holder_value(stage, holder, slot, miss)
 }
 
-/// The value the own entry at `entry` (an address) names in the object record at `record`:
-/// `None` (leaving at `miss`) where the record's exact shape is not the entry's, the entry
-/// names a prototype holder (or is empty), or the record's values are not plain. A holder of
-/// zero, the stored own holder, is the guard.
-// Read by the tests; the b-jit stencil build reads `site_read`, which also takes holder entries.
-#[allow(dead_code)]
-#[inline(always)]
-pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let own = own_entry(stage, entry);
-    stage.guard(own, miss)?;
-    own_entry_value(stage, record, entry, miss)
-}
-
 /// Guards that the field cache table `entries` (the running program's, as
 /// `Vm::program_field_entries` hands it) and the object record table `records` are present.
 #[inline(always)]
@@ -170,8 +157,6 @@ fn site_read_in<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::
 /// holds (`site_read_in`), or `None` (leaving at `miss`) where either table is absent too. The
 /// offset is the row's only per-site operand, so a site is read as the interpreter's cached
 /// read reads it.
-// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn site_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
     site_tables(stage, tables, miss)?;
@@ -180,8 +165,6 @@ pub(crate) fn site_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), obj
 
 /// A nested lookup's chain of two reads, `object.first.second` (`FieldLookup::Site`): the value
 /// the first entry reads is the object the second reads from, and the tables are proved once.
-// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn site_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
     site_tables(stage, tables, miss)?;
@@ -222,8 +205,6 @@ fn plain_store<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, value: S
 /// either table is absent or the word is no direct object, nothing written. Whether the program
 /// may store in place at all (a specialized run, no method cache naming the field) is the
 /// caller's.
-// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, value: S::Word, miss: S::Miss) -> Option<()> {
     site_tables(stage, tables, miss)?;
@@ -237,38 +218,13 @@ pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
     plain_store(stage, record, slot, value, miss)
 }
 
-/// The word the loop entry record holds at the per-site byte `offset`: a field value the loop's
-/// entry recorded (`LoopEntry`), written before the run and never during it.
-// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
-#[allow(dead_code)]
-#[inline(always)]
-pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
-    stage.load_site(entry, offset)
-}
-
-/// The dense backing of an array the loop entry recorded: its first value, at the per-site
-/// byte `offset` of the entry record (which never changes during a run, so the load is of an
-/// immutable table), and its length, read from the backing's header.
-// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
-#[allow(dead_code)]
-#[inline(always)]
-pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let address = stage.add_imm(entry, offset);
-    let values = stage.load_table(address);
-    let length = stage.load_u32(values, ARRAY.header_length_offset as i32 - ARRAY.header_values_offset as i32);
-    (values, length)
-}
-
-/// The interpreter's reading of `own_read_entry` over a site table entry.
-///
-/// # Safety
-/// `object` is a live record, `entry` the address of a stored field cache entry, and
-/// `property_values` the base of the arena that holds the record's run.
+/// The interpreter's `site_read` of `object` through the stored field cache entry `entry` (at
+/// byte 0 of its table), over the heap's own tables.
 #[cfg(test)]
-unsafe fn concrete_read_entry(object: &crate::heap::Object, entry: *const u32, property_values: *const crate::Value) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
-    own_read_entry(&mut stage, object as *const crate::heap::Object as u64, entry as u64, ()).map(crate::Value::from_bits)
+fn concrete_read_entry(heap: &crate::heap::Heap, object: crate::Value, entry: &[u32; 3]) -> Option<crate::Value> {
+    let records = heap.object_record_base()? as u64;
+    // SAFETY: a stored entry, and the heap's live record table and arena.
+    unsafe { super::ic::concrete_site_read(heap.arena_values_base(), (entry.as_ptr() as u64, records), object, 0) }
 }
 
 #[cfg(test)]
@@ -307,14 +263,13 @@ mod tests {
         let record = heap.object(object).unwrap();
         for slot in 0..count as u16 {
             let entry = stored(shape, ENTRY.own_holder, u32::from(slot));
-            // SAFETY: a live record, a stored entry and its arena.
-            let by_entry = unsafe { concrete_read_entry(record, entry.as_ptr(), heap.arena_values_base()) };
+            let by_entry = concrete_read_entry(&heap, object, &entry);
             // SAFETY: the hint's shape and slot are the record's own.
             let by_hint = unsafe { crate::staged::concrete_own_field_hit(record, heap.arena_values_base(), shape, slot) };
             assert_eq!(by_entry, by_hint, "slot {slot}");
             assert_eq!(by_entry, Some(Value::integer(10 * (i32::from(slot) + 1))));
         }
-        let read = |entry: [u32; 3]| unsafe { concrete_read_entry(record, entry.as_ptr(), heap.arena_values_base()) };
+        let read = |entry: [u32; 3]| concrete_read_entry(&heap, object, &entry);
         assert_eq!(read(stored(shape + 1, ENTRY.own_holder, 0)), None, "another shape");
         assert_eq!(read(stored(shape, 7, 0)), None, "a holder entry");
         assert_eq!(read([0; 3]).is_some(), shape == ENTRY.receiver_complement, "the empty entry names no shape");
@@ -390,10 +345,7 @@ mod tests {
                 let mut stage = crate::staged::Concrete::storing(heap);
                 site_store(&mut stage, (entry.as_ptr() as u64, records), object.to_bits(), 0u64, value.to_bits(), ()).is_some()
             };
-            let read = |heap: &Heap, entry: [u32; 3]| {
-                // SAFETY: a live record, a stored entry and its arena.
-                unsafe { concrete_read_entry(heap.object(object).unwrap(), entry.as_ptr(), heap.arena_values_base()) }
-            };
+            let read = |heap: &Heap, entry: [u32; 3]| concrete_read_entry(heap, object, &entry);
             for slot in 0..count as u32 {
                 let entry = stored(shape, ENTRY.own_holder, slot);
                 assert!(store(&heap, entry, Value::integer(-7)), "{count} values, slot {slot}");
@@ -410,30 +362,13 @@ mod tests {
         }
     }
 
-    /// The row has no per-site hole of its own: the entry address is the caller's word.
+    /// The site read's only per-site operand is the entry's byte offset.
     #[test]
-    fn the_entry_read_has_no_per_site_hole() {
+    fn the_site_read_has_one_per_site_hole() {
         let mut stage = crate::staged::trace::Trace::default();
-        let (record, entry) = (stage.constant(0), stage.constant(1));
-        own_read_entry(&mut stage, record, entry, ());
-        assert!(stage.holes.is_empty(), "{:?}", stage.holes);
-    }
-
-    #[test]
-    fn the_loop_entry_rows_read_the_recorded_field_and_array_backing() {
-        let mut backing = crate::heap::ArrayElements::from_slice(&[Value::integer(1), Value::number(0.5), Value::integer(3)]);
-        let values = backing.make_mut().as_mut_ptr() as u64;
-        let record = [Value::integer(7).to_bits(), values];
-        let mut stage = crate::staged::Concrete::new(std::ptr::null());
-        let entry = record.as_ptr() as u64;
-        assert_eq!(entry_word(&mut stage, entry, 0), Value::integer(7).to_bits());
-        let (first, length) = entry_backing(&mut stage, entry, std::mem::size_of::<u64>() as u64);
-        assert_eq!((first, length), (values, 3));
-        let mut trace = crate::staged::trace::Trace::default();
-        let entry = trace.constant(0);
-        let (offset, other) = (trace.site(8), trace.site(16));
-        entry_word(&mut trace, entry, offset);
-        entry_backing(&mut trace, entry, other);
-        assert_eq!(trace.holes, [8, 16], "the offsets are the rows' only operands");
+        let (entries, records, object) = (stage.constant(0), stage.constant(1), stage.constant(2));
+        let offset = stage.site(ENTRY.entry_size as u64);
+        site_read(&mut stage, (entries, records), object, offset, ());
+        assert_eq!(stage.holes, [ENTRY.entry_size as u64], "{:?}", stage.holes);
     }
 }
