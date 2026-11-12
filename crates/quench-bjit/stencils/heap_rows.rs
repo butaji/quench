@@ -10,15 +10,11 @@
 
 use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_VALUES, JS_STEP_LOOP_ENTRY};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of, number_word};
+use crate::words::hole;
 use crate::stage::StencilStage;
 use crate::staged::{elements, entry, environment, value};
 
 pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, INDEX_ROW, STORE_ROW};
-
-unsafe extern "C" {
-    static HOLE_V0: u8;
-    static HOLE_V1: u8;
-}
 
 macro_rules! need {
     ($s:expr, $e:expr) => {
@@ -44,8 +40,7 @@ fn payload(s: &S) -> usize {
 /// The array word an `ENTRY == false` row names: the frame slot at hole `H`.
 #[inline(always)]
 fn array_word<const H: u8>(s: &S) -> u64 {
-    let offset = if H == 0 { &raw const HOLE_V0 as usize } else { &raw const HOLE_V1 as usize };
-    word_at(s.frame, offset)
+    word_at(s.frame, hole::<H>())
 }
 
 /// The backing `(values, length)` of the array an access names: the entry record's (the offset

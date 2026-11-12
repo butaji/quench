@@ -34,7 +34,65 @@ pub(crate) enum Out {
     Exit(S),
 }
 
-/// The value of hole `H` as a 32-bit field or a displacement.
+/// A 64-bit value hole as the form the target patches (the relocation `build.rs` reads):
+/// x86-64 a `movabs` immediate (`R_X86_64_64`); AArch64 ELF four `movz`/`movk` groups
+/// (`R_AARCH64_MOVW_UABS_G0_NC`..`G3`); AArch64 Mach-O, which has no `MOVW` relocation, a literal
+/// word the code loads and branches over (`ARM64_RELOC_UNSIGNED`).
+#[cfg(target_arch = "x86_64")]
+macro_rules! hole_word {
+    ($sym:ident) => {{
+        let v: u64;
+        core::arch::asm!("movabs {v}, offset {h}", v = out(reg) v, h = sym $sym, options(pure, nomem, nostack, preserves_flags));
+        v
+    }};
+}
+#[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]
+macro_rules! hole_word {
+    ($sym:ident) => {{
+        let v: u64;
+        core::arch::asm!(
+            "movz {v}, #:abs_g3:{h}",
+            "movk {v}, #:abs_g2_nc:{h}",
+            "movk {v}, #:abs_g1_nc:{h}",
+            "movk {v}, #:abs_g0_nc:{h}",
+            v = out(reg) v, h = sym $sym, options(pure, nomem, nostack, preserves_flags)
+        );
+        v
+    }};
+}
+#[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+macro_rules! hole_word {
+    ($sym:ident) => {{
+        let v: u64;
+        core::arch::asm!(
+            "ldr {v}, 2f",
+            "b 3f",
+            "2:",
+            ".quad {h}",
+            "3:",
+            v = out(reg) v, h = sym $sym, options(pure, nomem, nostack, preserves_flags)
+        );
+        v
+    }};
+}
+
+/// The value of hole `H` as a 64-bit constant (a tagged word).
+#[inline(always)]
+pub(crate) fn hole64<const H: u8>() -> u64 {
+    // SAFETY: the template only materializes a symbol's value in a register.
+    unsafe {
+        match H {
+            0 => hole_word!(HOLE_V0),
+            1 => hole_word!(HOLE_V1),
+            _ => hole_word!(HOLE_V2),
+        }
+    }
+}
+
+/// The value of hole `H` as a 32-bit field or a displacement: on x86-64 the address of the hole
+/// symbol itself (a 32-bit relocation LLVM folds into the using instruction), on AArch64 the
+/// 64-bit hole (an address would be `adrp`/`add`, which no patch can fill).
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub(crate) fn hole<const H: u8>() -> usize {
     match H {
@@ -43,20 +101,10 @@ pub(crate) fn hole<const H: u8>() -> usize {
         _ => &raw const HOLE_V2 as usize,
     }
 }
-
-/// The value of hole `H` as a 64-bit constant (a tagged word).
+#[cfg(target_arch = "aarch64")]
 #[inline(always)]
-pub(crate) fn hole64<const H: u8>() -> u64 {
-    let v: u64;
-    // SAFETY: `movabs` of a symbol's address into a register: an R_X86_64_64 relocation.
-    unsafe {
-        match H {
-            0 => core::arch::asm!("movabs {v}, offset {h}", v = out(reg) v, h = sym HOLE_V0, options(pure, nomem, nostack, preserves_flags)),
-            1 => core::arch::asm!("movabs {v}, offset {h}", v = out(reg) v, h = sym HOLE_V1, options(pure, nomem, nostack, preserves_flags)),
-            _ => core::arch::asm!("movabs {v}, offset {h}", v = out(reg) v, h = sym HOLE_V2, options(pure, nomem, nostack, preserves_flags)),
-        }
-    }
-    v
+pub(crate) fn hole<const H: u8>() -> usize {
+    hole64::<H>() as usize
 }
 
 #[inline(always)]

@@ -5,13 +5,11 @@
 //! `UNSUPPORTED_*` symbol, which `build.rs` rejects, so a row cannot silently use one.
 
 use crate::staged::{Stage, Table};
+use crate::words::hole;
 use crate::typed_ir::Type;
 use crate::staged::effects::Region;
 
 unsafe extern "C" {
-    static HOLE_V0: u8;
-    static HOLE_V1: u8;
-    static HOLE_V2: u8;
     fn UNSUPPORTED_store_gate(a: u64, b: u64) -> u64;
     fn UNSUPPORTED_assumption(a: u64) -> u64;
     fn UNSUPPORTED_number_operator(a: u64, b: u64, c: u64) -> u64;
@@ -55,9 +53,11 @@ impl Stage for StencilStage {
         self.sites += 1;
         // SAFETY: only the addresses of the statics are taken.
         unsafe {
-            match [&raw const HOLE_V0, &raw const HOLE_V1, &raw const HOLE_V2].get(n as usize) {
-                Some(hole) => *hole as u64,
-                None => UNSUPPORTED_site(n as u64),
+            match n {
+                0 => hole::<0>() as u64,
+                1 => hole::<1>() as u64,
+                2 => hole::<2>() as u64,
+                _ => UNSUPPORTED_site(n as u64),
             }
         }
     }

@@ -1,11 +1,5 @@
 use super::*;
-use quench_bjit::HOLES;
-
-/// `push imm32` and `jmp rel32`: a row's exit stub, which names its PC and the routine that
-/// writes the live registers back.
-pub(super) const PUSH_IMM32: u8 = 0x68;
-pub(super) const JMP_REL32: u8 = 0xe9;
-pub(super) const EXIT_STUB_LEN: usize = 2 * (1 + std::mem::size_of::<u32>());
+use quench_bjit::{exit_stub, patch_successor, EXIT_STUB_LEN, HOLES};
 
 /// A routine of the stencil build (`quench-bjit/stencils/entry.rs`) by name.
 fn routine(name: &str) -> Result<Stencil, String> {
@@ -18,8 +12,7 @@ pub(super) fn thunk(rows_at: usize) -> Result<Vec<u8>, String> {
     let mut code = stencil.code.clone();
     for reloc in &stencil.relocs {
         let at = reloc.offset as usize;
-        let displacement = rows_at as i64 + reloc.addend - at as i64;
-        code[at..at + std::mem::size_of::<i32>()].copy_from_slice(&(displacement as i32).to_le_bytes());
+        patch_successor(&mut code, at, reloc.class, rows_at as i64 + reloc.addend - at as i64).map_err(|error| format!("entry thunk: {error:?}"))?;
     }
     Ok(code)
 }
@@ -217,8 +210,7 @@ pub(super) fn place_rows(rows: &[Placed], exits: &[(usize, u32, usize)], routine
     let mut addresses = vec![base as usize; rows.len()];
     for (row, pc, routine) in exits {
         addresses[*row] = base as usize + at;
-        let displacement = routine_at[*routine] as i64 - (at + EXIT_STUB_LEN) as i64;
-        let stub: Vec<u8> = [&[PUSH_IMM32][..], &pc.to_le_bytes(), &[JMP_REL32], &(displacement as i32).to_le_bytes()].concat();
+        let stub = exit_stub(*pc, routine_at[*routine] as i64 - at as i64).map_err(|error| format!("exit stub: {error:?}"))?;
         code[at..at + EXIT_STUB_LEN].copy_from_slice(&stub);
         at += EXIT_STUB_LEN;
     }

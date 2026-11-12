@@ -1,6 +1,6 @@
 //! Number rows for loops over tagged `Value` words, the vocabulary the planner names them in
 //! (the semantics are `stencils/numeric.rs`). A row names where each operand lives: a frame slot holding a tagged word (hole: byte offset), a pinned register
-//! holding a raw int32 (r14, r15, rdi, rsi through the whole chain of stencils: no tag, no
+//! holding a raw int32 (the first integer registers of the row convention, through the whole chain of stencils: no tag, no
 //! store-forwarding), an immediate int32 (hole) or a constant tagged word (hole). A row applies
 //! the interpreter's Number semantics (`Value::number` canonicalization) and continues at the
 //! next row. Speculating rows take int32 operands only: anything else, an overflow, or a result
