@@ -28,6 +28,9 @@ pub struct AheadImages {
 
 const MAGIC: &[u8; 8] = b"QAHEAD\0\x02";
 
+/// Names the build whose machine code and layouts the images are (`build.rs`); a file from another build is rejected.
+const BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
+
 /// What names a program: a hash of its source text and every function's registers and opcodes
 /// (atom numbers are per VM, so no operand), which an image is valid for and no other (plus the helper count the code was linked against; it is a validity key, never a reason to treat a program specially).
 fn fingerprint(program: &ResidualProgram) -> u64 {
@@ -89,10 +92,11 @@ impl AheadImages {
     /// Whether no function has an image.
     pub fn is_empty(&self) -> bool { self.images.is_empty() }
 
-    /// The file of these images: a magic, then per image its function, entry facts, code and
+    /// The file of these images: a magic, the build id, then per image its function, entry facts, code and
     /// relocations (offset, namespace, key, addend), every number little-endian.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = MAGIC.to_vec();
+        out.extend(BUILD_ID.to_le_bytes());
         out.extend(self.program.to_le_bytes());
         out.extend((self.images.len() as u32).to_le_bytes());
         for (function, image) in &self.images {
@@ -120,6 +124,7 @@ impl AheadImages {
     /// The images `to_bytes` wrote; an error names what the file lacks.
     pub fn from_bytes(file: &[u8]) -> Result<Self, String> {
         let mut words = Words(file.strip_prefix(MAGIC.as_slice()).ok_or("not an ahead image file")?);
+        if words.quad()? != BUILD_ID { return Err("images from another quench-node build".into()); }
         let program = words.quad()?;
         let mut images = Vec::new();
         for _ in 0..words.half()? {

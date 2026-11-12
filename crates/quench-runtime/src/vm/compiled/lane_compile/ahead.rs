@@ -55,6 +55,16 @@ mod tests {
         }
     }
 
+    /// An image file from another build (its header differs) is not read at all.
+    #[test]
+    fn images_of_another_build_are_rejected() {
+        let program = crate::Engine::specialize("function add(a,b){return a+b;}", "ahead-a.js").unwrap();
+        let mut file = AheadImages::compile(&program).to_bytes();
+        assert!(AheadImages::from_bytes(&file).is_ok());
+        file[8] ^= 1;
+        assert!(AheadImages::from_bytes(&file).is_err());
+    }
+
     /// A body that names atoms (a store) names them by symbol: the loading VM
     /// numbers them itself.
     #[test]

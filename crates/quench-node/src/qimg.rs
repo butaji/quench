@@ -40,8 +40,10 @@ pub fn run(image: &str, arguments: impl IntoIterator<Item = String>) -> Result<E
     let (length, body) = file.split_at_checked(LENGTH_BYTES).ok_or("truncated image file")?;
     let length = u32::from_le_bytes(length.try_into().map_err(|_| "truncated image file")?) as usize;
     let (entry, bundle) = body.split_at_checked(length).ok_or("truncated image file")?;
-    AheadImages::unbundle(bundle)?;
-    STAGED.with(|staged| *staged.borrow_mut() = bundle.to_vec());
+    match AheadImages::unbundle(bundle) {
+        Ok(_) => STAGED.with(|staged| *staged.borrow_mut() = bundle.to_vec()),
+        Err(error) => eprintln!("quench-node: {image}: {error}; running without images"),
+    }
     let entry = String::from_utf8(entry.to_vec()).map_err(|error| error.to_string())?;
     crate::shared_run::run_shared_cli(std::iter::once(entry).chain(arguments))
 }
