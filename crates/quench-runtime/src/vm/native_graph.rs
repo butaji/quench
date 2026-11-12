@@ -24,6 +24,10 @@ const DEFAULT_REGION_INSTRUCTION_BUDGET: NonZeroUsize = NonZeroUsize::new(1024).
 const NATIVE_JS_REGION_EXIT: u32 = super::compiled::NATIVE_JS_INVALID_PC + 1;
 // The shared entry ABI's memory-base word is unused by JavaScript bodies.
 const REGION_START_PC_PARAMETER: usize = 1;
+/// The image's ABI header import is its first function symbol.
+const ABI_SYMBOL_INDEX: u32 = 0;
+/// Data records an image publishes between its functions' operands and the fallback tables: the narrow table.
+const NARROW_TABLE_COUNT: usize = 1;
 
 /// How executable memory receives the call-threaded graph. Both publications
 /// residualize the same graph over the same semantic entries; they differ in
@@ -135,136 +139,178 @@ impl CallThreadedExtension for ObjectExtension<'_> {
     }
 
     fn finish(self) -> Result<NativeJsModule, String> {
-        let Self { isa, namespace, options, program, functions: bodies } = self;
-        let mut functions = Vec::new();
-        let abi_function = 0;
-        functions.push(NativeFunction::Import {
+        let mut functions = vec![NativeFunction::Import {
             name: crate::NATIVE_JS_ABI_SYMBOL.into(),
-            signature: ir::Signature::new(isa.default_call_conv()),
-        });
+            signature: ir::Signature::new(self.isa.default_call_conv()),
+        }];
+        let lane_bodies = self.lane_bodies(&mut functions)?;
+        let operations = import_operations(&mut functions, &self.functions, &*self.isa)?;
+        let symbols = self.symbols(functions.len(), &lane_bodies)?;
+        let mut data = Vec::with_capacity(self.program.function_count());
+        let mut pending = Definitions::default();
+        for (id, lane_body) in lane_bodies.into_iter().enumerate() {
+            let entry = self.lower_function(id, lane_body, &operations, &symbols, &mut pending)?;
+            data.push(self.operand_data(id)?);
+            functions.push(NativeFunction::Definition { name: format!("{}_function_{id}", self.namespace), function: entry });
+        }
+        self.assemble(functions, data, pending, symbols.first_definition)
+    }
+}
+
+/// Where an image's definitions start: its functions' symbols, then their private regions, the
+/// lane bodies and their fallbacks.
+struct Symbols {
+    first_definition: u32,
+    body_base: usize,
+    fallback_base: usize,
+}
+
+/// The definitions the functions' entries refer to, published after the entries themselves.
+#[derive(Default)]
+struct Definitions {
+    regions: Vec<NativeFunction>,
+    bodies: Vec<NativeFunction>,
+    fallbacks: Vec<NativeFunction>,
+    fallback_tables: Vec<NativeData>,
+}
+
+impl ObjectExtension<'_> {
+    /// Every function's lane body, importing the lane helper table where any lowers.
+    fn lane_bodies(&self, functions: &mut Vec<NativeFunction>) -> Result<Vec<Option<ir::Function>>, String> {
         let lane_helpers = u32::try_from(functions.len()).map_err(|_| "native helper symbol count exceeds u32")?;
-        let lane_bodies = lower_lane_bodies(program, options, &*isa, lane_helpers);
+        let lane_bodies = lower_lane_bodies(self.program, self.options, &*self.isa, lane_helpers);
         if lane_bodies.iter().any(Option::is_some) {
             functions.push(NativeFunction::Import {
                 name: crate::NATIVE_JS_LANE_HELPERS_SYMBOL.into(),
-                signature: super::compiled::native_lane_helpers_signature(&*isa),
+                signature: super::compiled::native_lane_helpers_signature(&*self.isa),
             });
         }
-        // Lane bodies decode packed inline fields through the narrow table, so every image
-        // publishes it (`NarrowTable::Linked`).
-        let has_narrow_table = true;
-        let operations = import_operations(&mut functions, &bodies, &*isa)?;
-        let first_definition =
-            u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
-        let region_count = (0..program.function_count())
-            .try_fold(0usize, |count, id| count.checked_add(options.region_count(program.function(id).code.len())))
+        Ok(lane_bodies)
+    }
+
+    /// The symbol layout after `defined` imports: a function's lane body publishes under its own
+    /// symbol, after the functions and the private regions; its fallback after the lane bodies.
+    fn symbols(&self, defined: usize, lane_bodies: &[Option<ir::Function>]) -> Result<Symbols, String> {
+        let first_definition = u32::try_from(defined).map_err(|_| "native symbol count exceeds u32")?;
+        let region_count = (0..self.program.function_count())
+            .try_fold(0usize, |count, id| count.checked_add(self.options.region_count(self.program.function(id).code.len())))
             .ok_or("native region count overflow")?;
-        // A function's lane body publishes under its own symbol, after the functions and
-        // the private regions; its fallback after the lane bodies.
         let body_base = (first_definition as usize)
-            .checked_add(program.function_count())
+            .checked_add(self.program.function_count())
             .and_then(|base| base.checked_add(region_count))
             .ok_or("native lane body symbol count overflow")?;
         let fallback_base = body_base.checked_add(lane_bodies.iter().flatten().count())
             .ok_or("native fallback symbol count overflow")?;
         u32::try_from(fallback_base).map_err(|_| "native lane body symbol count exceeds u32")?;
-        let mut data = Vec::with_capacity(program.function_count());
-        let mut region_definitions = Vec::new();
-        let mut body_definitions = Vec::new();
-        let mut fallback_definitions = Vec::new();
-        let mut fallback_tables = Vec::new();
-        for (id, lane_body) in lane_bodies.into_iter().enumerate() {
-            let body = program.function(id);
-            let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
-            let sites = &bodies[id];
-            let byte_len = sites
-                .len()
-                .checked_mul(std::mem::size_of::<NativeJsOperands>())
-                .ok_or("native operand data size overflow")?;
-            let mut bytes = Vec::with_capacity(byte_len);
-            for site in sites {
-                site.operands.append_native_bytes(&mut bytes);
-            }
-            let native = if let Some(regions) = options.regions(body.code.len()) {
-                let region_base = (first_definition as usize)
-                    .checked_add(program.function_count())
-                    .and_then(|base| base.checked_add(region_definitions.len()))
-                    .ok_or("native symbol count overflow")?;
-                let region_end = region_base
-                    .checked_add(regions.len())
-                    .ok_or("native symbol count overflow")?;
-                u32::try_from(region_end).map_err(|_| "native symbol count exceeds u32")?;
-                for (index, region) in regions.iter().cloned().enumerate() {
-                    region_definitions.push(NativeFunction::Definition {
-                        name: format!("{namespace}_function_{id}_region_{index}"),
-                        function: lower_object_body(
-                            sites,
-                            function_id,
-                            &*isa,
-                            &operations,
-                            Some(region),
-                        )?,
-                    });
-                }
-                lower_object_regions(function_id, body.code.len(), options, &*isa, (region_base, regions.len()))?
-            } else if let Some(lane_body) = lane_body {
-                let symbols = (
-                    u32::try_from(body_base + body_definitions.len()).map_err(|_| "native lane body symbol exceeds u32")?,
-                    u32::try_from(fallback_base + fallback_definitions.len()).map_err(|_| "native fallback symbol exceeds u32")?,
-                );
-                let table = program.function_count().checked_add(usize::from(has_narrow_table))
-                    .and_then(|index| index.checked_add(fallback_tables.len()))
-                    .and_then(|index| u32::try_from(index).ok())
-                    .ok_or("native fallback table count exceeds u32")?;
-                fallback_tables.push(object_fallback_table(
-                    body, &format!("{namespace}_function_{id}_fallback_table"), &*isa, &operations,
-                )?);
-                fallback_definitions.push(NativeFunction::Definition {
-                    name: format!("{namespace}_function_{id}_fallback"),
-                    function: lower_object_fallback(body, function_id, table, &*isa)?,
-                });
-                body_definitions.push(NativeFunction::Definition {
-                    name: format!("{namespace}_function_{id}_body"),
-                    function: lane_body,
-                });
-                lower_object_entry(function_id, body.code.len(), &*isa, symbols)?
-            } else {
-                lower_object_body(sites, function_id, &*isa, &operations, None)?
-            };
-            data.push(NativeData {
-                name: format!("{namespace}_operands_{id}"),
-                bytes,
-                alignment: std::mem::align_of::<NativeJsOperands>() as u64,
-                writable: false,
-                function_addresses: Vec::new(),
-            });
-            functions.push(NativeFunction::Definition {
-                name: format!("{namespace}_function_{id}"),
-                function: native,
+        Ok(Symbols { first_definition, body_base, fallback_base })
+    }
+
+    /// Function `id`'s entry: a dispatcher over private regions where it passes the region
+    /// budget, else its trampoline over lane body and fallback, else its call-threaded body.
+    fn lower_function(
+        &self, id: usize, lane_body: Option<ir::Function>, operations: &[Option<u32>], symbols: &Symbols,
+        pending: &mut Definitions,
+    ) -> Result<ir::Function, String> {
+        let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
+        if let Some(regions) = self.options.regions(self.program.function(id).code.len()) {
+            self.lower_regions(function_id, &regions, operations, symbols, pending)
+        } else if let Some(lane_body) = lane_body {
+            self.lower_lane(function_id, lane_body, operations, symbols, pending)
+        } else {
+            lower_object_body(&self.functions[id], function_id, &*self.isa, operations, None)
+        }
+    }
+
+    fn lower_regions(
+        &self, function_id: u32, regions: &[Range<usize>], operations: &[Option<u32>], symbols: &Symbols,
+        pending: &mut Definitions,
+    ) -> Result<ir::Function, String> {
+        let id = function_id as usize;
+        let region_base = (symbols.first_definition as usize)
+            .checked_add(self.program.function_count())
+            .and_then(|base| base.checked_add(pending.regions.len()))
+            .ok_or("native symbol count overflow")?;
+        let region_end = region_base.checked_add(regions.len()).ok_or("native symbol count overflow")?;
+        u32::try_from(region_end).map_err(|_| "native symbol count exceeds u32")?;
+        for (index, region) in regions.iter().cloned().enumerate() {
+            pending.regions.push(NativeFunction::Definition {
+                name: format!("{}_function_{id}_region_{index}", self.namespace),
+                function: lower_object_body(&self.functions[id], function_id, &*self.isa, operations, Some(region))?,
             });
         }
-        if has_narrow_table {
-            data.push(NativeData {
-                name: format!("{namespace}_narrow_upper_words"),
-                bytes: crate::value::NarrowLayout::decode_words().iter()
-                    .flat_map(|word| word.to_ne_bytes()).collect(),
-                alignment: std::mem::align_of::<u64>() as u64,
-                writable: false,
-                function_addresses: Vec::new(),
-            });
+        let length = self.program.function(id).code.len();
+        lower_object_regions(function_id, length, self.options, &*self.isa, (region_base, regions.len()))
+    }
+
+    fn lower_lane(
+        &self, function_id: u32, lane_body: ir::Function, operations: &[Option<u32>], symbols: &Symbols,
+        pending: &mut Definitions,
+    ) -> Result<ir::Function, String> {
+        let id = function_id as usize;
+        let (body, namespace) = (self.program.function(id), self.namespace);
+        let entries = (
+            u32::try_from(symbols.body_base + pending.bodies.len()).map_err(|_| "native lane body symbol exceeds u32")?,
+            u32::try_from(symbols.fallback_base + pending.fallbacks.len()).map_err(|_| "native fallback symbol exceeds u32")?,
+        );
+        let table = self.program.function_count().checked_add(NARROW_TABLE_COUNT)
+            .and_then(|index| index.checked_add(pending.fallback_tables.len()))
+            .and_then(|index| u32::try_from(index).ok())
+            .ok_or("native fallback table count exceeds u32")?;
+        pending.fallback_tables.push(object_fallback_table(
+            body, &format!("{namespace}_function_{id}_fallback_table"), &*self.isa, operations,
+        )?);
+        pending.fallbacks.push(NativeFunction::Definition {
+            name: format!("{namespace}_function_{id}_fallback"),
+            function: lower_object_fallback(body, function_id, table, &*self.isa)?,
+        });
+        pending.bodies.push(NativeFunction::Definition { name: format!("{namespace}_function_{id}_body"), function: lane_body });
+        lower_object_entry(function_id, body.code.len(), &*self.isa, entries)
+    }
+
+    /// Function `id`'s operand records as object data.
+    fn operand_data(&self, id: usize) -> Result<NativeData, String> {
+        let sites = &self.functions[id];
+        let byte_len = sites
+            .len()
+            .checked_mul(std::mem::size_of::<NativeJsOperands>())
+            .ok_or("native operand data size overflow")?;
+        let mut bytes = Vec::with_capacity(byte_len);
+        for site in sites {
+            site.operands.append_native_bytes(&mut bytes);
         }
-        data.extend(fallback_tables);
-        functions.extend(region_definitions);
-        functions.extend(body_definitions);
-        functions.extend(fallback_definitions);
+        Ok(NativeData {
+            name: format!("{}_operands_{id}", self.namespace),
+            bytes,
+            alignment: std::mem::align_of::<NativeJsOperands>() as u64,
+            writable: false,
+            function_addresses: Vec::new(),
+        })
+    }
+
+    /// The module of `functions` and `data` (one operand record set per function) followed by the
+    /// narrow table, the fallback tables, `pending`'s definitions and the entry table.
+    fn assemble(
+        &self, mut functions: Vec<NativeFunction>, mut data: Vec<NativeData>, pending: Definitions,
+        first_definition: u32,
+    ) -> Result<NativeJsModule, String> {
+        // Lane bodies decode packed inline fields through the narrow table, so every image
+        // publishes it (`NarrowTable::Linked`).
+        data.push(NativeData {
+            name: format!("{}_narrow_upper_words", self.namespace),
+            bytes: crate::value::NarrowLayout::decode_words().iter().flat_map(|word| word.to_ne_bytes()).collect(),
+            alignment: std::mem::align_of::<u64>() as u64,
+            writable: false,
+            function_addresses: Vec::new(),
+        });
+        data.extend(pending.fallback_tables);
+        functions.extend(pending.regions);
+        functions.extend(pending.bodies);
+        functions.extend(pending.fallbacks);
         u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
         let entry_table = data.len();
-        data.push(entry_table_data(&*isa, namespace, program.function_count(), (abi_function, first_definition))?);
-        Ok(NativeJsModule {
-            functions,
-            data,
-            entry_table,
-        })
+        let entries = (ABI_SYMBOL_INDEX, first_definition);
+        data.push(entry_table_data(&*self.isa, self.namespace, self.program.function_count(), entries)?);
+        Ok(NativeJsModule { functions, data, entry_table })
     }
 }
 

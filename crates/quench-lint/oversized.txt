@@ -863,7 +863,6 @@ complexity crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::value 21
 complexity crates/quench-runtime/src/vm/json.rs::JsonSyntax::positioned_message 14
 complexity crates/quench-runtime/src/vm/json.rs::Vm<H>::json_serialize_value 23
 complexity crates/quench-runtime/src/vm/method_cache.rs::Vm<H>::call_method_site_safe 13
-complexity crates/quench-runtime/src/vm/native_graph.rs::ObjectExtension<'_>::finish 17
 complexity crates/quench-runtime/src/vm/native_object.rs::emit_native_module 28
 complexity crates/quench-runtime/src/vm/native_stencil.rs::StencilExtension<H>::finish 15
 complexity crates/quench-runtime/src/vm/number.rs::Vm<H>::number_exponential 15
@@ -3257,7 +3256,6 @@ function-lines crates/quench-runtime/src/vm/lazy_data_property.rs::Vm<H>::lazy_d
 function-lines crates/quench-runtime/src/vm/lazy_data_property.rs::Vm<H>::materialize_lazy_group 71
 function-lines crates/quench-runtime/src/vm/method_cache.rs::Vm<H>::call_method_site_safe 99
 function-lines crates/quench-runtime/src/vm/name_atom_memo/primitive_bench.rs::query_pair 65
-function-lines crates/quench-runtime/src/vm/native_graph.rs::ObjectExtension<'_>::finish 233
 function-lines crates/quench-runtime/src/vm/native_graph.rs::lower_body 131
 function-lines crates/quench-runtime/src/vm/native_graph.rs::lower_object_fallback 49
 function-lines crates/quench-runtime/src/vm/native_graph.rs::lower_region_dispatch 95
