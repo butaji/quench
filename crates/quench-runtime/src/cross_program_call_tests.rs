@@ -81,3 +81,100 @@ fn calls_across_programs_match_calls_within_one() {
     ];
     assert_eq!(output(CROSS_PROGRAM_CALLS), expected);
 }
+
+const CROSS_PROGRAM_CONSTRUCTS: &str = r####"
+var out = [];
+function say() { out.push(Array.prototype.join.call(arguments, ' ')); }
+
+(0, eval)("var Base = class Base { constructor(x) { this.x = x; this.nt = new.target.name; } area() { return this.x * 2; } static of(x) { return new this(x); } };");
+(0, eval)("var Mid = class Mid extends Base { constructor(x, y) { super(x); this.y = y; } sum() { return this.x + this.y; } };");
+(0, eval)("function RetObj(a) { this.a = a; return { replaced: a * 2 }; } function RetPrim(a) { this.a = a; return 5; } function Throws(a) { if (a > 2) throw new Error('bad' + a); this.a = a; }");
+var Leaf = new Function("Mid", "return class Leaf extends Mid { constructor() { super(1, 2); this.z = this.sum(); } };")(Mid);
+
+var total = 0;
+for (var i = 0; i < 40; i++) {
+  var b = new Base(i), m = new Mid(i, 1), l = new Leaf();
+  total += b.area() + m.sum() + l.z + (Base.of(i) instanceof Base ? 1 : 0);
+}
+say('classes', total, new Leaf().nt, new Mid(1, 2).nt, Reflect.construct(Base, [3], Mid).nt);
+
+var r = [];
+for (var i = 0; i < 5; i++) {
+  var o = new RetObj(i), p = new RetPrim(i);
+  r.push(o.replaced + ':' + o.a + ':' + p.a + ':' + (p instanceof RetPrim));
+  try { new Throws(i); r.push('ok'); } catch (e) { r.push(e.message); }
+}
+say('returns', r.join(' '));
+
+class Local extends Base { constructor() { super(7); this.local = true; } }
+var n = 0;
+for (var i = 0; i < 20; i++) { var q = new Local(); n += q.x + (q.local ? 1 : 0); }
+say('local-derived', n, new Local().nt);
+out.forEach(function (line) { print(line); });
+"####;
+
+#[test]
+fn constructs_across_programs_yield_their_receivers_and_replacements() {
+    let expected: Vec<&str> = vec![
+        r####"classes 2540 Leaf Mid Mid"####,
+        r####"returns 0:undefined:0:true ok 2:undefined:1:true ok 4:undefined:2:true ok 6:undefined:3:true bad3 8:undefined:4:true bad4"####,
+        r####"local-derived 160 Local"####,
+    ];
+    assert_eq!(output(CROSS_PROGRAM_CONSTRUCTS), expected);
+}
+
+const CROSS_PROGRAM_RETURNING_CALLS: &str = r####"
+var out = [];
+function say() { out.push(Array.prototype.join.call(arguments, ' ')); }
+
+// Returning calls (`return f(x)`) through chains that cross programs and stay within one.
+(0, eval)("function c3(x) { return x + 3; } function c3b(x) { return c3(x) * 2; }");
+(0, eval)("function b2(x) { return c3(x + 2); } function b2b(x) { return c3b(x + 2); }");
+(0, eval)("function a1(x) { return b2(x + 1); } function a1b(x) { return b2b(x + 1) + 1; }");
+var local = function (x) { return a1(x) + a1b(x); };
+var tail = function (x) { return local(x); };
+var nested = function (x) { return tail(x) + tail(x + 1); };
+
+var t = 0;
+for (var i = 0; i < 60; i++) t += nested(i) + a1(i) + (function (v) { return b2b(v); })(i);
+say('chains', t);
+
+(0, eval)("function thrower(x) { if (x === 3) throw new Error('t3'); return x; } function viaTail(x) { return thrower(x); } function viaTry(x) { try { return viaTail(x); } finally { fin++; } }");
+var fin = 0, results = [];
+for (var i = 0; i < 6; i++) {
+  try { results.push(viaTry(i)); } catch (e) { results.push(e.message); }
+}
+say('exceptions', results.join(','), fin);
+
+(0, eval)("function* g1(n) { for (var i = 0; i < n; i++) yield tailAdd(i); } function tailAdd(x) { return addTwo(x); } function addTwo(x) { return x + 2; }");
+var gs = [];
+for (var v of g1(4)) gs.push(v);
+say('generator', gs.join(','));
+
+(0, eval)("async function af(x) { return await tailAsync(x); } function tailAsync(x) { return Promise.resolve(x + 1); }");
+var asyncOut = [];
+af(1).then(function (v) { asyncOut.push(v); return af(v); }).then(function (v) {
+  asyncOut.push(v);
+  say('async', asyncOut.join(','));
+  out.forEach(function (line) { print(line); });
+});
+
+(0, eval)("function deepTail(n) { return n === 0 ? 'bottom' : deepTail2(n - 1); } function deepTail2(n) { return deepTail(n); }");
+say('deep', deepTail(2000));
+
+(0, eval)("function sorter(a, b) { return cmp2(a, b); } function cmp2(a, b) { return a - b; }");
+say('callbacks', [5, 3, 9, 1].sort(sorter).join(','), [1, 2, 3].map(function (x) { return tailAdd(x); }).join(','));
+"####;
+
+#[test]
+fn returning_calls_across_programs_complete_in_the_programs_they_began_in() {
+    let expected: Vec<&str> = vec![
+        r####"chains 19350"####,
+        r####"exceptions 0,1,2,t3,4,5 6"####,
+        r####"generator 2,3,4,5"####,
+        r####"deep bottom"####,
+        r####"callbacks 1,3,5,9 3,4,5"####,
+        r####"async 2,3"####,
+    ];
+    assert_eq!(output(CROSS_PROGRAM_RETURNING_CALLS), expected);
+}

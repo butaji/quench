@@ -114,45 +114,75 @@ pub(super) fn lane_complete_plain_activation<H: Host, const LEAF: u8>(cx: *mut L
     Some(Resumed::At(registers, next, view))
 }
 
-/// `lane_complete_activation` of a run of JavaScript activations of one program each
-/// returning the completion of the call above it (`return f(...)`), down to one whose call
+/// `lane_complete_activation` of a run of JavaScript activations, of one program or several,
+/// each returning the completion of the call above it (`return f(...)`), down to one whose call
 /// takes `value` in its result register. Only that outermost activation's caller state is
 /// restored: an inner one's would be overwritten by it. `None`, which changes nothing, leaves
 /// any other completion to the activation-by-activation loop.
 #[inline(always)]
 pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let activations = &vm.lane_stack.activations;
+    let (outermost, crossed) = returning_chain_outermost(&vm.lane_stack.activations)?;
+    // Script activations hold no Wasm storage (`LaneStack::pop_activation`), so the inner
+    // ones go without its accounting.
+    debug_assert!(vm.lane_stack.activations[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
+    vm.lane_stack.activations.truncate(outermost + 1);
+    vm.lane_stack.drop_iterators_from(outermost + 1);
+    vm.lane_stack.drop_trap_checks_from(outermost + 1);
+    let top = &vm.lane_stack.activations[outermost];
+    let completion = match &top.kind {
+        ActivationKind::Script(script) => script.completion,
+        ActivationKind::Wasm { .. } => unreachable!("a chain holds script activations"),
+    };
+    if completion == Completion::ReturnsToBody {
+        return lane_end_body_callee(cx, value);
+    }
+    // The outermost activation of another program than its caller's enters that program;
+    // one of its own, past a crossing one above it, returns to the program it began in.
+    if completion == Completion::Cross {
+        return lane_complete_cross_activation(cx, value);
+    }
+    if crossed {
+        lane_enter_program(cx, top.caller_program);
+        unsafe { (*cx).memory = MemoryView::script(cx) };
+    }
+    lane_complete_plain_activation::<H, NOT_LEAF>(cx, value)
+}
+
+/// The index of the outermost activation of the run the innermost one completes, each
+/// returning the completion of the call above it, and whether the run crosses programs; `None`
+/// where a completion past a plain or crossing return, or the frame, ends it.
+#[inline(always)]
+fn returning_chain_outermost(activations: &[Activation]) -> Option<(usize, bool)> {
     let mut index = activations.len();
-    let outermost = loop {
+    let mut crossed = false;
+    loop {
         index = index.checked_sub(1)?;
         let activation = &activations[index];
         let ActivationKind::Script(script) = &activation.kind else {
             return None;
         };
         // A body's callee (`Completion::ReturnsToBody`) ends the run its call started: it is
-        // the outermost, whatever its call's register.
+        // the outermost, whatever its call's register, and runs in its caller's program.
         if script.completion == Completion::ReturnsToBody {
-            break index;
+            return (!crossed).then_some((index, false));
         }
-        if script.completion != Completion::Plain {
+        crossed |= script.completion == Completion::Cross;
+        if !matches!(script.completion, Completion::Plain | Completion::Cross) {
             return None;
         }
         // SAFETY: the call record belongs to the caller's live view.
         if unsafe { (*activation.call).a } & crate::bytecode::RETURN_REGISTER == 0 {
-            break index;
+            return Some((index, crossed));
         }
-    };
-    // Script activations hold no Wasm storage (`LaneStack::pop_activation`), so the inner
-    // ones go without its accounting.
-    debug_assert!(activations[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
-    vm.lane_stack.activations.truncate(outermost + 1);
-    vm.lane_stack.drop_iterators_from(outermost + 1);
-    vm.lane_stack.drop_trap_checks_from(outermost + 1);
-    if matches!(&vm.lane_stack.activations[outermost].kind, ActivationKind::Script(script) if script.completion == Completion::ReturnsToBody) {
-        return lane_end_body_callee(cx, value);
     }
-    lane_complete_plain_activation::<H, NOT_LEAF>(cx, value)
+}
+
+/// `lane_complete_plain_chain` out of line, for the returns past the common one
+/// (`lane_return_general`, `lane_return_value_general`), whose frames stay small.
+#[inline(never)]
+pub(super) fn lane_complete_returning_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+    lane_complete_plain_chain(cx, value)
 }
 
 /// The end of the nested run of a body's callee, the innermost activation (`Completion::ReturnsToBody`),

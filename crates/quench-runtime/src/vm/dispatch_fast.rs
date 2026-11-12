@@ -3951,6 +3951,9 @@ fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Va
     if let Some(resumed) = lane_complete_cross_activation(cx, value) {
         return resumed;
     }
+    if let Some(resumed) = lane_complete_returning_chain(cx, value) {
+        return resumed;
+    }
     lane_return_value_other(cx, ip, value)
 }
 
@@ -16487,7 +16490,11 @@ lane_handler! {
     /// line, so `lane_return` keeps its registers.
     #[inline(never)]
     fn lane_return_general<>(cx, r, ip, i, view) {
-        if let Some(resumed) = lane_complete_cross_activation(cx, r.get(i.a)) {
+        let value = r.get(i.a);
+        if let Some(resumed) = lane_complete_cross_activation(cx, value) {
+            resume!(cx, resumed)
+        }
+        if let Some(resumed) = lane_complete_returning_chain(cx, value) {
             resume!(cx, resumed)
         }
         sibling!(lane_return_other::<H>, r, ip, view)
