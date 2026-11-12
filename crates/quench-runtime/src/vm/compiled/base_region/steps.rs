@@ -19,11 +19,13 @@
 //! (`call_plan::plan_call`): the direct entry-cell row where the site recorded a stable callee,
 //! the helper row otherwise, between the spills and reloads. A loop region makes no activation,
 //! so its returns (and its calls that return a result) are leaves; its plain calls are the chain
-//! with the helper row alone (`calls_in_place`, `LaneHelper::RegionCall`), or the callee's rows
-//! where the stitch inlines it (`function::parts`): a call that completes
-//! continues the region, one that missed leaves at the call, and one that left the lane in its
-//! callee's activation, or ended in termination, ends the run with the word that says so
-//! (`LaneExit::Callee`, `LaneExit::Terminated`), the registers already spilled.
+//! with the helper row alone (`calls_in_place`, `LaneHelper::RegionCall`), the direct row where the
+//! site recorded a stable callee, or the callee's rows where the stitch inlines it
+//! (`function::parts`): a call that completes continues the region, one that missed leaves at the
+//! call, and one that left the lane in its callee's activation, or whose callee left, or that ended
+//! in termination, ends the run with the (status, word) it left with, which the region's entry
+//! returns as a body's does (`LoopOutcome::Left`, `LoopOutcome::Terminated`), the registers already
+//! spilled.
 //!
 //! Which class an instruction is in follows from the opcode catalog's traits and layouts
 //! (`lowering`), never from a table of opcodes here.

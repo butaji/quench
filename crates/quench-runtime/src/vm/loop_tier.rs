@@ -191,7 +191,7 @@ fn region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: 
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
     let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
     let candidates = lane_direct_callees(machine, own, function, body);
-    machine.region_calls(program, function, &candidates)
+    machine.region_calls(program, function, own, &candidates)
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.

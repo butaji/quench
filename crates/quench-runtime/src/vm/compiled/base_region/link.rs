@@ -10,8 +10,9 @@ pub(super) const JMP_REL32: u8 = 0xe9;
 pub(super) const EXIT_STUB_LEN: usize = 2 * (1 + std::mem::size_of::<u32>());
 
 /// How a region hands back its result: a loop region stores its word through the entry's result
-/// pointer and returns status 0; a function body returns its status and word in two registers,
-/// as a lane body does (`lane_body_abi`), a leave with status `NATIVE_JS_STOPPED`.
+/// pointer and returns status 0, or, where a call it made ended the run (`Leave::Status`), that call's
+/// status; a function body returns its status and word in two registers, as a lane body does
+/// (`lane_body_abi`), a leave with status `NATIVE_JS_STOPPED`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Ending {
     Region,

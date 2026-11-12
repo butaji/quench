@@ -17,8 +17,8 @@
 //! the helper's address (`lane_body_call`); vm, residual and lane context come from the
 //! dispatch payload behind the context. Successors: COMPLETED continues at NEXT; MISSED
 //! (nothing ran) leaves at the call's pc through EXIT0 (a leave that does not spill); LEFT and
-//! TERMINATED leave through EXIT1 with the (status, word) in r14, r15 (`leave_status`); a loop region reads
-//! the word alone, which says CALLEE_EXIT or TERMINATED_EXIT.
+//! TERMINATED leave through EXIT1 with the (status, word) in r14, r15 (`leave_status`), which a loop region's
+//! entry thunk returns as the status and the word (`entry.rs`).
 //!
 //! Direct row `call_direct_a<N>_<strict|sloppy>`: hole V0 = the address of the site's
 //! `CallRecord`. It checks the callee word and (sloppy) the receiver, admits the call with the
@@ -37,7 +37,7 @@
 
 #[path = "../src/call_record.rs"]
 mod call_record;
-use self::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_EXIT, TERMINATED_STATUS};
+use self::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_STATUS};
 use crate::codes::{LAST_INT_PIN, PIN, PINF};
 use crate::heap_rows::{payload, word_at};
 use crate::layout::{CELL_BODY_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_CONTEXT, JS_STEP_NATIVE_END, JS_STEP_NATIVE_TOP, JS_STEP_RESIDUAL, JS_STEP_SHADOW_END, JS_STEP_SHADOW_TOP, JS_STEP_VM, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
@@ -144,7 +144,7 @@ pub unsafe extern "rust-preserve-none" fn call_helper(frame: usize, ctx: usize, 
             }
             _ => {
                 core::hint::cold_path();
-                go!(HOLE_EXIT1, leaving(&s, TERMINATED_STATUS, TERMINATED_EXIT))
+                go!(HOLE_EXIT1, leaving(&s, TERMINATED_STATUS, 0))
             }
         }
     }

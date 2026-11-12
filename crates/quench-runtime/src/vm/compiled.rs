@@ -52,7 +52,7 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
-mod osr_compile; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
+mod region_lend; mod osr_compile; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
@@ -6072,11 +6072,11 @@ impl CompiledOsrRegion {
         function: u32,
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
-        lane_context: usize,
+        (lane_context, direct_calls): (usize, bool),
     ) -> LoopOutcome {
         // SAFETY: the caller's contract; the region runs the same lane entry ABI.
         unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(self.entry, registers, entry, region, interrupt) }
-            else { self.run_lane(registers, entry, region, vm, program, function, frame, interrupt, lane_context) } }
+            else { self.run_lane(registers, entry, region, vm, program, function, frame, interrupt, (lane_context, direct_calls)) } }
     }
 
     /// Runs a loop compiled through the lane region specializer: the shared lane entry ABI,
@@ -6095,7 +6095,7 @@ impl CompiledOsrRegion {
         function: u32,
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
-        lane_context: usize,
+        (lane_context, direct_calls): (usize, bool),
     ) -> LoopOutcome {
         let mut outcome = LoopOutcome::Terminated;
         #[cfg(test)]
@@ -6158,7 +6158,11 @@ impl CompiledOsrRegion {
             let mut context = CallContext::interrupt_only(&*interrupt);
             context.vm = std::ptr::from_mut(vm).cast();
             context.program = program;
-            context.adapter_payload = (&mut native.dispatch as *mut JsStepDispatch).cast();
+            // A region that calls callees by their entries runs on the lane frame's payload, which their
+            // own helpers read (`region_lend`).
+            let lent = self.calls.enters_callees();
+            let payload: *mut JsStepDispatch = if lent { unsafe { region_lend::lend(vm, &mut native.dispatch, direct_calls) } } else { &raw mut native.dispatch };
+            context.adapter_payload = payload.cast();
             let mut word = 0u64;
             // SAFETY: as the caller promises; the code reads the register file and writes
             // the result word.
@@ -6166,10 +6170,11 @@ impl CompiledOsrRegion {
             let mut shadow = ShadowFrame { window: registers as usize, ..ShadowFrame::EMPTY };
             let arguments = if self.crossing == Crossing::Lean { (&raw mut shadow).cast::<u64>().cast_const() } else { registers.cast::<u64>().cast_const() };
             // The region's call rows reload its payload's heap bases after the callee ran (`lane_region_call`).
-            let outer = super::dispatch_fast::lane_region_payload::<H>(lane_context, (&raw mut native.dispatch).addr());
+            let outer = super::dispatch_fast::lane_region_payload::<H>(lane_context, payload.addr());
             let status = enter_native(&mut context, 0, 0, arguments,
                 &mut word, NativeEntryMode::Resumable, self.entry);
             super::dispatch_fast::lane_region_payload::<H>(lane_context, outer);
+            let frames = if lent { unsafe { region_lend::reclaim::<H>(&mut native.dispatch) } } else { ShadowFrames::NONE };
 
             if let Some(Raised::Panic(panic)) = context.raised.take() {
                 std::panic::resume_unwind(panic);
@@ -6183,13 +6188,25 @@ impl CompiledOsrRegion {
                 LoopOutcome::Returned { pc: native.dispatch.returned_pc as u32,
                     value: crate::Value::from_bits(word) }
             } else {
-                lane_loop_outcome(word, region)
+                lane_region_outcome::<H>((status, word), region, self.crossing, frames)
             };
         }) };
         if ran.is_none() { return LoopOutcome::Terminated; }
         outcome
     }
 
+}
+
+/// The outcome of a lane OSR region's return, its result `word` and `status`: a stencil region's
+/// status says, where it is not 0, that its run ended inside the callee of a call it made (the leave
+/// routine of `Exit::Status` returns the call's status, `quench-bjit`'s `entry.rs`), whose own leave the
+/// status and word make (`lane_method_exit`), with the native `frames` the call pushed; any other
+/// return is the region's own leave.
+fn lane_region_outcome<H: Host>((status, word): (u32, u64), region: &LoopRegion, crossing: Crossing, frames: ShadowFrames) -> LoopOutcome {
+    if crossing == Crossing::Lean && status != 0 {
+        return LoopOutcome::Left { exit: Vm::<H>::lane_method_exit(status, word), frames };
+    }
+    lane_loop_outcome(word, region)
 }
 
 /// The outcome of a lane OSR region's leave `word`. A leave outside the loop is the loop's
@@ -6729,8 +6746,6 @@ pub(super) enum LaneExit {
 const INLINED_EXIT: u64 = 1 << 63;
 /// The result word of a leave into a native call's callee activation.
 const CALLEE_EXIT: u64 = 1 << 62;
-/// The result word of a call that ended in termination, where the entry returns no status (a loop region's).
-const TERMINATED_EXIT: u64 = 1 << 60;
 /// The result word of a leave at the body's entry, whose proof of its inputs failed.
 const ENTRY_EXIT: u64 = 1 << 61;
 /// The status of a lane body whose activation completes: its result word holds the value,
@@ -6771,8 +6786,7 @@ impl LaneExit {
             Self::Inlined { frame, pc } => INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc),
             Self::Callee => CALLEE_EXIT,
             Self::Entry => ENTRY_EXIT,
-            Self::Terminated => TERMINATED_EXIT,
-            Self::Returned { .. } => unreachable!("a completion is a status, not a leave word"),
+            Self::Returned { .. } | Self::Terminated => unreachable!("a completion is a status, not a leave word"),
         }
     }
 
@@ -6782,9 +6796,6 @@ impl LaneExit {
         }
         if word == ENTRY_EXIT {
             return Self::Entry;
-        }
-        if word == TERMINATED_EXIT {
-            return Self::Terminated;
         }
         if word & INLINED_EXIT == 0 {
             return Self::At(usize::try_from(word).unwrap_or(0));
@@ -7339,10 +7350,13 @@ impl<H: Host> Vm<H> {
     /// Reloads the heap bases of the payload of the native loop region the lane entered, whose address the
     /// lane context holds (`dispatch_fast::lane_region_payload`; zero where none runs), as
     /// `refresh_body_bases` does the body frame's.
-    pub(super) fn refresh_region_bases(&self, payload: usize) {
+    pub(super) fn refresh_region_bases(&mut self, payload: usize) {
         // SAFETY: a region's payload lives for its run, which the helper that calls this is made from.
         if let Some(payload) = unsafe { (payload as *mut JsStepDispatch).as_mut() } {
             payload.refresh_object_bases(self);
+            // The activation the call made is popped: a direct call's window and frame go where the lane's are now.
+            let direct_calls = payload.shadow_end != payload.shadow_base;
+            region_lend::bind_stacks(self, payload, direct_calls);
         }
     }
 
@@ -7365,13 +7379,16 @@ const SHADOW_FRAMES: usize = 64;
 
 /// The native frames a leave took (`Vm::take_shadow_frames`): the prefixes of `count` activations
 /// at `base`, in the activations' spare room, where materialization makes the activations in place.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ShadowFrames {
     base: *const Activation,
     pub(super) count: usize,
 }
 
 impl ShadowFrames {
+    /// No frames: a run that pushed none.
+    pub(super) const NONE: Self = Self { base: std::ptr::null(), count: 0 };
+
     /// Frame `index`, outermost first, read before the activation that replaces it is pushed.
     pub(super) fn get(&self, index: usize) -> ShadowFrame {
         // SAFETY: `index < count` frames were pushed in place by the run that left.

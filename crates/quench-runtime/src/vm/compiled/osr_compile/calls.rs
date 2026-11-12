@@ -5,6 +5,7 @@
 use super::super::*;
 use super::super::base_region::callees::Callees;
 use super::super::base_region::RealmProof;
+use super::super::lane_facts::bind_callees;
 use crate::bytecode::{ResidualProgram, WideInstruction};
 use crate::code_dependencies::Invalidation;
 use crate::vm::dispatch_fast::LaneRecoverySpace;
@@ -20,10 +21,13 @@ pub(in crate::vm) struct RegionCalls {
 
 impl<H: Host> Vm<H> {
     /// The calls of `function` of `program`, whose call sites reached `candidates` (by PC), that a
-    /// region of it may inline.
-    pub(in crate::vm) fn region_calls(&mut self, program: &ResidualProgram, function: u32, candidates: &[DirectCandidates]) -> RegionCalls {
+    /// region of it may inline or call by their entries; the callees' bodies are in demand for the
+    /// calls the region keeps, as a body's are (`bind_callees`, by the view `own` of the function).
+    pub(in crate::vm) fn region_calls(&mut self, program: &ResidualProgram, function: u32, own: &crate::vm::dispatch_fast::LaneView, candidates: &[DirectCandidates]) -> RegionCalls {
         let code: Vec<WideInstruction> = program.function_get(function as usize).map(|body| body.instructions().collect()).unwrap_or_default();
-        RegionCalls { callees: self.stitch_callees(program, function, &code, candidates), realm: self.realm_proof() }
+        let callees = self.stitch_callees(program, function, &code, candidates);
+        bind_callees(&callees.owned, own);
+        RegionCalls { callees, realm: self.realm_proof() }
     }
 }
 
@@ -37,7 +41,7 @@ impl<H: Host> Vm<H> {
 pub(in crate::vm) struct CallCode {
     pub(in crate::vm) inlined: Vec<InlinedCall>,
     pub(in crate::vm) direct: Box<[DirectCallee]>,
-    _records: Vec<Box<CallRecord>>,
+    records: Vec<Box<CallRecord>>,
     /// The registers of the function the region belongs to: its inlined callees' follow them.
     caller_registers: u16,
     recovery: LaneRecoverySpace,
@@ -49,7 +53,13 @@ impl CallCode {
     /// callees' rows, `direct` by their entries (`records`: those its rows read).
     pub(super) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectCallee]>, Vec<Box<CallRecord>>), caller_registers: u16, invalidation: Invalidation) -> Self {
         let recovery = LaneRecoverySpace::inlined(&inlined);
-        Self { inlined, direct, _records: records, caller_registers, recovery, invalidation }
+        Self { inlined, direct, records, caller_registers, recovery, invalidation }
+    }
+
+    /// Whether its code calls a callee by its entry (a direct row, whose record it owns): it runs on
+    /// the lane frame's payload (`region_lend`).
+    pub(in crate::vm) fn enters_callees(&self) -> bool {
+        !self.records.is_empty()
     }
 
     /// The room a leave inside an inlined callee needs, which a run is admitted by.

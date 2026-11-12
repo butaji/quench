@@ -305,9 +305,7 @@ fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Pa
 }
 
 fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {
-    let ending = sites.ending;
-    // A region's calls take the helper row: its payload holds no native frames for a direct row to push.
-    let callees: &[Option<DirectFacts>] = if ending == Ending::Body { sites.facts } else { &[] };
+    let (ending, callees) = (sites.ending, sites.facts);
     let mut stitched = stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
     let reached = reachable(&span, &stitched.rows)?;

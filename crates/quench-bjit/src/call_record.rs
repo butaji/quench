@@ -34,9 +34,6 @@ pub const LANE_BODY_NOT_ENTERED: u32 = GENERAL_RETURN_STATUS_BASE - 2;
 pub const NATIVE_JS_STOPPED: u32 = 1;
 pub const CALLEE_EXIT: u64 = 1 << 62;
 pub const TERMINATED_STATUS: u32 = 8;
-/// The result word of a call that ended in termination, which a loop region (whose entry returns a
-/// word alone, no status) reports as the terminated run (`LaneExit::Terminated`).
-pub const TERMINATED_EXIT: u64 = 1 << 60;
 
 /// The per-site record of a direct-call row, one cache line, patched into the row as the one
 /// 64-bit value hole 0 (its address). Everything a site knows that does not fit the three value

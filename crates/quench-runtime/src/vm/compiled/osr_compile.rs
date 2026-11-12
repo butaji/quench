@@ -336,7 +336,7 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, region.header, &code, None, "");
     }
-    let calls = CallCode::of((frames, Box::default(), records), registers, invalidation);
+    let calls = CallCode::of((frames, calls.callees.owned, records), registers, invalidation);
     let facts = OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new(),
         stable: StableFacts { globals: stable, holders, atoms }, calls: LaneDependencies::of(std::iter::empty(), &calls.direct) };
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
