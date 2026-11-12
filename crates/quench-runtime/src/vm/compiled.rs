@@ -935,6 +935,9 @@ pub(super) struct DenseArrayView {
     /// Whether its backing counts no values (`emit_dense_array_uncounted` ran on the edge
     /// that proved the view): a store through it then writes the element alone.
     pub(super) uncounted: bool,
+    /// Whether every index read through it is proved below `length` (a counted loop's entry
+    /// check, `Lowering::counted_entry`): the element read then has no bounds guard.
+    pub(super) bounded: bool,
 }
 
 /// The emission proofs a staged value operation carries: a field projection or a dense
@@ -968,7 +971,7 @@ pub(super) fn emit_dense_array_view(
     }
     // The view's length is an `i32`, the width an int32 index has.
     let length = builder.ins().ireduce(types::I32, length);
-    DenseArrayView { values, length, writable, uncounted: false }
+    DenseArrayView { values, length, writable, uncounted: false, bounded: false }
 }
 
 /// The backing's first value and length of the array `base` (tagged) an earlier view
@@ -996,8 +999,12 @@ pub(super) fn emit_dense_element(
     fallback: ir::Block,
 ) -> (ir::Value, ir::Value) {
     let mut stage = object_slots::Emit { builder, property_values: None };
-    crate::staged::elements::dense_element(&mut stage, view.values, view.length, index, fallback)
-        .expect("the emit stage continues past its guards")
+    if view.bounded {
+        crate::staged::elements::dense_present(&mut stage, view.values, index, fallback)
+    } else {
+        crate::staged::elements::dense_element(&mut stage, view.values, view.length, index, fallback)
+    }
+    .expect("the emit stage continues past its guards")
 }
 
 /// Replace the present element at `address`, whose value was `old`, with the non-heap

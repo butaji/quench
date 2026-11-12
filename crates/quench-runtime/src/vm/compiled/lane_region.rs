@@ -52,7 +52,7 @@ use captures::RootedRead;
 #[path = "lane_region/field_reads.rs"] mod field_reads;
 #[path = "lane_region/number_domains.rs"] mod number_domains;
 #[path = "lane_region/loop_arrays.rs"] mod loop_arrays;
-#[cfg(test)] #[path = "lane_region/counted_loops.rs"] mod counted_loops;
+#[path = "lane_region/counted_loops.rs"] mod counted_loops;
 #[path = "lane_region/direct_calls.rs"] mod direct_calls;
 #[path = "lane_region/direct_admission.rs"] mod direct_admission;
 #[path = "lane_region/direct_enter.rs"] mod direct_enter;
@@ -536,6 +536,9 @@ struct Lowering<'a, 'f> {
     hoisted: BTreeMap<usize, LoopRead>,
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
+    /// The counted loops (`counted_loops`), and the element accesses their entry checks prove in bounds.
+    counted: Vec<counted_loops::CountedLoop>,
+    counted_proven: BTreeSet<usize>,
     /// Each hoisted base's tagged value and view, by register, across its loop's iterations.
     array_vars: BTreeMap<ArraySource, ArrayVariables>,
     views: ElementViews,
@@ -1572,6 +1575,8 @@ pub(super) fn lower(
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
         loop_arrays: Vec::new(),
+        counted: Vec::new(),
+        counted_proven: BTreeSet::new(),
         array_vars: BTreeMap::new(),
         views,
         loop_fields: Vec::new(),
@@ -1638,6 +1643,7 @@ pub(super) fn lower(
     lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], observed);
     lowering.intrinsics = native_calls::intrinsic_calls(unit, global_reads, |pc| direct.contains_key(&pc));
     let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics);
+    lowering.counted = loops.iter().filter_map(|&(header, back)| counted_loops::counted_loop(&instructions, &program.constants, header, back)).collect();
     // One entry query of the call depth replaces each binding's helper with its cached
     // target probe (`cached_call_target`). A completed call leaves the depth it found.
     if !numeric && unit.frames.iter().any(|frame| frame.target.callee == CalleeBinding::Function) {
@@ -3778,6 +3784,7 @@ impl Lowering<'_, '_> {
         self.hoist_stable(state, header);
         self.hoist_reads(state, header);
         self.hoist_arrays(state, header, true);
+        self.counted_entry(state, header);
     }
 
     /// Whether an enclosing loop's entry hoisted the capture read at `pc` already (its body holds
@@ -4096,7 +4103,7 @@ impl Lowering<'_, '_> {
             let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
             // A grown backing may count its values again; stores through the view keep none.
             if array.writable {
-                super::emit_dense_array_uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true, uncounted: false });
+                super::emit_dense_array_uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true, uncounted: false, bounded: false });
             }
             self.builder.def_var(variables.values, values);
             self.builder.def_var(variables.length, length);
@@ -4125,8 +4132,10 @@ impl Lowering<'_, '_> {
             // An element read as a Number (`number_reads`) needs no hole test of its own: a hole
             // is a NaN pattern, which the Number proof's one NaN test sends to the tag check
             // that leaves.
-            let in_bounds = self.ins().icmp(IntCC::UnsignedLessThan, index, length);
-            emit_js_guard(&mut self.builder, in_bounds, exit);
+            if !self.counted_proven.contains(&pc) {
+                let in_bounds = self.ins().icmp(IntCC::UnsignedLessThan, index, length);
+                emit_js_guard(&mut self.builder, in_bounds, exit);
+            }
             let offset = self.ins().uextend(types::I64, index);
             let offset = self.ins().imul_imm_s(offset, std::mem::size_of::<crate::Value>() as i64);
             let address = self.ins().iadd(values, offset);
@@ -4134,7 +4143,7 @@ impl Lowering<'_, '_> {
             return self.set_tagged(state, destination, value);
         }
         if array.views == ElementViews::Dense {
-            let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable };
+            let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable, bounded: self.counted_proven.contains(&pc) };
             let value = super::emit_dense_element(&mut self.builder, view, index, exit).1;
             return self.set_tagged(state, destination, value);
         }
@@ -4157,14 +4166,14 @@ impl Lowering<'_, '_> {
         // append helper is a call every live value is spilled around, which a loop that
         // never appends should not pay (a site that left compiles it, `left_here`).
         if !self.left_here {
-            let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
+            let view = super::DenseArrayView { values, length, writable: true, uncounted: true, bounded: self.counted_proven.contains(&(pc as usize)) };
             return self.index_write(state, index, value, view, exit);
         }
         let base = self.tagged(state, instruction.register_b());
         let key = self.tagged(state, instruction.register_c());
         let (slow, done) = (self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(slow);
-        let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
+        let view = super::DenseArrayView { values, length, writable: true, uncounted: true, bounded: self.counted_proven.contains(&(pc as usize)) };
         // The view's backing counts no values (`hoist_arrays`): the store writes the element.
         self.index_write(state, index, value, view, slow);
         self.ins().jump(done, &[]);
