@@ -85,6 +85,7 @@ pub use wasm::{
     WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue, extern_kind::WasmExternKind,
 };
 
+pub use vm::AheadImages;
 pub use bytecode::{KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase};
 pub use module_identity::normalized_text as normalized_module_name;
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
