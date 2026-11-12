@@ -1,7 +1,7 @@
 //! The specializer's Cranelift stage: `crate::staged` operations emitted as IR.
 
 use super::*;
-use crate::staged::{Domain, NumericStage, Stage, Table};
+use crate::staged::{Domain, NumericStage, Region, Stage, Table};
 use crate::vm::operations::{NumberArithmetic, NumberRelation};
 
 /// One Cranelift instruction at the stage's builder: `ins!(self, iadd(a, b))` is
@@ -20,6 +20,9 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
     /// The dispatch payload that holds the object marks the store barrier's test reads, where
     /// the operation stores (`Stage::store_gate`).
     pub(in crate::vm::compiled) gate: Option<ir::Value>,
+    /// Whether no operation of the region the operation is in may move an array's backing or the
+    /// array record table, so the record table's base is read-only (`Region::RecordBases`).
+    pub(in crate::vm::compiled) fixed_arrays: bool,
 }
 
 /// An immediate of the Cranelift stage: a constant, or a value the caller holds as one (a stencil's
@@ -61,6 +64,16 @@ impl Stage for Emit<'_, '_> {
     }
     fn load_u64(&mut self, base: ir::Value, offset: i32) -> ir::Value {
         ins!(self, load(types::I64, MemFlagsData::trusted(), base, offset))
+    }
+    /// A load of `region`: a record table's base word is read-only and movable where the region's
+    /// arrays stay put (`fixed_arrays`), so the compiler hoists it out of the loops around it.
+    fn load_in(&mut self, region: Region, base: ir::Value, offset: i32) -> ir::Value {
+        let flags = if region == Region::RecordBases && self.fixed_arrays {
+            MemFlagsData::trusted().with_readonly().with_can_move()
+        } else {
+            MemFlagsData::trusted()
+        };
+        ins!(self, load(types::I64, flags, base, offset))
     }
     fn load_table(&mut self, address: ir::Value) -> ir::Value {
         ins!(self, load(types::I64, MemFlagsData::trusted().with_readonly().with_can_move(), address, 0))
@@ -325,7 +338,7 @@ mod tests {
         builder.switch_to_block(entry);
         let [record, base] = builder.block_params(entry).try_into().unwrap();
         let miss = builder.create_block();
-        let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None };
+        let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None, fixed_arrays: false };
         let inline = crate::staged::object::inline_storage(&mut stage, record);
         let layout = own_layout(&mut stage, record, inline, form,
             usize::from(slot) + 1, PackedAccess::Reload, miss).unwrap();

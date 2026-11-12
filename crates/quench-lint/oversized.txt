@@ -1448,9 +1448,9 @@ file-lines crates/quench-runtime/src/vm/call_printer.rs 624
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/coercion.rs 510
 file-lines crates/quench-runtime/src/vm/collections.rs 1470
-file-lines crates/quench-runtime/src/vm/compiled.rs 19000
+file-lines crates/quench-runtime/src/vm/compiled.rs 18962
 file-lines crates/quench-runtime/src/vm/compiled/frame_ssa.rs 682
-file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5458
+file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5266
 file-lines crates/quench-runtime/src/vm/compiled/lane_unit.rs 861
 file-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs 7550
 file-lines crates/quench-runtime/src/vm/compiled/scalar_region.rs 571
@@ -5445,7 +5445,7 @@ native_ir crates/quench-runtime/src/vm/compiled/general_elements.rs 7
 native_ir crates/quench-runtime/src/vm/compiled/general_getter.rs 5
 native_ir crates/quench-runtime/src/vm/compiled/general_names.rs 7
 native_ir crates/quench-runtime/src/vm/compiled/general_store.rs 44
-native_ir crates/quench-runtime/src/vm/compiled/lane_region.rs 358
+native_ir crates/quench-runtime/src/vm/compiled/lane_region.rs 245
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/bindings.rs 24
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/bound_this.rs 6
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/captures.rs 14

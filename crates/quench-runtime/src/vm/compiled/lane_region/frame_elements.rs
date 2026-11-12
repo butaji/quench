@@ -9,7 +9,7 @@ use crate::bytecode::{Operand, OperandKind};
 use crate::staged::element_rows::ElementView;
 use crate::staged::elements::DenseView;
 use crate::staged::typed_elements::TypedView;
-use crate::staged::{ElementFrame, Stage};
+use crate::staged::{ElementFrame, Region, Stage};
 
 /// The view of a loop's hoisted array an element row reads and writes through, which the loop's
 /// entering edge proved once: a dense array's backing, or a typed array's elements.
@@ -47,7 +47,7 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     }
 
     fn array_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {
-        Some(emit_js_payload_word(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, array_record_base)))
+        Some(stage.load_in(Region::RecordBases, self.payload, std::mem::offset_of!(JsStepDispatch, array_record_base) as i32))
     }
 
     /// A register's tagged view, or an immediate constant's bits.

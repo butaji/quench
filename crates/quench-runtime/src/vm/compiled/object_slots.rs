@@ -148,7 +148,7 @@ impl ObjectHeader {
 
 /// The stage whose residual `staged` operations that address no arena emit into `builder`.
 pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
-    Emit { builder, property_values: None, gate: None }
+    Emit { builder, property_values: None, gate: None, fixed_arrays: false }
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.

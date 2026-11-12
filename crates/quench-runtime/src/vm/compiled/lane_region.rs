@@ -64,6 +64,7 @@ use captures::RootedRead;
 #[path = "lane_region/call_outs.rs"] mod call_outs;
 #[path = "lane_region/register_rows.rs"] mod register_rows;
 #[path = "lane_region/element_rows.rs"] mod element_rows;
+#[path = "lane_region/fixed_arrays.rs"] mod fixed_arrays;
 #[cfg(test)] #[path = "lane_region/element_tests.rs"] mod element_tests;
 use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
@@ -439,6 +440,9 @@ struct Lowering<'a, 'f> {
     hoisted: BTreeMap<usize, LoopRead>,
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
+    /// Whether no operation of the unit may move an array's backing or the array record table
+    /// (`arrays_stay_put`), so the record table's base is read-only throughout.
+    arrays_fixed: bool,
     /// Each hoisted base's tagged value and view, by register, across its loop's iterations.
     array_vars: BTreeMap<ArraySource, ArrayVariables>,
     views: ElementViews,
@@ -1503,7 +1507,7 @@ pub(super) fn lower(
         hoists: BTreeMap::new(),
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
-        loop_arrays: Vec::new(),
+        loop_arrays: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
         views,
         loop_fields: Vec::new(),
@@ -1623,6 +1627,7 @@ pub(super) fn lower(
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && instructions[at].op().class().eq(Class::LoadCapture))),
         lowering.views, typed_captures);
+    lowering.arrays_fixed = lowering.arrays_stay_put();
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
         lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner), rooted: false });
@@ -2897,7 +2902,7 @@ impl Lowering<'_, '_> {
         let locals = self.completion != Completion::Number;
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);
-        let mut stage = Emit { builder: &mut self.builder, property_values, gate };
+        let mut stage = Emit { builder: &mut self.builder, property_values, gate, fixed_arrays: self.arrays_fixed };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held, registers_base: self.registers_base,
             stable: StableHold { uses: &mut self.stable, online: self.vm.online, at: self.at } });

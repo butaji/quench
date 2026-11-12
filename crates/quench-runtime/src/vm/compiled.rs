@@ -931,7 +931,7 @@ pub(super) fn emit_dense_array_view(
 ) -> DenseArrayView {
     let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
         std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, fixed_arrays: false };
     let backing = crate::staged::elements::array_backing(&mut stage, record_base, base, fallback)
         .expect("the emit stage continues past its guards");
     let crate::staged::elements::Backing { values, length, .. } = backing;
@@ -968,7 +968,7 @@ pub(super) fn emit_dense_element(
     index: ir::Value,
     fallback: ir::Block,
 ) -> (ir::Value, ir::Value) {
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, fixed_arrays: false };
     crate::staged::elements::dense_element(&mut stage, view.values, view.length, index, fallback)
         .expect("the emit stage continues past its guards")
 }
@@ -985,7 +985,7 @@ pub(super) fn emit_dense_element_replace(
     value: ir::Value,
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, fixed_arrays: false };
     if view.uncounted {
         crate::staged::elements::replace_uncounted_element(&mut stage, address, value);
     } else {
@@ -1668,7 +1668,7 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
         }
     };
     let narrow = builder.ins().uextend(types::I64, narrow);
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, fixed_arrays: false };
     let encoded = crate::staged::object::decode_narrow_through(&mut stage, narrow, table);
     builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
 }
@@ -14404,7 +14404,7 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
-        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None };
+        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None, fixed_arrays: false };
         let encoded = crate::staged::store::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
         builder.seal_all_blocks();

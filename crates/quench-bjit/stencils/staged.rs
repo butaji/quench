@@ -2,7 +2,7 @@
 pub(crate) use stage::{Stage, Table};
 pub(crate) type Concrete = crate::stage::StencilStage;
 pub(crate) mod effects {
-    #[derive(Clone, Copy)] pub(crate) enum Region { Frame, ObjectSlots, ShapeWord, Elements, HeapMeta, MissCounters }
+    #[derive(Clone, Copy)] pub(crate) enum Region { Frame, ObjectSlots, ShapeWord, Elements, RecordBases, HeapMeta, MissCounters }
 }
 #[path = "../../quench-runtime/src/staged/value.rs"] pub(crate) mod value;
 #[path = "../../quench-runtime/src/staged/object.rs"] pub(crate) mod object;
