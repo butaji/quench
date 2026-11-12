@@ -116,7 +116,7 @@ fn shadow_net_ns(length: u64, entries: u32, ir: usize, entering_region: bool, lo
     let per_entry = if entering_region { priors.region_entry_ns } else { (length + loop_work) * priors.interpreter_ns * (super::tier_policy::PER_MILLE - share) / super::tier_policy::PER_MILLE };
     let saved = per_entry.saturating_sub(priors.body_entry_ns) as i64;
     let future = (u64::from(entries) / priors.remaining_divisor) as i64;
-    future * saved - (ir as u64 * compile) as i64
+    future * saved - (ir as u64 * compile * priors.compile_wall_permille / super::tier_policy::PER_MILLE) as i64
 }
 
 fn shadow_log(function: u32, entries: u32, ir: usize, region: bool, today: bool, net: i64, quick_net: i64) {
