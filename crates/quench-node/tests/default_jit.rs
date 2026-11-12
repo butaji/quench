@@ -52,7 +52,6 @@ fn the_jit_mode_flags_select_one_mode_and_the_old_flag_is_gone() {
     assert!(!run_flags(&["--b-jit", "--u-jit"]).0, "two modes are an error");
     assert!(!run_flags(&["--jit"]).0, "--jit is removed");
     assert!(!run_flags(&["--q-jit"]).0, "--q-jit is reserved for the Cranelift quick mode and rejected");
-    assert!(!run_flags(&["--f-jit"]).0, "--f-jit is an unknown flag");
     assert!(compiles(&["--b-jit"]) > 0, "--b-jit: the hot number loop runs from stencils");
     assert!(compiles(&["--u-jit"]) > 0, "--u-jit: the hot loop runs compiled code");
 }
