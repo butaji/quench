@@ -59,6 +59,24 @@ print(out.join(" | "));
     );
 }
 
+/// `split` at short and long, one-byte and longer, ASCII, non-ASCII, empty and surrogate
+/// separators, with limits and regular expressions, cuts as Node does (a checksum of every
+/// result, each separator run on strings of both widths).
+#[test]
+fn split_cuts_as_node_does() {
+    let source = r#"
+const strs = ["a,b,c", "", "a, b, c", "x\r\ny\r\nz", "😀,😁", "a--b--", "--", "é, è"];
+const seps = [",", ", ", "--", "\r\n", "", undefined, /,/, /\s*,\s*/, "\ud83d"];
+const parts = [];
+for (const s of strs) for (const sep of seps) for (const lim of [undefined, 0, 2]) parts.push(JSON.stringify(s.split(sep, lim)));
+const long = "ab, ".repeat(500) + "end";
+parts.push(long.split(", ").length + " " + long.split(", ", 3).join("|"));
+const text = parts.join("\n"); let h = 7; for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) % 1000000007;
+print([h, parts.length, parts[7], parts[parts.length - 1]].join(" "));
+"#;
+    assert_eq!(printed(source, "split-cuts.js"), ["430364895 217 [] 501 ab|ab|ab"]);
+}
+
 /// Natives the lane runs in place (`Map` iterators, `toString` of strings and functions,
 /// legacy `RegExp` statics, an iterator's close) give Node's values and throw where it throws.
 #[test]

@@ -26,7 +26,9 @@ impl JsString {
             (Units::Ascii(haystack), Units::Ascii(&[byte])) => {
                 cut_runs(units, memchr::memchr_iter(byte, haystack), 1, limit, part);
             }
-            (Units::Ascii(haystack), Units::Ascii(needle)) => {
+            // A long text or needle builds one searcher for every occurrence; in short text the
+            // scan of `Units::find` costs less than the searcher's construction.
+            (Units::Ascii(haystack), Units::Ascii(needle)) if !search::scans(haystack.len(), needle.len()) => {
                 cut_runs(units, memchr::memmem::find_iter(haystack, needle), needle.len(), limit, part);
             }
             _ => {

@@ -7,6 +7,12 @@ use super::Units;
 const SCANNED_HAYSTACK_MAX_BYTES: usize = 1 << 10;
 const SCANNED_NEEDLE_MAX_BYTES: usize = 32;
 
+/// Whether a search of a haystack of `haystack` bytes for a needle of `needle` bytes scans for
+/// the needle's first byte rather than building a `memchr::memmem` searcher.
+pub(super) fn scans(haystack: usize, needle: usize) -> bool {
+    haystack <= SCANNED_HAYSTACK_MAX_BYTES && needle <= SCANNED_NEEDLE_MAX_BYTES
+}
+
 impl<'a> Units<'a> {
     /// The first index at or after `start` where `search` occurs.
     pub(crate) fn find(self, search: Units<'_>, start: usize) -> Option<usize> {
@@ -35,7 +41,7 @@ impl<'a> Units<'a> {
 
 /// The first offset of `needle`, which is not empty, in `haystack`.
 fn find_ascii(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if haystack.len() > SCANNED_HAYSTACK_MAX_BYTES || needle.len() > SCANNED_NEEDLE_MAX_BYTES {
+    if !scans(haystack.len(), needle.len()) {
         return memchr::memmem::find(haystack, needle);
     }
     let (first, rest) = needle.split_first()?;
