@@ -27,7 +27,13 @@ pub(super) struct LaneBodyHistory {
     short: bool,
     /// Whether a caller's compile asked for its body (`LaneView::demand_body`).
     demanded: bool,
+    /// The timed runs of its current body and of the interpreter (`audit`).
+    audit: audit::Audit,
 }
+
+#[path = "lane_body_audit.rs"]
+mod audit;
+pub(super) use audit::{audit_nanos, Timed, Verdict};
 
 /// The entries and the milliseconds of warming past which a function specializes by its
 /// recurrence alone (`LaneView::recurrent`).
@@ -296,6 +302,7 @@ impl LaneView {
             unsafe { (*self.prologue.get()).handler }
         };
         use std::cell::Cell;
+        self.audit_restart();
         // Native callers enter a closed body through the view's cell, and leave inside it
         // through the view's pin.
         if let Some(body) = method.lease().filter(|body| body.calls_only_natively()) {

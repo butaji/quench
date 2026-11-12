@@ -14771,6 +14771,9 @@ script_handler! {
         // SAFETY: the program's views outlive the lane run; this record is the view's.
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)
             .expect("a lane body entry runs in its view");
+        // The body side's clock covers the entry's own work, as the interpreter side's nested run does.
+        let timed = own.audit_entry();
+        let started = (timed == Some(lane_body_tier::Timed::Body)).then(std::time::Instant::now);
         // A body a lifecycle edge retired gives its prologue back and warms again.
         let Some(method) = own.lane_body() else {
             own.settle_retired_body();
@@ -14792,18 +14795,22 @@ script_handler! {
         let captures = capture_reads(unsafe { (*cx).capture });
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
+        if let Err(next) = body_calls::audited(cx, own, function, base, timed) {
+            return next;
+        }
         let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
-        lane_body_conclude!(cx, r, ip, own, method, exit, function)
+        lane_body_conclude!(cx, r, ip, own, method, exit, function, started)
     }
 }
 
 /// Where the lane continues after a run of `method`, `own`'s body, that ran on the
 /// activation `cx` holds, with registers `r`, and ended at `exit`: a returned run completes
 /// the activation (no leave to resolve, no frame to materialize), any other leave resumes
-/// where it names (`lane_body_left`).
+/// where it names (`lane_body_left`); `started` is the audit's clock for this entry, read once
+/// the run's leave is resolved.
 macro_rules! lane_body_conclude {
-    ($cx:expr, $r:expr, $ip:expr, $own:expr, $method:expr, $exit:expr, $function:expr) => {{
-        let (cx, r, ip, own, method, exit, function) = ($cx, $r, $ip, $own, $method, $exit, $function);
+    ($cx:expr, $r:expr, $ip:expr, $own:expr, $method:expr, $exit:expr, $function:expr, $started:expr) => {{
+        let (cx, r, ip, own, method, exit, function, started) = ($cx, $r, $ip, $own, $method, $exit, $function, $started);
         let base = unsafe { (*cx).base };
         if let super::compiled::LaneExit::Returned { pc, value } = exit
             && !unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled()
@@ -14812,6 +14819,7 @@ macro_rules! lane_body_conclude {
             unsafe { (*cx).callee_warming = false };
             own.note_lane_body_end(exit, false, |_| {});
             drop(method);
+            own.audit_body_run(started);
             // SAFETY: the record that completes the activation is one of its function's.
             lane_return_value!(cx, unsafe { base.add(pc) }, value)
         }
@@ -14821,6 +14829,9 @@ macro_rules! lane_body_conclude {
         // Counted once nothing reads the body: a retirement or reoptimization moves it.
         if counts {
             own.note_lane_body_end(feedback, false, |left| lane_note_leave(cx, function, left));
+        }
+        if matches!(exit, super::compiled::LaneExit::Returned { .. }) {
+            own.audit_body_run(started);
         }
         match resumed {
             LaneBodyLeft::Terminated => return self::exit(ip),
