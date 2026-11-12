@@ -27,7 +27,6 @@ impl<W, P> Operation<W, P> {
         let left = instruction.operand_b().register_index()?;
         let right = instruction.operand_c().register_index()?;
         if instruction.result_flags() != 0 { return None; }
-        if let Some(has_property) = Self::decode_has_property(instruction) { return Some(has_property); }
         let destination = instruction.result_register();
         let operator = instruction.binary_operator();
         Some(match equality_operator(operator) {

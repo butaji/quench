@@ -300,10 +300,6 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn delete_property(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _strict: bool, _miss: S::Miss) -> Option<S::Word> { None }
 
-    /// `key in base`: the boolean word, or a leave at `miss`.
-    #[inline(always)]
-    fn has_property(&mut self, _stage: &mut S, _key: S::Word, _base: S::Word, _miss: S::Miss) -> Option<S::Word> { None }
-
     /// `base[key]` where no dense or typed element read answers it: a hole read through the
     /// prototype chain, an index past a typed array, a string's character, a keyed own read.
     #[inline(always)]
@@ -460,10 +456,6 @@ pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
         Operation::Delete { base, key, strict } => {
             let (base, key) = (frame.tagged(stage, base), frame.tagged(stage, key));
             frame.delete_property(stage, base, key, strict, miss)
-        }
-        Operation::HasProperty { key, base } => {
-            let (key, base) = (frame.tagged(stage, key), frame.tagged(stage, base));
-            frame.has_property(stage, key, base, miss)
         }
         Operation::IndexGetHost { base, key } => frame.index_get_host(stage, base, key, miss),
         _ => None,

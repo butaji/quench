@@ -328,8 +328,6 @@ pub(crate) enum Operation<W, P> {
     FieldAdd { object: W, atom: u32, site: u16, value: W },
     /// `delete base[key]`, throwing on a refusal where `strict` (`PropertyFrame::delete_property`).
     Delete { base: Register, key: Register, strict: bool },
-    /// `key in base` (`PropertyFrame::has_property`).
-    HasProperty { key: Register, base: Register },
     /// `base[key]` past the dense and typed element reads (`PropertyFrame::index_get_host`).
     IndexGetHost { base: W, key: W },
 }
@@ -383,14 +381,6 @@ impl<W, P> Operation<W, P> {
             FieldLookup::Site(_) => FieldBase(FieldBase::NESTED),
         };
         Some(Self::GetField { base, lookup })
-    }
-
-    /// `key in base` of two registers (`generic::decode_binary` decodes `Binary` rows).
-    fn decode_has_property(instruction: WideInstruction) -> Option<Self> {
-        if instruction.result_flags() != 0
-            || instruction.binary_operator() != oxc_ast::ast::BinaryOperator::In as u32 { return None; }
-        Some(Self::HasProperty { key: instruction.operand_b().register_index()?,
-            base: instruction.operand_c().register_index()? })
     }
 
     /// The value-level operations of `decode`.

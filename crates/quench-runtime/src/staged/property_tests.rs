@@ -93,9 +93,6 @@ impl<'p> PropertyFrame<Concrete> for Host<'p> {
     fn delete_property(&mut self, _stage: &mut Concrete, _base: u64, _key: u64, strict: bool, _miss: ()) -> Option<u64> {
         self.call(if strict { "delete_strict" } else { "delete" }).then_some(ANSWER)
     }
-    fn has_property(&mut self, _stage: &mut Concrete, _key: u64, _base: u64, _miss: ()) -> Option<u64> {
-        self.call("has_property").then_some(ANSWER)
-    }
     fn index_get_host(&mut self, _stage: &mut Concrete, _base: u64, _key: u64, _miss: ()) -> Option<u64> {
         self.call("index_get_host").then_some(ANSWER)
     }
@@ -205,13 +202,12 @@ fn run(answers: bool, operation: Operation<u64, ()>) -> (Option<u64>, Vec<&'stat
 #[test]
 fn host_plans_and_callouts_reach_the_frame_and_a_declining_frame_leaves() {
     let lookup = FieldLookup::Atom { atom: 1, base: FieldBase::register(1), cache_site: 2 };
-    let cases: [(Operation<u64, ()>, &str); 7] = [
+    let cases: [(Operation<u64, ()>, &str); 6] = [
         (Operation::GetField { base: FieldBase::register(1), lookup }, "field_get_host"),
         (Operation::FieldGetHost { object: 0, atom: 1, site: 2 }, "field_get_host"),
         (Operation::FieldAdd { object: 0, atom: 1, site: 2, value: 5 }, "field_add"),
         (Operation::Delete { base: 1, key: 2, strict: true }, "delete_strict"),
         (Operation::Delete { base: 1, key: 2, strict: false }, "delete"),
-        (Operation::HasProperty { key: 2, base: 1 }, "has_property"),
         (Operation::IndexGetHost { base: 0, key: 1 }, "index_get_host"),
     ];
     for (operation, name) in cases {
@@ -250,10 +246,7 @@ fn the_property_instructions_decode_to_their_operations() {
     assert!(matches!(delete, Operation::Delete { base: 2, key: 3, strict: true }));
     let has = decode(WideInstruction::new(Op::Binary, 1, Operand(2).0, Operand(3).0,
         oxc_ast::ast::BinaryOperator::In as u32)).expect("`in` of registers decodes");
-    assert!(matches!(has, Operation::HasProperty { key: 2, base: 3 }));
-    let add = decode(WideInstruction::new(Op::Binary, 1, Operand(2).0, Operand(3).0,
-        oxc_ast::ast::BinaryOperator::Addition as u32));
-    assert!(add.is_none(), "another binary operator is not a property operation");
+    assert!(matches!(has, Operation::Binary { left: 2, right: 3, .. }), "`in` is the VM's Binary call-out row");
 }
 
 /// `plan` read from `object` as register 1's owner, by a frame claiming `proven`; the word read

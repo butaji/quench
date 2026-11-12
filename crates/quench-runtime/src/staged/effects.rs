@@ -109,7 +109,7 @@ impl<W, P> Operation<W, P> {
             Self::GetField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord),
                 may_call_js: true, may_throw: true, ..Effects::NONE },
             Self::SetField { .. } | Self::StoreField { .. } | Self::FieldAdd { .. } | Self::Delete { .. } => Effects::ANY,
-            Self::FieldGetHost { .. } | Self::HasProperty { .. } | Self::IndexGetHost { .. } => Effects::ANY,
+            Self::FieldGetHost { .. } | Self::IndexGetHost { .. } => Effects::ANY,
             _ => return None,
         })
     }
