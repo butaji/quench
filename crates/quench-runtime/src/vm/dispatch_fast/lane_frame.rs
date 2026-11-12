@@ -149,6 +149,24 @@ pub(super) fn staged_require_object_coercible(r: Registers, view: Carried, regis
     }
 }
 
+/// Whether the staged RequireIteratorResult accepts `register` as it is (a direct object or
+/// array record); false where the full operation decides.
+#[inline(always)]
+pub(super) fn staged_require_iterator_result(r: Registers, view: Carried, register: u16) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
+    matches!(crate::staged::step(&mut stage, &mut frame, Operation::RequireIteratorResult { register }), Step::Value(_))
+}
+
+/// ToPropertyKey of a direct string register `source` into `destination`, by the staged
+/// operation; false, writing nothing, where the full conversion decides.
+#[inline(always)]
+pub(super) fn staged_to_property_key(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
+    matches!(crate::staged::step(&mut stage, &mut frame, Operation::ToPropertyKey { destination, source }), Step::Value(_))
+}
+
 /// ToNumeric of a Number register `source` into `destination`, by the staged operation;
 /// false, writing nothing, where `source` is not a Number.
 #[inline(always)]

@@ -424,3 +424,26 @@ fn every_host_callout_operation_has_a_concrete_reading() {
     }
     assert!(matches!(step(&mut stage, &mut frame, Operation::Safepoint { proof: () }), Step::Value(_)));
 }
+
+/// The fast arms of `RequireIteratorResult` and `ToPropertyKey` answer from the register's word
+/// alone: an object or array record passes, a direct string is its own key, and every other
+/// value leaves for the full operation, writing nothing.
+#[test]
+fn the_key_and_iterator_fast_arms_decide_from_the_word_alone() {
+    let mut heap = Heap::new();
+    let mut stage = Concrete::new(std::ptr::null());
+    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let string = heap.alloc_string(crate::vm::wtf16::JsString::from_str("key"));
+    for (value, passes) in [(object, true), (string, false), (Value::UNDEFINED, false), (Value::integer(1), false), (Value::number(0.5), false)] {
+        let mut frame = ConcreteFrame { registers: vec![value.to_bits()], heap: None };
+        let step = step(&mut stage, &mut frame, Operation::RequireIteratorResult { register: 0 });
+        assert_eq!(matches!(step, Step::Value(_)), passes, "{value:?}");
+    }
+    for (value, copies) in [(string, true), (object, false), (Value::integer(7), false), (Value::UNDEFINED, false)] {
+        let mut frame = ConcreteFrame { registers: vec![value.to_bits(), Value::NULL.to_bits()], heap: None };
+        let step = step(&mut stage, &mut frame, Operation::ToPropertyKey { destination: 1, source: 0 });
+        assert_eq!(matches!(step, Step::Value(_)), copies, "{value:?}");
+        let expected = if copies { value } else { Value::NULL };
+        assert_eq!(Value::from_bits(frame.registers[1]), expected, "{value:?}");
+    }
+}

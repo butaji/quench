@@ -32,7 +32,7 @@ impl<W, P> Operation<W, P> {
             Self::LoadLocalPlain { .. } => Effects::reads(Region::Frame),
             Self::StoreLocalPlain { .. } => Effects::writes(Region::Frame),
             Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Number(_) => Effects::NONE,
-            Self::RequireObjectCoercible { .. } => Effects { may_throw: true, ..Effects::NONE },
+            Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } | Self::ToPropertyKey { .. } => Effects { may_throw: true, ..Effects::NONE },
             Self::Safepoint { .. } => Effects { may_collect: true, ..Effects::NONE },
             // The memory operations answered in `memory_effects`; anything else is conservative.
             _ => Effects::ANY,

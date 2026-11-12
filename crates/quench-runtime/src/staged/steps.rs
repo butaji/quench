@@ -11,6 +11,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination, frame.miss()),
+        Operation::RequireIteratorResult { register } => iteration::require_iterator_result(stage, frame, register, frame.miss()),
+        Operation::ToPropertyKey { destination, source } => iteration::to_property_key(stage, frame, destination, source, frame.miss()),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } => register_step(stage, frame, operation),
         heap => super::heap::heap_step(stage, frame, heap),
