@@ -12,19 +12,21 @@
 //! capture store (`CAPTURE_SET_ROW`) takes its value operand in hole 0 and the slot and its byte
 //! offset in holes 1 and 2. A field store (`SITE_STORE_ROW`) takes the object register's frame
 //! offset in hole 0, its value operand in hole 1 and the cache entry's byte offset in hole 2. A
-//! chained site read (`ENTRY`) carries both entry offsets in hole 2.
+//! chained site read (`ENTRY`) carries both entry offsets in hole 2. The rows of the activation's
+//! receiver (`THIS_ROW`, `THIS_STORE_ROW`) take it from the payload, so their hole 0 is the
+//! destination alone (a read) or unused (a store).
 //! Every failed proof leaves through exit 0 with nothing written, so the interpreter runs the
 //! instruction.
 
 use crate::layout::{
     CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
-    JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE,
+    JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, PROPERTY_BUFFER_BASE,
 };
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word, word_of};
 use crate::stage::StencilStage;
 use crate::staged::{elements, entry, environment, value};
 
-pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, INDEX_ROW, LENGTH_ROW, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW, STORE_ROW};
+pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, INDEX_ROW, LENGTH_ROW, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW, STORE_ROW, THIS_ROW, THIS_STORE_ROW};
 
 unsafe extern "C" {
     static HOLE_V0: u8;
@@ -198,6 +200,8 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         FIELD_ROW => field_row::<D>(s, payload),
         SITE_ROW => site_row::<D, ENTRY>(s, payload, register_object(&s)),
         SITE_STORE_ROW => site_store_row::<A>(s, payload, word_at(s.frame, hole::<0>())),
+        THIS_ROW => site_row::<D, ENTRY>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
+        THIS_STORE_ROW => site_store_row::<A>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
         ARRAY_ROW => array_row(s),
         LENGTH_ROW => length_row::<D>(s, payload),
         INDEX_ROW => index_row::<ENTRY, D, B>(s, payload),

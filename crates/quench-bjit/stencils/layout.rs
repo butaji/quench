@@ -173,6 +173,9 @@ pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 112;
 /// (`environment::dense_capture_store`); the bit of a body's capture word that says so
 /// (`dispatch_fast::CAPTURE_STORES`) moves here at its entry.
 pub(crate) const JS_STEP_CAPTURE_STORES: usize = 360;
+/// The running activation's receiver word, `DELETED` where it has none: a body's entry publishes
+/// its receiver here for its run (`entry_body`), as a loop region's run does.
+pub(crate) const JS_STEP_RECEIVER: usize = 200;
 pub(crate) const CAPTURE_STORES_BIT: u64 = 1;
 /// The heap bases a field read through a site's cache entry reads: the object record
 /// reservation, the allocator header of the property values (whose base is at

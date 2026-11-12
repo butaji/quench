@@ -51,6 +51,9 @@ pub const SITE_ROW: u8 = 5;
 pub const LENGTH_ROW: u8 = 6;
 pub const CAPTURE_SET_ROW: u8 = 7;
 pub const SITE_STORE_ROW: u8 = 8;
+/// The site rows of the activation's receiver (`this`), which the payload holds.
+pub const THIS_ROW: u8 = 9;
+pub const THIS_STORE_ROW: u8 = 10;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries
 /// the destination's frame offset beneath it.
 pub const SITE_OBJECT_AT: u32 = 32;

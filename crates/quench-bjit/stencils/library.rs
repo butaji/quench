@@ -152,10 +152,10 @@ pub type HeapCode = (u8, bool, u8, u8, u8);
 pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
     match heap {
         CAPTURE_ROW | FIELD_ROW | LENGTH_ROW => (heap, false, dst, MEM, MEM),
-        SITE_ROW => (heap, entry, dst, MEM, MEM),
+        SITE_ROW | THIS_ROW => (heap, entry, dst, MEM, MEM),
         INDEX_ROW => (heap, entry, dst, MEM, b),
         STORE_ROW => (heap, entry, MEM, a, b),
-        CAPTURE_SET_ROW | SITE_STORE_ROW => (heap, false, MEM, a, MEM),
+        CAPTURE_SET_ROW | SITE_STORE_ROW | THIS_STORE_ROW => (heap, false, MEM, a, MEM),
         _ => (heap, false, MEM, MEM, MEM),
     }
 }
@@ -173,7 +173,7 @@ pub fn heap_library() -> Vec<HeapCode> {
     let mut rows = BTreeSet::new();
     for entry in [false, true] {
         for &dst in &dsts {
-            for heap in [CAPTURE_ROW, INDEX_ROW, FIELD_ROW, SITE_ROW, LENGTH_ROW] {
+            for heap in [CAPTURE_ROW, INDEX_ROW, FIELD_ROW, SITE_ROW, LENGTH_ROW, THIS_ROW] {
                 rows.extend(srcs.iter().map(|&b| heap_canonical((heap, entry, dst, MEM, b))));
             }
         }
@@ -181,7 +181,7 @@ pub fn heap_library() -> Vec<HeapCode> {
             rows.insert(heap_canonical((STORE_ROW, entry, MEM, a, b)));
         }
     }
-    for heap in [CAPTURE_SET_ROW, SITE_STORE_ROW] {
+    for heap in [CAPTURE_SET_ROW, SITE_STORE_ROW, THIS_STORE_ROW] {
         rows.extend(srcs.iter().map(|&a| heap_canonical((heap, false, MEM, a, MEM))));
     }
     rows.insert(heap_canonical((ARRAY_ROW, false, MEM, MEM, MEM)));

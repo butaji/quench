@@ -217,3 +217,16 @@ fn property_writes_run_in_a_body() {
     );
     assert_eq!(interpreted, compiled);
 }
+
+/// `this.x` reads and stores run in a method's body through the site entries, the receiver the
+/// body's entry publishes to the payload; a method of a class reads its instance the same way.
+#[test]
+fn this_fields_run_in_a_method_body() {
+    assert_bodies_never_leave(
+        "const counter = { n: 0, step: 2, bump() { this.n = this.n + this.step; return this.n; } };
+         class Acc { constructor(s) { this.total = 0; this.s = s; } add(x) { this.total = this.total + x * this.s; return this.total; } }
+         const acc = new Acc(3); let t = 0;
+         for (let k = 0; k < 300; k++) t = (t + counter.bump() + acc.add(k)) | 0;
+         print(t); print(counter.n); print(acc.total);",
+    );
+}

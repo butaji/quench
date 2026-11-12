@@ -18,12 +18,14 @@
 //! activation completes with the register slot at hole 0; hole 1 the status, hole 2 the
 //! record that completes it, which the lane reads from the dispatch payload). A body's captures
 //! word is unpacked into the payload's capture words for its run (the slots, their count and whether
-//! they admit every direct store), as a loop region's entry leaves them, and cleared when it returns.
+//! they admit every direct store), as a loop region's entry leaves them, and cleared when it returns;
+//! its receiver (rsi) is published as the payload's receiver for the run, and `DELETED` on return.
 
 use crate::layout::{
     CALL_CONTEXT_ADAPTER_PAYLOAD, CAPTURE_ADDRESS_BITS, CAPTURE_ADDRESS_PAD, CAPTURE_STORES_BIT, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES,
-    JS_STEP_RETURNED_PC,
+    JS_STEP_RECEIVER, JS_STEP_RETURNED_PC,
 };
+use crate::layout::words::DELETED;
 use crate::staged::frame;
 use crate::words::HOLE_V0;
 
@@ -80,7 +82,8 @@ pub unsafe extern "C" fn leave_pop() {
 /// The body entry: saves the callee-saved registers, takes the context in r13 and the register
 /// file in r12, publishes the captures word (the dense slots' address below `CAPTURE_ADDRESS_BITS`,
 /// whose low bit says they admit every direct store, and their count above) as the payload's
-/// capture words, calls the first row, clears them, and
+/// capture words and the receiver (rsi) as the payload's receiver, calls the first row, clears
+/// them (the receiver to `DELETED`), and
 /// returns (status, word) as the chain left them in (rdx, rax). The pad keeps the stack 16-byte
 /// aligned at the call, as the six pushes and the return address leave it 8 off.
 #[unsafe(naked)]
@@ -97,6 +100,7 @@ pub unsafe extern "C" fn entry_body() {
         "mov r13, rdi",
         "mov r12, rcx",
         "mov rax, [rdi + {payload}]",
+        "mov [rax + {receiver}], rsi",
         "mov r8, rdx",
         "shl r8, {pad}",
         "shr r8, {pad}",
@@ -112,6 +116,8 @@ pub unsafe extern "C" fn entry_body() {
         "mov qword ptr [rcx + {values}], 0",
         "mov qword ptr [rcx + {len}], 0",
         "mov qword ptr [rcx + {stores}], 0",
+        "movabs r8, {deleted}",
+        "mov [rcx + {receiver}], r8",
         "add rsp, 8",
         "pop r15",
         "pop r14",
@@ -127,6 +133,8 @@ pub unsafe extern "C" fn entry_body() {
         len = const JS_STEP_CAPTURE_LEN,
         stores = const JS_STEP_CAPTURE_STORES,
         stores_bit = const CAPTURE_STORES_BIT,
+        receiver = const JS_STEP_RECEIVER,
+        deleted = const DELETED,
         bits = const CAPTURE_ADDRESS_BITS,
         pad = const CAPTURE_ADDRESS_PAD,
     )

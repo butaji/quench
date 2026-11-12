@@ -35,11 +35,17 @@ pub(super) enum Heap {
     /// A chain of two such reads, `object.first.second` (a nested field lookup), whose entry offsets
     /// share hole 2: the first below `CHAIN_SECOND_AT` bits, the second above them.
     SiteChain,
+    /// `Site` and `SiteChain` of the activation's receiver, which the payload holds: hole 0 is the
+    /// destination alone.
+    This,
+    ThisChain,
     /// The `length` of the direct array at hole 1, an int32 (what the array's record counts).
     Length,
     /// Stores the value operand (hole 1) into the own data field the site's cache entry (hole 2) names
     /// of the object register whose frame offset is hole 0, where the store gate admits it.
     SiteStore,
+    /// `SiteStore` into the activation's receiver: hole 0 is unused.
+    ThisStore,
     /// Stores the value operand (hole 0) into depth-0 capture `slot` of an activation whose slots
     /// admit every direct store; the slot is hole 1 and its byte offset hole 2.
     CaptureSet(u16),
@@ -67,9 +73,11 @@ impl Heap {
             Heap::Field => library::FIELD_ROW,
             Heap::Array => library::ARRAY_ROW,
             Heap::Site | Heap::SiteChain => library::SITE_ROW,
+            Heap::This | Heap::ThisChain => library::THIS_ROW,
             Heap::Length => library::LENGTH_ROW,
             Heap::CaptureSet(_) => library::CAPTURE_SET_ROW,
             Heap::SiteStore => library::SITE_STORE_ROW,
+            Heap::ThisStore => library::THIS_STORE_ROW,
         }
     }
 }
@@ -137,9 +145,9 @@ mod tests {
         );
         assert_eq!(
             [std::mem::offset_of!(JsStepDispatch, object_record_base), std::mem::offset_of!(JsStepDispatch, property_buffer), std::mem::offset_of!(JsStepDispatch, field_entries), crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize, std::mem::offset_of!(JsStepDispatch, capture_stores), super::super::super::dispatch_fast::CAPTURE_STORES,
-             std::mem::offset_of!(JsStepDispatch, object_mark_blocks), std::mem::offset_of!(JsStepDispatch, object_mark_block_count), std::mem::offset_of!(JsStepDispatch, slots_tracked)],
+             std::mem::offset_of!(JsStepDispatch, object_mark_blocks), std::mem::offset_of!(JsStepDispatch, object_mark_block_count), std::mem::offset_of!(JsStepDispatch, slots_tracked), std::mem::offset_of!(JsStepDispatch, receiver)],
             [mirror::JS_STEP_OBJECT_RECORD_BASE, mirror::JS_STEP_PROPERTY_BUFFER, mirror::JS_STEP_FIELD_ENTRIES, mirror::PROPERTY_BUFFER_BASE, mirror::CAPTURE_ADDRESS_BITS as usize, mirror::JS_STEP_CAPTURE_STORES, mirror::CAPTURE_STORES_BIT as usize,
-             mirror::JS_STEP_OBJECT_MARK_BLOCKS, mirror::JS_STEP_OBJECT_MARK_BLOCK_COUNT, mirror::JS_STEP_SLOTS_TRACKED]
+             mirror::JS_STEP_OBJECT_MARK_BLOCKS, mirror::JS_STEP_OBJECT_MARK_BLOCK_COUNT, mirror::JS_STEP_SLOTS_TRACKED, mirror::JS_STEP_RECEIVER]
         );
     }
 }

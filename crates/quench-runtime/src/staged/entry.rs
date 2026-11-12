@@ -27,6 +27,13 @@ fn shape_matches<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, (offs
     stage.guard(same, miss)
 }
 
+/// Whether the entry at `entry` is an own entry: its holder word is the stored own holder.
+#[inline(always)]
+fn own_entry<S: Stage>(stage: &mut S, entry: S::Word) -> S::Cond {
+    let stored = stage.load_u32(entry, ENTRY.holder_offset as i32);
+    stage.eq_imm(stored, u64::from(ENTRY.holder_complement ^ ENTRY.own_holder))
+}
+
 /// The slot the entry at `entry` names.
 #[inline(always)]
 fn entry_slot<S: Stage>(stage: &mut S, entry: S::Word) -> S::Word {
@@ -116,9 +123,8 @@ fn holder_entry_value<S: Stage>(stage: &mut S, records: S::Word, record: S::Word
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let stored_holder = stage.load_u32(entry, ENTRY.holder_offset as i32);
-    let holder = stage.eq_imm(stored_holder, u64::from(ENTRY.holder_complement ^ ENTRY.own_holder));
-    stage.guard(holder, miss)?;
+    let own = own_entry(stage, entry);
+    stage.guard(own, miss)?;
     own_entry_value(stage, record, entry, miss)
 }
 
@@ -133,6 +139,20 @@ fn site_tables<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), 
     Some(())
 }
 
+/// The record, its id and the cache entry `offset` bytes into the table `entries` that a site
+/// access of `object` names, whose presence the caller proved (`site_tables`): `None` (leaving at
+/// `miss`) where the word is no direct object.
+#[inline(always)]
+fn site_record<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss)
+    -> Option<(S::Word, S::Word, S::Word)> {
+    let direct = super::value::is_direct_object(stage, object);
+    stage.guard(direct, miss)?;
+    let id = stage.and_imm(object, u64::from(u32::MAX));
+    let record = super::object::object_record_at(stage, records, id);
+    let entry = stage.add_imm(entries, offset);
+    Some((id, record, entry))
+}
+
 /// A field read through the cache entry `offset` bytes into the table `entries`, of the object
 /// `object` names in the record table at `records`, whose presence the caller proved
 /// (`site_tables`): the data value the entry holds, own or held by the receiver's prototype, or
@@ -140,15 +160,9 @@ fn site_tables<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), 
 /// the record (`own_entry_value`, `holder_entry_value`).
 #[inline(always)]
 fn site_read_in<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
-    let (entries, records) = tables;
-    let direct = super::value::is_direct_object(stage, object);
-    stage.guard(direct, miss)?;
-    let id = stage.and_imm(object, u64::from(u32::MAX));
-    let record = super::object::object_record_at(stage, records, id);
-    let entry = stage.add_imm(entries, offset);
-    let stored_holder = stage.load_u32(entry, ENTRY.holder_offset as i32);
-    let own = stage.eq_imm(stored_holder, u64::from(ENTRY.holder_complement ^ ENTRY.own_holder));
-    stage.choose_leaving(own, |stage| own_entry_value(stage, record, entry, miss), |stage| holder_entry_value(stage, records, record, entry, miss))
+    let (_, record, entry) = site_record(stage, tables, object, offset, miss)?;
+    let own = own_entry(stage, entry);
+    stage.choose_leaving(own, |stage| own_entry_value(stage, record, entry, miss), |stage| holder_entry_value(stage, tables.1, record, entry, miss))
 }
 
 /// A field read through the cache entry `offset` bytes into the field cache table `entries`
@@ -213,14 +227,8 @@ fn plain_store<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, value: S
 #[inline(always)]
 pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, value: S::Word, miss: S::Miss) -> Option<()> {
     site_tables(stage, tables, miss)?;
-    let (entries, records) = tables;
-    let direct = super::value::is_direct_object(stage, object);
-    stage.guard(direct, miss)?;
-    let id = stage.and_imm(object, u64::from(u32::MAX));
-    let record = super::object::object_record_at(stage, records, id);
-    let entry = stage.add_imm(entries, offset);
-    let stored_holder = stage.load_u32(entry, ENTRY.holder_offset as i32);
-    let own = stage.eq_imm(stored_holder, u64::from(ENTRY.holder_complement ^ ENTRY.own_holder));
+    let (id, record, entry) = site_record(stage, tables, object, offset, miss)?;
+    let own = own_entry(stage, entry);
     stage.guard(own, miss)?;
     shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
     let open = stage.store_gate(id, value);

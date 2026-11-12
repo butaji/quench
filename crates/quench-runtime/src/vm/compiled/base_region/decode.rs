@@ -160,9 +160,9 @@ fn entry_offset(site: u16) -> u64 {
     u64::from(site) * crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64
 }
 
-/// The row of a named field read of a register through the site's cache entry, or a nested
-/// lookup's two (`FieldSite`: `base.first.second`, with no sink field): a read of `this` has
-/// its receiver outside the registers.
+/// The row of a named field read of a register (or of the receiver, `this`, which the payload
+/// holds) through the site's cache entry, or a nested lookup's two (`FieldSite`: `base.first.second`,
+/// with no sink field).
 fn site_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
     let (base, first, second) = match instruction.field_lookup()? {
         FieldLookup::Atom { base, cache_site, .. } => (base, cache_site, None),
@@ -171,11 +171,15 @@ fn site_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
             (site.base, site.first.1, site.second.map(|(_, cache_site)| cache_site))
         }
     };
-    let (heap, hole) = match second {
-        Some(second) => (Heap::SiteChain, entry_offset(first) | entry_offset(second) << numeric::library::CHAIN_SECOND_AT),
-        None => (Heap::Site, entry_offset(first)),
+    let receiver = base == FieldBase::THIS;
+    let object = if receiver { None } else { Some(Source::Register(base.register_index()?)) };
+    let heap = match (receiver, second.is_some()) {
+        (false, false) => Heap::Site,
+        (false, true) => Heap::SiteChain,
+        (true, false) => Heap::This,
+        (true, true) => Heap::ThisChain,
     };
-    let object = Some(Source::Register(base.register_index()?));
+    let hole = entry_offset(first) | second.map_or(0, |second| entry_offset(second) << numeric::library::CHAIN_SECOND_AT);
     Some(Decoded { hole, ..Decoded::heap(heap, Some(instruction.result_register()), object, None) })
 }
 
@@ -203,17 +207,21 @@ fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
     }
 }
 
-/// The row of a named field store to a register's object through the site's cache entry
-/// (`entry::site_store`): a function's, where the store may run in place (`Known::stores_in_place`).
-/// A loop region's reads may be entry snapshots of a field its stores write, so it has none.
+/// The row of a named field store to a register's object, or to `this`, through the site's cache
+/// entry (`entry::site_store`): a function's, where the store may run in place
+/// (`Known::stores_in_place`). A loop region's reads may be entry snapshots of a field its stores
+/// write, so it has none.
 fn field_store_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
     let atom = instruction.atom_index();
     if !known.stores_in_place(atom) || instruction.returns_from_frame() || instruction.writes_current_this() {
         return None;
     }
+    let (heap, base) = match instruction.field_store_register() {
+        Some(register) => (Heap::SiteStore, Some(register)),
+        None => (Heap::ThisStore, None),
+    };
     let value = Some(Source::Register(instruction.register_a()));
-    let row = Decoded::heap(Heap::SiteStore, None, value, None);
-    Some(Decoded { base: Some(instruction.field_store_register()?), hole: entry_offset(instruction.cache_site_index()), atom: Some(atom), ..row })
+    Some(Decoded { base, hole: entry_offset(instruction.cache_site_index()), atom: Some(atom), ..Decoded::heap(heap, None, value, None) })
 }
 
 /// Whether `instruction` stores to a depth-0 capture and nothing else (`general_capture::lower_capture`'s

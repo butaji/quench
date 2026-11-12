@@ -11,7 +11,7 @@
 //! that finds a register that is no Number returns `LaneExit::Entry`.
 
 use super::osr_loop::LoopRegion;
-use crate::bytecode::{Atom, Class, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
+use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::value::Value;
 use oxc_ast::ast::BinaryOperator;
 use super::base_rows::{self, Heap, HeapRow};
@@ -40,7 +40,7 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// The names method caches hold now, where the VM and the program run specialized, so a
     /// store of an unnamed atom may run in place; `None` where none may. Code that stores holds
     /// each such atom unnamed as a Stable fact (`Body::atoms`), which a cache naming it retires.
-    pub(in crate::vm::compiled) stores: Option<&'a super::method_cache::AtomBits>,
+    pub(in crate::vm::compiled) stores: Option<&'a crate::vm::method_cache::AtomBits>,
 }
 
 impl Known<'_> {
