@@ -16,6 +16,14 @@ impl<H: Host> Vm<H> {
     /// (`nested_lane_run`); else, where its function lays out as no window, as the frame its
     /// owner gives up, which the general loop runs from the resume point, or, for a throw, from
     /// the handler the suspended `await` or `yield` selects. How the run ended.
+    ///
+    /// The frame fallback serves the generators and async functions whose plan lays out no window
+    /// (`CallPlan::suspended_registers` and `suspended_environment` both false): one with
+    /// locals promoted to registers (`local_registers`) that also makes a closure, binds a
+    /// `with` scope or a dynamic one, takes a rest parameter or an `arguments` object, or
+    /// has promoted parameters short of its parameter count; one whose initial register is not
+    /// `undefined`; one with an instruction addressing a local outside the window's handlers
+    /// (`Function::locals_ride_window`); and one whose `arguments` object a closure captures.
     pub(in crate::vm) fn run_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> JobEnd {
         let nested = !self.lane_stack.activations.is_empty() || self.lane_deferred.is_some();
         let admitted = if nested {
