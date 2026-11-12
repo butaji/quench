@@ -54,9 +54,13 @@ struct Totals {
     bodies: u64,
     covered: u64,
     exits: u64,
+    /// The call sites of bodies that call a callee's entry cell directly, and those that take the
+    /// helper row (`call_plan::Choice`).
+    direct_calls: u64,
+    helper_calls: u64,
 }
 
-static TOTALS: Mutex<Totals> = Mutex::new(Totals { regions: 0, ops: 0, bytes: 0, nanos: 0, rejected: 0, bodies: 0, covered: 0, exits: 0 });
+static TOTALS: Mutex<Totals> = Mutex::new(Totals { regions: 0, ops: 0, bytes: 0, nanos: 0, rejected: 0, bodies: 0, covered: 0, exits: 0, direct_calls: 0, helper_calls: 0 });
 static REJECTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
 static LEAVES: Mutex<BTreeMap<(u32, u32), (crate::bytecode::Op, u64)>> = Mutex::new(BTreeMap::new());
 static REPORT: std::sync::Once = std::sync::Once::new();
@@ -117,7 +121,7 @@ extern "C" fn report() {
         totals.nanos as f64 / ops as f64
     );
     let rows = (totals.covered + totals.exits).max(1);
-    eprintln!("bjit-bodies bodies={} covered={} exits={} covered_share={:.1}%", totals.bodies, totals.covered, totals.exits, 100.0 * totals.covered as f64 / rows as f64);
+    eprintln!("bjit-bodies bodies={} covered={} exits={} covered_share={:.1}% direct_calls={} helper_calls={}", totals.bodies, totals.covered, totals.exits, 100.0 * totals.covered as f64 / rows as f64, totals.direct_calls, totals.helper_calls);
     let [entered, left, declined, compiled, bodies] = std::array::from_fn(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
     eprintln!("bjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies}");
     if let Ok(leaves) = LEAVES.lock() {

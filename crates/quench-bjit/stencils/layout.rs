@@ -165,6 +165,8 @@ pub(crate) const JS_STEP_LOOP_ENTRY: usize = 0;
 pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 96;
 pub(crate) const JS_STEP_CAPTURE_LEN: usize = 104;
 pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 112;
+/// The running lane body's receiver (`this`): a body's entry stores the one it is entered with.
+pub(crate) const JS_STEP_RECEIVER: usize = 200;
 /// The heap bases a field read through a site's cache entry reads: the object record
 /// reservation, the allocator header of the property values (whose base is at
 /// `PROPERTY_BUFFER_BASE`) and the field cache entries of the running program.

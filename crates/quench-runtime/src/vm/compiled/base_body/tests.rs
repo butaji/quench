@@ -32,17 +32,45 @@ fn a_loop_function_runs_as_a_body() {
     assert!(runs > 100 && returns > 100, "the body ran {runs} times and completed {returns}");
 }
 
-/// An instruction with no row in the middle of the function leaves the body at its PC, and the
-/// interpreter resumes there with the registers the rows computed.
+/// An instruction the interpreter runs in the middle of the function (a native call through the
+/// helper row) continues the body, whose rows go on with the registers the call left.
 #[test]
-fn an_uncovered_instruction_in_the_middle_leaves_and_resumes() {
-    let (interpreted, compiled, [runs, returns]) = run_both(
+fn a_native_call_in_the_middle_continues_the_body() {
+    let (interpreted, compiled, [runs, _]) = run_both(
         "function g(a, b) { let s = 0; for (let i = 0; i < b; i++) { s = s + a * i; } const m = Math.floor(s / 3); let r = m; for (let j = 0; j < 4; j++) r = r + j * a; return r + a; }
          let t = 0; for (let k = 0; k < 300; k++) t = (t + g(k, 9)) | 0;
          print(t); print(g(7, 11)); print(g(-5, 4)); print(g(1.5, 6));",
     );
     assert_eq!(interpreted, compiled);
-    assert!(runs > 100 && returns < runs, "the body left {} of {runs} runs", runs - returns);
+    assert!(runs > 100, "the body ran {runs} times");
+}
+
+/// A call of a script function, direct through its entry cell where its body exists and by the
+/// helper row before, returns its result into the caller's register, which the caller's rows read.
+#[test]
+fn a_script_call_runs_in_a_body() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function sq(x) { return x * x; }
+         function f(n) { let s = 0; for (let i = 0; i < n; i++) s = s + sq(i); return s; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + f(k % 9)) | 0;
+         print(t); print(f(12)); print(f(2.5));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+}
+
+/// A callee that raises, or one that leaves inside, ends the caller's body as the interpreter's
+/// run does: the same output and the same exception.
+#[test]
+fn a_leave_inside_a_callee_ends_the_callers_body() {
+    let (interpreted, compiled, _) = run_both(
+        "function pick(x) { if (x > 250) throw new Error('big ' + x); return x + 1; }
+         function f(n) { let s = 0; for (let i = 0; i < n; i++) s = s + pick(i); return s; }
+         let t = 0; for (let k = 0; k < 200; k++) t = (t + f(k % 9)) | 0;
+         print(t);
+         try { f(300); } catch (e) { print(e.message); }",
+    );
+    assert_eq!(interpreted, compiled);
 }
 
 /// Recursion: each activation is its own body run or interpreter run, and the results agree.

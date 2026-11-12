@@ -24,7 +24,7 @@
 //! (`lowering`), never from a table of opcodes here.
 
 use super::*;
-use super::call_plan::{self, CallChain, CallPart, CallPlan, CallShape};
+use super::call_plan::{self, CallChain, CallPart, CallPlan, CallShape, Choice};
 use super::super::{LaneHelper, LaneHelpers};
 use crate::bytecode::Traits;
 use quench_bjit::HOLES;
@@ -137,7 +137,8 @@ fn plan_call(layout: &Layout, shape: CallShape, helpers: LaneHelpers) -> Result<
     let helper = call_plan::helper_address(helpers, LaneHelper::Call).ok_or("call: no helper address")?;
     let (spills, reloads) = (layout.spills(shape.call_pc), layout.spills(shape.call_pc + 1));
     let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads };
-    let CallChain { parts, record, .. } = call_plan::plan_call(&plan)?;
+    let CallChain { parts, record, choice } = call_plan::plan_call(&plan)?;
+    note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     chained(parts, spills.len(), record)
 }
 

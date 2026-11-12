@@ -61,12 +61,13 @@ const HOLE_RECORD: u8 = 0;
 /// Shift from a word count to bytes.
 const WORD_SHIFT: u32 = REGISTER_BYTES.trailing_zeros();
 
-/// `leave_status`: the leave a (status, word) in r14, r15 ends in: the lane body ABI's two
-/// return registers (eax, rdx), returned to the caller of the chain unchanged.
+/// `leave_status`: the leave a (status, word) in r14, r15 ends in, as every leave routine ends
+/// (`entry.rs`): the word in rax and the status in rdx, which `entry_body` swaps into the lane
+/// body ABI's (eax, rdx) and `entry_thunk` reads the word of.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn leave_status() {
-    core::arch::naked_asm!("mov eax, r14d", "mov rdx, r15", "ret")
+    core::arch::naked_asm!("mov rax, r15", "mov edx, r14d", "ret")
 }
 
 /// A lane body's return: its status and result word in (eax, rdx), as `BodyReturn`.

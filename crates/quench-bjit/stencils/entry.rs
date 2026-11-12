@@ -12,15 +12,16 @@
 //!
 //! A function body (`entry_body`, the lane body ABI of `lane_body_abi.rs`) is entered as
 //! (rdi = context, rsi = receiver, rdx = captures, rcx = the register file) and returns the
-//! status in eax and its result word in rdx. Its leave routines put the word in rax and the
+//! status in eax and its result word in rdx; its receiver is published in the payload for its run. Its leave routines put the word in rax and the
 //! status in rdx, which the thunk swaps on the way out: `leave_stop` (hole 0 the word, hole 1
 //! the status), `leave_stop_pop` (the word an exit stub pushed) and `leave_returned` (the
 //! activation completes with the register slot at hole 0; hole 1 the status, hole 2 the
 //! record that completes it, which the lane reads from the dispatch payload). A body's captures
 //! word is unpacked into the payload's capture words for its run, as a loop region's entry
-//! leaves them, and cleared when it returns.
+//! leaves them, and the caller's put back when it returns (a body calls bodies: a callee's
+//! entry replaces the capture words its caller's rows read).
 
-use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, CAPTURE_ADDRESS_BITS, CAPTURE_ADDRESS_PAD, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_VALUES, JS_STEP_RETURNED_PC};
+use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, CAPTURE_ADDRESS_BITS, CAPTURE_ADDRESS_PAD, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_VALUES, JS_STEP_RECEIVER, JS_STEP_RETURNED_PC};
 use crate::staged::frame;
 use crate::words::HOLE_V0;
 
@@ -75,10 +76,12 @@ pub unsafe extern "C" fn leave_pop() {
 }
 
 /// The body entry: saves the callee-saved registers, takes the context in r13 and the register
-/// file in r12, publishes the captures word (the dense slots' address below `CAPTURE_ADDRESS_BITS`,
-/// their count above) as the payload's capture words, calls the first row, clears them, and
-/// returns (status, word) as the chain left them in (rdx, rax). The pad keeps the stack 16-byte
-/// aligned at the call, as the six pushes and the return address leave it 8 off.
+/// file in r12, saves the payload's receiver and capture words (those of the body that entered
+/// this one, if a body did) and publishes in their place the receiver it is entered with and its
+/// captures word (the dense slots' address below `CAPTURE_ADDRESS_BITS`, their count above),
+/// calls the first row, puts the saved words back, and returns (status, word) as the chain left
+/// them in (rdx, rax). The six pushes, the three saved words and the return address leave the
+/// stack 16-byte aligned at the call.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_body() {
@@ -89,10 +92,13 @@ pub unsafe extern "C" fn entry_body() {
         "push r13",
         "push r14",
         "push r15",
-        "sub rsp, 8",
         "mov r13, rdi",
         "mov r12, rcx",
         "mov rax, [rdi + {payload}]",
+        "push qword ptr [rax + {values}]",
+        "push qword ptr [rax + {len}]",
+        "push qword ptr [rax + {receiver}]",
+        "mov [rax + {receiver}], rsi",
         "mov r8, rdx",
         "shl r8, {pad}",
         "shr r8, {pad}",
@@ -101,9 +107,9 @@ pub unsafe extern "C" fn entry_body() {
         "mov [rax + {len}], rdx",
         "call {first}",
         "mov rcx, [r13 + {payload}]",
-        "mov qword ptr [rcx + {values}], 0",
-        "mov qword ptr [rcx + {len}], 0",
-        "add rsp, 8",
+        "pop qword ptr [rcx + {receiver}]",
+        "pop qword ptr [rcx + {len}]",
+        "pop qword ptr [rcx + {values}]",
         "pop r15",
         "pop r14",
         "pop r13",
@@ -116,6 +122,7 @@ pub unsafe extern "C" fn entry_body() {
         payload = const CALL_CONTEXT_ADAPTER_PAYLOAD,
         values = const JS_STEP_CAPTURE_VALUES,
         len = const JS_STEP_CAPTURE_LEN,
+        receiver = const JS_STEP_RECEIVER,
         bits = const CAPTURE_ADDRESS_BITS,
         pad = const CAPTURE_ADDRESS_PAD,
     )
