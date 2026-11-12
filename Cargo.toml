@@ -14,6 +14,7 @@ members = [
     "crates/quench-runtime",
     "crates/quench-stack",
     "crates/quench-tier-corpus",
+    "crates/quench-stencil-mine",
     "crates/quench-bjit",
     "crates/quench-alloc",
     "crates/quench-regexp",

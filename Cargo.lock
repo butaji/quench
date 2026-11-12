@@ -1766,6 +1766,14 @@ name = "quench-stack"
 version = "0.1.0"
 
 [[package]]
+name = "quench-stencil-mine"
+version = "0.1.0"
+dependencies = [
+ "quench-runtime",
+ "serde_json",
+]
+
+[[package]]
 name = "quench-temporal"
 version = "0.1.0"
 
