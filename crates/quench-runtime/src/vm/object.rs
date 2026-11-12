@@ -1942,10 +1942,10 @@ impl<H: Host> Vm<H> {
             return false;
         };
         let receiver = self.heap.object_record_by_id(record_id);
+        // Boxed primitive, stack and error data live in the extras, which most receivers lack.
         if !receiver.admits_cached_add()
-            || receiver.boxed_primitive().is_some()
-            || receiver.stack_data().is_some()
-            || receiver.has_error_data()
+            || (receiver.has_extras()
+                && (receiver.boxed_primitive().is_some() || receiver.stack_data().is_some() || receiver.has_error_data()))
         {
             return false;
         }

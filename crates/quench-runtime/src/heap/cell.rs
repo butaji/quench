@@ -2109,6 +2109,12 @@ impl Object {
         true
     }
 
+    /// Whether the object owns extras (`ObjectExtras`): the data a plain object lacks.
+    #[inline(always)]
+    pub(crate) fn has_extras(&self) -> bool {
+        self.extras_pointer().is_some()
+    }
+
     #[inline] fn extras(&self) -> Option<&ObjectExtras> {
         // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime.
         self.extras_pointer().map(|extras| unsafe { &*extras })
