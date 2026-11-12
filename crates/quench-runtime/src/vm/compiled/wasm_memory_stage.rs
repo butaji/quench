@@ -82,7 +82,7 @@ impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
         let byte = self.body.core.builder.ins().uextend(types::I64, byte);
         self.call_leaf(
             compiled_memory_fill as *const () as usize,
-            [address, byte, length],
+            &[address, byte, length],
         );
     }
 
@@ -91,7 +91,7 @@ impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
         let source = self.body.core.builder.ins().iadd(self.base, source);
         self.call_leaf(
             compiled_memory_copy as *const () as usize,
-            [destination, source, length],
+            &[destination, source, length],
         );
     }
 }
@@ -115,7 +115,7 @@ impl<H: Host> WasmMemoryGrow for Emitter<'_, '_, H> {
     fn memory_grow(&mut self, pages: ir::Value) -> ir::Value {
         let delta = self.memory_index(pages);
         let context = self.body.core.context;
-        let before = self.call_leaf(memory_grow_callout::<H> as *const () as usize, [context, delta]);
+        let before = self.call_leaf(memory_grow_callout::<H> as *const () as usize, &[context, delta]);
         self.body.core.builder.ins().ireduce(types::I32, before)
     }
 }
@@ -131,15 +131,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             .iadd_imm_s(host, i64::from(offset))
     }
 
-    /// A call of a memory leaf: words in, a word out (the status of a checked range, which
-    /// never fails, or a growth's result).
-    fn call_leaf<const WORDS: usize>(
-        &mut self,
-        leaf: usize,
-        arguments: [ir::Value; WORDS],
-    ) -> ir::Value {
+    /// A call of a leaf: words in, a word out (the status of a checked range or a stored
+    /// word, which never fails, or a growth's or a load's result).
+    pub(super) fn call_leaf(&mut self, leaf: usize, arguments: &[ir::Value]) -> ir::Value {
         let mut signature = Signature::new(self.call_conv);
-        for _ in &arguments {
+        for _ in arguments {
             signature.params.push(AbiParam::new(types::I64));
         }
         signature.returns.push(AbiParam::new(types::I64));
@@ -150,7 +146,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             .core
             .builder
             .ins()
-            .call_indirect(signature, target, &arguments);
+            .call_indirect(signature, target, arguments);
         self.body.core.builder.inst_results(call)[0]
     }
 

@@ -89,6 +89,8 @@ mod wasm_callable;
 #[path = "compiled/wasm_stage.rs"]
 mod wasm_stage;
 mod wasm_instance_stage;
+#[cfg(test)]
+mod wasm_global_tests;
 mod wasm_memory_stage;
 mod wasm_flow_stage;
 mod wasm_call_stage;
@@ -9564,13 +9566,18 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
     }
 
-    /// The address of the value of the global bound at `slot`.
-    fn global_address(&mut self, slot: u32) -> ir::Value {
-        let position = self
-            .globals
+    /// The position of the global bound at `slot` among the artifact's globals
+    /// (`CallContext::globals`).
+    fn global_position(&self, slot: u32) -> usize {
+        self.globals
             .iter()
             .position(|candidate| *candidate == slot)
-            .expect("planned globals are collected");
+            .expect("planned globals are collected")
+    }
+
+    /// The address of the value of the global bound at `slot`.
+    fn global_address(&mut self, slot: u32) -> ir::Value {
+        let position = self.global_position(slot);
         let table = self
             .body.core.builder
             .ins()

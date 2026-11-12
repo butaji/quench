@@ -1,6 +1,7 @@
-//! The instance-binding and global steps of the Wasm interpreter. A global's access is the
-//! staged rule (`staged::wasm_instance`) on `ConcreteInstance` over the global's cell, with the
-//! storage its type decides, so the interpreter and the tier move the same words.
+//! The instance-binding and global steps of the Wasm interpreter and its lane handlers. A
+//! binding or a global's access is the staged rule (`staged::wasm_instance`) on
+//! `ConcreteInstance` over the cell, with the storage its type decides, so the interpreter,
+//! the lane and the tier move the same words.
 
 use super::*;
 use crate::staged::wasm_instance::{Instance, Storage, WasmInstance};
@@ -20,8 +21,7 @@ impl<H: Host> Vm<H> {
         match Instance::of(i.op()) {
             Some(Instance::Binding) => {
                 let value = self
-                    .heap
-                    .environment_slot(self.frames[f].env, i.imm() as usize)
+                    .wasm_binding(self.frames[f].env, i.imm() as usize)
                     .ok_or_else(|| JsError::validation("invalid Wasm instance binding".into()))?;
                 self.write(f, i.result_register(), value);
             }
@@ -37,18 +37,19 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    /// The instance field at environment slot `slot` of `env`: a binding is a handle read from
+    /// the environment's cell.
+    pub(super) fn wasm_binding(&self, env: Value, slot: usize) -> Option<Value> {
+        let field = self.heap.environment_slot(env, slot)?;
+        Some(read_cell(field, Storage::Handle))
+    }
+
     /// The value of the global bound to `binding`: its cell's word under its type's storage.
-    fn wasm_global_load(&self, binding: Value) -> Result<Value, JsError> {
+    pub(super) fn wasm_global_load(&self, binding: Value) -> Result<Value, JsError> {
         let Some(Cell::WasmGlobal { value, ty, .. }) = self.heap.get(binding) else {
             return Err(JsError::validation("invalid Wasm global binding".into()));
         };
-        let storage = Storage::of(*ty);
-        let mut cell = *value;
-        let mut stage = ConcreteInstance {
-            globals: std::slice::from_mut(&mut cell),
-            memory: &mut [],
-        };
-        Ok(slot_value(storage, stage.global_load(CELL, storage)))
+        Ok(read_cell(*value, Storage::of(*ty)))
     }
 
     /// Stores `value` in the mutable global bound to `binding`, as its type's storage holds it.
@@ -76,4 +77,13 @@ impl<H: Host> Vm<H> {
         .global_store(CELL, storage, slot_word(storage, value));
         Ok(())
     }
+}
+
+/// The slot a register takes from the cell `cell` read as `storage`.
+fn read_cell(mut cell: Value, storage: Storage) -> Value {
+    let mut stage = ConcreteInstance {
+        globals: std::slice::from_mut(&mut cell),
+        memory: &mut [],
+    };
+    slot_value(storage, stage.global_load(CELL, storage))
 }

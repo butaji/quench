@@ -10,7 +10,7 @@ lane_handler! {
     pub(super) fn lane_instance_binding<MEMORY: bool>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let env = vm.frames[unsafe { (*cx).frame }].env;
-        let Some(value) = vm.heap.environment_slot(env, i.imm() as usize) else {
+        let Some(value) = vm.wasm_binding(env, i.imm() as usize) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -155,26 +155,24 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// A global's load (`Vm::wasm_global_load`, the staged rule): the cell's word under its
+    /// type's storage. Anything but a global binding takes the general path.
     pub(super) fn lane_global_get<>(cx, r, ip, i, view) {
-        let Some(Cell::WasmGlobal { value, .. }) = unsafe { vm(cx) }.heap.get(r.get(i.b)) else {
+        let Ok(value) = unsafe { vm(cx) }.wasm_global_load(r.get(i.b)) else {
             return exit(ip);
         };
-        r.set(i.a, *value);
+        r.set(i.a, value);
         next!(cx, r, following(ip), view)
     }
 }
 
 lane_handler! {
+    /// A global's store (`Vm::wasm_global_store`, the staged rule); a binding that is no
+    /// mutable global takes the general path, which raises.
     pub(super) fn lane_global_set<>(cx, r, ip, i, view) {
-        let Some(Cell::WasmGlobal {
-            value,
-            mutable: true,
-            ..
-        }) = unsafe { vm(cx) }.heap.get_mut(r.get(i.b))
-        else {
+        if unsafe { vm(cx) }.wasm_global_store(r.get(i.b), r.get(i.a)).is_err() {
             return exit(ip);
-        };
-        *value = r.get(i.a);
+        }
         next!(cx, r, following(ip), view)
     }
 }

@@ -78,9 +78,10 @@ impl Storage {
     }
 }
 
-/// The state of the instance a function runs in. A word is a global's value as its `Storage`
-/// holds it: the 32-bit payload zero-extended, or the whole slot. Only a 32-bit word is a value
-/// a tier computes with; a wider one stays with the interpreter, which owns the boxes.
+/// The state of the instance a function runs in. A word is a global's value as the stage's
+/// registers hold it: a 32-bit payload zero-extended; a 64-bit one as the interpreter holds it
+/// (its cell's slot, in place or a box's handle) or as the tier computes with it (the payload,
+/// which the tier reads through the VM's box where the cell holds one); a handle whole.
 pub(crate) trait WasmInstance: WasmStage {
     /// The word of the global bound at environment slot `slot`.
     fn global_load(&mut self, slot: u32, storage: Storage) -> Self::Word;
