@@ -4,6 +4,7 @@
 //! copies no register. A `yield` suspends the frame in place and pops the activation, and a
 //! return completes the generator.
 use super::*;
+use super::super::activation::GeneratorFrame;
 
 impl Activation {
     /// What its caller's frame resumes with when the activation becomes a frame, as the register
@@ -73,12 +74,50 @@ pub(super) fn lane_resume_generator_step<H: Host>(
     lane_resume_generator(cx, r, ip, generator, method, Value::UNDEFINED, Completion::Generates)
 }
 
+/// How a resumed generator's window carries its locals (`GeneratorFrame::open_environment_window`):
+/// its function's captured-slot mask and, for a frame that made its environment, the slot storage
+/// of that environment.
+struct WindowLocals {
+    captured: u64,
+    own_slots: Option<*const crate::heap::EnvironmentSlots>,
+}
+
+/// The environment a generator's closures and captures run under, and its window's locals when
+/// `environment` (`CallPlan::generator_environment`) says the window carries them: the frame's
+/// `env` is its own environment once it made one (`captured`), whose parent the activation
+/// runs under, else the closure's. `None`, before any effect, where `view` has no environment
+/// window or the environment is no cell.
+fn window_environments<H: Host>(
+    vm: &Vm<H>,
+    view: *const LaneView,
+    env: Value,
+    captured: bool,
+    environment: bool,
+) -> Option<(Value, Option<WindowLocals>)> {
+    let own = if captured {
+        let Some(Cell::Environment { parent, slots, .. }) = vm.heap.get(env) else {
+            return None;
+        };
+        Some((*parent, std::ptr::from_ref(slots)))
+    } else {
+        None
+    };
+    let parent = own.map_or(env, |(parent, _)| parent);
+    if !environment {
+        return Some((parent, None));
+    }
+    // SAFETY: the program store keeps a derived view alive with its program.
+    let layout = unsafe { &*view }.environment_window?;
+    Some((parent, Some(WindowLocals { captured: layout.captured, own_slots: own.map(|(_, slots)| slots) })))
+}
+
 /// The activation of `generator`, a suspended generator the lane admits
 /// (`Vm::generator_window_frame`) that `method` steps (`steps_as_generator`), made over its
 /// record's register file for the call record at `ip` of the running function, whose registers
 /// are `r`: `sent` is the value its `yield` evaluates to, `completion` how its caller takes the
-/// step. The window's registers and the frame's closure environment, receiver and captures are
-/// the record's own. The registers and record the lane continues at, or `None`, before any
+/// step. The window's registers, and for a generator with locals the environment window after
+/// them, are the record's own, bound as a call binds a fresh one; the frame's receiver and
+/// captures run with it. The registers and record the lane continues at, or `None`, before any
 /// effect, where the lane has no room or no view for it.
 fn lane_resume_generator<H: Host>(
     cx: *mut LaneContext<H>,
@@ -92,59 +131,79 @@ fn lane_resume_generator<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let frame = vm.generator_window_frame(generator, code)?;
-    let (program, function, env, this, pc, size) = (frame.program, frame.function, frame.env, frame.this(), frame.pc, frame.registers.len());
+    let (frame, environment) = vm.generator_window_frame(generator, code)?;
+    let (program, function, env, captured) = (frame.program, frame.function, frame.env, frame.captured);
+    let (this, pc, size) = (frame.this(), frame.pc, frame.registers.len());
     let depth = vm.lane_stack.activations.len();
     if depth >= vm.lane_stack.activation_limit.get() {
         return None;
     }
     let view = vm.lane_view_any(program, function)?;
-    let capture = vm.target_capture(code, program, env);
+    let (parent, locals) = window_environments(vm, view, env, captured, environment)?;
+    let capture = vm.target_capture(code, program, parent);
     let frame = vm.resume_generator_window(method, generator, sent, depth)?;
+    if let Some(locals) = locals {
+        open_window_locals(vm, frame, env, &locals);
+    }
     // SAFETY: the record keeps the frame, and so its registers, until the activation ends.
     let (prefix, window) = unsafe { ((*frame).prefix(), (*frame).registers.as_mut_ptr()) };
-    let activation = generator_activation(cx, r, ip, prefix, function, generator, completion);
+    let activation = generator_activation(cx, r, ip, GeneratorWindow { prefix, function, generator, completion, environment });
     // SAFETY: the limit check above leaves room for the activation, and the frame's loops
     // resume as the new activation's (`LaneStack::iterators`).
     unsafe {
         vm.lane_stack.push_generator_activation(activation);
         vm.lane_stack.restore_iterators(depth, &mut (*frame).active_iterators);
     }
-    let entry = PreparedEntry { view, env, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
+    let entry = PreparedEntry { view, env: parent, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
     // SAFETY: the window holds the suspended registers, which nothing else writes while it runs,
     // and `pc` is where the frame resumes in its function's view.
     let start = unsafe { lane_enter_suspended(cx, &entry, window, pc) };
     Some((Registers(window), start))
 }
 
-/// The activation of `generator`'s frame, whose prefix is `prefix` and whose function is
-/// `function`, for the call record at `ip`, made by the running function with registers `r`.
-fn generator_activation<H: Host>(
-    cx: *mut LaneContext<H>,
-    r: Registers,
-    ip: Ip,
+/// Lays `frame`'s environment window after its registers (`GeneratorFrame::open_environment_window`).
+/// An environment the frame made already is written through the window's stores without the
+/// barrier a heap write takes, so it joins the remembered set once, as a capture store's target
+/// does (`Vm::target_capture`).
+fn open_window_locals<H: Host>(vm: &mut Vm<H>, frame: *mut GeneratorFrame, env: Value, locals: &WindowLocals) {
+    if locals.own_slots.is_some() {
+        vm.heap.remember_cell(env);
+    }
+    // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
+    unsafe { (*frame).open_environment_window(locals.captured, locals.own_slots) };
+}
+
+/// What the activation of a resumed generator runs (`generator_activation`): its frame's
+/// prefix and function, the generator, how its caller takes the step, and whether its window
+/// carries an environment (`ScriptActivation::environment`).
+struct GeneratorWindow {
     prefix: crate::vm::compiled::ShadowFrame,
     function: u32,
     generator: Value,
     completion: Completion,
-) -> Activation {
+    environment: bool,
+}
+
+/// The activation of `window`'s generator for the call record at `ip`, made by the running
+/// function with registers `r`.
+fn generator_activation<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, window: GeneratorWindow) -> Activation {
     Activation {
-        native: prefix,
-        function,
+        native: window.prefix,
+        function: window.function,
         call: ip,
         // SAFETY: the running lane's context, which nothing else accesses.
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
         caller_program: unsafe { (*cx).program },
         kind: ActivationKind::Script(ScriptActivation {
-            callee: generator,
+            callee: window.generator,
             argc: 0,
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
-            completion,
+            completion: window.completion,
             forwards: false,
-            environment: false,
+            environment: window.environment,
         }),
     }
 }

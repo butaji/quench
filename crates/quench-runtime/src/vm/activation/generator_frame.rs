@@ -5,7 +5,9 @@ use super::CallContext;
 use crate::bytecode::Atom;
 use crate::compile::liveness::RegisterSet;
 use crate::snapshot::{Reader, Snap, SnapshotResult, Writer};
+use crate::heap::EnvironmentSlots;
 use crate::vm::compiled::ShadowFrame;
+use crate::vm::dispatch_fast::{WINDOW_CAPTURED, WINDOW_ENVIRONMENT, WINDOW_LOCALS, WINDOW_SLOTS, WINDOW_STORAGE};
 use crate::vm::program_store::ProgramId;
 use crate::vm::{ActiveIterator, CaptureCache, Frame};
 use crate::Value;
@@ -40,6 +42,10 @@ pub(crate) struct GeneratorFrame {
     pub(in crate::vm) live_registers: Option<RegisterSet>,
     /// Skip one function-entry tier attempt when the frame runs again (`Frame::js_jit_skip_entry_once`).
     pub(in crate::vm) js_jit_skip_entry_once: bool,
+    /// An environment window follows the registers in the file's spare capacity while a lane
+    /// activation runs the frame (`open_environment_window`): the locals and environment
+    /// live there until the run ends (`close_environment_window`).
+    environment_window: bool,
 }
 
 #[cfg(test)]
@@ -71,6 +77,54 @@ impl GeneratorFrame {
         self.prefix
     }
 
+    /// Lays the environment window of a lane activation over the register file after its
+    /// registers, as a call lays a fresh one (`lane_activate_environment`): the environment (the
+    /// frame's own, once it made one, with `own_slots` its slot storage; else `DELETED`, the
+    /// slots living among the locals in place), the slot storage's address, the `captured` mask,
+    /// the in-place storage words, then the locals. The words live in the file's spare
+    /// capacity, so a frame that never ran in a lane carries none of them.
+    pub(in crate::vm) fn open_environment_window(&mut self, captured: u64, own_slots: Option<*const EnvironmentSlots>) {
+        let count = self.registers.len();
+        self.registers.reserve(usize::from(WINDOW_LOCALS) + self.locals.len());
+        self.bind_window();
+        // SAFETY: the capacity holds the entries and the locals after the registers, which
+        // nothing else reads or writes while a window runs the frame.
+        unsafe {
+            let entries = self.registers.as_mut_ptr().add(count);
+            let (environment, slots) = match own_slots {
+                Some(slots) => (self.env, slots),
+                None => (
+                    Value::DELETED,
+                    EnvironmentSlots::lay_out_in_place(entries.add(usize::from(WINDOW_STORAGE)), self.locals.len()),
+                ),
+            };
+            entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
+            entries.add(usize::from(WINDOW_SLOTS)).write(std::mem::transmute::<u64, Value>(slots as u64));
+            entries.add(usize::from(WINDOW_CAPTURED)).write(std::mem::transmute::<u64, Value>(captured));
+            entries.add(usize::from(WINDOW_LOCALS)).copy_from_nonoverlapping(self.locals.as_ptr(), self.locals.len());
+        }
+        self.environment_window = true;
+    }
+
+    /// Takes back what an environment window run changed: the locals, and the environment a
+    /// closure made while it ran, which the frame then owns (`captured`). The frame's other
+    /// fields, the parent environment included, are as it left them.
+    pub(in crate::vm) fn close_environment_window(&mut self) {
+        if !std::mem::take(&mut self.environment_window) {
+            return;
+        }
+        // SAFETY: `open_environment_window` wrote the entries and the locals after the registers.
+        unsafe {
+            let entries = self.registers.as_ptr().add(self.registers.len());
+            let environment = *entries.add(usize::from(WINDOW_ENVIRONMENT));
+            if !environment.is_deleted() {
+                self.env = environment;
+                self.captured = true;
+            }
+            self.locals.as_mut_ptr().copy_from_nonoverlapping(entries.add(usize::from(WINDOW_LOCALS)), self.locals.len());
+        }
+    }
+
     /// The suspension of a frame that ran in a lane activation over its register file: it resumes
     /// at `pc`, with the registers liveness finds live there, and takes back the iterators its
     /// loops pushed while it ran. Only these change while a window runs the frame.
@@ -100,7 +154,7 @@ impl GeneratorFrame {
         let mut record = Self {
             prefix, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: None, js_jit_skip_entry_once,
+            live_registers: None, js_jit_skip_entry_once, environment_window: false,
         };
         record.bind_window();
         Box::new(record)
@@ -115,7 +169,7 @@ impl GeneratorFrame {
         let Self {
             prefix: _, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: _, js_jit_skip_entry_once,
+            live_registers: _, js_jit_skip_entry_once, environment_window: _,
         } = *self;
         Box::new(Frame {
             context, reflected_parameters, original_arguments, program, function, pc,
@@ -189,6 +243,7 @@ impl Clone for GeneratorFrame {
             with_objects: self.with_objects.clone(),
             live_registers: self.live_registers,
             js_jit_skip_entry_once: self.js_jit_skip_entry_once,
+            environment_window: false,
         };
         copy.bind_window();
         copy
@@ -233,6 +288,7 @@ impl Snap for GeneratorFrame {
             captured: Snap::unsnap(reader)?,
             live_registers: None,
             js_jit_skip_entry_once: false,
+            environment_window: false,
         };
         record.bind_window();
         Ok(record)

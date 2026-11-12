@@ -1726,6 +1726,7 @@ call_plan_bits!(
     registers_only,
     environment_activation,
     generator_registers_only,
+    generator_environment,
 );
 
 #[derive(Clone, Copy, Debug)]
@@ -1780,6 +1781,11 @@ pub(crate) struct CallPlan {
     /// receiver and closure environment. A lane resumes it as an activation whose window is the
     /// frame's register file, and its `yield` suspends it back into that file.
     pub(crate) generator_registers_only: bool,
+    /// A synchronous generator whose frame locals and environment ride a window past its
+    /// registers (`locals_ride_window`), which a lane resumes as an activation over the
+    /// frame's register file, binding the window from the record as a call binds a fresh one
+    /// (`GeneratorFrame::open_environment_window`) and storing it back at the `yield`.
+    pub(crate) generator_environment: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2259,6 +2265,49 @@ impl Function {
             .any(|instruction| instruction.op().suspends())
     }
 
+    /// Whether its locals and the environment its closures capture can live in a window past
+    /// its registers: the layout an environment activation (`CallPlan::environment_activation`)
+    /// and a suspended generator's window (`CallPlan::generator_environment`) share. Each local
+    /// is a frame local (none promoted to a register), the captured ones owned by the
+    /// environment, and every instruction that addresses one is a record the window's handlers
+    /// read.
+    fn locals_ride_window(&self, tables: &impl FactTables) -> bool {
+        self.arguments_own_their_slots(|atom| tables.atom_name(atom))
+            && self.self_binding_slot.is_none()
+            && !self.inherited_with_scope
+            && self.local_registers.is_empty()
+            && (self.arguments_slot.is_none() || self.reads_passed_arguments_only())
+            && self.binding_sites.is_empty()
+            && self.selective_capture_slots.is_some()
+            && self.initial_register == InitialRegister::Undefined
+            && !self.has_dynamic_scope_access()
+            // The implicit bindings `activation_binding_reads` names, but for clones, are a frame's.
+            && !self.body_binding_reads_beside_clones(tables)
+            && self.instructions().all(|instruction| {
+                let op = instruction.op();
+                // An iteration's `CloneEnv` copies the window's environment, once a closure
+                // made one (`lane_clone_window_env`).
+                op.immediate_role() != ImmediateRole::SuperinstructionIndex
+                    && (instruction.addressed_local_slots().next().is_none()
+                        || matches!(
+                            op,
+                            Op::LoadLocal
+                                | Op::LoadLocalPlain
+                                | Op::LoadEnvLocal
+                                | Op::StoreLocal
+                                | Op::StoreLocalPlain
+                                | Op::StoreEnvLocal
+                                | Op::InitializeTdz
+                        )
+                        // A read whose base is a plain local reads the window's local
+                        // (`lane_plain_local_operand`).
+                        || (op == Op::GetField
+                            && instruction.addressed_local_slots().eq(instruction.local_field_base()))
+                        // The window keeps every value passed, which these answer.
+                        || op.reads_arguments())
+            })
+    }
+
     /// The function's `CallPlan`, derived on first use.
     #[inline(always)] pub(crate) fn call_plan(&self, tables: &impl FactTables) -> CallPlan {
         *self.call_plan.get_or_init(|| self.derive_call_plan(tables))
@@ -2326,46 +2375,7 @@ impl Function {
                         .addressed_local_slots()
                         .all(|slot| Some(slot) == self.arguments_slot)
                 });
-            let environment_activation = in_loop
-                && self.parent.is_some()
-                && !self.is_class_constructor
-                // Each argument fills its own slot, a hidden one where the list binds its names
-                // apart; a rest list binding directly fills its slot with the gathered array
-                // (`lane_activate_environment`).
-                && self.arguments_own_their_slots(|atom| tables.atom_name(atom))
-                && self.self_binding_slot.is_none()
-                && !self.inherited_with_scope
-                && self.local_registers.is_empty()
-                && (self.arguments_slot.is_none() || self.reads_passed_arguments_only())
-                && self.binding_sites.is_empty()
-                && self.selective_capture_slots.is_some()
-                && self.initial_register == InitialRegister::Undefined
-                && !self.has_dynamic_scope_access()
-                // `in_loop` leaves out the other kinds `activation_binding_reads` names.
-                && !self.body_binding_reads_beside_clones(tables)
-                && self.instructions().all(|instruction| {
-                    let op = instruction.op();
-                    // An iteration's `CloneEnv` copies the window's environment, once a closure
-                    // made one (`lane_clone_window_env`).
-                    op.immediate_role() != ImmediateRole::SuperinstructionIndex
-                        && (instruction.addressed_local_slots().next().is_none()
-                            || matches!(
-                                op,
-                                Op::LoadLocal
-                                    | Op::LoadLocalPlain
-                                    | Op::LoadEnvLocal
-                                    | Op::StoreLocal
-                                    | Op::StoreLocalPlain
-                                    | Op::StoreEnvLocal
-                                    | Op::InitializeTdz
-                            )
-                            // A read whose base is a plain local reads the window's local
-                            // (`lane_plain_local_operand`).
-                            || (op == Op::GetField
-                                && instruction.addressed_local_slots().eq(instruction.local_field_base()))
-                            // The window keeps every value passed, which these answer.
-                            || op.reads_arguments())
-                });
+            let environment_activation = in_loop && self.parent.is_some() && self.locals_ride_window(tables);
             let generator_registers_only = self.is_generator
                 && !self.is_async
                 && registers_layout_of_any_kind
@@ -2375,9 +2385,19 @@ impl Function {
                 && self.initial_register == InitialRegister::Undefined
                 && !addresses_locals
                 && !self.has_dynamic_scope_access();
+            // Its locals and closures ride an environment window as an ordinary body's do; the
+            // `arguments` and dynamic scope shapes the lane has no window for stay frames.
+            let generator_environment = self.is_generator
+                && !self.is_async
+                && !generator_registers_only
+                && self.parent.is_some()
+                && !self.parameter_eval_arguments_error
+                && self.arguments_slot.is_none()
+                && self.locals_ride_window(tables);
             CallPlan {
                 environment_activation,
                 generator_registers_only,
+                generator_environment,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 settles_in_loop,

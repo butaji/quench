@@ -6,16 +6,18 @@ use super::super::activation::GeneratorFrame;
 
 impl<H: Host> Vm<H> {
     /// The frame of `generator` the lane resumes as an activation over its register file, which
-    /// `code`, the running program's, lays out as its registers (`CallPlan::generator_registers_only`):
+    /// `code`, the running program's, lays out as its registers (`CallPlan::generator_registers_only`)
+    /// or with an environment window after them (`CallPlan::generator_environment`, the `bool`):
     /// a suspended generator of this realm and program that is not running or done.
-    pub(in crate::vm) fn generator_window_frame(&self, generator: Value, code: &ResidualProgram) -> Option<&GeneratorFrame> {
+    pub(in crate::vm) fn generator_window_frame(&self, generator: Value, code: &ResidualProgram) -> Option<(&GeneratorFrame, bool)> {
         let IteratorRecord { ext, .. } = self.heap.iterator(generator)?;
         let record = ext.generator.as_deref()?;
         let frame = &*record.suspended_continuation()?.frame;
+        let plan = code.function_get(frame.function as usize)?.call_plan(code);
         (record.realm == self.realm.globals
             && frame.program == self.active_program
-            && code.function_get(frame.function as usize)?.call_plan(code).generator_registers_only)
-            .then_some(frame)
+            && (plan.generator_registers_only || plan.generator_environment))
+            .then_some((frame, plan.generator_environment))
     }
 
     /// Starts a windowed run of `generator`, which `generator_window_frame` admitted: the
@@ -63,6 +65,7 @@ impl<H: Host> Vm<H> {
             .generator_record_mut(generator)
             .and_then(GeneratorRecord::take_windowed)
             .expect("a windowed yield belongs to a windowed generator");
+        frame.close_environment_window();
         let (program, function) = (frame.program, frame.function);
         let live_registers = self.release_dead_registers(program, function, pc, &mut frame.registers);
         frame.suspend_at(pc, live_registers, self.lane_stack.drain_iterators(depth));
@@ -88,10 +91,11 @@ impl<H: Host> Vm<H> {
         generator: Value,
         iterators: impl Iterator<Item = ActiveIterator>,
     ) {
-        let frame = self
+        let mut frame = self
             .generator_record_mut(generator)
             .and_then(GeneratorRecord::take_windowed)
             .expect("a windowed generator's activation materializes");
+        frame.close_environment_window();
         let mut frame = frame.into_frame(self.with_stack.len());
         frame.active_iterators.extend(iterators);
         self.activate_frame(&mut frame);
@@ -160,6 +164,40 @@ mod tests {
             .map(|function| function.call_plan(&program).generator_registers_only)
             .collect();
         assert_eq!(windowed, [true, false, false, false]);
+    }
+
+    #[test]
+    fn generators_reading_arguments_or_async_ones_keep_their_frames() {
+        let program = Engine::specialize(
+            "function* reading() { yield arguments.length; }
+             async function* asynchronous(n) { for (let i = 0; i < n; i++) yield i; }",
+            "generator-frame-plans.js",
+        )
+        .unwrap();
+        for function in program.functions.iter().filter(|function| function.is_generator) {
+            let plan = function.call_plan(&program);
+            assert!(!plan.generator_registers_only && !plan.generator_environment);
+        }
+    }
+
+    #[test]
+    fn a_generator_with_a_closure_and_try_finally_resumes_without_frames() {
+        // Its locals and the environment its closure captures ride a window past the record's
+        // registers, and the handler is part of its bytecode, so no resume makes a `Box<Frame>`.
+        let (lines, made) = run(
+            r#"
+            function* counting() {
+                let total = 0;
+                const add = (k) => total += k;
+                try { for (let i = 0; i < 50; i++) { add(i); yield total; } } finally { print("closed"); }
+            }
+            let sum = 0;
+            for (const x of counting()) sum += x;
+            print(String(sum));
+            "#,
+        );
+        assert_eq!(lines, ["closed", "20825"]);
+        assert_eq!(made, 0, "a resume made a frame");
     }
 
     #[test]

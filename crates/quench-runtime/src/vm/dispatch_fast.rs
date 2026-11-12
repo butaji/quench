@@ -567,10 +567,10 @@ struct EnvironmentWindow {
 /// (`EnvironmentSlots::lay_out_in_place`) over its locals, which follow. Until a closure or a
 /// frame needs the environment, every slot lives among the locals and the storage address
 /// names that in-place storage, so a captured slot reads the same way before and after.
-const WINDOW_ENVIRONMENT: u16 = 0;
-const WINDOW_SLOTS: u16 = 1;
-const WINDOW_CAPTURED: u16 = 2;
-const WINDOW_STORAGE: u16 = 3;
+pub(super) const WINDOW_ENVIRONMENT: u16 = 0;
+pub(super) const WINDOW_SLOTS: u16 = 1;
+pub(super) const WINDOW_CAPTURED: u16 = 2;
+pub(super) const WINDOW_STORAGE: u16 = 3;
 pub(super) const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
 
 impl EnvironmentWindow {
@@ -4111,7 +4111,13 @@ script_handler! {
                     .filter(|binding| !binding.is_deleted())
             };
             if let Some(binding) = binding {
-                debug_assert!(!unsafe { vm(cx) }.heap.is_old(r.get(registers + WINDOW_ENVIRONMENT)));
+                // The window's environment is young, or a resumed generator's, which joined the
+                // remembered set when its window opened (`generator_windows::open_window_locals`).
+                debug_assert!({
+                    let heap = &unsafe { vm(cx) }.heap;
+                    let environment = r.get(registers + WINDOW_ENVIRONMENT);
+                    !heap.is_old(environment) || heap.is_remembered_cell(environment)
+                });
                 let value = r.get(i.a);
                 *binding = value;
                 if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
