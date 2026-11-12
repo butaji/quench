@@ -7102,7 +7102,7 @@ impl<H: Host> Vm<H> {
         unit.instructions
             .iter()
             .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
-            .filter(|(site, _)| !generic.contains(site))
+            .filter(|(site, _)| !generic.contains(site) && self.field_site_leaves(self.field_cache_index(*site)) < 2)
             .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), ..load }).collect::<Vec<_>>()))
             .filter(|(_, shapes)| !shapes.is_empty())
             .collect()
