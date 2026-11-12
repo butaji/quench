@@ -6,16 +6,24 @@
 //!    (`LaneHelper::Step`: `(vm, residual, lane_context, call_pc) -> LANE_CALL_*`, the row
 //!    `quench_bjit::call::CallRow::Helper`) between the spills of the live pinned registers and
 //!    their reloads (`call_plan::plan_step`), for the instructions whose general step only
-//!    continues, jumps or throws (`Traits::LANE_IN_PLACE`) and writes at most one register. The
-//!    helper answers completed, branched or missed, so both of the row's exits are the leave at
-//!    the instruction: a miss, where the helper made nothing or raised, leaves there for the
-//!    interpreter. A step that jumps (`ForInNext`) has its target as the row's branch: the helper
-//!    answers branched where the interpreter's step took it, which continues at the reloads of the
-//!    registers live at the target (`branching`).
+//!    continues, jumps or throws (`Op::steps_in_body`: the lane's in-place steps, and the scope,
+//!    operator, constant, name, literal, element, field and class steps that may also replace the
+//!    frame's environment, after which the helper drops the lane's capture caches) and writes at
+//!    most one register. The helper answers completed, branched or missed,
+//!    so both of the row's exits are the leave at the instruction: a miss, where the helper made
+//!    nothing or raised, leaves there for the interpreter. A step that jumps (`ForInNext`) has its
+//!    target as the row's branch: the helper answers branched where the interpreter's step took
+//!    it, which continues at the reloads of the registers live at the target (`branching`).
 //! 3. A leave (`CallRow::Here`): the region ends at the instruction and the interpreter runs it,
-//!    for every other instruction: jumps and branches the rows do not take, throws,
-//!    suspensions, scope entries, and any instruction that carries result flags, which a helper
-//!    cannot give back.
+//!    for every other instruction: `Throw`; the calls but `Call` (`CallArray`, `CallSpread`, `CallKnown`,
+//!    `CallMethod`, `CallThisMethod`, `CallForwardingArguments`, `Construct`), which push the
+//!    frames the lane owns; `LoadNameCall` and `InitializeThis`, which write two registers or the
+//!    frame's `this` the body's rows read from its payload; `SuperConstArrayObject2`; the
+//!    suspensions `Await`, `Yield` and `YieldStar`, whose generator or async record the lane
+//!    resumes in the interpreter, so no native code could continue past them; the Wasm opcodes
+//!    (`EXCLUDED`); a conditional jump the helper would take backward, which must poll the
+//!    interrupt flag where a region has no such row; and any instruction that carries result
+//!    flags, which a helper cannot give back.
 //!
 //! A whole function's body (`function`) also has the two steps that are the body's own: its
 //! `Return` completes the activation, and its `Call` is the call planner's chain
@@ -29,7 +37,7 @@
 use super::*;
 use super::call_plan::{self, CallChain, CallPart, CallPlan, CallShape, Choice};
 use super::super::{LaneHelper, LaneHelpers};
-use crate::bytecode::{Op, Traits};
+use crate::bytecode::Op;
 use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
 
@@ -82,7 +90,7 @@ pub(in crate::vm::compiled) fn covers(code: &[WideInstruction]) -> bool {
 
 /// Whether `instruction` is made in place by `LaneHelper::Step`.
 fn steps_in_place(instruction: WideInstruction) -> bool {
-    instruction.op().traits().has(Traits::LANE_IN_PLACE) && instruction.result_flags() == 0 && instruction.written_registers().count() <= 1
+    instruction.op().steps_in_body() && instruction.result_flags() == 0 && instruction.written_registers().count() <= 1
 }
 
 /// The lowering of `instruction`, where helpers are `helpers`: a helper step where the helper
@@ -92,13 +100,19 @@ pub(super) fn lowering(instruction: WideInstruction, helpers: LaneHelpers) -> St
     if addressed && steps_in_place(instruction) { Step::Helper } else { Step::Leave }
 }
 
+/// Whether `instruction` at `pc` may jump backward, which only a row that polls the interrupt flag
+/// may do.
+fn branches_back(pc: u32, instruction: WideInstruction) -> bool {
+    instruction.op().control_flow_layout().jumps() && instruction.jump_target() <= pc
+}
+
 /// The row of an instruction at `pc` that has no numeric or heap row: a `Nop` is the jump to the
 /// next instruction, the rest their step. A helper step names the register it writes.
 pub(super) fn decode_step(pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     match instruction.op().class() {
         Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
         _ => {
-            let step = lowering(instruction, helpers);
+            let step = if branches_back(pc, instruction) { Step::Leave } else { lowering(instruction, helpers) };
             let helped = step == Step::Helper;
             let written = if helped { instruction.written_registers().next() } else { None };
             let target = (helped && instruction.op().control_flow_layout().jumps()).then(|| instruction.jump_target());
@@ -155,13 +169,20 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
     }
 }
 
+/// The step helper's chain at `pc`: the spills, the helper row and the `reloads` after it. The
+/// helper answers completed, branched or missed, so its (status, word) exit is the leave at the
+/// record too.
+fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], helpers: LaneHelpers) -> Result<Planned, String> {
+    let address = call_plan::helper_address(helpers, LaneHelper::Step).ok_or("step: no helper address")?;
+    let spills = layout.spills(pc);
+    let mut row = chained(call_plan::plan_step(pc, address, &spills, reloads)?, spills.len(), None)?;
+    row.exits = vec![Exit::At(pc); row.exits.len()];
+    Ok(row)
+}
+
 /// The chain of a helper step at `pc`, which also branches to `target` where its instruction jumps.
 fn plan_helper(layout: &Layout, pc: u32, target: Option<u32>, helpers: LaneHelpers) -> Result<Planned, String> {
-    let address = call_plan::helper_address(helpers, LaneHelper::Step).ok_or("step: no helper address")?;
-    let (spills, reloads) = (layout.spills(pc), layout.spills(pc + 1));
-    let mut row = chained(call_plan::plan_step(pc, address, &spills, &reloads)?, spills.len(), None)?;
-    // The step helper answers completed, branched or missed: its (status, word) exit is the leave at the record too.
-    row.exits = vec![Exit::At(pc); row.exits.len()];
+    let row = helper_chain(layout, pc, &layout.spills(pc + 1), helpers)?;
     match target {
         Some(target) => branching(row, layout, (pc, target)),
         None => Ok(row),
@@ -206,7 +227,7 @@ fn plan_call(layout: &Layout, shape: CallShape, helpers: LaneHelpers) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::Op;
+    use crate::bytecode::Traits;
 
     fn instruction(op: Op) -> WideInstruction {
         WideInstruction::new(op, 1, 2, 3, 0)
@@ -250,8 +271,9 @@ mod tests {
         Op::IteratorClose, Op::IteratorCleanupPush, Op::IteratorCleanupPop,
     ];
 
-    /// No function of the lane fixtures holds a generic helper step beyond the listed residual
-    /// opcodes, and a helper step that jumps names its target (its row branches).
+    /// No function of the lane fixtures holds a generic helper step of the lane's in-place steps
+    /// beyond the listed residual opcodes (the others are `Op::steps_in_body`'s own), and a helper
+    /// step that jumps names its target (its row branches).
     #[test]
     fn lane_fixtures_use_the_generic_helper_only_for_residual_opcodes() {
         let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
@@ -269,12 +291,24 @@ mod tests {
                     let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);
                     let row = decode_step(0, instruction, process);
                     if row.step == Some(Step::Helper) {
-                        assert!(RESIDUAL.contains(&instruction.op()), "{path:?}: {:?} takes the generic helper", instruction.op());
+                        assert!(RESIDUAL.contains(&instruction.op()) || !instruction.op().traits().has(Traits::LANE_IN_PLACE), "{path:?}: {:?} takes the generic helper", instruction.op());
                         assert_eq!(row.target.is_some(), instruction.op().control_flow_layout().jumps(), "{:?}", instruction.op());
                     }
                 }
             }
         }
+    }
+
+    /// The scope, operator, constant and class steps `Op::steps_in_body` names are helper steps of
+    /// the instruction that has no flags, and leave where it has them.
+    #[test]
+    fn body_steps_are_helper_steps_without_result_flags() {
+        let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+        for op in [Op::CloneEnv, Op::InitializeTdz, Op::StoreEnvLocal, Op::LoadConst, Op::ValidateClassHeritage, Op::LoadName] {
+            assert_eq!(lowering(instruction(op), process), Step::Helper, "{op:?}");
+        }
+        let flagged = WideInstruction::new(Op::Binary, 1 | crate::bytecode::RETURN_REGISTER, 2, 3, 0);
+        assert_eq!(lowering(flagged, process), Step::Leave);
     }
 
     /// A function holding a Wasm opcode is no b-jit body; the catalog's other opcodes are covered.

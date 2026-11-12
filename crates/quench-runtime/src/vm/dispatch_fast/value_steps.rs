@@ -47,12 +47,16 @@ unsafe fn lane_body_value_step_record<H: Host>(_vm: u64, _residual: u64, context
 }
 
 /// The record at `call_pc`, an instruction whose general step only continues, jumps or throws
-/// (`lane_steps_in_place`), made by that step on the running frame as `lane_general_step` makes
-/// it: `LANE_CALL_COMPLETED` with its effects in the frame, `LANE_CALL_BRANCHED` where it also took
-/// its conditional jump (`ForInNext` past its last key), or `LANE_CALL_MISSED` where it raised
-/// (the error stashed for the general path to raise at the record) or where the record is no
-/// in-place step or runs where it has no frame of its own (frameless activations, a native callee's
-/// shadow frames, whose registers and function are not the running frame's); nothing ran then.
+/// (`Op::steps_in_body`: the lane's own in-place steps and those that may replace the frame's
+/// environment), made by that step on the running frame as
+/// `lane_general_step` makes it: `LANE_CALL_COMPLETED` with its effects in the frame,
+/// `LANE_CALL_BRANCHED` where it also took its conditional jump (`ForInNext` past its last key),
+/// or `LANE_CALL_MISSED` where it raised (the error stashed for the general path to raise at the
+/// record, which is how a body's `throw` ends it) or where the record is no such step or runs
+/// where it has no frame of its own (frameless activations, a native callee's shadow frames,
+/// whose registers and function are not the running frame's); nothing ran then. The step may have
+/// replaced the frame's environment, so the lane's capture caches, which name the old one, are
+/// dropped after it (`lane_clone_env`).
 /// `lane_body_step_record`, then the heap bases the body's rows read through the payload reloaded
 /// (`Vm::refresh_body_bases`): the step may have allocated or run guest code.
 ///
@@ -74,7 +78,7 @@ unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64,
     let (code, frame, ip) = unsafe { (&*(*cx).code, (*cx).frame, (*cx).base.add(call_pc as usize)) };
     let function = code.function(vm.frames[frame].function as usize);
     let instruction = decoded_instruction(function, function.code[call_pc as usize]);
-    if !lane_steps_in_place(instruction.op()) { return LANE_CALL_MISSED; }
+    if !instruction.op().steps_in_body() { return LANE_CALL_MISSED; }
     let following = call_pc as usize + 1;
     let branched = lane_in_place(cx, ip, |vm, code| {
         let mut next = following;
@@ -83,6 +87,12 @@ unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64,
             next != following
         })
     });
+    // SAFETY: as above; the dropped caches are derived again where the lane next needs them.
+    unsafe {
+        (*cx).capture = std::ptr::null();
+        (*cx).outer = NO_OUTER_WALK;
+        (*cx).frame_storage = NO_FRAME_STORAGE;
+    }
     match branched {
         Some(true) => LANE_CALL_BRANCHED,
         Some(false) => LANE_CALL_COMPLETED,

@@ -335,3 +335,62 @@ fn folded_prototype_reads_see_changes_a_call_in_the_body_makes() {
     );
     assert_eq!(interpreted, compiled);
 }
+
+/// `typeof`, `instanceof` and `in` are the interpreter's operations made in place by the step
+/// helper, for every kind of operand: the body completes and prints what the interpreter prints.
+#[test]
+fn typeof_instanceof_and_in_run_in_a_body() {
+    assert_bodies_never_leave(
+        "function kind(v) { return (typeof v === 'number' ? 1 : 0) + (typeof v === 'string' ? 2 : 0) + (typeof v === 'function' ? 4 : 0) + (typeof v === 'undefined' ? 8 : 0); }
+         function has(o, k) { return k in o ? 1 : 0; }
+         function inst(v, c) { return v instanceof c ? 1 : 0; }
+         const values = [1, 'a', function () {}, undefined, null, {}, [], 2.5]; let t = 0;
+         for (let k = 0; k < 300; k++) t = (t + kind(values[k % 8]) + has({ p: 1 }, k % 2 ? 'p' : 'q') + inst([], k % 2 ? Array : Object)) | 0;
+         print(t); print(kind(Symbol())); print(has([1, 2], 1)); print(has([1, 2], 'length')); print(inst(function () {}, Function));",
+    );
+    let (interpreted, compiled, _) = run_both(
+        "function has(o, k) { return k in o; }
+         function inst(v, c) { return v instanceof c; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + (has({ p: 1 }, 'p') ? 1 : 0) + (inst([], Array) ? 1 : 0)) | 0;
+         print(t);
+         try { has(5, 'p'); } catch (e) { print(e.constructor.name); }
+         try { inst({}, 5); } catch (e) { print(e.constructor.name); }
+         try { inst({}, { [Symbol.hasInstance]() { throw new Error('h'); } }); } catch (e) { print(e.message); }",
+    );
+    assert_eq!(interpreted, compiled);
+}
+
+/// A block scope per iteration (`CloneEnv`) with closures that capture its bindings, and a
+/// binding in its temporal dead zone, run in the body: each closure sees its own iteration's copy.
+#[test]
+fn block_scopes_with_closures_run_in_a_body() {
+    assert_bodies_never_leave(
+        "function scopes(n) { let first, last; for (let j = 0; j < n; j++) { let c = j * 2; const g = function () { return c + j; }; if (j === 0) first = g; else last = g; } return (first ? first() : 0) + (last ? last() : 0); }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + scopes(k % 6)) | 0;
+         print(t); print(scopes(4));",
+    );
+    let (interpreted, compiled, _) = run_both(
+        "function tdz(n) { let s = 0; for (let i = 0; i < n; i++) { try { s = s + z; let z = 1; } catch (e) { s = s + 1; } } return s; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + tdz(k % 5)) | 0;
+         print(t); print(tdz(3));",
+    );
+    assert_eq!(interpreted, compiled);
+}
+
+/// A class's construction (the constructor's own body, `super`, heritage validation and a method
+/// that reads `super`) prints what the interpreter prints; the constructions leave their callers'
+/// bodies (`Construct` is the interpreter's).
+#[test]
+fn class_construction_and_super_print_what_the_interpreter_prints() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "class A { constructor(v) { this.v = v; } get() { return this.v; } }
+         class B extends A { constructor(v) { super(v + 1); this.w = 2; } get() { return super.get() * this.w; } }
+         function make(v) { return new B(v).get(); }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + make(k % 5)) | 0;
+         print(t);
+         try { class Bad extends 5 {} } catch (e) { print(e.constructor.name); }
+         try { new (class C extends A { constructor() { this.x = 1; } })(); } catch (e) { print(e.constructor.name); }",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+}
