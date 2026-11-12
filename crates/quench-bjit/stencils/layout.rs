@@ -69,6 +69,8 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) header_length_offset: usize,
     pub(crate) header_values_offset: usize,
     pub(crate) header_owners_offset: usize,
+    pub(crate) header_capacity_offset: usize,
+    pub(crate) capacity_mask: u32,
     pub(crate) object_offset: usize,
     pub(crate) frozen_mask: u32,
 }
@@ -82,6 +84,8 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     header_length_offset: 4,
     header_values_offset: 16,
     header_owners_offset: 0,
+    header_capacity_offset: 8,
+    capacity_mask: 2147483647,
     object_offset: 0,
     frozen_mask: 2147483648,
 };

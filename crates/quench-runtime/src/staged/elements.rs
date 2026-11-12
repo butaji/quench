@@ -131,6 +131,20 @@ pub(crate) fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S
     Some(grown)
 }
 
+/// Appends `value`, a Number word whose store passes the write barrier unlogged, at the length
+/// of the writable `backing` (`writable_backing`) while its capacity word proves a slot past the
+/// length; `None` (leaving at `miss`, before any write) for a full backing, which the VM grows.
+/// The capacity word changes only where the backing is allocated or grown, so room is a layout
+/// fact the row reads, not a VM reserve.
+#[inline(always)]
+pub(crate) fn append_in_room<S: Stage>(stage: &mut S, backing: Backing<S::Word>, value: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let word = stage.load_u32(backing.header, ARRAY.header_capacity_offset as i32);
+    let capacity = stage.and_imm(word, u64::from(ARRAY.capacity_mask));
+    append_element(stage, backing.values, backing.length, capacity, backing.length, value, miss)
+}
+
 /// A backing's count of other values once a write added `added` and overwrote `removed`;
 /// `OTHERS_UNKNOWN` stays unknown. Subtracting first keeps an exact count from overflowing.
 #[inline(always)]
@@ -251,5 +265,30 @@ mod tests {
         elements.reserve(1);
         assert_eq!(append(elements, full, Value::number(0.25)), Some(full as u64 + 1));
         assert_eq!(others(elements), u64::from(crate::heap::OTHERS_UNKNOWN), "an unknown count stays unknown");
+    }
+
+    /// `append_in_room` on `Concrete` over `elements`' own backing, whose header sits
+    /// `header_values_offset` before its values.
+    fn append_in_room_of(elements: &mut crate::heap::UniqueElements, value: Value) -> Option<u64> {
+        use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+        let values = elements.as_mut_ptr() as u64;
+        let header = values - ARRAY.header_values_offset as u64;
+        let backing = Backing { record: 0, header, values, length: elements.len() as u64 };
+        append_in_room(&mut Concrete::new(std::ptr::null()), backing, value.to_bits(), ())
+    }
+
+    #[test]
+    fn an_append_in_room_reads_the_capacity_word_and_leaves_where_the_backing_is_full() {
+        let mut backing = crate::heap::ArrayElements::from_slice(&[Value::integer(1)]);
+        let elements = backing.make_mut();
+        elements.reserve(2);
+        let room = (elements.capacity() - elements.len()) as u64;
+        assert!(room >= 2);
+        for grown in 2..2 + room {
+            assert_eq!(append_in_room_of(elements, Value::integer(0)), Some(grown));
+        }
+        assert_eq!(elements.len(), elements.capacity());
+        assert_eq!(append_in_room_of(elements, Value::integer(0)), None, "a full backing leaves for the VM to grow it");
+        assert_eq!(elements.len(), elements.capacity(), "the leave wrote nothing");
     }
 }

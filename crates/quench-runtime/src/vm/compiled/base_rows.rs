@@ -73,6 +73,10 @@ pub(super) enum Heap {
     /// The fast arm of `ToPropertyKey`: the register at hole 1 holds a direct string, which is copied to
     /// the register at hole 0, else the row leaves into the helper step after it.
     Key,
+    /// The fast arm of `AppendArray` (`elements::append_in_room`): the Number operand at hole 1 is appended to
+    /// the unique writable dense array in the frame slot of hole 0 where the backing's capacity word proves
+    /// room, else the row leaves into the helper step after it, which grows the backing.
+    Append,
 }
 
 /// A heap row: its operation and where its operands and destination live.
@@ -110,6 +114,7 @@ impl Heap {
             Heap::Live => library::LIVE_ROW,
             Heap::Object => library::OBJECT_ROW,
             Heap::Key => library::KEY_ROW,
+            Heap::Append => library::APPEND_ROW,
         }
     }
 
@@ -117,7 +122,7 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key)
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key | Heap::Append)
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value

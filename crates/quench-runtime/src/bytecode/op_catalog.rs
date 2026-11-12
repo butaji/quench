@@ -3,7 +3,6 @@
 //! `opcodes!` table expands into `Op::class` and `Op::traits`.
 use super::Op;
 pub(crate) use super::opcode_table::{OPCODE_COUNT, opcode_name};
-
 /// A tier's operation family, declared once by the catalog (`Op::class`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -112,6 +111,7 @@ pub(crate) enum Class {
     MakeObject2,
     MakeObjectLiteral,
     PrivateIn,
+    AppendArray,
     RequireIteratorResult,
     StoreCapture,
     StoreEnvLocal,
@@ -240,6 +240,7 @@ macro_rules! class_of {
     (MakeObject2) => { Class::MakeObject2 };
     (MakeObjectLiteral) => { Class::MakeObjectLiteral };
     (PrivateIn) => { Class::PrivateIn };
+    (AppendArray) => { Class::AppendArray };
     (RequireIteratorResult) => { Class::RequireIteratorResult };
     (StoreCapture) => { Class::StoreCapture };
     (StoreEnvLocal) => { Class::StoreEnvLocal };
@@ -404,7 +405,6 @@ macro_rules! traits_of {
     (WasmIndirectTarget) => { Traits::UNROLL_EXCLUDED };
     ($other:ident) => { Traits::NONE };
 }
-
 
 pub(crate) use super::denotation::JsDenotation;
 

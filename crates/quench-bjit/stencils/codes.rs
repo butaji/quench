@@ -79,6 +79,11 @@ pub const LIVE_ROW: u8 = 16;
 /// helper step laid out after the row; a miss leaves through EXIT0 into it.
 pub const OBJECT_ROW: u8 = 17;
 pub const KEY_ROW: u8 = 18;
+/// `AppendArray`'s fast arm: the Number operand (hole 1) appended to the unique writable dense array at the
+/// frame slot of hole 0 where the backing's capacity word proves room (`elements::append_in_room`). A hit
+/// continues at TAKEN, past the helper step laid out after the row (which grows the backing); a miss
+/// leaves through EXIT0 into it.
+pub const APPEND_ROW: u8 = 19;
 /// Bits below the prototype link in a folded read's hole 1, which carries the receiver's exact shape beneath it.
 pub const HELD_LINK_AT: u32 = 32;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries

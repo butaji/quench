@@ -80,6 +80,9 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) header_values_offset: usize,
     /// The backing's owner count, one where no other array shares it.
     pub(crate) header_owners_offset: usize,
+    /// The backing's capacity word: the values it has room for, under `capacity_mask`.
+    pub(crate) header_capacity_offset: usize,
+    pub(crate) capacity_mask: u32,
     /// The record's object part, whose meta and payload words `NATIVE_OBJECT_LAYOUT` names.
     pub(crate) object_offset: usize,
     /// The meta bit of a frozen array.
@@ -110,6 +113,8 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     header_length_offset: array_elements::NATIVE_HEADER_LENGTH_OFFSET,
     header_values_offset: array_elements::NATIVE_HEADER_VALUES_OFFSET,
     header_owners_offset: array_elements::NATIVE_HEADER_OWNERS_OFFSET,
+    header_capacity_offset: array_elements::NATIVE_HEADER_CAPACITY_OFFSET,
+    capacity_mask: array_elements::NATIVE_HEADER_CAPACITY_MASK,
     object_offset: cell::NATIVE_ARRAY_OBJECT_OFFSET,
     frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
 };

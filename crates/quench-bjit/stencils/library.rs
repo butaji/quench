@@ -169,7 +169,7 @@ pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
         SITE_ROW | THIS_SITE_ROW | HELD_ROW => (heap, entry, dst, MEM, MEM),
         INDEX_ROW => (heap, entry, dst, MEM, b),
         STORE_ROW => (heap, entry, MEM, a, b),
-        STORE_LOCAL_ROW | CAPTURE_SET_ROW | SITE_STORE_ROW | THIS_STORE_ROW => (heap, false, MEM, a, MEM),
+        STORE_LOCAL_ROW | CAPTURE_SET_ROW | SITE_STORE_ROW | THIS_STORE_ROW | APPEND_ROW => (heap, false, MEM, a, MEM),
         _ => (heap, false, MEM, MEM, MEM),
     }
 }
@@ -198,7 +198,7 @@ pub fn heap_library() -> Vec<HeapCode> {
     for &dst in &dsts {
         rows.extend([THIS_ROW, LOAD_LOCAL_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
     }
-    for heap in [STORE_LOCAL_ROW, CAPTURE_SET_ROW, SITE_STORE_ROW, THIS_STORE_ROW] {
+    for heap in [STORE_LOCAL_ROW, CAPTURE_SET_ROW, SITE_STORE_ROW, THIS_STORE_ROW, APPEND_ROW] {
         rows.extend(srcs.iter().map(|&a| heap_canonical((heap, false, MEM, a, MEM))));
     }
     rows.extend([ARRAY_ROW, IDENTITY_ROW, LIVE_ROW, OBJECT_ROW, KEY_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));

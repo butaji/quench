@@ -58,6 +58,8 @@ const FAMILIES: &[(&str, &str)] = &[
     ("iterator-result-record-then-done", "var n = 0; for (var v of { [Symbol.iterator]() { return { next() { return n++ < 3 ? { value: n, done: false } : { done: true }; } }; } }) acc += v;"),
     ("define-field-shape-change", "class B { constructor(n) { if (n) this.pre = 1; } } class D extends B { a = i; b = 2; } t = new D(i % 50 === 0); acc += t.a + t.b + ('pre' in t ? 1 : 0);"),
     ("append-array-non-dense-spread", "var sp = i % 40 === 0 ? [1, , 3] : i % 40 === 1 ? 'ab' : arr; t = [0, ...sp, 9]; acc += t.length;"),
+    ("append-array-element-after-spread-hits-and-misses", "t = [...arr, i, i / 4, i & 1 ? 'x' : i, {a: i}]; acc += t.length + t[4] + (typeof t[6] === 'string' ? 1 : 0);"),
+    ("append-array-grows-past-capacity", "t = [...arr, ...arr, ...arr, i, i, i, i, i]; acc += t.length + t[12];"),
     ("for-in-mutated-object", "var m = {a: 1, b: 2, c: 3}; for (var key in m) { if (key === 'a') { delete m.b; m.d = 4; } acc += key.length; }"),
     ("for-of-break", "for (var v of arr) { if (v > 2) break; acc += v; }"),
     ("array-spread", "t = [...arr, i]; acc += t.length;"),

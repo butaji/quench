@@ -13,7 +13,8 @@
 //!    answers branched where the interpreter's step took it, which continues at the reloads of the
 //!    registers live at the target (`branching`).
 //!    Where the instruction's meaning has a fast arm that a register's own word decides
-//!    (`staged::iteration`: `RequireIteratorResult`, `ToPropertyKey`), the run is that arm's heap row
+//!    (`staged::iteration`: `RequireIteratorResult`, `ToPropertyKey`) or the backing's layout words
+//!    (`staged::elements::append_in_room`: a one-element `AppendArray`), the run is that arm's heap row
 //!    first (`Step::Fast`, `plan_fast`): its hit hops past the helper step to the next instruction,
 //!    and its miss enters the helper step laid out behind it, the slow arm, so the generic step is
 //!    only the operation's remainder.
@@ -34,7 +35,7 @@
 use super::*;
 use super::call_plan::{self, CallChain, CallPart, CallPlan, CallShape, Choice};
 use super::super::{LaneHelper, LaneHelpers};
-use crate::bytecode::{Op, Traits};
+use crate::bytecode::{InstructionField, Op, Traits};
 use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
 
@@ -99,13 +100,31 @@ fn steps_in_place(instruction: WideInstruction) -> bool {
     instruction.op().traits().has(Traits::LANE_IN_PLACE) && instruction.result_flags() == 0 && instruction.written_registers().count() <= 1
 }
 
-/// The heap row that is the fast arm of `instruction`, where its meaning has one its operand
-/// register's word decides (`staged::iteration`); both read register B.
+/// The heap row that is the fast arm of `instruction`, where its meaning has one that a register's
+/// word (`staged::iteration`) or the backing's own layout words (`elements::append_in_room`) decide.
 fn fast_arm(instruction: WideInstruction) -> Option<Heap> {
     match instruction.op().class() {
         Class::RequireIteratorResult => Some(Heap::Object),
         Class::ToPropertyKey => Some(Heap::Key),
+        Class::AppendArray => appends_one(instruction).then_some(Heap::Append),
         _ => None,
+    }
+}
+
+/// Whether an `AppendArray` is one element (not a spread, not elisions) defined at the literal's
+/// length: the case a capacity word decides.
+fn appends_one(instruction: WideInstruction) -> bool {
+    instruction.array_length() == 0
+        && instruction.optional_register_b().is_some()
+        && instruction.boolean_field(InstructionField::C) == Some(false)
+}
+
+/// The registers a fast arm reads: its operand in `a`, and for an append the array it writes
+/// through, the way a store names its array (`Decoded::base`).
+fn fast_operands(instruction: WideInstruction, fast: Heap) -> (Option<Source>, Option<Register>) {
+    match fast {
+        Heap::Append => (instruction.optional_register_b().map(Source::Register), Some(instruction.register_a())),
+        _ => (Some(Source::Register(instruction.register_b())), None),
     }
 }
 
@@ -131,8 +150,11 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, helpers: LaneHe
             let helped = step.runs_helper();
             let written = if helped { instruction.written_registers().next() } else { None };
             let target = (helped && instruction.op().control_flow_layout().jumps()).then(|| instruction.jump_target());
-            let read = matches!(step, Step::Fast(_)).then(|| Source::Register(instruction.register_b()));
-            Decoded { target, a: read, ..Decoded::step(step, written) }
+            let (read, base) = match step {
+                Step::Fast(fast) => fast_operands(instruction, fast),
+                _ => (None, None),
+            };
+            Decoded { target, a: read, base, ..Decoded::step(step, written) }
         }
     }
 }
@@ -202,12 +224,17 @@ fn plan_helper(layout: &Layout, pc: u32, target: Option<u32>, helpers: LaneHelpe
 /// The run of a fast arm at `pc`: the heap row `fast` over the operand's frame slot, whose hit hops
 /// past the rest of the run to the next instruction, and behind it the helper step the row leaves
 /// into where its proof fails. An operand or result held outside its frame slot (a pinned register
-/// holds a Number, which no fast arm takes) has the helper step alone.
+/// holds a Number, which no fast arm takes but an append's element) has the helper step alone. An
+/// append's frame slot is its array's, a Number element read from wherever it lives; any other arm
+/// writes its destination's.
 fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     let slow = plan_helper(layout, pc, None, helpers)?;
     let homes = &layout.homes;
-    let ((read, read_hole), (written, written_hole)) = (operand(homes, decoded.a), operand(homes, decoded.dst.map(Source::Register)));
-    if read != Place::Mem || written != Place::Mem {
+    let appends = fast == Heap::Append;
+    let (read, read_hole) = operand(homes, decoded.a);
+    let slot = if appends { decoded.base } else { decoded.dst };
+    let (written, written_hole) = operand(homes, slot.map(Source::Register));
+    if written != Place::Mem || (read != Place::Mem && !appends) {
         return Ok(slow);
     }
     let row = HeapRow { heap: fast, dst: written, a: read, b: Place::Mem, entry: false };
@@ -327,7 +354,7 @@ mod tests {
         Op::SetFunctionDebugName,
         // Defines through the sparse-or-dense element store, which allocates and grows the backing.
         Op::DefineArrayElement,
-        // The room past the length is proved only by a VM reserve (`LaneHelper::AppendRoom`): the backing header holds no capacity.
+        // A spread iterates (guest code) and elisions set a sparse length; only the one-element append has a fast arm (the capacity word), and this helper is its slow arm, which grows the backing.
         Op::AppendArray,
         // Enumerates the source's keys and runs guest code (getters, proxies).
         Op::CopyDataProperties,
@@ -370,6 +397,23 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A one-element append is a fast row over the backing's capacity word; a spread, an elision count
+    /// or no element leave the generic helper step alone.
+    #[test]
+    fn a_one_element_append_has_a_fast_row_and_a_spread_the_helper_alone() {
+        use crate::bytecode::encode_optional_register;
+        let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+        let append = |element: Option<u16>, spread: u16, elisions: u32| {
+            lowering(WideInstruction::new(Op::AppendArray, 1, encode_optional_register(element), spread, elisions), process)
+        };
+        assert_eq!(append(Some(2), 0, 0), Step::Fast(Heap::Append));
+        assert_eq!(append(Some(2), 1, 0), Step::Helper);
+        assert_eq!(append(Some(2), 0, 1), Step::Helper);
+        assert_eq!(append(None, 0, 2), Step::Helper);
+        let row = decode_step(0, WideInstruction::new(Op::AppendArray, 1, encode_optional_register(Some(2)), 0, 0), process);
+        assert!(matches!(row.a, Some(Source::Register(2))) && row.base == Some(1) && row.dst.is_none());
     }
 
     /// A function holding a Wasm opcode is no b-jit body; the catalog's other opcodes are covered.

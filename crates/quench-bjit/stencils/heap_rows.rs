@@ -30,7 +30,7 @@ use crate::staged::{Stage, Step, elements, entry, environment, iteration, load_t
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW,
+    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW, APPEND_ROW,
 };
 
 unsafe extern "C" {
@@ -295,6 +295,17 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
     Out::Next(s)
 }
 
+/// `AppendArray`'s fast arm: the Number operand (hole 1) appended to the array at hole 0 where its
+/// backing is writable and its capacity word has room (`elements::append_in_room`); a hit continues at TAKEN.
+#[inline(always)]
+fn append_row<const A: u8>(s: S, payload: usize) -> Out {
+    let word = need!(s, number_word::<A, HOLE_A>(&s));
+    let (_, _, backing) = need!(s, backing::<false, 0, true>(&s, payload));
+    let mut stage = StencilStage::from_hole(ELEMENT_SITES);
+    need!(s, elements::append_in_room(&mut stage, backing, word, ()));
+    Out::Taken(s)
+}
+
 #[inline(always)]
 pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, const B: u8>(s: S) -> Out {
     let payload = payload(&s);
@@ -311,6 +322,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         ARRAY_ROW => array_row(s),
         OBJECT_ROW => object_row(s),
         KEY_ROW => key_row(s),
+        APPEND_ROW => append_row::<A>(s, payload),
         IDENTITY_ROW => identity_row(s),
         THIS_ROW => this_row::<D>(s),
         LOAD_LOCAL_ROW => load_local_row::<D>(s),
