@@ -1,11 +1,11 @@
 use super::program_store::ProgramId;
 use crate::Value;
 
-mod generator_frame;
+mod frame_record;
 mod generator_record;
-pub(crate) use generator_frame::GeneratorFrame;
+pub(crate) use frame_record::FrameRecord;
 #[cfg(test)]
-pub(in crate::vm) use generator_frame::frames_made;
+pub(in crate::vm) use frame_record::frames_made;
 pub(crate) use generator_record::{GeneratorRecord, GeneratorState};
 
 /// The only state that crosses an activation boundary. The value is kept as a
@@ -181,12 +181,12 @@ impl CallContext {
     }
 }
 
-/// A suspended activation: its frame record (`GeneratorFrame`), which owns the frame state,
+/// A suspended activation: its frame record (`FrameRecord`), which owns the frame state,
 /// and what its resumer reads. Suspending moves the frame's state into the record and
-/// resuming moves it back out (`GeneratorFrame::into_frame`), so neither copies it nor gives up its storage.
+/// resuming moves it back out (`FrameRecord::into_frame`), so neither copies it nor gives up its storage.
 #[derive(Clone)]
 pub(crate) struct Continuation {
-    pub frame: Box<GeneratorFrame>,
+    pub frame: Box<FrameRecord>,
     pub completion: Completion,
     pub resume_register: Option<u16>,
     pub promise: Value,
@@ -225,14 +225,14 @@ impl Continuation {
         resume_register: Option<u16>,
         promise: Value,
     ) -> Self {
-        Self { frame: GeneratorFrame::capture(frame), completion, resume_register, promise }
+        Self { frame: FrameRecord::capture(frame), completion, resume_register, promise }
     }
 
     /// A lane resumes the frame as an activation over its register file, which stays in this
     /// continuation's record: the frame's address, which its box keeps until the run ends,
     /// and the register that takes the value the run resumes with. Every register is live
     /// while it runs.
-    pub(crate) fn begin_window(&mut self) -> (*mut GeneratorFrame, Option<u16>) {
+    pub(crate) fn begin_window(&mut self) -> (*mut FrameRecord, Option<u16>) {
         self.frame.live_registers = None;
         (&raw mut *self.frame, self.resume_register)
     }
@@ -243,7 +243,7 @@ impl Continuation {
     }
 
     /// Its edges, appended to `out`: the GC traces every suspended frame this way
-    /// (`GeneratorFrame::extend_roots`).
+    /// (`FrameRecord::extend_roots`).
     pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
         self.frame.extend_roots(out);
         out.extend(match self.completion {

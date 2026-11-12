@@ -1,12 +1,12 @@
 //! Names a window activation resolves through its scope: the `with` objects of its chain
-//! (`LaneStack::with_chain`) and the dynamic bindings of its record (`GeneratorFrame`). A
+//! (`LaneStack::with_chain`) and the dynamic bindings of its record (`FrameRecord`). A
 //! suspending function that reaches names this way (`CallPlan::suspended_environment`) runs
 //! its by-name loads and stores, local stores and closures here instead of in a frame, where
 //! `Vm::find_with_binding`, `Vm::load_name_call` and `Vm::closure_in_realm` make them. A lookup
 //! the shapes of the objects alone do not decide, or that no `with` object or dynamic binding of
 //! the activation answers, leaves the instruction to the general path before any effect.
 use super::*;
-use super::super::activation::GeneratorFrame;
+use super::super::activation::FrameRecord;
 use crate::bytecode::Atom;
 
 /// What a name lookup reads of the window activation making it, in the terms of the frame
@@ -21,7 +21,7 @@ struct WindowScope {
     /// closure's.
     env: Value,
     captured: bool,
-    record: *mut GeneratorFrame,
+    record: *mut FrameRecord,
     /// The resume pc of the binding site the access is at (`Frame::binding_site_pc`), if it is
     /// at one.
     site: Option<u32>,

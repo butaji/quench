@@ -1786,7 +1786,7 @@ pub(crate) struct CallPlan {
     /// A function that suspends whose frame locals and environment ride a window past its
     /// registers (`locals_ride_window`), which a lane resumes as an activation over the
     /// frame's register file, binding the window from the record as a call binds a fresh one
-    /// (`GeneratorFrame::open_environment_window`) and storing it back at the suspension. Its
+    /// (`FrameRecord::open_environment_window`) and storing it back at the suspension. Its
     /// names may resolve through `with` objects and dynamic bindings, which its record carries
     /// and its window's handlers read (`suspends_scoped`, `scoped_names`).
     pub(crate) suspended_environment: bool,
@@ -2334,8 +2334,8 @@ impl Function {
 
     /// Whether a function that suspends in a record may lay out an environment window though it
     /// resolves names through `with` objects, binding sites or dynamic bindings, which its record
-    /// and its activation's scope chain carry (`GeneratorFrame::with_objects`,
-    /// `GeneratorFrame::dynamic_bindings`): one that makes no iteration copy of its environment
+    /// and its activation's scope chain carry (`FrameRecord::with_objects`,
+    /// `FrameRecord::dynamic_bindings`): one that makes no iteration copy of its environment
     /// (`CloneEnv`), which would have to share them (`Vm::iteration_environment`).
     pub(crate) fn suspends_scoped(&self) -> bool {
         self.suspends_in_record() && !self.instructions().any(|instruction| instruction.op() == Op::CloneEnv)

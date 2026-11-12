@@ -1,6 +1,6 @@
 //! A `with` statement's scope chain is data on the lane stack while a frameless activation
 //! runs it (`LaneStack::with_objects`), and in the record of a suspended frame between runs
-//! (`GeneratorFrame::with_objects`): entering, leaving and returning through a `with` in a lane
+//! (`FrameRecord::with_objects`): entering, leaving and returning through a `with` in a lane
 //! run agree with the interpreter's. A suspending function that resolves names through `with`
 //! objects, binding sites or a direct eval's dynamic bindings resumes in its window
 //! (`CallPlan::suspended_environment`, `scoped_names`), as the interpreter's frame does.

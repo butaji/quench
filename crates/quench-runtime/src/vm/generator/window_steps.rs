@@ -1,15 +1,15 @@
 //! A generator the lane runs as an activation over its suspended frame's register file
-//! (`GeneratorFrame`): the record keeps the frame while the activation runs, so a resume
+//! (`FrameRecord`): the record keeps the frame while the activation runs, so a resume
 //! makes no `Box<Frame>` and copies no register, and a yield suspends the frame in place.
 use super::*;
-use super::super::activation::GeneratorFrame;
+use super::super::activation::FrameRecord;
 
 impl<H: Host> Vm<H> {
     /// The frame of `generator` the lane resumes as an activation over its register file, which
     /// `code`, the running program's, lays out as its registers or with an environment window
     /// after them (`window_layout`, the `bool`): a suspended generator of this realm and
     /// program that is not running or done.
-    pub(in crate::vm) fn generator_window_frame(&self, generator: Value, code: &ResidualProgram) -> Option<(&GeneratorFrame, bool)> {
+    pub(in crate::vm) fn generator_window_frame(&self, generator: Value, code: &ResidualProgram) -> Option<(&FrameRecord, bool)> {
         let IteratorRecord { ext, .. } = self.heap.iterator(generator)?;
         let record = ext.generator.as_deref()?;
         let frame = &*record.suspended_continuation()?.frame;
@@ -21,7 +21,7 @@ impl<H: Host> Vm<H> {
     /// file, and whether its window carries an environment after the registers: a frame of the
     /// active program whose function lays out as its registers or with an environment window
     /// (`CallPlan::suspended_registers`, `CallPlan::suspended_environment`).
-    pub(in crate::vm) fn window_layout(&self, frame: &GeneratorFrame, code: &ResidualProgram) -> Option<bool> {
+    pub(in crate::vm) fn window_layout(&self, frame: &FrameRecord, code: &ResidualProgram) -> Option<bool> {
         let plan = code.function_get(frame.function as usize)?.call_plan(code);
         (frame.program == self.active_program && (plan.suspended_registers || plan.suspended_environment))
             .then_some(plan.suspended_environment)
@@ -31,7 +31,7 @@ impl<H: Host> Vm<H> {
     /// (`dynamic_bindings`: `new.target`, `super`'s home) that closures made in the window
     /// observe: the environment promotion makes of the frame (`promoted_environment`), which owns
     /// the captured locals and takes the bindings over. Its slot storage.
-    pub(in crate::vm) fn promote_record_environment(&mut self, frame: &mut GeneratorFrame) -> *const crate::heap::EnvironmentSlots {
+    pub(in crate::vm) fn promote_record_environment(&mut self, frame: &mut FrameRecord) -> *const crate::heap::EnvironmentSlots {
         let bindings = std::mem::take(&mut frame.dynamic_bindings);
         let (env, slots) = self.promoted_environment(frame.env, frame.program, frame.function, &mut frame.locals, bindings);
         frame.env = env;
@@ -49,7 +49,7 @@ impl<H: Host> Vm<H> {
         generator: Value,
         sent: Value,
         depth: usize,
-    ) -> Option<*mut GeneratorFrame> {
+    ) -> Option<*mut FrameRecord> {
         let (frame, resume_register) = self.generator_record_mut(generator)?.resume_windowed()?;
         // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
         unsafe { &mut *frame }.receive(resume_register, sent);
@@ -90,7 +90,7 @@ impl<H: Host> Vm<H> {
     /// Suspends the frame of a windowed run at `pc`: the environment window closed, its dead
     /// registers cleared, and the iterators and `with` objects the activation at `depth` holds
     /// taken back.
-    pub(in crate::vm) fn park_frame(&mut self, frame: &mut GeneratorFrame, pc: usize, depth: usize) {
+    pub(in crate::vm) fn park_frame(&mut self, frame: &mut FrameRecord, pc: usize, depth: usize) {
         frame.close_environment_window();
         let live_registers = self.release_dead_registers(frame.program, frame.function, pc, &mut frame.registers);
         let with_objects = self.lane_stack.drain_with_objects(depth);
@@ -126,7 +126,7 @@ impl<H: Host> Vm<H> {
     /// lane resumed it.
     pub(in crate::vm) fn push_resumed_frame(
         &mut self,
-        mut frame: Box<GeneratorFrame>,
+        mut frame: Box<FrameRecord>,
         iterators: impl Iterator<Item = ActiveIterator>,
         with_objects: impl Iterator<Item = Value>,
     ) {

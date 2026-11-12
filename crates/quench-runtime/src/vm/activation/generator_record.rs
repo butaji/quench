@@ -1,6 +1,6 @@
 //! A generator's lifecycle: where it is, and the continuation it can resume from.
 
-use super::{AsyncGeneratorRequest, Completion, Continuation, GeneratorFrame};
+use super::{AsyncGeneratorRequest, Completion, Continuation, FrameRecord};
 use crate::snapshot::{Reader, Snap, SnapshotError, SnapshotResult, Writer};
 use crate::Value;
 use std::collections::VecDeque;
@@ -17,7 +17,7 @@ pub(crate) enum GeneratorLife {
     /// Running as a lane activation whose window is the frame's register file, which stays
     /// here: a yield or an await suspends it from here and a materialization takes it for its
     /// frame (`take_windowed`).
-    Windowed(Box<GeneratorFrame>),
+    Windowed(Box<FrameRecord>),
     /// An async generator busy awaiting a `yield`'s value, a `return`'s, or inside its body,
     /// its continuation still parked here: requests queue.
     Busy(Continuation),
@@ -137,7 +137,7 @@ impl GeneratorRecord {
     /// Its address, which the box keeps while it lives, and the register that takes the sent
     /// value (`Continuation::begin_window`); `None`, leaving the generator as it was, when it
     /// holds no frame to resume.
-    pub(crate) fn resume_windowed(&mut self) -> Option<(*mut GeneratorFrame, Option<u16>)> {
+    pub(crate) fn resume_windowed(&mut self) -> Option<(*mut FrameRecord, Option<u16>)> {
         match std::mem::replace(&mut self.life, GeneratorLife::Executing) {
             GeneratorLife::Suspended(mut continuation) | GeneratorLife::Busy(mut continuation) => {
                 let window = continuation.begin_window();
@@ -153,7 +153,7 @@ impl GeneratorRecord {
 
     /// The frame of a windowed run, taken: the generator executes without one (a yield
     /// suspends it again, a materialization makes its frame, a completion drops it).
-    pub(crate) fn take_windowed(&mut self) -> Option<Box<GeneratorFrame>> {
+    pub(crate) fn take_windowed(&mut self) -> Option<Box<FrameRecord>> {
         match std::mem::replace(&mut self.life, GeneratorLife::Executing) {
             GeneratorLife::Windowed(frame) => Some(frame),
             other => {

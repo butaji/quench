@@ -1,10 +1,10 @@
 //! A generator the lane resumes as an activation over its suspended frame's register file
-//! (`GeneratorFrame`, `Vm::resume_generator_window`): the record keeps the frame and its
+//! (`FrameRecord`, `Vm::resume_generator_window`): the record keeps the frame and its
 //! registers, which the activation's window is, so a resume allocates no `Box<Frame>` and
 //! copies no register. A `yield` suspends the frame in place and pops the activation, and a
 //! return completes the generator.
 use super::*;
-use super::super::activation::GeneratorFrame;
+use super::super::activation::FrameRecord;
 
 impl Activation {
     /// What its caller's frame resumes with when the activation becomes a frame, as the register
@@ -25,7 +25,7 @@ impl Activation {
 
 impl LaneStack {
     /// Pushes `activation` over the register file of a suspended frame, which its prefix names
-    /// (`GeneratorFrame::prefix`): the window is marked as no lane stack's (`HEAP_WINDOW`), so
+    /// (`FrameRecord::prefix`): the window is marked as no lane stack's (`HEAP_WINDOW`), so
     /// its return frees nothing there.
     ///
     /// # Safety
@@ -43,7 +43,7 @@ impl LaneStack {
     }
 
     /// The iterators the activation at `depth`, the innermost, pushed: its entries, the last,
-    /// which a suspended frame keeps (`GeneratorFrame::suspend_at`).
+    /// which a suspended frame keeps (`FrameRecord::suspend_at`).
     pub(in crate::vm) fn drain_iterators(&mut self, depth: usize) -> impl Iterator<Item = super::super::ActiveIterator> + '_ {
         let first = self.iterators.partition_point(|(owner, _)| *owner < depth);
         self.iterators.drain(first..).map(|(_, iterator)| iterator)
@@ -74,7 +74,7 @@ pub(super) fn lane_resume_generator_step<H: Host>(
     lane_resume_generator(cx, r, ip, generator, method, Value::UNDEFINED, Completion::Generates)
 }
 
-/// How a resumed generator's window carries its locals (`GeneratorFrame::open_environment_window`):
+/// How a resumed generator's window carries its locals (`FrameRecord::open_environment_window`):
 /// its function's captured-slot mask and, for a frame that made its environment, the slot storage
 /// of that environment.
 pub(super) struct WindowLocals {
@@ -162,12 +162,12 @@ fn lane_resume_generator<H: Host>(
     Some((Registers(window), start))
 }
 
-/// Lays `frame`'s environment window after its registers (`GeneratorFrame::open_environment_window`).
+/// Lays `frame`'s environment window after its registers (`FrameRecord::open_environment_window`).
 /// A frame holding implicit bindings makes its environment first, which owns them for the
 /// closures the window makes (`Vm::promote_record_environment`). An environment the frame made
 /// already is written through the window's stores without the barrier a heap write takes, so it
 /// joins the remembered set once, as a capture store's target does (`Vm::target_capture`).
-pub(super) fn open_window_locals<H: Host>(vm: &mut Vm<H>, frame: *mut GeneratorFrame, locals: WindowLocals) {
+pub(super) fn open_window_locals<H: Host>(vm: &mut Vm<H>, frame: *mut FrameRecord, locals: WindowLocals) {
     // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
     let frame = unsafe { &mut *frame };
     let own_slots = locals
@@ -188,7 +188,7 @@ struct GeneratorWindow {
     generator: Value,
     completion: Completion,
     environment: bool,
-    record: *mut GeneratorFrame,
+    record: *mut FrameRecord,
 }
 
 /// The activation of `window`'s generator for the call record at `ip`, made by the running

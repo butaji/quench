@@ -1361,7 +1361,7 @@ struct ScriptActivation {
     /// The record of the suspended frame a windowed activation runs over (`generator_windows`,
     /// `lane_roots`), which the lane's name lookups read the dynamic bindings of; null for any
     /// other activation.
-    record: *mut super::activation::GeneratorFrame,
+    record: *mut super::activation::FrameRecord,
 }
 
 /// A JavaScript activation's own receiver and environment, which it does not store
@@ -16156,7 +16156,7 @@ fn lane_activate_environment<H: Host>(
 /// `this`, where its closures' arrows find it (`Vm::captured_lexical_this`), as a frame's
 /// promotion carries its bindings; an arrow's own `this` is that same lexical value. The
 /// environment of a window activation that resolves names at run time also takes over the
-/// activation's dynamic `bindings` (`GeneratorFrame::dynamic_bindings`), as a frame's promotion
+/// activation's dynamic `bindings` (`FrameRecord::dynamic_bindings`), as a frame's promotion
 /// takes its own (`Vm::promote_frame_environment`); any other passes none.
 ///
 /// # Safety

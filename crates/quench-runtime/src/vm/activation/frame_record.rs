@@ -1,5 +1,7 @@
-//! The heap record of a suspended frame: everything its activation needs to run again,
-//! owned in one place instead of spread over a pooled `Frame` and its continuation.
+//! The heap record of a frame: everything its activation needs to run again, owned in one
+//! place instead of spread over a pooled `Frame` and its continuation. A suspended function's
+//! (a generator, an async function) holds it while suspended; an ordinary function that
+//! enters a `with` or binds dynamically gets one when it first does (`FrameRecord::of_activation`).
 
 use super::CallContext;
 use crate::bytecode::Atom;
@@ -12,13 +14,13 @@ use crate::vm::program_store::ProgramId;
 use crate::vm::{ActiveIterator, CaptureCache, Frame};
 use crate::Value;
 
-/// A suspended frame. The prefix is the one emitted code writes for a frame (`CALLEE`,
+/// A frame's record. The prefix is the one emitted code writes for a frame (`CALLEE`,
 /// `THIS`, `BODY`, `WINDOW`, `staged::frame`); its `WINDOW` word points into `registers`,
 /// whose buffer a move of the record leaves in place and a clone makes anew
 /// (`bind_window`). The receiver lives in the prefix alone (`this`); the program is the
 /// one the frame resumes in, and the realm the owner's (`GeneratorRecord::realm`, the await
 /// state's).
-pub(crate) struct GeneratorFrame {
+pub(crate) struct FrameRecord {
     prefix: ShadowFrame,
     pub(in crate::vm) context: CallContext,
     pub(in crate::vm) reflected_parameters: u16,
@@ -56,13 +58,13 @@ thread_local! {
     static FRAMES_MADE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// How many `Box<Frame>`s resuming made on this thread (`GeneratorFrame::into_frame`).
+/// How many `Box<Frame>`s resuming made on this thread (`FrameRecord::into_frame`).
 #[cfg(test)]
 pub(in crate::vm) fn frames_made() -> usize {
     FRAMES_MADE.get()
 }
 
-impl GeneratorFrame {
+impl FrameRecord {
     /// Binds `WINDOW` to the register file's first register.
     fn bind_window(&mut self) {
         self.prefix.window = self.registers.as_mut_ptr().addr();
@@ -227,9 +229,9 @@ impl GeneratorFrame {
     }
 }
 
-impl std::fmt::Debug for GeneratorFrame {
+impl std::fmt::Debug for FrameRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GeneratorFrame")
+        f.debug_struct("FrameRecord")
             .field("program", &self.program)
             .field("function", &self.function)
             .field("pc", &self.pc)
@@ -237,7 +239,7 @@ impl std::fmt::Debug for GeneratorFrame {
     }
 }
 
-impl Clone for GeneratorFrame {
+impl Clone for FrameRecord {
     fn clone(&self) -> Self {
         let mut copy = Self {
             prefix: self.prefix,
@@ -265,7 +267,7 @@ impl Clone for GeneratorFrame {
 
 /// A suspended frame as a snapshot records it, field by field; a restored frame traces all
 /// its registers (`live_registers`) and starts its run anew on resume.
-impl Snap for GeneratorFrame {
+impl Snap for FrameRecord {
     fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
         self.context.snap(writer)?;
         self.reflected_parameters.snap(writer)?;

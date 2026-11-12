@@ -4,7 +4,7 @@
 use crate::Value;
 
 /// The low bit of an activation's `WINDOW` word when its window is not the lane stack's: a
-/// suspended frame's register file (a generator's, `GeneratorFrame`), which a return leaves
+/// suspended frame's register file (a generator's, `FrameRecord`), which a return leaves
 /// alone. A `Value` is word aligned, so the bit is free in an address.
 pub(super) const HEAP_WINDOW: usize = 1;
 const _: () = assert!(std::mem::align_of::<Value>() > HEAP_WINDOW);

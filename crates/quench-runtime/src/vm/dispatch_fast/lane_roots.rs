@@ -5,7 +5,7 @@
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
 use super::*;
 use super::generator_windows::{open_window_locals, window_environments};
-use super::super::activation::{GeneratorFrame, JobRoot};
+use super::super::activation::{FrameRecord, JobRoot};
 use super::super::dispatch_frame::{ExecutingProgram, LaneExit};
 
 /// The frame index of no frame: reads that look a frame up find none, and any other is a state
@@ -309,7 +309,7 @@ impl<H: Host> Vm<H> {
 /// resumes, what the lane is made for it and its first activation. The guest-stack guard lasts
 /// the run.
 struct JobWindow {
-    frame: *mut GeneratorFrame,
+    frame: *mut FrameRecord,
     registers: *mut Value,
     base: Ip,
     pc: usize,
@@ -348,7 +348,7 @@ fn job_activation(
     job: JobRoot,
     prefix: crate::vm::compiled::ShadowFrame,
     environment: bool,
-    record: *mut GeneratorFrame,
+    record: *mut FrameRecord,
 ) -> Activation {
     Activation {
         native: prefix,

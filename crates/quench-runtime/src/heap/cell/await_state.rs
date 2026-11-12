@@ -1,6 +1,6 @@
 use crate::value::Value;
 use crate::vm::program_store::ProgramId;
-use crate::vm::activation::{Continuation, GeneratorFrame, JobRoot, SuspendKind};
+use crate::vm::activation::{Continuation, FrameRecord, JobRoot, SuspendKind};
 
 /// What an await resumes, which fixes what it holds: an async function's activation, or an
 /// async generator, whose frame stays parked in its record (`GeneratorRecord::await_with`)
@@ -74,7 +74,7 @@ impl AwaitState {
     }
 
     /// The frame an async function's pending await suspended: what a lane job resumes.
-    pub(crate) fn suspended_frame(&self) -> Option<&GeneratorFrame> {
+    pub(crate) fn suspended_frame(&self) -> Option<&FrameRecord> {
         match self {
             Self::Pending { kind: AwaitKind::AsyncFunction(continuation), .. } => Some(&continuation.frame),
             _ => None,
@@ -84,7 +84,7 @@ impl AwaitState {
     /// Starts a lane run of a pending async function: its continuation stays here, running.
     /// The frame's address and the register that takes the awaited value
     /// (`Continuation::begin_window`); `None`, changing nothing, for any other state.
-    pub(crate) fn resume_windowed(&mut self) -> Option<(*mut GeneratorFrame, Option<u16>)> {
+    pub(crate) fn resume_windowed(&mut self) -> Option<(*mut FrameRecord, Option<u16>)> {
         match std::mem::replace(self, Self::Spent) {
             Self::Pending { kind: AwaitKind::AsyncFunction(mut continuation), realm, promise } => {
                 let window = continuation.begin_window();

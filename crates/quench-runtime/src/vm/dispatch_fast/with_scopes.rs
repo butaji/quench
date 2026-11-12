@@ -2,7 +2,7 @@
 //! VM's scope stack. An activation's chain is its closure's captured objects then the ones it
 //! entered, outermost first, each tagged with the activation that owns it
 //! (`LaneStack::with_objects`); a suspended frame's record keeps it while no activation runs
-//! the frame (`GeneratorFrame::with_objects`), and a materialized activation's frame takes it.
+//! the frame (`FrameRecord::with_objects`), and a materialized activation's frame takes it.
 use super::*;
 
 impl LaneStack {
@@ -13,7 +13,7 @@ impl LaneStack {
     }
 
     /// The chain of the activation at `depth`, the innermost, taken off the stack: what a
-    /// suspended frame keeps (`GeneratorFrame::suspend_at`).
+    /// suspended frame keeps (`FrameRecord::suspend_at`).
     pub(in crate::vm) fn drain_with_objects(&mut self, depth: usize) -> Vec<Value> {
         let first = self.with_objects.partition_point(|(owner, _)| *owner < depth);
         self.with_objects.drain(first..).map(|(_, object)| object).collect()

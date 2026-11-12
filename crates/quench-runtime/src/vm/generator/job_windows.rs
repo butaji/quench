@@ -4,7 +4,7 @@
 //! place at an `await`, completes with it, or gives its frame up when the lane's activations
 //! become VM frames, or when the lane does not admit the run (`Vm::run_job`).
 use super::*;
-use super::super::activation::{GeneratorFrame, JobResume, JobRoot, SuspendKind};
+use super::super::activation::{FrameRecord, JobResume, JobRoot, SuspendKind};
 use super::super::dispatch_fast::JobEnd;
 use crate::heap::AwaitState;
 
@@ -35,7 +35,7 @@ impl<H: Host> Vm<H> {
 
     /// The frame `job`'s owner suspended: an async function's pending await's, or the frame an
     /// async generator parked at an `await` (or a `yield`) in its record.
-    pub(in crate::vm) fn job_frame(&self, job: JobRoot) -> Option<&GeneratorFrame> {
+    pub(in crate::vm) fn job_frame(&self, job: JobRoot) -> Option<&FrameRecord> {
         match job.kind {
             SuspendKind::AsyncFunction => self.heap.await_state(job.object)?.suspended_frame(),
             SuspendKind::AsyncGenerator => {
@@ -48,7 +48,7 @@ impl<H: Host> Vm<H> {
     /// Starts the lane run of `job`'s activation: its frame stays in its owner, running, and
     /// `sent` is the value the suspending `await` evaluates to. The frame's address, which its
     /// box keeps until the run ends.
-    pub(in crate::vm) fn resume_job_window(&mut self, job: JobRoot, sent: Value) -> Option<*mut GeneratorFrame> {
+    pub(in crate::vm) fn resume_job_window(&mut self, job: JobRoot, sent: Value) -> Option<*mut FrameRecord> {
         let (frame, resume_register) = match job.kind {
             SuspendKind::AsyncFunction => self.heap.await_state_mut(job.object)?.resume_windowed()?,
             SuspendKind::AsyncGenerator => self.generator_record_mut(job.object)?.resume_windowed()?,
