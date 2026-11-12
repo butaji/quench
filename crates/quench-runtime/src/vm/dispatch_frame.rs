@@ -729,11 +729,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        if p.function(id as usize).parameter_eval_arguments_error {
-            return Err(self
-                .syntax_error_result(p, "arguments binding is not allowed in function parameters")
-                .expect_err("syntax_error_result must throw"));
-        }
         let function = &p.function(id as usize);
         let mut frame = self.pooled_frame();
         self.bind_activation_arguments(p, &mut frame, function, context, args)?;
@@ -814,11 +809,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        if p.function(id as usize).parameter_eval_arguments_error {
-            return Err(self
-                .syntax_error_result(p, "arguments binding is not allowed in function parameters")
-                .expect_err("syntax_error_result must throw"));
-        }
         let function = &p.function(id as usize);
         let placeholder = self.pooled_frame();
         let old = std::mem::replace(&mut self.frames[frame_index], placeholder);

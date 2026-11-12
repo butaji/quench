@@ -1435,6 +1435,17 @@ impl<H: Host> Vm<H> {
                             ..
                         }) if *realm == self.realm.globals
                     );
+                // The one raise of a function whose parameters' `eval` declares `arguments`
+                // (`Function::parameter_eval_arguments_error`): its activations run as any
+                // other's until that call, which the lane leaves to this step.
+                if direct_eval
+                    && i.parameter_eval()
+                    && p.function(self.frames[f].function as usize).parameter_eval_arguments_error
+                {
+                    return Err(self
+                        .syntax_error_result(p, "arguments binding is not allowed in function parameters")
+                        .expect_err("syntax_error_result must throw"));
+                }
                 let previous_binding_site_pc = if direct_eval {
                     Some(self.frames[f].binding_site_pc.replace(*pc as u32))
                 } else {
@@ -1900,6 +1911,5 @@ fn suspends_in_loop(body: &crate::bytecode::Function) -> bool {
         && !body.is_generator
         && !body.is_class_constructor
         && !body.derived_constructor
-        && !body.parameter_eval_arguments_error
         && body.suspends()
 }

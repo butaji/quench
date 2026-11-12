@@ -38,3 +38,22 @@ fn native_steps_throw_and_return_through_a_generators_handlers() {
         [r#"caught x fin {"value":3,"done":false} {"done":true} {"done":true} fin {"value":5,"done":true} {"done":true} early"#]
     );
 }
+
+#[test]
+fn a_parameter_eval_declaring_arguments_raises_at_the_eval_in_any_activation() {
+    // The function runs as an ordinary one; only its parameter's `eval` call raises.
+    let lines = agree(
+        r#"
+        function f(a, p = eval("var arguments = 1")) { return a; }
+        function* g(a, p = eval("var arguments = 1")) { yield a; }
+        async function h(a, p = eval("var arguments = 1")) { return a; }
+        const out = [f(1, 2)];
+        for (const call of [() => f(1), () => g(1).next(), () => h(1)]) {
+            try { const r = call(); out.push(r instanceof Promise ? "promise" : r); } catch (e) { out.push(e.constructor.name); }
+        }
+        out.push(g(5, 6).next().value);
+        print(out.join(" "));
+        "#,
+    );
+    assert_eq!(lines, ["1 SyntaxError SyntaxError promise 5"]);
+}

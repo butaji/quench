@@ -162,14 +162,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        let parameter_eval_arguments_error =
-            p.function(id as usize).parameter_eval_arguments_error;
-        if parameter_eval_arguments_error {
-            return self.syntax_error_result(
-                p,
-                "arguments binding is not allowed in generator parameters",
-            );
-        }
         let function = &p.function(id as usize);
         let mut frame = self.pooled_frame();
         frame

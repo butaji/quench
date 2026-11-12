@@ -1392,6 +1392,8 @@ pub struct Function {
     /// at creation.
     pub prototype_unobservable: bool,
     pub class_initializer: bool,
+    /// A parameter's direct `eval` declares `arguments`, which the call raises a SyntaxError for
+    /// (`Vm::step`'s `Call`); the function otherwise activates as any other.
     pub parameter_eval_arguments_error: bool,
     /// A mapped `arguments` binding whose mapping nothing can observe: nothing in the body
     /// rebinds a parameter, and it only reads `arguments.length` and `arguments[key]` or
@@ -2377,7 +2379,6 @@ impl Function {
             let registers_layout_of_any_kind = self.parent.is_some()
                 && !self.derived_constructor
                 && self.self_binding_slot.is_none()
-                && !self.parameter_eval_arguments_error
                 && !self.inherited_with_scope
                 && promoted_parameters == usize::from(self.params)
                 // A plain activation makes no closure, whichever bindings it would see.
@@ -2409,13 +2410,11 @@ impl Function {
             let in_loop = !self.is_async
                 && !self.is_generator
                 && !self.is_class_constructor
-                && !self.derived_constructor
-                && !self.parameter_eval_arguments_error;
+                && !self.derived_constructor;
             let settles_in_loop = self.is_async
                 && !self.is_generator
                 && !self.is_class_constructor
                 && !self.derived_constructor
-                && !self.parameter_eval_arguments_error
                 && !self.suspends();
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(tables);
@@ -2446,7 +2445,6 @@ impl Function {
             let suspended_environment = suspendable
                 && !suspended_registers
                 && self.parent.is_some()
-                && !self.parameter_eval_arguments_error
                 && self.locals_ride_window(tables, true);
             CallPlan {
                 environment_activation,
