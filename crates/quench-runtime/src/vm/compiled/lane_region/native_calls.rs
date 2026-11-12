@@ -64,6 +64,11 @@ pub(in crate::vm::compiled) fn emit_float_extreme(builder: &mut FunctionBuilder<
     if maximum { ins.fmax(left, right) } else { ins.fmin(left, right) }
 }
 
+/// The wrapping product of two int32 values (`staged::math::int_multiply`).
+pub(in crate::vm::compiled) fn emit_int_multiply(builder: &mut FunctionBuilder<'_>, left: ir::Value, right: ir::Value) -> ir::Value {
+    builder.ins().imul(left, right)
+}
+
 impl Inline {
     /// The operation `native` runs inline, if any.
     fn of(native: Native) -> Option<Self> {
@@ -131,7 +136,8 @@ impl Lowering<'_, '_> {
         let result = instruction.result_register();
         if let Inline::Imul = inline {
             let [left, right] = [numbers[0], numbers[1]].map(|number| self.number_to_int32(number, exit));
-            let product = self.ins().imul(left, right);
+            let mut stage = super::super::object_slots::Emit { builder: &mut self.builder, property_values: None };
+            let product = crate::staged::math::multiply(&mut stage, left, right);
             self.set_int(state, result, product);
         } else {
             let number = inline.emit(&mut self.builder, &numbers);

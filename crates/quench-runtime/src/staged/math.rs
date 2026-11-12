@@ -64,10 +64,22 @@ pub(crate) fn float_extreme(maximum: bool, left: f64, right: f64) -> f64 {
     if maximum { left.max(right) } else { left.min(right) }
 }
 
+/// `Math.imul`: the wrapping product of two int32 values.
+#[inline(always)]
+pub(crate) fn int_multiply(left: i32, right: i32) -> i32 {
+    left.wrapping_mul(right)
+}
+
 /// `operation` of the binary64 word `value`, on `stage`.
 #[inline(always)]
 pub(crate) fn unary<S: NumericStage>(stage: &mut S, operation: FloatUnary, value: S::Word) -> S::Word {
     stage.float_unary(operation, value)
+}
+
+/// The wrapping product of two int32 words, on `stage`.
+#[inline(always)]
+pub(crate) fn multiply<S: NumericStage>(stage: &mut S, left: S::Word, right: S::Word) -> S::Word {
+    stage.int_multiply(left, right)
 }
 
 /// `Math.max` (`maximum`) or `Math.min` of two binary64 words, on `stage`.

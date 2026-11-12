@@ -575,9 +575,8 @@ pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
         Native::MathPow => super::operations::exponentiate(argument(0), argument(1)),
         Native::MathAtan2 => super::fdlibm_math::atan2(argument(0), argument(1)),
         Native::MathImul => {
-            let product = (crate::value::number_to_u32(argument(0)) as i32)
-                .wrapping_mul(crate::value::number_to_u32(argument(1)) as i32);
-            f64::from(product)
+            let [left, right] = [argument(0), argument(1)].map(|number| crate::value::number_to_u32(number) as i32);
+            f64::from(crate::staged::math::int_multiply(left, right))
         }
         _ => return None,
     })
