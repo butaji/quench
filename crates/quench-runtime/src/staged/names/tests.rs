@@ -69,6 +69,8 @@ impl GlobalFrame<Concrete> for Probe {
     }
 }
 
+impl crate::staged::CallFrame<Concrete> for Probe {}
+
 impl NumericFrame<Concrete> for Probe {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no numeric row") }
     fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no numeric row") }

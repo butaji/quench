@@ -34,6 +34,8 @@ pub(crate) struct Invocation {
     pub(crate) window: Register,
     pub(crate) argc: u16,
     pub(crate) result: Register,
+    /// Whether the call's completion is its activation's: the call returns its callee's value.
+    pub(crate) returns: bool,
 }
 
 impl Invocation {
@@ -51,7 +53,8 @@ impl Invocation {
             },
             _ => return None,
         };
-        Some(Self { callee: instruction.register_b(), receiver, window, argc, result: instruction.result_register() })
+        Some(Self { callee: instruction.register_b(), receiver, window, argc,
+            result: instruction.result_register(), returns: instruction.returns_from_frame() })
     }
 }
 
@@ -153,9 +156,16 @@ pub(crate) fn bind_this<S: Stage>(stage: &mut S, receiver: S::Word, sloppy: Opti
     Some(stage.select(object, receiver, global))
 }
 
+/// `bind_this` on machine words for the interpreter's own binding of a sloppy callee's `this`:
+/// the same row the native tiers emit.
+#[inline(always)]
+pub(crate) fn concrete_bind_this(receiver: u64, global: u64) -> Option<u64> {
+    bind_this(&mut super::Concrete::new(std::ptr::null()), receiver, Some(global), ())
+}
+
 /// The byte offset of register `register` in a window.
 #[inline(always)]
-const fn window_offset(register: u16) -> i32 {
+pub(super) const fn window_offset(register: u16) -> i32 {
     register as i32 * VALUE_BYTES
 }
 
@@ -204,7 +214,7 @@ mod tests {
 
     #[test]
     fn a_site_runs_no_row_alone_and_a_callee_must_be_the_bound_one() {
-        let site = Invocation { callee: 1, receiver: Some(2), window: 3, argc: 1, result: 0 };
+        let site = Invocation { callee: 1, receiver: Some(2), window: 3, argc: 1, result: 0, returns: false };
         assert_eq!(run(CallOperation::Site(site)), None);
         assert_eq!(run(CallOperation::Callee { held: 9, expected: 9 }), Some(9));
         assert_eq!(run(CallOperation::Callee { held: 8, expected: 9 }), None);
@@ -290,7 +300,7 @@ mod tests {
     #[test]
     fn the_operands_of_a_call_and_a_construction_decode_once() {
         let call = Invocation::of(call_instruction(Op::Call, false)).expect("a call decodes");
-        assert_eq!(call, Invocation { callee: 5, receiver: Some(6), window: 7, argc: 2, result: 4 });
+        assert_eq!(call, Invocation { callee: 5, receiver: Some(6), window: 7, argc: 2, result: 4, returns: false });
         let construct = Invocation::of(call_instruction(Op::Construct, true)).expect("a construction decodes");
         assert_eq!((construct.callee, construct.receiver, construct.argc, construct.result), (5, None, 2, 4));
         assert_eq!(Invocation::of(call_instruction(Op::Move, false)), None);

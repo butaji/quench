@@ -12146,14 +12146,9 @@ fn lane_receiver_this<H: Host>(vm: &Vm<H>, binding: ThisBinding, receiver: Value
         // An arrow whose environment binds no `this` takes its caller's receiver.
         return (binding != ThisBinding::Lexical).then_some(receiver);
     }
-    // An object receiver binds itself; a direct record of any object family is one.
-    if receiver.is_direct_object_family() {
-        Some(receiver)
-    } else if receiver.is_null() || receiver.is_undefined() {
-        Some(vm.realm.globals)
-    } else {
-        None
-    }
+    // The staged binding (`protocol::bind_this`): an object receiver binds itself, `undefined`
+    // and `null` bind the global object, and any other receiver is the host's to box.
+    crate::staged::protocol::concrete_bind_this(receiver.to_bits(), vm.realm.globals.to_bits()).map(Value::from_bits)
 }
 
 script_handler! {

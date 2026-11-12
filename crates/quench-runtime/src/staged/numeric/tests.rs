@@ -66,6 +66,8 @@ impl Frame<Concrete> for NumberFrame {
 
 impl crate::staged::GlobalFrame<Concrete> for NumberFrame {}
 
+impl crate::staged::CallFrame<Concrete> for NumberFrame {}
+
 impl crate::staged::PropertyFrame<Concrete> for NumberFrame {
     type Plans = crate::staged::NoPlans;
 

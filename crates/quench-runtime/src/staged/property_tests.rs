@@ -68,6 +68,8 @@ impl Frame<Concrete> for Host<'_> {
 
 impl GlobalFrame<Concrete> for Host<'_> {}
 
+impl crate::staged::CallFrame<Concrete> for Host<'_> {}
+
 impl<'p> PropertyFrame<Concrete> for Host<'p> {
     type Plans = &'p Plans;
     fn plans(&self) -> &'p Plans { self.plans }

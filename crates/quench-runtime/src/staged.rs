@@ -40,6 +40,8 @@ pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
 pub(crate) mod protocol;
 pub(crate) use protocol::{CallOperation, Invocation, WindowFill};
+pub(crate) mod invoke;
+pub(crate) use invoke::{CalleeKind, CallEntry, CallFrame, DirectPlan, Entered, Room};
 pub(crate) mod plan_fields;
 pub(crate) mod property;
 mod property_write;
@@ -172,7 +174,6 @@ pub(crate) trait Frame<S: Stage> {
 
     /// Leave the function with `value` (Stage v2); `None` where the frame cannot.
     #[inline(always)]
-    #[allow(dead_code)]
     fn ret(&mut self, _stage: &mut S, _value: S::Word) -> Option<Self::Control> { None }
 
     /// The activation's environment storage word and the fact its slot reads carry
@@ -336,6 +337,8 @@ pub(crate) enum Operation<W, P> {
     /// A step of the call protocol: admission, `this` binding, the callee's window, completion
     /// (`protocol`).
     Call(CallOperation<W>),
+    /// Complete the activation with the value of `source` (`invoke::ret`).
+    Return { source: Register },
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes.
@@ -362,6 +365,7 @@ impl<W, P> Operation<W, P> {
             op if op.is_field_store() => return Self::decode_property(instruction),
             Op::Call | Op::CallForwardingArguments | Op::Construct =>
                 Self::Call(CallOperation::Site(Invocation::of(instruction)?)),
+            Op::Return => Self::Return { source: instruction.register_a() },
             _ => return names::decode(instruction),
         })
     }

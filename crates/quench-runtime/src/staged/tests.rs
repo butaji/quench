@@ -129,6 +129,8 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
 
 impl GlobalFrame<Concrete> for ConcreteFrame<'_> {}
 
+impl crate::staged::CallFrame<Concrete> for ConcreteFrame<'_> {}
+
 impl PropertyFrame<Concrete> for ConcreteFrame<'_> {
     type Plans = NoPlans;
 
