@@ -6,6 +6,26 @@ use super::*;
 use crate::bytecode::{Operand, Register, WideInstruction};
 use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NumericFrame, Operation, Protocol, Step};
 
+/// What the global-name rows did in a test: the call-outs that ran, and the direct global stores
+/// and typeofs the lane specializer emitted instead of one.
+#[cfg(test)]
+pub(crate) mod counts {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub(crate) static GLOBAL_CALL_OUTS: Cell<usize> = const { Cell::new(0) };
+        pub(crate) static DIRECT_GLOBAL_STORES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn bump(counter: &'static std::thread::LocalKey<Cell<usize>>) {
+        counter.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn take(counter: &'static std::thread::LocalKey<Cell<usize>>) -> usize {
+        counter.with(|count| count.replace(0))
+    }
+}
+
 /// Where a call-out runs: the running frame, and the PC after its instruction, which the
 /// binding rules of a name read for their error site.
 #[derive(Clone, Copy)]
@@ -20,6 +40,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn call_out(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut,
         [first, second]: [Option<Value>; 2]) -> Result<Option<Value>, JsError> {
         let operand = second.unwrap_or(Value::UNDEFINED);
+        #[cfg(test)]
+        if matches!(operation, CallOut::GlobalWrite { .. } | CallOut::GlobalTypeof { .. }) {
+            counts::bump(&counts::GLOBAL_CALL_OUTS);
+        }
         match operation {
             CallOut::PropertyKey { .. } => self.to_property_key(p, operand).map(Some),
             CallOut::Equality { strict, negated, .. } => {
