@@ -10,7 +10,7 @@ impl Lowering<'_, '_> {
         let absent = self.builder.create_block();
         let present = match self.step(state, frame::Edges::ValueGuarded { miss: absent },
             crate::staged::Operation::IndexRead { index,
-                proof: super::super::EmitProof::Index { view, absent } }) {
+                proof: super::super::EmitProof::Index { view, absent, in_bounds: false } }) {
             crate::staged::Step::Value(value) => value,
             _ => unreachable!("a dense element read yields a value or leaves at its cold path"),
         };
@@ -31,12 +31,12 @@ impl Lowering<'_, '_> {
 
 impl Lowering<'_, '_> {
     /// Store `value` at `index` of the dense array `view`: the staged element write, whose
-    /// hole or miss continues at `miss`.
+    /// hole or miss continues at `miss`; `in_bounds` is the index's range proof against the view.
     pub(super) fn index_write(&mut self, state: &mut State, index: ir::Value, value: ir::Value,
-        view: super::super::DenseArrayView, miss: ir::Block) {
+        view: super::super::DenseArrayView, miss: ir::Block, in_bounds: bool) {
         let step = self.step(state, frame::Edges::ValueGuarded { miss },
             crate::staged::Operation::IndexWrite { index, value,
-                proof: super::super::EmitProof::Index { view, absent: miss } });
+                proof: super::super::EmitProof::Index { view, absent: miss, in_bounds } });
         debug_assert!(matches!(step, crate::staged::Step::Value(_)));
     }
 }

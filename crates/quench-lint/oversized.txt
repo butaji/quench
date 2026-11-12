@@ -654,7 +654,6 @@ complexity crates/quench-runtime/src/vm/compiled/facts.rs::analyze 18
 complexity crates/quench-runtime/src/vm/compiled/facts.rs::transfer 15
 complexity crates/quench-runtime/src/vm/compiled/frame_ssa.rs::FrameFlow::promote 48
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::binary 52
-complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::bounded_increment 17
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::capture_int32_use 17
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::entry_facts 51
 complexity crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::get_field 28
@@ -2899,7 +2898,6 @@ function-lines crates/quench-runtime/src/vm/compiled/guard_aarch64.rs::tests::fa
 function-lines crates/quench-runtime/src/vm/compiled/guard_aarch64.rs::tests::unrelated_signals_reach_the_previous_handlers 65
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::base_field_read 43
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::binary 198
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::bounded_increment 41
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::direct_call 100
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::entry_facts 199
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::equality 82

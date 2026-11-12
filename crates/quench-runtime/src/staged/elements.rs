@@ -12,6 +12,14 @@ pub(crate) fn dense_element<S: Stage>(stage: &mut S, values: S::Word, length: S:
     miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let in_bounds = stage.ult(index, length);
     stage.guard(in_bounds, miss)?;
+    present_element(stage, values, index, miss)
+}
+
+/// `dense_element` of an `index` the caller proved below the backing's length (a range
+/// proof, `lane_region::int_ranges`): only a hole leaves at `miss`.
+#[inline(always)]
+pub(crate) fn present_element<S: Stage>(stage: &mut S, values: S::Word, index: S::Word,
+    miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let offset = stage.uextend32(index);
     let offset = stage.mul_imm(offset, std::mem::size_of::<crate::Value>() as u64);
     let address = stage.add(values, offset);

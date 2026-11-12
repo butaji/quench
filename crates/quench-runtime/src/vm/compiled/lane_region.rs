@@ -29,6 +29,11 @@ use cranelift_codegen::entity::EntityRef;
 
 #[path = "lane_region/packed_ranges.rs"]
 mod packed_ranges;
+#[path = "lane_region/int_ranges.rs"]
+mod int_ranges;
+#[cfg(all(test, feature = "aot"))]
+#[path = "lane_region/int_ranges_tests.rs"]
+mod int_ranges_tests;
 #[path = "lane_region/global_reads.rs"]
 mod global_reads;
 #[path = "lane_region/native_calls.rs"] mod native_calls;
@@ -456,7 +461,7 @@ struct Lowering<'a, 'f> {
     /// The element reads observed to hold Numbers (`RegionSpecializer::number_reads`).
     observed: super::facts::Observed<'a>,
     /// The registers observed to hold int32s at entry (`RegionSpecializer::int_entries`).
-    int_entries: &'a [Register],
+    int_entries: &'a [(Register, IntRange)],
     /// The capture slots observed to hold int32s (`RegionSpecializer::int_captures`).
     int_captures: &'a [u16],
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
@@ -543,6 +548,12 @@ struct Lowering<'a, 'f> {
     /// Successful write-through stores defining a loop-header field's SSA variable.
     loop_fields: Vec<LoopField>,
     loop_stores: BTreeMap<usize, LoopStore>,
+    /// The unit's integer ranges, computed once before lowering (`int_ranges::analyze`): the
+    /// arithmetic that cannot overflow and the hoisted element accesses within their array.
+    ranges: int_ranges::IntRanges,
+    /// The registers whose int32 range the entry guards once and the ranges pass takes as
+    /// the entry state (`Lowering::entering_ranges`).
+    entering: Vec<(Register, IntRange)>,
     /// The PC being lowered, whose edges to a header enter its loop or close it.
     at: usize,
     /// Per block leader, its forward edges (`forward_edges`), and the states the lowered
@@ -1377,7 +1388,7 @@ pub(super) struct RegionSpecializer<'p> {
     pub(super) number_reads: &'p [super::facts::ObservedRead],
     /// The registers whose values at entry were int32s: candidates for an int32 entry contract
     /// (`refine_inductive_inputs`), kept where every definition in the loop yields an int32.
-    pub(super) int_entries: &'p [Register],
+    pub(super) int_entries: &'p [(Register, IntRange)],
     /// The capture slots that held typed arrays at compilation (`Observation::typed_captures`).
     pub(super) typed_captures: &'p [u16],
     /// The capture slots that held int32s at compilation (`Observation::int_captures`).
@@ -1445,7 +1456,7 @@ pub(super) fn lower(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     entry_fields: &BTreeMap<usize, u32>,
     number_reads: &[super::facts::ObservedRead],
-    int_entries: &[Register],
+    int_entries: &[(Register, IntRange)],
     typed_captures: &[u16],
     int_captures: &[u16],
     coverage: Coverage,
@@ -1602,6 +1613,8 @@ pub(super) fn lower(
         views,
         loop_fields: Vec::new(),
         loop_stores: BTreeMap::new(),
+        ranges: int_ranges::IntRanges::new(0),
+        entering: Vec::new(),
         at: 0,
         forward: Vec::new(), sealable: CompoundBitSet::new(),
         arrived: BTreeMap::new(),
@@ -1717,6 +1730,8 @@ pub(super) fn lower(
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && instructions[at].op().class().eq(Class::LoadCapture))),
         lowering.views, typed_captures);
+    lowering.entering = lowering.entering_ranges(entry_pc);
+    lowering.ranges = int_ranges::analyze(program, unit, &lowering.facts, entry_pc, &lowering.entering, generic, &|pc| lowering.dense_loop_access(pc));
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
         lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner), rooted: false });
@@ -2006,48 +2021,6 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(join);
         state.proofs.int32_projections.push((bits, int32));
         Some(int32)
-    }
-
-    /// Whether the increment at `pc` of `source` into `register` is a loop's induction that its
-    /// header bounds: the loop's header leaves unless `register < bound`, with `bound` an
-    /// int32 the loop never writes, and this increment is the loop's only write of `register`,
-    /// run once per test (in no nested loop). Then `register + 1 <= bound`, which no int32
-    /// overflow reaches.
-    fn bounded_increment(&self, pc: usize, source: Register, register: Register) -> bool {
-        if source != register { return false; }
-        let instructions = &self.unit.instructions;
-        instructions.iter().enumerate().any(|(end, jump)| {
-            if jump.op().immediate_role() != crate::bytecode::ImmediateRole::JumpTarget { return false; }
-            let header = jump.imm() as usize;
-            if header > end || !(header..=end).contains(&pc) { return false; }
-            let test = instructions[header];
-            if !test.op().class().eq(Class::JumpBinaryFalse) || test.jump_target() as usize <= end
-                || super::operations::NumberRelation::from_operator(test.binary_operator_field())
-                    != Some(super::operations::NumberRelation::LessThan) {
-                return false;
-            }
-            let (left, bound) = (test.operand_b(), test.operand_c());
-            let int_bound = match bound.kind() {
-                Some(OperandKind::Register) => {
-                    let bound = bound.payload();
-                    self.facts.at(header).is_some_and(|types| types.get(usize::from(bound)).is_some_and(|ty| ty.is_subtype(Type::INT32)))
-                        && !instructions[header..=end].iter().any(|instruction| writes(*instruction).contains(&bound))
-                }
-                Some(OperandKind::Constant) => self.program.constants.get(usize::from(bound.payload()))
-                    .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
-                _ => false,
-            };
-            // Once per test: in no loop nested inside this one.
-            let nested = instructions.iter().enumerate().any(|(inner_end, inner)| {
-                inner.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
-                    && (inner.imm() as usize) <= inner_end && header < inner.imm() as usize
-                    && (inner.imm() as usize..=inner_end).contains(&pc)
-            });
-            !nested && left.register_index() == Some(register) && int_bound
-                && instructions[header..=end].iter().enumerate()
-                    .filter(|(_, instruction)| writes(**instruction).contains(&register))
-                    .all(|(offset, _)| header + offset == pc)
-        })
     }
 
     /// Whether only the result's ToInt32 is read of `register`, written at `pc`: the next
@@ -2549,6 +2522,26 @@ impl Lowering<'_, '_> {
         self.proving_entry = matches!(coverage, Coverage::Prefix) && self.completion.status_and_pc();
         self.conform(state, pc);
         self.proving_entry = false;
+        self.guard_entering_ranges(state, pc);
+    }
+
+    /// The observed int32 entries whose range is narrower than int32 and whose entry fact is
+    /// int32: what the entry guards once (`guard_entering_ranges`) and the pass assumes.
+    fn entering_ranges(&self, entry: usize) -> Vec<(Register, IntRange)> {
+        let types = self.facts.at(entry);
+        self.int_entries.iter().copied().filter(|&(register, range)| range != IntRange::FULL
+            && types.and_then(|types| types.get(usize::from(register))).is_some_and(|ty| ty.is_subtype(Type::INT32))).collect()
+    }
+
+    /// Leaves at `pc` where an entering register is below its range's minimum: the one guard
+    /// the ranges pass's entry state relies on (the range's maximum is int32's).
+    fn guard_entering_ranges(&mut self, state: &mut State, pc: usize) {
+        for (register, range) in self.entering.clone() {
+            let exit = self.guard_exit(state, pc as u32);
+            let value = self.int(state, register, exit);
+            let within = self.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, value, i64::from(range.min));
+            emit_js_guard(&mut self.builder, within, exit);
+        }
     }
 
     /// The guards' leaves to fill, once the entry's shared leave (`entry_conform`) is filled:
@@ -2706,9 +2699,9 @@ impl Lowering<'_, '_> {
                 decrement.map(|decrement| {
                     let exit = self.guard_exit(state, pc32);
                     let (source, destination) = (instruction.register_b(), instruction.result_register());
-                    // A loop counter its `<` test bounds never overflows, so its wrapping
-                    // result is exact and needs no exit.
-                    let overflow = if !decrement && self.bounded_increment(pc, source, destination) {
+                    // A step the unit's ranges (`int_ranges`) keep inside int32 never overflows,
+                    // so its wrapping result is exact and needs no exit.
+                    let overflow = if self.ranges.overflow_free(pc) {
                         crate::staged::Overflow::Wrap
                     } else {
                         crate::staged::Overflow::Exit
@@ -3628,7 +3621,7 @@ impl Lowering<'_, '_> {
     /// Whether a loop definition of `register` of type `ty` makes it a candidate for an int32
     /// entry contract: the definition yields an int32, or the register held one at entry.
     fn int32_candidate(&self, register: Register, ty: Type) -> bool {
-        ty == Type::INT32 || self.int_entries.contains(&register)
+        ty == Type::INT32 || self.int_entries.iter().any(|(entry, _)| *entry == register)
     }
 
     /// An unchanged arm preserves a checked entry hypothesis. Every definition
@@ -4058,7 +4051,7 @@ impl Lowering<'_, '_> {
             self.builder.set_cold_block(slow);
             let done = self.builder.create_block();
             let view = self.array_view(state, base, true, slow);
-            self.index_write(state, index, value, view, slow);
+            self.index_write(state, index, value, view, slow, false);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);
             self.builder.seal_block(slow);
@@ -4116,13 +4109,16 @@ impl Lowering<'_, '_> {
     /// element exits.
     fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, (pc, destination): (usize, Register), exit: ir::Block) {
         let (values, length) = self.hoisted_view(array);
+        let in_bounds = self.ranges.in_bounds(pc);
         let number = self.observed.at(pc).is_some();
         if array.views == ElementViews::Dense && number {
             // An element read as a Number (`number_reads`) needs no hole test of its own: a hole
             // is a NaN pattern, which the Number proof's one NaN test sends to the tag check
             // that leaves.
-            let in_bounds = self.ins().icmp(IntCC::UnsignedLessThan, index, length);
-            emit_js_guard(&mut self.builder, in_bounds, exit);
+            if !in_bounds {
+                let below = self.ins().icmp(IntCC::UnsignedLessThan, index, length);
+                emit_js_guard(&mut self.builder, below, exit);
+            }
             let offset = self.ins().uextend(types::I64, index);
             let offset = self.ins().imul_imm_s(offset, std::mem::size_of::<crate::Value>() as i64);
             let address = self.ins().iadd(values, offset);
@@ -4131,7 +4127,7 @@ impl Lowering<'_, '_> {
         }
         if array.views == ElementViews::Dense {
             let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable };
-            let value = super::emit_dense_element(&mut self.builder, view, index, exit).1;
+            let value = super::emit_dense_element(&mut self.builder, view, index, exit, in_bounds).1;
             return self.set_tagged(state, destination, value);
         }
         let kind = self.hoisted_kind(array);
@@ -4148,13 +4144,14 @@ impl Lowering<'_, '_> {
     fn dense_element_write(&mut self, state: &mut State, array: LoopArray, pc: u32, instruction: WideInstruction,
         index: ir::Value, exit: ir::Block) {
         let (values, length) = self.hoisted_view(array);
+        let in_bounds = self.ranges.in_bounds(pc as usize);
         let value = self.tagged(state, instruction.register_a());
         // A store the code has not left at replaces an element in place or leaves: the
         // append helper is a call every live value is spilled around, which a loop that
         // never appends should not pay (a site that left compiles it, `left_here`).
         if !self.left_here {
             let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
-            return self.index_write(state, index, value, view, exit);
+            return self.index_write(state, index, value, view, exit, in_bounds);
         }
         let base = self.tagged(state, instruction.register_b());
         let key = self.tagged(state, instruction.register_c());
@@ -4162,7 +4159,7 @@ impl Lowering<'_, '_> {
         self.builder.set_cold_block(slow);
         let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
         // The view's backing counts no values (`hoist_arrays`): the store writes the element.
-        self.index_write(state, index, value, view, slow);
+        self.index_write(state, index, value, view, slow, in_bounds);
         self.ins().jump(done, &[]);
         self.builder.switch_to_block(slow);
         self.builder.seal_block(slow);
@@ -5154,9 +5151,10 @@ impl Lowering<'_, '_> {
                         overflow: crate::staged::Overflow::Exit });
                     self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 } else if proved_int {
-                    // A sum or difference only `| 0` reads is its ToInt32: the wrapping int32
-                    // result, which needs no overflow exit.
-                    let overflow = if arithmetic.int32_projection_is_wrapping() && self.truncated(pc, destination) {
+                    // A result the unit's ranges keep inside int32, or a sum or difference only
+                    // `| 0` reads (its ToInt32), is the wrapping int32 result: no overflow exit.
+                    let overflow = if self.ranges.overflow_free(pc)
+                        || (arithmetic.int32_projection_is_wrapping() && self.truncated(pc, destination)) {
                         crate::staged::Overflow::Wrap
                     } else {
                         crate::staged::Overflow::Exit

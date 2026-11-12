@@ -98,3 +98,18 @@ impl Lowering<'_, '_> {
             .min_by_key(|array| array.back - array.header)
     }
 }
+
+impl Lowering<'_, '_> {
+    /// Whether the element access at `pc` goes through a hoisted dense view
+    /// (`loop_element_read`, `dense_element_write`), whose miss leaves the body, so nothing
+    /// runs between the access and its next instruction.
+    pub(super) fn dense_loop_access(&self, pc: usize) -> bool {
+        let instruction = self.unit.instructions[pc];
+        let base = match instruction.op().class() {
+            Class::GetIndex => instruction.operand_b().register_index(),
+            Class::SetIndex => Some(instruction.register_b()),
+            _ => None,
+        };
+        self.loop_array(pc, base).is_some_and(|array| array.views == ElementViews::Dense)
+    }
+}
