@@ -83,7 +83,7 @@ fn property_key<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut 
 
 /// Whether `bits` is `null` or `undefined`.
 #[inline(always)]
-fn nullish<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub(super) fn nullish<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Cond {
     let null = stage.eq_imm(bits, Value::NULL.to_bits());
     let undefined = stage.eq_imm(bits, Value::UNDEFINED.to_bits());
     stage.either(null, undefined)

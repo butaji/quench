@@ -85,6 +85,8 @@ const INLINE_NUMBER_PROJECTIONS: usize = 4;
 const INLINE_ARRAY_VIEWS: usize = 4;
 /// A header and a short latch usually need only a few guarded inputs.
 const INLINE_LOOP_INPUTS: usize = 4;
+/// A jump's step proves a fact of one tested register, along one or both of its edges.
+const INLINE_EDGE_REFINEMENTS: usize = 2;
 /// Common native-entry failure status; a pure scalar miss restarts its call.
 const NUMBER_ENTRY_MISS: i64 = 1;
 /// The executable memory a lane body may take: what a unit at its instruction bound
@@ -146,6 +148,9 @@ struct Registers {
 struct State {
     values: Vec<RegisterFact>,
     proofs: LocalProofs,
+    /// What the jump just stepped proved of a register along each of its edges
+    /// (`Frame::refine`), applied to the successors' states (`State::narrow`) once it branches.
+    refinements: smallvec::SmallVec<[(crate::staged::Edge, Register, Type); INLINE_EDGE_REFINEMENTS]>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -197,11 +202,23 @@ impl LocalProofs {
 
 impl State {
     fn canonical(registers: usize) -> Self {
-        Self { values: vec![RegisterFact::canonical(); registers], proofs: LocalProofs {
+        Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), proofs: LocalProofs {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), stable: false, realm: false,
             arrays: smallvec::SmallVec::new() } }
+    }
+
+    /// The facts a jump proved along `edge` (`refinements`), each narrowing its register's type for
+    /// the edge's successor.
+    fn narrow(&mut self, edge: crate::staged::Edge, refinements: &[(crate::staged::Edge, Register, Type)]) {
+        for &(_, register, ty) in refinements.iter().filter(|(on, ..)| *on == edge) {
+            let fact = self.values[usize::from(register)];
+            if fact.value.representation == Representation::Tagged && ty != fact.value.ty && ty.is_subtype(fact.value.ty) {
+                self.values[usize::from(register)] = RegisterFact { tagged: fact.tagged,
+                    ..RegisterFact::definition(ty, Representation::Tagged) };
+            }
+        }
     }
 
     /// The `headers` index of an owner: a register, or fixed `this` (`None`).
@@ -1841,7 +1858,7 @@ pub(super) fn lower(
     if matches!(coverage, Coverage::PrefixFrom(_)) && !lowering.backedge && unit.frames.is_empty() { return None; }
     for (block, values, pc, line) in lowering.take_leaves() {
         lowering.switch_to(block, true);
-        let mut leaving = State { values, proofs: LocalProofs::default() };
+        let mut leaving = State { values, proofs: LocalProofs::default(), refinements: smallvec::SmallVec::new() };
         if lowering.vm.diagnostics {
             let line = lowering.builder.ins().iconst(types::I64, i64::from(line));
             lowering.builder.ins().store(MemFlagsData::trusted(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
@@ -2928,7 +2945,7 @@ impl Lowering<'_, '_> {
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls, fields,
-            call_out: sites.call_out, capture: sites.capture };
+            call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
@@ -3421,11 +3438,14 @@ impl Lowering<'_, '_> {
         let back = target <= pc && target == self.coverage.entry();
         self.backedge |= back;
         if back { self.count_backedge(); }
+        let refinements = std::mem::take(&mut state.refinements);
         self.switch_to(taken_block, true);
         let mut taken_state = state.clone();
+        taken_state.narrow(crate::staged::Edge::Target, &refinements);
         self.continue_at(&mut taken_state, target);
         self.switch_to(fall_block, true);
         let mut fall_state = state.clone();
+        fall_state.narrow(crate::staged::Edge::Following, &refinements);
         self.continue_at(&mut fall_state, pc + 1);
     }
 

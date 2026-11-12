@@ -1993,23 +1993,6 @@ struct NullishComparison {
     negated: bool,
 }
 
-impl NullishComparison {
-    fn known_outcome(self, ty: typed_ir::Type) -> Option<bool> {
-        use typed_ir::Type;
-        let equal = if ty.is_subtype(Type::language(crate::ValueType::Null)) {
-            !self.strict || self.expected == Value::NULL
-        } else if ty.is_subtype(Type::language(crate::ValueType::Undefined)) {
-            !self.strict || self.expected == Value::UNDEFINED
-        } else if ty.is_direct_object_family()
-            || ty.is_subtype(Type::NUMBER.join(Type::language(crate::ValueType::Boolean))) {
-            false
-        } else {
-            return None;
-        };
-        Some(if self.negated { equal } else { !equal })
-    }
-}
-
 /// Resolve the constant operand and equality denotation before execution.
 fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: WideInstruction,
     register_type: impl Fn(Register) -> typed_ir::Type) -> Option<NullishComparison> {
@@ -2128,7 +2111,7 @@ fn emit_nullish_branch(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     let fall = builder.create_block();
     let join = builder.create_block();
     let result = builder.append_block_param(join, types::I8);
-    emit_nullish_edges(builder, value, comparison, html_dda, fallback, taken, fall, None);
+    emit_nullish_edges(builder, value, comparison, html_dda, fallback, taken, fall);
     for (block, bit) in [(taken, 1), (fall, 0)] {
         builder.switch_to_block(block);
         let bit = builder.ins().iconst(types::I8, bit);
@@ -2139,10 +2122,8 @@ fn emit_nullish_branch(builder: &mut FunctionBuilder<'_>, value: ir::Value,
 }
 
 /// Resolve comparison continuations without materializing a Boolean at their join.
-#[allow(clippy::too_many_arguments)]
 fn emit_nullish_edges(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    comparison: NullishComparison, html_dda: bool, fallback: ir::Block, taken: ir::Block, fall: ir::Block,
-    direct_object: Option<ir::Block>) {
+    comparison: NullishComparison, html_dda: bool, fallback: ir::Block, taken: ir::Block, fall: ir::Block) {
     use crate::value::ValueLayout;
     let equal = if comparison.strict {
         builder.ins().icmp_imm_u(IntCC::Equal, value, comparison.expected.to_bits() as i64)
@@ -2152,7 +2133,7 @@ fn emit_nullish_edges(builder: &mut FunctionBuilder<'_>, value: ir::Value,
         // before inspecting the remaining canonical encodings.
         let remaining = builder.create_block();
         let unequal = if comparison.negated { fall } else { taken };
-        builder.ins().brif(object, direct_object.unwrap_or(unequal), &[], remaining, &[]);
+        builder.ins().brif(object, unequal, &[], remaining, &[]);
         builder.switch_to_block(remaining);
         if html_dda {
             let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);

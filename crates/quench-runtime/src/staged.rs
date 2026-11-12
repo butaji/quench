@@ -29,7 +29,7 @@ pub(crate) mod compare;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::CallOut;
-pub(crate) use compare::Comparison;
+pub(crate) use compare::{Comparison, Nullish};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
@@ -84,6 +84,16 @@ pub(crate) trait Frame<S: Stage> {
 
     /// The fact `register` currently carries.
     fn fact(&self, register: Register) -> Self::Fact;
+
+    /// The semantic type `register` is proved to have; `None` where the stage keeps none, as the
+    /// interpreter does not.
+    #[inline(always)]
+    fn register_type(&self, _register: Register) -> Option<Type> { None }
+
+    /// `register` holds a value of type `ty` along `edge` of the jump the running step ends in:
+    /// a frame that keeps type facts narrows them for that edge's successor.
+    #[inline(always)]
+    fn refine(&mut self, _register: Register, _ty: Type, _edge: Edge) {}
 
     /// `register`'s word in the representation its fact names; tagged where it is tagged.
     fn read(&mut self, stage: &mut S, register: Register) -> S::Word;

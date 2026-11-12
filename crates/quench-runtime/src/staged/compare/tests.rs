@@ -3,18 +3,25 @@ use super::*;
 use crate::bytecode::{Op, Register};
 use crate::staged::tests::ConcreteFrame;
 use crate::staged::{Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, PropertyFrame};
+use crate::typed_ir::Type;
+use crate::ValueType;
 use oxc_ast::ast::BinaryOperator;
 
-/// A register file that records the decisions it is asked for, answering them with `answer`.
-pub(super) struct Probe {
-    pub(super) registers: Vec<u64>,
-    pub(super) calls: Vec<CallOut>,
-    pub(super) answer: Option<bool>,
+/// A register file that records the decisions it is asked for, answering them with `answer`, and
+/// the facts a jump proves along its edges; `types` are the registers' proved types.
+struct Probe {
+    registers: Vec<u64>,
+    calls: Vec<CallOut>,
+    answer: Option<bool>,
+    types: Vec<Option<Type>>,
+    refined: Vec<(Register, Type, Edge)>,
+    html_dda: bool,
 }
 
 impl Probe {
-    pub(super) fn of(values: &[Value]) -> Self {
-        Self { registers: values.iter().map(|value| value.to_bits()).collect(), calls: Vec::new(), answer: None }
+    fn of(values: &[Value]) -> Self {
+        Self { registers: values.iter().map(|value| value.to_bits()).collect(), calls: Vec::new(), answer: None,
+            types: Vec::new(), refined: Vec::new(), html_dda: true }
     }
 }
 
@@ -22,6 +29,8 @@ impl Frame<Concrete> for Probe {
     type Fact = ();
     type Control = Edge;
     fn fact(&self, _register: Register) {}
+    fn register_type(&self, register: Register) -> Option<Type> { self.types.get(usize::from(register)).copied().flatten() }
+    fn refine(&mut self, register: Register, ty: Type, edge: Edge) { self.refined.push((register, ty, edge)); }
     fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 { self.registers[usize::from(register)] }
     fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, _fact: ()) {
         self.registers[usize::from(register)] = value;
@@ -55,12 +64,13 @@ impl NumericFrame<Concrete> for Probe {
     fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no Number operand") }
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
     fn miss(&self) {}
+    fn html_dda(&self) -> bool { self.html_dda }
     fn int_fact(&self) {}
     fn number_fact(&self) {}
 }
 
 /// The step of the comparison jump of registers 0 and 1 over `frame`.
-pub(super) fn run(frame: &mut Probe, comparison: Comparison, negate: bool) -> Step<u64, Edge> {
+fn run(frame: &mut Probe, comparison: Comparison, negate: bool) -> Step<u64, Edge> {
     let operation = Operation::CompareJump { comparison, left: Operand::register(0), right: Operand::register(1), negate };
     crate::staged::step(&mut Concrete::new(std::ptr::null()), frame, operation)
 }
@@ -196,4 +206,81 @@ fn an_equality_of_a_constant_the_frame_has_no_word_for_is_unresolved() {
     let operation = Operation::CompareJump { comparison: Comparison::Equality { strict: true, negated: false },
         left: Operand::register(0), right: Operand::constant(0).expect("a constant operand"), negate: true };
     assert!(matches!(crate::staged::step(&mut stage, &mut frame, operation), Step::Unresolved));
+}
+
+/// The nullish test of register 0 against `expected` (`Operand` 1 is its constant side).
+fn nullish_test(expected: Nullish, strict: bool, negated: bool) -> Comparison {
+    Comparison::Nullish { expected, strict, negated }
+}
+
+/// A strict test is identity with its constant, whichever nullish value it names; the edge where
+/// the register equals it carries the register's exact type, and a jump that `negate`s the test
+/// takes the other edge.
+#[test]
+fn a_strict_nullish_test_is_identity_and_refines_the_edge_where_it_holds() {
+    let values = [Value::NULL, Value::UNDEFINED, Value::integer(0), Value::TRUE, Value::number(0.5)];
+    for (expected, constant) in [(Nullish::Null, Value::NULL), (Nullish::Undefined, Value::UNDEFINED)] {
+        for (negated, negate) in [(false, false), (false, true), (true, false), (true, true)] {
+            for value in values {
+                let mut frame = Probe::of(&[value, constant]);
+                let step = run(&mut frame, nullish_test(expected, true, negated), negate);
+                let equal = value == constant;
+                let taken = equal ^ negated ^ negate;
+                assert!(matches!(step, Step::Control(edge) if edge == if taken { Edge::Target } else { Edge::Following }),
+                    "{expected:?} {negated} {negate} {value:?}");
+                let equal_edge = if negated == negate { Edge::Target } else { Edge::Following };
+                assert_eq!(frame.refined, [(0, expected.ty(), equal_edge)], "the equal edge carries the exact type");
+                assert!(frame.calls.is_empty());
+            }
+        }
+    }
+}
+
+/// A loose test holds for `null` and `undefined` alike and for nothing else, and where an IsHTMLDDA
+/// object can exist a heap cell outside the records leaves the row to the interpreter.
+#[test]
+fn a_loose_nullish_test_holds_for_both_nullish_values_and_leaves_a_cell_that_may_be_htmldda() {
+    let cell = Value::from_bits(crate::value::ValueLayout::HEAP_TAG | 1);
+    for expected in [Nullish::Null, Nullish::Undefined] {
+        for value in [Value::NULL, Value::UNDEFINED, Value::integer(0), Value::FALSE, Value::number(0.5), Value::NAN] {
+            let mut frame = Probe::of(&[value, Value::NULL]);
+            let step = run(&mut frame, nullish_test(expected, false, false), true);
+            let equal = value.is_null() || value.is_undefined();
+            assert!(matches!(step, Step::Control(edge) if edge == if equal { Edge::Following } else { Edge::Target }), "{value:?}");
+            assert_eq!(frame.refined, [(0, Type::NULLISH, Edge::Following)]);
+        }
+        let mut frame = Probe::of(&[cell, Value::NULL]);
+        assert!(matches!(run(&mut frame, nullish_test(expected, false, false), true), Step::Unresolved));
+        assert!(frame.refined.is_empty(), "a left test proves nothing");
+        frame.html_dda = false;
+        let step = run(&mut frame, nullish_test(expected, false, false), true);
+        assert!(matches!(step, Step::Control(Edge::Target)), "with no IsHTMLDDA object a cell is no nullish value");
+    }
+}
+
+/// A register type that decides the test folds it: no word is read, and no fact is offered.
+#[test]
+fn a_type_that_decides_a_nullish_test_folds_it() {
+    let undefined = Type::language(ValueType::Undefined);
+    for (ty, strict, expected, equal) in [(undefined, true, Nullish::Undefined, true), (undefined, true, Nullish::Null, false),
+        (undefined, false, Nullish::Null, true), (Type::INT32, true, Nullish::Null, false), (Type::NUMBER, false, Nullish::Undefined, false),
+        (Type::DIRECT_OBJECT_FAMILY, false, Nullish::Null, false)] {
+        let mut frame = Probe::of(&[Value::NULL, Value::NULL]);
+        frame.types = vec![Some(ty)];
+        let step = run(&mut frame, nullish_test(expected, strict, false), false);
+        assert!(matches!(step, Step::Control(edge) if edge == if equal { Edge::Target } else { Edge::Following }), "{ty:?} {strict}");
+        assert!(frame.refined.is_empty());
+    }
+    let mut frame = Probe::of(&[Value::NULL, Value::NULL]);
+    frame.types = vec![Some(Type::ANY)];
+    run(&mut frame, nullish_test(Nullish::Null, true, false), false);
+    assert_eq!(frame.refined.len(), 1, "an undecided type is tested by its tag");
+}
+
+/// The constants a nullish test names are exactly `null` and `undefined`.
+#[test]
+fn only_null_and_undefined_are_nullish_constants() {
+    assert_eq!(Nullish::of(Value::NULL), Some(Nullish::Null));
+    assert_eq!(Nullish::of(Value::UNDEFINED), Some(Nullish::Undefined));
+    assert_eq!(Nullish::of(Value::FALSE), None);
 }

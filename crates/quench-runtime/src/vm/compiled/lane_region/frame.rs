@@ -54,6 +54,8 @@ pub(super) struct EmitFrame<'a> {
     pub(super) call_out: Option<&'a call_out::CallOutSite>,
     /// What a capture access reaches, where the lowering made it (`captures`).
     pub(super) capture: Option<&'a super::captures::CaptureSite>,
+    /// Whether an IsHTMLDDA object can exist (`VmFacts::html_dda`).
+    pub(super) html_dda: bool,
 }
 
 impl EmitFrame<'_> {
@@ -84,6 +86,17 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn fact(&self, register: Register) -> RegisterFact {
         self.state.values[usize::from(register)]
+    }
+
+    #[inline(always)]
+    fn register_type(&self, register: Register) -> Option<Type> {
+        Some(self.state.values[usize::from(register)].value.ty)
+    }
+
+    /// Kept beside the state and applied to the successor the jump's edge reaches (`State::narrow`).
+    #[inline(always)]
+    fn refine(&mut self, register: Register, ty: Type, edge: crate::staged::Edge) {
+        self.state.refinements.push((edge, register, ty));
     }
 
     #[inline(always)]
@@ -453,6 +466,10 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
 
     fn local_miss(&self) -> Option<ir::Block> {
         matches!(self.edges, Edges::ValueGuarded { .. }).then(|| self.miss())
+    }
+
+    fn html_dda(&self) -> bool {
+        self.html_dda
     }
 
     fn int_fact(&self) -> RegisterFact {
