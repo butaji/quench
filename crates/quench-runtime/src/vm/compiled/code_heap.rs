@@ -7,6 +7,7 @@
 //! block goes on its size class's free list for the next body of that size or smaller, and a
 //! chunk whose last body is freed returns its pages to the system.
 
+mod retire;
 mod views;
 
 use std::cell::Cell;
@@ -370,7 +371,7 @@ impl CodeMemory {
         // SAFETY: `length <= granted` bytes of the writable view, owned by `memory`.
         let code = unsafe { std::slice::from_raw_parts_mut(views.writer(offset), length) };
         Views::writing(|| fill(memory.pointer, code))?;
-        views.retire_writer(offset, length);
+        retire::retire(views, offset, length);
         views::flush_icache(memory.pointer, length);
         record_publication(memory.pointer, length, std::panic::Location::caller());
         Ok(memory)
@@ -382,6 +383,9 @@ impl Drop for CodeMemory {
         heap().free(self.block, self.length);
     }
 }
+
+/// Retires the writable-view pages of code published since the last flush (`retire`).
+pub(in crate::vm) use retire::flush as flush_retired_writers;
 
 #[cfg(test)]
 mod tests;

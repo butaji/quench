@@ -163,8 +163,7 @@ fn page_span(offset: usize, bytes: usize) -> (usize, usize) {
 }
 
 /// The system page size, which every region and chunk is a multiple of.
-#[cfg(target_os = "linux")]
-fn page_bytes() -> usize {
+pub(super) fn page_bytes() -> usize {
     static PAGE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     // SAFETY: `sysconf` has no preconditions.
     *PAGE.get_or_init(|| {

@@ -124,7 +124,7 @@ pub(super) use object_slots::{InheritedConstant, NativeFieldLoad};
 #[cfg(feature = "aot")]
 mod scalar_region;
 mod code_heap;
-pub(super) use code_heap::{CodeMemory, CODE_GRANULE};
+pub(super) use code_heap::{flush_retired_writers, CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
 mod direct_callee;

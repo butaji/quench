@@ -43,7 +43,7 @@ pub(in crate::vm) fn run_in_background<T: Send + 'static>(work: impl FnOnce() ->
         let (queue, jobs) = std::sync::mpsc::channel::<Work>();
         std::thread::Builder::new()
             .name("quench-codegen".into())
-            .spawn(move || jobs.into_iter().for_each(|job| { job(); release_compile_scratch(); }))
+            .spawn(move || serve(&jobs))
             .ok()
             .map(|_| queue)
     });
@@ -59,11 +59,30 @@ pub(in crate::vm) fn run_in_background<T: Send + 'static>(work: impl FnOnce() ->
     Pending { result }
 }
 
-/// Returns the freed heap pages of the code generator's malloc arena to the system: a compile's
-/// register-allocation state is megabytes that the arena otherwise keeps for the next.
+/// The code generator's loop. Its large scratch lives in its own arena (`quench_alloc::adopt_scratch_thread`),
+/// not glibc's, and goes back once per idle period, when the queue has drained: a release after each compile
+/// made ~2,300 `madvise` calls (and `malloc_trim` more) in V8-v7 earley-boyer, each a TLB shootdown that
+/// interrupted the program's thread (x86_64, 2026-11-12).
+fn serve(jobs: &Receiver<Work>) {
+    quench_alloc::adopt_scratch_thread();
+    loop {
+        match jobs.try_recv() {
+            Ok(job) => job(),
+            Err(TryRecvError::Empty) => {
+                release_compile_scratch();
+                match jobs.recv() {
+                    Ok(job) => job(),
+                    Err(_) => return,
+                }
+            }
+            Err(TryRecvError::Disconnected) => return,
+        }
+    }
+}
+
+/// Returns the code generator's idle pages to the system, and the code zone's batched writer-view retirements.
 fn release_compile_scratch() {
     quench_alloc::release_empty_pages();
-    // SAFETY: `malloc_trim` only releases free memory.
-    #[cfg(target_os = "linux")]
-    unsafe { libc::malloc_trim(0) };
+    quench_alloc::release_scratch();
+    crate::vm::compiled::flush_retired_writers();
 }
