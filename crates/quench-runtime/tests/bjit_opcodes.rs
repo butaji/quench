@@ -55,6 +55,8 @@ const FAMILIES: &[(&str, &str)] = &[
     ("template-literal", "s = `${i}:${acc}`.slice(0, 6);"),
     ("try-catch-finally", "try { if (i % 7 === 0) throw i; acc += 1; } catch (e) { acc += e; } finally { acc += 1; }"),
     ("throw-type-error", "try { null.x; } catch (e) { s = e.constructor.name; } acc += 1;"),
+    ("call-every-iteration", "acc = add(acc, i) | 0;"),
+    ("throw-every-iteration", "try { throw i; } catch (e) { acc += e; }"),
     ("labeled-loops", "outer: for (var a = 0; a < 3; a++) { for (var b = 0; b < 3; b++) { if (b === 2) continue outer; if (a === 2) break outer; acc += a + b; } }"),
     ("switch", "switch (i & 3) { case 0: acc += 1; break; case 1: acc += 2; case 2: acc += 3; break; default: acc += 4; }"),
     ("generator", "for (var g of gen(3)) acc += g;"),

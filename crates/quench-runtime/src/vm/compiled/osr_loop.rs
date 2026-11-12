@@ -1726,7 +1726,11 @@ fn admit_region(
     objects: &std::collections::BTreeSet<Register>,
     method_calls: MethodCalls,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
-    if let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls) {
+    // Under `--b-jit` a loop whose every iteration leaves (at a call, a throw) is still a region:
+    // BaseJIT lowers each instruction (`base_region::steps`), and Cranelift never compiles the loop.
+    if !crate::jit_mode::base_only()
+        && let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls)
+    {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }
     match admit_register_roles(
