@@ -5381,6 +5381,16 @@ impl JsStepDispatch {
         self.fixed_this_slot = vm.frames.get(self.frame)
             .filter(|frame| frame.fixed_this)
             .map_or(std::ptr::null(), |frame| &frame.this as *const Value);
+        self.refresh_capture_view(vm);
+        vm.frameless.bind(self);
+        self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
+        self.stores_specialized = usize::from(vm.specialized && program.specialized);
+    }
+
+    /// The frame's dense capture slots, which generated reads index (`capture_values`): none
+    /// while its slot memo is missing or stale, or its storage is not dense, and a read then
+    /// leaves at its record.
+    fn refresh_capture_view<H: Host>(&mut self, vm: &Vm<H>) {
         (self.capture_values, self.capture_len) = vm.frames.get(self.frame)
             .and_then(|_| vm.current_capture_slots(self.frame))
             .and_then(|(slots, root)| {
@@ -5390,9 +5400,15 @@ impl JsStepDispatch {
                 unsafe { &*slots }.native_dense_view()
             })
             .unwrap_or((std::ptr::null(), 0));
-        vm.frameless.bind(self);
-        self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
-        self.stores_specialized = usize::from(vm.specialized && program.specialized);
+    }
+
+    /// Binds the frame's capture slots once per activation. Only a lane entry makes the slot
+    /// memo, so an AOT activation walks to its environment here (`Vm::cached_direct_capture`
+    /// keeps the walk) and views the slots; later refreshes keep the view while the memo is
+    /// current, and a collection that retires it leaves reads to the per-PC fallback.
+    fn bind_captures<H: Host>(&mut self, vm: &mut Vm<H>) {
+        vm.cached_direct_capture(self.frame, 0, 0);
+        self.refresh_capture_view(vm);
     }
 }
 
@@ -11745,6 +11761,7 @@ impl<H: Host> Vm<H> {
                 return Some(failure("linked native function is missing".into()));
             };
             let dispatch = &mut activation.dispatch;
+            dispatch.bind_captures(vm);
             dispatch.stop_pc = stop_pc.unwrap_or(JS_NO_STOP_PC);
             vm.frames[frame].pc = start_pc;
             vm.frames[frame].pc_is_resume = false;

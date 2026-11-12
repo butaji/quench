@@ -92,6 +92,21 @@ fixture_tests! {
 }
 
 #[test]
+fn ahead_bodies_read_dense_captures_across_mutation_and_collection() {
+    let source = "function make(seed) {\n\
+          let total = seed;\n\
+          function bump(delta) { total = total + delta; }\n\
+          function read(n) { let sum = 0; for (let i = 0; i < n; i++) sum = (sum + total) | 0; return sum; }\n\
+          return { bump, read };\n\
+        }\n\
+        const counter = make(1);\n\
+        let seen = '';\n\
+        for (let round = 0; round < 8; round++) { counter.bump(round); $262.gc(); seen += counter.read(3) + ','; }\n\
+        print(seen);";
+    assert_agrees(source, "dense-captures", RETURNED);
+}
+
+#[test]
 fn packed_field_ranges_keep_boundaries_aliases_and_reentry() {
     let source = concat!(include_str!("../../tests/fixtures/packed-field-ranges.js"), "\nthrow 42;");
     assert_agrees(source, "packed-field-ranges", THREW_42);

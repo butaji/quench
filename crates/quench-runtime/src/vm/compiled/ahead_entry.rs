@@ -1,7 +1,8 @@
 //! The public native function entry of a function whose lane body is compiled ahead: a
 //! trampoline that runs the body from the function's start and maps its `LaneExit` onto the
 //! AOT driver's exits. A leave, a bounded run and a resume at a later PC all continue in the
-//! per-PC semantic fallback, which executes one instruction at a time.
+//! per-PC semantic fallback, which executes one instruction at a time. The body's receiver and
+//! dense captures are the payload's, bound once per activation (`JsStepDispatch::bind_captures`).
 use super::*;
 
 /// Where a trampoline reaches the bodies it joins: a body of the lane body ABI and the
