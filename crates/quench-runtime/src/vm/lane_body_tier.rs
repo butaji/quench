@@ -32,7 +32,7 @@ pub(super) struct LaneBodyHistory {
 
 #[path = "lane_body_audit.rs"]
 mod audit;
-pub(super) use audit::Timed;
+pub(super) use audit::{audit_nanos, Timed, Verdict};
 
 /// The entries and the milliseconds of warming past which a function specializes by its
 /// recurrence alone (`LaneView::recurrent`).

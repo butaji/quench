@@ -5,6 +5,8 @@
 //! function stays interpreted (`TIERS.lane_body`). Per function this holds the invariant that
 //! compiled code is never slower than the interpreter, from the one statistic it is about.
 
+use std::time::Instant;
+
 use super::{LaneBody, LaneView, TIERS};
 use super::super::compiled::tier_policy::PER_MILLE;
 
@@ -60,6 +62,13 @@ impl LaneView {
         self.audit_verdict();
     }
 
+    /// Books the body's timed run that ended at `started`'s clock, if this entry was timed.
+    pub(in crate::vm) fn audit_body_run(&self, started: Option<Instant>) {
+        if let Some(started) = started {
+            self.audit_record(Timed::Body, audit_nanos(started));
+        }
+    }
+
     /// Ends the audit: a body whose mean timed run is not `audit_margin_permille` below the
     /// interpreter's retires, and its function runs in the lane for good.
     fn audit_verdict(&self) {
@@ -71,15 +80,12 @@ impl LaneView {
         }
         history.audit.done = true;
         self.history.set(history);
-        // Means compared without a division: body / b_runs >= interpreted / i_runs x (1 - margin).
-        let slower = u128::from(body.nanos) * u128::from(interpreted.runs) * u128::from(PER_MILLE)
-            >= u128::from(interpreted.nanos) * u128::from(body.runs) * u128::from(PER_MILLE - lane.audit_margin_permille);
-        if std::env::var_os("QDBG_AUDIT").is_some() { eprintln!("DBGA body {} ns/run x{} interp {} ns/run x{} retire {}", body.nanos / u64::from(body.runs), body.runs, interpreted.nanos / u64::from(interpreted.runs), interpreted.runs, slower); }
-        if !slower {
+        let verdict = Verdict::of(body, interpreted, lane.audit_margin_permille);
+        self.body_stats.audit.set(Some(verdict));
+        if !verdict.retire {
             return;
         }
-        // SAFETY: as `lane_body`; the verdict runs between runs, and the caller's lease of the
-        // body keeps its code alive past the retirement, as a direct caller's does.
+        // SAFETY: as `lane_body`; the verdict runs between runs, after the run that ended it.
         let lane_body = unsafe { &mut *self.tier_lane.get() };
         if matches!(lane_body, LaneBody::Specialized { .. }) {
             self.retire_body(lane_body, LaneBody::Declined);
@@ -92,5 +98,71 @@ impl LaneView {
         let mut history = self.history.get();
         history.audit = Audit::default();
         self.history.set(history);
+        self.body_stats.audit.set(None);
+    }
+}
+
+/// The nanoseconds since `started`.
+pub(in crate::vm) fn audit_nanos(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
+
+/// What an audit concluded: each side's mean timed run and whether the body retires.
+#[derive(Clone, Copy)]
+pub(in crate::vm) struct Verdict {
+    body_nanos: u64,
+    interpreter_nanos: u64,
+    retire: bool,
+}
+
+impl Verdict {
+    /// A body retires unless its mean run is `margin_permille` below the interpreter's mean,
+    /// compared without a division: `body / b_runs < interpreted / i_runs x (1 - margin)`.
+    fn of(body: Side, interpreted: Side, margin_permille: u64) -> Self {
+        let retire = u128::from(body.nanos) * u128::from(interpreted.runs) * u128::from(PER_MILLE)
+            >= u128::from(interpreted.nanos) * u128::from(body.runs) * u128::from(PER_MILLE - margin_permille);
+        Self { body_nanos: body.mean(), interpreter_nanos: interpreted.mean(), retire }
+    }
+
+    /// The `QUENCH_LANE_BODY` report's `audit` value.
+    pub(in crate::vm) fn report(self) -> String {
+        format!("{{\"body_ns\":{},\"interpreter_ns\":{},\"retired\":{}}}", self.body_nanos, self.interpreter_nanos, self.retire)
+    }
+}
+
+impl Side {
+    fn mean(self) -> u64 {
+        self.nanos / u64::from(self.runs.max(1))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MARGIN: u64 = 50;
+
+    fn side(nanos: u64, runs: u16) -> Side {
+        Side { nanos, runs }
+    }
+
+    #[test]
+    fn a_body_clearly_faster_stays() {
+        assert!(!Verdict::of(side(800, 4), side(1000, 4), MARGIN).retire);
+    }
+
+    #[test]
+    fn a_body_only_as_fast_retires() {
+        assert!(Verdict::of(side(1000, 4), side(1000, 4), MARGIN).retire);
+        assert!(Verdict::of(side(960, 4), side(1000, 4), MARGIN).retire);
+    }
+
+    #[test]
+    fn the_margin_boundary_is_inclusive_and_means_not_totals_compare() {
+        // 950 against 1000 is exactly the margin: not faster than it, so retired.
+        assert!(Verdict::of(side(950, 1), side(1000, 1), MARGIN).retire);
+        assert!(!Verdict::of(side(949, 1), side(1000, 1), MARGIN).retire);
+        // Twice the runs at twice the total is the same mean.
+        assert!(Verdict::of(side(2000, 8), side(1000, 4), MARGIN).retire);
     }
 }

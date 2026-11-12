@@ -21,6 +21,8 @@ pub(in crate::vm) struct LaneBodyStats {
     pub(in crate::vm) refused: std::cell::Cell<u32>,
     /// Why its body declined (`decline`).
     pub(in crate::vm) declined: std::cell::Cell<&'static str>,
+    /// The audit's verdict (`LaneView::audit_verdict`): `None` while it runs.
+    pub(in crate::vm) audit: std::cell::Cell<Option<super::super::lane_body_tier::Verdict>>,
 }
 
 impl LaneBodyStats {
@@ -79,8 +81,9 @@ impl LaneBodyStats {
                 };
                 format!("[\"{place}\",{count}]")
             }).collect::<Vec<_>>().join(",");
+            let audit = self.audit.get().map_or(String::from("null"), |verdict| verdict.report());
             format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"compiled_at\":{:?},\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
+                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"compiled_at\":{:?},\"state\":\"{state}\",\"refused\":{},\"audit\":{audit},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
                 self.compiles.get(), self.frames.get(), self.shape.borrow(), self.compiled_at.borrow(), self.refused.get(),
             )
         })
