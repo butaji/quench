@@ -24,6 +24,7 @@ mod decode;
 mod link;
 mod plan;
 mod repr;
+mod residuals;
 mod tile;
 mod webs;
 use decode::*;
@@ -198,5 +199,7 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     let general: Vec<bool> = decoded.iter().map(|row| is_general(row, &reprs)).collect();
     let body = tile::plan_all(&layout, &decoded, &general)?;
     let bare = decoded.iter().all(|row| row.heap.is_none());
-    Ok((link(&layout, &body)?, bare))
+    let code = link(&layout, &body)?;
+    residuals::report_rows(&layout, &decoded, &body, code.len());
+    Ok((code, bare))
 }

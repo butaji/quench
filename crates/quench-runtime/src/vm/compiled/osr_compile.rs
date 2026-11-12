@@ -355,6 +355,7 @@ pub(in crate::vm) fn start_osr_region(
     // typed region use. A region it declines stays in the interpreter; there is no second
     // lowering with its own facts, widenings and entry record.
     let function = lane?.function;
+    super::residuals::report_clif(region.header, &function);
     let clif = native_dump_directory().map(|_| function.display().to_string());
     let facts = OsrFacts::observed(observation);
     let code = super::super::jit_backend::run_in_background(move || {
