@@ -11,7 +11,10 @@ mod library;
 
 #[path = "build/checks.rs"]
 mod checks;
+#[path = "build/layout.rs"]
+mod layout;
 
+use layout::{NEXT, SUCCESSOR};
 use std::{env, fs, path::PathBuf, process::Command};
 
 const SOURCE: &str = "stencils/rows.rs";
@@ -65,10 +68,8 @@ const U64_BYTES: usize = 8;
 const EXIT_PREFIX: usize = 4;
 const EXIT_BASE: u32 = 2;
 const ABS32: u8 = 0;
-const SUCCESSOR: u8 = 1;
 const ABS64: u8 = 2;
 /// The successor hole indexes (`quench_bjit::NEXT`, `TAKEN`, `EXIT`).
-const NEXT: u32 = 0;
 const TAKEN: u32 = 1;
 /// The routines around the rows (`stencils/entry.rs`).
 const ENTRY_PREFIX: &str = "entry_";
@@ -221,8 +222,9 @@ fn stencil_table(table: &str, data: &[u8]) -> String {
         assert!(returns || !ends_with_ret(code), "stencil {name} ends with `ret`");
         check_call(name, code);
         let relocs = relocations(&elf, &symbols, data, name, *section, code);
-        framed += usize::from(checks::is_row(name) && checks::has_stack_frame(code));
-        unchained += usize::from(checks::is_row(name) && !checks::ends_in_continuation(code, &relocs));
+        let (code, relocs) = layout::fold_cold_trampolines(code, &relocs).unwrap_or((code.to_vec(), relocs));
+        framed += usize::from(checks::is_row(name) && checks::has_stack_frame(&code));
+        unchained += usize::from(checks::is_row(name) && !checks::ends_in_continuation(&code, &relocs));
         rows.push((name.clone(), format!("    RawStencil {{ name: {name:?}, code: &{code:?}, relocs: &{relocs:?} }},\n")));
     }
     rows.sort();

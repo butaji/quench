@@ -196,13 +196,17 @@ pub mod rustc {
 }
 
 #[cfg(test)]
+#[path = "../build/layout.rs"]
+mod layout;
+
+#[cfg(test)]
 mod rustc_tests {
     use super::{numeric::library, rustc};
 
     /// Rows whose hot path may still end in something other than the continuation jump: LLVM
     /// lays a cold exit tail after it. It may only shrink; a row that gains a stack frame
     /// fails `no_row_has_a_stack_frame` instead.
-    const NOT_ENDING_IN_CONTINUATION_RATCHET: usize = 3200;
+    const NOT_ENDING_IN_CONTINUATION_RATCHET: usize = 3000;
 
     /// The routines around the rows (`stencils/entry.rs`).
     const ROUTINES: [&str; 7] = ["entry_thunk", "entry_body", "leave_word", "leave_pop", "leave_stop", "leave_stop_pop", "leave_returned"];
