@@ -119,12 +119,6 @@ pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl 
     status
 }
 
-/// Whether the running body is a native callee's, whose frames lie below the activations a helper
-/// would push (`dispatch_fast::lane_body_call`).
-pub(super) fn lane_shadow_active<H: Host>(cx: *mut LaneContext<H>) -> bool {
-    unsafe { vm(cx) }.lane_stack.activations.top_native().is_some()
-}
-
 /// The environment a running body's captures resolve in when it runs as a native callee: its
 /// closure's, which no lane activation holds; `None` in the activation's own.
 pub(super) fn innermost_callee_env<H: Host>(cx: *mut LaneContext<H>) -> Option<Value> {

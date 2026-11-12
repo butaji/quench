@@ -111,3 +111,30 @@ fn a_leave_at_each_depth_of_a_native_chain_materializes_its_frames() {
     "#);
     same_with_and_without_native_bodies(&source);
 }
+
+#[test]
+fn a_native_callee_calls_through_the_helper_path_above_its_frames() {
+    // The innermost level calls one of eight closures, more than a site inlines or calls
+    // directly: its activation is the helper's, pushed above the chain's native frames.
+    let mut source = chain(6, "return handlers[n & 7](n);", |_| "return NEXT + 1;".into());
+    source += r#"
+      function make(k) { return function (n) { return n * k + 1; }; }
+      var handlers = [];
+      for (var k = 0; k < 8; k++) handlers.push(make(k));
+      var total = 0;
+      for (var i = 0; i < 4000; i++) total = (total + c0(i & 255)) | 0;
+      print(total);
+    "#;
+    same_with_and_without_native_bodies(&source);
+}
+
+#[test]
+fn recursion_past_the_native_frame_bound_continues_in_helper_activations() {
+    let source = r#"
+      function down(n) { return n === 0 ? 0 : 1 + down(n - 1); }
+      var total = 0;
+      for (var i = 0; i < 600; i++) total = (total + down(150 + (i & 15))) | 0;
+      print(total);
+    "#;
+    same_with_and_without_native_bodies(source);
+}

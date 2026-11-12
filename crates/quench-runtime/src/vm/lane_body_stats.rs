@@ -118,7 +118,6 @@ macro_rules! miss_reasons {
     };
 }
 miss_reasons! {
-    CallShadowActive => "call:shadow-active",
     CallNoScriptCalls => "call:no-script-calls",
     CallConstructing => "call:constructing",
     CallWithScope => "call:with-scope",
@@ -127,7 +126,6 @@ miss_reasons! {
     CallEntryNotActivation => "call:entry-not-activation",
     CallNoActivationRoom => "call:no-activation-room",
     CallReadAnswer => "call:read-answer",
-    ConstructShadowActive => "construct:shadow-active",
     ConstructNoScriptConstructs => "construct:no-script-constructs",
     ConstructConstructTarget => "construct:construct-target",
     ConstructWithScope => "construct:with-scope",
