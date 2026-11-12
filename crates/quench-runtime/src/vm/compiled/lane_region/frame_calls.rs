@@ -58,25 +58,25 @@ pub(super) fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<
         RegisterFact::definition(Type::ANY, Representation::Tagged));
 }
 
-/// The address of a stack run holding the tagged words of `window`'s registers, which an
-/// allocator reads as the parts of a literal or a concatenation.
-fn window_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, window: RegisterWindow) -> ir::Value {
+/// The address of a stack run holding the tagged words of `registers`, which an allocator
+/// reads as the parts of a literal or a concatenation.
+fn register_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, registers: impl ExactSizeIterator<Item = Register>) -> ir::Value {
     let word = types::I64.bytes();
     let slot = stage.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
-        word * u32::from(window.count).max(1), word.trailing_zeros() as u8));
-    for part in 0..window.count {
-        let value = <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, window.base + part);
-        stage.builder.ins().stack_store(types::I64, value, slot, (word as usize * usize::from(part)) as i32);
+        word * (registers.len() as u32).max(1), word.trailing_zeros() as u8));
+    for (index, register) in registers.enumerate() {
+        let value = <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, register);
+        stage.builder.ins().stack_store(types::I64, value, slot, (word as usize * index) as i32);
     }
     stage.builder.ins().stack_addr(types::I64, slot, 0)
 }
 
-/// The parts address and count an allocator takes for `window` (`window_words`).
+/// The parts address and count an allocator takes for `window` (`register_words`).
 fn window_arguments(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, window: RegisterWindow) -> [ir::Value; 2] {
-    [window_words(frame, stage, window), immediate(stage, i64::from(window.count))]
+    [register_words(frame, stage, window.base..window.base + window.count), immediate(stage, i64::from(window.count))]
 }
 
-/// An allocation row by the lane's own allocator of it (`LaneHelper::NewObject`, `NewConstArray`,
+/// An allocation row by the lane's own allocator of it (`LaneHelper::NewObject`, `NewArray`, `NewConstArray`,
 /// `NewObjectPair`, `NewObjectLiteral`, `NewClosure`, `NewTemplate`, `NewConcat`): each leaves for a due collection first, and a
 /// DELETED answer leaves at the proof's miss edge.
 pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
@@ -85,6 +85,11 @@ pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>
         Allocation::Empty => (LaneHelper::NewObject, vec![]),
         Allocation::Array { length } =>
             (LaneHelper::NewArray, vec![immediate(stage, i64::from(length)), immediate(stage, 0)]),
+        Allocation::ArrayOf { elements } => {
+            let registers = elements.registers();
+            let words = register_words(frame, stage, registers.iter().copied());
+            (LaneHelper::NewArray, vec![immediate(stage, registers.len() as i64), words])
+        }
         Allocation::RegExp { .. } => return None,
         Allocation::ConstArray { constant, count } =>
             (LaneHelper::NewConstArray, vec![immediate(stage, i64::from(constant)), immediate(stage, i64::from(count))]),

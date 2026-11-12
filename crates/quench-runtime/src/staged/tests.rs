@@ -82,6 +82,7 @@ fn window_values(allocation: Allocation) -> i32 {
     match allocation {
         Allocation::ObjectLiteral { window, .. } | Allocation::Concat { window } => i32::from(window.count),
         Allocation::ObjectPair { .. } => 2,
+        Allocation::ArrayOf { elements } => elements.registers().len() as i32,
         Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { .. } | Allocation::ConstArray { .. } | Allocation::Closure { .. } | Allocation::Template { .. } => 0,
     }
 }
@@ -371,7 +372,6 @@ fn an_allocation_is_a_staged_operation_with_a_host_boundary() {
     let mut frame = ConcreteFrame { registers: vec![0; 3], heap: None };
     for operation in [
         Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () },
-        Operation::MakeArray { destination: 0, length: 0, elements: 0, proof: () },
     ] {
         assert!(matches!(step(&mut stage, &mut frame, operation), Step::Unresolved));
     }
@@ -382,7 +382,7 @@ fn an_allocation_is_a_staged_operation_with_a_host_boundary() {
 /// defines the destination with the word it made.
 #[test]
 fn an_allocation_row_defines_its_destination_through_the_frame_or_declines() {
-    use crate::bytecode::RegisterWindow;
+    use crate::bytecode::{RegisterList, RegisterWindow};
     let window = RegisterWindow { base: 1, count: 2 };
     let rows = [
         (Allocation::ObjectLiteral { site: 4, window }, 2),
@@ -394,6 +394,7 @@ fn an_allocation_row_defines_its_destination_through_the_frame_or_declines() {
         (Allocation::RegExp { site: 0 }, 0),
         (Allocation::ConstArray { constant: 0, count: 2 }, 0),
         (Allocation::ObjectPair { site: 1, first: 1, second: 2 }, 2),
+        (Allocation::ArrayOf { elements: RegisterList::collect(2, |index| 2 - index as u16).expect("two fit") }, 2),
     ];
     let heap = Heap::new();
     let mut stage = Concrete::new(std::ptr::null());
@@ -418,6 +419,8 @@ fn allocation_rows_declare_their_effects() {
     let row = |allocation| Operation::<u64, ()>::Allocate { destination: 0, allocation, proof: () }.effects();
     let (literal, closure) = (row(Allocation::ObjectLiteral { site: 0, window }), row(Allocation::Closure { function: 0 }));
     assert!(literal.may_alloc && !literal.may_call_js && !literal.writes.contains(Region::Frame));
+    let elements = row(Allocation::ArrayOf { elements: crate::bytecode::RegisterList::collect(1, |_| 0).expect("one fits") });
+    assert!(elements.may_alloc && !elements.may_call_js && !elements.writes.contains(Region::Frame), "its elements are stored fresh, with no barrier");
     assert!(closure.may_alloc && closure.writes.contains(Region::Frame));
     assert!(row(Allocation::Concat { window }).may_call_js, "ToString of an object runs guest code");
 }
@@ -462,7 +465,6 @@ fn every_host_callout_operation_has_a_concrete_reading() {
     let mut frame = ConcreteFrame { registers: vec![0; 4], heap: None };
     let declines = [
         Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () },
-        Operation::MakeArray { destination: 0, length: 0, elements: 0, proof: () },
         Operation::Allocate { destination: 0, allocation: Allocation::Closure { function: 0 }, proof: () },
         Operation::IndexSetHelper { base: 0, key: 1, value: 2, proof: () },
         Operation::LoadName { destination: 0, atom: 0, site: 0, receiver: None, proof: () },

@@ -9,19 +9,17 @@ use super::*;
 pub(super) fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        literal @ (Operation::MakeArray { .. } | Operation::Allocate { .. }) => allocation_step(stage, frame, literal),
+        allocate @ Operation::Allocate { .. } => allocation_step(stage, frame, allocate),
         helper @ (Operation::IndexSetHelper { .. } | Operation::FieldStoreMiss { .. }) => helper_step(stage, frame, helper),
         index => index_step(stage, frame, index),
     }
 }
 
-/// An object or array literal allocation over a frame's heap.
+/// An allocation row over a frame's heap.
 #[inline(always)]
 fn allocation_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let value = match operation {
-        Operation::MakeArray { destination, length, elements, proof } =>
-            frame.allocate_array(stage, destination, length, elements, proof),
         Operation::Allocate { destination, allocation, proof } =>
             frame.allocate_value(stage, destination, allocation, proof),
         _ => None,

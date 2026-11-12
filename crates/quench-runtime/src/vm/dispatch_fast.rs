@@ -28,7 +28,7 @@ use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
 use crate::bytecode::index as opc;
-use crate::bytecode::{Class, Traits};
+use crate::bytecode::{Class, RegisterList, Traits};
 use crate::staged::Allocation;
 use crate::bytecode::{
     FieldLayout, FieldStore, Function, ImmediateLayout, ImmediateRole, InstructionField, StoreReceiver, WideInstruction,
@@ -3299,7 +3299,7 @@ script_handler! {
         let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
         let body = code.function(function as usize);
         let wide = decoded_instruction(body, body.code[pc]);
-        let (_, allocation) = Allocation::decode(wide).expect("a constant array decodes");
+        let (_, allocation) = Allocation::decode(wide, &[]).expect("a constant array decodes");
         if !staged_allocate(cx, r, i.a, allocation) {
             return exit(ip);
         }
@@ -5445,23 +5445,26 @@ lane_handler! {
 
 lane_handler! {
     /// `MakeArray` whose literal's `DefineArrayElement` records follow it, one per index in
-    /// order (`specialize_array_literals`): the array made with those elements at once
-    /// (`Vm::literal_array`), as their definitions into its holes would leave it, and the
-    /// run goes on past them.
+    /// order (`specialize_array_literals`): the array made with those elements at once, as
+    /// their definitions into its holes would leave it, and the run goes on past them.
     fn lane_make_array_elements<>(cx, r, ip, i, view) {
         let length = i.imm() as usize;
-        r.set(i.a, lane_new_literal_array(unsafe { vm(cx) }, r, ip, length));
         // SAFETY: `specialize_array_literals` matched the `length` records after this one.
+        let elements = RegisterList::collect(length, |index| unsafe { (*ip.add(index + 1)).a })
+            .expect("a fused literal fits the window");
+        if !staged_allocate(cx, r, i.a, Allocation::ArrayOf { elements }) {
+            return exit(ip);
+        }
+        // SAFETY: as above.
         next!(cx, r, unsafe { ip.add(length + 1) }, view)
     }
 }
 
-/// `lane_make_array_elements`'s array of the `length` values the `DefineArrayElement` records
-/// after `ip` read, out of line as `lane_new_object`.
+/// The array of the values in `elements` (`Vm::literal_array`), out of line as `lane_new_object`.
 #[inline(never)]
-fn lane_new_literal_array<H: Host>(vm: &mut Vm<H>, r: Registers, ip: Ip, length: usize) -> Value {
-    // SAFETY: `specialize_array_literals` matched the `length` records after `ip`.
-    let value = vm.literal_array(length, |index| r.get(unsafe { (*ip.add(index + 1)).a }));
+fn lane_literal_array_value<H: Host>(vm: &mut Vm<H>, r: Registers, elements: RegisterList) -> Value {
+    let registers = elements.registers();
+    let value = vm.literal_array(registers.len(), |index| r.get(registers[index]));
     note_allocation(vm);
     value
 }
@@ -19709,7 +19712,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records);
         specialize_proved_arrays::<H>(&decoded, &mut records);
-        specialize_array_literals::<H>(&mut records);
+        specialize_array_literals::<H>(&decoded, &mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
@@ -20525,23 +20528,15 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
 }
 
 /// Gives each `MakeArray` of a literal whose elements are defined by the records right after
-/// it, a `DefineArrayElement` of a register value for each index in order, the literal made
-/// at once (`lane_make_array_elements`). The definitions stay: nothing jumps between them,
-/// and a run entered past the `MakeArray` takes them as before.
-fn specialize_array_literals<H: Host>(records: &mut [LaneInstruction]) {
+/// it, a `DefineArrayElement` of a register value for each index in order (`Allocation::ArrayOf`),
+/// the literal made at once (`lane_make_array_elements`). The definitions stay: nothing jumps
+/// between them, and a run entered past the `MakeArray` takes them as before.
+fn specialize_array_literals<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
     let make = lane_make_array::<H> as Handler as *const ();
-    let define = lane_define_array_element::<H> as Handler as *const ();
     for pc in 0..records.len() {
-        if records[pc].handler != make {
-            continue;
-        }
-        let (array, length) = (records[pc].a, records[pc].imm() as usize);
-        let defines = records.get(pc + 1..pc + 1 + length).is_some_and(|elements| {
-            elements.iter().enumerate().all(|(index, element)| {
-                element.handler == define && element.b == array && element.a != array && element.imm() as usize == index
-            })
-        });
-        if defines {
+        if records[pc].handler == make
+            && matches!(Allocation::decode(decoded[pc], &decoded[pc + 1..]), Some((_, Allocation::ArrayOf { .. })))
+        {
             records[pc].handler = lane_make_array_elements::<H> as Handler as *const ();
         }
     }

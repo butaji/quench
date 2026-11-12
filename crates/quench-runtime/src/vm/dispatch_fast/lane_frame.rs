@@ -313,6 +313,7 @@ unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Alloca
     match allocation {
         Allocation::Empty => Some(lane_new_object(unsafe { vm(cx) })),
         Allocation::Array { length } => Some(lane_new_hole_array(unsafe { vm(cx) }, length as usize)),
+        Allocation::ArrayOf { elements } => Some(lane_literal_array_value(unsafe { vm(cx) }, r, elements)),
         Allocation::RegExp { site } => lane_regexp_literal_value(cx, site),
         Allocation::ConstArray { constant, count } => lane_const_array_value(cx, constant, count),
         Allocation::ObjectPair { site, first, second } => Some(lane_object_pair(cx, r, site, [first, second])),

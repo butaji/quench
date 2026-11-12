@@ -2474,7 +2474,7 @@ fn admit(
             (instruction.result_flags() == 0).then_some(())?;
             admission.tagged(instruction.result_register())?;
         }
-        // Its literal's allocation writes it (`Lowering::literal_elements`).
+        // Its literal's allocation writes it (`Allocation::ArrayOf`).
         Class::DefineArrayElement => {}
         Class::LoadEnvLocal => {
             if instruction.result_flags() != 0

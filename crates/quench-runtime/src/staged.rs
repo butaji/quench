@@ -135,10 +135,6 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn typed_index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
 
-    /// The array literal `destination`, of `length` holes or `elements` values.
-    #[inline(always)]
-    fn allocate_array(&mut self, _stage: &mut S, _destination: Register, _length: S::Word, _elements: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
-
     /// The heap value `allocation` makes, defined into `destination`; `None` where the frame
     /// has no allocator for it or the value is the general path's (a due collection).
     #[inline(always)]
@@ -255,10 +251,8 @@ pub(crate) enum Operation<W, P> {
     TypedIndexRead { index: W, proof: P },
     /// Store the Number `value` at typed array element `index`, under `proof`.
     TypedIndexWrite { index: W, value: W, proof: P },
-    /// The array literal `destination`: `length` holes, or `elements` values.
-    MakeArray { destination: Register, length: W, elements: W, proof: P },
-    /// The empty object, object literal, constant array, closure, literal template or string
-    /// concatenation `allocation` makes, defined into `destination`; a due collection leaves
+    /// The empty object, object or array literal, constant array, regexp literal, closure,
+    /// literal template or string concatenation `allocation` makes, defined into `destination`; a due collection leaves
     /// at the frame's miss edge (`Frame::allocate_value`).
     Allocate { destination: Register, allocation: Allocation, proof: P },
     /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).

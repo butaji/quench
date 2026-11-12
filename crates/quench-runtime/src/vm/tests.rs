@@ -23243,6 +23243,55 @@ fn lane_bodies_allocate_literals() {
     assert_eq!(answers, [Some(-1474336480.0); 2]);
 }
 
+/// The osr diagnostics of function `name` after `source` runs compiled under every memory
+/// policy that compiles loops, with the printed output each policy must give.
+fn compiled_loop_diagnostics(source: &str, file: &str, name: &str, expected: &[&str])
+    -> Vec<(crate::MemoryPolicy, super::dispatch_fast::OsrDiagnostics)> {
+    let program = Engine::specialize(source, file).unwrap();
+    let function_id = program.functions.iter()
+        .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+    let mut diagnostics = Vec::new();
+    for policy in crate::MemoryPolicy::ALL.into_iter().filter(|policy| super::compiled::loop_tier_compiles(*policy)) {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{policy:?}");
+        let views = compiled.programs.lane_views(super::program_store::ProgramId::MAIN).expect("main program lane views");
+        diagnostics.push((policy, views.get(function_id).and_then(super::program_store::derived_lane_view)
+            .expect("the function's lane view").osr_diagnostics()));
+    }
+    diagnostics
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn lane_loops_make_array_literals_of_integers_and_objects_natively() {
+    // An array literal of integers, a number computed in the loop and one object twice
+    // (`Allocation::ArrayOf`) is made by the loop's native code, which reads the elements back
+    // as the interpreter does; the loop leaves only where a collection is due. Expected value
+    // is Node's.
+    let source = r#"
+      function run(n) {
+        var t = 0;
+        for (var i = 0; i < n; i++) {
+          var o = { v: i };
+          var a = [i, o, i + 1, o, 7];
+          t = (t + a[0] + a[1].v + a[2] + a[3].v + a[4] + a.length) | 0;
+        }
+        return t;
+      }
+      var s = 0;
+      for (var k = 0; k < 200; k++) s = (s + run(300)) | 0;
+      print(s);
+    "#;
+    for (policy, osr) in compiled_loop_diagnostics(source, "lane-array-literal-loop.js", "run", &["36660000"]) {
+        assert!(osr.native_region_runs > 0 && osr.exits < osr.native_region_runs, "{policy:?}: {osr:?}");
+    }
+}
+
 #[test]
 fn lane_bodies_construct_empty_arrays() {
     // `new Array()` of the realm's `Array` in a lane body is an empty array

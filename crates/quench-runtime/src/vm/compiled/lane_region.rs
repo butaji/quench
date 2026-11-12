@@ -2687,9 +2687,6 @@ impl Lowering<'_, '_> {
                 && !self.helpers.is_numeric() => self.typeof_test(state, pc, instruction),
             _ if plain && instruction.op().js_denotation() == JsDenotation::NumericUnary
                 && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
-            // An array literal's allocation, by the lane's own (`compiled::lane_new_array`); a due
-            // collection leaves first. The staged operation allocates and writes the result.
-            Class::MakeArray if self.literal_completes(instruction, pc) => Some(self.literal(state, pc, instruction)),
             _ if self.allocation_row(pc, instruction) => Some(self.allocation(state, pc, instruction)),
             Class::Construct if self.completion != Completion::Number && !instruction.is_super_construct()
                 && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
@@ -3028,19 +3025,6 @@ impl Lowering<'_, '_> {
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
-    }
-
-    /// An array literal's allocation, by the lane's own (`compiled::lane_new_array`); a due
-    /// collection leaves first. The staged operation allocates and writes the result.
-    fn literal(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        let exit = self.guard_exit(state, pc as u32);
-        let elements = self.literal_elements(state, pc, instruction);
-        let length = self.ins().iconst(types::I64, instruction.array_length() as i64);
-        let operation = crate::staged::Operation::MakeArray { destination: instruction.result_register(), length, elements,
-            proof: super::EmitProof::Allocation { miss: exit } };
-        self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
-        self.allocated(state);
-        self.literal_done(state, pc, instruction)
     }
 
     /// Whether a literal's allocation lowers here: plain, or the one that returns its value

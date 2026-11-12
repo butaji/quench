@@ -170,14 +170,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         calls::safepoint(self, stage, proof)
     }
 
-    /// An array literal: the lane's own allocator, with its holes or its written elements.
-    #[inline(always)]
-    fn allocate_array(&mut self, stage: &mut Emit<'_, '_>, destination: Register, length: ir::Value,
-        elements: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        self.allocate(stage, LaneHelper::NewArray, destination, &[length, elements], proof)
-    }
-
-    /// An empty object, object literal, constant array, closure, template or concatenation: the lane's own allocator.
+    /// An empty object, object or array literal, constant array, closure, template or concatenation: the lane's own allocator.
     #[inline(always)]
     fn allocate_value(&mut self, stage: &mut Emit<'_, '_>, destination: Register, allocation: crate::staged::Allocation,
         proof: EmitProof) -> Option<ir::Value> { calls::allocate_value(self, stage, destination, allocation, proof) }
