@@ -624,6 +624,23 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The frame of an activation of `id` bound and left unrun, off the frame stack, as a suspension
+    /// at its first instruction holds it: what an owner keeps to start in a lane run
+    /// (`Vm::start_root_job`).
+    pub(super) fn unstarted_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        parent: Value,
+        this: Value,
+        context: CallContext,
+    ) -> Result<Box<Frame>, JsError> {
+        self.activate_user_frame(p, id, parent, this, &[], context)?;
+        let mut frame = self.frames.pop().expect("the activation pushed a frame");
+        frame.with_objects = self.with_stack.split_off(frame.with_base);
+        Ok(frame)
+    }
+
     /// `activate_user_frame` for a function whose static layout describes its whole
     /// activation (`Function::plain_activation`): every local starts undefined because every
     /// parameter lives in a register, `this` is the coerced receiver or an arrow's lexical

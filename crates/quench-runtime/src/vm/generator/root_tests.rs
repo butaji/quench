@@ -29,3 +29,19 @@ fn a_module_root_reads_globals_and_stores_its_own_bindings_after_an_await() {
     );
     assert_eq!(lines, ["number:23"]);
 }
+
+#[test]
+fn a_module_awaiting_at_its_first_statement_suspends_a_window_never_a_frame() {
+    // The root runs from its first instruction as a job over its evaluation record
+    // (`Vm::start_root_job`), so even the first `await` suspends the lane's window.
+    let (lines, made) = module_run(
+        r#"
+        const first = await 1;
+        let total = first;
+        for (let i = 0; i < 50; i++) total += await i;
+        print(String(total));
+        "#,
+    );
+    assert_eq!(lines, ["1226"]);
+    assert_eq!(made, 0, "the root became a frame");
+}

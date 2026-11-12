@@ -87,6 +87,10 @@ impl<H: Host> Vm<H> {
             |vm| vm.promise_object(),
         )?;
         self.with_call_roots([promise], |vm| {
+            if id == super::ROOT_FUNCTION_ID {
+                vm.start_root_job(p, promise, env, this, context)?;
+                return Ok(promise);
+            }
             let outcome = match vm.call_user_frame(p, id, env, this, args, context) {
                 Ok(outcome) => outcome,
                 Err(error) => {
@@ -126,6 +130,29 @@ impl<H: Host> Vm<H> {
             }
             Ok(promise)
         })
+    }
+
+    /// Starts the body of an async root, a module with a top-level `await`, as a job over its
+    /// evaluation record: its frame, bound at its first instruction, is the continuation an
+    /// await state keeps, which `resume_await` runs as an await's reaction does. The lane runs
+    /// it from its first instruction, so its first `await` suspends a window and no frame
+    /// (`Vm::run_job`); the body's end settles `promise`.
+    fn start_root_job(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        env: Value,
+        this: Value,
+        context: CallContext,
+    ) -> Result<(), JsError> {
+        let frame = match self.unstarted_frame(p, super::ROOT_FUNCTION_ID, env, this, context) {
+            Ok(frame) => frame,
+            Err(error) => return self.reject_settled_call(p, promise, error),
+        };
+        let continuation = Continuation::suspend(frame, Completion::Await(Value::UNDEFINED), None, promise);
+        let kind = AwaitKind::function(continuation);
+        let state = self.heap.alloc_await_state(AwaitState::arm(kind, self.realm.globals, promise));
+        self.with_call_roots([state], |vm| vm.resume_await(p, state, false, Value::UNDEFINED)).map(drop)
     }
 
     /// Rejects an async call's `promise` with the error its body completed with.
