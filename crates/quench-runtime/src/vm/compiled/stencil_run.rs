@@ -11,7 +11,7 @@ const _: () = assert!(std::mem::offset_of!(super::JsStepDispatch, loop_entry) ==
 /// What a run of a region builds around its code.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Crossing {
-    /// The general tier's activation, dispatch and views.
+    /// A loop region's activation, dispatch and views.
     General,
     /// A stencil region that reads the heap: the activation and dispatch, without the views.
     Lean,

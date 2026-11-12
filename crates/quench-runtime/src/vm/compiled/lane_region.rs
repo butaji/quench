@@ -1440,7 +1440,7 @@ pub(super) fn lower(
     if numeric && (!super::super::js_compiled::function_candidate(function, program)
         || !numeric_unit(program, unit) || function.params > unit.caller_registers) { return None; }
     if fields.values().flatten().any(|field| !field.valid()) { return None; }
-    if unit.instructions.is_empty() || unit.instructions.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
+    if unit.instructions.is_empty() || unit.instructions.len() > MAX_NATIVE_RECORDS {
         return None;
     }
     let signature = lane_body_signature(isa.pointer_type(), isa.default_call_conv());
@@ -3368,7 +3368,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Count a taken execution of the region's backward edge in the loop entry record
-    /// (`LoopEntry::backedge_count`), which the lane's general-dispatch pricing reads.
+    /// (`LoopEntry::backedge_count`), which the loop tier's pricing reads.
     /// A lane body (`Coverage::Prefix`) counts nothing.
     fn count_backedge(&mut self) {
         if !matches!(self.coverage, Coverage::Loop { .. }) { return; }

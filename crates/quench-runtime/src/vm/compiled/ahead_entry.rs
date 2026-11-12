@@ -105,7 +105,7 @@ fn emit_body_status(
     builder.ins().store(MemFlagsData::trusted(), word, params[4], 0);
     let record = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, returned_pc));
     let record = builder.ins().ireduce(types::I32, record);
-    let status = builder.ins().iadd_imm_u(record, i64::from(JS_GENERAL_RETURN_STATUS_BASE));
+    let status = builder.ins().iadd_imm_u(record, i64::from(RETURN_STATUS_BASE));
     builder.ins().return_(&[status]);
     builder.switch_to_block(leave);
     // A failed entry proof resumes at the first record; any other word is the leave's PC.
@@ -166,5 +166,51 @@ mod tests {
             },
         }).unwrap();
         cranelift_codegen::verify_function(&function, &*isa).unwrap();
+    }
+}
+
+/// The shrink-only budget of records the trampolines leave to the per-PC fallback in the
+/// benchmark sources AOT compiles (`aot-exact-steps.txt`): a source whose count grows fails
+/// the check, and one whose count shrinks must lower its budget, as `oversized.txt` ratchets
+/// file sizes.
+#[cfg(all(test, feature = "aot"))]
+mod exact_steps {
+    use super::*;
+
+    const BUDGET: &str = include_str!("../../../aot-exact-steps.txt");
+
+    /// The records of every function of `source` that its ahead lane body does not lower, so a
+    /// trampoline hands them to the per-PC fallback: a function with no body counts all its
+    /// records. The root body runs once and is not counted.
+    fn fallback_records(source: &str, name: &str) -> usize {
+        let program = crate::Engine::specialize(source, name).expect("benchmark source compiles");
+        let isa = crate::vm::jit_backend::target_isa().expect("host ISA");
+        let globals = frozen_globals(&program);
+        let fields = frozen_fields(&program);
+        let facts = VmFacts { frozen_fields: Some(&fields), ..VmFacts::STATIC };
+        let helpers = LaneHelpers::Linked(0, u32::try_from(program.function_count()).expect("native namespace"));
+        (1..program.function_count()).map(|id| {
+            let function = program.function(id);
+            let reads = frozen_global_reads(&program, function, &globals);
+            let lowered = lowered_lane_body(&program, id as u32, &*isa, helpers, facts, &reads);
+            function.code.len().saturating_sub(lowered.map_or(0, |region| region.native))
+        }).sum()
+    }
+
+    #[test]
+    fn aot_exact_steps_stay_within_budget() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut failures = Vec::new();
+        for line in BUDGET.lines().filter(|line| !line.is_empty() && !line.starts_with('#')) {
+            let (budget, path) = line.split_once(' ').expect("`count path` budget line");
+            let budget: usize = budget.parse().expect("budget count");
+            let source = std::fs::read_to_string(root.join(path)).expect("budgeted benchmark source");
+            let count = fallback_records(&source, path);
+            if count != budget {
+                failures.push(format!("{path}: {count} fallback records, budget {budget}"));
+            }
+        }
+        assert!(failures.is_empty(), "fallback records left the budget (lower it when they shrink; \
+            lower an instruction natively when they grow):\n{}", failures.join("\n"));
     }
 }

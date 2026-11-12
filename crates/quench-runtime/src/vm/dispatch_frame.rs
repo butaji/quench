@@ -228,37 +228,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Feed real loop work to the shared JS baseline tier. The loop length is
-    /// an upper bound for the bytecodes executed on this iteration, so pricing
-    /// stays conservative when a loop body contains VM callouts.
-    #[inline(always)]
-    fn note_js_general_dispatch_backedge(
-        &mut self,
-        program: &ResidualProgram,
-        frame: usize,
-        source_pc: usize,
-        target_pc: usize,
-    ) {
-        if !self.js_tier_runs()
-            || !self.programs.js_jit_general_dispatch_enabled()
-            || program.kind == crate::bytecode::ProgramKind::Wasm
-        {
-            return;
-        }
-        let program_id = self.frames[frame].program;
-        let function = self.frames[frame].function;
-        let instructions = program
-            .function_get(function as usize)
-            .map_or(0, |body| body.code.len());
-        let work = source_pc.saturating_sub(target_pc).saturating_add(1);
-        self.programs.note_js_general_dispatch_backedge(
-            program_id,
-            function,
-            work,
-            instructions,
-        );
-    }
-
     pub(super) fn call_this_value(&mut self, this: Value, strict: bool) -> Result<Value, JsError> {
         if strict {
             Ok(this)
@@ -543,8 +512,7 @@ impl<H: Host> Vm<H> {
     fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const super::dispatch_fast::LaneView {
         let program = self.active_program;
         let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
-            && !self.js_tier_runs()
-            && !self.programs.js_jit_general_dispatch_enabled();
+            && !self.js_tier_runs();
         #[cfg(feature = "native-execution")]
         let lane_runs = lane_runs && self.programs.native_js_code(program).is_none();
         if !lane_runs
@@ -1558,11 +1526,10 @@ impl<H: Host> Vm<H> {
     /// lane at the frame's PC, so the lane runs from here (`run_frame_from_lane`).
     pub(super) fn run_resumed_frame(&mut self, p: &ResidualProgram, frame: usize) -> Result<FrameOutcome, JsError> {
         let (program, function, pc) = (self.frames[frame].program, self.frames[frame].function, self.frames[frame].pc);
-        // With JS tiers or JIT general dispatch the loop may run the resumed frame in a tier
-        // instead of the lane, so only the tier-free loop's lane entry is mirrored here.
+        // With JS tiers the loop may run the resumed frame in a tier instead of the lane,
+        // so only the tier-free loop's lane entry is mirrored here.
         let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
-            && !self.js_tier_runs()
-            && !self.programs.js_jit_general_dispatch_enabled();
+            && !self.js_tier_runs();
         let cursor = self.general_cursor(program, p, function, lane_runs);
         if !Self::lane_runs(cursor.lane, pc) {
             return self.run_frame_general_with_error(p, frame, None);
@@ -1846,98 +1813,16 @@ impl<H: Host> Vm<H> {
                     p.source_name, self.frames[frame].function, pc,
                 )));
             }
-            if super::compiled::tier_policy::tiers_enter(STOPS) && native_step.is_none() && !resumed && pc == 0 {
-                match self.js_tier_frame_entry(p, frame, allow_inline_calls) {
-                    super::compiled::JsTierFrameEntry::Interpreter => {}
-                    super::compiled::JsTierFrameEntry::ContinueAt(return_pc)
-                    | super::compiled::JsTierFrameEntry::NativeResume(return_pc) => {
-                        pc = return_pc;
-                        continue;
-                    }
-                    super::compiled::JsTierFrameEntry::NativeStep(step) => {
-                        pc = step.next_pc;
-                        native_step = Some(step);
-                    }
-                }
-            } else if super::compiled::tier_policy::tiers_enter(STOPS) && native_step.is_none() && !resumed {
-                // A compiled caller resumes at the bytecode after a callout or
-                // at a hot loop header. Re-enter its shared CFG from that exact
-                // PC instead of sending the rest of the activation through the
-                // interpreter until the next function entry.
-                let program_id = self.frames[frame].program;
-                let function_id = self.frames[frame].function;
-                let should_try_general = self.programs.js_jit_general_dispatch_enabled()
-                    && match self.programs.js_tier(program_id, function_id) {
-                        Some(super::program_store::JsTierState::Compiled(compiled)) => {
-                            compiled.is_general_dispatch()
-                        }
-                        Some(super::program_store::JsTierState::GeneralCompileDue) => true,
-                        _ => false,
-                    };
-                if should_try_general
-                    && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
-                        p,
-                        frame,
-                        pc,
-                        allow_inline_calls,
-                        matches!(
-                            self.programs.js_tier(program_id, function_id),
-                            Some(super::program_store::JsTierState::GeneralCompileDue)
-                        ),
-                    )
-                {
-                    match outcome {
-                        super::compiled::JsNativeDispatchResult::Step(step) => {
-                            pc = step.next_pc;
-                            native_step = Some(step);
-                        }
-                        super::compiled::JsNativeDispatchResult::Resume(resume_pc) => {
-                            pc = resume_pc;
-                            continue;
-                        }
-                    }
-                }
+            if super::compiled::tier_policy::tiers_enter(STOPS) && native_step.is_none() && !resumed && pc == 0
+                && let Some(return_pc) = self.js_tier_frame_entry(p, frame)
+            {
+                pc = return_pc;
+                continue;
             }
             if !resumed && native_step.is_none() && Self::lane_enters(cursor.lane, pc, entering_after_lane_exit) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(p, cursor.program, cursor.lane, &mut frame, pc, pending_calls, &mut executing, allow_inline_calls);
                 after_lane_exit = self.heap.should_collect();
-                let (resumed_program_id, resumed_function) = {
-                    let resumed = &self.frames[frame];
-                    (resumed.program, resumed.function)
-                };
-                let general_due = self.js_tier_runs()
-                    && self.js_tier_needs_general_entry(resumed_program_id, resumed_function);
-                if general_due {
-                    // A lane loop reported enough backward-edge work for the
-                    // shared baseline. Re-enter at the exact resume PC now so
-                    // a last loop activation cannot return before it gives the
-                    // shared compiler an entry.
-                    cursor.lane = std::ptr::null();
-                    cursor.back_edges = None;
-                    if resumed_program_id == cursor.program
-                        && p.function_get(resumed_function as usize)
-                            .is_some_and(|body| pc < body.code.len())
-                        && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
-                            p,
-                            frame,
-                            pc,
-                            allow_inline_calls,
-                            true,
-                        )
-                    {
-                        match outcome {
-                            super::compiled::JsNativeDispatchResult::Step(step) => {
-                                pc = step.next_pc;
-                                native_step = Some(step);
-                            }
-                            super::compiled::JsNativeDispatchResult::Resume(resume_pc) => {
-                                pc = resume_pc;
-                                continue;
-                            }
-                        }
-                    }
-                }
                 // The lane may leave in a frame of another program, its activations' calls
                 // having set the loop's executing program aside as the loop's pushes do.
                 executing_program = executing.id;
@@ -2183,13 +2068,6 @@ impl<H: Host> Vm<H> {
                 cursor.function,
                 instruction_pc,
             );
-            if self.programs.js_jit_diagnostics_enabled() {
-                self.programs.record_js_jit_general_dispatch_opcode(
-                    cursor.program,
-                    cursor.function,
-                    ins.op(),
-                );
-            }
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::count_general(
                 || {
@@ -2273,12 +2151,6 @@ impl<H: Host> Vm<H> {
                         pc = ins.jump_target() as usize;
                         if pc <= instruction_pc {
                             self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
-                            self.note_js_general_dispatch_backedge(
-                                p,
-                                frame,
-                                instruction_pc,
-                                pc,
-                            );
                         }
                     }
                     continue;
@@ -2302,12 +2174,6 @@ impl<H: Host> Vm<H> {
                             pc = ins.jump_target() as usize;
                             if pc <= instruction_pc {
                                 self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
-                                self.note_js_general_dispatch_backedge(
-                                    p,
-                                    frame,
-                                    instruction_pc,
-                                    pc,
-                                );
                             }
                         }
                         continue;
@@ -2457,12 +2323,6 @@ impl<H: Host> Vm<H> {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
                         self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
-                        self.note_js_general_dispatch_backedge(
-                            p,
-                            frame,
-                            instruction_pc,
-                            pc,
-                        );
                     }
                     continue;
                 }

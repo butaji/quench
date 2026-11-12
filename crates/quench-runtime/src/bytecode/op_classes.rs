@@ -31,11 +31,6 @@ impl Op {
         self.traits().has(crate::bytecode::Traits::MAKES_CLOSURE)
     }
 
-    /// A JavaScript branch: the unconditional jump or one of its conditional tests.
-    pub(crate) const fn is_js_jump(self) -> bool {
-        matches!(self, Op::Jump) || self.is_js_conditional_jump()
-    }
-
     /// A JavaScript conditional branch on a value or a binary comparison.
     pub(crate) const fn is_js_conditional_jump(self) -> bool {
         matches!(self, Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)

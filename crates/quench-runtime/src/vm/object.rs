@@ -11,7 +11,6 @@ use mru_chain::record_mru_entry;
 /// (`Vm::note_field_leave`), written on that path only and kept across refills.
 pub(super) const FIELD_LEAVES_WORD: usize = 2;
 pub(super) const FIELD_LEAVES_SHIFT: u32 = 24;
-pub(super) const FIELD_CLASS_BYTE: usize = 2;
 pub(super) const FIELD_BYTE: u32 = 0xff;
 
 #[cfg(all(test, feature = "aot"))]

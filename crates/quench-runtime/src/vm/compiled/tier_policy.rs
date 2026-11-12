@@ -121,40 +121,13 @@ pub(in crate::vm) struct LaneBody {
     pub(in crate::vm) benefit_over_cost: u64,
 }
 
-/// The per-function JavaScript tiers: the numeric optimizing tier and the general
-/// tagged-dispatch baseline.
+/// The per-function JavaScript tier: the numeric optimizing tier.
 pub(in crate::vm) struct JsFunction {
     /// Prespecified looks for the Number-entry profile. Critical counts are the exact
     /// one-sided Binomial( n, 0.80 ) cutoffs at alpha = 0.05 / 4 per look. A union bound caps
     /// false promotion at 5% across looks for one function under a stationary Bernoulli model;
     /// it is not a VM-wide multiple-test bound.
     pub(in crate::vm) promotion_looks: [(u8, u8); 4],
-    /// Entries after which a function is hot enough to price its general tagged-dispatch
-    /// baseline (`GeneralPromotionPending`); unlike the optimizing tier, the baseline needs no
-    /// numeric arguments or bytecode-shape candidate.
-    pub(in crate::vm) general_promotion_entries: u8,
-    /// A specialized artifact that repeatedly rejects entry values is useful only for its
-    /// matching profile. Eight confirmed misses cap this experiment before paying for the
-    /// complete-semantics baseline.
-    pub(in crate::vm) specialized_guard_misses: u8,
-    /// The general baseline's compile cost in interpreted-instruction units: a fixed part and
-    /// a part per bytecode instruction. Measured on Linux x86_64 with `QUENCH_TRACE=js-jit`
-    /// against roughly 50 ns per interpreted instruction: requiring jackspeak, about 0.8 ms
-    /// plus 32 µs per instruction; npm's semver scenario, 1.4 ms for a four-instruction body
-    /// and 40 to 76 µs per instruction for 160 to 200.
-    pub(in crate::vm) general_compile_fixed_cost: u64,
-    pub(in crate::vm) general_compile_cost_per_instruction: u64,
-    /// The share of an entry's interpreted instructions the baseline saves, as a fraction. It
-    /// keeps the interpreter's tagged semantics and calls back into the VM for most operations
-    /// (`js_step_callout` was 11% of npm browserslist with it on), so a quarter until the
-    /// baseline's savings are measured.
-    pub(in crate::vm) general_saved_share: (u64, u64),
-    /// What each native entry of the baseline costs beyond a frameless lane activation, in
-    /// interpreted-instruction units: a due function's calls take a VM frame and the general
-    /// loop (`Vm::js_tier_needs_general_entry`). Measured on npm's browserslist scenario: a
-    /// six-instruction body's 72,427 native entries cost about 650 machine instructions each
-    /// more than its lane calls, some 32 lane-interpreted instructions.
-    pub(in crate::vm) general_entry_overhead: u64,
 }
 
 /// The Wasm function and module tiers.
@@ -203,7 +176,7 @@ pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
 const FLOOR: Tiers = Tiers {
     loops: Loops { threshold: 2, ..MEASURED.loops },
     lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
-    js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
+    js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)] },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
 };
@@ -231,15 +204,7 @@ const MEASURED: Tiers = Tiers {
         saved_share: (1, 2),
         benefit_over_cost: 1,
     },
-    js_function: JsFunction {
-        promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)],
-        general_promotion_entries: 32,
-        specialized_guard_misses: 8,
-        general_compile_fixed_cost: 16_000,
-        general_compile_cost_per_instruction: 1_200,
-        general_saved_share: (1, 4),
-        general_entry_overhead: 32,
-    },
+    js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
     priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
 };
@@ -264,11 +229,11 @@ pub(in crate::vm) struct PolicyTiers {
     /// 2026-10-24). Compiling at `none`, without the e-graph pass, saved only 576 KiB on
     /// Crypto and 648 on NavierStokes (`tod137-loop-tier-opt-level-…`).
     pub(in crate::vm) loop_tier: bool,
-    /// Whether the JavaScript function tiers (the per-function tier and the general-dispatch
-    /// tier, and the loop tier's site analysis) compile. Memory-first compiles none, on the
+    /// Whether the JavaScript function tiers (the per-function tier and the loop tier's site
+    /// analysis) compile. Memory-first compiles none, on the
     /// owner's direction that it may trade Score for memory under `--jit` (TOD-123). Under
-    /// memory-first their code and regalloc2 state set the `--jit` peaks: the general-dispatch
-    /// tier took V8-v7 Crypto `--jit` from 3220 to 5496 KiB (median, bolted static x86_64).
+    /// memory-first their code and regalloc2 state set the `--jit` peaks: the function tiers
+    /// took V8-v7 Crypto `--jit` from 3220 to 5496 KiB (median, bolted static x86_64).
     /// With both off, every V8-v7 `--jit` row peaked 84-380 KiB lower, at its no-JIT level.
     /// Scores moved both ways: EarleyBoyer +125%, Splay +15%, RayTrace +11%, NavierStokes +8%,
     /// but DeltaBlue -9%, Richards -7%, RegExp -7% (same unbolted static binary, 5 runs,
@@ -302,8 +267,6 @@ mod tests {
         let looks = TIERS.js_function.promotion_looks;
         assert!(looks.windows(2).all(|pair| pair[0].0 < pair[1].0), "looks grow");
         assert!(looks.iter().all(|(observations, minimum)| minimum <= observations));
-        let (saved, of) = TIERS.js_function.general_saved_share;
-        assert!(saved > 0 && saved < of);
         for policy in crate::MemoryPolicy::ALL {
             let row = by_policy(policy);
             // The loop tier's site analysis belongs to the function tiers.

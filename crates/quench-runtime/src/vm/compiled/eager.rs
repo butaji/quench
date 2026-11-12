@@ -221,7 +221,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
     }
 }
 
-/// One exact semantic operation per PC for a live general-dispatch fallback:
+/// One exact semantic operation per PC for a live per-PC fallback:
 /// the same table the linked publisher relocates, addressed directly because
 /// this publication has no linker.
 #[cfg(feature = "aot")]

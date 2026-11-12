@@ -613,7 +613,6 @@ pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receive
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
 mod loop_runs;
-mod root_calls; #[cfg(test)] pub(super) use root_calls::call_from_script_root_in_frames;
 mod unary_values;
 mod lane_capture_store; use lane_capture_store::{lane_capture_store, lane_environment_store};
 use unary_values::lane_unary_value;
@@ -7914,34 +7913,6 @@ script_handler! {
         if script_below_floor(cx) {
             return lane_safepoint::<H>(ip, header, Slot::unset());
         }
-        // Keep the ordinary interpreter and JIT-off lane free of tier metadata
-        // lookups. Only the opt-in shared JS baseline observes loop work here.
-        let runtime = unsafe { vm(cx) };
-        if runtime.js_tier_runs()
-            && runtime.programs.js_jit_general_dispatch_enabled()
-            && unsafe { &*(*cx).code }.kind != crate::bytecode::ProgramKind::Wasm
-        {
-            let (program_id, code) = unsafe {
-                let context = &*cx;
-                (context.program, &*context.code)
-            };
-            let function = site.function;
-            let instruction_count = code
-                .function_get(function as usize)
-                .map_or(0, |body| body.code.len());
-            if runtime.programs.note_js_general_dispatch_backedge(
-                program_id,
-                function,
-                // Only the taken backedge is guaranteed to have executed;
-                // branches and `continue` can skip the rest of the region.
-                1,
-                instruction_count,
-            ) {
-                // The shared whole-function CFG starts at this exact loop header
-                // after run_fast_lane materializes any frameless lane activations.
-                return exit(header);
-            }
-        }
         if site.taken.get() < TIERS.loops.threshold {
             site.taken.set(site.taken.get() + 1);
             next!(cx, r, header, Carried::script(cx))
@@ -8196,14 +8167,8 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
 }
 
 /// Gives a loop site that will not enter native code again its plain backward jump back,
-/// so each iteration takes the jump without the site's checks. The shared JS baseline
-/// observes every backward jump of a site (`note_js_general_dispatch_backedge`), so while
-/// it runs the site stays.
+/// so each iteration takes the jump without the site's checks.
 fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
-    // SAFETY: the lane's VM is live, and nothing borrows it across the read.
-    if unsafe { vm(cx) }.programs.js_jit_general_dispatch_enabled() {
-        return;
-    }
     // A hot loop no region runs makes its function worth a body past the entry warm-up: its
     // calls have run, so their sites have linked, and its next entry runs the loop natively.
     // The site stays, and asks again a threshold of jumps on, while that body warms: the
@@ -8386,48 +8351,6 @@ fn lane_loop_run<H: Host>(
                 }
             }
             LoopOutcome::Terminated => {}
-        }
-    }
-    let general_dispatch_due = {
-        let runtime = unsafe { vm(cx) };
-        if runtime.programs.js_jit_general_dispatch_enabled() {
-            let backedges = usize::try_from(entry.backedge_count()).unwrap_or(usize::MAX);
-            // Every completed iteration executed at least its own backedge. The
-            // loop body's static span is not a sound work estimate when branches
-            // or `continue` paths skip instructions.
-            let work = backedges;
-            if work > 0 {
-                let context = unsafe { &*cx };
-                let function = site.function;
-                let instruction_count = unsafe { &*context.code }
-                    .function_get(function as usize)
-                    .map_or(0, |body| body.code.len());
-                runtime.programs.note_js_general_dispatch_backedge(
-                    context.program,
-                    function,
-                    work,
-                    instruction_count,
-                )
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    };
-    if general_dispatch_due {
-        match outcome {
-            LoopOutcome::Resume(pc) => return LoopContinuation::Exit(pc),
-            LoopOutcome::Exit(pc) => {
-                site.exits.set(site.exits.get().saturating_add(1));
-                return LoopContinuation::Exit(pc);
-            }
-            LoopOutcome::Inlined { frame, pc } => {
-                site.exits.set(site.exits.get().saturating_add(1));
-                return LoopContinuation::Inlined { frame, pc };
-            }
-            LoopOutcome::Callee => return LoopContinuation::Callee,
-            LoopOutcome::NotEntered | LoopOutcome::Terminated | LoopOutcome::Returned { .. } => {}
         }
     }
     match outcome {
@@ -10940,7 +10863,6 @@ fn lane_frame_state<H: Host>(
                     live,
                     sites,
                     vm.js_tier_runs(),
-                    vm.programs.js_jit_general_dispatch_enabled(),
                     diagnostics,
                 )
             }) else {
@@ -11741,7 +11663,6 @@ impl<H: Host> Vm<H> {
                 live,
                 sites,
                 self.js_tier_runs(),
-                self.programs.js_jit_general_dispatch_enabled(),
                 diagnostics,
             )
         })
@@ -14880,10 +14801,8 @@ fn lane_tier_enter<H: Host>(
         }
         return Some(entered);
     }
-    // The general baseline runs only from a VM frame (`Vm::js_tier_frame_entry`), so a
-    // function the general tier holds gains nothing from frameless claims either.
     if let Some(own) = own
-        && (!may_claim || vm.js_tier_holds_for_general(program, function))
+        && !may_claim
     {
         own.release_from_tier();
     }
@@ -17768,20 +17687,11 @@ fn lane_push_frame_call<H: Host>(
             // The tier observes the frame's entry as the general loop's would, and a
             // native result continues at the `Return` that completes the frame.
             let callee_frame = frame + 1;
-            let handoff = vm.js_tier_needs_general_entry(
-                vm.frames[callee_frame].program,
-                vm.frames[callee_frame].function,
-            );
-            if !handoff {
-                // SAFETY: the context's program, now the callee's, outlives the lane run.
-                if let super::compiled::JsTierFrameEntry::ContinueAt(return_pc) = vm
-                    .js_tier_frame_entry(unsafe { &*(*cx).code }, callee_frame, false)
-                {
-                    vm.frames[callee_frame].pc = return_pc;
-                }
+            // SAFETY: the context's program, now the callee's, outlives the lane run.
+            if let Some(return_pc) = vm.js_tier_frame_entry(unsafe { &*(*cx).code }, callee_frame) {
+                vm.frames[callee_frame].pc = return_pc;
             }
-            let entered = lane_enter_script_frame(cx, callee_frame);
-            if handoff { Resumed::Exit(exit(entered.into_loop())) } else { entered }
+            lane_enter_script_frame(cx, callee_frame)
         }
         // A failed push (the guest call depth) throws at the call, as the general path's.
         Some(Err(error)) => {
@@ -17929,22 +17839,10 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
             // The pushed frame's guard narrows the activations the thread admits.
             vm.lane_stack.refresh_activation_limit();
             let callee_frame = frame + 1;
-            let handoff = vm.js_tier_needs_general_entry(
-                vm.frames[callee_frame].program,
-                vm.frames[callee_frame].function,
-            );
-            if !handoff
-                && let super::compiled::JsTierFrameEntry::ContinueAt(return_pc) =
-                    vm.js_tier_frame_entry(code, callee_frame, false)
-                {
-                    vm.frames[callee_frame].pc = return_pc;
-                }
-            let callee_ip = lane_enter_script_frame(cx, callee_frame).into_loop();
-            if handoff {
-                exit(callee_ip)
-            } else {
-                callee_ip
+            if let Some(return_pc) = vm.js_tier_frame_entry(code, callee_frame) {
+                vm.frames[callee_frame].pc = return_pc;
             }
+            lane_enter_script_frame(cx, callee_frame).into_loop()
         }
         // A failed push (the guest call depth) throws at the construction, as the general
         // path's. The caller's program is the executing one again.
@@ -18667,7 +18565,6 @@ fn derive_lane_view<'live, H: Host>(
     live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     sites: &[crate::bytecode::FieldSite],
     loop_tier: bool,
-    general_dispatch: bool,
     diagnostics: bool,
 ) -> LaneView {
     // Each pass below reads instructions by PC; they are decoded once, here.
@@ -19696,7 +19593,6 @@ fn derive_lane_view<'live, H: Host>(
             constants,
             sites,
             live,
-            general_dispatch,
             diagnostics,
             &mut records,
         )
@@ -19824,7 +19720,6 @@ fn install_loop_sites<'live, H: Host>(
     constants: &[Value],
     sites: &[crate::bytecode::FieldSite],
     live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
-    general_dispatch: bool,
     diagnostics: bool,
     records: &mut [LaneInstruction],
 ) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {
@@ -19897,11 +19792,7 @@ fn install_loop_sites<'live, H: Host>(
                     // function's lane body may run it (`lane_loop_retire`), and the
                     // site retires to the plain jump where none does. A diagnostics run tiers
                     // as any other.
-                    if !general_dispatch {
-                        (std::cell::OnceCell::new(), false, Some(failure), Vec::new())
-                    } else {
-                        (std::cell::OnceCell::new(), true, Some(failure), Vec::new())
-                    }
+                    (std::cell::OnceCell::new(), false, Some(failure), Vec::new())
                 }
             };
             (
@@ -21166,7 +21057,6 @@ impl<H: Host> Vm<H> {
                     live,
                     sites,
                     self.js_tier_runs(),
-                    self.programs.js_jit_general_dispatch_enabled(),
                     diagnostics,
                 )
             })
@@ -21255,7 +21145,7 @@ impl<H: Host> Vm<H> {
                 && code.kind != crate::bytecode::ProgramKind::Wasm
                 && !self.direct_eval
                 && !self.parameter_eval
-                && root_calls::in_lane(*frame + 1 == self.frames.len(), self.frames[*frame].function),
+                && *frame + 1 == self.frames.len(),
             script_constructs: code
                 .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {

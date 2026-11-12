@@ -286,7 +286,7 @@ impl FrameFlow {
         let args = native.dfg.inst_args(instruction);
         let (value, base) = match opcode {
             ir::Opcode::CallIndirect if native.dfg.resolve_aliases(args[0]) == native.dfg.resolve_aliases(callout) => (args[2], 0),
-            ir::Opcode::Return => (args[0], i64::from(JS_GENERAL_RETURN_STATUS_BASE)),
+            ir::Opcode::Return => (args[0], i64::from(RETURN_STATUS_BASE)),
             _ => return None,
         };
         let ir::ValueDef::Result(constant, _) = native.dfg.value_def(native.dfg.resolve_aliases(value)) else { return None };

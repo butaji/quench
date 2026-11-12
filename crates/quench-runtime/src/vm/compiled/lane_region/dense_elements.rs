@@ -5,7 +5,7 @@ use super::*;
 impl Lowering<'_, '_> {
     /// Element `index` of the dense array `base` whose `view` the body holds: a present
     /// element, else what the array and its prototypes give a hole or an index past them by
-    /// the general tier's rule (`general_elements::general_element_get`), else `exit`.
+    /// the interpreter's rule (`general_elements::general_element_get`), else `exit`.
     pub(super) fn dense_element(&mut self, state: &mut State, base: ir::Value, view: super::super::DenseArrayView, index: ir::Value, exit: ir::Block) -> ir::Value {
         let absent = self.builder.create_block();
         let present = match self.step(state, frame::Edges::ValueGuarded { miss: absent },
