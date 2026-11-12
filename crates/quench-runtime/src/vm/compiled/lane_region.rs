@@ -3059,7 +3059,7 @@ impl Lowering<'_, '_> {
     fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>)
         -> crate::staged::Step<ir::Value, ()> {
         let locals = self.completion != Completion::Number;
-        let mut stage = Emit { builder: &mut self.builder, property_values: None };
+        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls };
@@ -4511,7 +4511,7 @@ impl Lowering<'_, '_> {
         if !field.valid() { return None; }
         let load = IcOp::LoadSlot { slot: field.slot, form: crate::staged::Form::of(field.storage, field.storage_len),
             storage_len: field.storage_len };
-        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties), gate: None };
         let ops: &[IcOp<'_>] = match members { Some(members) => &[IcOp::GuardShapes(members), load], None => &[load] };
         crate::staged::ic::run(&mut stage, ops, at, None, exit)
     }
@@ -4606,7 +4606,7 @@ impl Lowering<'_, '_> {
         // The prototype's run lies inside the arena, as every live flat object's does
         // (`object_slots::arena_range`).
         let properties = self.builder.use_var(self.entry.as_ref().expect("entry facts").receiver.properties);
-        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties), gate: None };
         use crate::staged::ic::IcOp;
         crate::staged::ic::run(&mut stage, &[IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(field.slot)],
             crate::staged::ic::Reached { record, shape: None, inline: None }, Some(records), exit)
@@ -4765,7 +4765,7 @@ impl Lowering<'_, '_> {
         // again.
         if self.generic.contains(&pc) && self.completion.status_and_pc() {
             let object = self.owner_bits(state, register);
-            self.field_add(object, instruction.atom_index(), instruction.cache_site_index(), value, exit);
+            self.field_add(state, object, (instruction.atom_index(), instruction.cache_site_index()), value, exit);
             self.reshaped(state);
             self.reload_receiver();
             return Some(true);

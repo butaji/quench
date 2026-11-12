@@ -23309,6 +23309,39 @@ fn lane_bodies_add_properties_at_feedback_stores() {
 }
 
 #[test]
+fn lane_bodies_run_the_staged_add_row_until_a_prototype_gains_a_setter() {
+    // An adding store of a constructor runs `staged::add`'s row in the lane body, holding the
+    // prototype chain's proof as a Stable fact; a setter installed late retires it, and the
+    // stores then reach the setter as the interpreter's do.
+    let source = r#"
+     (function () {
+      var hits = 0;
+      function W(n) { this.n = n; this.m = n + 1; this.k = n * 2; }
+      let t = 0;
+      for (let r = 0; r < 6000; r++) {
+        if (r === 4000) Object.defineProperty(W.prototype, 'm', { set(v) { hits += v; }, get() { return 5; }, configurable: true });
+        const w = new W(r & 15);
+        t = (t + w.n + w.m + w.k + hits) | 0;
+      }
+      globalThis.answer = t;
+     })();
+    "#;
+    let program = Engine::specialize(source, "lane-add-row.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    assert!(answers[0].is_some());
+    assert_eq!(answers[0], answers[1]);
+}
+
+#[test]
 fn lane_bodies_read_function_fields_natively() {
     // A lane body reads a function's own fields (static methods and data) through the
     // function's record (`ObjectHeader::prove_readable`); a replaced static method, a written
