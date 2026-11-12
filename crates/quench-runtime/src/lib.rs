@@ -126,6 +126,8 @@ mod host_stack_tests;
 #[cfg(test)]
 mod test_host;
 #[cfg(test)]
+mod cross_program_call_tests;
+#[cfg(test)]
 mod eval_name_scope_tests;
 #[cfg(test)]
 mod subset_scope_tests;

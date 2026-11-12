@@ -147,3 +147,105 @@ fn eval_code_global_reads_follow_every_scope_change() {
     ];
     assert_eq!(output(SCOPE_CHANGES), expected);
 }
+
+const NESTED_SCOPES: &str = r####"
+// More by-name scope adversaries.
+var log = [];
+function say(v) { log.push(String(v)); }
+
+// 12. the site lives in the function that calls eval itself.
+function ownEval() {
+  var seen = [];
+  for (var i = 0; i < 7; i++) {
+    seen.push(typeof Object + ':' + typeof Symbol);
+    if (i === 3) eval("var Object = 1;");
+    if (i === 5) eval("var Symbol = 'x';");
+  }
+  return seen.join(' ');
+}
+say(ownEval());
+
+// 13. generator and async code compiled by eval read globals across suspensions.
+var gen = eval("(function* () { var out = []; for (var i = 0; i < 3; i++) { out.push(typeof Map); yield out.length; } return out.join(); })");
+function runGen() {
+  var it = gen(), r, seen = [];
+  while (!(r = it.next()).done) seen.push(r.value);
+  seen.push(r.value);
+  return seen.join(' ');
+}
+say(runGen());
+// 14. global accessor that throws, read from eval code; undefined global message.
+Object.defineProperty(globalThis, 'thrower', { configurable: true, get() { throw new TypeError('no read'); } });
+function throwing() {
+  var f = eval("(function () { return thrower; })");
+  var g = eval("(function () { return definitelyUndefinedName; })");
+  var seen = [];
+  for (var i = 0; i < 3; i++) {
+    try { f(); seen.push('no'); } catch (e) { seen.push(e.constructor.name + ':' + e.message); }
+    try { g(); seen.push('no'); } catch (e) { seen.push(e.constructor.name + ':' + e.message); }
+  }
+  return seen.join(' ');
+}
+say(throwing());
+
+// 15. closures made inside a with block by eval.
+function inWith() {
+  var o = { Number: 'withNumber' };
+  var f;
+  with (o) { f = eval("(function () { return typeof Number + ':' + String(Number); })"); }
+  var seen = [];
+  for (var i = 0; i < 3; i++) seen.push(f());
+  delete o.Number;
+  seen.push(f());
+  return seen.join(' ');
+}
+say(inWith());
+
+// 16. strict eval and Function constructor code.
+function strictEval() {
+  'use strict';
+  var f = eval("(function () { return typeof Boolean; })");
+  var g = new Function("return typeof RegExp + ':' + typeof JSON;");
+  var seen = [];
+  for (var i = 0; i < 4; i++) seen.push(f() + g());
+  return seen.join(' ');
+}
+say(strictEval());
+
+// 17. one eval text from two callers, one of which has a with scope.
+var text = "(function () { return typeof Error; })";
+function plainCaller() { return eval(text); }
+function withCaller() { with ({ Error: 5 }) { return eval(text); } }
+var p = plainCaller(), w = withCaller();
+var seen17 = [];
+for (var i = 0; i < 3; i++) seen17.push(p(), w());
+say(seen17.join(' '));
+
+// 18. a dynamic var that is deleted, then the global is visible again.
+function deleted() {
+  var f = eval("(function () { return typeof Infinity; })");
+  var seen = [f(), f()];
+  eval("var Infinity = 'mine';");
+  seen.push(f(), f());
+  eval("delete Infinity;");
+  seen.push(f(), f());
+  return seen.join(' ');
+}
+say(deleted());
+
+log.forEach(function (line) { print(line); });
+"####;
+
+#[test]
+fn eval_code_global_reads_keep_their_own_function_and_realm_scopes() {
+    let expected: Vec<&str> = vec![
+        r####"function:function function:function function:function function:function number:function number:function number:string"####,
+        r####"1 2 3 function,function,function"####,
+        r####"TypeError:no read ReferenceError:definitelyUndefinedName is not defined TypeError:no read ReferenceError:definitelyUndefinedName is not defined TypeError:no read ReferenceError:definitelyUndefinedName is not defined"####,
+        r####"string:withNumber string:withNumber string:withNumber function:function Number() { [native code] }"####,
+        r####"functionfunction:object functionfunction:object functionfunction:object functionfunction:object"####,
+        r####"function number function number function number"####,
+        r####"number number string string number number"####,
+    ];
+    assert_eq!(output(NESTED_SCOPES), expected);
+}
