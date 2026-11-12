@@ -1311,18 +1311,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         initial_error: Option<JsError>,
     ) -> Result<GeneratorStep, JsError> {
-        let (realm, done, unstarted) = {
-            let Some(record) = self.generator_record_mut(generator) else {
-                return Err(JsError("generator receiver is invalid".into()));
-            };
-            if record.is_executing() {
-                return Err(JsError("generator is already running".into()));
-            }
-            let unstarted = record
-                .suspended_continuation()
-                .is_some_and(|continuation| matches!(continuation.completion, Completion::GeneratorStart));
-            (record.realm, record.is_completed(), unstarted)
-        };
+        let (realm, done, unstarted) = self.generator_resumption(generator)?;
         if done {
             return initial_error.map_or(Ok(GeneratorStep::Done(Value::UNDEFINED)), Err);
         }
@@ -1345,6 +1334,21 @@ impl<H: Host> Vm<H> {
         self.restore_active_program(previous_program);
         self.switch_realm_global(previous_global);
         self.finish_generator_step(generator, end)
+    }
+
+    /// What a resumption of `generator` finds: its realm, whether it has completed and whether
+    /// it has not started; an error where it is no generator or is running.
+    fn generator_resumption(&mut self, generator: Value) -> Result<(Value, bool, bool), JsError> {
+        let Some(record) = self.generator_record_mut(generator) else {
+            return Err(JsError("generator receiver is invalid".into()));
+        };
+        if record.is_executing() {
+            return Err(JsError("generator is already running".into()));
+        }
+        let unstarted = record
+            .suspended_continuation()
+            .is_some_and(|continuation| matches!(continuation.completion, Completion::GeneratorStart));
+        Ok((record.realm, record.is_completed(), unstarted))
     }
 
     /// An abrupt completion `error` of a generator that has not started: it closes without
@@ -1389,15 +1393,7 @@ impl<H: Host> Vm<H> {
         };
         match outcome {
             FrameOutcome::Yield { value, destination, delegated_result, frame: None } => {
-                let continuation =
-                    self.suspend_activation(frame, Completion::Yield(value), Some(destination), Value::UNDEFINED);
-                if let Some(record) = self.generator_record_mut(generator) {
-                    record.suspend(continuation);
-                }
-                Ok(match delegated_result {
-                    Some(result) => GeneratorStep::Delegated(result),
-                    None => GeneratorStep::Yielded(value),
-                })
+                Ok(self.park_generator_frame(generator, frame, (value, destination), delegated_result))
             }
             FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. } => {
                 self.pool_frame(frame);
@@ -1417,6 +1413,26 @@ impl<H: Host> Vm<H> {
                 self.pool_frame(frame);
                 Err(JsError("generator frame retained unexpectedly".into()))
             }
+        }
+    }
+
+    /// The step of `generator` whose frame yielded a value, `(value, destination)`, the register its
+    /// next sent value goes to: the frame is the generator's continuation, and a `yield*` passes its
+    /// delegate's own result on.
+    fn park_generator_frame(
+        &mut self,
+        generator: Value,
+        frame: Box<Frame>,
+        (value, destination): (Value, crate::bytecode::Register),
+        delegated_result: Option<Value>,
+    ) -> GeneratorStep {
+        let continuation = self.suspend_activation(frame, Completion::Yield(value), Some(destination), Value::UNDEFINED);
+        if let Some(record) = self.generator_record_mut(generator) {
+            record.suspend(continuation);
+        }
+        match delegated_result {
+            Some(result) => GeneratorStep::Delegated(result),
+            None => GeneratorStep::Yielded(value),
         }
     }
 
