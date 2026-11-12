@@ -7072,6 +7072,15 @@ impl<H: Host> Vm<H> {
     /// a store's own (`Vm::native_field_load_descriptors`); a nested lookup names one site
     /// per read of its chain, and its sink's store.
     /// The field cache sites `instruction` reads (`true`) or stores through (`false`).
+    /// Counts a run of a lane body that left at the instruction `pc` of `function`, on each
+    /// field site it has: the leave path's one write of a site's instability.
+    pub(super) fn note_field_leave(&mut self, program: &ResidualProgram, function: u32, pc: usize) {
+        let Some(instruction) = program.function_get(function as usize).and_then(|body| body.instructions().nth(pc)) else { return };
+        for (site, _) in Self::instruction_field_sites(program, &instruction) {
+            self.record_field_leave(self.field_cache_index(site));
+        }
+    }
+
     fn instruction_field_sites(program: &ResidualProgram, instruction: &WideInstruction) -> Vec<(u16, bool)> {
         match instruction.op().class() {
             Class::GetField => match instruction.field_lookup() {

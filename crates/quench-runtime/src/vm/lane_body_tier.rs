@@ -57,21 +57,44 @@ fn verdict(completed: bool, recompiles: u8, leaves: LaneLeaves, stuck: LaneLeave
     (recompiles < TIERS.lane_body.max_recompiles && !(recompiles > 0 && nothing_new)).then(|| stuck.union(leaves))
 }
 
+/// The function a leave at `exit` is in (`None`: the body's own) and its PC, for a leave that
+/// has an instruction.
+fn leave_place(exit: LaneExit, method: &super::compiled::PublishedLaneMethod) -> Option<(Option<u32>, usize)> {
+    match exit {
+        LaneExit::At(pc) => Some((None, pc)),
+        LaneExit::Inlined { frame, pc } => method.lease().and_then(|method| method.inlined.get(frame).map(|call| (Some(call.target.function), pc as usize))),
+        _ => None,
+    }
+}
+
+/// Names the place of a leave at `exit` among the body's, and hands a place it had not named to
+/// `left_new` once. A scattered body names none.
+fn name_leave(leaves_at: &std::cell::Cell<LaneLeaves>, exit: LaneExit, method: &super::compiled::PublishedLaneMethod, left_new: impl FnOnce((Option<u32>, usize))) {
+    // SAFETY: the cell is read in place and nothing writes it meanwhile.
+    let seen = match unsafe { &*leaves_at.as_ptr() } {
+        LaneLeaves::Few(named) => named.contains(&Some(exit)),
+        LaneLeaves::Scattered => true,
+    };
+    if seen { return; }
+    leaves_at.set(leaves_at.get().with(exit));
+    if leaves_at.get() != LaneLeaves::Scattered && let Some(place) = leave_place(exit, method) { left_new(place); }
+}
+
 impl LaneView {
     /// Counts how a run of the specialized body ended, at `exit`; at
     /// `TIERS.lane_body.reoptimize_exits` leaves, doubled per recompile, it takes its
     /// `verdict`. A body it compiles past keeps its code for the direct callers that name it.
-    pub(super) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool) {
+    pub(super) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, left_new: impl FnOnce((Option<u32>, usize))) {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        let LaneBody::Specialized { exits, leaves_at, completed, completions, recompiles, stuck, .. } = body else { return };
+        let LaneBody::Specialized { exits, leaves_at, completed, completions, recompiles, stuck, method, .. } = body else { return };
         if completed_region || matches!(exit, LaneExit::Returned { .. }) {
             completed.set(true);
             completions.set(completions.get().saturating_add(1));
             return;
         }
         exits.set(exits.get().saturating_add(1));
-        leaves_at.set(leaves_at.get().with(exit));
+        name_leave(leaves_at, exit, method, left_new);
         // Runs its native callers completed count too: they never end through here. Leaves past
         // the first `reoptimize_exits` that exceed `reoptimize_share` percent of the runs.
         let native = self.entry.completions.get();
