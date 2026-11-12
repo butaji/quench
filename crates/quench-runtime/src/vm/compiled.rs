@@ -53,7 +53,7 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod osr_compile; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
-pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
+pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
@@ -128,7 +128,7 @@ pub(super) use code_heap::{CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
 mod direct_callee;
-pub(super) use direct_callee::{DirectCallee, DirectCandidates, ShadowFrame};
+pub(super) use direct_callee::{names_dead_callee, window_width, DirectCallee, DirectCandidates, ShadowFrame};
 #[path = "compiled/lane_storage.rs"]
 mod lane_storage;
 #[path = "compiled/general_call.rs"]
@@ -6047,6 +6047,9 @@ pub(super) struct CompiledOsrRegion {
     entry: Entry,
     pub(super) facts: OsrFacts,
     crossing: Crossing,
+    /// What its code owns of its calls: the callees it runs as their own rows, whose registers
+    /// follow the activation's (`CallCode`).
+    pub(super) calls: CallCode,
 }
 
 impl CompiledOsrRegion {

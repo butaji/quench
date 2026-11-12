@@ -11,7 +11,7 @@ use super::base_region::function::{build_body, Body, BodySpec};
 use super::base_region::{Known, RealmProof};
 use super::lane_facts::bind_callees;
 use crate::code_dependencies::Invalidation;
-use crate::bytecode::Register;
+use crate::bytecode::{Register, WideInstruction};
 use super::lane_region::StableFacts;
 use crate::compile::liveness::RegisterMasks;
 
@@ -36,7 +36,7 @@ impl LaneMethod {
     /// sets `invalidation`: the word its rows read, whose address its code names.
     fn of_base_body(body: Body, function: u32, registers: u16, direct: Box<[DirectCallee]>, closed: bool, invalidation: Invalidation) -> Option<Self> {
         // Each inlined callee's registers are the frame slots from the caller's end (`Frame::base`).
-        let scratch_width = body.frames.iter().map(|frame| usize::from(frame.base - registers) + usize::from(frame.registers)).max().unwrap_or(0);
+        let scratch_width = window_width(&body.frames, registers);
         let memory = super::code_heap::publishing("b-jit-body", function as usize, || CodeMemory::new(&body.code))?;
         // SAFETY: `base_region::function` links its code behind `entry_body`, of the lane body ABI.
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
@@ -59,6 +59,20 @@ impl<H: Host> Vm<H> {
         InlineBody::of(program.function_get(function as usize)?, program.shared_register_root_masks(function))
     }
 
+    /// The callees `candidates` (the callees each call site of `code`, the function's, reached, by
+    /// PC) a stitch calls by their entries or inlines, and the Stable fact that holds each one's
+    /// callee register (`Vm::stable_callees`).
+    pub(in crate::vm::compiled) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
+        let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates));
+        let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
+        Callees::of(code, candidates, &inline_body, stable)
+    }
+
+    /// The realm a stitch finds its inlined callees in: the active one, which its entry proves active.
+    pub(in crate::vm::compiled) fn realm_proof(&self) -> RealmProof {
+        RealmProof { offset: u64::from(Self::realm_globals_offset().unsigned_abs()), global: self.realm.globals.to_bits() }
+    }
+
     /// `function`'s body for lane activations under `--b-jit`: what `parameters` (the entry's)
     /// showed and the places a predecessor left at (`generic`) specialize its rows, and `direct`
     /// (the callees each call site reached) its calls. Declined where the function has no row to
@@ -70,10 +84,7 @@ impl<H: Host> Vm<H> {
         let code: Vec<_> = body.instructions().collect();
         let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let (ints, doubles) = observed(parameters);
-        let candidates = direct(self);
-        let stable = self.stable_callees(program, function, &code, &Callees::recorded(&code, &candidates));
-        let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
-        let callees = Callees::of(&code, &candidates, &inline_body, stable);
+        let callees = self.stitch_callees(program, function, &code, &direct(self));
         let helpers = super::process_lane_helpers::<H>();
         let invalidation = Invalidation::default();
         // Where the VM and the program run specialized, the code holds Stable facts: its stores run in
@@ -86,8 +97,7 @@ impl<H: Host> Vm<H> {
             invalidation: Some(invalidation.address()),
         };
         let speculated = widened(generic);
-        let realm = RealmProof { offset: u64::from(Self::realm_globals_offset().unsigned_abs()), global: self.realm.globals.to_bits() };
-        let spec = BodySpec { function, registers: body.registers, known, realm, widened: &speculated, seen: [&ints, &doubles] };
+        let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: [&ints, &doubles] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, helpers) }) else { return LaneBodyOutcome::Declined };
         let closed = callees.closed(&code);

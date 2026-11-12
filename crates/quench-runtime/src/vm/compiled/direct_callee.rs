@@ -37,6 +37,21 @@ pub(in crate::vm) struct DirectCallee {
 /// The callees a call site reached that a body may call by their entries, the latest first.
 pub(in crate::vm) type DirectCandidates = smallvec::SmallVec<[DirectCallee; tier_policy::POLYMORPHISM]>;
 
+/// Whether code that runs `inlined` as their callees' rows and calls `direct` by their entries
+/// names a callee that `live` says died, or a callee body that retired: a collection that frees one
+/// retires the code (`ProgramStore::retire_dead_native_calls`).
+pub(in crate::vm) fn names_dead_callee(inlined: &[InlinedCall], direct: &[DirectCallee], live: impl Fn(Value) -> bool) -> bool {
+    inlined.iter().any(|call| call.target.identity().is_some_and(|callee| !live(callee)))
+        || direct.iter().any(|callee| !live(callee.callee) || callee.method.as_ref().is_some_and(|method| !method.is_published()))
+}
+
+/// The registers past the caller's `caller_registers` that `inlined` occupy: the scratch window a
+/// leave inside one reads (`Vm::lane_scratch`), and the room the frames past the caller's registers
+/// need.
+pub(in crate::vm) fn window_width(inlined: &[InlinedCall], caller_registers: u16) -> usize {
+    inlined.iter().map(|frame| usize::from(frame.base - caller_registers) + usize::from(frame.registers)).max().unwrap_or(0)
+}
+
 /// A native frame of a direct call (`DirectCallee`), which the lane materializes as an
 /// activation only if a run leaves inside it (`Vm::take_shadow_frames`): its callee, which
 /// names the call record it returns to, and its receiver. Its registers are the window past

@@ -38,7 +38,8 @@ impl InlineBody {
 
 /// The callees a body calls by their entries: the descriptors its code names, which its method
 /// owns for as long as the code runs, by PC which of them a call site calls, and the function
-/// each runs where a site may inline it.
+/// each runs where a site may inline it. The default has no call site: every call stays a call.
+#[derive(Default)]
 pub(in crate::vm::compiled) struct Callees {
     pub(in crate::vm::compiled) owned: Box<[DirectCallee]>,
     at: Vec<Option<usize>>,

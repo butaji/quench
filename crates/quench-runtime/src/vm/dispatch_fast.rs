@@ -8091,7 +8091,7 @@ fn lane_loop_native<H: Host>(
     // record remains contiguous in this lane view.
     let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
     // The record is filled where it lives, so its words are neither cleared nor copied.
-    if site.tier.borrow_mut().awaits_code(&mut unsafe { vm(cx) }.heap, site) {
+    if site.tier.borrow_mut().awaits_code(unsafe { vm(cx) }, site) {
         return LoopAttempt::Declined;
     }
     let mut entry = super::compiled::LoopEntry::new();
@@ -8110,6 +8110,7 @@ fn lane_loop_native<H: Host>(
         LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc, region.header..=region.backedge); LoopAttempt::Leave(exit(at(pc))) }
         LoopContinuation::Inlined { frame, pc } => { let frame = region.inlining.as_ref().expect("an inlining region").frames[frame];
             LoopAttempt::Leave(exit(lane_inlined_activation(cx, r, region, &entry, frame, at(frame.call), pc))) }
+        LoopContinuation::Recovered(resumed) => loop_body::loop_attempt(cx, record, resumed),
         LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
         // SAFETY: the call set the callee's activation and its resume record before the body
         // left (`lane_body_activate`), so the run leaves at a record of that view.
@@ -8293,6 +8294,9 @@ enum LoopContinuation {
     /// The general path executes callee PC `pc` of inlined frame `frame`, in the activation
     /// its call makes (`LoopOutcome::Inlined`).
     Inlined { frame: usize, pc: u32 },
+    /// Native code of a stitched region left inside an inlined callee, and the lane recovered the
+    /// activations around it (`lane_inlined_continuation`).
+    Recovered(LaneBodyLeft),
     /// The backward jump's safepoint ends the execution termination stopped.
     Safepoint,
     /// The region's code compiles: take the jump, which declines nothing.
@@ -8308,7 +8312,7 @@ fn count_continuation(continuation: &LoopContinuation) {
     use super::compiled::base_region::{count, Event};
     count(match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => Event::Declined,
-        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Safepoint | LoopContinuation::Callee => Event::Left,
+        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Recovered(_) | LoopContinuation::Safepoint | LoopContinuation::Callee => Event::Left,
         LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => Event::Entered,
     });
 }
@@ -8359,9 +8363,7 @@ fn lane_loop_run<H: Host>(
     };
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
-    let outcome = unsafe {
-        code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame, interrupt, cx as usize)
-    };
+    let outcome = unsafe { lane_region_run::<H>(cx, r, entry, (&*code, region), site.function, (machine, program, interrupt)) };
     if site.diagnostics {
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
@@ -8462,7 +8464,7 @@ fn lane_loop_run<H: Host>(
             }
             LoopOutcome::Inlined { frame, pc } => {
                 site.exits.set(site.exits.get().saturating_add(1));
-                return LoopContinuation::Inlined { frame, pc };
+                return lane_inlined_continuation(cx, r, region, &code, (frame, pc));
             }
             LoopOutcome::Callee => return LoopContinuation::Callee,
             LoopOutcome::NotEntered | LoopOutcome::Terminated | LoopOutcome::Returned { .. } => {}
@@ -8475,7 +8477,7 @@ fn lane_loop_run<H: Host>(
         // A run pays for its entry with the iterations it completed, wherever it leaves.
         LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
         LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
-        LoopOutcome::Inlined { frame, pc } => { site.note_run(entry.backedge_count()); LoopContinuation::Inlined { frame, pc } }
+        LoopOutcome::Inlined { frame, pc } => { site.note_run(entry.backedge_count()); lane_inlined_continuation(cx, r, region, &code, (frame, pc)) }
         // The call made the callee's activation, whose own records the lane runs next; the
         // run left as any exit does, so it too pays with the iterations it completed.
         LoopOutcome::Callee => { site.note_run(entry.backedge_count()); LoopContinuation::Callee }
@@ -8485,6 +8487,59 @@ fn lane_loop_run<H: Host>(
         }
         LoopOutcome::Terminated => LoopContinuation::Safepoint,
     }
+}
+
+/// Runs `code`, the region of the loop of `function` over the activation with registers `r`, where
+/// the lane admits the run (`lane_region_admits`); a run it does not admit enters nothing, as an entry
+/// guard that missed.
+///
+/// # Safety
+/// As `CompiledOsrRegion::run`: `machine` and `interrupt` belong to the running lane.
+unsafe fn lane_region_run<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    entry: &mut super::compiled::LoopEntry,
+    (code, region): (&super::compiled::CompiledOsrRegion, &super::compiled::LoopRegion),
+    function: u32,
+    (machine, program, interrupt): (*mut Vm<H>, ProgramId, *const crate::execution_interrupt::ExecutionInterrupt),
+) -> super::compiled::LoopOutcome {
+    if !lane_region_admits(cx, function, code) {
+        return super::compiled::LoopOutcome::NotEntered;
+    }
+    // SAFETY: the caller's contract.
+    unsafe { code.run::<H>(r.0, entry, region, machine, program, function, (*cx).frame, interrupt, cx as usize) }
+}
+
+/// Whether a run of `code`, the region of the loop of `function` the lane is in, may start: the lane
+/// has the room to make the activations of the calls it inlines should it leave inside one
+/// (`lane_room_admits`), and the activation keeps its locals apart from the window past its
+/// registers, which the registers of those callees occupy (`CompiledOsrRegion::run_lane`).
+#[inline(always)]
+fn lane_region_admits<H: Host>(cx: *mut LaneContext<H>, function: u32, code: &super::compiled::CompiledOsrRegion) -> bool {
+    let room = code.calls.recovery_space();
+    room.activations == 0 || (lane_room_admits(cx, room) && !lane_locals_in_window(cx, function))
+}
+
+/// Whether the running activation, of `function`, keeps its locals in its window past the register
+/// file (`CompiledOsrRegion::run_lane`), where its frame's own storage does not cover them.
+fn lane_locals_in_window<H: Host>(cx: *mut LaneContext<H>, function: u32) -> bool {
+    // SAFETY: the context's program and VM outlive the lane run.
+    let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
+    code.function_get(function as usize).is_some_and(|body| vm.frames[unsafe { (*cx).frame }].locals.len() < usize::from(body.locals))
+}
+
+/// Where the lane goes after native code left inside inlined `frame` of `region`'s callee, at its PC
+/// `pc`. An inlining region of the Cranelift tier makes the callee's activation from the entry's
+/// scratch window (`lane_inlined_activation`); a stitched region's registers are in the activation's
+/// register file past its own, which the lane recovers as a lane body's (`lane_body_inlined_activation`).
+fn lane_inlined_continuation<H: Host>(cx: *mut LaneContext<H>, r: Registers, region: &super::compiled::LoopRegion, code: &super::compiled::CompiledOsrRegion, (frame, pc): (usize, u32)) -> LoopContinuation {
+    if region.inlining.is_some() {
+        return LoopContinuation::Inlined { frame, pc };
+    }
+    // SAFETY: the context's records are the activation's, which the region ran on.
+    let base = unsafe { (*cx).base };
+    let (registers, resume, carried) = lane_body_inlined_activation(cx, r, base, InlinedRun::of_region(&code.calls), frame, pc);
+    LoopContinuation::Recovered(LaneBodyLeft::Resume(registers, resume, carried))
 }
 
 /// The entry record of `site`'s native code from the running activation, and the element
@@ -15218,7 +15273,13 @@ fn lane_materialize_frames<H: Host>(
 /// should it leave inside one (`lane_body_inlined_activation`).
 #[inline(always)]
 fn lane_body_admits<H: Host>(cx: *mut LaneContext<H>, method: &super::compiled::LaneMethod) -> bool {
-    let room = method.recovery_space();
+    lane_room_admits(cx, method.recovery_space())
+}
+
+/// Whether the lane has the room `room` names: the activations and values a leave inside an inlined
+/// callee of native code about to run makes (`lane_body_inlined_activation`).
+#[inline(always)]
+fn lane_room_admits<H: Host>(cx: *mut LaneContext<H>, room: LaneRecoverySpace) -> bool {
     let vm = unsafe { vm(cx) };
     room.activations == 0
         || (vm.lane_stack.activation_limit.get().saturating_sub(vm.lane_stack.activations.len()) >= room.activations
@@ -15246,7 +15307,29 @@ fn lane_body_prepare_recovery<H: Host>(cx: *mut LaneContext<H>, method: &super::
     true
 }
 
-/// The activation a lane body that left inside inlined `frame` of `method`, at its callee's
+/// The calls native code runs as their callees' rows: a lane body's (`LaneMethod`) or a loop region's
+/// (`CallCode`), their frames, whether the frames' registers are in the activation's register file past
+/// the caller's (a stitched body's or region's) and not in the scratch window the code fills, and the
+/// registers of the function that makes them.
+#[derive(Clone, Copy)]
+struct InlinedRun<'a> {
+    frames: &'a [super::compiled::InlinedCall],
+    framed: bool,
+    caller_registers: u16,
+}
+
+impl<'a> InlinedRun<'a> {
+    fn of_body(method: &'a super::compiled::LaneMethod) -> Self {
+        Self { frames: &method.inlined, framed: method.framed(), caller_registers: method.caller_registers() }
+    }
+
+    /// A BaseJIT region's: its frames' registers are in the register file.
+    fn of_region(calls: &'a super::compiled::CallCode) -> Self {
+        Self { frames: &calls.inlined, framed: true, caller_registers: calls.caller_registers() }
+    }
+}
+
+/// The activation native code that left inside inlined `frame` of `run`, at its callee's
 /// PC `pc`, continues in: the activations the calls of the frame and the frames around it
 /// make (`lane_push_activation`), outermost first, each holding the registers native code
 /// held for it (`Vm::lane_scratch`); the innermost's record at `pc`. Each frame's call
@@ -15256,13 +15339,13 @@ fn lane_body_inlined_activation<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     base: Ip,
-    method: &super::compiled::LaneMethod,
+    run: InlinedRun<'_>,
     frame: usize,
     pc: u32,
 ) -> (Registers, Ip, Carried) {
-    let frames = &method.inlined;
-    if method.framed() {
-        Vm::<H>::lane_adopt_window(r.0.cast_const(), usize::from(method.caller_registers()));
+    let frames = run.frames;
+    if run.framed {
+        Vm::<H>::lane_adopt_window(r.0.cast_const(), usize::from(run.caller_registers));
     }
     let mut chain = vec![frame];
     while let Some(parent) = frames[*chain.last().expect("a chain has a frame")].parent {
@@ -15297,7 +15380,7 @@ fn lane_body_inlined_activation<H: Host>(
         // call; the exit wrote only those (`lane_region`), the rest keep the activation's.
         let at = match depth.checked_sub(1) { Some(inner) => frames[chain[inner]].call, None => pc };
         let live = code.register_root_masks(call.target.function);
-        let scratch = usize::from(call.base - method.caller_registers());
+        let scratch = usize::from(call.base - run.caller_registers);
         Vm::<H>::lane_scratch(scratch, usize::from(call.registers), |register, value| {
             if live.is_none_or(|live| live.is_live(at as usize, register)) {
                 callee.set(register, value);
@@ -15778,7 +15861,7 @@ fn lane_body_left<H: Host>(
             LaneBodyLeft::Resume(r, unsafe { base.add(pc) }, carried)
         }
         super::compiled::LaneExit::Inlined { frame, pc } => {
-            let (registers, resume, carried) = lane_body_inlined_activation(cx, r, base, method, frame, pc);
+            let (registers, resume, carried) = lane_body_inlined_activation(cx, r, base, InlinedRun::of_body(method), frame, pc);
             LaneBodyLeft::Resume(registers, resume, carried)
         }
         // A native call made its callee's activation and left the lane there.

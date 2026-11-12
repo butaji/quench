@@ -1,5 +1,5 @@
-//! A whole function as one flat program of rows, numbered from 0: the stitch index every web,
-//! home, liveness set and exit of the body is keyed by.
+//! A whole function, or a loop region's span of it, as one flat program of rows, numbered from 0:
+//! the stitch index every web, home, liveness set and exit of the code is keyed by.
 //!
 //! The rows are what the caller's instructions decode to (`function::cover`), each caller
 //! instruction at its row, and in place of a call the stitch inlines, the callee's rows
@@ -10,7 +10,9 @@
 //! instruction it names. Each row names where the interpreter resumes if it leaves (`Origin`)
 //! and the registers it may read there (`Live`): the caller's own, and around an inlined callee's
 //! rows the registers its call reads and the ones that live on past it, with the callee's own,
-//! renamed into its window.
+//! renamed into its window. A loop region's rows end in a leave row for each PC control may go to
+//! outside the span (the one past its last instruction first, where its last row falls), which
+//! resumes the interpreter there, so a jump out of a region is a jump to a row like any other.
 
 use super::*;
 use super::call_plan::inline::{InlineSite, Proof};
@@ -58,12 +60,13 @@ pub(super) struct Stitched {
     pub(super) facts: Vec<GlobalFact>,
 }
 
-/// The first row of each caller PC's parts, and the row past the last.
-fn starts(count: usize, parts: &[Part], changed: bool) -> Vec<u32> {
+/// The first row of each caller PC's parts (by offset from the span's header), and the row past the last.
+fn starts(region: &LoopRegion, parts: &[Part], changed: bool) -> Vec<u32> {
+    let count = region.instructions().len();
     let (mut starts, mut at, mut last) = (vec![0; count + 1], 0, None);
     for part in parts {
         if last.replace(part.pc) != Some(part.pc) {
-            starts[part.pc as usize] = at;
+            starts[(part.pc - region.header) as usize] = at;
         }
         at += part.what.len(changed) as u32;
     }
@@ -71,27 +74,55 @@ fn starts(count: usize, parts: &[Part], changed: bool) -> Vec<u32> {
     starts
 }
 
+/// The PCs outside a loop region's span that its rows lead to, each once, in order: the PC past its
+/// last instruction first, which its last row falls to, then its jumps' targets. A function's
+/// body leads nowhere outside it.
+fn outside(region: &LoopRegion, parts: &[Part], ending: Ending) -> Vec<u32> {
+    if ending == Ending::Body {
+        return Vec::new();
+    }
+    let span = region.header..=region.backedge;
+    let targets = parts.iter().filter_map(|part| if let What::Row(row) = &part.what { row.target } else { None });
+    let mut leaves = vec![region.backedge + 1];
+    for target in targets.filter(|target| !span.contains(target)) {
+        if !leaves.contains(&target) {
+            leaves.push(target);
+        }
+    }
+    leaves
+}
+
 /// The caller's registers (below `registers`) the interpreter may read resuming at `pc`.
 fn callers(region: &LoopRegion, pc: u32, registers: u16) -> impl Iterator<Item = Register> + '_ {
     (0..registers).filter(move |register| region.is_live(pc, *register))
 }
 
-/// The parts laid out as one program over the function `region` holds, which has `registers`
-/// registers, folding facts under the invalidation word at `invalidation`.
-pub(super) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16, invalidation: Option<usize>) -> Stitched {
+/// The parts laid out as one program over the span `region` holds of its function, which has
+/// `registers` registers, folding facts under the invalidation word at `invalidation`; a loop
+/// region's (`ending`) is followed by its leave rows (`outside`).
+pub(super) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16, invalidation: Option<usize>, ending: Ending) -> Stitched {
     let changed = parts.iter().any(|part| part.what.changes_globals());
-    let starts = starts(region.instructions().len(), &parts, changed);
+    let starts = starts(region, &parts, changed);
+    let leaves = outside(region, &parts, ending);
     let tops = parts.iter().filter_map(|part| if let What::Site(site) = &part.what { Some(site.top as usize) } else { None });
     let rows = starts[starts.len() - 1] as usize;
-    let mut stitched = Stitched { rows: Vec::with_capacity(rows), origins: Vec::with_capacity(rows), live: Live::new(tops.fold(usize::from(registers), usize::max)), frames: Vec::new(), copies: Vec::new(), facts: Vec::new() };
+    let capacity = rows + leaves.len();
+    let mut stitched = Stitched { rows: Vec::with_capacity(capacity), origins: Vec::with_capacity(capacity), live: Live::new(tops.fold(usize::from(registers), usize::max)), frames: Vec::new(), copies: Vec::new(), facts: Vec::new() };
+    let row_of = |target: u32| match target.checked_sub(region.header).filter(|local| (*local as usize) < starts.len() - 1) {
+        Some(local) => starts[local as usize],
+        None => (rows + leaves.iter().position(|leave| *leave == target).expect("a leave row for each target outside")) as u32,
+    };
     for part in parts {
         match part.what {
             What::Row(row) => {
-                let row = Decoded { target: row.target.map(|target| starts[target as usize]), ..row };
+                let row = Decoded { target: row.target.map(row_of), ..row };
                 stitched.push(row, Origin::Caller(part.pc), callers(region, part.pc, registers));
             }
             What::Site(site) => stitched.site(region, part.pc, registers, site, invalidation.filter(|_| changed)),
         }
+    }
+    for pc in leaves {
+        stitched.push(Decoded::step(Step::Leave, None), Origin::Caller(pc), callers(region, pc, registers));
     }
     stitched
 }

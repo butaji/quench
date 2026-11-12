@@ -19,7 +19,8 @@
 //! (`call_plan::plan_call`): the direct entry-cell row where the site recorded a stable callee,
 //! the helper row otherwise, between the spills and reloads. A loop region makes no activation,
 //! so its returns (and its calls that return a result) are leaves; its plain calls are the chain
-//! with the helper row alone (`calls_in_place`, `LaneHelper::RegionCall`): a call that completes
+//! with the helper row alone (`calls_in_place`, `LaneHelper::RegionCall`), or the callee's rows
+//! where the stitch inlines it (`function::parts`): a call that completes
 //! continues the region, one that missed leaves at the call, and one that left the lane in its
 //! callee's activation, or ended in termination, ends the run with the word that says so
 //! (`LaneExit::Callee`, `LaneExit::Terminated`), the registers already spilled.
@@ -91,9 +92,9 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, helpers: LaneHe
 /// A helper step may write any heap value, which the snapshots a heap row reads (the entry
 /// record's captures, fields and array views) would not see: where the region has a heap row its
 /// helper steps leave instead.
-pub(super) fn settle(decoded: &mut [Decoded]) {
-    if decoded.iter().any(|row| row.heap.is_some_and(Heap::reads_snapshot)) {
-        decoded.iter_mut().filter(|row| row.step == Some(Step::Helper)).for_each(|row| row.step = Some(Step::Leave));
+pub(super) fn settle(rows: &mut [&mut Decoded]) {
+    if rows.iter().any(|row| row.heap.is_some_and(Heap::reads_snapshot)) {
+        rows.iter_mut().filter(|row| row.step == Some(Step::Helper)).for_each(|row| row.step = Some(Step::Leave));
     }
 }
 

@@ -87,13 +87,13 @@ impl LoopTier {
     /// Whether this entry passes to the interpreter's jump while the code compiles: entries
     /// between looks count down, and a look publishes code that is ready.
     #[inline(always)]
-    pub(super) fn awaits_code(&mut self, heap: &mut crate::heap::Heap, site: &LoopSite) -> bool {
+    pub(super) fn awaits_code<H: Host>(&mut self, vm: &mut Vm<H>, site: &LoopSite) -> bool {
         // A site with published code, or none under way, has nothing to wait for.
-        self.pending.is_some() && self.poll_pending(heap, site)
+        self.pending.is_some() && self.poll_pending(vm, site)
     }
 
     #[cold]
-    fn poll_pending(&mut self, heap: &mut crate::heap::Heap, site: &LoopSite) -> bool {
+    fn poll_pending<H: Host>(&mut self, vm: &mut Vm<H>, site: &LoopSite) -> bool {
         let Some(pending) = self.pending.take() else { return false };
         if self.wait > 0 {
             self.wait -= 1;
@@ -107,7 +107,7 @@ impl LoopTier {
                 self.pending = Some(pending);
                 return true;
             }
-            Ok(OsrCompile::Done(region)) => self.publish(heap, region),
+            Ok(OsrCompile::Done(region)) => self.publish(vm, region),
             Ok(OsrCompile::Stale) => {}
             Ok(OsrCompile::Failed) => self.compilations = TIERS.loops.max_compilations,
         }
@@ -119,26 +119,20 @@ impl LoopTier {
 
     /// Holds the compile `started`, while the facts its code names hold, and looks for its
     /// code at once.
-    fn start(&mut self, started: Option<super::super::compiled::PendingOsrRegion>, (heap, method_atoms): (&mut crate::heap::Heap, &mut crate::code_dependencies::CodeReaders), site: &LoopSite) {
-        self.pending = started.filter(|pending| pending.watch(heap, method_atoms)).map(Box::new);
+    fn start<H: Host>(&mut self, started: Option<super::super::compiled::PendingOsrRegion>, vm: &mut Vm<H>, site: &LoopSite) {
+        self.pending = started.filter(|pending| pending.watch(&mut vm.heap, vm.method_cache_atoms.readers())).map(Box::new);
         self.wait = 0;
         if self.pending.is_none() {
             self.compilations = TIERS.loops.max_compilations;
             // A declined or failed region retires the site now: later entries build no entry record.
             site.declines.set(TIERS.loops.max_declines);
         }
-        self.awaits_code(heap, site);
+        self.awaits_code(vm, site);
     }
 
-    /// Publishes `region` while the facts its code names hold.
-    fn publish(&mut self, heap: &mut crate::heap::Heap, region: super::super::compiled::CompiledOsrRegion) {
-        let publication = Rc::new(crate::code_dependencies::PublishedCode::new(region));
-        let code = publication.lease().expect("new publication");
-        let dependent: Rc<dyn crate::code_dependencies::DependentCode> = publication.clone();
-        if !code.facts.subscribe(&dependent, heap) {
-            publication.retire();
-        }
-        self.code = Some(publication);
+    /// Publishes `region` while the facts its code names hold (`ProgramStore::publish_region`).
+    fn publish<H: Host>(&mut self, vm: &mut Vm<H>, region: super::super::compiled::CompiledOsrRegion) {
+        self.code = Some(vm.programs.publish_region(region, &mut vm.heap, vm.method_cache_atoms.readers()));
     }
 }
 
@@ -175,13 +169,29 @@ pub(super) fn lane_loop_compile<H: Host>(
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
         int_registers: &ints, double_registers: &doubles };
     let policy = machine.heap.memory_policy();
+    // A BaseJIT region inlines the calls its sites recorded.
+    let calls = program.as_deref().filter(|_| crate::jit_mode::base_regions()).map(|program| region_calls(cx, machine, program, function)).unwrap_or_default();
     // Stores run in place for the atoms no method cache names, while the VM and the program run specialized.
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, policy, program, function, helpers,
-        &mut |unit| machine.lane_global_reads(program, function, unit), (&tier.widened, stores.as_ref())));
+        &mut |unit| machine.lane_global_reads(program, function, unit), (&tier.widened, stores.as_ref()), calls));
+    if let Some(pending) = &started {
+        let (watch, callees) = pending.native_calls();
+        machine.programs.note_pending_native_calls(&watch, callees);
+    }
     machine.host.after_native_compilation();
-    tier.start(started, (&mut machine.heap, machine.method_cache_atoms.readers()), site);
+    tier.start(started, machine, site);
+}
+
+/// The calls of `function` that a BaseJIT region of it may inline: the callees its call sites
+/// reached, which the lane would activate in place (`lane_direct_callees`).
+fn region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: &ResidualProgram, function: u32) -> super::super::compiled::RegionCalls {
+    // SAFETY: the program's views outlive the lane run.
+    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
+    let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
+    let candidates = lane_direct_callees(machine, own, function, body);
+    machine.region_calls(program, function, &candidates)
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.

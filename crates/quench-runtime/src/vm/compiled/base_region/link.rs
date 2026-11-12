@@ -96,11 +96,9 @@ pub(super) struct Layout<'a> {
     pub(super) homes: Homes,
     pub(super) webs: Webs,
     pub(super) ending: Ending,
-    /// Per caller PC, what the call there recorded of its callee: a whole function's call sites (a
-    /// loop region has none, its calls being leaves).
+    /// Per caller PC, what the call there recorded of its callee, where the code calls it by its entry.
     pub(super) callees: &'a [Option<DirectFacts>],
-    /// Per row of a stitched program, where the interpreter resumes if the row leaves; none for a
-    /// loop region, whose rows are its PCs.
+    /// Per row of a stitched program, where the interpreter resumes if the row leaves.
     pub(super) origins: &'a [Origin],
     /// Per inlined frame, the (parameter register, argument register) copies a leave inside it runs
     /// first: a parameter the callee never writes lives in the caller's argument register.
@@ -108,7 +106,7 @@ pub(super) struct Layout<'a> {
     /// The address of the invalidation word the code reads before each row that holds a Stable fact a
     /// call may have changed (`Decoded::holds_stable`): a body that folds one and makes a call.
     pub(super) invalidation: Option<usize>,
-    /// The realm the entry proves active, where the body inlines callees.
+    /// The realm the entry proves active, where the code inlines callees.
     pub(super) realm: Option<RealmProof>,
 }
 
@@ -140,8 +138,8 @@ impl Layout<'_> {
         }
     }
 
-    /// Whether a leave at `row` is inside an inlined callee.
-    fn inlined(&self, row: u32) -> bool {
+    /// Whether `row` is inside an inlined callee.
+    pub(super) fn inlined(&self, row: u32) -> bool {
         matches!(self.origin(row), Some(Origin::Inlined { .. }))
     }
 
@@ -241,13 +239,9 @@ struct Leaves(Vec<(Leave, Stencil)>);
 
 impl Leaves {
     /// The leave rows every link starts with, and the index of the failed entry's (nothing to
-    /// write back): a loop region also leaves past its backedge, where a body never falls (its
-    /// last row leaves it).
+    /// write back).
     fn open(layout: &Layout) -> Result<(Self, usize), String> {
         let mut leaves = Self(Vec::new());
-        if layout.ending == Ending::Region {
-            leaves.index(layout, Leave::Pc(layout.span.backedge + 1))?;
-        }
         let failed = leaves.index(layout, Leave::Word(super::super::LaneExit::Entry.word()))?;
         Ok((leaves, failed))
     }
