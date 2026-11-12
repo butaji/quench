@@ -3513,6 +3513,7 @@ impl IteratorRecord {
 /// costs its occupancy bit; a heap whose record range is unavailable boxes it in a
 /// `Cell::Function` slot.
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub(crate) struct FunctionRecord {
     pub(crate) object: Object,
     pub(crate) realm: Value,

@@ -13,7 +13,7 @@
 
 use super::entry::direct_record;
 use super::object::{Form, plain_payload, proto_link, store_slot};
-use super::Stage;
+use super::{RecordSpace, Stage};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
 /// One resolved transition as the words a stage computes on: the shape the object must hold, the
@@ -31,8 +31,8 @@ pub(crate) struct Edge<W> {
 /// shape reader or method cache can name it) and an open store gate (no slot representation
 /// observes the write, no barrier log is due). Answers the payload word the storage reads from.
 #[inline(always)]
-fn admitted<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, before: S::Word, value: S::Word,
-    miss: S::Miss) -> Option<S::Word> {
+pub(super) fn admitted<S: Stage>(stage: &mut S, space: RecordSpace, record: S::Word, record_id: S::Word, before: S::Word,
+    value: S::Word, miss: S::Miss) -> Option<S::Word> {
     let exact = stage.load_u32(record, OBJECT.auxiliary_offset as i32);
     let moved = stage.sub(exact, before);
     let same = stage.eq_imm(moved, 0u32);
@@ -44,7 +44,7 @@ fn admitted<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, before
     let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
-    let gate = stage.store_gate(record_id, value);
+    let gate = stage.store_gate(space, record_id, value);
     stage.guard(gate, miss)?;
     Some(payload)
 }
@@ -58,7 +58,7 @@ fn admitted<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, before
 #[inline(always)]
 pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
-    let payload = admitted(stage, record, record_id, edge.before, value, miss)?;
+    let payload = admitted(stage, RecordSpace::Object, record, record_id, edge.before, value, miss)?;
     store_slot(stage, record, payload, edge.slot, form, value, miss)?;
     stage.store_u32(record, OBJECT.auxiliary_offset as i32, edge.after);
     Some(())

@@ -1539,7 +1539,7 @@ fn emit_js_own_field_set(
 /// needs no barrier. Verified Numbers are immediate and discharge the test at
 /// compilation. Otherwise the caller must perform the logged store.
 fn emit_unlogged_property_store_guard(
-    builder: &mut FunctionBuilder<'_>, payload: ir::Value, record_id: ir::Value,
+    builder: &mut FunctionBuilder<'_>, space: crate::staged::RecordSpace, payload: ir::Value, record_id: ir::Value,
     value: ir::Value, ty: typed_ir::Type, fallback: ir::Block,
 ) {
     if ty.is_subtype(typed_ir::Type::NUMBER) { return; }
@@ -1553,12 +1553,18 @@ fn emit_unlogged_property_store_guard(
     builder.ins().brif(immediate, write, &[], heap_value, &[]);
     builder.switch_to_block(heap_value);
     use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-    let blocks = emit_js_payload_word(
-        builder, payload, std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
-    );
-    let count = emit_js_payload_word(
-        builder, payload, std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
-    );
+    let (blocks_at, count_at) = match space {
+        crate::staged::RecordSpace::Object => (
+            std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
+            std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
+        ),
+        crate::staged::RecordSpace::Function => (
+            std::mem::offset_of!(JsStepDispatch, function_mark_blocks),
+            std::mem::offset_of!(JsStepDispatch, function_mark_block_count),
+        ),
+    };
+    let blocks = emit_js_payload_word(builder, payload, blocks_at);
+    let count = emit_js_payload_word(builder, payload, count_at);
     let block = builder.ins().ushr_imm_u(
         record_id, i64::from(OBJECT.mark_records_per_block.trailing_zeros()),
     );
@@ -2083,6 +2089,9 @@ pub(super) struct OnlineFacts<'a> {
     /// The add a cache site recorded for an atom (`Vm::native_field_add`), whose staged row an adding
     /// store runs where the chain proof it holds is a Stable fact; `None` where none may be held.
     pub(super) adds: Option<&'a dyn Fn(u16, Atom, bool) -> Option<crate::staged::add_plan::AddSite>>,
+    /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
+    /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
+    pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
 }
 
 impl OnlineFacts<'_> {
@@ -6622,6 +6631,13 @@ struct JsStepDispatch {
     /// The string record range's base (`Heap::string_record_base`), which a string `length` row
     /// reads. Last among the words stencil rows read, so the words before it keep their offsets.
     string_record_base: usize,
+    /// The function records' mark blocks and their count, which a store into a function's own
+    /// properties reads as the object records' are (`RecordSpace::Function`); and the empty
+    /// string's word, which a function's inferred name replaces (`staged::naming`). Last, so the
+    /// words before them keep their offsets.
+    function_mark_blocks: usize,
+    function_mark_block_count: usize,
+    empty_string: u64,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -7428,6 +7444,9 @@ impl LaneFrame {
                 stores_specialized: 0,
                 slots_tracked: 0,
                 string_record_base: 0,
+                function_mark_blocks: 0,
+                function_mark_block_count: 0,
+                empty_string: Value::DELETED.to_bits(),
                 receiver: Value::DELETED.to_bits(),
                 vm: 0,
                 residual: 0,
@@ -7576,6 +7595,9 @@ impl JsNativeActivation {
             stores_specialized: 0,
             slots_tracked: 0,
             string_record_base: 0,
+            function_mark_blocks: 0,
+            function_mark_block_count: 0,
+            empty_string: Value::DELETED.to_bits(),
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
             residual: Rc::as_ptr(&program) as usize,
@@ -7636,6 +7658,9 @@ impl JsStepDispatch {
         self.epoch = vm.heap.collection_epoch();
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
+        let (blocks, count) = vm.heap.native_function_mark_blocks();
+        (self.function_mark_blocks, self.function_mark_block_count) = (blocks as usize, count);
+        self.empty_string = vm.empty_string_word().to_bits();
         self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
         self.string_record_base = vm.heap.string_record_base().map_or(0, |base| base as usize);
         let atoms = vm.method_cache_atoms.words();

@@ -34,6 +34,7 @@ pub(crate) mod object;
 pub(crate) mod store;
 pub(crate) mod strings;
 pub(crate) mod holder;
+pub(crate) mod naming;
 pub(crate) mod iteration;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
@@ -52,7 +53,7 @@ pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
     own_layout, read_slot};
 
 mod stage;
-pub(crate) use stage::{Stage, Table};
+pub(crate) use stage::{RecordSpace, Stage, Table};
 
 mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, jump_if, load_this, logical_not, read_local, write_local};

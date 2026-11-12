@@ -68,10 +68,12 @@ impl<H: Host> Vm<H> {
         let folds = self.specialized && program.specialized;
         let reads = |site: u16| self.native_field_read_descriptors(site);
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
+        let names = |site: u16, atom| self.native_function_name(site, atom);
         let known = Known {
             program, stores: folds.then(|| self.method_cache_atoms.bits()),
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
             adds: folds.then_some(&adds as &dyn Fn(u16, crate::bytecode::Atom, bool) -> Option<crate::staged::add_plan::AddSite>),
+            names: folds.then_some(&names as &dyn Fn(u16, crate::bytecode::Atom) -> Option<(crate::staged::add_plan::Transition, u64)>),
             invalidation: Some(invalidation.address()),
         };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).

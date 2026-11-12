@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 mod adds;
+mod names;
 mod call_plan;
 pub(in crate::vm::compiled) mod callees;
 mod decode;
@@ -58,6 +59,9 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// whose proved prototype chain is then a Stable fact) transition (`Vm::native_field_add`): a
     /// `DefineField` or an adding `SetField` runs it as `staged::add`'s row. `None` where no fact may be held.
     pub(in crate::vm::compiled) adds: Option<&'a dyn Fn(u16, Atom, bool) -> Option<crate::staged::add_plan::AddSite>>,
+    /// The naming a cache site recorded for a `SetFunctionName`'s atom, with the word of the name's string
+    /// (`Vm::native_function_name`): the instruction runs it as `staged::naming`'s row. `None` where no fact may be held.
+    pub(in crate::vm::compiled) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`), which a body that
     /// holds a Stable fact and makes a call reads before the rows that hold it. `None` for a region.
     pub(in crate::vm::compiled) invalidation: Option<usize>,

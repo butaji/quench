@@ -5,7 +5,7 @@
 //! record is the one feedback authority).
 
 use super::object::{Form, arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, plain_payload, store_slot};
-use super::Stage;
+use super::{RecordSpace, Stage};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::vm::NATIVE_FIELD_CACHE_LAYOUT as ENTRY;
 
@@ -45,7 +45,7 @@ fn entry_slot<S: Stage>(stage: &mut S, entry: S::Word) -> S::Word {
 /// (leaving at `miss`) where its values are not plain (extras displaced them). Packed values
 /// decode from the record, flat ones read from the arena run.
 #[inline(always)]
-fn plain_value<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub(super) fn plain_value<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
     let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
@@ -223,7 +223,7 @@ pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
     let own = own_entry(stage, entry);
     stage.guard(own, miss)?;
     shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
-    let open = stage.store_gate(id, value);
+    let open = stage.store_gate(RecordSpace::Object, id, value);
     stage.guard(open, miss)?;
     let slot = entry_slot(stage, entry);
     plain_store(stage, record, slot, value, miss)

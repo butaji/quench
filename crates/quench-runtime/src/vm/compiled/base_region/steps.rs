@@ -111,8 +111,9 @@ fn steps_in_place(instruction: WideInstruction) -> bool {
 
 /// The heap row that is the fast arm of `instruction`, where its meaning has one that a register's
 /// word (`staged::iteration`) or the backing's own layout words (`elements::append_in_room`) decide.
-fn fast_arm(instruction: WideInstruction) -> Option<Heap> {
+fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
     match instruction.op().class() {
+        Class::SetFunctionName => names::of(known, instruction).map(names::Name::heap),
         Class::RequireIteratorResult => Some(Heap::Object),
         Class::ToPropertyKey => Some(Heap::Key),
         Class::AppendArray => appends_one(instruction).then_some(Heap::Append),
@@ -134,6 +135,7 @@ fn appends_one(instruction: WideInstruction) -> bool {
 fn fast_operands(instruction: WideInstruction, fast: Heap) -> (Option<Source>, Option<Register>) {
     match fast {
         Heap::Add { .. } => adds::operands(instruction),
+        Heap::Name { .. } => (Some(Source::Register(instruction.register_a())), None),
         Heap::Append => (instruction.optional_register_b().map(Source::Register), Some(instruction.register_a())),
         _ => (Some(Source::Register(instruction.register_b())), None),
     }
@@ -146,7 +148,7 @@ fn fast_operands(instruction: WideInstruction, fast: Heap) -> (Option<Source>, O
 pub(super) fn lowering(instruction: WideInstruction, known: Known, helpers: LaneHelpers) -> Step {
     let addressed = call_plan::helper_address(helpers, LaneHelper::Step).is_some();
     let in_place = addressed && steps_in_place(instruction);
-    match (fast_arm(instruction).or_else(|| adds::of(known, instruction).map(adds::Add::heap)), in_place) {
+    match (fast_arm(instruction, known).or_else(|| adds::of(known, instruction).map(adds::Add::heap)), in_place) {
         (Some(fast @ Heap::Add { .. }), false) => Step::Guard(fast),
         (_, false) => Step::Leave,
         (Some(fast), true) => Step::Fast(fast),
@@ -170,7 +172,8 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, h
                 _ => (None, None),
             };
             let add = adds::of(known, instruction).filter(|add| matches!(step, Step::Fast(fast) | Step::Guard(fast) if fast == add.heap()));
-            Decoded { target, a: read, base, add, atom: add.map(|_| instruction.atom_index()), ..Decoded::step(step, written) }
+            let name = names::of(known, instruction).filter(|name| matches!(step, Step::Fast(fast) | Step::Guard(fast) if fast == name.heap()));
+            Decoded { target, a: read, base, add, name, atom: add.map(|_| instruction.atom_index()), ..Decoded::step(step, written) }
         }
     }
 }
@@ -224,6 +227,8 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::Helper => plan_helper(layout, pc, decoded.target, helpers),
         Step::Fast(Heap::Add { .. }) => adds::plan(decoded, layout, pc, Some(plan_helper(layout, pc, None, helpers)?)),
         Step::Guard(Heap::Add { .. }) => adds::plan(decoded, layout, pc, None),
+        Step::Fast(Heap::Name { .. }) => names::plan(decoded, layout, pc, Some(plan_helper(layout, pc, None, helpers)?)),
+        Step::Guard(Heap::Name { .. }) => names::plan(decoded, layout, pc, None),
         Step::Fast(fast) => plan_fast(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded.target, helpers)?)),
         Step::Guard(fast) => plan_fast(decoded, fast, layout, pc, None),
         Step::Return => {
@@ -340,7 +345,7 @@ mod tests {
 
     /// The facts of a program that has recorded nothing: no add, no store in place, no fold.
     fn known(program: &ResidualProgram) -> Known<'_> {
-        Known { program, stores: None, reads: None, adds: None, invalidation: None }
+        Known { program, stores: None, reads: None, adds: None, names: None, invalidation: None }
     }
 
     fn empty_program() -> ResidualProgram {
@@ -393,7 +398,7 @@ mod tests {
         Op::PrivateIn,
         // Writes the VM-held private-name table.
         Op::MarkPrivateName,
-        // The inferred-name slot write also records the function's name in VM-held provenance (`capture_function_name_for_atom`).
+        // Names any function the site's recorded edge (`names`) does not: its general naming also records that edge.
         Op::SetFunctionName,
         // Builds the name string from a key and a prefix: allocates.
         Op::SetFunctionNameKey,

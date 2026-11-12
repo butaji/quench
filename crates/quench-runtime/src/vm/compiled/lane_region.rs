@@ -36,6 +36,7 @@ mod global_reads;
 mod stable;
 #[path = "lane_region/polls.rs"]
 mod polls;
+#[path = "lane_region/function_names.rs"] mod function_names;
 #[path = "lane_region/literals.rs"] mod literals;
 #[path = "lane_region/edges.rs"] mod edges;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
@@ -2678,6 +2679,7 @@ impl Lowering<'_, '_> {
             }
             Class::SetIndex if [instruction.register_a(), instruction.register_b(), instruction.register_c()]
                 .iter().all(|register| *register < self.unit.registers) => Some(self.element_store(state, pc32, instruction)),
+            Class::SetFunctionName if plain && self.completion.status_and_pc() => self.function_name(state, pc, instruction),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
             _ if instruction.op().js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.operator(state, pc, instruction)
@@ -4929,7 +4931,7 @@ impl Lowering<'_, '_> {
         let record_id = self.ins().ireduce(types::I32, object_bits);
         let record_id = self.ins().uextend(types::I64, record_id);
         let payload = self.payload;
-        emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, direct_ty, general);
+        emit_unlogged_property_store_guard(&mut self.builder, crate::staged::RecordSpace::Object, payload, record_id, value, direct_ty, general);
         // The admitted write domain and barrier above also cover packed
         // references. Encoding support is shared with bound native stores.
         if (direct_ty.is_subtype(Type::INT32)
@@ -5033,7 +5035,7 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, allowed, slow);
             let (address, record) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
                 JsFieldReceiver::Value(object), site, false, slow, Some(binding), header, Some(packed));
-            emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, ty, slow);
+            emit_unlogged_property_store_guard(&mut self.builder, crate::staged::RecordSpace::Object, self.payload, record, value, ty, slow);
             self.ins().store(MemFlagsData::trusted(), value, address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(packed);
@@ -5042,7 +5044,7 @@ impl Lowering<'_, '_> {
             // mark bit as the arena path; a reference needing logging uses the VM.
             let record = self.ins().ireduce(types::I32, object);
             let record = self.ins().uextend(types::I64, record);
-            emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, ty, slow);
+            emit_unlogged_property_store_guard(&mut self.builder, crate::staged::RecordSpace::Object, self.payload, record, value, ty, slow);
             self.ins().store(MemFlagsData::trusted(), narrow, packed_address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);

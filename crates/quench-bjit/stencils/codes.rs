@@ -99,6 +99,17 @@ pub const THIS_ADD_EITHER_ROW: u8 = 25;
 /// at TAKEN, past the helper step laid out after the row, which also takes the exhausted step's jump; a
 /// miss leaves through EXIT0 into it.
 pub const FOR_IN_ROW: u8 = 26;
+/// `SetFunctionName`'s fast arm (`staged::naming::site_name`): the function in the frame slot whose offset
+/// hole 2 carries (above `NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot hole 2 carries (low
+/// `ADD_SLOT_BITS`), moving from the before-shape to the after-shape hole 0 carries as an add's does, where it
+/// held the empty name. One row per storage form the slot admits. A hit continues at TAKEN, past the helper
+/// step laid out after the row; a miss leaves through EXIT0 into it.
+pub const NAME_EITHER_ROW: u8 = 27;
+pub const NAME_ARENA_ROW: u8 = 28;
+/// Every naming row's code.
+pub const NAME_ROWS: [u8; 2] = [NAME_EITHER_ROW, NAME_ARENA_ROW];
+/// Bits below the function register's frame offset in a naming row's hole 2, which carries the slot beneath it.
+pub const NAME_FUNCTION_AT: u32 = ADD_SLOT_BITS;
 /// Every add row's code.
 pub const ADD_ROWS: [u8; 6] = [ADD_PACKED_ROW, ADD_ARENA_ROW, ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW];
 /// Bits below the after-shape in an add row's hole 0, which carries the before-shape beneath it.

@@ -105,6 +105,10 @@ const FAMILIES: &[(&str, &str)] = &[
     ("add-after-prevent-extensions", "var e = {}; if (i % 40 === 0) Object.preventExtensions(e); e.z = i; acc += 'z' in e ? 1 : 2;"),
     ("add-wide-object-narrow-then-wide-values", "var w = {}; w.a = i; w.b = 'x'; w.c = i / 4; w.d = {}; w.e = 5; w.f = 6; acc += w.e + w.f + Object.keys(w).length;"),
     ("define-field-wide-class", "t = new (class { a = 1; b = 2; c = 3; d = 4; e = i; f = i / 4; })(); acc += t.e + t.f;"),
+    ("set-function-name-anonymous-closures", "var f1 = function () { return i; }; var f2 = () => i; acc += f1.name.length + f2.name.length + f1() % 3;"),
+    ("set-function-name-object-and-default", "var h = { m: function () {}, n: () => 1 }; var { d = function () {} } = {}; acc += h.m.name.length + h.n.name.length + d.name.length;"),
+    ("set-function-name-late-class-static-name", "var kc = i === 1500 ? class { static name() { return 3; } } : class {}; acc += typeof kc.name === 'function' ? 2 : kc.name.length + 1;"),
+    ("set-function-name-after-name-redefined", "var fn = function () {}; if (i % 50 === 0) Object.defineProperty(fn, 'name', { value: 'z' + i }); acc += fn.name.length;"),
     ("async-function", "(async function () { await 0; acc += 1; })();"),
 ];
 

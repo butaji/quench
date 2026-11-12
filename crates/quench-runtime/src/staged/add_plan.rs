@@ -1,7 +1,8 @@
-//! The add row's planning inputs from the VM's recorded transitions, and the interpreter's
-//! reading of the row. Runtime only: it names the heap, which the stencil build does not compile.
+//! The add row's and the naming row's planning inputs from the VM's recorded transitions, and the
+//! interpreter's reading of them. Runtime only: it names the heap, which the stencil build does not compile.
 
 use super::add::{Edge, add_property};
+use super::naming::{name_form, set_function_name};
 use super::object::Form;
 use super::Concrete;
 use crate::heap::{Heap, NATIVE_OBJECT_LAYOUT as OBJECT};
@@ -64,6 +65,22 @@ pub(crate) unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, tran
         heap.note_object_slots(crate::Value::direct_object(record_id), usize::from(transition.slot) + 1);
     }
     added
+}
+
+/// The interpreter's reading of `naming::set_function_name`: the function record `record_id` of
+/// `heap` named `name` (the word of the name's string) along `transition`, whose slot is its `name`'s
+/// and whose before and after shapes the naming made; `empty` is the word of the empty string the
+/// function holds as its name. False changes nothing and leaves the naming to the VM.
+///
+/// # Safety
+/// `record_id` names a live function record of `heap`, whose exact shape the row proves before any write.
+#[inline(always)]
+pub(crate) unsafe fn concrete_set_function_name(heap: &mut Heap, record_id: u32, transition: Transition, empty: u64, name: crate::Value) -> bool {
+    // SAFETY: the caller's contract; the gate reads the heap before any write.
+    let record = unsafe { heap.unlogged_function_object(record_id) } as u64;
+    let edge = Edge { before: u64::from(transition.before), after: u64::from(transition.after), slot: u64::from(transition.slot) };
+    let mut stage = Concrete::storing(heap);
+    set_function_name(&mut stage, record, u64::from(record_id), (edge, empty), name_form(transition.slot), name.to_bits(), ()).is_some()
 }
 
 #[cfg(test)]

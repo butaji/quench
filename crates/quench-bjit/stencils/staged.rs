@@ -1,5 +1,5 @@
 #[path = "../../quench-runtime/src/staged/stage.rs"] mod stage;
-pub(crate) use stage::{Stage, Table};
+pub(crate) use stage::{RecordSpace, Stage, Table};
 pub(crate) type Concrete = crate::stage::StencilStage;
 #[path = "../../quench-runtime/src/staged/effects.rs"] pub(crate) mod effects;
 #[path = "../../quench-runtime/src/staged/register_frame.rs"] mod register_frame;
@@ -19,3 +19,4 @@ pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Ov
 #[path = "../../quench-runtime/src/staged/call.rs"] pub(crate) mod call;
 #[path = "../../quench-runtime/src/staged/iteration.rs"] pub(crate) mod iteration;
 #[path = "../../quench-runtime/src/staged/add.rs"] pub(crate) mod add;
+#[path = "../../quench-runtime/src/staged/naming.rs"] pub(crate) mod naming;

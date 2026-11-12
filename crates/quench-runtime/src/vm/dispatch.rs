@@ -1082,7 +1082,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::SetFunctionName => {
-                self.set_function_name(p, self.read(f, i.register_a()), i.atom_index())?;
+                self.set_function_name(p, self.read(f, i.register_a()), (i.atom_index(), i.cache_site_index()))?;
             }
             Op::SetFunctionNameKey => {
                 self.set_function_name_key(

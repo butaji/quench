@@ -111,14 +111,14 @@ impl Stage for Emit<'_, '_> {
     /// representation is tracked (`JsStepDispatch::slots_tracked`) and the shared tag and mark test
     /// (`emit_unlogged_property_store_guard`) finds the value no heap reference or its record
     /// unmarked. A stage with no payload answers no, and the store leaves at its miss.
-    fn store_gate(&mut self, record_id: ir::Value, value: ir::Value) -> ir::Value {
+    fn store_gate(&mut self, space: crate::staged::RecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
         let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
         let (logged, join) = (self.builder.create_block(), self.builder.create_block());
         let open = self.builder.append_block_param(join, types::I8);
         let tracked = super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(JsStepDispatch, slots_tracked));
         let untracked = self.builder.ins().icmp_imm_u(IntCC::Equal, tracked, 0);
         emit_js_guard(self.builder, untracked, logged);
-        super::super::emit_unlogged_property_store_guard(self.builder, payload, record_id, value, crate::typed_ir::Type::ANY, logged);
+        super::super::emit_unlogged_property_store_guard(self.builder, space, payload, record_id, value, crate::typed_ir::Type::ANY, logged);
         let yes = self.builder.ins().iconst(types::I8, 1);
         self.builder.ins().jump(join, &[ir::BlockArg::Value(yes)]);
         self.builder.switch_to_block(logged);

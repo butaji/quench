@@ -73,6 +73,8 @@ pub(super) struct Decoded {
     /// The recorded transition an add row runs (`adds`), with the form its storage takes and whether
     /// the receiver is the activation's `this`.
     pub(super) add: Option<adds::Add>,
+    /// The recorded naming a `SetFunctionName` row runs (`names`).
+    pub(super) name: Option<names::Name>,
     /// A `ToNumeric` copy: its operand is no Number until the row proves it (a loop's entry guards
     /// prove the registers it names; a function's registers are not proved).
     pub(super) checked: bool,
@@ -83,7 +85,7 @@ pub(super) struct Decoded {
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, add: None, step: None, checked: false, identity: None }
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, add: None, name: None, step: None, checked: false, identity: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {

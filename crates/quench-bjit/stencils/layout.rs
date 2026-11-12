@@ -62,6 +62,17 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeFunctionLayout {
+    pub(crate) record_size: usize,
+    pub(crate) object_offset: usize,
+}
+
+pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
+    record_size: 48,
+    object_offset: 0,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeArrayLayout {
     pub(crate) record_capacity: usize,
     pub(crate) record_size: usize,
@@ -203,6 +214,14 @@ pub(crate) const JS_STEP_SLOTS_TRACKED: usize = 528;
 pub(crate) const JS_STEP_EPOCH: usize = 472;
 /// The string record range's base, which a string `length` read finds the record from.
 pub(crate) const JS_STEP_STRING_RECORD_BASE: usize = JS_STEP_SLOTS_TRACKED + core::mem::size_of::<usize>();
+/// What a store into a function's own properties reads (`RecordSpace::Function`): the function
+/// records' mark blocks and their count, as the object records' (`JS_STEP_OBJECT_MARK_BLOCKS`); and the
+/// empty string's word, which a function's inferred name replaces (`staged::naming`).
+pub(crate) const JS_STEP_FUNCTION_MARK_BLOCKS: usize = JS_STEP_STRING_RECORD_BASE + core::mem::size_of::<usize>();
+pub(crate) const JS_STEP_FUNCTION_MARK_BLOCK_COUNT: usize = JS_STEP_FUNCTION_MARK_BLOCKS + core::mem::size_of::<usize>();
+pub(crate) const JS_STEP_EMPTY_STRING: usize = JS_STEP_FUNCTION_MARK_BLOCK_COUNT + core::mem::size_of::<usize>();
+/// The function record reservation's base (`JsStepDispatch::function_record_base`).
+pub(crate) const JS_STEP_FUNCTION_RECORD_BASE: usize = 128;
 pub(crate) const JS_STEP_FIELD_ENTRIES: usize = 160;
 pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;
 /// Bits of a body's capture word that hold the dense slots' address; the slot count sits above

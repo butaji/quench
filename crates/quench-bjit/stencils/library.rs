@@ -205,6 +205,7 @@ pub fn heap_library() -> Vec<HeapCode> {
     for heap in ADD_ROWS {
         rows.extend([false, true].map(|chained| heap_canonical((heap, chained, MEM, MEM, MEM))));
     }
+    rows.extend(NAME_ROWS.map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
     rows.extend([ARRAY_ROW, IDENTITY_ROW, LIVE_ROW, OBJECT_ROW, KEY_ROW, FOR_IN_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
     rows.into_iter().collect()
 }

@@ -112,6 +112,7 @@ pub(crate) enum Class {
     MakeObject2,
     MakeObjectLiteral,
     PrivateIn,
+    SetFunctionName,
     AppendArray,
     RequireIteratorResult,
     StoreCapture,
@@ -242,6 +243,7 @@ macro_rules! class_of {
     (MakeObject2) => { Class::MakeObject2 };
     (MakeObjectLiteral) => { Class::MakeObjectLiteral };
     (PrivateIn) => { Class::PrivateIn };
+    (SetFunctionName) => { Class::SetFunctionName };
     (AppendArray) => { Class::AppendArray };
     (RequireIteratorResult) => { Class::RequireIteratorResult };
     (StoreCapture) => { Class::StoreCapture };
