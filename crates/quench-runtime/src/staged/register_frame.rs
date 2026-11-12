@@ -39,6 +39,18 @@ pub(crate) enum Protocol {
     AppendArray { length: usize, spread: bool },
 }
 
+/// The tag byte of each `CallOut`, which a helper-call row passes as its immediate.
+pub(crate) const TAG_EQUALITY: u8 = 0;
+pub(crate) const TAG_BINARY: u8 = 1;
+pub(crate) const TAG_PROPERTY_KEY: u8 = 2;
+pub(crate) const TAG_PROTOCOL: u8 = 3;
+pub(crate) const TAG_FOR_IN_NEXT: u8 = 4;
+pub(crate) const TAG_LOAD_ENV_LOCAL: u8 = 5;
+pub(crate) const TAG_STORE_ENV_LOCAL: u8 = 6;
+pub(crate) const TAG_ARGUMENTS_LENGTH: u8 = 7;
+pub(crate) const TAG_GLOBAL_WRITE: u8 = 8;
+pub(crate) const TAG_GLOBAL_TYPEOF: u8 = 9;
+
 /// The VM operations a staged row calls out for when its own words do not decide it, named as
 /// data. A frame answers one in place (`Frame::vm_step`): the interpreter's frame calls the VM
 /// method, the lane specializer's frame calls the lane helper that decodes the record and makes
@@ -49,29 +61,29 @@ pub(crate) enum Protocol {
 pub(crate) enum CallOut {
     /// `left == right`, or `===` where `strict`, negated for `!=` and `!==`, by the VM's full
     /// equality: strings and BigInts compare by contents, a conversion may run guest code.
-    Equality { left: Register, right: Register, strict: bool, negated: bool },
+    Equality { left: Register, right: Register, strict: bool, negated: bool } = TAG_EQUALITY,
     /// `left operator right` by the VM's `Vm::binary`: a string or BigInt relation or operator,
     /// `instanceof`, `in`.
-    Binary { left: Register, right: Register, operator: u32 },
+    Binary { left: Register, right: Register, operator: u32 } = TAG_BINARY,
     /// ToPropertyKey of `source` (`Vm::to_property_key`): a Number allocates, an object runs
     /// guest code.
-    PropertyKey { source: Register },
+    PropertyKey { source: Register } = TAG_PROPERTY_KEY,
     /// An iteration or spread step over its operand registers (`Protocol`).
-    Protocol { step: Protocol, operands: [Option<Register>; 2] },
+    Protocol { step: Protocol, operands: [Option<Register>; 2] } = TAG_PROTOCOL,
     /// The next key of the for-in state in `state`; `Value::DELETED`, which no key is, once
     /// none is left.
-    ForInNext { state: Register },
+    ForInNext { state: Register } = TAG_FOR_IN_NEXT,
     /// The environment local `slot` of the running frame, by the binding rules.
-    LoadEnvLocal { slot: u16 },
+    LoadEnvLocal { slot: u16 } = TAG_LOAD_ENV_LOCAL,
     /// `source` to the environment local `slot` of the running frame, by the binding rules (a
     /// `with` scope, TDZ, a constant), `initialize` where it declares the binding.
-    StoreEnvLocal { source: Register, slot: u16, initialize: bool },
+    StoreEnvLocal { source: Register, slot: u16, initialize: bool } = TAG_STORE_ENV_LOCAL,
     /// The length of the arguments binding in local `slot`.
-    ArgumentsLength { slot: u16 },
+    ArgumentsLength { slot: u16 } = TAG_ARGUMENTS_LENGTH,
     /// `source` to the global name `atom` through cache `site`, `initialize` for a declaration.
-    GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool },
+    GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool } = TAG_GLOBAL_WRITE,
     /// The `typeof` name of the global `atom` through cache `site`.
-    GlobalTypeof { atom: u32, site: u16 },
+    GlobalTypeof { atom: u32, site: u16 } = TAG_GLOBAL_TYPEOF,
 }
 
 impl CallOut {

@@ -44,8 +44,7 @@ impl<H: Host> Vm<H> {
         match operation {
             CallOut::LoadEnvLocal { slot } => self.load_local_binding(p, frame, usize::from(slot), None).map(Some),
             CallOut::StoreEnvLocal { slot, initialize, .. } => {
-                self.store_env_local(p, frame, usize::from(slot), value, initialize)?;
-                Ok(Some(value))
+                Ok(self.store_env_local(p, frame, usize::from(slot), value, initialize)?.then_some(value))
             }
             CallOut::ArgumentsLength { slot } => {
                 let binding = self.load_local_binding(p, frame, usize::from(slot), None)?;
@@ -63,15 +62,16 @@ impl<H: Host> Vm<H> {
 
     /// The store of `value` to environment local `slot` of frame `f`: a `with` scope's binding
     /// first, then the initialization, constant and function-name rules, a global `var`'s property,
-    /// and at last the frame's binding with its mirrors.
+    /// and at last the frame's binding with its mirrors. Whether the store defines the
+    /// instruction's result: a sloppy assignment to a function's own name does not.
     pub(super) fn store_env_local(&mut self, p: &ResidualProgram, f: usize, slot: usize, value: Value,
-        initialize: bool) -> Result<(), JsError> {
+        initialize: bool) -> Result<bool, JsError> {
         let function = p.function(self.frames[f].function as usize);
         let atom = function.local_atoms.get(slot).copied();
         if let Some(atom) = atom
             && self.store_with_binding(p, f, atom, value, function.strict)?
         {
-            return Ok(());
+            return Ok(true);
         }
         self.check_local_assignment_initialized(p, f, slot, initialize)?;
         if let Some(atom) = atom
@@ -84,7 +84,7 @@ impl<H: Host> Vm<H> {
             if function.strict {
                 return Err(self.type_error(p, "assignment to function name binding".into()));
             }
-            return Ok(());
+            return Ok(false);
         }
         let global_var = self.root_global_var_atom(p, self.frames[f].program, self.frames[f].function, slot);
         if let Some(atom) = global_var {
@@ -93,12 +93,12 @@ impl<H: Host> Vm<H> {
             if !written && function.strict {
                 return Err(self.type_error(p, "cannot assign to read-only global binding".into()));
             }
-            return Ok(());
+            return Ok(true);
         }
         self.mirror_global_lexical_binding(p, f, slot, value);
         *self.frame_binding_mut(p, f, slot).ok_or_else(|| JsError("invalid local environment".into()))? = value;
         self.mapped_argument_store(p, f, slot, value);
-        Ok(())
+        Ok(true)
     }
 
     /// `action` with `resume` as the frame's binding-site PC, restored after.
