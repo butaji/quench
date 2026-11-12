@@ -21,7 +21,7 @@ pub(super) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: 
             let bits = register_tagged(builder, registers, state, register);
             if fact.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
                 builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64)
-            } else if matches!(helpers, LaneHelpers::Numeric) {
+            } else if helpers.is_numeric() {
                 emit_js_tagged_truthiness(builder, bits, miss)
             } else {
                 cell_truthiness(builder, payload, helpers, bits)

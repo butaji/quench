@@ -33,7 +33,7 @@ fn lower_numeric_region(program: &ResidualProgram, function_id: u32) -> Option<N
 /// image, linked to this process.
 pub(in crate::vm) fn compile_js_typed_numeric_region(program: &ResidualProgram, function_id: u32)
     -> Option<crate::vm::js_compiled::JsJitArtifact> {
-    NumericImage::compile(program, function_id)?.load(|_, _| None)
+    NumericImage::compile(program, function_id)?.load()
 }
 
 fn numeric_artifact(code: Vec<u8>, params: usize, number_result: NativeNumberResult) -> crate::vm::js_compiled::JsJitArtifact {
@@ -70,9 +70,9 @@ impl NumericImage {
     }
 
     /// The artifact this image loads as, its symbols resolved by `resolve`.
-    pub(in crate::vm) fn load(&self, resolve: impl Fn(u32, u32) -> Option<u64>) -> Option<crate::vm::js_compiled::JsJitArtifact> {
+    pub(in crate::vm) fn load(&self) -> Option<crate::vm::js_compiled::JsJitArtifact> {
         // Absolute 8-byte fields alone: the code is address-independent until it is placed.
-        let code = self.code.link(0, resolve).ok()?;
+        let code = self.code.link(0, lane_region::numeric_symbol).ok()?;
         Some(numeric_artifact(code, self.params, self.number_result))
     }
 }
@@ -86,8 +86,8 @@ mod tests {
     fn numeric_image_loads_as_the_function_the_jit_publishes() {
         let program = crate::Engine::specialize("function mix(a,b){a=a|0;b=b|0;return (a*3+b)|0;}", "numeric-image.js").unwrap();
         let image = NumericImage::compile(&program, 1).expect("a plain numeric function has an image");
-        assert!(image.code.relocations.is_empty(), "a live lowering embeds its addresses");
-        let compiled = CompiledJsFunction::from_artifact(image.load(|_, _| None).expect("an image without symbols loads")).unwrap();
+        assert!(image.code.relocations.is_empty(), "a function that calls no helper needs no symbol");
+        let compiled = CompiledJsFunction::from_artifact(image.load().expect("an image without symbols loads")).unwrap();
         let interrupt = crate::ExecutionInterrupt::default();
         for (a, b) in [(0_i32, 0_i32), (1, 2), (-7, 5), (100_000_000, 1), (-100_000_000, -1)] {
             let expected = a.wrapping_mul(3).wrapping_add(b);
@@ -96,4 +96,21 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn numeric_loop_names_its_interrupt_helper_by_symbol_and_runs_once_linked() {
+        let source = "function total(n){n=n|0;var s=0;for(var i=0;i<n;i=(i+1)|0){s=(s+i)|0;}return s|0;}";
+        let program = crate::Engine::specialize(source, "numeric-image-loop.js").unwrap();
+        let image = NumericImage::compile(&program, 1).expect("a numeric loop has an image");
+        assert!(!image.code.relocations.is_empty(), "the loop's interrupt poll names its helper by symbol");
+        let linked = CompiledJsFunction::from_artifact(image.load().expect("its symbols resolve")).unwrap();
+        let interrupt = crate::ExecutionInterrupt::default();
+        for n in [-3_i32, 0, 1, 10, 1000] {
+            let expected = (0..n.max(0)).sum::<i32>();
+            let result = direct_call(&linked, &[Value::integer(n)], &interrupt);
+            assert!(matches!(result, Some(value) if value.to_bits() == Value::integer(expected).to_bits()), "n={n}");
+        }
+        interrupt.request_termination();
+        assert!(direct_call(&linked, &[Value::integer(1_000_000)], &interrupt).is_none(), "the linked poll sees the interrupt");
+    }
 }

@@ -1949,6 +1949,8 @@ thread_local! {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneHelpers {
+    /// A frameless Number region: no VM helper capability, and its one helper (the interrupt
+    /// owner) named by a symbol (`RelocKind::Helper`) that its loader resolves.
     Numeric,
     Process(&'static [*const (); LaneHelper::COUNT]),
     #[cfg(feature = "aot")]
@@ -1969,12 +1971,19 @@ impl LaneHelpers {
         Self::Linked(helper_symbol, u32::try_from(program.function_count()).unwrap_or_default())
     }
 
+    /// Whether this is a frameless Number region, which has no VM helper capability.
+    fn is_numeric(self) -> bool {
+        matches!(self, Self::Numeric)
+    }
+
+    /// Whether helper addresses are symbols a loader resolves, not addresses of this process.
+    pub(super) fn links(self) -> bool {
+        !matches!(self, Self::Process(_))
+    }
+
     fn address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
         match self {
-            Self::Numeric => match helper {
-                LaneHelper::InterruptOwner => builder.iconst(types::I64, lane_interrupt_owner as *const () as usize as i64),
-                _ => unreachable!("frameless Number regions have no VM helper capability"),
-            },
+            Self::Numeric => unreachable!("a frameless Number region names its helper by symbol (`relocs::numeric_symbol`)"),
             Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
             #[cfg(feature = "aot")]
             Self::Bound(table, _) => {

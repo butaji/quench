@@ -42,7 +42,7 @@ mod polls;
 pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
 #[path = "lane_region/relocs.rs"] mod relocs;
-use relocs::RelocKind;
+use relocs::RelocKind; pub(super) use relocs::numeric_symbol;
 use captures::RootedRead;
 #[path = "lane_region/constructions.rs"] mod constructions;
 #[path = "lane_region/dense_elements.rs"] mod dense_elements;
@@ -2702,7 +2702,7 @@ impl Lowering<'_, '_> {
             Class::Unary if plain && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
                 && instruction.register_b() < self.unit.registers => self.typeof_index(state, pc, instruction),
             Class::Unary if crate::bytecode::typeof_test(instruction.unary_operator()).is_some()
-                && !matches!(self.helpers, LaneHelpers::Numeric) => self.typeof_test(state, pc, instruction),
+                && !self.helpers.is_numeric() => self.typeof_test(state, pc, instruction),
             _ if plain && instruction.op().js_denotation() == JsDenotation::NumericUnary
                 && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
             // A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
@@ -2951,7 +2951,7 @@ impl Lowering<'_, '_> {
             &self.program.constants, *operand, |register| state.values[usize::from(register)].value.ty)
             .is_subtype(Type::NUMBER));
         // A frameless Number region has no VM helper capability (`LaneHelpers::Numeric`).
-        let helpers = !matches!(self.helpers, LaneHelpers::Numeric);
+        let helpers = !self.helpers.is_numeric();
         if operator == oxc_ast::ast::BinaryOperator::Instanceof as u32 {
             return helpers.then(|| self.instance_of(state, pc, left, right)).flatten();
         }

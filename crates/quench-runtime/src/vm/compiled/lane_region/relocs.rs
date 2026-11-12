@@ -15,15 +15,24 @@ pub(super) enum RelocKind {
     CaptureWords,
     /// The code's invalidation word.
     Invalidation,
+    /// The address of `LaneHelper` number `key`.
+    Helper,
     /// Slot `key` of the program's constant pool.
     ConstantPool,
+}
+
+/// The address in this process of the symbol `(namespace, key)` a numeric image names, which is
+/// all an image of a frameless Number region can name.
+pub(in crate::vm::compiled) fn numeric_symbol(namespace: u32, key: u32) -> Option<u64> {
+    (namespace == RelocKind::Helper as u32 && key == LaneHelper::InterruptOwner as u32)
+        .then_some(super::super::lane_interrupt_owner as *const () as usize as u64)
 }
 
 impl Lowering<'_, '_> {
     /// The address of `kind` for `key`, which is `live` now. A live lowering embeds `live`; a
     /// linking one emits the symbol the loader resolves to the same address.
     pub(super) fn reloc(&mut self, kind: RelocKind, key: u32, live: u64) -> ir::Value {
-        if matches!(self.helpers, LaneHelpers::Numeric | LaneHelpers::Process(_)) {
+        if !self.helpers.links() {
             return self.word_const(live as i64);
         }
         crate::vm::jit_backend::symbol_address(&mut self.builder, types::I64, kind as u32, key)
