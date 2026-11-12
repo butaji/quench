@@ -622,14 +622,13 @@ impl Coverage {
     }
 }
 
-/// How a run ends: a lane body's status and result word (`LaneExit`), or a static typed
-/// region's source PC, which its canonical code continues at.
+/// How a run ends. Every kind but `Number` runs the lane body ABI (`lane_body_signature`): it
+/// returns its status and result word in registers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Completion {
-    StatusAndPc,
-    /// `StatusAndPc` of a lane body, which returns its status and result word in registers
-    /// (`lane_body_signature`) where a region writes the word through a pointer.
+    /// A status and a PC (`LaneExit`): a lane body, or a loop region.
     Body,
+    /// A static typed region: its status is the source PC its canonical code continues at.
     SourcePc,
     /// Pure, restartable scalar entry: borrowed Number inputs and one Number
     /// output through the common native ABI; a miss restarts the original call.
@@ -638,17 +637,17 @@ pub(super) enum Completion {
 
 impl Completion {
     /// Whether a run completes with a status and a PC (a lane body or a loop region).
-    pub(super) fn status_and_pc(self) -> bool { matches!(self, Self::StatusAndPc | Self::Body) }
+    pub(super) fn status_and_pc(self) -> bool { self == Self::Body }
 
     /// The entry signature of its function.
     fn entry_signature(self, isa: &dyn cranelift_codegen::isa::TargetIsa) -> Signature {
         let (pointer, call_conv) = (isa.pointer_type(), isa.default_call_conv());
-        if self == Self::Body { lane_body_signature(pointer, call_conv) } else { native_entry_signature(pointer, call_conv) }
+        if self == Self::Number { native_entry_signature(pointer, call_conv) } else { lane_body_signature(pointer, call_conv) }
     }
 
-    /// The types its leave block takes: the status, and a body's result word.
+    /// The types its leave block takes: the status, and the result word of a body's ABI.
     fn leave_params(self) -> &'static [ir::Type] {
-        if self == Self::Body { &[types::I32, types::I64] } else { &[types::I32] }
+        if self == Self::Number { &[types::I32] } else { &[types::I32, types::I64] }
     }
 }
 
@@ -1484,7 +1483,7 @@ pub(super) fn lower(
     let parameters = builder.block_params(entry_block).to_vec();
     let [context, entry_this, entry_captures, registers_base, rest @ ..] = parameters.as_slice() else { return None };
     let (context, entry_this, entry_captures, registers_base) = (*context, *entry_this, *entry_captures, *registers_base);
-    // A body returns its result word; a region writes it through its fifth parameter.
+    // A body returns its result word; a Number entry writes it through its fifth parameter.
     let result = rest.first().copied().unwrap_or(context);
     let payload = if numeric { builder.ins().iconst(types::I64, 0) } else { builder.ins().load(
         types::I64,
@@ -2127,7 +2126,7 @@ impl Lowering<'_, '_> {
     /// typed region returns it as the source PC its canonical code continues at.
     fn return_at(&mut self, word: u64) {
         match self.completion {
-            Completion::StatusAndPc | Completion::Body => {
+            Completion::Body => {
                 let word = self.builder.ins().iconst(types::I64, word as i64);
                 let stop = self.stop;
                 self.builder.ins().jump(stop, &[word.into()]);
@@ -2141,7 +2140,8 @@ impl Lowering<'_, '_> {
             Completion::SourcePc => {
                 let pc = self.builder.ins().iconst(types::I32,
                     i64::from(u32::try_from(word).expect("source PC has no inlined-frame tag")));
-                self.builder.ins().return_(&[pc]);
+                let no_word = self.builder.ins().iconst(types::I64, 0);
+                self.builder.ins().return_(&[pc, no_word]);
             }
         }
     }
@@ -2567,7 +2567,7 @@ impl Lowering<'_, '_> {
     /// the same facts; a Number entry misses, restarting the original call.
     fn return_entry(&mut self) {
         match self.completion {
-            Completion::StatusAndPc | Completion::Body => self.return_at(super::LaneExit::Entry.word()),
+            Completion::Body => self.return_at(super::LaneExit::Entry.word()),
             Completion::SourcePc => self.return_at(self.coverage.entry() as u64),
             Completion::Number => self.return_at(0),
         }
@@ -3473,10 +3473,10 @@ impl Lowering<'_, '_> {
     }
 
     /// Leaves with `status`, and with `word` as the result word where a run publishes one: a
-    /// body returns it beside the status, a region stores it through its result pointer.
+    /// body returns it beside the status, a Number entry stores it through its result pointer.
     pub(super) fn leave_with(&mut self, status: ir::Value, word: Option<ir::Value>) {
         let leave = self.leave;
-        if self.completion == Completion::Body {
+        if self.completion != Completion::Number {
             let word = word.unwrap_or_else(|| self.ins().iconst(types::I64, 0));
             self.ins().jump(leave, &[status.into(), word.into()]);
         } else {
@@ -5415,7 +5415,7 @@ mod tests {
             let isa = super::super::super::jit_backend::target_isa().unwrap();
             let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
             let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-                &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("capture loop region");
+                &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense).expect("capture loop region");
             let function = region.function;
             let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
             let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
@@ -5674,10 +5674,10 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
-        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
+        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
         let mut frame = super::super::LaneFrame::new();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         frame.dispatch.refresh_object_bases(&vm);
@@ -5687,8 +5687,7 @@ mod tests {
         for input in [-2.0, -1.0, 0.0, 1.0, 2.0] {
             let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
             registers[0] = Value::number(input);
-            let mut word = 0;
-            let status = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast(), &mut word) };
+            let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
             assert_eq!(status, LANE_BODY_RETURNED, "comparison result must continue natively: {input}, stopped at {word}");
             assert_eq!(Value::from_bits(word), Value::number(if input == -1.0 || input == 1.0 { 7.0 } else { 9.0 }));
         }
@@ -5698,8 +5697,7 @@ mod tests {
             let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
             registers[0] = Value::number(input);
             let before = registers.clone();
-            let mut word = u64::MAX;
-            let status = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast(), &mut word) };
+            let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
             // The entry's proof failed: the leave names it (`LaneExit::Entry`, which resumes
             // at the first record), not a PC the code would continue at.
             assert_eq!((status, word), (NATIVE_JS_STOPPED, super::super::LaneExit::Entry.word()));
@@ -5771,10 +5769,10 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
         assert!(region.fault_poll);
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
-        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
+        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
         let mut frame = super::super::LaneFrame::new();
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         frame.dispatch.refresh_object_bases(&vm);
@@ -5783,10 +5781,9 @@ mod tests {
         assert_eq!(frame.context.poll_start, 0);
         let before = vec![Value::number(7.0); usize::from(unit.caller_registers)];
         let mut registers = before.clone();
-        let mut word = u64::MAX;
         // No resumable page is lent, so this entry must leave before touching a
         // poll or executing any guest operation. The canonical inputs stay exact.
-        let status = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast(), &mut word) };
+        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
         assert_eq!(status, NATIVE_JS_STOPPED);
         assert_eq!(word, 0);
         assert_eq!(registers, before);
@@ -5808,7 +5805,7 @@ mod tests {
         for ty in [Type::INT32, Type::ANY] {
             fields.values_mut().next().unwrap()[0].ty = ty;
             let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-                &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+                &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
             let native = region.function;
             let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
                 .any(|instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -5835,7 +5832,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).unwrap();
         let native = region.function;
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -5865,7 +5862,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).unwrap();
         let native = region.function;
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
@@ -5891,7 +5888,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).expect("typed Number residual");
+            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).expect("typed Number residual");
         assert!(region.native > 0);
         let native = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
@@ -5950,7 +5947,7 @@ mod tests {
             generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
             entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
             plan: RegionPlan { coverage: Coverage::Loop { header, backedge, poll: true },
-                completion: Completion::StatusAndPc, views: ElementViews::Dense } }
+                completion: Completion::Body, views: ElementViews::Dense } }
             .specialize(&program).expect("the loop lowers");
         assert!(region.native > 0, "the loop runs natively");
         let native = region.function;
@@ -5980,7 +5977,7 @@ mod tests {
             entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[], plan }
             .specialize(&program).expect("the region lowers");
         let jit = specialize(RegionPlan { coverage: Coverage::Prefix,
-            completion: Completion::StatusAndPc, views: ElementViews::Dense });
+            completion: Completion::Body, views: ElementViews::Dense });
         let aot = specialize(RegionPlan { coverage: Coverage::Full,
             completion: Completion::SourcePc, views: ElementViews::Dense });
         assert!(jit.native > 0 && aot.native > 0, "both plans lower the same unit");

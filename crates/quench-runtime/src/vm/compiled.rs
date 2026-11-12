@@ -78,7 +78,7 @@ mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
 #[path = "compiled/numeric_image.rs"] mod numeric_image; pub(super) use numeric_image::compile_js_typed_numeric_region;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
-#[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, lane_body_signature, BodyEntry, BodyReturn};
+#[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, lane_body_signature, BodyEntry, BodyReturn, LANE_BODY_PARAMS};
 #[path = "compiled/general_tier_queries.rs"] mod general_tier_queries;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
@@ -3589,12 +3589,13 @@ pub(super) fn lower_js_general_dispatch(
             builder.ins().jump(run, &[]);
         }
         builder.switch_to_block(run);
-        let signature = builder.import_signature(native_entry_signature(isa.pointer_type(), isa.default_call_conv()));
+        let signature = builder.import_signature(lane_body_signature(isa.pointer_type(), isa.default_call_conv()));
         let name = builder.func.declare_imported_user_function(unit.function.name.get_user()
             .expect("typed residual has an internal symbol").clone());
         let target = builder.import_function(ir::ExtFuncData { name: ir::ExternalName::user(name),
             signature, colocated: false, patchable: false });
-        let call = builder.ins().call(target, &parameters);
+        // The region takes the lane body ABI's four words: the entry's, without its result pointer.
+        let call = builder.ins().call(target, &parameters[..LANE_BODY_PARAMS]);
         // After inlining ordinary exits preserve SSA edges. Exact callee
         // materialization owns a canonical frame boundary below.
         let pc = builder.inst_results(call)[0];
@@ -6038,14 +6039,14 @@ thread_local! {
 /// module; lanes only ask the region to run and inspect its exact-PC widening result.
 pub(super) struct CompiledOsrRegion {
     _code: CodeMemory,
-    entry: Entry,
+    entry: BodyEntry,
     pub(super) facts: OsrFacts,
     crossing: Crossing,
 }
 
 impl CompiledOsrRegion {
-    /// Runs the region on `registers` with `entry`'s record, through the native entry every
-    /// compiled artifact shares (`enter_native`).
+    /// Runs the region on `registers` with `entry`'s record, through the lane body ABI
+    /// (`enter_body`).
     ///
     /// # Safety
     /// `registers` is the running activation's register file, at least `Function::registers`
@@ -6146,14 +6147,9 @@ impl CompiledOsrRegion {
             context.vm = std::ptr::from_mut(vm).cast();
             context.program = program;
             context.adapter_payload = (&mut native.dispatch as *mut JsStepDispatch).cast();
-            let mut word = 0u64;
-            // SAFETY: as the caller promises; the code reads the register file and writes
-            // the result word.
-            // A stencil region (`Lean`) takes the frame, whose window is the register file; Cranelift code takes the file.
-            let mut shadow = ShadowFrame { window: registers as usize, ..ShadowFrame::EMPTY };
-            let arguments = if self.crossing == Crossing::Lean { (&raw mut shadow).cast::<u64>().cast_const() } else { registers.cast::<u64>().cast_const() };
-            let status = enter_native(&mut context, 0, 0, arguments,
-                &mut word, NativeEntryMode::Resumable, self.entry);
+            // SAFETY: as the caller promises; the code reads the register file and returns
+            // its status and result word.
+            let BodyReturn { status, value: word } = enter_body(&mut context, 0, 0, registers.cast::<u64>().cast_const(), self.entry);
 
             if let Some(Raised::Panic(panic)) = context.raised.take() {
                 std::panic::resume_unwind(panic);
@@ -6288,11 +6284,26 @@ fn dump_native_bytes(directory: &std::path::Path, header: u32, bytes: &[u8], add
 /// Publishes compiled `code` of a function lowered with `native_entry_signature` to
 /// executable memory, and its entry.
 fn publish_entry(code: &[u8]) -> Option<(CodeMemory, Entry)> {
-    let memory = CodeMemory::new(code)?;
-    write_perf_map("js-native", memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
+    let memory = publish_code(code)?;
     // SAFETY: callers lower the function with `native_entry_signature`.
     let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
     Some((memory, entry))
+}
+
+/// Publishes compiled `code` of a region lowered with `lane_body_signature` to executable
+/// memory, and its entry.
+fn publish_body(code: &[u8]) -> Option<(CodeMemory, BodyEntry)> {
+    let memory = publish_code(code)?;
+    // SAFETY: callers lower the region with `lane_body_signature`.
+    let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
+    Some((memory, entry))
+}
+
+/// `code` in executable memory, named for the profiler.
+fn publish_code(code: &[u8]) -> Option<CodeMemory> {
+    let memory = CodeMemory::new(code)?;
+    write_perf_map("js-native", memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
+    Some(memory)
 }
 
 /// Whole-program globals a frozen image may fold: a `var` the program writes exactly

@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 use super::LANE_OSR_RUNS;
-use super::{enter_native, lane_loop_outcome, CallContext, Entry, LoopEntry, LoopOutcome, LoopRegion, NativeEntryMode, Raised, TERMINATED_STATUS};
+use super::{enter_body, lane_loop_outcome, BodyEntry, BodyReturn, CallContext, LoopEntry, LoopOutcome, LoopRegion, Raised, TERMINATED_STATUS};
 
 
 /// A bare run's payload is the entry record's address alone, where the dispatch holds it.
@@ -25,7 +25,7 @@ pub(super) enum Crossing {
 /// # Safety
 /// As `run`.
 pub(super) unsafe fn run_bare(
-    entry_code: Entry,
+    entry_code: BodyEntry,
     registers: *mut crate::value::Value,
     entry: &mut LoopEntry,
     region: &LoopRegion,
@@ -37,11 +37,8 @@ pub(super) unsafe fn run_bare(
     let mut payload = entry.words_mut() as usize;
     let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
     context.adapter_payload = (&mut payload as *mut usize).cast();
-    let mut word = 0u64;
-    // The code takes the frame, whose window is the register file it runs on.
-    let mut frame = super::ShadowFrame { window: registers as usize, ..super::ShadowFrame::EMPTY };
-    // SAFETY: as the caller promises; the code reads the register file through the frame and writes the result word.
-    let status = unsafe { enter_native(&mut context, 0, 0, (&raw mut frame).cast::<u64>(), &mut word, NativeEntryMode::Resumable, entry_code) };
+    // SAFETY: as the caller promises; the code runs on the register file and returns its status and result word.
+    let BodyReturn { status, value: word } = unsafe { enter_body(&mut context, 0, 0, registers.cast::<u64>().cast_const(), entry_code) };
     if let Some(Raised::Panic(panic)) = context.raised.take() {
         std::panic::resume_unwind(panic);
     }

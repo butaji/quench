@@ -3,7 +3,7 @@
 
 use super::{
     compile_native_function, dump_native_bytes, dump_native_code, names_length, native_dump_directory, lane_unit, osr_loop,
-    publish_entry, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
+    publish_body, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
 use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
@@ -291,7 +291,7 @@ impl LoopPlanner<'_> {
             entry_fields,
             plan: super::lane_region::RegionPlan {
                 coverage: super::lane_region::Coverage::Loop { header, backedge, poll: false },
-                completion: super::lane_region::Completion::StatusAndPc, views: self.views,
+                completion: super::lane_region::Completion::Body, views: self.views,
             },
         }.specialize(self.program).ok().filter(|lowered| self.views == super::ElementViews::Dense || lowered.hoists_arrays)
     }
@@ -386,7 +386,7 @@ impl PendingOsrRegion {
             std::task::Poll::Ready(_) => return Ok(OsrCompile::Failed),
         };
         let Self { header, clif, facts, crossing, .. } = *self;
-        let Some((memory, entry)) = publish_entry(&code) else { return Ok(OsrCompile::Failed) };
+        let Some((memory, entry)) = publish_body(&code) else { return Ok(OsrCompile::Failed) };
         if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
             dump_native_code(directory, header, &memory, &clif);
         }

@@ -4,20 +4,19 @@
 //! runtime copies them like any stencil (`entry_*` may `call`, `leave_*` may `ret`; `build.rs`
 //! allows nothing else to).
 //!
-//! Entry ABI: (rdi = context, rcx = the frame, r8 = result pointer). The thunk moves the
-//! context to r13 and loads the frame's window of registers (`staged::frame::WINDOW`) into r12
-//! (the row convention), calls the first row
-//! (`HOLE_NEXT`), stores the word the chain returned through the result pointer and returns
-//! status 0.
+//! Entry ABI, the lane body ABI: (rdi = context, rcx = the window of registers) -> (eax =
+//! status, rdx = word). The thunk moves the context to r13 and the window into r12 (the row
+//! convention), calls the first row (`HOLE_NEXT`) and returns the word the chain returned in
+//! rdx beside status 0.
 
-use crate::staged::frame;
 use crate::words::HOLE_V0;
 
 unsafe extern "C" {
     static HOLE_NEXT: u8;
 }
 
-/// Saves rbp, rbx, r12-r15 and the result pointer r8, calls the first row, stores its word.
+/// Saves rbp, rbx and r12-r15, calls the first row, returns its word beside status 0. The
+/// eighth word keeps the stack 16-byte aligned at the call.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_thunk() {
@@ -28,12 +27,12 @@ pub unsafe extern "C" fn entry_thunk() {
         "push r13",
         "push r14",
         "push r15",
-        "push r8",
+        "sub rsp, 8",
         "mov r13, rdi",
-        "mov r12, [rcx + {window}]",
+        "mov r12, rcx",
         "call {first}",
-        "pop r8",
-        "mov [r8], rax",
+        "add rsp, 8",
+        "mov rdx, rax",
         "pop r15",
         "pop r14",
         "pop r13",
@@ -43,7 +42,6 @@ pub unsafe extern "C" fn entry_thunk() {
         "xor eax, eax",
         "ret",
         first = sym HOLE_NEXT,
-        window = const frame::WINDOW,
     )
 }
 
