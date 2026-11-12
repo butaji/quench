@@ -416,8 +416,8 @@ impl LanePlan {
         if let (Some(directory), Some(clif)) = (native_dump_directory(), self.lowered.clif.as_deref()) {
             dump_native_code(directory, self.function, &memory, clif);
         }
-        // SAFETY: the lane region lowers the shared native-entry ABI.
-        let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
+        // SAFETY: the lane region lowers a body with the lane body ABI (`lane_body_signature`).
+        let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         #[cfg(test)]
         LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]

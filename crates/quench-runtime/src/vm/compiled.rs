@@ -75,6 +75,7 @@ use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_n
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
+#[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, lane_body_signature, BodyEntry, BodyReturn};
 #[path = "compiled/general_tier_queries.rs"] mod general_tier_queries;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
@@ -6614,7 +6615,7 @@ pub(super) struct LaneMethod {
     /// The word its code reads at its invalidation points, set when it retires.
     pub(super) invalidation: crate::code_dependencies::Invalidation,
     _code: CodeMemory,
-    entry: Entry,
+    entry: BodyEntry,
     recovery_space: super::dispatch_fast::LaneRecoverySpace,
     /// The lowering requires an owned, resumable poll-page capability.
     fault_poll: bool,
@@ -7152,20 +7153,18 @@ impl<H: Host> Vm<H> {
             (*context).interrupt_owner = &self.execution_interrupt;
             context
         };
-        let mut word = 0_u64;
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases set above.
-        let status = if method.fault_poll {
+        let BodyReturn { status, value: word } = if method.fault_poll {
             let poll = native_poll_page(&self.execution_interrupt);
             // SAFETY: this entry owns the TLS binding until it returns. Reentrant
             // entries checkpoint it in `run_nested_lane_method`.
             let context = unsafe { &mut *context };
             context.bind_native_adapter(context.adapter_payload,
                 self.execution_interrupt.atomic_flag() as *const _, poll);
-            unsafe { enter_native(context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast(),
-                &mut word, NativeEntryMode::Resumable, method.entry) }
+            unsafe { enter_body(context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast(), method.entry) }
         } else {
-            unsafe { (method.entry)(&mut *context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast(), &mut word) }
+            unsafe { (method.entry)(&mut *context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast()) }
         };
         if status == LANE_BODY_RETURNED {
             // SAFETY: as above; the body wrote the record before it returned.

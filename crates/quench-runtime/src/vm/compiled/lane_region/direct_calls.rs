@@ -44,8 +44,8 @@ impl Lowering<'_, '_> {
 
     /// Where each status of a native call goes: a completion stores its value, or the
     /// construction's `receiver`, to the call's register and continues at `completed`.
-    fn direct_finish(&mut self, instruction: WideInstruction, status: ir::Value, shadow: ir::Value, helper: ir::Block, completed: ir::Block, receiver: Option<ir::Value>) {
-        let (base, payload, result) = (self.registers_base, self.payload, self.result);
+    fn direct_finish(&mut self, instruction: WideInstruction, (status, word): (ir::Value, ir::Value), shadow: ir::Value, helper: ir::Block, completed: ir::Block, receiver: Option<ir::Value>) {
+        let (base, payload) = (self.registers_base, self.payload);
         let returned = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_RETURNED));
         let (back, check, left, missed) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(left);
@@ -61,11 +61,10 @@ impl Lowering<'_, '_> {
         // A leave inside the callee stops the caller with it: the lane makes the frames'
         // activations and continues in the innermost (`dispatch_fast::lane_body_left`).
         self.builder.switch_to_block(left);
-        let leave = self.leave;
-        self.word_jump(leave, &[status.into()]);
+        self.leave_with(status, Some(word));
         self.builder.switch_to_block(back);
         self.word_store(shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
-        let value = match receiver { Some(receiver) => receiver, None => self.word_load(result, 0) };
+        let value = match receiver { Some(receiver) => receiver, None => word };
         self.word_store(value, base, register_offset(instruction.result_register()));
         self.word_jump(completed, &[]);
     }
