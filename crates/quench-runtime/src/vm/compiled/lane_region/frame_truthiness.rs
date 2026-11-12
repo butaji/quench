@@ -21,7 +21,7 @@ pub(super) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: 
             let bits = register_tagged(builder, registers, state, register);
             if fact.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
                 builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64)
-            } else if matches!(helpers, LaneHelpers::Numeric) {
+            } else if helpers.is_numeric() {
                 emit_js_tagged_truthiness(builder, bits, miss)
             } else {
                 cell_truthiness(builder, payload, helpers, bits)
@@ -39,7 +39,7 @@ fn cell_truthiness(builder: &mut FunctionBuilder<'_>, payload: ir::Value, helper
     let result = builder.append_block_param(join, types::I8);
     builder.ins().brif(undecided, cell, &[], join, &[ir::BlockArg::Value(truthy)]);
     builder.switch_to_block(cell);
-    let address = helpers.address(builder.ins(), LaneHelper::Truthy);
+    let address = helpers.address(builder, LaneHelper::Truthy);
     let word = super::super::super::emit_lane_helper_call(builder, payload, address, &[bits]);
     let truthy = builder.ins().icmp_imm_u(IntCC::NotEqual, word, 0);
     builder.ins().jump(join, &[ir::BlockArg::Value(truthy)]);

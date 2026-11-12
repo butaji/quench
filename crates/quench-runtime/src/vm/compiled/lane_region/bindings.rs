@@ -17,7 +17,7 @@ impl Lowering<'_, '_> {
             let one = self.ins().iconst(types::I64, 1);
             self.ins().brif(hit, join, &[ir::BlockArg::Value(one)], slow, &[]);
             self.builder.switch_to_block(slow);
-            let helper = self.helpers.address(self.builder.ins(), LaneHelper::AdmittedFunctionBinding);
+            let helper = self.helpers.address(&mut self.builder, LaneHelper::AdmittedFunctionBinding);
             let called = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function]);
             self.ins().jump(join, &[ir::BlockArg::Value(called)]);
             self.builder.switch_to_block(join);
@@ -25,7 +25,7 @@ impl Lowering<'_, '_> {
         } else {
             let depth = self.unit.recovery_depth().max(1) as i64;
             let depth = self.ins().iconst(types::I64, depth);
-            let helper = self.helpers.address(self.builder.ins(), LaneHelper::FunctionBinding);
+            let helper = self.helpers.address(&mut self.builder, LaneHelper::FunctionBinding);
             emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function, depth])
         };
         self.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0)
