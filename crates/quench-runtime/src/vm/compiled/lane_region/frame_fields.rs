@@ -200,8 +200,9 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     /// The direct store, and where it declines (a shape, the barrier or the storage does not
     /// admit it) the VM's store, which logs what it must; past the join only the proofs that
     /// held before the store do.
-    fn stored(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, (atom, site): (u32, u16),
-        value: ir::Value, miss: ir::Block, fast: impl FnOnce(&mut Emit<'b, 'c>, &mut Self, ir::Block) -> Option<()>) -> Option<()> {
+    fn stored(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, miss: ir::Block,
+        fast: impl FnOnce(&mut Emit<'b, 'c>, &mut Self, ir::Block) -> Option<()>,
+        slow: impl FnOnce(&mut Emit<'b, 'c>, &mut Self, ir::Block) -> Option<()>) -> Option<()> {
         let (general, done) = (stage.builder.create_block(), stage.builder.create_block());
         stage.builder.set_cold_block(general);
         let before = self.state.clone();
@@ -210,7 +211,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             None => { stage.builder.ins().jump(general, &[]); }
         }
         stage.builder.switch_to_block(general);
-        self.field_store_host(stage, object, atom, site, value, miss)?;
+        slow(stage, self, miss)?;
         stage.builder.ins().jump(done, &[]);
         stage.builder.switch_to_block(done);
         self.retire_fast_proofs(owner, &before);

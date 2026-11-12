@@ -69,16 +69,64 @@ pub(crate) enum FieldPlan<'a> {
     Host { atom: u32, site: u16 },
 }
 
+/// One own data slot a store site proved: objects of exact `shape` keep the field at `slot`.
+/// `holds` is `None` where the value stored is of a type the slot's type holds. Otherwise it
+/// is the type the row tests the value for before it stores in place, so the slot's
+/// representation never widens under the raw write; a value of any other type stores through
+/// the VM, which joins the slot's type.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct StoreArm {
+    pub(crate) shape: u32,
+    pub(crate) slot: u16,
+    pub(crate) holds: Option<Type>,
+}
+
+impl StoreArm {
+    /// The arm for the slot `slot` of objects of `shape`, whose type is `slot_ty`, under a
+    /// value of type `fact`. A slot that holds the value's type stores it as is. Otherwise
+    /// the arm admits an int32, or for a slot that holds any direct object, that type; `None`
+    /// where the slot's type holds no such value, so every store of it goes through the VM.
+    pub(crate) fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
+        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None }); }
+        let holds = if slot_ty.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) { slot_ty } else { Type::INT32 };
+        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds) })
+    }
+}
+
+/// How the VM completes a named store that an in-place arm does not: where no arm holds the
+/// receiver's shape, or its value, its barrier or its storage.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum StoreJoin {
+    /// The VM's own-field store hit, which a failure leaves at the miss edge.
+    Host,
+    /// The VM's adding entries, which complete a store of any shape without leaving; a frame
+    /// that uses it holds no object proof past the store.
+    Add,
+}
+
 /// How a named store site writes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum StorePlan {
-    /// An own data field of an object whose exact shape is `shape`, at `slot`: stored in place
-    /// where the shape, the barrier and the storage admit it, else by the VM's store.
-    Own { shape: u32, slot: u16 },
+pub(crate) enum StorePlan<'a> {
+    /// The first of `arms` whose exact shape the receiver has stores in place where the
+    /// value, the barrier and the storage admit it; every other store runs through `join`.
+    /// There is at least one arm (`StorePlan::of`).
+    Own { arms: &'a [StoreArm], join: StoreJoin },
     /// A store that may add the property or change the shape: the VM's adding entry.
     Add,
     /// A setter, a read-only or dictionary property, a proxy: the VM's store.
     Host,
+}
+
+impl<'a> StorePlan<'a> {
+    /// The plan that stores in place by `arms` and otherwise by `join`; by `join` alone with
+    /// no arm.
+    pub(crate) fn of(arms: &'a [StoreArm], join: StoreJoin) -> Self {
+        match (arms.is_empty(), join) {
+            (false, join) => Self::Own { arms, join },
+            (true, StoreJoin::Host) => Self::Host,
+            (true, StoreJoin::Add) => Self::Add,
+        }
+    }
 }
 
 /// The plans a frame's tier proved, by site. A frame with none answers `None`, and the
@@ -87,12 +135,12 @@ pub(crate) trait PlanSource {
     /// The read plan of `lookup`.
     fn field_plan(&self, lookup: FieldLookup) -> Option<FieldPlan<'_>>;
     /// The store plan of cache site `site`.
-    fn store_plan(&self, site: u16) -> Option<StorePlan>;
+    fn store_plan(&self, site: u16) -> Option<StorePlan<'_>>;
 }
 
 impl<P: PlanSource> PlanSource for &P {
     fn field_plan(&self, lookup: FieldLookup) -> Option<FieldPlan<'_>> { (**self).field_plan(lookup) }
-    fn store_plan(&self, site: u16) -> Option<StorePlan> { (**self).store_plan(site) }
+    fn store_plan(&self, site: u16) -> Option<StorePlan<'_>> { (**self).store_plan(site) }
 }
 
 /// The plans of a frame that proved none.
@@ -101,7 +149,7 @@ pub(crate) struct NoPlans;
 
 impl PlanSource for NoPlans {
     fn field_plan(&self, _lookup: FieldLookup) -> Option<FieldPlan<'_>> { None }
-    fn store_plan(&self, _site: u16) -> Option<StorePlan> { None }
+    fn store_plan(&self, _site: u16) -> Option<StorePlan<'_>> { None }
 }
 
 /// A frame's property callouts. Every default declines, leaving the operation to the host
@@ -211,14 +259,15 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn store_admitted(&mut self, _stage: &mut S, _atom: u32, _miss: S::Miss) -> Option<()> { Some(()) }
 
-    /// What `fast` stores, which leaves at the edge it is given; where it misses, the VM's store
-    /// instead (`field_store_host`), and past the join only what both prove holds.
+    /// What `fast` stores, which leaves at the edge it is given; where it misses, `slow` (the
+    /// VM's store) instead, and past the join only what both prove holds.
     #[inline(always)]
-    fn stored(&mut self, stage: &mut S, _owner: Owner, object: S::Word, (atom, site): (u32, u16), value: S::Word,
-        miss: S::Miss, fast: impl FnOnce(&mut S, &mut Self, S::Miss) -> Option<()>) -> Option<()> {
+    fn stored(&mut self, stage: &mut S, _owner: Owner, miss: S::Miss,
+        fast: impl FnOnce(&mut S, &mut Self, S::Miss) -> Option<()>,
+        slow: impl FnOnce(&mut S, &mut Self, S::Miss) -> Option<()>) -> Option<()> {
         match fast(stage, self, miss) {
             Some(()) => Some(()),
-            None => self.field_store_host(stage, object, atom, site, value, miss),
+            None => slow(stage, self, miss),
         }
     }
 
@@ -293,7 +342,7 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
 
 /// Continues where `owner`'s object has exact shape `shape`: a proof the frame holds emits
 /// nothing, else the guard is made and recorded. `direct` where the receiver is a direct object.
-fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
+pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
     at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<()> {
     if frame.proven_shape(stage, owner) == Some(shape) { return Some(()); }
     ic::guard_shape(stage, at, shape, miss)?;
@@ -355,20 +404,6 @@ fn chain<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, first: (Ow
         from = (Owner::Temporary, true);
     }
     Some(object)
-}
-
-/// The store of `value` to the own slot `slot` of `owner`'s `object` of exact `shape`: the
-/// owner's shape proof, the method-cache admission, then the shared own store, whose barrier
-/// and storage decisions are the stage's. Anything it cannot do stores through the VM.
-pub(super) fn own_store_row<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owner: Owner, object: S::Word,
-    (shape, slot): (u32, u16), (atom, site): (u32, u16), (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
-    frame.stored(stage, owner, object, (atom, site), value, miss, |stage, frame, miss| {
-        frame.store_admitted(stage, atom, miss)?;
-        let at = frame.receiver_record(stage, owner, object, false, miss)?;
-        guard_receiver_shape(stage, frame, (owner, true), &at, shape, miss)?;
-        let id = stage.and_imm(object, u64::from(u32::MAX));
-        super::store::own_store_proved(stage, at.record, id, slot, (value, fact), miss)
-    })
 }
 
 /// `GetField`: `base`'s value, as the loop's entry or the record of an OSR region already

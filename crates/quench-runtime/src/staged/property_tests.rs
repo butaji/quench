@@ -1,11 +1,12 @@
 //! The property rows on the concrete stage, against the heap's own object model.
 
 use super::ic::IcOp;
-use super::property::{read_with, Arm, FieldPlan, Owner, PlanSource, StorePlan};
+use super::property::{read_with, Arm, FieldPlan, Owner, PlanSource, StoreArm, StoreJoin, StorePlan};
 use super::*;
 use crate::bytecode::{FieldBase, Operand};
 use crate::heap::{Cell, Heap, Object};
-use crate::Value;
+use crate::typed_ir::Type;
+use crate::{Value, ValueType};
 
 /// The word a host callout answers, and what each callout was asked.
 const ANSWER: u64 = 0xA5A5;
@@ -13,12 +14,12 @@ const ANSWER: u64 = 0xA5A5;
 /// The plans of a test site: `lookup`'s read, cache site `store`'s store.
 struct Plans {
     read: FieldPlan<'static>,
-    store: StorePlan,
+    store: StorePlan<'static>,
 }
 
 impl PlanSource for Plans {
     fn field_plan(&self, _lookup: FieldLookup) -> Option<FieldPlan<'_>> { Some(self.read) }
-    fn store_plan(&self, _site: u16) -> Option<StorePlan> { Some(self.store) }
+    fn store_plan(&self, _site: u16) -> Option<StorePlan<'_>> { Some(self.store) }
 }
 
 /// A frame over a few registers and the heap's object records, whose callouts log their name.
@@ -111,7 +112,7 @@ fn own(shape: u32, slot: u16, len: usize) -> FieldPlan<'static> {
         IcOp::LoadSlot { slot, form: Form::Either, storage_len: len }]))
 }
 
-const NO_STORE: StorePlan = StorePlan::Host;
+const NO_STORE: StorePlan<'static> = StorePlan::Host;
 
 /// A heap whose shapes `1..=count` extend one another.
 fn heap_of(count: u32) -> Heap {
@@ -276,4 +277,63 @@ fn a_guard_is_recorded_as_the_owners_proof_and_a_proven_shape_is_not_tested_agai
     // told is proved, and records nothing again.
     let (read, proved) = read_owned_by(&heap, own(shape + 1, 1, 2), object, Some(shape + 1));
     assert_eq!((read, proved), (Some(Value::integer(8)), vec![]));
+}
+
+/// `plan` run as the store of `value` to `object`'s field, by a frame that holds no proof: the
+/// word the row stored (none where it left) and the VM callouts it made.
+fn store(heap: &mut Heap, plan: StorePlan<'static>, object: Value, value: Value) -> (Option<Value>, Vec<&'static str>) {
+    let plans = Plans { read: FieldPlan::Host { atom: 0, site: 0 }, store: plan };
+    let mut frame = Host::new(records(heap), &plans, vec![0, object.to_bits(), value.to_bits()]);
+    let mut stage = Concrete::storing(&*heap);
+    let word = match step(&mut stage, &mut frame, Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3 }) {
+        Step::Value(word) => Some(Value::from_bits(word)),
+        _ => None,
+    };
+    (word, frame.log)
+}
+
+#[test]
+fn an_arm_is_the_slots_type_or_the_test_of_the_type_that_keeps_its_representation() {
+    let arm = |slot_ty, fact| StoreArm::of((5, 2), slot_ty, fact);
+    let plain = |holds| Some(StoreArm { shape: 5, slot: 2, holds });
+    assert_eq!(arm(Type::NUMBER, Type::INT32), plain(None), "the slot holds the value's type");
+    assert_eq!(arm(Type::INT32, Type::NUMBER), plain(Some(Type::INT32)), "a Number may widen an int32 slot: test the int32");
+    let objects = Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH);
+    assert_eq!(arm(objects, Type::ANY), plain(Some(objects)), "an object slot admits objects and its nullish");
+    assert_eq!(arm(Type::language(ValueType::String), Type::INT32), None, "no value stores in place without widening");
+    assert_eq!(StorePlan::of(&[], StoreJoin::Add), StorePlan::Add);
+    assert_eq!(StorePlan::of(&[], StoreJoin::Host), StorePlan::Host);
+}
+
+#[test]
+fn a_widening_arm_stores_the_values_its_type_admits_in_place_and_leaves_the_rest_to_the_vm() {
+    let mut heap = heap_of(1);
+    let (object, shape) = object_of(&mut heap, &[Value::integer(7)]);
+    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: Some(Type::INT32) }]));
+    let plan = StorePlan::of(arms, StoreJoin::Host);
+    let (word, log) = store(&mut heap, plan, object, Value::integer(9));
+    assert_eq!((word, log), (Some(Value::integer(9)), Vec::new()));
+    assert_eq!(read(&heap, own(shape, 0, 1), object), Some(Value::integer(9)));
+    let (word, log) = store(&mut heap, plan, object, Value::number(1.5));
+    assert_eq!((word, log), (Some(Value::number(1.5)), vec!["field_store_host"]), "the VM joins the slot's type");
+    assert_eq!(read(&heap, own(shape, 0, 1), object), Some(Value::integer(9)), "the arm changed nothing");
+}
+
+#[test]
+fn several_arms_store_through_the_one_that_holds_the_receivers_shape() {
+    let mut heap = heap_of(2);
+    let (first, first_shape) = object_of(&mut heap, &[Value::integer(1)]);
+    let (second, second_shape) = object_of(&mut heap, &[Value::integer(2), Value::integer(3)]);
+    let (third, _) = object_of(&mut heap, &[]);
+    let arms: &'static [StoreArm] = Box::leak(Box::new([
+        StoreArm { shape: first_shape, slot: 0, holds: None }, StoreArm { shape: second_shape, slot: 1, holds: None }]));
+    let plan = StorePlan::of(arms, StoreJoin::Host);
+    assert_eq!(store(&mut heap, plan, first, Value::integer(10)).1, Vec::<&str>::new());
+    assert_eq!(read(&heap, own(first_shape, 0, 1), first), Some(Value::integer(10)));
+    assert_eq!(store(&mut heap, plan, second, Value::integer(11)).1, Vec::<&str>::new());
+    assert_eq!(read(&heap, own(second_shape, 1, 2), second), Some(Value::integer(11)));
+    assert_eq!(read(&heap, own(second_shape, 0, 2), second), Some(Value::integer(2)), "the other slot stays");
+    assert_eq!(store(&mut heap, plan, third, Value::integer(12)).1, ["field_store_host"], "a shape no arm names");
+    let adding = StorePlan::of(arms, StoreJoin::Add);
+    assert_eq!(store(&mut heap, adding, third, Value::integer(12)).1, ["field_add"], "the join the plan names");
 }

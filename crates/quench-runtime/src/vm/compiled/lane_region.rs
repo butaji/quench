@@ -65,7 +65,7 @@ use loop_arrays::{ArraySource, LoopArray};
 use frame::EmitFrame;
 use frame_fields::{FieldFacts, HeldRead, StableHold};
 use field_plans::{with_read_plan, LanePlans, LinkInput};
-use crate::staged::property::StorePlan;
+use crate::staged::property::{StoreArm, StoreJoin, StorePlan};
 use polls::specialize_closed_polls;
 #[cfg(test)]
 use polls::retain_closed_polls;
@@ -4438,10 +4438,8 @@ impl Lowering<'_, '_> {
         // an object retires, as another register may name it, and `this`'s facts are read
         // again.
         if self.generic.contains(&pc) && self.completion.status_and_pc() {
-            self.store_through_vm(state, (source, register), instruction, StorePlan::Add, exit)?;
-            self.forget_append_rooms(self.at);
-            self.reshaped(state);
-            self.reload_receiver();
+            self.named_store(state, (source, register), instruction, StorePlan::Add, exit)?;
+            self.after_store(state, StoreJoin::Add);
             return Some(true);
         }
         let projected = self.loop_stores.get(&pc).copied().filter(|slot|
@@ -4449,11 +4447,10 @@ impl Lowering<'_, '_> {
                 .is_some_and(|header| header.record == slot.header.record));
         if let Some(slot) = projected {
             self.loop_slot_store(state, instruction, slot, (value, exit));
-        } else if let Some(plan) = self.direct_store_plan(instruction, ty) {
+        } else if let Some((arms, join)) = self.store_arms(instruction, ty) {
             state.proofs.write_field(instruction.atom_index());
-            self.store_through_vm(state, (source, register), instruction, plan, exit)?;
-            state.proofs.stable = false;
-            self.forget_append_rooms(self.at);
+            self.named_store(state, (source, register), instruction, StorePlan::of(&arms, join), exit)?;
+            self.after_store(state, join);
         } else {
             self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, ty, exit)?;
         }
@@ -4498,26 +4495,41 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(done);
     }
 
-    /// The plan of a store that the `SetField` row makes: in place where the site's one own shape
-    /// folds and the value's type fits its slot (the barrier decision is the stage's, from the
-    /// value's type), by the VM where the site folds no own shape and binds no slot at entry.
-    /// `None` leaves the store to `store_field`: a value the slot's type may not hold, several
-    /// shapes, a run that calls, a bound slot.
-    fn direct_store_plan(&self, instruction: WideInstruction, ty: Type) -> Option<StorePlan> {
+    /// The in-place arms and the VM's completion of the store `instruction` makes of a value of
+    /// type `ty`, which the `SetField` row runs (`StorePlan::of`): one arm for each of the
+    /// site's own shapes whose layout the plan admits and whose slot the value's type fits or
+    /// widens by a test (`StoreArm::of`), the VM's own-field hit where no arm takes the store,
+    /// and in a body that completes through the VM's polymorphic entries (`status_and_pc`) a
+    /// site of several shapes ends in its adding entry. `None` leaves the store to
+    /// `store_field`: a site whose slot the entry bound, a run that calls.
+    fn store_arms(&self, instruction: WideInstruction, ty: Type) -> Option<(Vec<StoreArm>, StoreJoin)> {
         let site = instruction.cache_site_index();
         let own: Vec<&NativeFieldLoad> = self.fields.get(&site).into_iter().flatten().filter(|load| load.holder.is_none()).collect();
         let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
-        match own.as_slice() {
-            [] if !bound => Some(StorePlan::Host),
-            [field] if !bound && !self.native_calls && field.valid() && ty.is_subtype(field.ty) =>
-                Some(StorePlan::Own { shape: field.shape, slot: field.slot }),
-            _ => None,
+        if bound || self.native_calls { return None; }
+        let arms = own.iter().filter(|load| load.valid())
+            .filter_map(|load| StoreArm::of((load.shape, load.slot), load.ty, ty)).collect();
+        let completes = own.len() > 1 && self.completion.status_and_pc();
+        Some((arms, if completes { StoreJoin::Add } else { StoreJoin::Host }))
+    }
+
+    /// What a store the VM may have completed changes: an adding entry reshapes any object, so
+    /// every proof of one retires and the receiver's facts load again; the VM's own-field hit
+    /// writes a field, which a prototype's Stable facts may have named.
+    fn after_store(&mut self, state: &mut State, join: StoreJoin) {
+        self.forget_append_rooms(self.at);
+        match join {
+            StoreJoin::Add => {
+                self.reshaped(state);
+                self.reload_receiver();
+            }
+            StoreJoin::Host => state.proofs.stable = false,
         }
     }
 
     /// The store of the `source` register's value to `instruction`'s field of `register`'s
     /// object (`this` for `None`) as one `SetField` row under `plan`.
-    fn store_through_vm(&mut self, state: &mut State, (source, register): (Register, Option<Register>),
+    fn named_store(&mut self, state: &mut State, (source, register): (Register, Option<Register>),
         instruction: WideInstruction, plan: StorePlan, exit: ir::Block) -> Option<()> {
         let operation = crate::staged::Operation::SetField { value: source, base: register,
             atom: instruction.atom_index(), site: instruction.cache_site_index() };

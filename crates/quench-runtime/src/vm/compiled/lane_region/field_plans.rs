@@ -12,12 +12,12 @@ use crate::staged::Form;
 /// What one access's frame proved: the plan of its read and of its store.
 pub(super) struct LanePlans<'p> {
     pub(super) read: Option<FieldPlan<'p>>,
-    pub(super) store: Option<StorePlan>,
+    pub(super) store: Option<StorePlan<'p>>,
 }
 
 impl PlanSource for LanePlans<'_> {
     fn field_plan(&self, _lookup: FieldLookup) -> Option<FieldPlan<'_>> { self.read }
-    fn store_plan(&self, _site: u16) -> Option<StorePlan> { self.store }
+    fn store_plan(&self, _site: u16) -> Option<StorePlan<'_>> { self.store }
 }
 
 impl LanePlans<'static> {
