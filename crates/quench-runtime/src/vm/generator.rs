@@ -11,6 +11,8 @@ mod window_steps;
 mod arguments_tests;
 #[cfg(test)]
 mod async_await_tests;
+#[cfg(test)]
+mod hidden_name_tests;
 
 /// How a generator's resumption stopped (`Vm::resume_generator_step`).
 pub(super) enum GeneratorStep {

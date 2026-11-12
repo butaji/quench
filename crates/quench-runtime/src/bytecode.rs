@@ -1777,10 +1777,11 @@ pub(crate) struct CallPlan {
     /// may run such a body without a frame (`CallEntry::Environment`).
     pub(crate) environment_activation: bool,
     /// A function that suspends (a generator, an async function or an async generator) laid out
-    /// as its registers: no locals, `arguments`, closures, dynamic scope or implicit
-    /// bindings, so what its suspended frame holds is its registers, receiver and closure
-    /// environment. A lane resumes it as an activation whose window is the frame's register
-    /// file, and its `yield` or `await` suspends it back into that file.
+    /// as its registers: no locals, `arguments`, closures or dynamic scope, so what its
+    /// suspended frame holds is its registers, receiver and closure environment (its implicit
+    /// bindings are read through the frame an opcode that needs them makes of the record). A
+    /// lane resumes it as an activation whose window is the frame's register file, and its
+    /// `yield` or `await` suspends it back into that file.
     pub(crate) suspended_registers: bool,
     /// A function that suspends whose frame locals and environment ride a window past its
     /// registers (`locals_ride_window`), which a lane resumes as an activation over the
@@ -2274,6 +2275,13 @@ impl Function {
             && !(self.is_arrow && self.instructions().any(|instruction| instruction.op() == Op::LoadThis))
     }
 
+    /// Whether some instruction makes a closure or copies the environment for an iteration: the
+    /// function then makes an environment its closures capture, which a lane window builds
+    /// without the implicit bindings a frame holds.
+    fn makes_environments(&self) -> bool {
+        self.instructions().any(|instruction| matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv))
+    }
+
     /// Whether its locals and the environment its closures capture can live in a window past
     /// its registers: the layout an environment activation (`CallPlan::environment_activation`)
     /// and a suspended generator's window (`CallPlan::suspended_environment`) share. Each local
@@ -2290,8 +2298,10 @@ impl Function {
             && self.selective_capture_slots.is_some()
             && self.initial_register == InitialRegister::Undefined
             && !self.has_dynamic_scope_access()
-            // The implicit bindings `activation_binding_reads` names, but for clones, are a frame's.
-            && !self.body_binding_reads_beside_clones(tables)
+            // The implicit bindings `activation_binding_reads` names, but for clones, are a frame's:
+            // a suspended function's record keeps them, and the opcodes that read them exit the
+            // lane to the frame it becomes, unless a closure would capture them in the window.
+            && (!self.body_binding_reads_beside_clones(tables) || (self.suspends_in_record() && !self.makes_environments()))
             && self.instructions().all(|instruction| {
                 let op = instruction.op();
                 // An iteration's `CloneEnv` copies the window's environment, once a closure
@@ -2406,7 +2416,7 @@ impl Function {
             let suspendable = self.suspends_in_record();
             let suspended_registers = suspendable
                 && registers_layout_of_any_kind
-                && !self.body_binding_reads(tables)
+                && !self.makes_environments()
                 && !self.rest
                 && self.arguments_slot.is_none()
                 && self.initial_register == InitialRegister::Undefined
