@@ -13876,6 +13876,8 @@ script_handler! {
     /// keep their code.
     #[inline(never)]
     fn lane_script_construct_keeping<>(cx, r, ip, i, view) {
+        // A construction inside a leaf is the activation its call would have pushed, as `lane_script_construct` makes it.
+        lane_materialize_running_leaf(cx);
         match lane_construct_keeping_activation(cx, r, ip, i) {
             Ok(KeepingConstruction::Activated(registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Ok(KeepingConstruction::Finished(this)) => {

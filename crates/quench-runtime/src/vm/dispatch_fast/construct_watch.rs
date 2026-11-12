@@ -69,4 +69,26 @@ mod tests {
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["65,470,-25,1045"]);
     }
+
+    #[test]
+    fn a_leaf_returning_construction_completes() {
+        // `return new V(…)` in a function the lane runs as a leaf: the construction completes
+        // the materialized activation, not a frame return with the leaf still running
+        // (`a leaf's own returns complete it`).
+        let source = r#"
+          var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+          var V = Class.create();
+          V.prototype = { initialize: function (x, y) { this.x = x; this.y = y; } };
+          function make(i) { return new V(i, 2); }
+          function run(n) { var s = 0; for (var i = 0; i < n; i++) { var v = make(i); s += v.x + v.y; } return s; }
+          function warm() { for (var k = 0; k < 40; k++) { run(300); } }
+          warm();
+          print(run(10));
+        "#;
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = Engine::specialize(source, "leaf-returning-construct.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["65"]);
+    }
 }
