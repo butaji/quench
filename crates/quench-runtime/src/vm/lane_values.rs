@@ -3,6 +3,12 @@
 
 use crate::Value;
 
+/// The low bit of an activation's `WINDOW` word when its window is not the lane stack's: a
+/// suspended frame's register file (a generator's, `GeneratorFrame`), which a return leaves
+/// alone. A `Value` is word aligned, so the bit is free in an address.
+pub(super) const HEAP_WINDOW: usize = 1;
+const _: () = assert!(std::mem::align_of::<Value>() > HEAP_WINDOW);
+
 /// The values of a lane stack's windows, `base..top`, in an allocation of room up to `end`.
 /// They hold no drop glue, so truncation and growth only move words.
 pub(super) struct LaneValues {
@@ -47,14 +53,14 @@ impl LaneValues {
     #[inline(always)]
     pub(super) fn span(&self) -> std::ops::Range<usize> { self.base.addr()..self.end.addr() }
 
-    /// Ends the values at `window`, the first register of a window that returned, if the
-    /// stack allocated it; a window in another register file (a generator's) frees nothing here.
+    /// Ends the values at a returned activation's `WINDOW` word, unless it marks a window of
+    /// another register file (`HEAP_WINDOW`), which frees nothing here.
     ///
     /// # Safety
-    /// As `set_top`, for a `window` in the allocation.
+    /// As `set_top`, for a stack window's word.
     #[inline(always)]
-    pub(super) unsafe fn release_window(&mut self, window: *mut Value) {
-        if self.span().contains(&window.addr()) { self.top = window; }
+    pub(super) unsafe fn release_window(&mut self, window: usize) {
+        if window & HEAP_WINDOW == 0 { self.top = window as *mut Value; }
     }
 
     /// Ends the values at `top`, an address within the allocation.

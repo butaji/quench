@@ -78,10 +78,14 @@ pub(super) fn completed_value<H: Host>(vm: &Vm<H>, activation: &Activation, comp
 }
 
 /// The frame completion of an activation that neither constructs, settles a promise nor
-/// steps an array: a setter's store keeps yielding the value stored.
+/// steps an array: a setter's store keeps yielding the value stored, and a generator's step
+/// its iterator result, which a delegate's step makes fresh.
 pub(super) fn frame_completion(completion: Option<Completion>) -> CallCompletion {
     match completion {
         Some(Completion::Assigns) => CallCompletion::Assigned,
+        Some(generator @ (Completion::Generates | Completion::Delegates)) => {
+            CallCompletion::Generator(super::super::generator::GeneratorResume::new(generator == Completion::Generates))
+        }
         _ => CallCompletion::Value,
     }
 }

@@ -4,6 +4,8 @@ use crate::Value;
 mod generator_frame;
 mod generator_record;
 pub(crate) use generator_frame::GeneratorFrame;
+#[cfg(test)]
+pub(in crate::vm) use generator_frame::frames_made;
 pub(crate) use generator_record::{GeneratorRecord, GeneratorState};
 
 /// The only state that crosses an activation boundary. The value is kept as a
@@ -24,7 +26,8 @@ pub(crate) enum Completion {
 pub(super) struct NativeActivation {
     pub callable: Value,
     /// What the activation runs on and keeps alive besides its callable: an in-place
-    /// generator step's generator (`Vm::try_in_loop_generator_step`), `undefined` for others.
+    /// generator step's generator (`Vm::try_in_loop_generator_step`, `Vm::resume_generator_window`),
+    /// `undefined` for others.
     pub receiver: Value,
     pub frame_depth: usize,
     pub boundary: NativeCallBoundary,
@@ -156,9 +159,7 @@ pub(crate) struct Continuation {
 impl std::fmt::Debug for Continuation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Continuation")
-            .field("program", &self.frame.program)
-            .field("function", &self.frame.function)
-            .field("pc", &self.frame.pc)
+            .field("frame", &self.frame)
             .field("completion", &self.completion)
             .field("resume_register", &self.resume_register)
             .finish_non_exhaustive()

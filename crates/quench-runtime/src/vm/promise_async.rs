@@ -15,9 +15,6 @@ struct AwaitResume {
 }
 
 impl<H: Host> Vm<H> {
-    /// Clears the registers of a suspending frame that are dead where it resumes, the ones a
-    /// collection of it on the frame stack skips (its root mask at `frame.pc`): its
-    /// continuation then keeps alive only what the resumed code can read.
     /// `Continuation::suspend` of `frame` at an await or yield, with the registers liveness
     /// finds dead there cleared first (`release_dead_registers`): a suspended activation is
     /// traced whole, so a dead temporary otherwise stayed reachable until it resumed.
@@ -28,21 +25,29 @@ impl<H: Host> Vm<H> {
         resume_register: Option<u16>,
         promise: Value,
     ) -> Continuation {
-        let live_registers = self.release_dead_registers(&mut frame);
+        let live_registers = self.release_dead_registers(frame.program, frame.function, frame.pc, &mut frame.registers);
         let mut continuation = Continuation::suspend(frame, completion, resume_register, promise);
         continuation.frame.live_registers = live_registers;
         continuation
     }
 
-    /// Clears the registers dead at `frame`'s suspension and returns the live ones, when
-    /// liveness covers its function.
-    fn release_dead_registers(&self, frame: &mut super::Frame) -> Option<crate::compile::liveness::RegisterSet> {
-        let masks = self.programs.residual(frame.program).and_then(|program| program.register_root_masks(frame.function))?;
-        if masks.is_windowed() { return None; } let mask = masks.get(frame.pc)?;
+    /// Clears the `registers` of a frame of `function` of `program` suspending to resume at `pc`
+    /// that are dead there, the ones a collection of it on the frame stack skips (its root
+    /// mask at `pc`), and returns the live ones, when liveness covers the function: its
+    /// continuation then keeps alive only what the resumed code can read.
+    pub(in crate::vm) fn release_dead_registers(
+        &self,
+        program: super::ProgramId,
+        function: u32,
+        pc: usize,
+        registers: &mut [Value],
+    ) -> Option<crate::compile::liveness::RegisterSet> {
+        let masks = self.programs.residual(program).and_then(|program| program.register_root_masks(function))?;
+        if masks.is_windowed() { return None; } let mask = masks.get(pc)?;
         // The mask covers the first `RegisterSet::BITS` registers; every later one is dead.
         type RegisterSet = crate::compile::liveness::RegisterSet;
-        let covered = frame.registers.len().min(RegisterSet::BITS as usize);
-        let (low, high) = frame.registers.split_at_mut(covered);
+        let covered = registers.len().min(RegisterSet::BITS as usize);
+        let (low, high) = registers.split_at_mut(covered);
         high.fill(Value::UNDEFINED);
         // Dead registers come in runs (a statement's temporaries), each cleared as one span,
         // found a machine word of the mask at a time.

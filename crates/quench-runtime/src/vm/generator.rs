@@ -5,6 +5,7 @@ use crate::heap::AwaitKind;
 use super::promise::{PromiseReaction, PromiseState};
 use super::*;
 mod in_place_steps;
+mod window_steps;
 
 /// How a generator's resumption stopped (`Vm::resume_generator_step`).
 pub(super) enum GeneratorStep {
@@ -22,6 +23,13 @@ pub(super) enum GeneratorStep {
 /// the step's native activation, which keeps it alive while its frame runs.
 pub(crate) struct GeneratorResume {
     reuses_result: bool,
+}
+
+impl GeneratorResume {
+    /// The resume of a step whose result is the reused iteration object or a fresh one.
+    pub(super) fn new(reuses_result: bool) -> Self {
+        Self { reuses_result }
+    }
 }
 
 /// How a generator resumed in place stopped running its frame: a `yield` of a value, which
@@ -116,11 +124,7 @@ impl<H: Host> Vm<H> {
                 true
             }
         };
-        if resume.reuses_result {
-            self.reused_iterator_result(value, done)
-        } else {
-            self.iterator_result(value, done).expect("an iterator result allocates")
-        }
+        self.generator_step_result(value, done, resume.reuses_result)
     }
 
     /// A generator step `resume` made in place whose frame threw: the generator finishes, as

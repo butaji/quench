@@ -1,6 +1,8 @@
-//! The lane's yields of generator frames their callers resumed in place: `yield`, and
-//! `yield*` of a delegate generator.
+//! The lane's yields of generators their callers resumed in place: `yield`, and `yield*` of a
+//! delegate generator. A generator the lane resumed over its record's register file suspends
+//! in place (`generator_windows`); one it resumed as a frame suspends to its caller here.
 use super::*;
+use super::generator_windows::{lane_yield_in_window, lane_yield_star_in_window, running_generator};
 
 script_handler! {
     /// `yield` of the frame of a generator its caller resumed in place
@@ -11,6 +13,9 @@ script_handler! {
     #[inline(never)]
     fn lane_yield<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
+        if running_generator(vm) {
+            resume!(cx, lane_yield_in_window(cx, r, ip, i))
+        }
         // SAFETY: the general loop's pending calls outlive the lane run.
         let pending = unsafe { &mut *(*cx).pending };
         let frame = unsafe { (*cx).frame };
@@ -52,6 +57,9 @@ script_handler! {
     #[inline(never)]
     fn lane_yield_star<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
+        if running_generator(vm) {
+            resume!(cx, lane_yield_star_in_window(cx, r, ip, i))
+        }
         let frame = unsafe { (*cx).frame };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };

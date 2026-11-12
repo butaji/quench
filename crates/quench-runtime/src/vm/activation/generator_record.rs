@@ -1,6 +1,6 @@
 //! A generator's lifecycle: where it is, and the continuation it can resume from.
 
-use super::{AsyncGeneratorRequest, Completion, Continuation};
+use super::{AsyncGeneratorRequest, Completion, Continuation, GeneratorFrame};
 use crate::snapshot::{Reader, Snap, SnapshotError, SnapshotResult, Writer};
 use crate::Value;
 use std::collections::VecDeque;
@@ -14,6 +14,10 @@ pub(crate) enum GeneratorLife {
     Suspended(Continuation),
     /// Running: its frame is on the VM stack, and (async) requests queue.
     Executing,
+    /// Running as a lane activation whose window is the frame's register file, which stays
+    /// here: a yield suspends it from here and a materialization takes it for its frame
+    /// (`take_windowed`).
+    Windowed(Box<GeneratorFrame>),
     /// An async generator busy awaiting a `yield`'s value or a `return`'s, its continuation
     /// still parked here: requests queue.
     Busy(Continuation),
@@ -74,7 +78,7 @@ impl GeneratorRecord {
             GeneratorLife::Suspended(continuation) => (Some(continuation), GeneratorState::Suspended),
             GeneratorLife::Frameless => (None, GeneratorState::Suspended),
             GeneratorLife::Busy(continuation) => (Some(continuation), GeneratorState::Executing),
-            GeneratorLife::Executing => (None, GeneratorState::Executing),
+            GeneratorLife::Executing | GeneratorLife::Windowed(_) => (None, GeneratorState::Executing),
             GeneratorLife::AwaitingReturn => (None, GeneratorState::AwaitingReturn),
             GeneratorLife::Completed => (None, GeneratorState::Completed),
         }
@@ -82,7 +86,10 @@ impl GeneratorRecord {
 
     #[inline(always)]
     pub(crate) fn is_executing(&self) -> bool {
-        matches!(self.life, GeneratorLife::Executing | GeneratorLife::Busy(_) | GeneratorLife::AwaitingReturn)
+        matches!(
+            self.life,
+            GeneratorLife::Executing | GeneratorLife::Windowed(_) | GeneratorLife::Busy(_) | GeneratorLife::AwaitingReturn
+        )
     }
 
     #[inline(always)]
@@ -125,6 +132,37 @@ impl GeneratorRecord {
         }
     }
 
+    /// A lane resumes a suspended generator as an activation over its register file: the frame
+    /// stays in the record, which runs `Windowed`. Its address, which the box keeps while it
+    /// lives, and the register that takes the sent value; `None`, leaving the generator as it
+    /// was, when it is not suspended. Every register is live while it runs.
+    pub(crate) fn resume_windowed(&mut self) -> Option<(*mut GeneratorFrame, Option<u16>)> {
+        match std::mem::replace(&mut self.life, GeneratorLife::Executing) {
+            GeneratorLife::Suspended(Continuation { mut frame, resume_register, .. }) => {
+                frame.live_registers = None;
+                let at: *mut GeneratorFrame = &raw mut *frame;
+                self.life = GeneratorLife::Windowed(frame);
+                Some((at, resume_register))
+            }
+            other => {
+                self.life = other;
+                None
+            }
+        }
+    }
+
+    /// The frame of a windowed run, taken: the generator executes without one (a yield
+    /// suspends it again, a materialization makes its frame, a completion drops it).
+    pub(crate) fn take_windowed(&mut self) -> Option<Box<GeneratorFrame>> {
+        match std::mem::replace(&mut self.life, GeneratorLife::Executing) {
+            GeneratorLife::Windowed(frame) => Some(frame),
+            other => {
+                self.life = other;
+                None
+            }
+        }
+    }
+
     /// The continuation a resumption runs, taken: a suspended generator executes from it,
     /// while one that has not started and receives an `abrupt` completion closes without
     /// running, leaving no frame.
@@ -156,7 +194,7 @@ impl GeneratorRecord {
     /// again, and a completed one stays so.
     pub(crate) fn stop(&mut self) {
         self.life = match std::mem::replace(&mut self.life, GeneratorLife::Completed) {
-            GeneratorLife::Executing => GeneratorLife::Frameless,
+            GeneratorLife::Executing | GeneratorLife::Windowed(_) => GeneratorLife::Frameless,
             GeneratorLife::Busy(continuation) => GeneratorLife::Suspended(continuation),
             GeneratorLife::AwaitingReturn => GeneratorLife::Completed,
             other => other,
@@ -204,6 +242,9 @@ impl GeneratorRecord {
         out.push(self.realm);
         if let Some(continuation) = self.continuation() {
             continuation.extend_roots(out);
+        }
+        if let GeneratorLife::Windowed(frame) = &self.life {
+            frame.extend_roots(out);
         }
         out.extend(self.requests.iter().flat_map(|request| [request.promise, request.value]));
     }

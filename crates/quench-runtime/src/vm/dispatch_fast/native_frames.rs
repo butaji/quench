@@ -164,7 +164,7 @@ pub(super) fn discard_frames<H: Host>(cx: *mut LaneContext<H>) {
     if count == 0 { return; }
     // SAFETY: the values hold no drop glue.
     unsafe {
-        let window = (*vm.lane_stack.activations.slot(len - count)).window_ptr();
+        let window = (*vm.lane_stack.activations.slot(len - count)).window_word();
         vm.lane_stack.activations.set_len(len - count);
         vm.lane_stack.values.release_window(window);
     }

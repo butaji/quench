@@ -604,7 +604,7 @@ mod closure_targets;
 mod getters;
 mod lane_stack_growth;
 mod native_frames;
-use super::lane_values::LaneValues;
+use super::lane_values::{LaneValues, HEAP_WINDOW};
 use super::lane_activations::LaneActivations;
 mod this_binding;
 use this_binding::ThisBinding;
@@ -1371,11 +1371,19 @@ struct ActivationState {
 }
 
 impl Activation {
-    /// The address of this activation's first register: its prefix's WINDOW word, which names
-    /// the lane stack's values by default and any other register file (a generator's) alike.
+    /// The address of this activation's first register: its prefix's WINDOW word without its
+    /// mark (`HEAP_WINDOW`), which names the lane stack's values by default and any other
+    /// register file (a generator's) alike.
     #[inline(always)]
     pub(in crate::vm) fn window_ptr(&self) -> *mut Value {
-        self.native.window as *mut Value
+        (self.native.window & !HEAP_WINDOW) as *mut Value
+    }
+
+    /// The prefix's WINDOW word as it stands, which a return hands the lane stack's values to
+    /// free the window if the stack holds it (`LaneValues::release_window`).
+    #[inline(always)]
+    pub(in crate::vm) fn window_word(&self) -> usize {
+        self.native.window
     }
 
     /// The first `len` values from the window: its registers, and what follows them
@@ -1452,6 +1460,17 @@ enum Completion {
     ReturnsToBody,
     /// `ReturnsToBody` of a body's `new`. Made a frame, it is a construction's.
     ConstructsToBody,
+    /// A generator the lane resumed over its suspended frame's register file
+    /// (`generator_windows`): its `yield` suspends it back into the record and its return
+    /// completes it, the call yielding the step's iterator result, which only a step's
+    /// `done` and `value` reads observe (`Vm::reused_iterator_result`). The activation's
+    /// callee is the generator. Made a frame, its pending call completes the step
+    /// (`CallCompletion::Generator`).
+    Generates,
+    /// `Generates` for a `yield*` step of a delegate generator: the step's fresh result goes to
+    /// the delegating record's state register, which that record, made again, reads
+    /// (`lane_yield_star`).
+    Delegates,
 }
 
 impl Completion {
@@ -1473,6 +1492,11 @@ impl Completion {
     /// non-object result.
     #[inline] fn constructs(self) -> bool {
         matches!(self, Self::Constructs | Self::CrossConstructs | Self::ConstructsToBody)
+    }
+
+    /// Whether the activation runs a generator over its record's register file.
+    #[inline] fn is_generator(self) -> bool {
+        matches!(self, Self::Generates | Self::Delegates)
     }
 
     /// Whether the activation's return makes the caller's program the lane's again.
@@ -4210,7 +4234,8 @@ script_handler! {
     fn lane_load_callee<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = match vm.lane_stack.activations.last() {
-            Some(Activation { kind: ActivationKind::Script(script), .. }) => script.callee,
+            // A generator's activation names the generator, whose frame is the record's.
+            Some(Activation { kind: ActivationKind::Script(script), .. }) if !script.completion.is_generator() => script.callee,
             Some(_) => return exit(ip),
             None => vm.frames[unsafe { (*cx).frame }].context.callee().unwrap_or(Value::UNDEFINED),
         };
@@ -11188,8 +11213,8 @@ impl<H: Host> Vm<H> {
             });
             // SAFETY: a call record lies in its caller's view.
             let mut call_pc = unsafe { activation.call.offset_from(activation.caller_base) } as usize;
-            let mut result = unsafe { (*activation.call).a };
-            self.frames[caller].pc = call_pc + 1;
+            let (mut result, resume_pc) = activation.caller_resume(call_pc);
+            self.frames[caller].pc = resume_pc;
             self.frames[caller].pc_is_resume = true;
             let count = usize::from(code.function(activation.function as usize).registers);
             // SAFETY: the activation's window holds its registers, which nothing writes until
@@ -11208,6 +11233,12 @@ impl<H: Host> Vm<H> {
             // A native's callback is the entry frame of the loop that finishes it.
             let to_native = body_calls::enters_as_frame(&mut self.lane_stack, &activation, self.frames.len());
             let call_guard = match activation.kind {
+                // A generator's frame is its record's, which takes the iterators its loops pushed.
+                ActivationKind::Script(script) if script.completion.is_generator() => {
+                    let owned = iterators.iter().filter(|(owner, _)| *owner == depth).map(|(_, iterator)| *iterator);
+                    self.push_generator_window_frame(script.callee, owned);
+                    crate::stack::GuestCallGuard::enter().ok()
+                }
                 ActivationKind::Script(script) => {
                     let argc = usize::from(script.argc);
                     // A forwarding activation kept the values after its registers; any other
@@ -12428,6 +12459,9 @@ script_handler! {
     #[inline(never)]
     fn lane_generator_step<>(cx, r, ip, i, view) {
         let (method, iterator) = (r.get(i.b), r.get(i.c));
+        if let Some((registers, start)) = lane_resume_generator_step(cx, r, ip, i, method, iterator) {
+            next!(cx, registers, start, Carried::script(cx))
+        }
         if let Some(next) = lane_resume_generator_frame(cx, ip, i, method, iterator) {
             return next;
         }
@@ -13330,6 +13364,7 @@ use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
 mod native_calls; mod generator_yields; use generator_yields::yield_handler;
+mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step};
 mod array_steps;
 mod value_steps;
 pub(in crate::vm) use value_steps::lane_body_value_step;
@@ -16440,7 +16475,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
         return None;
     }
     let destination = destination & crate::bytecode::REGISTER_MASK;
-    let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.window_ptr());
+    let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.window_word());
     let (this, env, capture) = (script.caller_this, script.caller_env, script.caller_capture);
     let caller_program = top.caller_program;
     // SAFETY: a script activation holds no drop glue and no Wasm storage
@@ -16598,7 +16633,7 @@ fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value)
 fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: &Activation) -> (MemoryView, Value) {
     let vm = unsafe { vm(cx) };
     // SAFETY: the values hold no drop glue.
-    unsafe { vm.lane_stack.values.release_window(activation.window_ptr()) };
+    unsafe { vm.lane_stack.values.release_window(activation.window_word()) };
     let caller_memory = activation.caller_memory(cx);
     let this = unsafe { (*cx).this };
     unsafe {
@@ -16620,14 +16655,20 @@ fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: &Activation
 /// after its call with `value` in the call's result register.
 #[inline(always)]
 fn lane_resume_after_call(activation: &Activation, memory: MemoryView, value: Value) -> Resumed {
+    // SAFETY: the call record belongs to the caller's live view.
+    activation.caller_registers.set(unsafe { (*activation.call).a }, value);
+    lane_resume_at(activation, memory, following(activation.call))
+}
+
+/// The caller of `activation`, restored with `memory`, resumes at the record `at` of its view.
+#[inline(always)]
+fn lane_resume_at(activation: &Activation, memory: MemoryView, at: Ip) -> Resumed {
     let view = Carried {
         memory,
         integers: crate::value::IntegerEncoding::TAG,
         acc: Slot::of(Value::UNDEFINED),
     };
-    // SAFETY: the call record belongs to the caller's live view.
-    activation.caller_registers.set(unsafe { (*activation.call).a }, value);
-    Resumed::At(activation.caller_registers, following(activation.call), view)
+    Resumed::At(activation.caller_registers, at, view)
 }
 
 /// Complete the innermost lane activation with `value`, which the record at `ip` of that
@@ -16661,6 +16702,9 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             }
             if script.completion == Completion::ArrayStep {
                 return Some(lane_step_array_iteration(cx, &activation, value));
+            }
+            if script.completion.is_generator() {
+                return Some(lane_generator_returned(cx, &activation, caller_memory, value));
             }
             // [[Construct]] of an ordinary constructor yields its returned object,
             // otherwise the receiver it allocated. A skipped forwarding constructor returns
@@ -21841,7 +21885,7 @@ unsafe fn lane_reenter_prepared_values<H: Host, const N: usize>(
                 && (*cx).this == entry.this
                 && (*cx).env == entry.env
                 && (*cx).capture == entry.capture
-                && vm(cx).lane_stack.values.top() == registers.add(entry.size),
+                && vm(cx).lane_stack.activations.last().is_some_and(|activation| activation.window_ptr() == registers),
             "a returning activation's context is its own"
         );
         let vm = vm(cx);
@@ -21889,17 +21933,43 @@ unsafe fn lane_enter_filled<H: Host>(
     registers: *mut Value,
 ) -> Ip {
     let vm = unsafe { vm(cx) };
+    unsafe { vm.lane_stack.values.set_top(registers.add(entry.size)) };
+    lane_install_entry(cx, entry, registers);
+    vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
+    // SAFETY: the program store keeps a derived view alive with its program.
+    unsafe { (*entry.view).start() }
+}
+
+/// The context made `entry`'s callee's, running over the window at `registers`, wherever it lies.
+#[inline(always)]
+fn lane_install_entry<H: Host>(cx: *mut LaneContext<H>, entry: &PreparedEntry, registers: *mut Value) {
+    // SAFETY: the program store keeps a derived view alive with its program.
     unsafe {
-        vm.lane_stack.values.set_top(registers.add(entry.size));
         (*cx).registers = Registers(registers);
         (*cx).base = (*entry.view).records();
         (*cx).this = entry.this;
         (*cx).env = entry.env;
         (*cx).capture = entry.capture;
     }
-    vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
+}
+
+/// The activation of a suspended frame (`generator_windows`) enters its window at `registers`,
+/// a register file of its own that no lane stack holds, at the record of `pc`, where the frame
+/// resumes: the context made the callee's.
+///
+/// # Safety
+/// `registers` holds the callee's registers, which nothing else writes while it runs, and `pc`
+/// is a record of its view.
+#[inline(always)]
+unsafe fn lane_enter_suspended<H: Host>(
+    cx: *mut LaneContext<H>,
+    entry: &PreparedEntry,
+    registers: *mut Value,
+    pc: usize,
+) -> Ip {
+    lane_install_entry(cx, entry, registers);
     // SAFETY: the program store keeps a derived view alive with its program.
-    unsafe { (*entry.view).start() }
+    unsafe { (*entry.view).records().add(pc) }
 }
 
 impl<H: Host> Vm<H> {

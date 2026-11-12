@@ -38,6 +38,20 @@ pub(crate) struct GeneratorFrame {
     /// other register was cleared there (`Vm::suspend_activation`): only these can name a
     /// cell, so the GC traces them alone. `None` traces every register.
     pub(in crate::vm) live_registers: Option<RegisterSet>,
+    /// Skip one function-entry tier attempt when the frame runs again (`Frame::js_jit_skip_entry_once`).
+    pub(in crate::vm) js_jit_skip_entry_once: bool,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The frames `into_frame` made on this thread: a lane resume makes none.
+    static FRAMES_MADE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many `Box<Frame>`s resuming made on this thread (`GeneratorFrame::into_frame`).
+#[cfg(test)]
+pub(in crate::vm) fn frames_made() -> usize {
+    FRAMES_MADE.get()
 }
 
 impl GeneratorFrame {
@@ -51,22 +65,42 @@ impl GeneratorFrame {
         Value::from_bits(self.prefix.this)
     }
 
+    /// The prefix words (`CALLEE`, `THIS`, `BODY`, `WINDOW`) a lane activation over the register
+    /// file starts from: no native callee or body, and the window as the file's address.
+    pub(in crate::vm) fn prefix(&self) -> ShadowFrame {
+        self.prefix
+    }
+
+    /// The suspension of a frame that ran in a lane activation over its register file: it resumes
+    /// at `pc`, with the registers liveness finds live there, and takes back the iterators its
+    /// loops pushed while it ran. Only these change while a window runs the frame.
+    pub(in crate::vm) fn suspend_at(
+        &mut self,
+        pc: usize,
+        live_registers: Option<RegisterSet>,
+        iterators: impl Iterator<Item = ActiveIterator>,
+    ) {
+        self.pc = pc;
+        self.live_registers = live_registers;
+        self.active_iterators.extend(iterators);
+    }
+
     /// `frame`'s suspended state, moved: its register file and buffers keep their storage. What
     /// a run derives for itself (the operation's field and binding site, the capture cache,
     /// a fixed `this`, the `with` base) is not kept.
-    pub(super) fn capture(frame: Box<Frame>) -> Box<Self> {
+    pub(in crate::vm) fn capture(frame: Box<Frame>) -> Box<Self> {
         let Frame {
             context, reflected_parameters, original_arguments, program, function, pc, env, this,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            pc_is_resume: _, js_jit_skip_entry_once: _, source_field: _, binding_site_pc: _,
+            pc_is_resume: _, source_field: _, binding_site_pc: _,
             initialized_registers: _, capture_cache: _, with_base: _, js_jit_interpreter_started: _,
-            fixed_this: _,
+            fixed_this: _, js_jit_skip_entry_once,
         } = *frame;
         let prefix = ShadowFrame { this: this.to_bits(), ..ShadowFrame::EMPTY };
         let mut record = Self {
             prefix, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: None,
+            live_registers: None, js_jit_skip_entry_once,
         };
         record.bind_window();
         Box::new(record)
@@ -74,17 +108,19 @@ impl GeneratorFrame {
 
     /// The suspended frame, ready to push: it continues after its suspending instruction,
     /// every register holds a value, and the state a run derives for itself starts anew.
-    pub(super) fn into_frame(self: Box<Self>, with_base: usize) -> Box<Frame> {
+    pub(in crate::vm) fn into_frame(self: Box<Self>, with_base: usize) -> Box<Frame> {
+        #[cfg(test)]
+        FRAMES_MADE.set(FRAMES_MADE.get() + 1);
         let this = self.this();
         let Self {
             prefix: _, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: _,
+            live_registers: _, js_jit_skip_entry_once,
         } = *self;
         Box::new(Frame {
             context, reflected_parameters, original_arguments, program, function, pc,
             pc_is_resume: true,
-            js_jit_skip_entry_once: false,
+            js_jit_skip_entry_once,
             source_field: None,
             binding_site_pc: None,
             env, this, locals, dynamic_bindings, captured,
@@ -124,6 +160,16 @@ impl GeneratorFrame {
     }
 }
 
+impl std::fmt::Debug for GeneratorFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeneratorFrame")
+            .field("program", &self.program)
+            .field("function", &self.function)
+            .field("pc", &self.pc)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Clone for GeneratorFrame {
     fn clone(&self) -> Self {
         let mut copy = Self {
@@ -142,6 +188,7 @@ impl Clone for GeneratorFrame {
             active_iterators: self.active_iterators.clone(),
             with_objects: self.with_objects.clone(),
             live_registers: self.live_registers,
+            js_jit_skip_entry_once: self.js_jit_skip_entry_once,
         };
         copy.bind_window();
         copy
@@ -185,6 +232,7 @@ impl Snap for GeneratorFrame {
             with_objects: Snap::unsnap(reader)?,
             captured: Snap::unsnap(reader)?,
             live_registers: None,
+            js_jit_skip_entry_once: false,
         };
         record.bind_window();
         Ok(record)

@@ -1725,6 +1725,7 @@ call_plan_bits!(
     reads_passed_arguments,
     registers_only,
     environment_activation,
+    generator_registers_only,
 );
 
 #[derive(Clone, Copy, Debug)]
@@ -1774,6 +1775,11 @@ pub(crate) struct CallPlan {
     /// environment load, store or dead-zone opening of a selectively captured layout. A lane
     /// may run such a body without a frame (`CallEntry::Environment`).
     pub(crate) environment_activation: bool,
+    /// A synchronous generator laid out as its registers: no locals, `arguments`, closures,
+    /// dynamic scope or implicit bindings, so what its suspended frame holds is its registers,
+    /// receiver and closure environment. A lane resumes it as an activation whose window is the
+    /// frame's register file, and its `yield` suspends it back into that file.
+    pub(crate) generator_registers_only: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2360,8 +2366,18 @@ impl Function {
                             // The window keeps every value passed, which these answer.
                             || op.reads_arguments())
                 });
+            let generator_registers_only = self.is_generator
+                && !self.is_async
+                && registers_layout_of_any_kind
+                && !self.body_binding_reads(tables)
+                && !self.rest
+                && self.arguments_slot.is_none()
+                && self.initial_register == InitialRegister::Undefined
+                && !addresses_locals
+                && !self.has_dynamic_scope_access();
             CallPlan {
                 environment_activation,
+                generator_registers_only,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 settles_in_loop,
