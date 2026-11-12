@@ -102,3 +102,15 @@ fn b_jit_compiles_no_function_and_runs_base_regions() {
     assert_eq!(attempts, 0, "--b-jit: no Cranelift function compile is attempted");
     assert!(runs > 0, "--b-jit: the hot loop runs its stencil region");
 }
+
+/// A hot loop entered by each tier, passed from one tier to the next while it runs, and left
+/// at guards prints what the interpreter prints: output identity across every JIT mode.
+#[test]
+fn osr_transitions_between_tiers_keep_the_output() {
+    let expected = run_fixture("--no-jit", "osr_transitions.js");
+    assert!(expected.0 && expected.1.lines().count() == 6, "--no-jit: {}", expected.1);
+    // `--` ends the options: the default mode, every tier on.
+    for flag in ["--b-jit", "--q-jit", "--u-jit", "--"] {
+        assert_eq!(run_fixture(flag, "osr_transitions.js"), expected, "osr_transitions.js under {flag}");
+    }
+}
