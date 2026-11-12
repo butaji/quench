@@ -24,6 +24,8 @@ pub(crate) use wasm_fields::{WasmGcFields, WasmTableElements};
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
+#[cfg(test)]
+pub(crate) use global_values::new_table;
 pub(crate) use global_values::{GlobalCell, GlobalFact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_value};
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have

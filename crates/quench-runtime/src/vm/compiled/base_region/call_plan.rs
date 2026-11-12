@@ -2,6 +2,10 @@
 //! chain of stencil parts (`quench-bjit/stencils/call_rows.rs` holds the rows and their register
 //! and stack contract; `quench_bjit::call` names them).
 //!
+//! A call whose callee is small and monomorphic is not a chain at all (`Choice::Inline`): the
+//! stitcher splices the callee's rows in its place (`inline::InlineSite`), so the chain has no
+//! parts and the pinned registers stay where they are.
+//!
 //! The chain, in layout order:
 //!
 //! 1. one `Spill` row per pinned register live at the call, writing it to its frame slot as a
@@ -25,6 +29,8 @@
 //! validity word becomes the row's expected word, so a republish or withdrawal that bumps the
 //! validity sends the call to the helper row, which resolves the target anew.
 
+mod inline;
+use inline::InlineSite;
 use super::SLOT;
 use super::super::direct_callee::DirectCallee;
 use super::super::entry_cell::capture_word;
@@ -128,6 +134,8 @@ pub(super) enum Declined {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Choice {
+    /// The callee's rows are spliced in, no call row.
+    Inline,
     Direct,
     Helper(Declined),
 }
@@ -174,6 +182,9 @@ pub(super) struct CallChain {
 pub(super) struct CallPlan<'a> {
     pub(super) shape: CallShape,
     pub(super) direct: Option<&'a DirectFacts>,
+    /// The callee's rows, where it is monomorphic and small (`InlineSite::plan`, which proves
+    /// the call direct first).
+    pub(super) inline: Option<&'a InlineSite>,
     /// The address of `lane_body_call` (`helper_address`).
     pub(super) helper: usize,
     pub(super) spills: &'a [(Place, Register)],
@@ -234,6 +245,10 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<
 
 /// The chain of a call (see the module doc for its layout and successors).
 pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
+    if plan.inline.is_some() {
+        super::note_inlined();
+        return Ok(CallChain { parts: Vec::new(), record: None, choice: Choice::Inline });
+    }
     let mut parts = plan.spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
     let choice = choose(&plan.shape, plan.direct);
     let direct = match (choice, plan.direct) {
@@ -288,7 +303,7 @@ mod tests {
     }
 
     fn plan<'a>(direct: Option<&'a DirectFacts>, spills: &'a [(Place, Register)], reloads: &'a [(Place, Register)]) -> CallPlan<'a> {
-        CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads }
+        CallPlan { shape: SHAPE, direct, inline: None, helper: 0x4000, spills, reloads }
     }
 
     #[test]

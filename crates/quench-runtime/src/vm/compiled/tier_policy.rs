@@ -5,13 +5,33 @@
 //! against, and what each memory policy lets compile. A tuning experiment changes a row here,
 //! never a controller.
 
+use crate::bytecode::Class;
+
 /// The thresholds every tier controller reads.
 pub(in crate::vm) struct Tiers {
     pub(in crate::vm) loops: Loops,
     pub(in crate::vm) lane_body: LaneBody,
     pub(in crate::vm) js_function: JsFunction,
     pub(in crate::vm) wasm: Wasm,
+    pub(in crate::vm) stitch: Stitch,
     pub(in crate::vm) priors: Priors,
+}
+
+/// Stitch-inlining: the callee rows the b-jit stitcher splices in place of a direct-cell call row
+/// (`base_region::inline_plan`).
+pub(in crate::vm) struct Stitch {
+    /// The longest callee body, in bytecodes: the accessors and arithmetic helpers whose call
+    /// costs more than their work.
+    pub(in crate::vm) max_instructions: usize,
+    /// The callee bytecodes one stitch inlines in all, so a hot loop's code stays a few call
+    /// bodies' worth.
+    pub(in crate::vm) max_total_instructions: usize,
+    /// The inline depth: activations a leave inside inlined code materializes, the caller's
+    /// included.
+    pub(in crate::vm) max_depth: usize,
+    /// The opcode classes a callee body may hold: the numeric rows of the stencil library, and the
+    /// `Return` that becomes a jump to the continuation.
+    pub(in crate::vm) classes: &'static [Class],
 }
 
 /// Parts per thousand, the unit of a prior's share.
@@ -205,6 +225,7 @@ const FLOOR: Tiers = Tiers {
     lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
+    stitch: MEASURED.stitch,
     priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
 };
 
@@ -241,6 +262,15 @@ const MEASURED: Tiers = Tiers {
         general_entry_overhead: 32,
     },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
+    stitch: Stitch {
+        max_instructions: 24,
+        max_total_instructions: 96,
+        max_depth: 3,
+        classes: &[
+            Class::Move, Class::ToNumeric, Class::LoadConst, Class::Binary, Class::NumericAdd, Class::NumericMultiply,
+            Class::IncDec, Class::JumpBinaryFalse, Class::Jump, Class::Return,
+        ],
+    },
     priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
 };
 

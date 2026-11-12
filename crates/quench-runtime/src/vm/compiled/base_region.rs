@@ -70,6 +70,18 @@ pub(in crate::vm) enum Event {
     BodyCompile,
 }
 
+/// The direct-cell call sites the stitcher inlined (`call_plan::plan_call`), counted whether or not
+/// the trace channel is on and reported with the totals.
+static INLINED_SITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn note_inlined() {
+    INLINED_SITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn inlined_sites() -> u64 {
+    INLINED_SITES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 static EVENTS: [std::sync::atomic::AtomicU64; 5] = [const { std::sync::atomic::AtomicU64::new(0) }; 5];
 
 /// The most frequent leave sites a run reports.
@@ -110,7 +122,7 @@ extern "C" fn report() {
         totals.nanos as f64 / ops as f64
     );
     let [entered, left, declined, compiled, bodies] = std::array::from_fn(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
-    eprintln!("bjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies}");
+    eprintln!("bjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies} inlined_sites={}", inlined_sites());
     if let Ok(leaves) = LEAVES.lock() {
         let mut ranked: Vec<_> = leaves.iter().collect();
         ranked.sort_by(|a, b| (b.1).1.cmp(&(a.1).1).then(a.0.cmp(b.0)));

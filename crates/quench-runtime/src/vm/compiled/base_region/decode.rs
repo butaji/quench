@@ -64,43 +64,46 @@ impl Decoded {
     }
 }
 
-pub(super) fn source(region: &LoopRegion, operand: crate::bytecode::Operand) -> Result<Source, String> {
+/// The Number a function's constant table holds at an index: the caller's for a region's own
+/// instructions, the callee's for an inlined body (`inline_plan`).
+pub(super) type Numbers<'a> = &'a dyn Fn(usize) -> Option<f64>;
+
+pub(super) fn source(numbers: Numbers, operand: crate::bytecode::Operand) -> Result<Source, String> {
     match operand.kind() {
         Some(OperandKind::Register) => Ok(Source::Register(operand.payload())),
-        Some(OperandKind::Constant) => region
-            .number_constant(usize::from(operand.payload()))
+        Some(OperandKind::Constant) => numbers(usize::from(operand.payload()))
             .map(|number| Source::Constant(Value::number(number).to_bits()))
             .ok_or_else(|| "operand: constant that is no Number".to_string()),
         other => Err(format!("operand: {other:?}")),
     }
 }
 
-pub(super) fn binary(region: &LoopRegion, instruction: WideInstruction) -> Result<Decoded, String> {
+pub(super) fn binary(numbers: Numbers, instruction: WideInstruction) -> Result<Decoded, String> {
     let operator = instruction.binary_operator();
     let kind = kind_of(operator, false).ok_or_else(|| format!("{:?}:{operator}", instruction.op()))?;
     Ok(Decoded::number(
         kind,
         Some(instruction.result_register()),
-        Some(source(region, instruction.operand_b())?),
-        Some(source(region, instruction.operand_c())?),
+        Some(source(numbers, instruction.operand_b())?),
+        Some(source(numbers, instruction.operand_c())?),
         None,
     ))
 }
 
-pub(super) fn jump_binary(region: &LoopRegion, instruction: WideInstruction) -> Result<Decoded, String> {
+pub(super) fn jump_binary(numbers: Numbers, instruction: WideInstruction) -> Result<Decoded, String> {
     let operator = instruction.binary_operator_field();
     let kind = kind_of(operator, true).ok_or_else(|| format!("{:?}:{operator}", instruction.op()))?;
     Ok(Decoded::number(
         kind,
         None,
-        Some(source(region, instruction.operand_b())?),
-        Some(source(region, instruction.operand_c())?),
+        Some(source(numbers, instruction.operand_b())?),
+        Some(source(numbers, instruction.operand_c())?),
         Some(instruction.jump_target()),
     ))
 }
 
-pub(super) fn load_const(region: &LoopRegion, instruction: WideInstruction) -> Result<Decoded, String> {
-    let number = region.number_constant(instruction.constant_index()).ok_or_else(|| "LoadConst: not a Number".to_string())?;
+pub(super) fn load_const(numbers: Numbers, instruction: WideInstruction) -> Result<Decoded, String> {
+    let number = numbers(instruction.constant_index()).ok_or_else(|| "LoadConst: not a Number".to_string())?;
     let word = Source::Constant(Value::number(number).to_bits());
     Ok(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(word), None, None))
 }
@@ -133,7 +136,7 @@ pub(super) fn heap_row(region: &LoopRegion, dense: bool, pc: u32, instruction: W
         }
         Class::GetIndex if !instruction.returns_from_frame() => {
             let base = instruction.operand_b().register_index()?;
-            let index = source(region, instruction.operand_c()).ok()?;
+            let index = source(numbers, instruction.operand_c()).ok()?;
             let row = Decoded::heap(Heap::Index, Some(instruction.result_register()), register(base), Some(index));
             Some(Decoded { hole: entry_array(region, dense, base), ..row })
         }
@@ -154,7 +157,7 @@ pub(super) fn heap_row(region: &LoopRegion, dense: bool, pc: u32, instruction: W
 }
 
 pub(super) fn decode(region: &LoopRegion, dense: bool, pc: u32, instruction: WideInstruction) -> Result<Decoded, String> {
-    let decoded = match numeric_row(region, instruction) {
+    let decoded = match numeric_row(&|index| region.number_constant(index), instruction) {
         Some(decoded) => decoded,
         None => heap_row(region, dense, pc, instruction).filter(|_| instruction.result_flags() == 0),
     };
@@ -163,17 +166,17 @@ pub(super) fn decode(region: &LoopRegion, dense: bool, pc: u32, instruction: Wid
 
 /// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it
 /// is one a row cannot take.
-fn numeric_row(region: &LoopRegion, instruction: WideInstruction) -> Option<Option<Decoded>> {
+pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Option<Option<Decoded>> {
     let copy = || Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Register(instruction.register_b())), None, None);
     let plain = instruction.result_flags() == 0;
     Some(match instruction.op().class() {
         Class::Move => plain.then(copy),
         // A Number operand (the entry guards and the region's own rows prove it) is its own numeric value.
         Class::ToNumeric => plain.then(copy),
-        Class::LoadConst => load_const(region, instruction).ok().filter(|_| plain),
-        Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(region, instruction).ok().filter(|_| plain),
+        Class::LoadConst => load_const(numbers, instruction).ok().filter(|_| plain),
+        Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
         Class::IncDec => inc_dec(instruction).ok().filter(|_| plain),
-        Class::JumpBinaryFalse => jump_binary(region, instruction).ok(),
+        Class::JumpBinaryFalse => jump_binary(numbers, instruction).ok(),
         Class::Jump => Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target()))),
         _ => return None,
     })
@@ -181,13 +184,14 @@ fn numeric_row(region: &LoopRegion, instruction: WideInstruction) -> Option<Opti
 
 /// Why no row takes `instruction`.
 fn reject(region: &LoopRegion, instruction: WideInstruction) -> String {
+    let numbers = |index| region.number_constant(index);
     let op = instruction.op();
     let fallback = |error: Option<String>| error.unwrap_or_else(|| format!("{op:?}"));
     match op.class() {
         Class::GetField => "GetField: dynamic or unrecorded".to_string(),
-        Class::Binary | Class::NumericAdd | Class::NumericMultiply => fallback(binary(region, instruction).err()),
-        Class::JumpBinaryFalse => fallback(jump_binary(region, instruction).err()),
-        Class::LoadConst => fallback(load_const(region, instruction).err()),
+        Class::Binary | Class::NumericAdd | Class::NumericMultiply => fallback(binary(&numbers, instruction).err()),
+        Class::JumpBinaryFalse => fallback(jump_binary(&numbers, instruction).err()),
+        Class::LoadConst => fallback(load_const(&numbers, instruction).err()),
         _ => fallback(None),
     }
 }
