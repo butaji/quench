@@ -76,7 +76,7 @@ fn window_arguments(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, window:
     [register_words(frame, stage, window.base..window.base + window.count), immediate(stage, i64::from(window.count))]
 }
 
-/// An allocation row by the lane's own allocator of it (`LaneHelper::NewObject`, `NewArray`, `NewConstArray`,
+/// An allocation row by the lane's own allocator of it (`LaneHelper::NewObject`, `NewArray`, `NewRegExp`, `NewConstArray`,
 /// `NewObjectPair`, `NewObjectLiteral`, `NewClosure`, `NewTemplate`, `NewConcat`): each leaves for a due collection first, and a
 /// DELETED answer leaves at the proof's miss edge.
 pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
@@ -90,7 +90,7 @@ pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>
             let words = register_words(frame, stage, registers.iter().copied());
             (LaneHelper::NewArray, vec![immediate(stage, registers.len() as i64), words])
         }
-        Allocation::RegExp { .. } => return None,
+        Allocation::RegExp { site } => (LaneHelper::NewRegExp, vec![immediate(stage, i64::from(site))]),
         Allocation::ConstArray { constant, count } =>
             (LaneHelper::NewConstArray, vec![immediate(stage, i64::from(constant)), immediate(stage, i64::from(count))]),
         Allocation::ObjectPair { site, first, second } => {

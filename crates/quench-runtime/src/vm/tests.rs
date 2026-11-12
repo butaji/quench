@@ -23293,6 +23293,31 @@ fn lane_loops_make_array_literals_of_integers_and_objects_natively() {
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
+fn lane_loops_make_regexp_literals_natively_with_fresh_state() {
+    // A regexp literal in a loop (`Allocation::RegExp`, `lane_new_regexp`) is a fresh object of
+    // its site's template each iteration: matching one leaves the others' `lastIndex` alone,
+    // and the loop leaves only where a collection is due. Expected value is Node's.
+    let source = r#"
+      function run(n) {
+        var t = 0, re;
+        for (var i = 0; i < n; i++) {
+          re = /a(b+)c/g;
+          t = (t + i) | 0;
+        }
+        return [re, t];
+      }
+      var first = run(300)[0], last, total = 0;
+      for (var k = 0; k < 200; k++) { var made = run(300); last = made[0]; total = (total + made[1]) | 0; }
+      first.test("xabbc");
+      print([first.lastIndex, last.lastIndex, first !== last, last.source, last.flags, last.exec("xabbbc")[1], total].join(" "));
+    "#;
+    for (policy, osr) in compiled_loop_diagnostics(source, "lane-regexp-literal-loop.js", "run", &["5 0 true a(b+)c g bbb 8970000"]) {
+        assert!(osr.native_region_runs > 0 && osr.exits < osr.native_region_runs, "{policy:?}: {osr:?}");
+    }
+}
+
+#[test]
 fn lane_bodies_construct_empty_arrays() {
     // `new Array()` of the realm's `Array` in a lane body is an empty array
     // (`dispatch_fast::lane_body_construct`); a function named `Array` constructs as itself,

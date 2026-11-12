@@ -1,4 +1,4 @@
-//! The lane helpers that allocate (`LaneHelper::NewObject`, `NewArray`, `Binary`): each
+//! The lane helpers that allocate (`LaneHelper::NewObject`, `NewArray`, `NewRegExp`, `Binary`): each
 //! leaves for a due collection first, and the dispatch then reads the moved arena bases again.
 
 use super::{Host, JsStepDispatch, ResidualProgram, Value, Vm};
@@ -66,6 +66,19 @@ pub(super) unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64,
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
     array.to_bits()
+}
+
+/// A lane body's regexp literal at `site`, as the lane makes it (`dispatch_fast::lane_regexp_literal_value`):
+/// a fresh object of the site's compiled template; `DELETED` where a collection is due or the pattern
+/// fails to compile, which the interpreter raises at the instruction.
+pub(super) unsafe extern "C" fn lane_new_regexp<H: Host>(vm: u64, residual: u64, payload: u64, site: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; the residual is the running program.
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let Ok(object) = vm.regexp_literal_of(residual, dispatch.program_id, site as usize) else { return Value::DELETED.to_bits() };
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    object.to_bits()
 }
 
 /// A lane body's object literal of literal `site`'s shape over the `count` values at `parts`,

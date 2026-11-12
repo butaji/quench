@@ -2727,10 +2727,10 @@ fn lowered_natively(instruction: WideInstruction) -> bool {
 }
 
 /// An allocation the lane makes in place, running no guest code: a literal (`lane_new_object`,
-/// `lane_new_object_pair`, `lane_new_array`) or a construction by its callee's plan
+/// `lane_new_object_pair`, `lane_new_array`, `lane_new_regexp`) or a construction by its callee's plan
 /// (`lane_construct`). A due collection leaves before it, so native code never collects.
 fn allocates(op: Op) -> bool {
-    matches!(op.class(), Class::MakeObject | Class::MakeObject2 | Class::MakeArray | Class::Construct)
+    matches!(op.class(), Class::MakeObject | Class::MakeObject2 | Class::MakeArray | Class::CreateRegExpLiteral | Class::Construct)
 }
 
 /// The registers an allocation of `instructions` defines, which also hold the Numbers a

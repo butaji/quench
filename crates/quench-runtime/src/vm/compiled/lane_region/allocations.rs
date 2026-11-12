@@ -16,7 +16,7 @@ impl Lowering<'_, '_> {
         &after[..run]
     }
 
-    /// Whether `instruction` is an allocation row this body makes natively: an array, empty
+    /// Whether `instruction` is an allocation row this body makes natively: an array, regexp literal, empty
     /// object, constant array or pair that completes (`literal_completes`: plain, or returning
     /// its value from a caller record), an array of elements among the unit's registers; otherwise
     /// plain, its window inside the unit's registers, and a closure or template only of the
@@ -28,10 +28,9 @@ impl Lowering<'_, '_> {
         let callers = matches!(self.unit.origins.get(pc), Some(super::super::lane_unit::Origin::Caller(_)));
         let plain = instruction.result_flags() == 0 && self.completion.status_and_pc();
         match allocation {
-            Allocation::RegExp { .. } => false,
             Allocation::ArrayOf { elements } => elements.registers().iter().all(|register| *register < self.unit.registers)
                 && self.literal_completes(instruction, pc),
-            Allocation::Array { .. } | Allocation::Empty | Allocation::ConstArray { .. } | Allocation::ObjectPair { .. } =>
+            Allocation::Array { .. } | Allocation::RegExp { .. } | Allocation::Empty | Allocation::ConstArray { .. } | Allocation::ObjectPair { .. } =>
                 self.literal_completes(instruction, pc),
             Allocation::ObjectLiteral { window, .. } | Allocation::Concat { window } => plain && inside(window),
             Allocation::Closure { .. } | Allocation::Template { .. } => plain && callers,

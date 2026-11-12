@@ -72,7 +72,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{lane_binary, lane_new_array, lane_new_closure, lane_new_concat, lane_new_const_array, lane_new_object, lane_new_object_literal, lane_new_object_pair, lane_new_template};
+use lane_allocations::{lane_binary, lane_new_array, lane_new_closure, lane_new_concat, lane_new_const_array, lane_new_object, lane_new_object_literal, lane_new_object_pair, lane_new_regexp, lane_new_template};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
@@ -1789,6 +1789,8 @@ lane_helper_inventory! { H;
     NewTemplate => lane_new_template::<H>,
     /// A string concatenation of pure parts (`lane_new_concat`).
     NewConcat => lane_new_concat::<H>,
+    /// A regexp literal's fresh object of its site's template (`lane_new_regexp`).
+    NewRegExp => lane_new_regexp::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
