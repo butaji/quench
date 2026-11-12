@@ -78,7 +78,7 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             match arrays[first..].iter_mut().find(|array: &&mut LoopArray| array.source == source) {
                 Some(array) => array.writable |= stores,
                 None => {
-                    let views = if matches!(source, ArraySource::Capture(_)) { ElementViews::Typed } else { views };
+                    let views = if matches!(source, ArraySource::Capture(_)) { ElementViews::Typed(None) } else { views };
                     arrays.push(LoopArray { header, back, source, views, writable: stores });
                 }
             }

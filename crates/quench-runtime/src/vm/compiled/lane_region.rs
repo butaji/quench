@@ -23,6 +23,8 @@ use super::super::specializer::Specializer;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
 use super::object_slots::{CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable};
 use crate::typed_ir::Division;
+use crate::staged::typed_elements::{NativeKind, ViewKind};
+use crate::staged::typed_view::{prove_typed_view, TypedRecords, ViewAccess};
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
 use cranelift_codegen::entity::EntityRef;
@@ -565,12 +567,34 @@ impl Completion {
 /// typed arrays' (`Vm::lane_typed_array_elements`). A region assumes one, proved on each
 /// loop's entering edge, so no access chooses between them; a static image publishes a
 /// typed variant beside the dense one, which its dispatcher tries next at the header, and a
-/// loop site compiles the one its entry found (`LoopTier::views`).
+/// loop site compiles the one its entry found (`LoopTier::views`). A typed view carries the
+/// kind the site observed, which the proof compares once and the accesses fold; `None` where
+/// the entries showed several kinds (or none was observed), the accesses dispatching on the
+/// record's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(in crate::vm) enum ElementViews {
     #[default]
     Dense,
-    Typed,
+    Typed(Option<crate::heap::TypedArrayKind>),
+}
+
+impl ElementViews {
+    /// The views of arrays viewed both as `self` and as `other`: the same dense views, or typed
+    /// views of the kind both name and of no kind where they differ; `None` for a mix.
+    pub(in crate::vm) fn common(self, other: Self) -> Option<Self> {
+        match (self, other) {
+            (Self::Typed(left), Self::Typed(right)) => Some(Self::Typed(if left == right { left } else { None })),
+            _ => (self == other).then_some(self),
+        }
+    }
+
+    /// The kind a typed view's site observed.
+    fn observed_kind(self) -> Option<crate::heap::TypedArrayKind> {
+        match self {
+            Self::Typed(kind) => kind,
+            Self::Dense => None,
+        }
+    }
 }
 
 /// No heap, environment or guest-call effect may precede scalar-call recovery.
@@ -3836,7 +3860,7 @@ impl Lowering<'_, '_> {
                     let unproved = self.ins().iconst(types::I32, 0);
                     self.builder.def_var(variables.room, unproved);
                 }
-                ElementViews::Typed => self.hoist_typed_view(array, bits, variables, exit),
+                ElementViews::Typed(_) => self.hoist_typed_view(array, bits, variables, exit),
             }
         }
     }
@@ -3853,22 +3877,39 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// The typed array `bits` holds, viewed in place by the helper; a miss exits at the loop's entry.
+    /// The typed array `bits` holds, proved from its record once on the loop's entering edge
+    /// (`prove_typed_view`): a proof that leaves takes the slow arm, where the VM publishes the
+    /// record (`LaneHelper::TypedArrayView`) and the proof is made again, leaving at the loop's
+    /// entry where it fails still.
     fn hoist_typed_view(&mut self, array: LoopArray, bits: ir::Value, variables: ArrayVariables, exit: ir::Block) {
-            let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
-                size_of::<super::LaneTypedArrayView>() as u32, align_of::<super::LaneTypedArrayView>().trailing_zeros() as u8));
-            let out = self.ins().stack_addr(types::I64, slot, 0);
-            let writable = self.ins().iconst(types::I64, i64::from(array.writable));
-            let viewed = self.helper_call(LaneHelper::TypedArrayView, &[bits, writable, out]);
-            let admitted = self.ins().icmp_imm_u(IntCC::NotEqual, viewed, 0);
-            emit_js_guard(&mut self.builder, admitted, exit);
-            let word = |field: usize| i32::try_from(field).expect("view field offset fits i32");
-            let values = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, elements)));
-            let length = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, length)));
-            let kind = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, kind)));
-            self.builder.def_var(variables.values, values);
-            self.builder.def_var(variables.length, length);
-            self.builder.def_var(variables.kind, kind);
+        let access = ViewAccess { kind: array.views.observed_kind().and_then(NativeKind::new), writable: array.writable };
+        let (publish, done) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.set_cold_block(publish);
+        self.prove_typed_view_into(variables, bits, access, publish);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(publish);
+        self.builder.seal_block(publish);
+        let published = self.helper_call(LaneHelper::TypedArrayView, &[bits]);
+        let admitted = self.ins().icmp_imm_u(IntCC::NotEqual, published, 0);
+        emit_js_guard(&mut self.builder, admitted, exit);
+        self.prove_typed_view_into(variables, bits, access, exit);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(done);
+        self.builder.seal_block(done);
+    }
+
+    /// The proof of the typed array `bits` for `access`, leaving at `miss`, whose view the
+    /// array's variables then hold.
+    fn prove_typed_view_into(&mut self, variables: ArrayVariables, bits: ir::Value, access: ViewAccess, miss: ir::Block) {
+        let records = TypedRecords {
+            entries: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_base)),
+            relocations: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, buffer_relocations)),
+        };
+        let view = prove_typed_view(&mut super::object_slots::emit(&mut self.builder), records, bits, access, miss)
+            .expect("the emit stage continues past its guards");
+        self.builder.def_var(variables.values, view.values);
+        self.builder.def_var(variables.length, view.length);
+        if let ViewKind::Dynamic(kind) = view.kind { self.builder.def_var(variables.kind, kind); }
     }
 
     fn array_variables(&mut self, array: LoopArray) -> ArrayVariables {
@@ -3910,10 +3951,15 @@ impl Lowering<'_, '_> {
         (self.builder.use_var(variables.values), self.builder.use_var(variables.length))
     }
 
-    /// A typed region's hoisted array kind.
-    fn hoisted_kind(&mut self, array: LoopArray) -> ir::Value {
-        let variables = self.array_variables(array);
-        self.builder.use_var(variables.kind)
+    /// A typed region's hoisted array kind: the site's, which its proof compared once, or the record's.
+    fn hoisted_kind(&mut self, array: LoopArray) -> ViewKind<ir::Value> {
+        match array.views.observed_kind().and_then(NativeKind::new) {
+            Some(native) => ViewKind::Static(native),
+            None => {
+                let variables = self.array_variables(array);
+                ViewKind::Dynamic(self.builder.use_var(variables.kind))
+            }
+        }
     }
 
     /// A Number's store through a hoisted dense array view at a site that left (`left_here`): in place,

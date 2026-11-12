@@ -4,7 +4,7 @@
 //! over the frame's proofs of the array (`frame_elements`), with the exit, the join and the
 //! views a store retires left to this lowering.
 use super::*;
-use crate::staged::typed_elements::{TypedView, ViewKind};
+use crate::staged::typed_elements::TypedView;
 use crate::staged::{Operation, Step};
 
 impl Lowering<'_, '_> {
@@ -45,7 +45,7 @@ impl Lowering<'_, '_> {
         self.held_view = array.map(|array| self.held_array(array, packed));
         let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key })
             else { unreachable!("an element read yields a value or leaves at its miss edge") };
-        if array.is_some_and(|array| array.views == ElementViews::Typed) {
+        if array.is_some_and(|array| matches!(array.views, ElementViews::Typed(_))) {
             self.set_number(state, destination, value);
         } else {
             self.set_tagged(state, destination, value);
@@ -64,7 +64,7 @@ impl Lowering<'_, '_> {
         match array.views {
             ElementViews::Dense => frame_elements::Held::Dense(super::super::DenseArrayView {
                 values, length, writable: array.writable, uncounted: array.writable }, packed),
-            ElementViews::Typed => frame_elements::Held::Typed(TypedView { values, length, kind: ViewKind::Dynamic(self.hoisted_kind(array)) }),
+            ElementViews::Typed(_) => frame_elements::Held::Typed(TypedView { values, length, kind: self.hoisted_kind(array) }),
         }
     }
 

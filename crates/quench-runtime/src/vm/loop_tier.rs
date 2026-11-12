@@ -65,12 +65,14 @@ impl LoopTier {
         if let Some(code) = self.code.take() { code.retire(); }
     }
 
-    /// Whether code over the element `views` an entry found may run: code over the other
-    /// views goes where a compilation remains, which the entry then makes over these.
+    /// Whether code over the element `views` an entry found may run: typed code of no kind runs
+    /// over any typed kind; code over any other views goes where a compilation remains, which the
+    /// entry then makes over these, or over no kind where two kinds were found.
     pub(super) fn select(&mut self, views: ElementViews) -> bool {
-        if self.views == views { return true; }
+        let common = self.views.common(views);
+        if common == Some(self.views) { return true; }
         if self.compilations >= TIERS.loops.max_compilations { return false; }
-        self.views = views;
+        self.views = common.unwrap_or(views);
         if let Some(code) = self.code.take() { code.retire(); }
         true
     }
@@ -216,11 +218,11 @@ pub(super) fn lane_loop_arrays<H: Host>(vm: &mut Vm<H>, r: Registers, region: &L
         } else {
             // A typed array read through a field is no loop's hoisted view.
             array.field.is_none().then_some(())?;
-            let (elements, length, _) = vm.lane_typed_array_elements(value, array.written)?;
+            let (elements, length, kind) = vm.lane_typed_array_elements(value, array.written)?;
             entry.push_array(elements, length, length)?;
-            ElementViews::Typed
+            ElementViews::Typed(Some(kind))
         };
-        if *views.get_or_insert(found) != found { return None; }
+        views = Some(views.map_or(Some(found), |seen: ElementViews| seen.common(found))?);
     }
     Some(views.unwrap_or_default())
 }

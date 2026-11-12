@@ -10,6 +10,11 @@ const FILL: &str = "function fill(a, n) { for (var i = 0; i < n; i++) { a[i] = i
 /// The loop region of the function `source` declares, over dense views; `observed` types its element
 /// reads Numbers (`ObservedRead`), `left` records that its element stores left before (`generic`).
 fn region(source: &str, observed: bool, left: bool) -> ir::Function {
+    region_over(source, observed, left, ElementViews::Dense)
+}
+
+/// `region` over the element `views`.
+fn region_over(source: &str, observed: bool, left: bool, views: ElementViews) -> ir::Function {
     let program = crate::Engine::specialize(source, "element-rows.js").unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
@@ -24,7 +29,7 @@ fn region(source: &str, observed: bool, left: bool) -> ir::Function {
     let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &BTreeMap::new(), &Default::default(), VmFacts::STATIC,
         &generic, &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &reads, &[], &[], &[],
-        Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("a loop region").function
+        Coverage::PrefixFrom(header), Completion::StatusAndPc, views).expect("a loop region").function
 }
 
 /// The instructions of `function`'s loop blocks.
@@ -86,4 +91,32 @@ fn a_numeric_loop_over_an_array_loads_the_record_base_read_only_and_movable() {
     assert!(hoistable_loads(&numeric, &loop_body(&numeric)) > 0, "the record base is hoisted out of the loop: {numeric}");
     let storing = region(FILL, false, false);
     assert_eq!(hoistable_loads(&storing, &loop_body(&storing)), 0, "a loop that stores moves arrays: {storing}");
+}
+
+/// The comparisons in `body` with the constant `bits`, by `icmp` or `icmp_imm`.
+fn compares_with(function: &ir::Function, body: &[ir::Inst], bits: u64) -> usize {
+    body.iter().filter(|&&inst| match function.dfg.insts[inst] {
+        ir::InstructionData::IntCompare { args, .. } => args.iter().any(|&arg| is_constant(function, arg, bits)),
+        ir::InstructionData::IntCompareImm { imm, .. } => imm.bits() as u64 == bits,
+        _ => false,
+    }).count()
+}
+
+#[test]
+fn a_float64_sum_loop_has_no_kind_dispatch_in_its_body_and_checks_the_kind_once_before_it() {
+    use crate::heap::TypedArrayKind as Kind;
+    // Kinds whose discriminants no other comparison of a sum loop names.
+    let kinds = [Kind::Int32, Kind::Float32, Kind::Float64].map(|kind| kind as u64);
+    let dispatch = |function: &ir::Function| -> usize {
+        let body = loop_body(function);
+        kinds.iter().map(|&kind| compares_with(function, &body, kind)).sum()
+    };
+    let folded = region_over(SUM, false, false, ElementViews::Typed(Some(Kind::Float64)));
+    assert_eq!(dispatch(&folded), 0, "a site kind the proof compared is a constant of the loop: {folded}");
+    let body = loop_body(&folded);
+    let before: Vec<ir::Inst> = folded.layout.blocks().flat_map(|block| folded.layout.block_insts(block))
+        .filter(|inst| !body.contains(inst)).collect();
+    assert!(compares_with(&folded, &before, Kind::Float64 as u64) >= 1, "the kind is checked before the loop: {folded}");
+    let dynamic = region_over(SUM, false, false, ElementViews::Typed(None));
+    assert!(dispatch(&dynamic) >= kinds.len(), "a view of no site kind dispatches on the record's in the loop: {dynamic}");
 }

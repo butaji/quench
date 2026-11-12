@@ -1775,7 +1775,7 @@ lane_helper_inventory! { H;
     Binary => lane_binary::<H>,
     /// A store that may add its property (`lane_field_add`).
     FieldAdd => lane_field_add::<H>,
-    /// A loop's hoisted typed array view (`lane_typed_array_view`).
+    /// The slow arm of a loop's hoisted typed array view proof (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
     /// A VM operation a staged row calls out for (`dispatch_fast::lane_vm_step`).
     VmStep => super::dispatch_fast::lane_vm_step::<H>,
@@ -2241,14 +2241,14 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
                 plan: lane_region::RegionPlan { coverage, completion: lane_region::Completion::SourcePc, views } }
                 .specialize(program).ok().filter(|region| region.native != 0)
                 .map(|mut region| {
-                    let symbol = (header << 1) | u32::from(views == lane_region::ElementViews::Typed);
+                    let symbol = (header << 1) | u32::from(matches!(views, lane_region::ElementViews::Typed(_)));
                     region.function.name = UserFuncName::user(lane_region::LANE_REGION_NAMESPACE, symbol);
                     (region.hoists_arrays,
                         StaticTypedRegion { header: header as usize, function: region.function, stable: region.stable, scalar: false })
                 })
         };
         let (hoists_arrays, dense) = variant(lane_region::ElementViews::Dense)?;
-        let typed = hoists_arrays.then(|| variant(lane_region::ElementViews::Typed)).flatten().map(|(_, region)| region);
+        let typed = hoists_arrays.then(|| variant(lane_region::ElementViews::Typed(None))).flatten().map(|(_, region)| region);
         Some(typed.into_iter().chain(std::iter::once(dense)).collect())
     };
     // Preserve pure preheaders in the SSA graph. Otherwise, first try the
@@ -6564,6 +6564,12 @@ struct JsStepDispatch {
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
     allocated: usize,
     collect_at: usize,
+    /// The typed arrays' view records by legacy slot (`Heap::typed_view_base`), refreshed with
+    /// the other record bases, and the address of the process's buffer-relocation count
+    /// (`buffer_relocations_address`): what a typed array's view proof reads
+    /// (`staged::typed_view::TypedRecords`).
+    typed_view_base: usize,
+    buffer_relocations: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -6930,28 +6936,14 @@ unsafe extern "C" fn lane_store_miss<H: Host>(vm: u64, residual: u64, payload: u
     1
 }
 
-/// A hoisted typed array view as `lane_typed_array_view` writes it for native code.
-#[repr(C)]
-pub(super) struct LaneTypedArrayView {
-    pub(super) elements: u64,
-    pub(super) length: u64,
-    /// The `TypedArrayKind` discriminant.
-    pub(super) kind: u64,
-}
-
-/// A lane loop's typed array view (`Vm::lane_typed_array_elements`), written to `out`; zero
-/// where the loop cannot address the elements in place, which leaves at the loop's header. The
-/// count is below 2^31 (`staged::typed_elements::TypedView`): a longer array leaves too.
-unsafe extern "C" fn lane_typed_array_view<H: Host>(vm: u64, _residual: u64, object: u64, writable: u64, out: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; the view reads cells and allocates nothing.
+/// The slow arm of a loop's hoisted typed array view proof (`Vm::publish_typed_view`): publishes
+/// the typed array's elements in its record, which the proof then reads; zero where the loop
+/// cannot address them in place, which leaves at the loop's header. The count is below 2^31
+/// (`staged::typed_elements::TypedView`): a longer array leaves too.
+unsafe extern "C" fn lane_typed_array_view<H: Host>(vm: u64, _residual: u64, object: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the publication reads cells and allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
-    let Some((elements, length, kind)) = vm.lane_typed_array_elements(Value::from_bits(object), writable != 0)
-        .filter(|&(_, length, _)| i32::try_from(length).is_ok()) else {
-        return 0;
-    };
-    // SAFETY: `out` is the caller's stack slot of one view.
-    unsafe { *(out as *mut LaneTypedArrayView) = LaneTypedArrayView { elements: elements as u64, length: length as u64, kind: kind as u64 } };
-    1
+    u64::from(vm.publish_typed_view(Value::from_bits(object)))
 }
 
 /// A lane body's element store: the lane's own in-place replacement of a record array's
@@ -7341,6 +7333,8 @@ impl LaneFrame {
                 native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0,
                 allocated: 0,
                 collect_at: 0,
+                typed_view_base: 0,
+                buffer_relocations: 0,
                 loop_entry: 0,
                 method_cache_atoms: 0,
                 method_cache_atom_words: 0,
@@ -7489,7 +7483,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
+            field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, typed_view_base: 0, buffer_relocations: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
@@ -7548,6 +7542,8 @@ impl JsStepDispatch {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
+        self.typed_view_base = vm.heap.typed_view_base().addr();
+        self.buffer_relocations = crate::heap::buffer_relocations_address().addr();
         self.epoch = vm.heap.collection_epoch();
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
