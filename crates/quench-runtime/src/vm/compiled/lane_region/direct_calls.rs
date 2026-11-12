@@ -64,9 +64,17 @@ impl Lowering<'_, '_> {
         self.leave_with(status, Some(word));
         self.builder.switch_to_block(back);
         let offset = dispatch_offset(std::mem::offset_of!(EntryCell, completions));
+        // Counts only below the window the tier machine drains at each leave: past it the
+        // call reads the word and stores nothing, so recursion chains no store through it.
         let done = self.word_load(cell, offset);
+        let (count, counted) = (self.builder.create_block(), self.builder.create_block());
+        let open = self.word_cmp_imm(IntCC::UnsignedLessThan, done, EntryCell::COMPLETION_WINDOW as i64);
+        self.word_brif(open, count, &[], counted, &[]);
+        self.builder.switch_to_block(count);
         let done = self.word_add_imm(done, 1);
         self.word_store(done, cell, offset);
+        self.word_jump(counted, &[]);
+        self.builder.switch_to_block(counted);
         self.word_store(shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
         let value = match receiver { Some(receiver) => receiver, None => word };
         self.word_store(value, base, register_offset(instruction.result_register()));

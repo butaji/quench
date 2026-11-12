@@ -18,7 +18,7 @@ pub(in crate::vm) struct EntryCell {
     /// The address of the published body (`LaneMethod`), which the view keeps until it drops
     /// (`LaneView::pinned`): a leave inside a call through the cell recovers through it.
     pub(in crate::vm) body: std::cell::Cell<usize>,
-    /// Runs of the body its native callers completed (`Lowering::direct_finish` counts each),
+    /// Runs of the body its native callers completed, up to `COMPLETION_WINDOW` (`Lowering::direct_finish` counts each),
     /// which `note_lane_body_end` never sees: the tier machine's evidence a body runs to its return.
     pub(in crate::vm) completions: std::cell::Cell<u64>,
 }
@@ -32,6 +32,9 @@ unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *co
 static NO_RECOVERY: LaneRecoverySpace = LaneRecoverySpace { values: 0, activations: 0 };
 
 impl EntryCell {
+    /// The most completions the cell counts between two drains (`LaneView::note_lane_body_end`).
+    pub(in crate::vm) const COMPLETION_WINDOW: u64 = 1 << 12;
+
     pub(in crate::vm) fn stub() -> usize { lane_entry_stub as BodyEntry as usize }
 
     pub(in crate::vm) fn new() -> Self {
