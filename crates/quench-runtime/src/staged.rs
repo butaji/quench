@@ -14,7 +14,7 @@
 //! (`docs/v2/specialization.md`). `staged_coverage` in this module's tests keeps hand-written
 //! decodes of the same layouts from reappearing elsewhere.
 
-use crate::bytecode::{FieldBase, FieldLookup, Op, Register, WideInstruction};
+use crate::bytecode::{FieldBase, FieldLookup, Op, Operand, Register, WideInstruction};
 use crate::typed_ir::Type;
 
 mod concrete;
@@ -24,9 +24,12 @@ mod global;
 mod names;
 mod callout;
 mod admission;
+mod captures;
+pub(crate) mod compare;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::CallOut;
+pub(crate) use compare::Comparison;
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
@@ -196,6 +199,17 @@ pub(crate) trait Frame<S: Stage> {
     fn vm_step(&mut self, _stage: &mut S, _operation: CallOut, _result: Option<Register>)
         -> Option<(S::Word, Self::Fact)> { None }
 
+    /// Read the capture `slot`, `depth` scopes out, with the fact the frame keeps of it; `None`
+    /// where the frame cannot (an uninitialized or shared binding, no captures), leaving the
+    /// read to the interpreter.
+    #[inline(always)]
+    fn capture_slot(&mut self, _stage: &mut S, _depth: u16, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Store `value` to the capture `slot`, `depth` scopes out; `None` where the binding does
+    /// not take the direct store (a `const`, an uninitialized `let`).
+    #[inline(always)]
+    fn store_capture(&mut self, _stage: &mut S, _depth: u16, _slot: u16, _value: S::Word) -> Option<()> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;
@@ -331,6 +345,13 @@ pub(crate) enum Operation<W, P> {
     Delete { base: Register, key: Register, strict: bool },
     /// `base[key]` past the dense and typed element reads (`PropertyFrame::index_get_host`).
     IndexGetHost { base: W, key: W },
+    /// Define `destination` from the capture `slot`, `depth` scopes out (`Frame::capture_slot`).
+    LoadCapture { destination: Register, depth: u16, slot: u16 },
+    /// Store `source` to the capture `slot`, `depth` scopes out (`Frame::store_capture`).
+    StoreCapture { source: Register, depth: u16, slot: u16 },
+    /// `left` compared with `right` (`Comparison`), jumping to the target when the comparison
+    /// holds, or fails where `negate` (`JumpBinaryFalse`); otherwise continue after it.
+    CompareJump { comparison: Comparison, left: Operand, right: Operand, negate: bool },
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes.
@@ -351,8 +372,9 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
-            Op::Binary | Op::ToPropertyKey => return Self::decode_generic(instruction),
-            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec => return Self::decode_value(instruction),
+            Op::Binary | Op::ToPropertyKey | Op::JumpBinaryFalse => return Self::decode_generic(instruction),
+            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec
+                | Op::LoadCapture | Op::StoreCapture => return Self::decode_value(instruction),
             Op::GetField | Op::Delete => return Self::decode_property(instruction),
             op if op.is_field_store() => return Self::decode_property(instruction),
             _ => return names::decode(instruction),
@@ -401,6 +423,10 @@ impl<W, P> Operation<W, P> {
                     destination: instruction.result_register(), source: instruction.register_b() },
             Op::Unary if instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Void as u32
                 && !instruction.returns_from_frame() => Self::Void { destination: instruction.result_register() },
+            Op::LoadCapture if instruction.result_flags() == 0 => Self::LoadCapture {
+                destination: instruction.result_register(), depth: instruction.capture_depth(), slot: instruction.capture_slot() },
+            Op::StoreCapture => Self::StoreCapture {
+                source: instruction.register_a(), depth: instruction.capture_depth(), slot: instruction.capture_slot() },
             _ => return None,
         })
     }

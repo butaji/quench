@@ -153,13 +153,19 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 /// A relation of two operands in `domain`; its predicate word.
 fn relation<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> Step<S::Word, F::Control> {
+    let holds = relation_holds(stage, frame, left, right, relation, domain);
+    Step::Value(stage.cond_word(holds))
+}
+
+/// Whether `relation` holds of two operands in `domain`.
+pub(super) fn relation_holds<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> S::Cond {
     let miss = frame.miss();
     let (left, right) = match domain {
         Domain::Int32 => (frame.int_operand(stage, left, miss), frame.int_operand(stage, right, miss)),
         Domain::Float64 => (frame.number_operand(stage, left, miss), frame.number_operand(stage, right, miss)),
     };
-    let condition = stage.relation(relation, domain, left, right);
-    Step::Value(stage.cond_word(condition))
+    stage.relation(relation, domain, left, right)
 }
 
 /// Arithmetic of two operands in `domain`; the result in `domain` or widened to binary64.

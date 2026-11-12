@@ -42,7 +42,7 @@ macro_rules! number_relations {
 
         impl NumberRelation {
             #[inline(always)]
-            pub(super) fn from_operator(op: u32) -> Option<Self> {
+            pub(crate) fn from_operator(op: u32) -> Option<Self> {
                 $(
                     if $(op == BinaryOperator::$operator as u32)||+ {
                         return Some(Self::$relation);
