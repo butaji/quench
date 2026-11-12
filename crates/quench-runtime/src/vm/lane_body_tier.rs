@@ -127,7 +127,7 @@ impl LaneView {
 
     /// The entries before its next body specializes: the warm-up, doubled per dropped body.
     pub(super) fn warmup_entries(&self) -> u16 {
-        TIERS.lane_body.warmup_entries << self.history.get().lifetimes.min(7)
+        TIERS.lane_body.warmup() << self.history.get().lifetimes.min(7)
     }
 
     /// The bytecodes one entry runs inside its loops: each loop's iteration span times the mean
@@ -232,7 +232,7 @@ impl LaneView {
         if history.callee_recompiles >= TIERS.lane_body.max_callee_recompiles { return; }
         self.history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, late_calls: 0, ..history });
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
-        let next = LaneBody::Unspecialized { entries: TIERS.lane_body.warmup_entries - 1, recompiles: *recompiles, stuck: *stuck };
+        let next = LaneBody::Unspecialized { entries: TIERS.lane_body.warmup() - 1, recompiles: *recompiles, stuck: *stuck };
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         self.entry.withdraw();
         self.retired.borrow_mut().push(method);
@@ -284,9 +284,10 @@ impl LaneView {
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
     }
 
-    /// `--b-jit` compiles no function body: the view's body is declined, once.
+    /// A mode with neither Cranelift function tiers nor `--b-jit`'s stencil bodies compiles no
+    /// function body: the view's body is declined, once.
     fn declined_by_mode(&self) -> bool {
-        let declined = !crate::jit_mode::function_tiers();
+        let declined = !crate::jit_mode::function_tiers() && !crate::jit_mode::base_only();
         if declined {
             // SAFETY: as `lane_body`.
             unsafe { *self.tier_lane.get() = LaneBody::Declined };
@@ -392,7 +393,7 @@ impl LaneView {
         if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() }
             && self.history.get().lifetimes == 0 && !self.history.get().unpaid
         {
-            *entries = TIERS.lane_body.warmup_entries - 1;
+            *entries = TIERS.lane_body.warmup() - 1;
         }
     }
 }

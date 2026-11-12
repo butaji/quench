@@ -38,6 +38,7 @@ pub const JUMP_POLL: u8 = 19;
 pub const GUARD: u8 = 20;
 pub const TAG_INIT: u8 = 21;
 pub const SPILL: u8 = 22;
+pub const JUMP_WATCH: u8 = 23;
 
 pub const CAPTURE_ROW: u8 = 0;
 pub const INDEX_ROW: u8 = 1;

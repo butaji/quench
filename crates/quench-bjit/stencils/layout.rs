@@ -165,3 +165,5 @@ pub(crate) const JS_STEP_LOOP_ENTRY: usize = 0;
 pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 96;
 pub(crate) const JS_STEP_CAPTURE_LEN: usize = 104;
 pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 112;
+/// The record a completed body names (`LANE_BODY_RETURNED`).
+pub(crate) const JS_STEP_RETURNED_PC: usize = 256;

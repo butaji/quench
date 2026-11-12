@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 mod decode;
+pub(in crate::vm::compiled) mod function;
 mod link;
 mod plan;
 mod repr;
@@ -44,9 +45,14 @@ struct Totals {
     bytes: u64,
     nanos: u64,
     rejected: u64,
+    /// Whole-function bodies built (`function::build_body`), and their instructions that run as
+    /// rows and that leave the body.
+    bodies: u64,
+    covered: u64,
+    exits: u64,
 }
 
-static TOTALS: Mutex<Totals> = Mutex::new(Totals { regions: 0, ops: 0, bytes: 0, nanos: 0, rejected: 0 });
+static TOTALS: Mutex<Totals> = Mutex::new(Totals { regions: 0, ops: 0, bytes: 0, nanos: 0, rejected: 0, bodies: 0, covered: 0, exits: 0 });
 static REJECTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
 static LEAVES: Mutex<BTreeMap<(u32, u32), (crate::bytecode::Op, u64)>> = Mutex::new(BTreeMap::new());
 static REPORT: std::sync::Once = std::sync::Once::new();
@@ -106,6 +112,8 @@ extern "C" fn report() {
         totals.regions, totals.rejected, totals.ops, totals.bytes, totals.bytes as f64 / ops as f64, totals.nanos,
         totals.nanos as f64 / ops as f64
     );
+    let rows = (totals.covered + totals.exits).max(1);
+    eprintln!("bjit-bodies bodies={} covered={} exits={} covered_share={:.1}%", totals.bodies, totals.covered, totals.exits, 100.0 * totals.covered as f64 / rows as f64);
     let [entered, left, declined, compiled, bodies] = std::array::from_fn(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
     eprintln!("bjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies}");
     if let Ok(leaves) = LEAVES.lock() {
@@ -156,6 +164,23 @@ pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [
     built
 }
 
+/// The webs of `decoded`, their representations and homes, and the rows renamed to webs.
+fn analyze(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
+    // A register with several webs may not have a web in an int slot, whose writes keep a
+    // tagged word's high half; such a register is left whole.
+    let mut merged: std::collections::BTreeSet<Register> = Default::default();
+    loop {
+        let (webs, renamed) = Webs::split(region, decoded, &merged);
+        let reprs = representations(region, &renamed, widened, seen, &webs);
+        let homes = Homes::of(&ranked(&renamed, &reprs, Repr::Int), &ranked(&renamed, &reprs, Repr::Double), webs.orig.clone(), &webs.clashes(region, &renamed));
+        let split: Vec<Register> = homes.slots.iter().map(|web| webs.orig[usize::from(*web)]).filter(|register| webs.count(*register) > 1).collect();
+        if split.is_empty() {
+            return (reprs, homes, webs, renamed);
+        }
+        merged.extend(split);
+    }
+}
+
 /// The code, and whether it reads no heap row: such a region needs from its payload only the entry
 /// record's address (`Crossing::Bare`).
 fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<(Vec<u8>, bool), String> {
@@ -163,23 +188,11 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
     let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, dense, header + k as u32, *instruction)).collect::<Result<Vec<_>, _>>()?;
-    // A register with several webs may not have a web in an int slot, whose writes keep a
-    // tagged word's high half; such a register is left whole.
-    let mut merged: std::collections::BTreeSet<Register> = Default::default();
-    let (reprs, homes, webs, decoded) = loop {
-        let (webs, renamed) = Webs::split(region, &decoded, &merged);
-        let reprs = representations(region, &renamed, widened, seen, &webs);
-        let homes = Homes::of(&ranked(&renamed, &reprs, Repr::Int), &ranked(&renamed, &reprs, Repr::Double), webs.orig.clone(), &webs.clashes(region, &renamed));
-        let split: Vec<Register> = homes.slots.iter().map(|web| webs.orig[usize::from(*web)]).filter(|register| webs.count(*register) > 1).collect();
-        if split.is_empty() {
-            break (reprs, homes, webs, renamed);
-        }
-        merged.extend(split);
-    };
-    let layout = Layout { header, backedge, homes, webs, region };
+    let (reprs, homes, webs, decoded) = analyze(region, &decoded, widened, seen);
+    let layout = Layout { header, backedge, homes, webs, region, ending: Ending::Region };
     let mut body = Vec::with_capacity(count);
     for (k, row) in decoded.iter().enumerate() {
-        body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs))?);
+        body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs), Kind::JumpPoll)?);
     }
     let bare = decoded.iter().all(|row| row.heap.is_none());
     Ok((link(&layout, &body)?, bare))

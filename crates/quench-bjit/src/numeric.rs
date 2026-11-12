@@ -60,7 +60,9 @@ pub enum Kind {
     Ge,
     Eq,
     Ne,
-    /// Go to `taken` (and poll the interrupt flag first, for `JumpPoll`).
+    /// Go to `taken` (and poll the interrupt flag first, for `JumpPoll`, which also counts the
+    /// edge in the loop entry record; for `JumpWatch`, which counts nothing, a function body
+    /// having no such record).
     Jump,
     JumpPoll,
     /// Go to `taken` unless the operand is a Number; into a pinned destination an int word, which
@@ -70,6 +72,7 @@ pub enum Kind {
     TagInit,
     /// Write a pinned double (operand `a`) to the frame slot at hole 0 as a canonical Number word.
     Spill,
+    JumpWatch,
 }
 
 impl Kind {

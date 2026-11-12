@@ -17,7 +17,7 @@ fn read_operands(kind: u8, dst: u8, a: u8, b: u8) -> (u8, u8, u8) {
     match kind {
         _ if is_copy(kind) => (dst, a, MEM),
         _ if is_compare(kind) => (MEM, a, b),
-        JUMP | JUMP_POLL | TAG_INIT => (MEM, MEM, MEM),
+        JUMP | JUMP_POLL | JUMP_WATCH | TAG_INIT => (MEM, MEM, MEM),
         GUARD => (dst, a, MEM),
         SPILL => (MEM, a, MEM),
         _ => (dst, a, b),
@@ -123,7 +123,7 @@ fn products(places: &Places, rows: &mut BTreeSet<Code>) {
 /// Jumps, entry tagging, guards and spills (of a pinned double to a canonical word, of a pinned
 /// int32 back to a tagged int word).
 fn control(places: &Places, rows: &mut BTreeSet<Code>) {
-    for kind in [JUMP, JUMP_POLL, TAG_INIT] {
+    for kind in [JUMP, JUMP_POLL, JUMP_WATCH, TAG_INIT] {
         rows.insert(canonical((kind, MEM, MEM, MEM, true)));
     }
     for &dst in places.floats_dst.iter().chain(&places.ints_dst) {

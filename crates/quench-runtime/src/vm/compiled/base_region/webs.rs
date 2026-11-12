@@ -72,7 +72,7 @@ impl Decoded {
 
     /// Where control goes after the row: row indices within the region, and branch targets
     /// leaving it (which includes falling off its last row).
-    fn successors(&self, k: usize, count: usize, region: &LoopRegion) -> (Vec<usize>, Vec<Pc>) {
+    pub(super) fn successors(&self, k: usize, count: usize, region: &LoopRegion) -> (Vec<usize>, Vec<Pc>) {
         let (header, backedge) = (region.header, region.backedge);
         let falls = !matches!(self.kind, Kind::Jump | Kind::JumpPoll);
         let (mut inside, mut outside) = (Vec::new(), Vec::new());
@@ -176,7 +176,7 @@ impl Renamer {
                 other => other,
             };
             let dst = row.dst.map(|register| self.web(register, k as Def + 1) as Register);
-            renamed.push(Decoded { kind: row.kind, dst, a: source(row.a), b: source(row.b), target: row.target, heap: row.heap, base: row.base.map(read), hole: row.hole });
+            renamed.push(Decoded { kind: row.kind, dst, a: source(row.a), b: source(row.b), target: row.target, heap: row.heap, base: row.base.map(read), hole: row.hole, end: row.end });
             tables.push(here);
         }
         let leaf_webs = leaves.iter().map(|(target, state)| (*target, self.table(state))).collect();

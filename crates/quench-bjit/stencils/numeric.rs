@@ -310,15 +310,18 @@ fn count_backedge(s: &S) {
     }
 }
 
+/// A jump that polls the interrupt flag first, and counts a taken edge where `COUNT`.
 #[inline(always)]
-fn jump<const POLL: bool>(s: S) -> Out {
+fn jump<const POLL: bool, const COUNT: bool>(s: S) -> Out {
     if POLL {
         // The interrupt flag: the context's pointer to a byte, nonzero once requested.
         let byte = unsafe { *(((s.ctx + hole::<0>()) as *const *const u8).read()) };
         if byte != 0 {
             return Out::Exit(s);
         }
-        count_backedge(&s);
+        if COUNT {
+            count_backedge(&s);
+        }
     }
     Out::Taken(s)
 }
@@ -374,8 +377,9 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         ADD | SUB | MUL | DIV => arith::<K, D, A, B, SPEC>(s),
         AND..=USHR => bitwise::<K, D, A, B, SPEC>(s),
         LT..=NE => compare::<K, A, B, SPEC>(s),
-        JUMP => jump::<false>(s),
-        JUMP_POLL => jump::<true>(s),
+        JUMP => jump::<false, false>(s),
+        JUMP_POLL => jump::<true, true>(s),
+        JUMP_WATCH => jump::<true, false>(s),
         GUARD => guard::<D, A>(s),
         TAG_INIT => tag_init(s),
         _ => spill::<A>(s),

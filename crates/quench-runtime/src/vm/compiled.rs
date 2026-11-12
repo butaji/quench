@@ -52,7 +52,7 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
-mod osr_compile; pub(in crate::vm) mod base_region; mod base_rows; mod stencil_run; use stencil_run::Crossing;
+mod osr_compile; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
 pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
@@ -6032,6 +6032,8 @@ fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize,
 thread_local! {
     /// Lane-ABI OSR runs in this test thread.
     pub(super) static LANE_OSR_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Runs of lane bodies in this test thread, and those that completed their activation.
+    pub(super) static LANE_BODY_RUNS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
 }
 
 /// A native OSR region published by the shared compiler. Its lowerer is private to this
@@ -7180,6 +7182,8 @@ impl<H: Host> Vm<H> {
         } else {
             unsafe { (method.entry)(&mut *context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast()) }
         };
+        #[cfg(test)]
+        LANE_BODY_RUNS.with(|runs| { let [all, returned] = runs.get(); runs.set([all + 1, returned + usize::from(status == LANE_BODY_RETURNED)]); });
         if status == LANE_BODY_RETURNED {
             // SAFETY: as above; the body wrote the record before it returned.
             let pc = unsafe { (*frame).dispatch.returned_pc };

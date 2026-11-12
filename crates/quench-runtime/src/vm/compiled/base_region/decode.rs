@@ -35,6 +35,14 @@ pub(super) enum Source {
     Constant(u64),
 }
 
+/// How a row ends a whole function's run of rows: it leaves at its PC with the registers
+/// canonical (an instruction with no row), or completes the activation with the register it reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum End {
+    Exit,
+    Return,
+}
+
 /// An instruction as a row: its kind, destination, operands and branch target.
 pub(super) struct Decoded {
     pub(super) kind: Kind,
@@ -47,11 +55,18 @@ pub(super) struct Decoded {
     pub(super) heap: Option<Heap>,
     pub(super) base: Option<Register>,
     pub(super) hole: u64,
+    /// Set for a row that leaves the function: it has no successor.
+    pub(super) end: Option<End>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0 }
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, end: None }
+    }
+
+    /// A row that leaves the function (`End`), reading `a`.
+    pub(super) fn ending(end: End, a: Option<Source>) -> Self {
+        Self { end: Some(end), ..Self::number(Kind::Jump, None, a, None, None) }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -163,7 +178,7 @@ pub(super) fn decode(region: &LoopRegion, dense: bool, pc: u32, instruction: Wid
 
 /// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it
 /// is one a row cannot take.
-fn numeric_row(region: &LoopRegion, instruction: WideInstruction) -> Option<Option<Decoded>> {
+pub(super) fn numeric_row(region: &LoopRegion, instruction: WideInstruction) -> Option<Option<Decoded>> {
     let copy = || Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Register(instruction.register_b())), None, None);
     let plain = instruction.result_flags() == 0;
     Some(match instruction.op().class() {

@@ -8175,6 +8175,11 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
                 super::compiled::LaneBodyWork::Start { generic, shrinks, observed, called, caller, arrays: &arrays },
             poll => poll,
         };
+        // `--b-jit` stitches its body at once: it calls nothing directly and waits for no callee.
+        if crate::jit_mode::base_only() {
+            let super::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };
+            return vm.base_body_work(code, function, generic, parameters);
+        }
         if matches!(work, super::compiled::LaneBodyWork::Start { .. })
             && let Some(outcome) = lane_body_tier::start_gate(vm, own, code.function_get(function as usize))
         {

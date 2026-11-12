@@ -9,12 +9,23 @@
 //! (the row convention), calls the first row
 //! (`HOLE_NEXT`), stores the word the chain returned through the result pointer and returns
 //! status 0.
+//!
+//! A function body (`entry_body`, the lane body ABI of `lane_body_abi.rs`) is entered as
+//! (rdi = context, rsi = receiver, rdx = captures, rcx = the register file) and returns the
+//! status in eax and its result word in rdx. Its leave routines put the word in rax and the
+//! status in rdx, which the thunk swaps on the way out: `leave_stop` (hole 0 the word, hole 1
+//! the status), `leave_stop_pop` (the word an exit stub pushed) and `leave_returned` (the
+//! activation completes with the register slot at hole 0; hole 1 the status, hole 2 the
+//! record that completes it, which the lane reads from the dispatch payload).
 
+use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_RETURNED_PC};
 use crate::staged::frame;
 use crate::words::HOLE_V0;
 
 unsafe extern "C" {
     static HOLE_NEXT: u8;
+    static HOLE_V1: u8;
+    static HOLE_V2: u8;
 }
 
 /// Saves rbp, rbx, r12-r15 and the result pointer r8, calls the first row, stores its word.
@@ -59,4 +70,69 @@ pub unsafe extern "C" fn leave_word() {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn leave_pop() {
     core::arch::naked_asm!("pop rax", "ret")
+}
+
+/// The body entry: saves the callee-saved registers, takes the context in r13 and the register
+/// file in r12, calls the first row, and returns (status, word) as the chain left them in
+/// (rdx, rax). The pad keeps the stack 16-byte aligned at the call, as the six pushes and the
+/// return address leave it 8 off.
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn entry_body() {
+    core::arch::naked_asm!(
+        "push rbp",
+        "push rbx",
+        "push r12",
+        "push r13",
+        "push r14",
+        "push r15",
+        "sub rsp, 8",
+        "mov r13, rdi",
+        "mov r12, rcx",
+        "call {first}",
+        "add rsp, 8",
+        "pop r15",
+        "pop r14",
+        "pop r13",
+        "pop r12",
+        "pop rbx",
+        "pop rbp",
+        "xchg rax, rdx",
+        "ret",
+        first = sym HOLE_NEXT,
+    )
+}
+
+/// Leaves a body with the word at hole 0 and the status at hole 1.
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn leave_stop() {
+    core::arch::naked_asm!("movabs rax, offset {word}", "movabs rdx, offset {status}", "ret", word = sym HOLE_V0, status = sym HOLE_V1)
+}
+
+/// Leaves a body with the word an exit stub pushed and the status at hole 1.
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn leave_stop_pop() {
+    core::arch::naked_asm!("pop rax", "movabs rdx, offset {status}", "ret", status = sym HOLE_V1)
+}
+
+/// Completes the activation: writes the record at hole 2 to the dispatch payload's
+/// `returned_pc`, and leaves with the register slot at hole 0 as the word and the status at hole 1.
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn leave_returned() {
+    core::arch::naked_asm!(
+        "mov rax, [r12 + {slot}]",
+        "mov rcx, [r13 + {payload}]",
+        "movabs rdx, offset {record}",
+        "mov [rcx + {returned}], rdx",
+        "movabs rdx, offset {status}",
+        "ret",
+        slot = sym HOLE_V0,
+        status = sym HOLE_V1,
+        record = sym HOLE_V2,
+        payload = const CALL_CONTEXT_ADAPTER_PAYLOAD,
+        returned = const JS_STEP_RETURNED_PC,
+    )
 }

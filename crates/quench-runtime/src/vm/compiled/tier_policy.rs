@@ -74,6 +74,11 @@ pub(in crate::vm) struct LaneBody {
     /// sites have linked their targets, which the body inlines (`lane_unit::unit`), and that
     /// only a function called repeatedly pays for compiling one.
     pub(in crate::vm) warmup_entries: u16,
+    /// The same under `--b-jit`, whose whole-function body (`Vm::base_body_work`) is stitched
+    /// from stencils in microseconds, with no register allocator or code generator thread to
+    /// pay for: a few entries show a function's parameters their types (the int32s its entry
+    /// rows assume), where a Cranelift body waits for hundreds to have its call sites linked.
+    pub(in crate::vm) base_entries: u16,
     /// The share of a body's runs, in percent, its leaves may reach, from `reoptimize_exits`
     /// leaves on, before it specializes again.
     pub(in crate::vm) reoptimize_share: u8,
@@ -202,11 +207,18 @@ pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
     loops: Loops { threshold: 2, ..MEASURED.loops },
-    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
+    lane_body: LaneBody { warmup_entries: 2, base_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
 };
+
+impl LaneBody {
+    /// The entries before a function's body specializes in this process's mode.
+    pub(in crate::vm) fn warmup(&self) -> u16 {
+        if crate::jit_mode::base_only() { self.base_entries } else { self.warmup_entries }
+    }
+}
 
 /// The base a share in percent is a share of.
 pub(in crate::vm) const PERCENT: u64 = 100;
@@ -215,6 +227,7 @@ const MEASURED: Tiers = Tiers {
     loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8, region_entry_work: 3 },
     lane_body: LaneBody {
         warmup_entries: 400,
+        base_entries: 8,
         reoptimize_share: 1,
         retire_after_runs: 1000,
         retire_share: 10,
@@ -294,7 +307,7 @@ mod tests {
     #[test]
     fn the_tier_table_is_consistent() {
         let lane = &TIERS.lane_body;
-        assert!(lane.warmup_entries > 0);
+        assert!(lane.warmup_entries > 0 && lane.base_entries > 0 && lane.base_entries <= lane.warmup_entries);
         // The warm-up doubles per dropped body, at most seven times, and must not overflow.
         assert!(u32::from(lane.warmup_entries) << 7 <= u32::from(u16::MAX));
         // The reoptimization threshold doubles per recompile and must not overflow its counter.

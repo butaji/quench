@@ -52,6 +52,8 @@ const MAX_REGION_FIELDS: usize = 16;
 const MAX_REGION_FIELD_STORES: usize = 16;
 pub(crate) use crate::vm::js_compiled::MAX_CODE_BYTES;
 
+#[path = "osr_loop/function.rs"]
+mod function;
 #[path = "osr_loop/iteration.rs"]
 mod iteration;
 #[path = "osr_loop/receivers.rs"]

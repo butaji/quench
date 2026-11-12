@@ -57,6 +57,14 @@ pub(super) fn operand(homes: &Homes, source: Option<Source>) -> (Place, u64) {
     }
 }
 
+/// A row that leaves the function at `pc`, or completes the activation with the register slot
+/// at byte offset `returns`.
+#[derive(Clone, Copy)]
+pub(super) struct Stop {
+    pub(super) pc: u32,
+    pub(super) returns: Option<u64>,
+}
+
 /// A row placed in the program: its stencil, hole values and branch target.
 pub(super) struct Planned {
     pub(super) stencil: &'static Stencil,
@@ -68,11 +76,13 @@ pub(super) struct Planned {
     /// frame slots only; these move its operands and result between the slot and a pinned register).
     pub(super) pre: Vec<Planned>,
     pub(super) post: Vec<Planned>,
+    /// Set for a row that leaves the function (a whole function's `End`): it jumps to a stub.
+    pub(super) stop: Option<Stop>,
 }
 
 impl Planned {
-    fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
-        Self { stencil, holes, target, exit_pc, pre: Vec::new(), post: Vec::new() }
+    pub(super) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
+        Self { stencil, holes, target, exit_pc, pre: Vec::new(), post: Vec::new(), stop: None }
     }
 }
 
@@ -92,7 +102,8 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
     Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
 }
 
-pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Planned, String> {
+/// The row of `decoded` at `pc`; a backward jump takes the row `poll` names.
+pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool, poll: Kind) -> Result<Planned, String> {
     let (a, a_hole) = operand(homes, decoded.a);
     let (b, b_hole) = operand(homes, decoded.b);
     let (dst, dst_hole) = operand(homes, decoded.dst.map(Source::Register));
@@ -104,7 +115,7 @@ pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> 
         return heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
     }
     let polls = decoded.target.is_some_and(|target| target <= pc) && decoded.kind == Kind::Jump;
-    let kind = if polls { Kind::JumpPoll } else { decoded.kind };
+    let kind = if polls { poll } else { decoded.kind };
     let stencil = numeric::stencil(numeric::Row { kind, dst, a, b, speculate: !general })?;
     let interrupt = std::mem::offset_of!(super::super::CallContext, interrupt) as u64;
     let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || matches!(dst, Place::Pin(_) | Place::PinF(_) | Place::MemInt);
