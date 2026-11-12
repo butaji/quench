@@ -320,3 +320,58 @@ print(o.join('|'));
 fn set_trap_results_through_returned_calls_match_node() {
     assert_eq!(printed(CHAINED_SET_SOURCE, "set3.js"), ["TypeError:'set' on proxy: trap returned falsish,TypeError:'set' on proxy: trap returned falsish,TypeError:'set' on proxy: trap returned falsish,TypeError:'set' on proxy: trap returned falsish|0,1,2|ok,ok,ok,ok|0,1,2|TypeError:'set' on proxy: trap returned falsish,TypeError:'set' on proxy: trap returned falsish,TypeError:'set' on proxy: trap returned falsish,TypeError:'set' on proxy: trap returned falsish|0,1,2|ok,ok,ok,ok|0,1,2|ok,TypeError:'set' on proxy: trap returned falsish,ok,TypeError:'set' on proxy: trap returned falsish|0,1,2|TypeError,TypeError,TypeError|'set' on proxy: trap returned falsish for property 'someName'|E,E,E"]);
 }
+
+/// The source `array_proxy_traps_keep_length_and_element_invariants_match_node` runs.
+const ARRAY_PROXY_SOURCE: &str = r#"
+const o = [];
+const log = [];
+const h = { get(t, k, r) { log.push(String(k)); return Reflect.get(t, k, r); }, set(t, k, v, r) { return Reflect.set(t, k, v, r); } };
+const pa = new Proxy([1, 2, 3], h);
+function reads(p, n) { let s = 0; for (let i = 0; i < n; i++) s += p.length + p[0] + p[1] + (p[7] === undefined ? 1 : 0); return s; }
+o.push(reads(pa, 10), log.length);
+function sets(p, n) { 'use strict'; for (let i = 0; i < n; i++) { p.length = 3; p[0] = i; p[5] = i; } return JSON.stringify(p) + p.length; }
+o.push(sets(pa, 4));
+// frozen array: trap lying about length / elements
+const frozen = Object.freeze([1, 2, 3]);
+const lie = new Proxy(frozen, { get(t, k, r) { return k === 'length' ? 99 : k === '0' ? 100 : Reflect.get(t, k, r); } });
+function lieLen(n) { try { for (let i = 0; i < n; i++) lie.length; } catch (e) { return e.constructor.name; } return 'none'; }
+function lieIdx(n) { try { for (let i = 0; i < n; i++) lie[0]; } catch (e) { return e.constructor.name; } return 'none'; }
+function lieOk(n) { try { for (let i = 0; i < n; i++) lie[1]; } catch (e) { return e.constructor.name; } return 'none'; }
+o.push(lieLen(5), lieIdx(5), lieOk(5));
+// non-writable length
+const ro = [1, 2]; Object.defineProperty(ro, 'length', { writable: false });
+const lie2 = new Proxy(ro, { get(t, k, r) { return k === 'length' ? 5 : Reflect.get(t, k, r); } });
+function lieRo(n) { try { for (let i = 0; i < n; i++) lie2.length; } catch (e) { return e.constructor.name; } return 'none'; }
+o.push(lieRo(5));
+// defined non-configurable element
+const ne = [1, 2]; Object.defineProperty(ne, 0, { value: 9, configurable: false, writable: false });
+const lie3 = new Proxy(ne, { get(t, k, r) { return k === '0' ? 5 : Reflect.get(t, k, r); }, set() { return true; } });
+function lieNe(n) { try { for (let i = 0; i < n; i++) lie3[0]; } catch (e) { return e.constructor.name; } return 'none'; }
+function setNe(n) { 'use strict'; try { for (let i = 0; i < n; i++) lie3[0] = 5; } catch (e) { return e.constructor.name; } return 'none'; }
+o.push(lieNe(5), setNe(5));
+// frozen array set trap returning true for a changed value
+const frz = new Proxy(Object.freeze([1]), { set() { return true; } });
+function setFrz(n) { 'use strict'; try { for (let i = 0; i < n; i++) frz.length = 5; } catch (e) { return e.constructor.name; } return 'none'; }
+function setFrz2(n) { 'use strict'; try { for (let i = 0; i < n; i++) frz[0] = 5; } catch (e) { return e.constructor.name; } return 'none'; }
+o.push(setFrz(5), setFrz2(5));
+// array with expando, holes, index beyond, sloppy arguments object target
+const ex = [1, , 3]; ex.tag = 'x';
+const pe = new Proxy(ex, { get(t, k, r) { return Reflect.get(t, k, r); } });
+function exr(n) { let r; for (let i = 0; i < n; i++) r = [pe.tag, pe[1], pe[2], pe.length].join(); return r; }
+o.push(exr(5));
+function args() { return new Proxy(arguments, { get(t, k, r) { return Reflect.get(t, k, r); } }); }
+const pg = args(1, 2, 3);
+function rg(n) { let r; for (let i = 0; i < n; i++) r = pg.length + ':' + pg[1]; return r; }
+o.push(rg(5));
+// push/pop/sort/splice/indexOf through a proxy of an array (the Vue pattern)
+const arr = new Proxy([3, 1, 2], { get(t, k, r) { return Reflect.get(t, k, r); }, set(t, k, v, r) { return Reflect.set(t, k, v, r); } });
+function ops(n) { for (let i = 0; i < n; i++) { arr.push(i); arr.pop(); } arr.sort(); arr.splice(1, 1); return arr.join() + ':' + arr.indexOf(3) + ':' + arr.length; }
+o.push(ops(10));
+print(o.join('|'));
+"#;
+
+/// A proxied array's `length` and elements read and store through the lane's trap activations unless the target constrains them: frozen arrays, a read-only `length`, a non-configurable element, expandos, holes, arguments objects, and the Vue-style array operations behave as in Node.
+#[test]
+fn array_proxy_traps_keep_length_and_element_invariants_match_node() {
+    assert_eq!(printed(ARRAY_PROXY_SOURCE, "arr1.js"), ["70|40|[3,2,3,null,null,3]6|TypeError|TypeError|none|TypeError|TypeError|TypeError|TypeError|TypeError|x,,3,3|3:2|1,3:1:2"]);
+}

@@ -185,6 +185,16 @@ impl<H: Host> Vm<H> {
     /// shape lookup excludes) or a collection. `false` for an index key, an arguments
     /// object, a dictionary-shaped target or any other exotic one.
     pub(in crate::vm) fn shape_leaves_atom_unconstrained(&self, target: Value, atom: Atom) -> bool {
+        if let Some(array) = self.heap.array(target).and_then(|_| self.object_data(target)).filter(|array| !array.is_arguments_object()) {
+            // An array's `length` is non-configurable and writable unless a descriptor says
+            // otherwise; its elements are configurable unless a descriptor was recorded.
+            if atom == self.length_atom {
+                return !array.has_length_descriptor();
+            }
+            if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) {
+                return array.is_extensible() && !array.has_indexed_descriptors();
+            }
+        }
         if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) || !self.shape_names_own_keys(target) {
             return false;
         }
