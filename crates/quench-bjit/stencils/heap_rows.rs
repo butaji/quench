@@ -30,14 +30,14 @@ macro_rules! need {
 }
 
 #[inline(always)]
-fn word_at(base: usize, offset: usize) -> u64 {
+pub(crate) fn word_at(base: usize, offset: usize) -> u64 {
     // SAFETY: a layout offset of a live record, as every staged load.
     unsafe { ((base + offset) as *const u64).read() }
 }
 
 /// The activation's dispatch payload: the context's adapter pointer.
 #[inline(always)]
-fn payload(s: &S) -> usize {
+pub(crate) fn payload(s: &S) -> usize {
     word_at(s.ctx, CALL_CONTEXT_ADAPTER_PAYLOAD) as usize
 }
 

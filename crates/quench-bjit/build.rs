@@ -1,8 +1,10 @@
 //! Compiles `stencils/rows.rs` (and the Number rows `stencils/library.rs` lists, generated into
 //! `OUT_DIR/instances.rs`) with the toolchain's own rustc into an object, reads its functions and
 //! relocations with a minimal ELF64 reader, and writes them as static tables
-//! (`OUT_DIR/rustc_stencils.rs`). A row that contains a `call` or a `ret` is a build error:
-//! rows chain by `become` only, and only the `leave_*` rows return.
+//! (`OUT_DIR/rustc_stencils.rs`). A row that contains a `ret` is a build error: rows chain by
+//! `become` only, and only the `leave_*` rows return. A relocated `call` is a build error; the
+//! one call a row may make is `call reg` through an address `movabs`-loaded from a value hole,
+//! and only in rows named `call_*` (`check_call`).
 #[path = "stencils/library.rs"]
 mod library;
 
@@ -52,6 +54,14 @@ const EXIT_BASE: u32 = 2;
 const ABS32: u8 = 0;
 const SUCCESSOR: u8 = 1;
 const ABS64: u8 = 2;
+/// The rows that may make a call (`stencils/call_rows.rs`).
+const CALL_ROW_PREFIX: &str = "call_";
+/// `movabs r64, imm64`: REX.W (REX.B for r8-r15) then `B8 + register`; the immediate follows.
+const MOVABS_REX: [u8; 2] = [0x48, 0x49];
+const MOVABS_OPCODES: std::ops::RangeInclusive<u8> = 0xb8..=0xbf;
+/// `call r64`: `FF /2` with a register operand (REX.B first for r8-r15).
+const CALL_REG_OPCODE: u8 = 0xff;
+const CALL_REG_MODRM: std::ops::RangeInclusive<u8> = 0xd0..=0xd7;
 
 struct Section {
     kind: u32,
@@ -122,12 +132,26 @@ fn check_transfer(row: &str, code: &[u8], at: usize) {
     assert!(jmp || jcc || call, "stencil {row}: relocation at {at} is not a jmp or jcc (a `call`?)");
 }
 
+/// A 64-bit hole is always a `movabs` immediate, the one form the stitcher's absolute patch fits.
+fn check_movabs(row: &str, code: &[u8], at: usize) {
+    let before = &code[..at];
+    let movabs = matches!(before, [.., rex, opcode] if MOVABS_REX.contains(rex) && MOVABS_OPCODES.contains(opcode));
+    assert!(movabs, "stencil {row}: the 64-bit hole at {at} is not a movabs immediate");
+}
+
+/// A `call_*` row calls through a register (`call r64`) and no other way; any other row has no
+/// call, which a relocation against a non-hole symbol would already have failed.
+fn check_call(row: &str, code: &[u8]) {
+    let calls = code.windows(2).any(|pair| pair[0] == CALL_REG_OPCODE && CALL_REG_MODRM.contains(&pair[1]));
+    assert!(calls || !row.starts_with(CALL_ROW_PREFIX), "stencil {row}: a call row with no `call reg`");
+}
+
 /// Every file whose change must recompile the stencils: the stencil sources and the runtime's
 /// staged rows they include, and nothing else.
-const SOURCES: [&str; 10] = [
+const SOURCES: [&str; 12] = [
     "stencils", "../quench-runtime/src/staged/stage.rs", "../quench-runtime/src/staged/value.rs",
     "../quench-runtime/src/staged/object.rs", "../quench-runtime/src/staged/elements.rs",
-    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "../quench-runtime/src/staged/frame.rs", "build.rs", "src/numeric.rs",
+    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "../quench-runtime/src/staged/frame.rs", "../quench-runtime/src/staged/call.rs", "build.rs", "src/numeric.rs", "src/call_record.rs",
 ];
 
 fn main() {
@@ -171,6 +195,7 @@ fn stencil_table(data: &[u8]) -> String {
         let code = &data[section_data.offset..section_data.offset + section_data.size];
         let returns = name.starts_with("leave_") || name.starts_with("entry_");
         assert!(returns || !ends_with_ret(code), "stencil {name} ends with `ret`");
+        check_call(name, code);
         let relocs = relocations(&elf, &symbols, data, name, *section, code);
         rows.push((name.clone(), format!("    RawStencil {{ name: {name:?}, code: &{code:?}, relocs: &{relocs:?} }},\n")));
     }
@@ -188,8 +213,10 @@ fn relocations(elf: &Elf, symbols: &[(String, usize, usize, u8)], data: &[u8], n
             let (offset, info, addend) = (u64_at(data, at) as usize, u64_at(data, at + RELA_INFO), u64_at(data, at + RELA_ADDEND) as i64);
             let (symbol, kind) = (&symbols[(info >> SYMBOL_INDEX_SHIFT) as usize].0, (info & RELOC_KIND_MASK) as u32);
             let (class, index) = hole_of(name, symbol, kind);
-            if class == SUCCESSOR {
-                check_transfer(name, code, offset);
+            match class {
+                SUCCESSOR => check_transfer(name, code, offset),
+                ABS64 => check_movabs(name, code, offset),
+                _ => {}
             }
             relocs.push((u16::try_from(offset).expect("a stencil under 64 KiB"), class, u8::try_from(index).expect("a small hole index"), i32::try_from(addend).expect("a small addend")));
         }

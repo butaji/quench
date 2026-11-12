@@ -21,6 +21,9 @@ use quench_bjit::{PINNED, PINNED_F, Row as Placed, Stencil};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+// The call planner: consumed by the whole-function b-jit planner, which names its chains.
+#[allow(dead_code)]
+mod call_plan;
 mod decode;
 mod link;
 mod plan;
