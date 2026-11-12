@@ -126,8 +126,8 @@ mod fault_handler;
 pub use fault_handler::NativeFaultHandler;
 pub(super) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
-    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion,
-    Observation, RegionAnalysisFailure, RegionRejection, Widening,
+    ArrayUse, CalleeRead, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome,
+    LoopRegion, Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
 
 pub(super) use crate::staged::Domain as NumberRelationDomain;
@@ -6263,7 +6263,7 @@ pub(super) fn analyze_inlining_osr_region<'a>(
     live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse], osr_loop::CalleeRead) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
     osr_loop::inline_region(function, decoded, constants, sites, live, header, backedge, resolve)
 }

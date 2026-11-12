@@ -193,3 +193,43 @@ fn osr_by_name_calls_load_their_callee_and_receiver() {
         }
     }
 }
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn osr_inlines_global_name_calls() {
+    // `addOne` is a global binding: the loop reads it by name, and the callee's body (no
+    // `this`) runs in place, so the region no longer leaves at the call each iteration.
+    let source = r#"
+      globalThis.addOne = function (x) { return x + 1; };
+      function loop(n) {
+        let s = 0;
+        for (let i = 0; i < n; i++) { s = addOne(s); }
+        return s;
+      }
+      for (let k = 0; k < 400; k++) loop(40);
+      print(loop(5) + " " + loop(0));
+    "#;
+    let program = Engine::specialize(source, "osr-inline-name-call.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "loop")
+    }).unwrap();
+    for compiled in [false, true] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if compiled {
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            vm.programs.enable_js_jit_diagnostics();
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["5 0"]);
+        if compiled {
+            let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+            let diagnostics = views.get(function_id).and_then(super::program_store::derived_lane_view)
+                .unwrap().osr_diagnostics();
+            assert!(diagnostics.native_region_runs > 0, "the by-name call loop must run natively: {diagnostics:?}");
+            // Inlined: a run no longer leaves at the call, so the loop's iterations stay
+            // natively in one run.
+            assert_eq!(diagnostics.exits, 0, "the inlined call must not leave per iteration: {diagnostics:?}");
+        }
+    }
+}

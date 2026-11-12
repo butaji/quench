@@ -18,6 +18,33 @@ pub(super) fn lane_entry_captures<H: Host>(
     Some(())
 }
 
+/// The callee a call's read resolves now: a depth-0 capture, a global binding, or the last of
+/// the field chain's values.
+pub(super) fn lane_callee_read<H: Host>(
+    cx: *mut LaneContext<H>,
+    source: super::compiled::CalleeRead,
+    last: impl FnOnce() -> Option<Value>,
+) -> Option<Value> {
+    match source {
+        super::compiled::CalleeRead::Capture(slot) => lane_capture_value(cx, 0, slot),
+        super::compiled::CalleeRead::Global { atom, site } => lane_entry_global::<H>(cx, atom, site),
+        super::compiled::CalleeRead::Chain => last(),
+    }
+}
+
+/// The binding an inlined frame's guard reads now, or `None` for a guard that checks none
+/// (`Field`, `AtRead`).
+pub(super) fn lane_inlined_callee<H: Host>(
+    cx: *mut LaneContext<H>,
+    frame: &super::compiled::InlineFrame,
+) -> Option<Option<Value>> {
+    Some(match frame.guard {
+        super::compiled::InlineGuard::Capture(slot) => Some(lane_capture_value(cx, 0, slot)?),
+        super::compiled::InlineGuard::Global { atom, site, .. } => Some(lane_entry_global::<H>(cx, atom, site)?),
+        _ => None,
+    })
+}
+
 /// One entry capture (`lane_entry_captures`), by `region.capture_globals` and its slot.
 fn lane_entry_capture<H: Host>(
     cx: *mut LaneContext<H>,

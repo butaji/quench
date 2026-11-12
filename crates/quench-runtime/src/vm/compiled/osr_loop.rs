@@ -711,8 +711,8 @@ fn tagged_registers_with_failure(
                         return Err(offset);
                     }
                 }
-                // Entry captures and cached fields can carry arbitrary boxed values.
-                Class::LoadCapture | Class::GetField | Class::GetIndex => {}
+                // Captures (a by-name call's callee too) and cached fields carry any value.
+                Class::LoadCapture | Class::LoadNameCall | Class::GetField | Class::GetIndex => {}
                 Class::Binary if number_comparison(instruction).is_some() => {}
                 // The type-name index is still a boxed Number at bytecode level. Its
                 // lowering reads only immediate tags and exits before the operation for
@@ -750,6 +750,9 @@ pub(crate) enum InlineGuard {
     AtRead(u32),
     /// A depth-zero plain capture, checked by the VM at every native entry.
     Capture(u16),
+    /// A by-name call's global binding: the entry capture holds it, and native code compares
+    /// the read's value with the callee at `read`, leaving for the lane where it differs.
+    Global { atom: crate::bytecode::Atom, site: u16, read: u32 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -806,6 +809,15 @@ pub(crate) const THIS_CAPTURE: u16 = CALLEE_CAPTURE - 1;
 /// The exit PC native code reports for an inlined callee's instruction: its region PC with
 /// this bit, which no function PC has (`MAX_REGION_INSTRUCTIONS`).
 pub(crate) const INLINED_EXIT: u32 = 1 << 31;
+
+/// How a call's callee is read: the last of a field chain, a depth-zero capture, or a global
+/// binding's entry capture (`atom` at its cache `site`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CalleeRead {
+    Chain,
+    Capture(u16),
+    Global { atom: crate::bytecode::Atom, site: u16 },
+}
 
 /// What `inline_region` needs of a call's callee.
 pub(crate) struct InlineCallee<'a> {
@@ -921,7 +933,7 @@ pub(super) fn inline_region<'a>(
     live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse], CalleeRead) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
     let (start, end) = (header as usize, backedge as usize);
     (start <= end && end < decoded.len()).then_some(())?;
@@ -982,16 +994,18 @@ pub(super) fn inline_region<'a>(
         let read_offset = (0..offset).rev().find(|index| caller[*index].defined_register() == Some(function_register))?;
         let read = header + read_offset as u32;
         let definition = caller[read_offset];
-        let capture = (definition.op().is_load_capture()
+        // A by-name call's read stays in the region: it defines the callee and the receiver.
+        let global = name_calls::global_call(definition, &globals);
+        let capture = (global.is_none() && definition.op().is_load_capture()
             && definition.capture_depth() == 0 && definition.result_flags() == 0)
             .then(|| definition.capture_slot());
-        let mut callee_path = if capture.is_some() { None } else {
+        let mut callee_path = if capture.is_some() || global.is_some() { None } else {
             Some(field_path(definition, sites, &std::collections::BTreeMap::new())?)
         };
         // A receiver the region writes is the call's own: the callee is re-read through it,
         // or guarded at the read (`calls::reroot_receiver`).
         let (mut receiver, mut resume_offset) = (receiver, read_offset);
-        let checked = calls::reroot_receiver(caller, pc, offset, read_offset, receiver, sites, &|atom| caller_stored.contains(&atom), callee_path.as_ref(), captured.get(&receiver), &defines, &mask)?
+        let checked = global.is_some() || calls::reroot_receiver(caller, pc, offset, read_offset, receiver, sites, &|atom| caller_stored.contains(&atom), callee_path.as_ref(), captured.get(&receiver), &defines, &mask)?
             .apply(&mut callee_path, &mut receiver, &mut resume_offset, |own| {
                 let fresh = Register::try_from(total).ok()?;
                 total += 1;
@@ -1013,26 +1027,23 @@ pub(super) fn inline_region<'a>(
         // The callee as the read finds it now.
         let mut chain = Vec::new();
         if let Some(path) = &callee_path { intern_field(&mut chain, path, true); }
-        let callee = resolve(&chain, capture)?;
+        let callee = resolve(&chain, name_calls::callee_read(global, capture))?;
         (callee.params == argc && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
         let reached = crate::bytecode::reachable_from(&callee.instructions, [0]);
-        let body = || callee.instructions.iter().copied().enumerate().filter(|(pc, _)| reached.contains(*pc)).map(|(_, instruction)| instruction);
-        body().all(|instruction| inlinable(instruction.op()) && (instruction.result_flags() == 0 || inlined_returning(instruction) || inlined_set_this(instruction, sites).is_some())).then_some(())?;
-        // A captured call may bind undefined to the global receiver. Keep this slice
-        // receiver-independent; recovery still performs the ordinary binding below.
-        if capture.is_some() {
-            body().all(|instruction| !instruction.op().is_get_field()
-                || field_base(instruction, sites) != Some(FieldBase::THIS)).then_some(())?;
-        }
+        let body: Vec<WideInstruction> = callee.instructions.iter().copied().enumerate()
+            .filter(|(pc, _)| reached.contains(*pc)).map(|(_, instruction)| instruction).collect();
+        // A callee read by capture or by name binds no meaningful receiver, so its body may
+        // not touch `this`; recovery still performs the ordinary binding below.
+        name_calls::admits_body(&body, sites, capture.is_some() || global.is_some())?;
         // A parameter read as an object is bound to the caller register its argument was
         // moved from in the setup, which the region never writes; any other is a Number it
         // copies.
         let mut bound = [None; MAX_INLINE_PARAMS];
         for parameter in 0..argc {
-            if !body().any(|instruction| object_reads(instruction) == Some(parameter)) {
+            if !body.iter().any(|instruction| object_reads(*instruction) == Some(parameter)) {
                 continue;
             }
-            body().all(|instruction| instruction.defined_register() != Some(parameter)).then_some(())?;
+            body.iter().all(|instruction| instruction.defined_register() != Some(parameter)).then_some(())?;
             let argument = window + parameter;
             let moved = (read_offset + 1..offset).rev().find(|index| caller[*index].defined_register() == Some(argument))?;
             (caller[moved].op().is_move() && !defines(caller[moved].register_b())).then_some(())?;
@@ -1268,7 +1279,8 @@ pub(super) fn inline_region<'a>(
     for (call_pc, site) in calls.into_iter() {
         let mut frame = site.frame;
         if let Some(read) = checked_reads.get(&call_pc) {
-            frame.guard = InlineGuard::AtRead(caller_flat[(*read - header) as usize] - header);
+            frame.guard = name_calls::read_guard(caller[(*read - header) as usize], &globals,
+                caller_flat[(*read - header) as usize] - header);
             frames.push(frame);
             continue;
         }
@@ -2616,8 +2628,8 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
 /// The value register an instruction defines, numeric or tagged.
 fn number_definition(instruction: WideInstruction) -> Option<Register> {
     use Op::*;
-    matches!(instruction.op(), LoadConst | Move | LoadCapture | Binary | NumericAdd | NumericMultiply | IncDec
-        | Unary | ToNumeric | GetIndex | GetField | LoadEnvLocal)
+    matches!(instruction.op(), LoadConst | Move | LoadCapture | LoadNameCall | Binary | NumericAdd | NumericMultiply
+        | IncDec | Unary | ToNumeric | GetIndex | GetField | LoadEnvLocal)
     .then(|| instruction.result_register())
 }
 
@@ -3068,7 +3080,9 @@ pub(super) fn verify_region<'a>(
     }
     let values = values.into_iter().enumerate().map(|(definition, fact)| {
         if fact.ty == Type::NEVER { Ok(None) }
-        else { fact.verified().map(Some).ok_or(TypeError::InvalidRepresentation { definition }) }
+        else {
+            fact.verified().map(Some).ok_or(TypeError::InvalidRepresentation { definition })
+        }
     }).collect::<Result<_, _>>()?;
     let verify_inputs = |facts: Vec<ValueFact>, kind| facts.into_iter().enumerate().map(|(index, fact)|
         fact.verified().ok_or(TypeError::InvalidInputFact { kind, index })).collect::<Result<Vec<_>, _>>();

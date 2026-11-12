@@ -8428,8 +8428,8 @@ fn lane_inlined_target<H: Host>(
     receiver: Value,
     frame: &super::compiled::InlineFrame,
 ) -> Option<*const ScriptCallTarget> {
-    if let super::compiled::InlineGuard::Capture(slot) = frame.guard {
-        (lane_capture_value(cx, 0, slot)? == frame.callee).then_some(())?;
+    if lane_entry::lane_inlined_callee::<H>(cx, frame)?.is_some_and(|bound| bound != frame.callee) {
+        return None;
     }
     let vm = unsafe { vm(cx) };
     let target_pointer = vm.script_call_entry(frame.callee)?;
@@ -8441,7 +8441,8 @@ fn lane_inlined_target<H: Host>(
         && !vm.with_scope_entered
         && lane_activation_room(vm, target)
         && lane_call_this(vm, target, receiver).is_some_and(|bound| {
-            bound == receiver || matches!(frame.guard, super::compiled::InlineGuard::Capture(_))
+            bound == receiver || matches!(frame.guard,
+                super::compiled::InlineGuard::Capture(_) | super::compiled::InlineGuard::Global { .. })
         }))
     .then_some(target_pointer)
 }
@@ -8483,16 +8484,13 @@ fn lane_inlining_region<H: Host>(
     let constants = machine.programs.constants(program).to_vec();
     // The callee is the last of the fields its read reads through, each read from the
     // registers and the fields before it as they are now.
-    let mut resolve = |chain: &[super::compiled::FieldUse], capture: Option<u16>| -> Option<super::compiled::InlineCallee<'_>> {
+    let mut resolve = |chain: &[super::compiled::FieldUse], source: super::compiled::CalleeRead| -> Option<super::compiled::InlineCallee<'_>> {
         let mut values = Vec::with_capacity(chain.len());
         for field in chain {
             let value = lane_region_field(cx, r, field, |index| values[index])?;
             values.push(value);
         }
-        let callee = match capture {
-            Some(slot) => lane_capture_value(cx, 0, slot)?,
-            None => *values.last()?,
-        };
+        let callee = lane_entry::lane_callee_read::<H>(cx, source, || values.last().copied())?;
         let vm = unsafe { vm(cx) };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
         let target = unsafe { &*vm.script_call_entry(callee)? };
@@ -8506,7 +8504,7 @@ fn lane_inlining_region<H: Host>(
             live: code.register_root_masks(target.function)?,
         })
     };
-    super::compiled::analyze_inlining_osr_region(
+    let inlined = super::compiled::analyze_inlining_osr_region(
         function,
         &decoded,
         &constants,
@@ -8515,7 +8513,8 @@ fn lane_inlining_region<H: Host>(
         site.header,
         site.backedge,
         &mut resolve,
-    )
+    );
+    inlined
 }
 
 /// The record native code leaving at the inlined instruction `callee_pc` of `frame` (exit
