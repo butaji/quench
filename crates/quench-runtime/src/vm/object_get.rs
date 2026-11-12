@@ -232,39 +232,10 @@ impl<H: Host> Vm<H> {
                     self.heap.root_value(receiver).unwrap(),
                 ],
             )?;
-            if !self.truthy(result) {
-                if strict {
-                    let key = self.heap.root_value(key).unwrap();
-                    return Err(self.proxy_set_refused_error(p, key));
-                }
-                return Ok(false);
-            }
-            let descriptor = self.own_property_descriptor_record(
-                p,
-                self.heap.root_value(target).unwrap(),
-                self.heap.root_value(key).unwrap(),
-            )?;
-            if let Some(descriptor) = descriptor
-                && descriptor.configurable != Some(true)
-            {
-                let is_data = descriptor.has_data_fields();
-                if is_data
-                    && descriptor.writable != Some(true)
-                    && descriptor.value.is_some_and(|target_value| {
-                        !self.same_value(self.heap.root_value(value).unwrap(), target_value)
-                    })
-                {
-                    return Err(self
-                        .type_error(p, "proxy set trap changed a frozen target property".into()));
-                }
-                if !is_data && descriptor.setter.is_none_or(Value::is_undefined) {
-                    return Err(self.type_error(
-                        p,
-                        "proxy set trap accepted a property without a setter".into(),
-                    ));
-                }
-            }
-            Ok(true)
+            let (target, key, value) = (self.heap.root_value(target).unwrap(), self.heap.root_value(key).unwrap(), self.heap.root_value(value).unwrap());
+            let accepted = self.truthy(result);
+            self.validate_proxy_store(p, target, key, value, strict, result)?;
+            Ok(accepted)
         })();
         for root in [target, handler, receiver, key, value] {
             self.heap.release_root(root);

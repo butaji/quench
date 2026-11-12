@@ -32,6 +32,38 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Whether the `set` trap's `result` for the store of `value` to the property `key` of
+    /// `target` stands (ECMA-262 10.5.9 steps 9 to 14): a falsish result is the store's
+    /// `TypeError` only where `strict`; a truthy one must not contradict a non-configurable
+    /// own property of the target. Run after the trap, which may have changed the target.
+    pub(in crate::vm) fn validate_proxy_store(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: Value,
+        value: Value,
+        strict: bool,
+        result: Value,
+    ) -> Result<(), JsError> {
+        if !self.truthy(result) {
+            return if strict { Err(self.proxy_set_refused_error(p, key)) } else { Ok(()) };
+        }
+        let Some(descriptor) = self.own_property_descriptor_record(p, target, key)? else {
+            return Ok(());
+        };
+        if descriptor.configurable == Some(true) {
+            return Ok(());
+        }
+        let is_data = descriptor.has_data_fields();
+        if is_data && descriptor.writable != Some(true) && descriptor.value.is_some_and(|held| !self.same_value(value, held)) {
+            return Err(self.type_error(p, "proxy set trap changed a frozen target property".into()));
+        }
+        if !is_data && descriptor.setter.is_none_or(Value::is_undefined) {
+            return Err(self.type_error(p, "proxy set trap accepted a property without a setter".into()));
+        }
+        Ok(())
+    }
+
     /// The `TypeError` of a strict store of the property `key` whose `set` trap returned a
     /// falsish value.
     pub(in crate::vm) fn proxy_set_refused_error(&mut self, p: &ResidualProgram, key: Value) -> JsError {

@@ -1,4 +1,5 @@
 use super::*;
+use super::array_view::{Match, Search};
 
 /// Where `Vm::array_species_is_array_create` found `Array.prototype.constructor` for an array
 /// of `shape`, which has no own `constructor`, under `epoch`. A change to the prototype's layout

@@ -121,7 +121,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn validate_proxy_get(
+    pub(in crate::vm) fn validate_proxy_get(
         &mut self,
         p: &ResidualProgram,
         target: Value,

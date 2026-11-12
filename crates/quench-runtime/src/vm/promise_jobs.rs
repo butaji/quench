@@ -210,12 +210,8 @@ impl<H: Host> Vm<H> {
                     record.remaining += 1;
                     index
                 };
-                let resolved = match self.aggregate_element_resolve(
-                    p,
-                    self.heap.root_value(promise_resolve_root).unwrap(),
-                    self.heap.root_value(constructor_root).unwrap(),
-                    value,
-                ) {
+                let (resolve, constructor) = (self.heap.root_value(promise_resolve_root).unwrap(), self.heap.root_value(constructor_root).unwrap());
+                let resolved = match self.aggregate_element_resolve(p, resolve, constructor, value) {
                     Ok(value) => value,
                     Err(error) => {
                         self.reject_aggregate_input_completion(

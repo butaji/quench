@@ -1,4 +1,5 @@
 use super::*;
+use super::array_view::{Match, Search};
 
 impl<H: Host> Vm<H> {
     pub(super) fn array_indexed_native(

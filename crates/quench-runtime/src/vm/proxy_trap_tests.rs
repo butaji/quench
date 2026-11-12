@@ -375,3 +375,45 @@ print(o.join('|'));
 fn array_proxy_traps_keep_length_and_element_invariants_match_node() {
     assert_eq!(printed(ARRAY_PROXY_SOURCE, "arr1.js"), ["70|40|[3,2,3,null,null,3]6|TypeError|TypeError|none|TypeError|TypeError|TypeError|TypeError|TypeError|x,,3,3|3:2|1,3:1:2"]);
 }
+
+/// The accesses `proxy_trap_results_meet_the_targets_invariants` runs: each trap changes its
+/// target, once the access is hot, in a way that constrains the very key it serves.
+const INVARIANT_SOURCE: &str = r#"
+const o = [];
+const mods = {
+  readonly: (t, k) => Object.defineProperty(t, k, { value: 1, writable: false, configurable: false }),
+  getterless: (t, k) => Object.defineProperty(t, k, { set: undefined, get: undefined, configurable: false }),
+  freeze: (t, k) => { Object.defineProperty(t, k, { value: 5, configurable: true, writable: true }); Object.freeze(t); },
+  sealed: (t, k) => Object.defineProperty(t, k, { value: 7, writable: true, configurable: false }),
+  extensions: (t, k) => Object.preventExtensions(t),
+};
+const targets = { plain: () => ({}), array: () => [1, 2, 3], map: () => new Map(), set: () => new Set() };
+function read(p, n) { let r; for (let i = 0; i < n; i++) r = p.x; return r; }
+function store(p, n) { "use strict"; let r; for (let i = 0; i < n; i++) { p.x = 7; r = 1; } return r; }
+function sloppy(p, n) { let r; for (let i = 0; i < n; i++) { p.x = 7; r = 1; } return r; }
+function attempt(op, access, mod, target, result) {
+  let armed = false;
+  const trap = op === "get" ? function (t, k, r) { if (armed) mods[mod](t, k); return result; }
+    : function (t, k, v, r) { if (armed) mods[mod](t, k); return result; };
+  const p = new Proxy(targets[target](), op === "get" ? { get: trap } : { set: trap });
+  try { access(p, 3000); } catch (e) { return "warm:" + e.constructor.name; }
+  armed = true;
+  try { return String(access(p, 1)); } catch (e) { return e.constructor.name; }
+}
+for (const target of Object.keys(targets)) for (const mod of Object.keys(mods)) {
+  o.push([target, mod, "get", attempt("get", read, mod, target, 9), attempt("get", read, mod, target, undefined)].join(":"));
+  o.push([target, mod, "set", attempt("set", store, mod, target, true), attempt("set", sloppy, mod, target, true), attempt("set", store, mod, target, false), attempt("set", sloppy, mod, target, false)].join(":"));
+}
+print(o.join("|"));
+"#;
+
+/// A `get` or `set` trap that itself makes the property non-configurable (read-only, without a
+/// getter or setter, or through `Object.freeze`) on its target before it returns a different
+/// value or a truthy result raises the `TypeError` Node raises, though the target left the key
+/// unconstrained when the trap was called, as it does for a plain object, an array, a `Map` and
+/// a `Set`; one that only prevents extensions, or seals the key and stores the returned value,
+/// does not.
+#[test]
+fn proxy_trap_results_meet_the_targets_invariants() {
+    assert_eq!(printed(INVARIANT_SOURCE, "proxy-invariants.js"), ["plain:readonly:get:TypeError:TypeError|plain:readonly:set:TypeError:TypeError:warm:TypeError:1|plain:getterless:get:TypeError:undefined|plain:getterless:set:TypeError:TypeError:warm:TypeError:1|plain:freeze:get:TypeError:TypeError|plain:freeze:set:TypeError:TypeError:warm:TypeError:1|plain:sealed:get:9:undefined|plain:sealed:set:1:1:warm:TypeError:1|plain:extensions:get:9:undefined|plain:extensions:set:1:1:warm:TypeError:1|array:readonly:get:TypeError:TypeError|array:readonly:set:TypeError:TypeError:warm:TypeError:1|array:getterless:get:TypeError:undefined|array:getterless:set:TypeError:TypeError:warm:TypeError:1|array:freeze:get:TypeError:TypeError|array:freeze:set:TypeError:TypeError:warm:TypeError:1|array:sealed:get:9:undefined|array:sealed:set:1:1:warm:TypeError:1|array:extensions:get:9:undefined|array:extensions:set:1:1:warm:TypeError:1|map:readonly:get:TypeError:TypeError|map:readonly:set:TypeError:TypeError:warm:TypeError:1|map:getterless:get:TypeError:undefined|map:getterless:set:TypeError:TypeError:warm:TypeError:1|map:freeze:get:TypeError:TypeError|map:freeze:set:TypeError:TypeError:warm:TypeError:1|map:sealed:get:9:undefined|map:sealed:set:1:1:warm:TypeError:1|map:extensions:get:9:undefined|map:extensions:set:1:1:warm:TypeError:1|set:readonly:get:TypeError:TypeError|set:readonly:set:TypeError:TypeError:warm:TypeError:1|set:getterless:get:TypeError:undefined|set:getterless:set:TypeError:TypeError:warm:TypeError:1|set:freeze:get:TypeError:TypeError|set:freeze:set:TypeError:TypeError:warm:TypeError:1|set:sealed:get:9:undefined|set:sealed:set:1:1:warm:TypeError:1|set:extensions:get:9:undefined|set:extensions:set:1:1:warm:TypeError:1"]);
+}

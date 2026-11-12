@@ -72,17 +72,18 @@ pub(super) fn completed_value<H: Host>(vm: &Vm<H>, activation: &Activation, comp
     match completion {
         completion if completion.constructs() && !vm.is_object_like(value) => this,
         // SAFETY: the call record belongs to the caller's live view.
-        Completion::Assigns | Completion::AssignsChecked => activation.caller_registers.get(unsafe { (*activation.call).a }),
+        Completion::Assigns | Completion::AssignsTrapped => activation.caller_registers.get(unsafe { (*activation.call).a }),
         _ => value,
     }
 }
 
 /// The frame completion of an activation that neither constructs, settles a promise nor
-/// steps an array: a setter's store keeps yielding the value stored.
-pub(super) fn frame_completion(completion: Option<Completion>) -> CallCompletion {
+/// steps an array: a setter's store keeps yielding the value stored, a proxy trap's access
+/// owes its target's invariants (the next of `traps`).
+pub(super) fn frame_completion(completion: Option<Completion>, traps: &mut impl Iterator<Item = (usize, TrapCheck)>) -> CallCompletion {
     match completion {
         Some(Completion::Assigns) => CallCompletion::Assigned,
-        Some(Completion::AssignsChecked) => CallCompletion::AssignedChecked,
+        Some(Completion::ReadsTrapped | Completion::AssignsTrapped) => CallCompletion::Trapped(traps.next().expect("each trapped activation has its entry").1),
         _ => CallCompletion::Value,
     }
 }
@@ -107,7 +108,7 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn completed_call_value(&self, completion: &CallCompletion, caller: usize, destination: crate::bytecode::Register, value: Value) -> Value {
         match completion {
             CallCompletion::Constructor(this) if !self.is_object_like(value) => *this,
-            CallCompletion::Assigned | CallCompletion::AssignedChecked => self.read(caller, destination),
+            CallCompletion::Assigned | CallCompletion::Trapped(TrapCheck { access: TrapAccess::Store | TrapAccess::StrictStore, .. }) => self.read(caller, destination),
             _ => value,
         }
     }

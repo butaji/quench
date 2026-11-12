@@ -69,11 +69,11 @@ pub(super) fn lane_read_get_trap<H: Host>(
     read: Option<(Value, crate::bytecode::Atom)>,
 ) -> Result<(Registers, Ip), Ip> {
     let vm = unsafe { vm(cx) };
-    let Some((trap, handler, arguments)) = read.and_then(|(base, atom)| get_trap_call(vm, base, atom)) else {
-        return match read {
-            Some((base, atom)) => lane_read_forwarded(cx, r, ip, base, atom),
-            None => Err(exit(ip)),
-        };
+    let Some((base, atom)) = read else {
+        return Err(exit(ip));
+    };
+    let Some((trap, handler, arguments)) = get_trap_call(vm, base, atom) else {
+        return lane_read_forwarded(cx, r, ip, base, atom);
     };
     lane_materialize_running_leaf(cx);
     let Some(target) = lane_script_target(cx, trap).filter(|target| !target.forwards()) else {
@@ -83,16 +83,42 @@ pub(super) fn lane_read_get_trap<H: Host>(
         return Err(exit(ip));
     };
     let passed = ActivationArguments::Kept(arguments.as_ptr(), GET_TRAP_ARGUMENTS);
-    lane_activate_keeping::<H, false>(cx, r, ip, &target, passed, this, false, None)
+    let activated = lane_activate_keeping::<H, false>(cx, r, ip, &target, passed, this, false, None)?;
+    owe_invariants(vm, Completion::ReadsTrapped, TrapCheck { target: arguments[0], atom, access: TrapAccess::Read });
+    Ok(activated)
 }
 
-/// Whether `activation` is a strict store's `set` trap (`Completion::AssignsChecked`) returning
-/// the falsish `value`, a rejected store, which returns from its frame so that its pending
-/// call raises the store's `TypeError` (`CallCompletion::AssignedChecked`).
+/// Records that the trap activation `lane_activate_keeping` just pushed completes as
+/// `completion` says and owes `check` its target's invariants.
+fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, check: TrapCheck) {
+    let depth = vm.lane_stack.activations.len() - 1;
+    if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
+        script.completion = completion;
+    }
+    vm.lane_stack.trap_checks.push((depth, check));
+}
+
+/// Whether `activation` is a trap's (`Completion::ReadsTrapped`, `AssignsTrapped`) whose
+/// result `value` the general path must check: the target's shape no longer leaves the key
+/// unconstrained, which the lane's pre-check found it did before the trap ran, or a strict
+/// store's trap returns a falsish value, which is the store's `TypeError`. It returns from
+/// its frame, so that its pending call checks it (`CallCompletion::Trapped`).
 #[inline(always)]
-pub(super) fn set_trap_refuses<H: Host>(vm: &Vm<H>, activation: Option<&Activation>, value: Value) -> bool {
-    matches!(activation, Some(Activation { kind: ActivationKind::Script(script), .. }) if script.completion == Completion::AssignsChecked)
-        && !vm.truthy(value)
+pub(super) fn trap_result_needs_general_path<H: Host>(vm: &Vm<H>, activation: Option<&Activation>, value: Value) -> bool {
+    let Some(Activation { kind: ActivationKind::Script(script), .. }) = activation else {
+        return false;
+    };
+    if !matches!(script.completion, Completion::ReadsTrapped | Completion::AssignsTrapped) {
+        return false;
+    }
+    let Some((_, check)) = vm.lane_stack.trap_checks.last() else {
+        return false;
+    };
+    match check.access {
+        TrapAccess::StrictStore if !vm.truthy(value) => true,
+        TrapAccess::Store | TrapAccess::StrictStore if !vm.truthy(value) => false,
+        _ => !vm.shape_leaves_atom_unconstrained(check.target, check.atom),
+    }
 }
 
 /// The `set` trap's call for a store of `value` to the name `atom` of the proxy `object`, as
@@ -154,9 +180,8 @@ pub(super) fn lane_store_set_trap<H: Host>(
     let passed = ActivationArguments::Kept(arguments.as_ptr(), SET_TRAP_ARGUMENTS);
     Some(match lane_activate_keeping::<H, false>(cx, r, ip, &target, passed, this, false, None) {
         Ok((registers, next)) => {
-            if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
-                script.completion = if strict { Completion::AssignsChecked } else { Completion::Assigns };
-            }
+            let access = if strict { TrapAccess::StrictStore } else { TrapAccess::Store };
+            owe_invariants(vm, Completion::AssignsTrapped, TrapCheck { target: arguments[0], atom, access });
             Resumed::At(registers, next, Carried::script(cx))
         }
         Err(next) => Resumed::Exit(next),
@@ -164,23 +189,32 @@ pub(super) fn lane_store_set_trap<H: Host>(
 }
 
 impl<H: Host> Vm<H> {
-    /// The `TypeError` and its instruction of the strict store whose `set` trap's frame returned
-    /// the falsish `value` to the pending call `pending` of `frame`
-    /// (`CallCompletion::AssignedChecked`); `None` for any other completion or a truthy value.
-    pub(in crate::vm) fn refused_store_error(
+    /// The `TypeError` and its instruction of the access whose trap the lane activated and
+    /// whose frame returned `value` to the pending call `pending` of `frame`
+    /// (`CallCompletion::Trapped`): the trap's result broke an invariant of its target, which
+    /// the trap itself may have changed since the lane's pre-check, or a strict store's trap
+    /// returned a falsish value. `None` for any other completion or an accepted result.
+    pub(in crate::vm) fn trap_result_error(
         &mut self,
         p: &ResidualProgram,
         pending: &PendingGeneralCall,
         frame: usize,
         value: Value,
     ) -> Option<(u32, JsError)> {
-        if !pending.completion.is_checked_assignment() || self.truthy(value) {
+        let CallCompletion::Trapped(check) = pending.completion else {
             return None;
-        }
-        let body = p.function(self.frames[frame].function as usize);
-        let atom = decoded_instruction(body, body.code[pending.call_pc as usize]).atom_index();
-        let key = self.atom_string(atom);
-        Some((pending.call_pc, self.proxy_set_refused_error(p, key)))
+        };
+        let key = self.atom_string(check.atom);
+        let stored = match check.access {
+            TrapAccess::Read => Value::UNDEFINED,
+            TrapAccess::Store | TrapAccess::StrictStore => self.read(frame, pending.destination),
+        };
+        let outcome = self.with_call_roots([check.target, key, stored, value], |vm| match check.access {
+            TrapAccess::Read => vm.validate_proxy_get(p, check.target, key, value),
+            TrapAccess::Store => vm.validate_proxy_store(p, check.target, key, stored, false, value),
+            TrapAccess::StrictStore => vm.validate_proxy_store(p, check.target, key, stored, true, value),
+        });
+        outcome.err().map(|error| (pending.call_pc, error))
     }
 }
 

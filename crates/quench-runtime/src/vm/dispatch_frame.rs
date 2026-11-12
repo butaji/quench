@@ -2558,7 +2558,7 @@ impl<H: Host> Vm<H> {
                         }
                         self.active_registers = self.frames[frame].registers.as_mut_ptr();
                         // SAFETY: as for `p` at the top of the loop.
-                        settle_error = self.refused_store_error(unsafe { &*executing_residual }, &pending, frame, value);
+                        settle_error = self.trap_result_error(unsafe { &*executing_residual }, &pending, frame, value);
                         value = self.completed_call_value(&pending.completion, frame, pending.destination, value);
                         if let Some(root) = pending.completion.take_promise() {
                             let promise = self.release_settled_call_root(root);

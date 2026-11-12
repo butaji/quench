@@ -45,7 +45,7 @@ use crate::heap::{
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::{CallSource, Profile, TerminalCall};
 use crate::value::number_to_u32;
-use activation::{CallCompletion, CallContext, ConstructionTarget};
+use activation::{CallCompletion, CallContext, ConstructionTarget, TrapAccess, TrapCheck};
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
@@ -210,7 +210,6 @@ pub(crate) use program_store::ProgramId;
 pub(crate) use regexp::RegExpFlags;
 use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
-use array_view::{Match, Search};
 use property_key::PropertyKey;
 pub(crate) mod operations;
 #[cfg(all(test, feature = "bench-primitives"))]
