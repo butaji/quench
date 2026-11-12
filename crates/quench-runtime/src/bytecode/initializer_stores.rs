@@ -1,5 +1,5 @@
 //! The stores of a constructor body that only initializes `this` (`Function::initializer_stores`).
-use super::{Constant, Op, OperandKind, Register, WideInstruction};
+use super::{Constant, FieldLookup, Op, OperandKind, Register, WideInstruction};
 use smallvec::SmallVec;
 
 /// A store of an initializing body (`Function::initializer_stores`): the field `atom`, at
@@ -176,10 +176,12 @@ fn temporary(instruction: &WideInstruction, params: u16) -> bool {
 fn constructor_chain(instructions: &[WideInstruction], at: usize, mut register: Register, params: u16) -> ([u32; NESTED_CHAIN], usize, Register) {
     let mut chain = [0; NESTED_CHAIN];
     let mut depth = 0;
-    while let Some(read) = instructions.get(at + depth).filter(|read| read.op() == Op::GetField
-        && crate::bytecode::FieldBase(read.b()).register_index() == Some(register)
-        && temporary(read, params) && depth < NESTED_CHAIN) {
-        chain[depth] = read.imm();
+    while let Some((read, atom)) = instructions.get(at + depth).filter(|read| read.op() == Op::GetField && temporary(read, params) && depth < NESTED_CHAIN)
+        .and_then(|read| match read.field_lookup() {
+            Some(FieldLookup::Atom { atom, base, .. }) if base.register_index() == Some(register) => Some((read, atom)),
+            _ => None,
+        }) {
+        chain[depth] = atom;
         register = read.result_register();
         depth += 1;
     }

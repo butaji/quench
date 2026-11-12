@@ -36,6 +36,7 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
     let slot = stage.load_u32(entry, ENTRY.slot_offset as i32);
+    let slot = stage.and_imm(slot, u64::from(u16::MAX));
     let inline = inline_storage(stage, record);
     Some(stage.choose(inline, |stage| {
         let half = stage.mul_imm(slot, std::mem::size_of::<u32>() as u64);
@@ -52,8 +53,6 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
 
 /// The word the loop entry record holds at the per-site byte `offset`: a field value the loop's
 /// entry recorded (`LoopEntry`), written before the run and never during it.
-// Read by the b-jit stencil generator (thread 7), which replaces its hand `field` with this row.
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
     stage.load_site(entry, offset)
@@ -62,8 +61,6 @@ pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm
 /// The dense backing of an array the loop entry recorded: its first value, at the per-site
 /// byte `offset` of the entry record (which never changes during a run, so the load is of an
 /// immutable table), and its length, read from the backing's header.
-// Read by the b-jit stencil generator (thread 7), which replaces its hand `entry_view` with this row.
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;

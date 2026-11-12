@@ -23,4 +23,18 @@ impl JsStepDispatch {
             self.bind_native_storage(vm);
         }
     }
+
+    /// A lane entry's refresh: the bases stand while this VM's record layout and atom words are
+    /// as the last entry read them (a helper's refresh in between only made them fresher).
+    #[inline(always)]
+    pub(super) fn refresh_object_bases_at_entry<H: Host>(&mut self, vm: &Vm<H>) {
+        let layout = vm.heap.native_layout_epoch();
+        let atoms = vm.method_cache_atoms.words();
+        if self.vm == (vm as *const Vm<H>).addr() && self.layout_seen == layout
+            && self.method_cache_atoms == atoms.as_ptr() as usize && self.method_cache_atom_words == atoms.len() {
+            return;
+        }
+        self.refresh_object_bases(vm);
+        self.layout_seen = layout;
+    }
 }

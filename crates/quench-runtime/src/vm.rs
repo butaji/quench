@@ -24,7 +24,7 @@ mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;
 mod wasm;
-pub use compiled::ExecutionMode;
+pub use compiled::{AheadImages, ExecutionMode};
 pub use date::local_timezone_changed;
 mod wasm_exception;
 mod wasm_gc;
@@ -131,7 +131,7 @@ mod construction;
 mod data_view;
 mod date;
 mod dispatch;
-mod dispatch_fast;
+mod dispatch_fast; mod lane_values;
 mod dispatch_frame;
 mod dispatch_wasm;
 mod dynamic_strings;
@@ -3235,7 +3235,7 @@ impl<H: Host> Vm<H> {
     /// keeps them, from its shape table and what its live objects hold: once its builtins
     /// exist or its realm is restored.
     pub(super) fn keep_slot_representations(&mut self) {
-        if self.programs.js_jit_lane_methods_enabled() {
+        if self.programs.js_jit_lane_methods_enabled() && crate::jit_mode::function_tiers() {
             let layouts = self.shape_layouts();
             self.heap.track_slot_representations(&layouts);
         }
@@ -3304,8 +3304,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn store_dynamic_program_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
-        let footprint = crate::compile::program_profile::ProgramFootprint::of(&program).total();
-        self.heap.charge_reclaimable_program(footprint);
+        compiled::AheadImages::record(&program);
+        let footprint = crate::compile::program_profile::ProgramFootprint::of(&program).total(); self.heap.charge_reclaimable_program(footprint);
         let id = self.programs.insert_reclaimable_shared(program, footprint)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);

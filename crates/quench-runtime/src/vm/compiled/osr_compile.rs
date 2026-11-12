@@ -2,7 +2,7 @@
 //! generator's thread compiles, and the next look publishes the code.
 
 use super::{
-    compile_native_function, dump_native_code, names_length, native_dump_directory, lane_unit, osr_loop,
+    compile_native_function, dump_native_bytes, dump_native_code, names_length, native_dump_directory, lane_unit, osr_loop,
     publish_entry, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
@@ -44,6 +44,8 @@ pub(in crate::vm) struct PendingOsrRegion {
     header: u32,
     clif: Option<String>,
     facts: OsrFacts,
+    /// What a run of the code builds around it.
+    crossing: super::Crossing,
 }
 
 /// What a background loop-region compile came to.
@@ -301,6 +303,26 @@ impl LoopPlanner<'_> {
 /// bound stays bounded by the lane plan's own admission.
 const REGION_CODE_BUDGET: usize = 2 * osr_loop::MAX_CODE_BYTES;
 
+/// The BaseJIT tier's answer for `region`: `Some(code)` where it builds or (under `--b-jit`) declines the
+/// region, `None` where Cranelift compiles it. Number loops whose every instruction has a stencil row skip Cranelift.
+fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usize], observation: &Observation<'_>)
+    -> Option<Option<PendingOsrRegion>> {
+    let base_only = crate::jit_mode::base_only();
+    if !crate::jit_mode::base_regions() || region.inlining.is_some() {
+        return base_only.then_some(None);
+    }
+    let built = super::base_region::build(region, views == super::ElementViews::Dense, widened,
+        [observation.int_registers, observation.double_registers]);
+    let Ok((code, bare)) = built else { return base_only.then_some(None) };
+    if let Some(directory) = native_dump_directory() {
+        dump_native_bytes(directory, region.header, &code, None, "");
+    }
+    let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
+    let code = super::super::jit_backend::run_in_background(move || Ok(code));
+    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean },
+        facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new() } }))
+}
+
 /// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
 /// `None` where it lowers no code (a typed plan hoisting no view would leave at an access).
 pub(in crate::vm) fn start_osr_region(
@@ -314,6 +336,9 @@ pub(in crate::vm) fn start_osr_region(
     widened: &[usize],
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
+    if let Some(decided) = fast_pending(region, views, widened, observation) {
+        return decided;
+    }
     let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views };
     let mut plan = |unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, header: usize, backedge: usize, generic: &[usize]|
         planner.plan(&mut *global_reads, unit, entry_fields, (header, backedge), generic);
@@ -336,7 +361,7 @@ pub(in crate::vm) fn start_osr_region(
         compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts })
+    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General })
 }
 
 impl PendingOsrRegion {
@@ -360,12 +385,12 @@ impl PendingOsrRegion {
             std::task::Poll::Ready(Some(Ok(code))) => code,
             std::task::Poll::Ready(_) => return Ok(OsrCompile::Failed),
         };
-        let Self { header, clif, facts, .. } = *self;
+        let Self { header, clif, facts, crossing, .. } = *self;
         let Some((memory, entry)) = publish_entry(&code) else { return Ok(OsrCompile::Failed) };
         if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
             dump_native_code(directory, header, &memory, &clif);
         }
-        Ok(OsrCompile::Done(CompiledOsrRegion { _code: memory, entry, facts }))
+        Ok(OsrCompile::Done(CompiledOsrRegion { _code: memory, entry, facts, crossing }))
     }
 }
 

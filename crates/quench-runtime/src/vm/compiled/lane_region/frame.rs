@@ -55,7 +55,7 @@ impl EmitFrame<'_> {
         proof: EmitProof) -> Option<ir::Value> {
         let EmitProof::Allocation { miss } = proof else { return None };
         let payload = self.payload;
-        let address = self.helpers.address(stage.builder.ins(), helper);
+        let address = self.helpers.address(&mut stage.builder, helper);
         let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[&[payload], arguments].concat());
         calls::finish_allocation(stage, self, destination, value, miss);
         Some(value)
@@ -163,8 +163,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         Some(())
     }
 
-    /// The lane's own global-name read; a DELETED answer leaves at the miss edge.
-    #[inline(always)] fn global_read(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, proof: EmitProof) -> Option<()> { calls::global_read(self, stage, destination, atom, site, proof) }
     /// The VM field-store hit, whose false answer leaves at the miss edge.
     #[inline(always)] fn field_store_miss(&mut self, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32, site: u16, value: ir::Value, proof: EmitProof) -> Option<()> { calls::field_store_miss(self, stage, object, atom, site, value, proof) }
 

@@ -78,6 +78,8 @@ setting! {
         Shapes = "shapes",
         Rewrite = "rewrite",
         JsJit = "js-jit",
+        /// BaseJIT region exits by instruction, most frequent first (printed at exit).
+        BjitLeave = "bjit-leave",
         WasmJit = "wasm-jit",
         OsrReject = "osr-reject",
         JitPeak = "jit-peak",
@@ -118,6 +120,9 @@ setting! {
         /// Every JavaScript JIT compile at `CompileLevel::Quick` (no mid-end optimization,
         /// one-pass register allocation), to measure the level's cost and code quality.
         QuickCompile = "quick-compile",
+        /// Number loop regions build from BaseJIT stencils (`quench-bjit`) where every
+        /// instruction has a row, instead of Cranelift IR.
+        Bjit = "bjit",
         /// Selective Wasm hot-root tiering (`wasm-selective`).
         WasmSelective = "wasm-selective",
         /// A bounded root compilation of the residual Wasm function `wasm-root=N`.

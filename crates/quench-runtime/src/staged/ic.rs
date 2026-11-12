@@ -23,6 +23,9 @@ pub(crate) enum IcOp<'a> {
     /// The value at `slot` of a prototype record, which keeps its values in the arena past its
     /// extras (`Object::extras_storage_start`), else the read misses; it ends the read.
     LoadPrototypeSlot(u16),
+    /// The record's prototype link selects its value from these (link, value bits) pairs, else
+    /// the read misses; a dependency holds each prototype's value. It ends the read.
+    PrototypeConstants(&'a [(u32, u64)]),
 }
 
 /// The record a read starts from, with the facts its caller already holds for it: its
@@ -57,6 +60,7 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
             }
             IcOp::LoadSlot { slot, form, storage_len } => return load_slot(stage, &at, slot, form, storage_len, miss),
             IcOp::LoadPrototypeSlot(slot) => return prototype_slot(stage, at.record, slot, miss),
+            IcOp::PrototypeConstants(values) => return prototype_constants(stage, at.record, values, miss),
         }
     }
     None
@@ -82,6 +86,23 @@ fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, slot: u16,
 /// The reached record's exact shape word: the caller's where it holds one, else loaded.
 fn shape_word<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>) -> S::Word {
     at.shape.unwrap_or_else(|| stage.load_u32(at.record, OBJECT.auxiliary_offset as i32))
+}
+
+/// `IcOp::PrototypeConstants`: the value `values` pair with the link of `record`'s prototype.
+#[inline(always)]
+fn prototype_constants<S: Stage>(stage: &mut S, record: S::Word, values: &[(u32, u64)], miss: S::Miss) -> Option<S::Word> {
+    let link = proto_link(stage, record);
+    let ((first, bits), rest) = values.split_first()?;
+    let mut matched = stage.eq_imm(link, u64::from(*first));
+    let mut read = stage.constant(*bits);
+    for (prototype, bits) in rest {
+        let same = stage.eq_imm(link, u64::from(*prototype));
+        let candidate = stage.constant(*bits);
+        read = stage.select(same, candidate, read);
+        matched = stage.any(matched, same);
+    }
+    stage.guard(matched, miss)?;
+    Some(read)
 }
 
 /// `IcOp::LoadPrototypeSlot` of the record at `record`.
@@ -156,6 +177,20 @@ mod tests {
         assert_eq!(concrete(&heap, &read(holder, holder), object), None);
         assert_eq!(concrete(&heap, &read(own, own), object), None);
         assert_eq!(concrete(&heap, &read(holder, holder), prototype), None);
+    }
+
+    /// A prototype-selected constant answers for the link of the receiver's prototype and
+    /// misses for any other.
+    #[test]
+    fn a_prototype_constant_is_selected_by_the_receivers_link() {
+        let mut heap = Heap::new();
+        let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        heap.object_record_mut(prototype).unwrap().mark_as_prototype();
+        let object = heap.alloc(Cell::Object(Object::new(prototype)));
+        let link = heap.object(object).unwrap().proto_link().bits();
+        let (one, two) = (Value::number(1.5).to_bits(), Value::number(2.5).to_bits());
+        assert_eq!(concrete(&heap, &[IcOp::PrototypeConstants(&[(link ^ 1, one), (link, two)])], object), Some(Value::number(2.5)));
+        assert_eq!(concrete(&heap, &[IcOp::PrototypeConstants(&[(link ^ 1, one)])], object), None);
     }
 
     /// The interpreter keeps its typed prototype read (`Heap::holder_property_get_flat`),

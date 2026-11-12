@@ -11,17 +11,17 @@ type LaneCode = Result<Vec<u8>, super::jit_backend::NativeCompileRejection>;
 
 /// A lowered lane body: the method it becomes once its code exists.
 pub(super) struct LanePlan {
-    unit: lane_unit::Unit,
-    lowered: lane_region::LoweredLane,
-    fields: BTreeMap<u16, Vec<NativeFieldLoad>>,
-    direct: Box<[DirectCallee]>,
+    pub(super) unit: lane_unit::Unit,
+    pub(super) lowered: lane_region::LoweredLane,
+    pub(super) fields: BTreeMap<u16, Vec<NativeFieldLoad>>,
+    pub(super) direct: Box<[DirectCallee]>,
     /// Whether every call of it that has run is inlined or direct (`LaneMethod::closed`).
-    closed: bool,
-    function: u32,
+    pub(super) closed: bool,
+    pub(super) function: u32,
     /// The word its publication sets when one of its Stable facts changes.
-    invalidation: crate::code_dependencies::Invalidation,
+    pub(super) invalidation: crate::code_dependencies::Invalidation,
     /// The callee instructions its unit inlined at most (`lane_unit::with_budget`).
-    budget: usize,
+    pub(super) budget: usize,
 }
 
 /// A plan whose code compiles on the code generator's thread. It holds while the facts it
@@ -99,10 +99,11 @@ const REPLAN_BUDGET_DIVISOR: usize = 2;
 /// on richards and deltablue.
 const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
 
+#[cfg(test)] #[path = "lane_compile/ahead.rs"] mod ahead;
 /// The code of one lane body, compiled on the calling thread.
 fn lane_code(function: ir::Function, level: super::jit_backend::CompileLevel) -> LaneCode {
     let level = match level {
-        super::jit_backend::CompileLevel::Optimized if function.dfg.num_insts() > LANE_BACKTRACKING_MAX_INSTS =>
+        super::jit_backend::CompileLevel::Optimized | super::jit_backend::CompileLevel::Quick if function.dfg.num_insts() > LANE_BACKTRACKING_MAX_INSTS =>
             super::jit_backend::CompileLevel::Large,
         level => level,
     };
@@ -262,7 +263,7 @@ impl<H: Host> Vm<H> {
         bind_callees(&plan.direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
-        if let Some(entries) = observed && !pays_compile(program, function, entries, native.dfg.num_insts()) { return Err(Unstarted::Unpaid); }
+        if let Some(entries) = observed && !pays_compile(program, function, entries, native.dfg.num_insts(), caller, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
         if !self.programs.admit_lane_compile(&key, TIERS.lane_body.max_compiles) { plan_miss(Miss::PlanCompileBound); return Err(Unstarted::Declined); }
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
@@ -312,6 +313,8 @@ impl<H: Host> Vm<H> {
         // the calling thread, without one) publishes at once.
         loop {
             let (generic, budget) = pending;
+            // A function with an ahead-of-time body takes it where a first compile would.
+            if let Some(published) = self.install_ahead_body(program, function, entry, &generic) { return LaneBodyOutcome::Published(published); }
             let direct = direct(self);
             let started = match self.start_lane_method(program, function, targets, captures, &direct, &generic, budget, entry, observed, called, caller.expect("a started body names its view"), &arrays) {
                 Ok(started) => started,
@@ -405,7 +408,7 @@ impl LanePlan {
 
     /// The method its compiled `code` makes, published to executable memory. The method
     /// takes its direct callees whole: the code names them by address.
-    fn finish(mut self, code: &[u8]) -> Option<LaneMethod> {
+    pub(super) fn finish(mut self, code: &[u8]) -> Option<LaneMethod> {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
         let amortizes = amortizes_entry(unit, self.function, &self.direct);
@@ -416,8 +419,8 @@ impl LanePlan {
         if let (Some(directory), Some(clif)) = (native_dump_directory(), self.lowered.clif.as_deref()) {
             dump_native_code(directory, self.function, &memory, clif);
         }
-        // SAFETY: the lane region lowers the shared native-entry ABI.
-        let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
+        // SAFETY: the lane region lowers a body with the lane body ABI (`lane_body_signature`).
+        let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         #[cfg(test)]
         LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]

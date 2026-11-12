@@ -17,6 +17,9 @@ pub(super) struct LoopTier {
     pending: Option<Box<super::super::compiled::PendingOsrRegion>>,
     wait: u16,
     pub(super) compilations: u32,
+    /// Native runs of the region and the iterations they took: the loop's mean trip count.
+    runs: u32,
+    iterations: u64,
     /// Each operation the code left at, with its leaves so far; and those whose int32
     /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
     leaves: Vec<(u32, u16)>,
@@ -26,6 +29,16 @@ pub(super) struct LoopTier {
 }
 
 impl LoopTier {
+    pub(super) fn weigh_run(&mut self, backedges: u64) {
+        self.runs = self.runs.saturating_add(1);
+        self.iterations = self.iterations.saturating_add(backedges);
+    }
+
+    /// Iterations per native run, or `None` before the first run.
+    pub(super) fn mean_trip(&self) -> Option<u64> {
+        self.iterations.checked_div(u64::from(self.runs))
+    }
+
     pub(super) fn is_published(&self) -> bool {
         self.code.as_ref().is_some_and(|code| code.is_published())
     }
@@ -73,7 +86,14 @@ impl LoopTier {
 
     /// Whether this entry passes to the interpreter's jump while the code compiles: entries
     /// between looks count down, and a look publishes code that is ready.
+    #[inline(always)]
     pub(super) fn awaits_code(&mut self, heap: &mut crate::heap::Heap, site: &LoopSite) -> bool {
+        // A site with published code, or none under way, has nothing to wait for.
+        self.pending.is_some() && self.poll_pending(heap, site)
+    }
+
+    #[cold]
+    fn poll_pending(&mut self, heap: &mut crate::heap::Heap, site: &LoopSite) -> bool {
         let Some(pending) = self.pending.take() else { return false };
         if self.wait > 0 {
             self.wait -= 1;
@@ -104,6 +124,8 @@ impl LoopTier {
         self.wait = 0;
         if self.pending.is_none() {
             self.compilations = TIERS.loops.max_compilations;
+            // A declined or failed region retires the site now: later entries build no entry record.
+            site.declines.set(TIERS.loops.max_declines);
         }
         self.awaits_code(heap, site);
     }
@@ -124,6 +146,7 @@ impl LoopTier {
 /// and looks for its code at once: a code generator without its own thread has it ready.
 pub(super) fn lane_loop_compile<H: Host>(
     cx: *mut LaneContext<H>,
+    r: Registers,
     site: &LoopSite,
     region: &super::super::compiled::LoopRegion,
     tier: &mut LoopTier,
@@ -133,6 +156,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     int_captures: &[u16],
 ) {
     tier.compilations += 1;
+    super::super::compiled::base_region::count(super::super::compiled::base_region::Event::Compiled);
     if site.diagnostics {
         site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
     }
@@ -143,7 +167,13 @@ pub(super) fn lane_loop_compile<H: Host>(
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
     let native_field_loads = native_field_loads(machine, region);
-    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures };
+    let ints = region.registers_where(|register| r.get(register).as_int().is_some());
+    let doubles = region.registers_where(|register| {
+        let value = r.get(register);
+        value.as_number().is_some() && value.as_int().is_none()
+    });
+    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
+        int_registers: &ints, double_registers: &doubles };
     let policy = machine.heap.memory_policy();
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, policy, program, function, helpers,

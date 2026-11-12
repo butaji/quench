@@ -11,6 +11,32 @@ pub(in crate::vm) struct Tiers {
     pub(in crate::vm) lane_body: LaneBody,
     pub(in crate::vm) js_function: JsFunction,
     pub(in crate::vm) wasm: Wasm,
+    pub(in crate::vm) priors: Priors,
+}
+
+/// Parts per thousand, the unit of a prior's share.
+pub(in crate::vm) const PER_MILLE: u64 = 1000;
+
+/// The priors the tier model starts from, each a statement about the world until the engine's own
+/// measurements replace it (`tier-decision-rule-v1`): nothing here is fitted to a benchmark row.
+pub(in crate::vm) struct Priors {
+    /// Nanoseconds an interpreted lane bytecode takes.
+    pub(in crate::vm) interpreter_ns: u64,
+    /// A body's per-bytecode time as a share of the interpreter's, in thousandths.
+    pub(in crate::vm) body_share: u64,
+    /// Nanoseconds the second core takes to compile one IR instruction.
+    pub(in crate::vm) compile_ns_per_ir: u64,
+    /// The same for a Quick compile, and the share of the interpreter's time its code still takes.
+    pub(in crate::vm) quick_compile_ns_per_ir: u64,
+    pub(in crate::vm) quick_body_share: u64,
+    /// The part per thousand of a compile's time that waits on the running program: compiles run
+    /// on the code generator's thread, so most of their time overlaps it (two cores).
+    pub(in crate::vm) compile_wall_permille: u64,
+    /// Nanoseconds entering a loop region from the lane costs per call, and a body's entry.
+    pub(in crate::vm) region_entry_ns: u64,
+    pub(in crate::vm) body_entry_ns: u64,
+    /// The divisor of the entries so far that gives the credible lower bound of the entries to come.
+    pub(in crate::vm) remaining_divisor: u64,
 }
 
 /// The loop tier (OSR regions at backward jumps).
@@ -34,6 +60,12 @@ pub(in crate::vm) struct Loops {
     /// Compilations a site may make: each after the first widens a value the last one held as
     /// an `i32`, and a region has few such values.
     pub(in crate::vm) max_compilations: u32,
+    /// The work, in interpreted-instruction units (`LaneBody::compile_cost_per_ir`), a loop
+    /// region's entry costs a call of its function: about 140 ns of entry and exit plumbing per
+    /// entry (V8-v7 Crypto's `am3`, 4.3M entries) at the 50 ns that constant counts an interpreted
+    /// instruction at. A function whose region enters weighs its body compile against that saving
+    /// alone (`pays_compile`): the region already runs the loop.
+    pub(in crate::vm) region_entry_work: u64,
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
@@ -149,6 +181,10 @@ pub(in crate::vm) struct Wasm {
 /// the generic case: the width of every polymorphic cache and of each guarded switch a tier
 /// specializes a site into. One bound for every lattice of site feedback.
 pub(in crate::vm) const POLYMORPHISM: usize = 4;
+/// The bodies a field site's leaves may have named (`Vm::field_site_leaves`) before a plan reads
+/// it as a probed read rather than a shape proof: a site that left in one body may have met its
+/// second shape by chance.
+pub(in crate::vm) const UNSTABLE_SITE_LEAVES: u8 = 2;
 
 /// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
 /// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
@@ -172,13 +208,14 @@ const FLOOR: Tiers = Tiers {
     lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
+    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
 };
 
 /// The base a share in percent is a share of.
 pub(in crate::vm) const PERCENT: u64 = 100;
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8 },
+    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8, region_entry_work: 3 },
     lane_body: LaneBody {
         warmup_entries: 400,
         reoptimize_share: 1,
@@ -207,6 +244,7 @@ const MEASURED: Tiers = Tiers {
         general_entry_overhead: 32,
     },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
+    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)

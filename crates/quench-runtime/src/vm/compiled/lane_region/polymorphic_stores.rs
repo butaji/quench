@@ -12,7 +12,7 @@ impl Lowering<'_, '_> {
     pub(super) fn finish_shape_switch_store(&mut self, state: &mut State, object_bits: ir::Value, atom: Atom, site: u16,
         value: ir::Value, ty: Type, exit: ir::Block, header: Option<ObjectHeader>, general: ir::Block,
         widens: &[ir::Block], done: ir::Block) {
-        if self.completion != Completion::StatusAndPc {
+        if !self.completion.status_and_pc() {
             return self.finish_store(state, object_bits, atom, site, value, ty, exit, header, general, widens, done);
         }
         for block in std::iter::once(general).chain(widens.iter().copied()) {
@@ -28,7 +28,7 @@ impl Lowering<'_, '_> {
     /// The store of `value` to `atom` of `object` by the VM's own, polymorphic and adding
     /// entries (`compiled::lane_field_add`); a miss leaves through `exit`.
     pub(super) fn field_add(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
-        let write = self.ins().iconst(types::I64, (u64::from(atom) << u16::BITS | u64::from(site)) as i64);
+        let write = self.atom_site_word(atom, site);
         let payload = self.payload;
         let stored = self.helper_call(LaneHelper::FieldAdd, &[payload, object, write, value]);
         self.forget_append_rooms(self.at);

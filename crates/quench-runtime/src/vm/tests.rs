@@ -10,6 +10,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 #[path = "osr_retirement_tests.rs"] mod osr_retirement_tests;
 #[path = "forced_deopt_tests.rs"] mod forced_deopt_tests;
+#[cfg(target_os = "linux")]
+#[path = "no_rwx_tests.rs"] mod no_rwx_tests;
 #[test]
 fn deferred_math_joins_startup_intrinsics_before_guest_mutation() {
     let program = Engine::specialize(r#"
@@ -99,6 +101,23 @@ fn loop_calls_to_numeric_closures_run_initialization_once() {
     }
     assert_eq!(answers[0], answers[1]);
     assert_eq!(answers[1].1, Value::integer(192), "initialization and post-loop effect each run once per call");
+}
+
+/// A loop that calls a function writing the field its condition reads must see the write:
+/// the region's entry value of the field does not stand past a call it continues after.
+#[test]
+fn loop_condition_reads_the_field_a_called_function_writes() {
+    let source = r#"function advance(state) { state.count = (state.count - 1) | 0; }
+        function run(state) { while (state.count > 0) advance(state); }
+        const s = {count: 4000}; run(s); print(String(s.count));"#;
+    let program = Engine::specialize(source, "loop-call-field.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["0"]);
+    }
 }
 
 #[test]

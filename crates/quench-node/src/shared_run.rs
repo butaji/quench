@@ -418,7 +418,7 @@ fn execute_shared_on_worker(
     let snapshot = snapshot_path.as_deref().and_then(crate::host::startup_snapshot::load_or_schedule);
     let mut runtime = EntryRuntime::new(Runtime::new(host), teardown);
     runtime.set_execution_mode(mode);
-    runtime.set_memory_policy(memory_policy);
+    runtime.set_memory_policy(memory_policy); crate::qimg::install(&mut runtime);
     #[cfg(feature = "profile-memory")]
     profile_startup_boundary("node_vm_allocated");
     crate::host::resident_pages::release_read_only_pages();
@@ -438,7 +438,7 @@ fn execute_shared_on_worker(
                 // The restore may have left the runtime half replaced: boot a fresh one.
                 *runtime = Runtime::new(new_host(None)?);
                 runtime.set_execution_mode(mode);
-                runtime.set_memory_policy(memory_policy);
+                runtime.set_memory_policy(memory_policy); crate::qimg::install(&mut runtime);
                 program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
             }
         }
@@ -655,7 +655,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         Some("--help") | Some("-h") => {
             print_cli_help();
             // Quench's own options follow Node's.
-            println!("quench-node [--no-jit|--b-jit|--q-jit|--u-jit] [{}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG);
+            println!("quench-node [--no-jit|--b-jit|--u-jit] [{}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG);
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
@@ -681,7 +681,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            flag @ ("--no-jit" | "--f-jit" | "--q-jit" | "--b-jit" | "--u-jit" | "--jit") => if let Err(message) = quench_runtime::JitMode::select(&mut jit_mode, flag) { return Ok(cli_usage_error(message)); },
+            flag if quench_runtime::JitMode::is_flag(flag) => if let Err(message) = quench_runtime::JitMode::select(&mut jit_mode, flag) { return Ok(cli_usage_error(&message)); },
             "--env-file" | "--env-file-if-exists" => {
                 let Some(path) = args.get(index + 1) else {
                     return Ok(cli_usage_error(&format!(
@@ -930,7 +930,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     execute_shared_with_teardown(
         input,
         argv,
-        jit_mode.unwrap_or_default().execution_mode(),
+        { let mode = jit_mode.unwrap_or_default(); mode.set_process_mode(); mode.execution_mode() },
         Teardown::ProcessExit,
     )
     .map(SharedCompletion::exit_code)

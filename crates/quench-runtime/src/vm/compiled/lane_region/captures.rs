@@ -74,7 +74,7 @@ impl Lowering<'_, '_> {
             // A loop's read leaves at a root-held binding until the code has left here: the
             // helper is a call every value live around the loop is spilled across (`left_here`).
             let loop_code = matches!(self.coverage, Coverage::Loop { .. });
-            if rooted != RootedRead::No && self.completion == Completion::StatusAndPc
+            if rooted != RootedRead::No && self.completion.status_and_pc()
                 && (self.left_here || !loop_code || rooted == RootedRead::OnEntry) {
                 return self.capture_get(instruction, exit);
             }
@@ -85,7 +85,7 @@ impl Lowering<'_, '_> {
         };
         let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
         let slot = self.ins().iconst(types::I64, i64::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())));
-        let helper = self.helpers.address(self.builder.ins(), LaneHelper::FunctionCapture);
+        let helper = self.helpers.address(&mut self.builder, LaneHelper::FunctionCapture);
         let read = emit_lane_call(&mut self.builder, helper, &[vm, callee, slot]);
         let hit = self.ins().icmp_imm_u(IntCC::NotEqual, read, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, hit, exit);

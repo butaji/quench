@@ -129,9 +129,6 @@ pub(crate) struct LoopRegion {
     /// holds then, from the array's record, and only a present
     /// element below the backing's length, which no prototype answers, stays native.
     dynamic_arrays: std::collections::BTreeSet<Register>,
-    /// The registers the region defines. Their slots hold no entry value: a register dead at
-    /// the header may still name a collected object, so entry never reads one as a receiver.
-    defined: std::collections::BTreeSet<Register>,
     /// Existing own-data Number slots stored by the region, by offset from its header.
     field_stores: std::collections::BTreeMap<u32, usize>,
     /// Own-data stores whose receiver the region redefines, by offset from its header: each
@@ -162,6 +159,14 @@ impl LoopRegion {
     /// The function's full decoded code, which a loop unit keeps so its PCs stay the
     /// function's; only `header..=backedge` lowers.
     pub(crate) fn instructions(&self) -> &[WideInstruction] { &self.instructions }
+    /// The Number constant the region reads at pool index `index`.
+    pub(super) fn number_constant(&self, index: usize) -> Option<f64> { self.constants.get(&index).copied() }
+    /// The registers of the region for which `is_int` holds.
+    pub(crate) fn registers_where(&self, is_int: impl Fn(Register) -> bool) -> Vec<Register> {
+        self.entry_registers().filter(|register| is_int(*register)).collect()
+    }
+    /// The registers the region treats as Numbers.
+    pub(super) fn number_registers(&self) -> &[Register] { &self.numbers }
     /// The cached field reads, by offset from the header: the lane specializer's field
     /// sites, mapped from the observation's descriptors.
     pub(crate) fn field_reads(&self) -> &std::collections::BTreeMap<u32, usize> { &self.field_reads }
@@ -179,15 +184,15 @@ impl LoopRegion {
         self.dynamic_field_reads.values().any(|field| *field == index)
     }
 
-    /// Whether field `index` has an entry value: its receiver is one (`this`, a capture, an
-    /// entry register), not a register the region defines. A defined register holds no entry
-    /// value at the header, so the field's entry word is only its representation's placeholder.
-    pub(crate) fn field_has_entry_value(&self, index: usize) -> bool {
-        match self.fields[index].receiver {
-            FieldReceiver::This | FieldReceiver::Capture(_) => true,
-            FieldReceiver::Field(earlier) => self.field_has_entry_value(earlier),
-            FieldReceiver::Register(register) => !self.defined.contains(&register),
-        }
+    /// Whether field `index` is a dynamic read through a register the loop defines or that is
+    /// dead at the header: at entry that register holds no value of the loop's (it may name a
+    /// dead record), so the entry seeds the field's placeholder without reading through it.
+    pub(crate) fn seeds_without_receiver(&self, index: usize) -> bool {
+        let Some(FieldUse { receiver: FieldReceiver::Register(register), .. }) = self.fields.get(index) else { return false };
+        self.is_dynamic_field(index)
+            && (!self.is_live(self.header, *register)
+                || self.instructions.get(self.header as usize..=self.backedge as usize)
+                    .is_some_and(|code| code.iter().any(|instruction| instruction.defined_register() == Some(*register))))
     }
 
     pub(crate) fn writes_fields(&self) -> bool {
@@ -1366,6 +1371,13 @@ impl LoopRegion {
         live.is_live(index, register)
     }
 
+    /// The byte offset in the entry record of the element pointer, length and capacity of the array
+    /// `register` holds throughout the region, when the entry pushes one for it.
+    pub(crate) fn array_entry_offset(&self, register: Register) -> Option<u64> {
+        let k = self.arrays.iter().position(|array| array.register == register)?;
+        Some(((field_word(self, self.fields.len()) + k * ARRAY_WORDS) * std::mem::size_of::<u64>()) as u64)
+    }
+
     /// The field whose value `register` holds at every read, when it is one the region
     /// writes only with that field's reads (`held_registers`).
     pub(crate) fn held_field(&self, register: Register) -> Option<usize> {
@@ -1774,13 +1786,12 @@ fn admit_lifetime_roles(
     {
         return None;
     }
-    let defined = defined_registers(&instructions);
     let mut flow = LoopRegion {
         header, backedge: header + instructions.len() as u32 - 1,
         numbers: (0..registers).map(|register| register as Register).collect(),
         tagged: Vec::new(), arrays: Vec::new(), captures: Vec::new(), stored_captures: Vec::new(),
         fields: Vec::new(), field_reads: BTreeMap::new(), dynamic_field_reads: BTreeMap::new(),
-        dynamic_arrays: BTreeSet::new(), defined,
+        dynamic_arrays: BTreeSet::new(),
         field_stores: BTreeMap::new(), dynamic_field_stores: BTreeMap::new(), field_store_sites: Vec::new(), held: BTreeMap::new(),
         identity_branches: BTreeMap::new(), instructions, constants: BTreeMap::new(),
         live, inlining: None,
@@ -2072,6 +2083,9 @@ fn admit_register_roles(
             Some(_) => None,
         })
         .collect();
+    // A call the region continues past may write any field, so a read through a receiver the
+    // region never rewrites reads its current slot, as one of the region's own stored names does.
+    let calls = instructions.iter().any(|instruction| instruction.op().is_ordinary_call());
     let mut dynamic_field_stores = std::collections::BTreeMap::new();
     let mut field_store_sites = Vec::new();
     let defined_registers = defined_registers(&instructions);
@@ -2098,7 +2112,7 @@ fn admit_register_roles(
                     return Err(RegionAnalysisFailure::at(RegionRejection::FieldReceiverDefined, header, offset));
                 }
                 dynamic_field_reads.insert(offset as u32, index);
-            } else if path.steps.len() == 1 && stored_fixed.contains(&(path.steps[0].0, path.root)) {
+            } else if path.steps.len() == 1 && (calls || stored_fixed.contains(&(path.steps[0].0, path.root))) {
                 dynamic_field_reads.insert(offset as u32, index);
                 if path.root == FieldReceiver::This && !admission.captures.contains(&THIS_CAPTURE) {
                     admission.captures.push(THIS_CAPTURE);
@@ -2323,7 +2337,6 @@ fn admit_register_roles(
         field_reads,
         dynamic_field_reads,
         dynamic_arrays,
-        defined: defined_registers,
         field_stores,
         dynamic_field_stores,
         field_store_sites,
@@ -2578,6 +2591,10 @@ pub(crate) struct Observation<'a> {
     /// The depth-zero capture slots holding typed arrays when compiled: a loop's array read
     /// through such a capture is viewed as a typed array (`LoopArray::views`).
     pub(crate) typed_captures: &'a [u16],
+    /// The registers of the region that held an int32 where the compile began.
+    pub(crate) int_registers: &'a [Register],
+    /// The registers that held a Number that is no int32.
+    pub(crate) double_registers: &'a [Register],
     /// The depth-zero capture slots holding int32s when compiled: a read of such a capture
     /// takes the checked integer view where its uses are integer arithmetic.
     pub(crate) int_captures: &'a [u16],
