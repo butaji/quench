@@ -24,7 +24,7 @@ pub(crate) use wasm_fields::{WasmGcFields, WasmTableElements};
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
-pub(crate) use global_values::{GlobalCell, GlobalFact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_value};
+pub(crate) use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes; a collection frees a prototype, whose
@@ -2498,6 +2498,7 @@ impl Object {
         if !self.was_used_as_prototype() {
             // A prototype's elements answer its dependents' reads: no proof replaces them.
             super::array_proofs::retire_array_storage_proofs();
+            self.note_global_layout_change();
             self.extras_mut().prototype_lookup = PrototypeLookupState::Setup;
         }
     }
@@ -2534,6 +2535,7 @@ impl Object {
     pub(crate) fn set_shape(&mut self, shape: u32, arena: &mut ValueArena) {
         arena.note_shape_transition(self.shape(), shape);
         self.note_prototype_layout_change();
+        self.note_global_layout_change();
         self.renumber_shape(shape);
     }
     #[inline] pub(crate) fn is_extensible(&self) -> bool {
@@ -2573,6 +2575,7 @@ impl Object {
     }
     pub(crate) fn set_frozen(&mut self, value: bool) {
         self.note_prototype_layout_change();
+        self.note_global_layout_change();
         super::array_proofs::retire_array_storage_proofs();
         let mut properties = ValueVec::from_parts(self.meta & VALUE_VEC_INTEGRITY_BITS, 0);
         properties.set_frozen(value);
