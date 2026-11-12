@@ -13012,7 +13012,7 @@ fn lane_tagged_int32_bitwise_ops_fall_back_exactly() {
           try { bitXor(13n, 1); } catch (error) { bigintThrew = error instanceof TypeError; }
           if (!bigintThrew) throw Error('mixed bigint fallback');
         "#,
-        "js-general-int32-bitwise.js",
+        "js-lane-int32-bitwise.js",
         &["result"],
     );
 }
