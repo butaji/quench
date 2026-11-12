@@ -129,6 +129,8 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) binding_sites: Vec<crate::bytecode::BindingSite>,
     pub(super) clone_plans: environment_clones::ClonePlans,
     controls: Vec<ControlTarget>,
+    /// How many loop statements (heads and bodies) enclose the code being compiled.
+    pub(super) loop_depth: u32,
     iterator_closures: Vec<IteratorClosure>,
     pub(super) iterator_close_ranges: Vec<(u32, u32)>,
     iterator_close_exclusions: Vec<Vec<(u32, u32)>>,
@@ -242,6 +244,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             binding_sites: vec![],
             clone_plans: Default::default(),
             controls: vec![],
+            loop_depth: 0,
             iterator_closures: vec![],
             iterator_close_ranges: vec![],
             iterator_close_exclusions: vec![],

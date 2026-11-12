@@ -3,7 +3,7 @@ use oxc_span::Span;
 
 use crate::bytecode::Atom;
 
-#[derive(Clone, Copy, Default, PartialEq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub(crate) struct EvalContext {
     pub in_function: bool,
     pub home_atom: Option<Atom>,

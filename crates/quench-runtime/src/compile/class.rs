@@ -22,10 +22,15 @@ impl FunctionCompiler<'_, '_> {
         // Emit before heritage/TDZ evaluation, then fill from the class's allocated
         // locals. This preserves earlier class evaluations before their slots change.
         let first_class_slot = self.locals.len();
-        let scopes = self.active_lexical_slots();
-        let clone_plan = self.push_environment_clone(Vec::new(), scopes);
-        self.clone_plans.class.insert(clone_plan);
-        self.emit(Op::CloneEnv, 0, 0, 0, clone_plan as u32);
+        // Only a class evaluated again in one activation (inside a loop) needs its own copy
+        // of the environment; copying it costs every slot of the scope per class.
+        let clone_plan = (self.loop_depth > 0).then(|| {
+            let scopes = self.active_lexical_slots();
+            let plan = self.push_environment_clone(Vec::new(), scopes);
+            self.clone_plans.class.insert(plan);
+            self.emit(Op::CloneEnv, 0, 0, 0, plan as u32);
+            plan
+        });
         let class_binding = class.id.as_ref().map(|identifier| {
             let source = self.owner.atom(identifier.name.as_str());
             let binding = self.hidden_local(&format!(
@@ -192,9 +197,11 @@ impl FunctionCompiler<'_, '_> {
                 ));
             }
         }
-        self.clone_plans.slots[clone_plan] = (first_class_slot..self.locals.len())
-            .map(|slot| slot as u16)
-            .collect();
+        if let Some(plan) = clone_plan {
+            self.clone_plans.slots[plan] = (first_class_slot..self.locals.len())
+                .map(|slot| slot as u16)
+                .collect();
+        }
         let scopes = self.capture_scopes();
         for field in &fields {
             let Some(expression) = class_field_initializer(*field) else {
