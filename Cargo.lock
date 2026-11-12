@@ -1582,6 +1582,7 @@ name = "quench-bench"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "quench-tier-corpus",
  "serde",
  "serde_json",
 ]
@@ -1746,6 +1747,7 @@ dependencies = [
  "quench-regexp",
  "quench-stack",
  "quench-temporal",
+ "quench-tier-corpus",
  "rayon",
  "rustc-hash",
  "ryu",
@@ -1779,6 +1781,10 @@ dependencies = [
  "tempfile",
  "wait-timeout",
 ]
+
+[[package]]
+name = "quench-tier-corpus"
+version = "0.1.0"
 
 [[package]]
 name = "quench-wasm"

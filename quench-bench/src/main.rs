@@ -2,6 +2,7 @@ mod analysis;
 mod contention;
 mod jetstream;
 mod subcommand;
+mod tier_differential;
 mod tier_invariant;
 
 use serde::{Deserialize, Serialize};
@@ -2890,7 +2891,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [--fixed-work] [--tier-invariant [--tier-tolerance FRACTION] [--tier-q-jit]] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [--fixed-work] [--tier-invariant [--tier-tolerance FRACTION] [--tier-q-jit]] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [engine options]\n       quench-bench --tier-differential --quench PATH [--seed S] [--count N] [--iterations N] [--timeout-ms N] [--out-dir DIR]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }

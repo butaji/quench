@@ -20,7 +20,7 @@ fn answer(source: &str, name: &str, mode: crate::ExecutionMode) -> Option<f64> {
 }
 
 /// Runs `source` with each of its first `limit` guards forced; returns (guards, mismatches).
-fn forced_everywhere(source: &str, name: &str, limit: usize) -> (usize, Vec<usize>) {
+pub(super) fn forced_everywhere(source: &str, name: &str, limit: usize) -> (usize, Vec<usize>) {
     let expected = answer(source, name, crate::ExecutionMode::Interpreted);
     forced_miss::arm(None);
     assert_eq!(answer(source, name, crate::ExecutionMode::Compiled), expected, "unforced compile");
