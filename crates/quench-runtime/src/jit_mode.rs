@@ -30,13 +30,19 @@ impl JitMode {
         }
     }
 
+    /// Whether `arg` has the shape of a JIT mode flag (`--no-jit`, `--b-jit`, the removed `--jit`, or an unknown `--x-jit`).
+    pub fn is_flag(arg: &str) -> bool {
+        arg.starts_with("--") && arg.ends_with("-jit")
+    }
+
     /// Record `flag` as the process's mode in `chosen`: an error message if a mode was already
     /// chosen or the flag is the removed `--jit`.
-    pub fn select(chosen: &mut Option<Self>, flag: &str) -> Result<(), &'static str> {
+    pub fn select(chosen: &mut Option<Self>, flag: &str) -> Result<(), String> {
         match (chosen.is_some(), Self::from_flag(flag)) {
-            (true, _) => Err("only one of --no-jit, --b-jit, --q-jit and --u-jit can be used"),
+            (true, _) => Err("only one of --no-jit, --b-jit, --q-jit and --u-jit can be used".into()),
             (false, Some(mode)) => Ok(*chosen = Some(mode)),
-            (false, None) => Err("--jit was removed: JIT is the default, and --no-jit selects the interpreter"),
+            (false, None) if flag == "--jit" => Err("--jit was removed: JIT is the default, and --no-jit selects the interpreter".into()),
+            (false, None) => Err(format!("unknown JIT flag {flag}: use --no-jit, --b-jit, --q-jit or --u-jit")),
         }
     }
 
@@ -104,9 +110,12 @@ mod tests {
         let tiers = |flag| JitMode::from_flag(flag).map(JitMode::tiers_enabled);
         assert_eq!(tiers("--no-jit"), Some((false, false)));
         assert_eq!(tiers("--b-jit"), Some((true, false)));
-        assert_eq!(tiers("--q-jit"), None);
+        assert_eq!(tiers("--q-jit"), Some((false, true)));
         assert_eq!(tiers("--u-jit"), Some((false, true)));
         assert_eq!(tiers("--jit"), None);
+        let mut chosen = None;
+        let error = JitMode::select(&mut chosen, "--zz-jit").unwrap_err();
+        assert!(error.starts_with("unknown JIT flag --zz-jit") && chosen.is_none());
         assert_eq!(JitMode::default().tiers_enabled(), (true, true));
     }
 }

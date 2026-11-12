@@ -681,7 +681,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            flag @ ("--no-jit" | "--q-jit" | "--b-jit" | "--u-jit" | "--jit") => if let Err(message) = quench_runtime::JitMode::select(&mut jit_mode, flag) { return Ok(cli_usage_error(message)); },
+            flag if quench_runtime::JitMode::is_flag(flag) => if let Err(message) = quench_runtime::JitMode::select(&mut jit_mode, flag) { return Ok(cli_usage_error(&message)); },
             "--env-file" | "--env-file-if-exists" => {
                 let Some(path) = args.get(index + 1) else {
                     return Ok(cli_usage_error(&format!(
@@ -835,7 +835,6 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                 });
                 break;
             }
-            option if option.starts_with("--") && option.ends_with("-jit") => return Ok(cli_usage_error(&format!("unknown JIT flag {option}: use --no-jit, --b-jit or --u-jit"))),
             option if option.starts_with('-') => {
                 exec_argv.push(args[index].clone());
             }

@@ -931,7 +931,7 @@ impl ABIMachineSpec for X64ABIMachineSpec {
             // The `winch` calling convention doesn't have any callee-save
             // registers.
             CallConv::Winch => vec![],
-            // Quench V6: FastJIT stencils (`unwind_info=false` with the tail convention) save
+            // Quench V6: b-jit stencils (`unwind_info=false` with the tail convention) save
             // nothing: the entry thunk preserves the callee-saved registers once for the chain.
             CallConv::Tail if !flags.unwind_info() => vec![],
             CallConv::Fast | CallConv::SystemV | CallConv::Tail => regs
