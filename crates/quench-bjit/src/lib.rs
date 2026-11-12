@@ -112,7 +112,8 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
                     TAKEN => out as usize + starts[row.taken.expect("a branch row names its target")],
                     index => exit(k, index - EXIT),
                 };
-                std::ptr::write_unaligned(place.cast::<i32>(), (target as i64 + r.addend - place as i64) as i32);
+                let displacement = i32::try_from(target as i64 + r.addend - place as i64).expect("a successor within rel32 reach");
+                std::ptr::write_unaligned(place.cast::<i32>(), displacement);
             }
         }
     }
@@ -169,6 +170,24 @@ mod rustc_tests {
         for code in library::heap_library() {
             assert_eq!(library::heap_canonical(code), code);
             assert!(rustc::stencil(&library::heap_name(code)).is_some(), "{code:?}");
+        }
+    }
+
+    /// Every patched field of every stencil lies inside its code, and names a hole the copy
+    /// patches: the range `copy_patch` writes through.
+    #[test]
+    fn patch_ranges_lie_inside_the_code() {
+        let names = library::library().into_iter().map(library::name).chain(library::heap_library().into_iter().map(library::heap_name));
+        for name in names.chain(["entry_thunk", "leave_word", "leave_pop"].map(String::from)) {
+            let stencil = rustc::stencil(&name).unwrap_or_else(|| panic!("{name}"));
+            for field in &stencil.imm32 {
+                assert!(field.offset as usize + 4 <= stencil.code.len() && (field.index as usize) < crate::HOLES, "{name}: {field:?}");
+            }
+            for reloc in &stencil.relocs {
+                let width = if reloc.pc_relative { 4 } else { 8 };
+                assert!(reloc.offset as usize + width <= stencil.code.len(), "{name}: {reloc:?}");
+                assert!(reloc.pc_relative || (reloc.index as usize) < crate::HOLES, "{name}: {reloc:?}");
+            }
         }
     }
 }
