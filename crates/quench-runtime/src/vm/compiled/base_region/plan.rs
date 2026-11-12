@@ -92,11 +92,24 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
     Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
 }
 
-/// Plans a row. A `Variant::Concat` site allocates, so it can only run as a call of the runtime
-/// through the helper-call stencil class (`(vm, residual, lane_context, call_pc)` giving
-/// `LANE_CALL_{COMPLETED, MISSED, LEFT, TERMINATED}`); until that class exists its general row's
-/// tag guard exits at the PC for a string operand, writing nothing.
-pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Planned, String> {
+/// Whether a row of `variant` speculates int32 operands, given whether the representations make
+/// it `general`: the double variant never does, the others as the representations say. A
+/// `Variant::Concat` site would call the runtime (`lane_body_string_concat`) through the helper row
+/// (`call_plan`), whose payload only a region that crosses with the activation's dispatch has;
+/// until then it takes the generic row, whose tag guard exits at the PC for a string operand and
+/// writes nothing.
+fn speculates(variant: Variant, general: bool) -> bool {
+    variant != Variant::Double && !general
+}
+
+/// The stencil of the row, of the variant's speculation or, where the library holds none, of
+/// the speculation the representations give.
+fn row_stencil(kind: Kind, [dst, a, b]: [Place; 3], variant: Variant, general: bool) -> Result<&'static Stencil, String> {
+    let row = |speculate| numeric::stencil(numeric::Row { kind, dst, a, b, speculate });
+    row(speculates(variant, general)).or_else(|_| row(!general))
+}
+
+pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool, variant: Variant) -> Result<Planned, String> {
     let (a, a_hole) = operand(homes, decoded.a);
     let (b, b_hole) = operand(homes, decoded.b);
     let (dst, dst_hole) = operand(homes, decoded.dst.map(Source::Register));
@@ -109,7 +122,7 @@ pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> 
     }
     let polls = decoded.target.is_some_and(|target| target <= pc) && decoded.kind == Kind::Jump;
     let kind = if polls { Kind::JumpPoll } else { decoded.kind };
-    let stencil = numeric::stencil(numeric::Row { kind, dst, a, b, speculate: !general })?;
+    let stencil = row_stencil(kind, [dst, a, b], variant, general)?;
     let interrupt = std::mem::offset_of!(super::super::CallContext, interrupt) as u64;
     let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || matches!(dst, Place::Pin(_) | Place::PinF(_) | Place::MemInt);
     // A poll row also names where the run's backward-edge counter lives (`jump_row`).

@@ -13306,7 +13306,7 @@ mod in_place_natives;
 mod native_calls; mod generator_yields; use generator_yields::yield_handler;
 mod array_steps;
 mod value_steps;
-pub(in crate::vm) use value_steps::lane_body_value_step;
+pub(in crate::vm) use value_steps::{lane_body_string_concat, lane_body_value_step};
 use array_steps::*;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
 mod wasm_gc;

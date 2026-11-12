@@ -1820,6 +1820,8 @@ lane_helper_inventory! { H;
     TypedArrayView => lane_typed_array_view::<H>,
     /// A value step the interpreter defines (`dispatch_fast::lane_body_value_step`).
     ValueStep => super::dispatch_fast::lane_body_value_step::<H>,
+    /// `+` of strings (`dispatch_fast::lane_body_string_concat`).
+    StringConcat => super::dispatch_fast::lane_body_string_concat::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
 }

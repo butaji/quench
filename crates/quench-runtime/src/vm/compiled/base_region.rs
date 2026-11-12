@@ -184,7 +184,7 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     let layout = Layout { header, backedge, homes, webs, region };
     let mut body = Vec::with_capacity(count);
     for (k, row) in decoded.iter().enumerate() {
-        body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs))?);
+        body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs), variant_of(row.kind, kinds.get(k)))?);
     }
     let bare = decoded.iter().all(|row| row.heap.is_none());
     Ok((link(&layout, &body)?, bare))

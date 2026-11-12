@@ -22,9 +22,7 @@ pub(super) fn operand_repr(reprs: &Reprs, source: Option<Source>) -> Repr {
     }
 }
 
-/// The variant of row a site gets, chosen from its operand feedback. `Concat` awaits the helper-call
-/// stencil class (`plan`), so only `selected` and the tests read the wider variants yet.
-#[allow(dead_code)]
+/// The variant of row a site gets, chosen from its operand feedback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Variant {
     /// The int32-speculating row: guards int32 operands, exits at the PC on any other.
@@ -59,7 +57,6 @@ fn selected(class: OperandClass) -> Variant {
     SELECTION.iter().find(|(candidate, _)| *candidate == class).map_or(Variant::Generic, |(_, variant)| *variant)
 }
 
-#[allow(dead_code)]
 /// The variant of the row of `kind` at a site with `kinds`.
 pub(super) fn variant_of(kind: Kind, kinds: Option<&OperandKinds>) -> Variant {
     let Some(kinds) = kinds else { return Variant::Int32 };
