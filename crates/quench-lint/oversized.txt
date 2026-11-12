@@ -619,7 +619,6 @@ complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::call_refe
 complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::convert 12
 complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::float_binary 13
 complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::instruction 59
-complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::integer_binary 28
 complexity crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::simd 17
 complexity crates/quench-runtime/src/vm/compiled.rs::Vm<H>::call_import 15
 complexity crates/quench-runtime/src/vm/compiled.rs::Vm<H>::compile_program_with_diagnostics_and_root_mode 57
@@ -2808,7 +2807,6 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::call_
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::callout_function 78
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::convert 45
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::instruction 407
-function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::integer_binary 66
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::simd 72
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::simd_kernel 80
 function-lines crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::vector_instruction 63

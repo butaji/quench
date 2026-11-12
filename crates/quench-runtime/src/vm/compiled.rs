@@ -34,9 +34,8 @@ use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{
     F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator,
 };
-use crate::wasm::integer::{
-    I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator,
-};
+use crate::staged::wasm_operation::WasmOperation;
+use crate::wasm::integer::I32BinaryOperator;
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName,
@@ -87,6 +86,8 @@ pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 mod static_loops;
 #[path = "compiled/wasm_callable.rs"]
 mod wasm_callable;
+#[path = "compiled/wasm_stage.rs"]
+mod wasm_stage;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
 pub(super) use lane_unit::static_call_targets;
@@ -3915,16 +3916,6 @@ fn counterpart(ty: crate::WasmType) -> crate::WasmType {
         crate::WasmType::F64 => crate::WasmType::I64,
         _ => unreachable!("compiled values are numeric scalars"),
     }
-}
-
-/// An i32 integer operator is its i64 namesake: the i64 selectors extend the
-/// shared declaration (`crate::wasm::integer`), so tags agree.
-fn widen_binary(operator: I32BinaryOperator) -> I64BinaryOperator {
-    I64BinaryOperator::from_tag(operator as u32).expect("i64 selectors extend i32's")
-}
-
-fn widen_unary(operator: I32UnaryOperator) -> I64UnaryOperator {
-    I64UnaryOperator::from_tag(operator as u32).expect("i64 selectors extend i32's")
 }
 
 /// A float operator and its operand type; both widths share one declaration
@@ -8826,21 +8817,14 @@ impl<H: Host> Analysis<'_, H> {
         }) {
             return None;
         }
-        if let Some(_operator) = I32BinaryOperator::from_register_op(op) {
-            i32_value(state, instruction.b())?;
-            i32_value(state, instruction.c())?;
-            return set(state, instruction.a(), Slot::Value(Kind::I32));
-        }
-        if I32BinaryOperator::from_immediate_op(op).is_some() {
-            i32_value(state, instruction.b())?;
-            return set(state, instruction.a(), Slot::Value(Kind::I32));
-        }
-        if I32BinaryOperator::from_jump_op(op).is_some() {
-            i32_value(state, instruction.a())?;
-            return i32_value(state, instruction.b());
-        }
-        if I32BinaryOperator::from_immediate_jump_op(op).is_some() {
-            return i32_value(state, instruction.a());
+        if let Some(operation) = WasmOperation::of(op, instruction.imm()) {
+            return wasm_stage::integer_transfer(
+                state,
+                function.registers,
+                instruction,
+                operation,
+                &value,
+            );
         }
         if let Some(load) = MemoryLoad::from_direct_op(op) {
             if Some(instruction.b()) != memory_register
@@ -8880,19 +8864,6 @@ impl<H: Host> Analysis<'_, H> {
             return set(state, instruction.a(), Slot::Value(kind));
         }
         match op.class() {
-            Class::WasmI64Binary => {
-                let operator = I64BinaryOperator::from_tag(instruction.imm())?;
-                (value(state, instruction.b())? == Kind::I64).then_some(())?;
-                (value(state, instruction.c())? == Kind::I64).then_some(())?;
-                let result = Kind::of(operator.apply(1, 1).ok()?.ty())?;
-                set(state, instruction.a(), Slot::Value(result))
-            }
-            Class::WasmI64Unary => {
-                let operator = I64UnaryOperator::from_tag(instruction.imm())?;
-                (value(state, instruction.b())? == Kind::I64).then_some(())?;
-                let result = Kind::of(operator.apply(0).ty())?;
-                set(state, instruction.a(), Slot::Value(result))
-            }
             Class::WasmScalarConvert => {
                 let operator = ScalarConversionOperator::from_tag(instruction.imm())?;
                 (value(state, instruction.b())? == Kind::of(operator.source_type())?)
@@ -8972,20 +8943,6 @@ impl<H: Host> Analysis<'_, H> {
                 }
                 set(state, instruction.a(), Slot::Vector)
             }
-            Class::WasmI32Unary => {
-                I32UnaryOperator::from_tag(instruction.imm())?;
-                i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(Kind::I32))
-            }
-            Class::WasmI32ShiftRightUnsignedAnd => {
-                i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(Kind::I32))
-            }
-            Class::WasmI32AddJump => {
-                i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(Kind::I32))
-            }
-            Class::WasmJumpI32Zero | Class::WasmJumpI32NonZero => i32_value(state, instruction.a()),
             Class::Jump => Some(()),
             Class::WasmBranchTable => {
                 i32_value(state, instruction.a())?;
@@ -9953,95 +9910,6 @@ impl<H: Host> Emitter<'_, '_, H> {
                 values.push(self.body.core.builder.ins().iconst(kind.ir(), 0));
             }
             self.body.core.builder.ins().return_(&values);
-        }
-    }
-
-    /// An integer operator at the operands' width.
-    fn integer_binary(
-        &mut self,
-        operator: I64BinaryOperator,
-        left: ir::Value,
-        right: ir::Value,
-    ) -> ir::Value {
-        use I64BinaryOperator as B;
-        let ty = self.body.core.builder.func.dfg.value_type(left);
-        let compare = |this: &mut Self, cc: IntCC| {
-            let flag = this.body.core.builder.ins().icmp(cc, left, right);
-            this.body.core.builder.ins().uextend(types::I32, flag)
-        };
-        match operator {
-            B::Add => self.body.core.builder.ins().iadd(left, right),
-            B::Subtract => self.body.core.builder.ins().isub(left, right),
-            B::Multiply => self.body.core.builder.ins().imul(left, right),
-            B::And => self.body.core.builder.ins().band(left, right),
-            B::Or => self.body.core.builder.ins().bor(left, right),
-            B::Xor => self.body.core.builder.ins().bxor(left, right),
-            B::ShiftLeft => self.body.core.builder.ins().ishl(left, right),
-            B::ShiftRightSigned => self.body.core.builder.ins().sshr(left, right),
-            B::ShiftRightUnsigned => self.body.core.builder.ins().ushr(left, right),
-            B::RotateLeft => self.body.core.builder.ins().rotl(left, right),
-            B::RotateRight => self.body.core.builder.ins().rotr(left, right),
-            B::MultiplyHighSigned => self.body.core.builder.ins().smulhi(left, right),
-            B::MultiplyHighUnsigned => self.body.core.builder.ins().umulhi(left, right),
-            B::Equal => compare(self, IntCC::Equal),
-            B::NotEqual => compare(self, IntCC::NotEqual),
-            B::LessSigned => compare(self, IntCC::SignedLessThan),
-            B::LessUnsigned => compare(self, IntCC::UnsignedLessThan),
-            B::GreaterSigned => compare(self, IntCC::SignedGreaterThan),
-            B::GreaterUnsigned => compare(self, IntCC::UnsignedGreaterThan),
-            B::LessEqualSigned => compare(self, IntCC::SignedLessThanOrEqual),
-            B::LessEqualUnsigned => compare(self, IntCC::UnsignedLessThanOrEqual),
-            B::GreaterEqualSigned => compare(self, IntCC::SignedGreaterThanOrEqual),
-            B::GreaterEqualUnsigned => compare(self, IntCC::UnsignedGreaterThanOrEqual),
-            B::DivideSigned | B::RemainderSigned | B::DivideUnsigned | B::RemainderUnsigned => {
-                let zero = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, right, 0);
-                self.trap_if(zero, crate::WasmTrap::IntegerDivideByZero);
-                match operator {
-                    B::DivideUnsigned => self.body.core.builder.ins().udiv(left, right),
-                    B::RemainderUnsigned => self.body.core.builder.ins().urem(left, right),
-                    B::DivideSigned => {
-                        let minimum = if ty == types::I32 {
-                            i64::from(i32::MIN)
-                        } else {
-                            i64::MIN
-                        };
-                        let minimum = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, left, minimum);
-                        let negative_one = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
-                        let overflow = self.body.core.builder.ins().band(minimum, negative_one);
-                        self.trap_if(overflow, crate::WasmTrap::IntegerOverflow);
-                        self.body.core.builder.ins().sdiv(left, right)
-                    }
-                    _ => {
-                        // `MIN % -1` is 0; the machine division would fault.
-                        let negative_one = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
-                        let one = self.body.core.builder.ins().iconst(ty, 1);
-                        let divisor = self.body.core.builder.ins().select(negative_one, one, right);
-                        self.body.core.builder.ins().srem(left, divisor)
-                    }
-                }
-            }
-        }
-    }
-
-    /// An integer unary operator at the operand's width.
-    fn integer_unary(&mut self, operator: I64UnaryOperator, value: ir::Value) -> ir::Value {
-        use I64UnaryOperator as U;
-        let ty = self.body.core.builder.func.dfg.value_type(value);
-        let mut extend = |narrow_type| {
-            let narrow = self.body.core.builder.ins().ireduce(narrow_type, value);
-            self.body.core.builder.ins().sextend(ty, narrow)
-        };
-        match operator {
-            U::EqualZero => {
-                let flag = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, value, 0);
-                self.body.core.builder.ins().uextend(types::I32, flag)
-            }
-            U::LeadingZeros => self.body.core.builder.ins().clz(value),
-            U::TrailingZeros => self.body.core.builder.ins().ctz(value),
-            U::PopulationCount => self.body.core.builder.ins().popcnt(value),
-            U::ExtendSigned8 => extend(types::I8),
-            U::ExtendSigned16 => extend(types::I16),
-            U::ExtendSigned32 => extend(types::I32),
         }
     }
 
@@ -11197,36 +11065,8 @@ impl<H: Host> Emitter<'_, '_, H> {
         if let Some(done) = self.vector_instruction(pc, instruction) {
             return done;
         }
-        if let Some(operator) = I32BinaryOperator::from_register_op(op) {
-            let left = self.read(b, Kind::I32);
-            let right = self.read(c, Kind::I32);
-            let value = self.integer_binary(widen_binary(operator), left, right);
-            self.write(a, Kind::I32, value);
-            return true;
-        }
-        if let Some(operator) = I32BinaryOperator::from_immediate_op(op) {
-            let left = self.read(b, Kind::I32);
-            let right = self
-                .body.core.builder
-                .ins()
-                .iconst(types::I32, i64::from(instruction.imm() as i32));
-            let value = self.integer_binary(widen_binary(operator), left, right);
-            self.write(a, Kind::I32, value);
-            return true;
-        }
-        if let Some(operator) = I32BinaryOperator::from_jump_op(op) {
-            let left = self.read(a, Kind::I32);
-            let right = self.read(b, Kind::I32);
-            let holds = self.integer_binary(widen_binary(operator), left, right);
-            self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
-            return false;
-        }
-        if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
-            let left = self.read(a, Kind::I32);
-            let right = self.body.core.builder.ins().iconst(types::I32, i64::from(b as i16));
-            let holds = self.integer_binary(widen_binary(operator), left, right);
-            self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
-            return false;
+        if let Some(operation) = WasmOperation::of(op, instruction.imm()) {
+            return self.integer_operation(pc, instruction, operation);
         }
         if let Some(load) = MemoryLoad::from_direct_op(op) {
             let result = load_type(load).expect("planned");
@@ -11374,21 +11214,6 @@ impl<H: Host> Emitter<'_, '_, H> {
             return true;
         }
         match op.class() {
-            Class::WasmI64Binary => {
-                let operator = I64BinaryOperator::from_tag(instruction.imm()).expect("planned");
-                let left = self.read(b, Kind::I64);
-                let right = self.read(c, Kind::I64);
-                let value = self.integer_binary(operator, left, right);
-                let kind = Kind::of_ir(self.body.core.builder.func.dfg.value_type(value));
-                self.write(a, kind, value);
-            }
-            Class::WasmI64Unary => {
-                let operator = I64UnaryOperator::from_tag(instruction.imm()).expect("planned");
-                let input = self.read(b, Kind::I64);
-                let value = self.integer_unary(operator, input);
-                let kind = Kind::of_ir(self.body.core.builder.func.dfg.value_type(value));
-                self.write(a, kind, value);
-            }
             Class::WasmScalarConvert => {
                 let operator =
                     ScalarConversionOperator::from_tag(instruction.imm()).expect("planned");
@@ -11416,42 +11241,6 @@ impl<H: Host> Emitter<'_, '_, H> {
                         self.write_constant(window.base + offset, kind, bits);
                     }
                 }
-            }
-            Class::WasmI32Unary => {
-                let operator = I32UnaryOperator::from_tag(instruction.imm()).expect("planned");
-                let input = self.read(b, Kind::I32);
-                let value = self.integer_unary(widen_unary(operator), input);
-                self.write(a, Kind::I32, value);
-            }
-            Class::WasmI32ShiftRightUnsignedAnd => {
-                let input = self.read(b, Kind::I32);
-                let shift = self.body.core.builder.ins().iconst(types::I32, i64::from(c as i16));
-                let shifted =
-                    self.integer_binary(I64BinaryOperator::ShiftRightUnsigned, input, shift);
-                let mask = self
-                    .body.core.builder
-                    .ins()
-                    .iconst(types::I32, i64::from(instruction.imm() as i32));
-                let value = self.integer_binary(I64BinaryOperator::And, shifted, mask);
-                self.write(a, Kind::I32, value);
-            }
-            Class::WasmI32AddJump => {
-                let input = self.read(b, Kind::I32);
-                let addend = self.body.core.builder.ins().iconst(types::I32, i64::from(c as i16));
-                let sum = self.body.core.builder.ins().iadd(input, addend);
-                self.write(a, Kind::I32, sum);
-                self.branch(pc, sum, instruction.jump_target() as usize, pc + 1);
-                return false;
-            }
-            Class::WasmJumpI32Zero | Class::WasmJumpI32NonZero => {
-                let value = self.read(a, Kind::I32);
-                let (taken, other) = (instruction.jump_target() as usize, pc + 1);
-                if op.is_wasm_jump_i32_non_zero() {
-                    self.branch(pc, value, taken, other);
-                } else {
-                    self.branch(pc, value, other, taken);
-                }
-                return false;
             }
             Class::Jump => {
                 let target = instruction.jump_target() as usize;
@@ -18924,26 +18713,9 @@ mod tests {
         assert_eq!(loop_state.get(0, 1), Some(Slot::DEFAULT));
     }
 
-    /// Each i32 integer operator widens to its namesake, and each f32 float
-    /// operator to its f64 namesake.
+    /// Each f32 float operator widens to its f64 namesake.
     #[test]
     fn narrow_selectors_name_their_wide_namesakes() {
-        let mut tag = 0;
-        while let Some(operator) = I32BinaryOperator::from_tag(tag) {
-            assert_eq!(
-                format!("{operator:?}"),
-                format!("{:?}", widen_binary(operator))
-            );
-            tag += 1;
-        }
-        let mut tag = 0;
-        while let Some(operator) = I32UnaryOperator::from_tag(tag) {
-            assert_eq!(
-                format!("{operator:?}"),
-                format!("{:?}", widen_unary(operator))
-            );
-            tag += 1;
-        }
         let mut tag = 0;
         while let Some(operator) = F32BinaryOperator::from_tag(tag) {
             let (wide, _) = float_binary_operator(Op::WasmF32Binary, tag).expect("f32 selector");
