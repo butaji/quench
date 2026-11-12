@@ -1,5 +1,5 @@
-//! Reads of a proxy whose `get` trap the lane activates (`proxy_traps::lane_read_get_trap`),
-//! against Node's output.
+//! Stores to and reads of a proxy whose `get` or `set` trap the lane activates
+//! (`proxy_traps::lane_read_get_trap`, `lane_store_set_trap`), against Node's output.
 use crate::test_host::printed;
 
 /// The reads `proxy_get_traps_match_node` runs.
@@ -56,4 +56,51 @@ o.push(acc, [...gen()].join());
 #[test]
 fn proxy_get_traps_match_node() {
     assert_eq!(printed(SOURCE, "proxy-get.js"), ["12000|9000|recv|TypeError|TypeError|TypeError|TypeError|H,string,true,3|H,string,false,3|50000|TypeError|TypeError|b0|2500|2,4,6|number|true|a,b,g|{\"v\":5}|2000|1,2,3|1000"]);
+}
+
+/// The stores `proxy_set_traps_match_node` runs.
+const SET_SOURCE: &str = r#"
+const o = []; const log = [];
+const p1 = new Proxy({ a: 1 }, { set(t, k, v, r) { log.push(typeof k + ":" + k + ":" + v + ":" + (r === p1)); t[k] = v; return true; } });
+const p2 = new Proxy({ a: 1 }, { set() { return false; } });
+const p3 = new Proxy({ a: 1 }, { set(t, k, v) { throw new RangeError("thrown " + v); } });
+const p4 = new Proxy(Object.freeze({ a: 1 }), { set() { return true; } });
+const p5 = new Proxy({ a: 1 }, { set() { return 0; } });
+const p6 = new Proxy({}, { set() { return undefined; } });
+function sloppy(p, n) { let last; for (let i = 0; i < n; i++) last = (p.a = i); return last; }
+function strict(p, n) { "use strict"; let last; for (let i = 0; i < n; i++) last = (p.a = i); return last; }
+function caught(p, n) { "use strict"; const r = []; for (let i = 0; i < n; i++) { try { p.zz = i; r.push("ok"); } catch (e) { r.push(e.constructor.name); } finally { r.push("f"); } } return r.join(); }
+function sloppyRes(p, n) { const r = []; for (let i = 0; i < n; i++) r.push(p.zz = i); return r.join(); }
+o.push(sloppy(p1, 5), strict(p1, 5), log.length, log.slice(0, 2).join(";"));
+o.push(sloppy(p2, 5), caught(p2, 3), sloppyRes(p2, 3), caught(p3, 2), sloppyRes(p5, 3), caught(p5, 2), caught(p6, 2), caught(p4, 2));
+const child = Object.create(p1);
+function viaChild(n) { "use strict"; for (let i = 0; i < n; i++) child.x = i; return Object.keys(child).join() + ":" + p1.x; }
+o.push(viaChild(5));
+const h = { v: 7, set(t, k, val) { t[k] = this.v + val; return true; } };
+const p8 = new Proxy({}, h);
+function viaThis(n) { "use strict"; for (let i = 0; i < n; i++) p8.w = i; return p8.w; }
+o.push(viaThis(5));
+const p9 = new Proxy({}, { set(t, k, v) { Object.defineProperty(t, k, { value: 1, writable: false, configurable: true }); return true; } });
+function nonWritable(n) { "use strict"; for (let i = 0; i < n; i++) p9.n = i; return p9.n; }
+o.push(nonWritable(5));
+const t10 = {}; Object.defineProperty(t10, "a", { get() { return 1; }, configurable: false });
+const p10 = new Proxy(t10, { set() { return true; } });
+function noSetter(n) { "use strict"; try { for (let i = 0; i < n; i++) p10.a = i; } catch (e) { return e.constructor.name; } }
+o.push(noSetter(5));
+const hc = { set() { return true; } }; const p11 = new Proxy({}, hc);
+function swap(n) { "use strict"; const r = []; for (let i = 0; i < n; i++) { try { r.push(p11.q = i); } catch (e) { r.push(e.constructor.name); } if (i === 1) hc.set = () => false; if (i === 2) delete hc.set; if (i === 3) hc.set = 5; } return r.join(); }
+o.push(swap(6));
+function* gen() { for (let i = 0; i < 3; i++) { p1.g = i; yield p1.g; } }
+o.push([...gen()].join());
+(async () => { for (let i = 0; i < 100; i++) { p1.h = i; if (i % 50 === 0) await null; } return p1.h; })().then(v => { o.push(v); print(o.join("|")); });
+"#;
+
+/// A trapped store calls the trap on its handler with the target, the key, the value and the
+/// receiver, and yields the value stored; a falsish result is a `TypeError` of a strict store
+/// only (raised at the store, inside its `try`), a throwing trap, a trap replaced, removed or
+/// made non-callable mid-loop, a frozen or getterless target, a proxy up the receiver's chain,
+/// and generator and async callers keep their semantics.
+#[test]
+fn proxy_set_traps_match_node() {
+    assert_eq!(printed(SET_SOURCE, "proxy-set.js"), ["4|4|10|string:a:0:true;string:a:1:true|4|TypeError,f,TypeError,f,TypeError,f|0,1,2|RangeError,f,RangeError,f|0,1,2|TypeError,f,TypeError,f|TypeError,f,TypeError,f|ok,f,ok,f|:4|11|1|TypeError|0,1,TypeError,3,TypeError,TypeError|0,1,2|99"]);
 }

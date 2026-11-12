@@ -1407,6 +1407,10 @@ enum Completion {
     /// stored, which its record's register still holds, whatever the setter returns. Made a
     /// frame, its pending call yields it the same way (`CallCompletion::Assigned`).
     Assigns,
+    /// A strict store's proxy `set` trap (`proxy_traps::lane_store_set_trap`): `Assigns` for a
+    /// trap that returns a truthy value. A falsish one is the `TypeError` of the store, which
+    /// the general path raises from the trap's frame (`CallCompletion::AssignedChecked`).
+    AssignsChecked,
     /// An array callback method's callback the lane runs for one element
     /// (`lane_begin_array_iteration`): its return steps the iteration `LaneStack::steps`
     /// keeps (`lane_step_array_iteration`). Made a frame, its pending call finishes the
@@ -6924,6 +6928,9 @@ fn lane_set_field_in_place<H: Host>(
         return Resumed::Exit(exit(ip));
     };
     let (atom, value, site) = (i.imm(), r.get(i.a), i.c);
+    if let Some(resumed) = proxy_traps::lane_store_set_trap(cx, r, ip, object, atom, value, strict) {
+        return resumed;
+    }
     if lane_in_place(cx, ip, |vm, code| vm.set_field_cached(code, object, atom, value, site, strict)).is_none() {
         return Resumed::Exit(exit(ip));
     }
@@ -16633,6 +16640,11 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
         return Some(resumed);
     }
     let vm = unsafe { vm(cx) };
+    // A strict store's `set` trap that refuses it returns from its frame, whose pending call
+    // raises the store's `TypeError` (`CallCompletion::AssignedChecked`).
+    if proxy_traps::set_trap_refuses(vm, value) {
+        return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
+    }
     // A settling activation whose promise's resolution would observe the value returns it
     // from its frame, whose pending call resolves the promise (`lane_settled_then`); else the
     // `then` read here is the one its resolution uses.

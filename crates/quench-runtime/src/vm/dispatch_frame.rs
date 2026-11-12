@@ -2522,7 +2522,7 @@ impl<H: Host> Vm<H> {
                         self.programs
                             .record_js_jit_interpreter_completion(program, function, elapsed_ns);
                     }
-                    let mut settle_error = None;
+                    let mut settle_error;
                     loop {
                     if let Some(mut pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
@@ -2557,6 +2557,8 @@ impl<H: Host> Vm<H> {
                             self.set_active_program(executing_program);
                         }
                         self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                        // SAFETY: as for `p` at the top of the loop.
+                        settle_error = self.refused_store_error(unsafe { &*executing_residual }, &pending, frame, value);
                         value = self.completed_call_value(&pending.completion, frame, pending.destination, value);
                         if let Some(root) = pending.completion.take_promise() {
                             let promise = self.release_settled_call_root(root);

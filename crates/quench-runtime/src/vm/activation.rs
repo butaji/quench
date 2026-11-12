@@ -57,6 +57,10 @@ pub(crate) enum CallCompletion {
     /// A store's setter the lane activated: the assignment yields the value stored, which
     /// the caller's register still holds, whatever the setter returns.
     Assigned,
+    /// A strict store's proxy `set` trap the lane activated: `Assigned`, unless the trap
+    /// returns a falsish value, which is a `TypeError` raised at the store
+    /// (`Vm::proxy_set_refused_error`).
+    AssignedChecked,
 }
 
 impl CallCompletion {
@@ -70,7 +74,10 @@ impl CallCompletion {
     /// Whether the call's value is made on the general path from what the callee returns:
     /// an async callee's promise settles there, an array step's iteration finishes there.
     #[inline(always)]
-    pub(super) fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_)) }
+    pub(super) fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_) | Self::AssignedChecked) }
+
+    #[inline(always)]
+    pub(super) fn is_checked_assignment(&self) -> bool { matches!(self, Self::AssignedChecked) }
 
     #[inline(always)]
     pub(super) fn take_array_step(&mut self) -> Option<Box<super::array_indexed::ArrayStepCall>> {

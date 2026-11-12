@@ -72,7 +72,7 @@ pub(super) fn completed_value<H: Host>(vm: &Vm<H>, activation: &Activation, comp
     match completion {
         completion if completion.constructs() && !vm.is_object_like(value) => this,
         // SAFETY: the call record belongs to the caller's live view.
-        Completion::Assigns => activation.caller_registers.get(unsafe { (*activation.call).a }),
+        Completion::Assigns | Completion::AssignsChecked => activation.caller_registers.get(unsafe { (*activation.call).a }),
         _ => value,
     }
 }
@@ -82,6 +82,7 @@ pub(super) fn completed_value<H: Host>(vm: &Vm<H>, activation: &Activation, comp
 pub(super) fn frame_completion(completion: Option<Completion>) -> CallCompletion {
     match completion {
         Some(Completion::Assigns) => CallCompletion::Assigned,
+        Some(Completion::AssignsChecked) => CallCompletion::AssignedChecked,
         _ => CallCompletion::Value,
     }
 }
@@ -106,7 +107,7 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn completed_call_value(&self, completion: &CallCompletion, caller: usize, destination: crate::bytecode::Register, value: Value) -> Value {
         match completion {
             CallCompletion::Constructor(this) if !self.is_object_like(value) => *this,
-            CallCompletion::Assigned => self.read(caller, destination),
+            CallCompletion::Assigned | CallCompletion::AssignedChecked => self.read(caller, destination),
             _ => value,
         }
     }

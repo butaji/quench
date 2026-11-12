@@ -6,6 +6,7 @@ pub(super) mod ordinary_chain;
 mod function_reflection;
 mod plain_key_set;
 mod proxy_get;
+mod proxy_set;
 
 /// Where constructors of one shape hold their own `@@species` getter
 /// (`Vm::has_intrinsic_species_getter`) under one `prototype_layout_epoch`: the shape names
@@ -259,11 +260,8 @@ impl<H: Host> Vm<H> {
             )?;
             if !self.truthy(result) {
                 if strict {
-                    let property = self.detail_string(self.heap.root_value(key).unwrap());
-                    return Err(self.type_error(
-                        p,
-                        format!("'set' on proxy: trap returned falsish for property '{property}'"),
-                    ));
+                    let key = self.heap.root_value(key).unwrap();
+                    return Err(self.proxy_set_refused_error(p, key));
                 }
                 return Ok(false);
             }
