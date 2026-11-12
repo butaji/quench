@@ -49,10 +49,13 @@ fn raising_instruction(instruction: WideInstruction, registers: Register) -> boo
 }
 
 /// The register a handler's thrown value goes to, where native code can store it: `None`
-/// for a handler it cannot serve (a `finally` return, a `with` scope to unwind, or a binding
-/// that lives in a frame local), `Some(None)` for a catch that binds nothing.
+/// for a handler it cannot serve (a `with` scope to unwind, or a binding that lives in a
+/// frame local), `Some(None)` for a catch that binds nothing. A `finally` is served as a
+/// catch-all: the thrown value goes to its error register, its exceptional copy of the
+/// finalizer runs, and the `Throw` that ends it re-raises (`Lowering::throw`). Its
+/// `return_target` is only where a generator resumes a `return`, which an exception never takes.
 fn handler_slot(unit: &Unit, handler: crate::bytecode::Handler) -> Option<Option<Register>> {
-    if handler.return_target.is_some() || handler.with_depth != 0 { return None; }
+    if handler.with_depth != 0 { return None; }
     match handler.slot {
         None => Some(None),
         Some(ThrownValueSlot::Register(register)) if register < unit.registers => Some(Some(register)),

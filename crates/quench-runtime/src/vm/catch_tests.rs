@@ -125,10 +125,14 @@ fn an_uncaught_throw_in_a_hot_loop_reaches_the_outer_handler() {
     matches_interpreter(&format!("(function(){{{source}}})();"), "run");
 }
 
-/// Runs `source` compiled and returns its printed lines and, per function of `names`, the lane
-/// body's runs that ended the activation and the ones that left it to the lane
-/// (`LaneBodyStats::runs`): a throw that crossed native frames made no frame, so no run left.
-fn body_runs(source: &str, names: &[&str]) -> (Vec<String>, Vec<(u32, u32)>) {
+/// The runs of a function's lane body: those a Rust entry ended and those it left to the lane
+/// (`LaneBodyStats::runs`), and those a native caller saw end by an exception
+/// (`EntryCell::raised_runs`), which only direct calls make.
+type BodyRuns = (u32, u32, u32);
+
+/// Runs `source` compiled and returns its printed lines and the `BodyRuns` of each function of
+/// `names`: a throw that crossed native frames made no frame, so no run left.
+fn body_runs(source: &str, names: &[&str]) -> (Vec<String>, Vec<BodyRuns>) {
     let program = Engine::specialize(source, "catch-tests.js").unwrap();
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
@@ -142,14 +146,18 @@ fn body_runs(source: &str, names: &[&str]) -> (Vec<String>, Vec<(u32, u32)>) {
         let id = program.functions.iter()
             .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name))
             .unwrap();
-        views.get(id).and_then(super::program_store::derived_lane_view).expect("lane view").body_stats.runs()
+        let view = views.get(id).and_then(super::program_store::derived_lane_view).expect("lane view");
+        let (ended, left) = view.body_stats.runs();
+        // SAFETY: the view owns its entry cell, which lives as long as the view.
+        let raised = unsafe { &*(view.entry_cell() as *const super::compiled::entry_cell::EntryCell) }.raised_runs();
+        (ended, left, raised)
     }).collect();
     let lines = output.borrow().clone();
     (lines, runs)
 }
 
 /// The compiled run's lines, which must equal the interpreter's, and the body runs of `names`.
-fn bodies_match_interpreter(source: &str, names: &[&str]) -> Vec<(u32, u32)> {
+fn bodies_match_interpreter(source: &str, names: &[&str]) -> Vec<BodyRuns> {
     let wrapped = format!("(function(){{{source}}})();");
     let (expected, _) = run_in(crate::ExecutionMode::Interpreted, &wrapped, names[0]);
     let (actual, runs) = body_runs(&wrapped, names);
@@ -181,6 +189,7 @@ fn a_throw_from_a_compiled_callee_is_caught_by_a_compiled_caller_without_leaving
     let runs = bodies_match_interpreter(source, &["caller", "thrower"]);
     assert!(runs[0].0 > 0, "the caller's body runs natively");
     assert_eq!(runs[0].1, 0, "the callee's throw is caught by native code: no run of the caller leaves");
+    assert!(runs[1].2 > 0, "the callee's body ended by an exception through its native caller");
 }
 
 /// An exception no compiled frame catches crosses three of them and reaches the
@@ -207,6 +216,7 @@ fn an_uncaught_throw_crosses_three_compiled_frames_to_the_interpreter() {
     let runs = bodies_match_interpreter(source, &["first", "second", "third"]);
     assert!(runs[0].0 > 0, "the outermost compiled frame runs natively");
     assert_eq!(runs[0].1, 0, "the exception unwinds through the native frames without a leave");
+    assert!(runs[1].2 > 0 && runs[2].2 > 0, "the second and third frames ended by the exception through native callers");
 }
 
 /// A `finally` in a compiled frame between the throw and the catch runs once per unwind, and a
@@ -238,7 +248,8 @@ fn finally_blocks_and_rethrows_across_compiled_frames_match_the_interpreter() {
       for (let repeat = 0; repeat < 256; repeat++) { log = 0; result = run(24); }
       print(String(result));
     "#;
-    bodies_match_interpreter(source, &["run", "rethrower", "guarded", "inner"]);
+    let runs = bodies_match_interpreter(source, &["run", "rethrower", "guarded", "inner"]);
+    assert_eq!(runs[0].1, 0, "calls stay native in functions with a finally: no run of the driver leaves");
 }
 
 /// The source location of an uncaught exception thrown in compiled code is the throw's, as the

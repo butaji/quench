@@ -2,7 +2,7 @@
 //! it admits, the window and frame it pushes, and where each status goes.
 
 use super::*;
-use super::super::entry_cell::LANE_BODY_NOT_ENTERED;
+use super::super::entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED, RAISED_RUN};
 use super::direct_admission::dispatch_offset;
 
 impl Lowering<'_, '_> {
@@ -19,7 +19,7 @@ impl Lowering<'_, '_> {
         admitted.extend([fits, room]);
         self.direct_admit(&admitted, edges.helper);
         let status = self.direct_enter(instruction, callee, cell, (this, top, next, shadow));
-        self.direct_finish(instruction, status, shadow, edges, None);
+        self.direct_finish(instruction, status, (shadow, cell), edges, None);
     }
 
     /// The construction through forwarding constructor `callee.callee` whose forwarded
@@ -39,13 +39,13 @@ impl Lowering<'_, '_> {
         let (top, next, shadow, [fits, room]) = self.direct_room(callee, cell);
         self.direct_admit(&[built, fits, room], edges.helper);
         let status = self.direct_enter(instruction, callee, cell, (receiver, top, next, shadow));
-        self.direct_finish(instruction, status, shadow, edges, Some(receiver));
+        self.direct_finish(instruction, status, (shadow, cell), edges, Some(receiver));
     }
 
     /// Where each status of a native call goes: a completion stores its value, or the
     /// construction's `receiver`, to the call's register and continues at `completed`; the
     /// callee's exception pops its frame and continues at `raised`.
-    fn direct_finish(&mut self, instruction: WideInstruction, (status, word): (ir::Value, ir::Value), shadow: ir::Value, edges: CallEdges, receiver: Option<ir::Value>) {
+    fn direct_finish(&mut self, instruction: WideInstruction, (status, word): (ir::Value, ir::Value), (shadow, cell): (ir::Value, ir::Value), edges: CallEdges, receiver: Option<ir::Value>) {
         let (base, payload) = (self.registers_base, self.payload);
         let returned = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_RETURNED));
         let (back, check, left, missed) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
@@ -57,12 +57,17 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(check);
         let not_entered = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_NOT_ENTERED));
         self.word_brif(not_entered, missed, &[], threw, &[]);
-        self.direct_unwind(missed, shadow, edges.helper);
+        self.builder.switch_to_block(missed);
+        self.direct_unwind(shadow, edges.helper);
         // The callee ended by an exception, which sits in `Vm::lane_raised`: its frame is gone.
         self.builder.switch_to_block(threw);
         let raised = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_THREW));
         self.word_brif(raised, popped, &[], left, &[]);
-        self.direct_unwind(popped, shadow, edges.raised);
+        self.builder.switch_to_block(popped);
+        let counters = self.word_load(cell, dispatch_offset(std::mem::offset_of!(EntryCell, counters)));
+        let counted = self.word_add_imm(counters, RAISED_RUN as i64);
+        self.word_store(counted, cell, dispatch_offset(std::mem::offset_of!(EntryCell, counters)));
+        self.direct_unwind(shadow, edges.raised);
         // A leave inside the callee stops the caller with it: the lane makes the frames'
         // activations and continues in the innermost (`dispatch_fast::lane_body_left`).
         self.builder.switch_to_block(left);
@@ -74,10 +79,9 @@ impl Lowering<'_, '_> {
         self.word_jump(edges.completed, &[]);
     }
 
-    /// In `block`, pops the callee's native frame (`shadow` is the next free frame) and continues at `target`.
-    fn direct_unwind(&mut self, block: ir::Block, shadow: ir::Value, target: ir::Block) {
+    /// Pops the callee's native frame (`shadow` is the next free frame) and continues at `target`.
+    fn direct_unwind(&mut self, shadow: ir::Value, target: ir::Block) {
         let payload = self.payload;
-        self.builder.switch_to_block(block);
         self.word_store(shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
         self.word_jump(target, &[]);
     }
