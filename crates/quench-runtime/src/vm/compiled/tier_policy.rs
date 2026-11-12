@@ -199,6 +199,11 @@ pub(in crate::vm) struct Wasm {
     pub(in crate::vm) eager_module_bytecodes: usize,
 }
 
+/// The prototype links a specializer unrolls a staged walk over (`Stage::walk_prototypes`): an
+/// instance, its class chain and `Object.prototype` end within it, and each link is a block of
+/// code, so a longer chain is the VM's residual rather than more code.
+pub(in crate::vm) const PROTOTYPE_UNROLL_LINKS: u32 = 4;
+
 /// The distinct cases (shapes, callees, targets) a site's feedback keeps before it widens to
 /// the generic case: the width of every polymorphic cache and of each guarded switch a tier
 /// specializes a site into. One bound for every lattice of site feedback.

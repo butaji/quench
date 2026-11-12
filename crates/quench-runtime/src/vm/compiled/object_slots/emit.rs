@@ -167,6 +167,13 @@ impl Stage for Emit<'_, '_> {
     fn table(&mut self, table: Table) -> ir::Value {
         match table { Table::PropertyValues => self.property_values.expect("an operation addressing the arena has its base") }
     }
+    /// The walk unrolled up to the tier's bound; a longer chain is undecided, for the caller's
+    /// residual.
+    fn walk_prototypes(&mut self, records: ir::Value, object: ir::Value, target: ir::Value, max_depth: u32)
+        -> (ir::Value, ir::Value) {
+        let links = max_depth.min(crate::vm::compiled::tier_policy::PROTOTYPE_UNROLL_LINKS);
+        crate::staged::object::walk_prototypes(self, records, object, target, links)
+    }
 }
 
 impl NumericStage for Emit<'_, '_> {
