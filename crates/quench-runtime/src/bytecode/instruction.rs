@@ -151,10 +151,12 @@ impl WideInstruction {
         self.a |= RETURN_REGISTER;
     }
 
-    /// Whether the return flag is the instruction's only result flag: it completes its function with
-    /// the value it would write to its result register, and does nothing else with it.
-    pub(crate) fn only_returns_from_frame(self) -> bool {
-        self.result_flags() == RETURN_REGISTER && self.returns_from_frame()
+    /// The instruction without its return flag where that is its only result flag (it completes its
+    /// function with the value it would write to its result register, and does nothing else with it),
+    /// and whether it had it; any other instruction as it is.
+    pub(crate) fn split_return(self) -> (Self, bool) {
+        let returning = self.result_flags() == RETURN_REGISTER && self.returns_from_frame();
+        (if returning { self.without_return() } else { self }, returning)
     }
 
     /// The instruction without its return flag: the same operation, which writes its result register.

@@ -258,7 +258,7 @@ mod tests {
     use crate::staged::call::{CellFacts, ENTRY_ACTIVATES};
     use oxc_ast::ast::BinaryOperator;
 
-    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false };
+    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: super::CallForm::Plain };
     /// The caller's registers: the callee's window starts here.
     const BASE: Register = 8;
     const IDENTITY: u64 = 7;

@@ -80,7 +80,7 @@ unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64,
     // A returning record (`return a + b`) is made as the step that writes its result register: the body's
     // own `Return` row completes the activation with it.
     let instruction = decoded_instruction(function, function.code[call_pc as usize]).without_return();
-    if !instruction.op().steps_in_body() { return LANE_CALL_MISSED; }
+    if !(instruction.op().steps_in_body() || instruction.op().makes_script_call()) { return LANE_CALL_MISSED; }
     let following = call_pc as usize + 1;
     let branched = lane_in_place(cx, ip, |vm, code| {
         let mut next = following;

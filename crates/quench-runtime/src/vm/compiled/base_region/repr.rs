@@ -90,6 +90,10 @@ pub(super) fn representations(region: &LoopRegion, decoded: &[Decoded], widened:
     while changed {
         changed = false;
         for (k, row) in decoded.iter().enumerate() {
+            if let Some(also) = row.also.filter(|also| reprs[usize::from(*also)] < Repr::Tagged) {
+                reprs[usize::from(also)] = Repr::Tagged;
+                changed = true;
+            }
             let Some(dst) = row.dst else { continue };
             let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some()), region.number_registers().contains(&webs.orig[usize::from(dst)]));
             if reprs[usize::from(dst)] < result {

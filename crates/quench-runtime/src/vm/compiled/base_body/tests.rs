@@ -468,3 +468,60 @@ fn a_returning_instruction_that_misses_completes_in_the_interpreter() {
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the bodies ran {runs} times");
 }
+
+/// The call forms beyond the plain call (a method call, a call through `this`, a spread, an applied
+/// list, a forwarded `arguments`, a construction and a name call of a global) are the call planner's
+/// chains: the body runs them in place and continues with the registers they wrote, printing what the
+/// interpreter prints.
+#[test]
+fn every_call_form_runs_in_a_body() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function add(a, b) { return a + b; }
+         const obj = { base: 2, m(x) { return x + this.base; }, n() { return this.m(1); } };
+         class P { constructor(v) { this.v = v; } get() { return this.v; } }
+         class Q extends P { constructor(v) { super(v + 1); this.w = 2; } }
+         function forwards() { return add.apply(null, arguments); }
+         function forms(i, list) {
+           let s = obj.m(i) + obj.n() + add(...list) + add(i, ...list) + forwards(i, 1);
+           s = s + new P(i).get() + new Q(i).get() + Math.max(i, 3);
+           return s | 0;
+         }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + forms(k % 7, [1, 2])) | 0;
+         print(t); print(forms(0, [0, 0])); print(forms(2.5, [1, 2]));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+}
+
+/// A call form that raises, a constructor that returns an object, and a spread of a non-iterable
+/// end as the interpreter's do: the same exception, caught by the same handler.
+#[test]
+fn a_call_form_that_raises_ends_as_the_interpreter_does() {
+    let (interpreted, compiled, _) = run_both(
+        "function boom(x) { if (x > 250) throw new Error('big ' + x); return x; }
+         const o = { go(x) { return boom(x); } };
+         function ctor(x) { return new (function () { this.v = boom(x); })().v; }
+         function spread(x) { return Math.max(...x); }
+         let t = 0; for (let k = 0; k < 200; k++) t = (t + o.go(k) + ctor(k) + spread([k, 1])) | 0;
+         print(t);
+         try { o.go(300); } catch (e) { print(e.message); }
+         try { ctor(400); } catch (e) { print(e.message); }
+         try { spread(5); } catch (e) { print(e.constructor.name); }",
+    );
+    assert_eq!(interpreted, compiled);
+}
+
+/// A returning construction and a returning method call complete the activation with their result.
+#[test]
+fn returning_call_forms_complete_the_activation() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "class P { constructor(v) { this.v = v; } }
+         const obj = { m(x) { return x * 2; } };
+         function make(v) { return new P(v); }
+         function call(v) { return obj.m(v); }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + make(k).v + call(k)) | 0;
+         print(t); print(make(3).v); print(call(4));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+}

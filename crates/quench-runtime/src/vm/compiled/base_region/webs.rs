@@ -82,8 +82,9 @@ struct Def {
 /// `words[j]..words[j + 1]` of a state and the union-find nodes `nodes[j]..nodes[j + 1]`.
 struct Defs {
     named: Vec<Register>,
-    /// The definition each row makes.
-    written: Vec<Option<Def>>,
+    /// The definitions each row makes: its result, and the register a step writes beside it
+    /// (`Decoded::also`).
+    written: Vec<[Option<Def>; STEP_WRITES]>,
     nodes: Vec<usize>,
     words: Vec<usize>,
 }
@@ -113,10 +114,12 @@ impl Defs {
         let written = decoded
             .iter()
             .map(|row| {
-                row.dst.map(|dst| {
-                    let column = named.binary_search(&dst).expect("a named register");
-                    counts[column] += 1;
-                    Def { column, local: counts[column] - 1 }
+                [row.dst, row.also].map(|dst| {
+                    dst.map(|dst| {
+                        let column = named.binary_search(&dst).expect("a named register");
+                        counts[column] += 1;
+                        Def { column, local: counts[column] - 1 }
+                    })
                 })
             })
             .collect();
@@ -214,7 +217,7 @@ impl Flow {
         let mut out = vec![0; self.width];
         while let Some(k) = work.pop() {
             out.copy_from_slice(self.row(k));
-            if let Some(def) = defs.written[k] {
+            for def in defs.written[k].into_iter().flatten() {
                 out[defs.words[def.column]..defs.words[def.column + 1]].fill(0);
                 out[defs.words[def.column] + def.local / WORD] |= 1 << (def.local % WORD);
             }
@@ -350,8 +353,8 @@ impl Renamer<'_> {
             };
             let (a, b, base) = (source(row.a), source(row.b), row.base.map(|register| read(register)));
             let identity = row.identity.map(|(register, word)| (read(register), word));
-            let dst = defs.written[k].map(|def| self.web(def));
-            renamed.push(Decoded { dst, a, b, base, identity, ..*row });
+            let [dst, also] = defs.written[k].map(|def| def.map(|def| self.web(def)));
+            renamed.push(Decoded { dst, also, a, b, base, identity, ..*row });
             at.extend(here);
         }
         let leaf_at = (0..flow.leaf_pcs.len()).flat_map(|leaf| self.table(flow.leaf(leaf))).collect();
@@ -393,7 +396,7 @@ impl Webs {
         let mut clash: Vec<Vec<usize>> = vec![Vec::new(); self.orig.len()];
         for (k, row) in decoded.iter().enumerate() {
             let mut held = self.live_at(region, region.header + k as Pc);
-            held.extend(row.dst.map(usize::from));
+            held.extend([row.dst, row.also].into_iter().flatten().map(usize::from));
             for &web in &held {
                 clash[web].extend(held.iter().copied().filter(|other| *other != web));
             }

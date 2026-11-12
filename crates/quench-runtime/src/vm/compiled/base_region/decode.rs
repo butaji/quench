@@ -56,6 +56,9 @@ impl Folded {
 pub(super) struct Decoded {
     pub(super) kind: Kind,
     pub(super) dst: Option<Register>,
+    /// The second register a step writes: the `this` a name call defines beside its callee
+    /// (`STEP_WRITES`). Its value is a tagged word the step made in its frame slot.
+    pub(super) also: Option<Register>,
     pub(super) a: Option<Source>,
     pub(super) b: Option<Source>,
     pub(super) target: Option<u32>,
@@ -83,7 +86,7 @@ pub(super) struct Decoded {
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, identity: None, completes: false }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, identity: None, completes: false }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -103,7 +106,7 @@ impl Decoded {
 
     /// The registers the row names.
     pub(super) fn registers(&self) -> impl Iterator<Item = Register> {
-        [self.dst, self.a.and_then(register_of), self.b.and_then(register_of), self.base, self.identity.map(|(register, _)| register)].into_iter().flatten()
+        [self.dst, self.also, self.a.and_then(register_of), self.b.and_then(register_of), self.base, self.identity.map(|(register, _)| register)].into_iter().flatten()
     }
 }
 

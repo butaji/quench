@@ -11,7 +11,7 @@
 
 use super::*;
 use super::call_plan::inline::{Callee, Context, InlineSite};
-use super::call_plan::{CallShape, DirectFacts};
+use super::call_plan::{CallForm, CallShape, DirectFacts};
 use super::super::{DirectCallee, DirectCandidates};
 use crate::bytecode::Function;
 
@@ -40,11 +40,11 @@ pub(in crate::vm::compiled) struct Callees {
     bodies: Vec<Option<InlineBody>>,
 }
 
-/// Whether the call at `instruction` is one a body's call chain makes: a call whose result is its
-/// register's, or one that returns its result (`return f(x)`), which the row after it completes with.
+/// Whether the call at `instruction` is a plain call a body's call chain makes: a call whose result
+/// is its register's, or one that returns its result (`return f(x)`), which the row after it
+/// completes with. The other forms record no callee (`call_plan::CallForm`).
 pub(super) fn chains(instruction: WideInstruction) -> bool {
-    instruction.op().class() == Class::Call && (instruction.result_flags() == 0 || instruction.only_returns_from_frame())
-        && !instruction.direct_eval() && !instruction.parameter_eval()
+    CallForm::of(instruction.split_return().0) == Some(CallForm::Plain)
 }
 
 impl Callees {

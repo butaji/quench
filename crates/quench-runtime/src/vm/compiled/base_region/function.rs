@@ -8,8 +8,8 @@
 //! the interrupt flag at every branch back (`Ending::poll`).
 use super::*;
 use super::call_plan::inline::Context;
-use super::call_plan::{CallShape, DirectFacts};
-use super::callees::{chains, Callees};
+use super::call_plan::{CallForm, CallShape, DirectFacts};
+use super::callees::Callees;
 use super::super::LaneHelpers;
 use crate::bytecode::Function;
 use quench_bjit::call_record::CallRecord;
@@ -53,14 +53,14 @@ fn lowered(region: &LoopRegion, pc: u32, sites: &mut Sites, (instruction, return
     if instruction.op().raises() && let Some(caught) = throws::caught(sites.function, (pc, sites.registers), instruction) {
         return caught;
     }
+    if let Some(form) = CallForm::of(instruction) {
+        let shape = CallShape { returning, ..CallShape::of(pc, instruction, form) };
+        return sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape, sites.registers)
+            .unwrap_or_else(|| Decoded::step(Step::Call(shape), Some(shape.result)));
+    }
     match instruction.op().class() {
         Class::Return if plain && instruction.register_a() < sites.registers => {
             Decoded { a: Some(Source::Register(instruction.register_a())), ..Decoded::step(Step::Return, None) }
-        }
-        Class::Call if chains(instruction) => {
-            let shape = CallShape { returning, ..CallShape::of(pc, instruction) };
-            sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape, sites.registers)
-                .unwrap_or_else(|| Decoded::step(Step::Call(shape), Some(shape.result)))
         }
         _ => decode(region, (Facts::Site, sites.known), pc, instruction, helpers),
     }
@@ -77,8 +77,7 @@ fn completable(row: &Decoded) -> bool {
 /// followed by the completion with its result (`Decoded::completes`); an instruction no row takes
 /// leaves at its PC as it is, flag and all, for the interpreter.
 fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
-    let returning = instruction.only_returns_from_frame();
-    let plain = if returning { instruction.without_return() } else { instruction };
+    let (plain, returning) = instruction.split_return();
     let row = lowered(region, pc, sites, (plain, returning), helpers);
     Decoded { completes: returning && completable(&row), ..row }
 }

@@ -57,7 +57,7 @@ impl Op {
             self,
             Op::CloneEnv | Op::InitializeTdz | Op::LoadLocal | Op::StoreLocal | Op::LoadEnvLocal | Op::StoreEnvLocal | Op::StoreVarBinding
                 | Op::LoadConst | Op::Unary | Op::Binary | Op::JumpBinaryFalse | Op::Throw
-                | Op::LoadName | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName | Op::StoreName | Op::StoreResolvedName
+                | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName | Op::StoreName | Op::StoreResolvedName
                 | Op::LoadCallee | Op::LoadImportMeta | Op::LoadCapture | Op::StoreCapture
                 | Op::MakeClosure | Op::MakeArray | Op::MakeConstArray | Op::MakeObject | Op::MakeObject2 | Op::MakeObjectLiteral
                 | Op::MakeLiteralTemplate | Op::CreateRegExpLiteral | Op::CacheTemplateObject | Op::LoadCachedTemplateObject
@@ -71,6 +71,12 @@ impl Op {
     /// of its function may take it.
     pub(crate) const fn raises(self) -> bool {
         self.traits().has(crate::bytecode::Traits::RAISES)
+    }
+
+    /// A call form that activates a script function: the plain call, the method, known, array, spread and
+    /// forwarding calls, and the construction (the catalog's `SCRIPT_CALL` trait).
+    pub(crate) const fn makes_script_call(self) -> bool {
+        self.traits().has(crate::bytecode::Traits::SCRIPT_CALL)
     }
 
     /// A suspension point: an `await`, or a `yield` of a generator.

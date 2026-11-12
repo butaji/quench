@@ -9,7 +9,7 @@
 //!    continues, jumps or throws (`Op::steps_in_body`: the lane's in-place steps, and the scope,
 //!    operator, constant, name, literal, element, field and class steps that may also replace the
 //!    frame's environment, after which the helper drops the lane's capture caches) and writes at
-//!    most one register. The helper answers completed, branched or missed,
+//!    most `STEP_WRITES` registers. The helper answers completed, branched or missed,
 //!    so both of the row's exits are the leave at the instruction: a miss, where the helper made
 //!    nothing or raised, leaves there for the interpreter. A step that jumps (`ForInNext`) has its
 //!    target as the row's branch: the helper answers branched where the interpreter's step took
@@ -117,9 +117,13 @@ pub(in crate::vm::compiled) fn covers(code: &[WideInstruction]) -> bool {
     code.iter().all(|instruction| !EXCLUDED[instruction.op() as usize])
 }
 
+/// The most registers a step the helper makes writes: its result, and the `this` a name call
+/// defines beside its callee.
+pub(super) const STEP_WRITES: usize = 2;
+
 /// Whether `instruction` is made in place by `LaneHelper::Step`.
 fn steps_in_place(instruction: WideInstruction) -> bool {
-    instruction.op().steps_in_body() && instruction.result_flags() == 0 && instruction.written_registers().count() <= 1
+    instruction.op().steps_in_body() && instruction.result_flags() == 0 && instruction.written_registers().count() <= STEP_WRITES
 }
 
 /// The heap row that is the fast arm of `instruction`, where its meaning has one its operand
@@ -164,10 +168,11 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, (helpers, polls
         _ => {
             let step = if branches_back(pc, instruction) && !polls { Step::Leave } else { lowering(instruction, helpers) };
             let helped = step.runs_helper();
-            let written = if helped { instruction.written_registers().next() } else { None };
+            let mut written = instruction.written_registers().filter(|_| helped);
             let target = (helped && instruction.op().control_flow_layout().jumps()).then(|| instruction.jump_target());
             let read = matches!(step, Step::Fast(_)).then(|| Source::Register(instruction.register_b()));
-            Decoded { target, a: read, ..Decoded::step(step, written) }
+            let result = written.next();
+            Decoded { target, a: read, also: written.next(), ..Decoded::step(step, result) }
         }
     }
 }
@@ -343,7 +348,7 @@ fn branching(mut row: Planned, layout: &Layout, (pc, target): (u32, u32)) -> Res
 /// The chain of the call `shape` names: spills, the direct row where the site's target is stable,
 /// the helper row, reloads. The direct row's record is the row's `owned`.
 fn plan_call(layout: &Layout, shape: CallShape, helpers: LaneHelpers) -> Result<Planned, String> {
-    let helper = call_plan::helper_address(helpers, LaneHelper::Call).ok_or("call: no helper address")?;
+    let helper = call_plan::helper_address(helpers, shape.form.helper()).ok_or("call: no helper address")?;
     let (spills, reloads) = (layout.spills(shape.call_pc), if shape.returning { Vec::new() } else { layout.spills(shape.call_pc + 1) });
     let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads };
     let CallChain { parts, record, choice } = call_plan::plan_call(&plan)?;

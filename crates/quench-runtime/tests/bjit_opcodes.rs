@@ -109,6 +109,10 @@ const FAMILIES: &[(&str, &str)] = &[
     ("returning-arithmetic-field-unary-relational-typeof", "var f = function (a, b) { return a + b; }, g = function (v) { return v.p; }, h = function (a) { return -a; }, k = function (a, b) { return a < b; }, m = function (v) { return typeof v; }; acc += f(i, 1) + g(o) + h(i & 3) + (k(i, 9) ? 1 : 0) + m(i).length;"),
     ("returning-calls-chain", "var leaf = function (x) { return x + 1; }, mid = function (x) { return leaf(x); }; acc += mid(i) | 0;"),
     ("returning-misses", "var f2 = function (a, b) { return a + b; }; acc += f2(i < 1500 ? i : 'k', 1).length | 0;"),
+    ("call-method-this-method", "var ob = { b: 2, m(x) { return x + this.b; }, n() { return this.m(1); } }; acc += ob.m(i) + ob.n();"),
+    ("call-spread-array-and-forwarded", "var sum3 = function () { var r = 0; for (var q = 0; q < arguments.length; q++) r += arguments[q]; return r; }; acc += sum3(...arr) + sum3(i, ...arr) + sum3.apply(null, arr) + sum3.call(null, i);"),
+    ("construct-returning-and-super", "class P2 { constructor(v) { this.v = v; } } class Q2 extends P2 { constructor(v) { super(v + 1); } } var mk2 = function (v) { return new Q2(v); }; acc += mk2(i & 3).v + new P2(i & 1).v;"),
+    ("name-call-of-a-global", "acc += Math.max(i, 5) + parseInt('12', 10) + add(i, 1);"),
     ("async-function", "(async function () { await 0; acc += 1; })();"),
 ];
 

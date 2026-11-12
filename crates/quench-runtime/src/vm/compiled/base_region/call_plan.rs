@@ -37,16 +37,60 @@ use super::{Exit, SLOT};
 use super::super::direct_callee::DirectCallee;
 use super::super::entry_cell::capture_word;
 use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
-use crate::bytecode::{ImmediateLayout, Register, WideInstruction};
+use crate::bytecode::{Class, ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
 use quench_bjit::call::{self, CallRow};
 use quench_bjit::call_record::{CallRecord, MAX_DIRECT_ARGC};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{HOLES, Stencil};
 
-/// What a `Call` instruction names, decoded once: the record the helper takes (`call_pc`), the
-/// callee and receiver registers, the first argument register, the argument count and the
-/// register that receives the result.
+/// How a body makes a call, by the instruction's operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CallForm {
+    /// `Call`, through its callee register and argument window: direct through the callee's entry
+    /// cell where its site recorded a stable callee, else the call helper (`lane_body_call`).
+    Plain,
+    /// `Construct` over registers: the construct helper (`lane_body_construct`), which plans the
+    /// receiver's fields or activates the constructor as the lane's own construction does.
+    Construct,
+    /// Every other form (method, this-method, known, array, spread and forwarding calls; a `super`
+    /// or array-argument construction): the interpreter's own step made in place by the step helper,
+    /// the call it makes running the callee as any call from a helper does. These sites record no
+    /// callee to call by its entry cell, and a method call's callee is the method cache's lookup,
+    /// which no register holds for a call row to read.
+    Stepped,
+}
+
+impl CallForm {
+    /// The form of the call `instruction` is, if a body's call chain makes it: a call form with no
+    /// result flag left (the return flag is `cover`'s) and no `eval` (which declares bindings in the
+    /// caller's scope, the webs' registers and locals being fixed once compiled).
+    pub(super) fn of(instruction: WideInstruction) -> Option<Self> {
+        if !instruction.op().makes_script_call() || instruction.result_flags() != 0 || instruction.resolves_dynamic_scope() {
+            return None;
+        }
+        let over_registers = instruction.op().class() == Class::Construct && !instruction.is_super_construct() && !ImmediateLayout::construct_array_arguments(instruction.imm());
+        Some(match instruction.op().class() {
+            Class::Call => Self::Plain,
+            Class::Construct if over_registers => Self::Construct,
+            _ => Self::Stepped,
+        })
+    }
+
+    /// The helper whose row makes the call.
+    pub(super) fn helper(self) -> LaneHelper {
+        match self {
+            Self::Plain => LaneHelper::Call,
+            Self::Construct => LaneHelper::ConstructCall,
+            Self::Stepped => LaneHelper::Step,
+        }
+    }
+}
+
+/// What a call instruction names, decoded once: the record the helper takes (`call_pc`), the
+/// register that receives the result and the form. A plain call also names the callee and receiver
+/// registers, the first argument register and the argument count (zero for the other forms, whose
+/// helpers read their own operands from the record).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct CallShape {
     pub(super) call_pc: u32,
@@ -58,19 +102,25 @@ pub(super) struct CallShape {
     /// The call completes its caller's activation with its result (`return f(x)`): the row that
     /// follows it does (`steps::completing`), and nothing is live after it.
     pub(super) returning: bool,
+    pub(super) form: CallForm,
 }
 
 impl CallShape {
-    pub(super) fn of(call_pc: u32, instruction: WideInstruction) -> Self {
+    pub(super) fn of(call_pc: u32, instruction: WideInstruction, form: CallForm) -> Self {
         let imm = instruction.imm();
-        Self {
-            call_pc,
-            callee: instruction.register_b(),
-            this: instruction.register_c(),
-            window: ImmediateLayout::call_window_base(imm),
-            argc: ImmediateLayout::argument_count(imm),
-            result: instruction.result_register(),
-            returning: instruction.returns_from_frame(),
+        let (result, returning) = (instruction.result_register(), instruction.returns_from_frame());
+        match form {
+            CallForm::Plain => Self {
+                call_pc,
+                callee: instruction.register_b(),
+                this: instruction.register_c(),
+                window: ImmediateLayout::call_window_base(imm),
+                argc: ImmediateLayout::argument_count(imm),
+                result,
+                returning,
+                form,
+            },
+            CallForm::Construct | CallForm::Stepped => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form },
         }
     }
 }
@@ -132,6 +182,8 @@ pub(super) enum Declined {
     /// A construction, which the helper row's `lane_body_call` does not make either: the
     /// planner for `Construct` chooses.
     Construction,
+    /// The call is not a plain `Call`: no direct row makes it (`CallForm`).
+    Form,
     /// A callee with no registers has no window the room check can refuse.
     Window,
     /// The cell's facts do not describe the callee (not yet published, or another function's).
@@ -150,6 +202,9 @@ pub(super) enum Choice {
 /// The row class of a call: direct when its target's cell is stable and describes the callee,
 /// else the helper row, with the first reason it cannot be direct.
 pub(super) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice {
+    if shape.form != CallForm::Plain {
+        return Choice::Helper(Declined::Form);
+    }
     let Some(facts) = direct else { return Choice::Helper(Declined::NoTarget) };
     let declined = [
         (usize::from(shape.argc) > MAX_DIRECT_ARGC, Declined::Arguments),
@@ -277,7 +332,7 @@ mod tests {
     use super::*;
     use quench_bjit::call_record as protocol;
 
-    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false };
+    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain };
 
     fn facts(registers: u16, params: u16) -> DirectFacts {
         let cell = CellFacts { registers, room: registers, params, entry: ENTRY_ACTIVATES as u8 };
@@ -301,6 +356,9 @@ mod tests {
         assert_eq!(choose(&SHAPE, Some(&facts(4, 1))), helper(Declined::Facts), "more arguments than params");
         let returning = CallShape { returning: true, ..SHAPE };
         assert_eq!(choose(&returning, Some(&facts(4, 2))), helper(Declined::Returning));
+        for form in [CallForm::Construct, CallForm::Stepped] {
+            assert_eq!(choose(&CallShape { form, ..SHAPE }, Some(&facts(4, 2))), helper(Declined::Form));
+        }
         let unpublished = DirectFacts { facts: CellFacts { room: 9, ..facts(4, 2).facts }, ..facts(4, 2) };
         assert_eq!(choose(&SHAPE, Some(&unpublished)), helper(Declined::Facts), "the cell describes another window");
         let other_kind = DirectFacts { facts: CellFacts { entry: 1, ..facts(4, 2).facts }, ..facts(4, 2) };
