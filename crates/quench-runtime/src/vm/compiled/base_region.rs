@@ -61,6 +61,10 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// The program's constants as the compiling VM materialized them (a string or BigInt is a heap
     /// value there, which lives as long as the program), where it has them; none for a region.
     pub(in crate::vm::compiled) constants: &'a [Value],
+    /// The compiling VM's table of `typeof` result strings (`Vm::typeof_names`), indexed as
+    /// `bytecode::TYPEOF_NAMES`: a `typeof` string row names it, so a value's string is the entry its tag's
+    /// index selects. Empty for a region, whose `typeof` is the helper step.
+    pub(in crate::vm::compiled) typeof_names: &'a [Value],
 }
 
 impl Known<'_> {

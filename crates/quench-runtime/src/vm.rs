@@ -2108,8 +2108,9 @@ pub(crate) struct Vm<H> {
     /// The compiled chunk of each first-call stub, by its program and function, while both live.
     first_chunks: first_call_chunk::FirstChunks,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
-    /// The `typeof` result string of each value type, made on first use; `undefined` until
-    /// then. Rooted, so `typeof` neither hashes nor allocates once warm.
+    /// The `typeof` result strings, one table indexed as `bytecode::TYPEOF_NAMES`, interned when the
+    /// heap is made (`Vm::intern_typeof_names`). Rooted, so `typeof` neither hashes nor allocates, and a
+    /// compiled body may name the table (`staged::value::typeof_string`).
     typeof_names: [Value; TYPEOF_NAMES],
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: WellKnownSymbols,
@@ -3120,7 +3121,7 @@ impl<H: Host> Vm<H> {
         self.regexp_matchers.clear();
         self.atom_classes.resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
-        self.typeof_names = [Value::UNDEFINED; TYPEOF_NAMES];
+        self.intern_typeof_names();
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
         self.clear_call_targets();

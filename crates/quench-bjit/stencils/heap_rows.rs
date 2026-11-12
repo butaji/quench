@@ -31,7 +31,7 @@ use crate::staged::{Frame, Stage, Step, elements, entry, environment, iteration,
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW,
+    STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW,
 };
 
 unsafe extern "C" {
@@ -251,6 +251,17 @@ fn typeof_index_row(s: S) -> Out {
     finish_fast(frame, done)
 }
 
+/// The `typeof` result string of the operand (hole 1) from the table at hole 2, in the destination (hole 0), or a
+/// heap value, which leaves (`value::immediate_typeof_string`).
+#[inline(always)]
+fn typeof_string_row(s: S) -> Out {
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let mut stage = StencilStage::from_hole(0);
+    let word = frame.tagged(&mut stage, LEFT);
+    let done = value::immediate_typeof_string(&mut stage, word, hole64::<HOLE_B>(), ()).map(|name| frame.write(&mut stage, DEST, name, Rep::Tagged)).is_some();
+    finish_fast(frame, done)
+}
+
 /// Whether the tag-decided `typeof` index of the operand (hole 1) is the name at index hole 2 (or is
 /// not, where `NEGATED`), as a boolean in the destination (hole 0).
 #[inline(always)]
@@ -362,6 +373,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         OBJECT_ROW => object_row(s),
         KEY_ROW => key_row(s),
         TYPEOF_INDEX_ROW => typeof_index_row(s),
+        TYPEOF_STRING_ROW => typeof_string_row(s),
         TYPEOF_IS_ROW => typeof_is_row::<false>(s),
         TYPEOF_ISNOT_ROW => typeof_is_row::<true>(s),
         IDENTITY_ROW => identity_row(s),

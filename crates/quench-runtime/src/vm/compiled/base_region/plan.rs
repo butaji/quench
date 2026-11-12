@@ -171,6 +171,7 @@ pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bo
         Heap::StoreLocal(slot) | Heap::StoreChecked(slot) => [0, a_hole, u64::from(slot)],
         Heap::TypeofIs { index, .. } => [dst_hole, a_hole, u64::from(index)],
         Heap::Identity => [0, a_hole, decoded.hole],
+        Heap::TypeofString => [dst_hole, a_hole, decoded.hole],
         Heap::CaptureSet(slot) => [a_hole, u64::from(slot), u64::from(slot) * SLOT],
         _ => [dst_hole, a_hole, b_hole],
     })

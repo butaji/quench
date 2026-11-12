@@ -38,8 +38,12 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
-        let kind = self.typeof_kind(value);
-        self.typeof_name(kind)
+        let mut stage = crate::staged::Concrete::new(std::ptr::null());
+        let names = self.typeof_names.as_ptr() as u64;
+        match crate::staged::value::immediate_typeof_string(&mut stage, value.to_bits(), names, ()) {
+            Some(name) => Value::from_bits(name),
+            None => self.typeof_name(self.typeof_kind(value)),
+        }
     }
 
     /// The kind whose name `typeof value` yields: an `[[IsHTMLDDA]]` object reads as
@@ -67,25 +71,19 @@ impl<H: Host> Vm<H> {
 
     /// The one string `typeof` yields for values of `kind`: every result and every string
     /// constant spelling one (`Vm::materialize_constant`) is this value, so `===` between two
-    /// of them is identity.
-    fn typeof_name(&mut self, kind: crate::ValueType) -> Value {
-        // `null` and objects share one name, kept in the object kind's slot.
-        let kind = if kind == crate::ValueType::Null { crate::ValueType::Object } else { kind };
-        let cached = self.typeof_names[kind as usize];
-        if !cached.is_undefined() {
-            return cached;
-        }
-        let name = self.intern_dynamic_ascii(typeof_text(kind));
-        self.typeof_names[kind as usize] = name;
-        name
+    /// of them is identity. `null` and objects share the object's.
+    fn typeof_name(&self, kind: crate::ValueType) -> Value {
+        self.typeof_names[typeof_name_index(kind)]
+    }
+
+    /// Interns the eight `typeof` result strings of a fresh heap, in the order of `bytecode::TYPEOF_NAMES`.
+    pub(super) fn intern_typeof_names(&mut self) {
+        self.typeof_names = crate::bytecode::TYPEOF_NAMES.map(|text| self.intern_dynamic_ascii(text));
     }
 
     /// The `typeof` name spelled by `text`, if it spells one (`Vm::typeof_name`).
-    pub(super) fn typeof_constant(&mut self, text: &str) -> Option<Value> {
-        TYPEOF_KINDS
-            .into_iter()
-            .find(|kind| typeof_text(*kind) == text)
-            .map(|kind| self.typeof_name(kind))
+    pub(super) fn typeof_constant(&self, text: &str) -> Option<Value> {
+        crate::bytecode::typeof_name_index(text).map(|index| self.typeof_names[index])
     }
 
     #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
@@ -444,14 +442,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The kinds whose `typeof` names differ: `null` reads as an object.
-const TYPEOF_KINDS: [crate::ValueType; 8] = {
-    use crate::ValueType as T;
-    [T::Undefined, T::Object, T::Boolean, T::Number, T::String, T::BigInt, T::Symbol, T::Function]
-};
-
-/// The index in `bytecode::TYPEOF_NAMES` of the name `typeof` yields for a value of `kind`;
-/// `TYPEOF_KINDS` lists the kinds in that order.
+/// The index in `bytecode::TYPEOF_NAMES` of the name `typeof` yields for a value of `kind`.
 #[inline] fn typeof_name_index(kind: crate::ValueType) -> usize {
     use crate::ValueType as T;
     match kind {

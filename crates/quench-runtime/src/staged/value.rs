@@ -111,6 +111,17 @@ pub(crate) fn immediate_typeof_index<S: Stage>(stage: &mut S, bits: S::Word, mis
     Some(stage.select(number, number_name, word))
 }
 
+/// The `typeof` result string of the value `bits` where its tag alone decides it: the entry of `names`,
+/// the address of the table of the eight result strings (`Vm::typeof_names`, interned when the heap is
+/// made and indexed as `bytecode::TYPEOF_NAMES`), at the value's index; a heap value leaves at `miss`.
+#[inline(always)]
+pub(crate) fn immediate_typeof_string<S: Stage>(stage: &mut S, bits: S::Word, names: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let index = immediate_typeof_index(stage, bits, miss)?;
+    let offset = stage.mul_imm(index, core::mem::size_of::<crate::Value>() as u64);
+    let entry = stage.add(names, offset);
+    Some(stage.load_table(entry))
+}
+
 /// The interpreter's `immediate_typeof_index` of `value`.
 #[inline(always)]
 pub(crate) fn concrete_immediate_typeof_index(value: crate::Value) -> Option<usize> {

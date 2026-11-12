@@ -9,7 +9,7 @@ impl<H: Host> Vm<H> {
         host: H,
         execution_interrupt: crate::ExecutionInterrupt,
     ) -> Self {
-        Self {
+        let mut vm = Self {
             host,
             native_microtask_running: false,
             unobserved_jobs_entered: false,
@@ -200,6 +200,8 @@ impl<H: Host> Vm<H> {
             deferred_dependency_batch: false,
             construct_target: None,
             random_state: fresh_random_seed(),
-        }
+        };
+        vm.intern_typeof_names();
+        vm
     }
 }

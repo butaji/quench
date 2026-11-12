@@ -393,7 +393,17 @@ pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u3
         .flatten()
         .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0))
         .or_else(|| value_row(known, instruction))
-        .unwrap_or_else(|| decode_step(pc, instruction, (helpers, matches!(facts, Facts::Site))))
+        .unwrap_or_else(|| names(known, decode_step(pc, instruction, (helpers, matches!(facts, Facts::Site)))))
+}
+
+/// The step `row` with the table of `typeof` result strings its fast arm reads (hole 2) where the VM has
+/// one, else the helper step alone.
+fn names(known: Known, row: Decoded) -> Decoded {
+    match (row.step, known.typeof_names.first()) {
+        (Some(Step::Fast(Heap::TypeofString)), Some(first)) => Decoded { hole: std::ptr::from_ref(first).addr() as u64, ..row },
+        (Some(Step::Fast(Heap::TypeofString)), None) => Decoded { step: Some(Step::Helper), a: None, ..row },
+        _ => row,
+    }
 }
 
 /// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it

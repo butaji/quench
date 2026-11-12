@@ -341,7 +341,7 @@ pub(in crate::vm) fn start_osr_region(
     (widened, stores): (&[usize], Option<&crate::vm::method_cache::AtomBits>),
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
-    if let Some(decided) = fast_pending(region, views, super::base_region::Known { program, stores, reads: None, invalidation: None, constants: &[] }, widened, observation, helpers) {
+    if let Some(decided) = fast_pending(region, views, super::base_region::Known { program, stores, reads: None, invalidation: None, constants: &[], typeof_names: &[] }, widened, observation, helpers) {
         return decided;
     }
     let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views };

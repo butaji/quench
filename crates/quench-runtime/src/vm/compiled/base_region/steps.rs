@@ -127,11 +127,13 @@ fn steps_in_place(instruction: WideInstruction) -> bool {
     instruction.op().steps_in_body() && instruction.result_flags() == 0 && instruction.written_registers().count() <= STEP_WRITES
 }
 
-/// The heap row that is the fast arm of a `Unary` that is a `typeof` index or test
+/// The heap row that is the fast arm of a `Unary` that is a `typeof` string, index or test
 /// (`staged::value::immediate_typeof_index`), where the test's name index fits its hole.
 fn typeof_arm(operator: u32) -> Option<Heap> {
-    if operator == crate::bytecode::UNARY_TYPEOF_INDEX {
-        return Some(Heap::TypeofIndex);
+    match operator {
+        crate::bytecode::UNARY_TYPEOF_INDEX => return Some(Heap::TypeofIndex),
+        crate::vm::coercion::TYPEOF => return Some(Heap::TypeofString),
+        _ => {}
     }
     let (index, negated) = crate::bytecode::typeof_test(operator)?;
     Some(Heap::TypeofIs { index: u8::try_from(index).ok()?, negated })
@@ -303,8 +305,10 @@ fn plan_catch(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers)
 
 /// The word a `typeof` fast arm answers for any Number, which an operand held in a pinned register or an
 /// int slot always is: the fact is the operand's representation, proved once where it was defined.
-fn number_typeof(fast: Heap) -> Option<u64> {
+fn number_typeof(fast: Heap, names: u64) -> Option<u64> {
     match fast {
+        // SAFETY: the table is the compiling VM's (`Known::typeof_names`), whose strings the VM roots.
+        Heap::TypeofString => Some(unsafe { (names as *const u64).add(crate::staged::value::TYPEOF_NUMBER as usize).read() }),
         Heap::TypeofIndex => Some(Value::integer(crate::staged::value::TYPEOF_NUMBER as i32).to_bits()),
         Heap::TypeofIs { index, negated } => Some(Value::boolean((u64::from(index) == crate::staged::value::TYPEOF_NUMBER) != negated).to_bits()),
         _ => None,
@@ -324,7 +328,7 @@ fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, helpers: L
     if written != Place::Mem {
         return Ok(slow);
     }
-    if let Some(word) = number_typeof(fast).filter(|_| matches!(read, Place::Pin(_) | Place::PinF(_) | Place::MemInt)) {
+    if let Some(word) = number_typeof(fast, decoded.hole).filter(|_| matches!(read, Place::Pin(_) | Place::PinF(_) | Place::MemInt)) {
         return plan(&Decoded::number(Kind::Move, decoded.dst, Some(Source::Value(word)), None, None), layout, pc, true, helpers);
     }
     if read != Place::Mem && fast.reads_frame_word() {

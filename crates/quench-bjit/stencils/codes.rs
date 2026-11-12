@@ -93,6 +93,10 @@ pub const TYPEOF_ISNOT_ROW: u8 = 21;
 /// TAKEN. The slot number is hole 1 (a read) or hole 2 (the store, whose first operand is the value).
 pub const LOAD_CHECKED_ROW: u8 = 22;
 pub const STORE_CHECKED_ROW: u8 = 23;
+/// A fast arm of `Unary`'s `typeof` string (`staged::value::immediate_typeof_string`): the operand (hole 1)
+/// whose tag decides its index, the entry of the table of result strings at hole 2 at that index, to the
+/// destination (hole 0). A hit continues at TAKEN; a heap value leaves through EXIT0 into the helper step.
+pub const TYPEOF_STRING_ROW: u8 = 24;
 /// Bits below the prototype link in a folded read's hole 1, which carries the receiver's exact shape beneath it.
 pub const HELD_LINK_AT: u32 = 32;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries
