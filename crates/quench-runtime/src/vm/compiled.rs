@@ -1849,6 +1849,8 @@ lane_helper_inventory! { H;
     ValueStep => super::dispatch_fast::lane_body_value_step::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
+    /// A native's call in an inlined frame, where it completes in place (`lane_native_in_place`).
+    NativeInPlace => lane_native_in_place::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
@@ -6813,6 +6815,25 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
         super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
         super::object::FieldCacheProbe::OrdinaryMiss => vm.field_miss_data_value(receiver, atom, vm.field_cache_index(site)).unwrap_or(Value::DELETED).to_bits(),
         _ => Value::DELETED.to_bits(),
+    }
+}
+
+/// A native's call from a lane body's inlined frame, by its operands: `callee`'s value
+/// where it is a native that completes in place (`Vm::in_place_native_value`, which runs no
+/// guest code and raises nothing), else `DELETED`, which leaves the body at the call.
+///
+/// # Safety
+/// `vm` and `residual` are the running VM and residual; `arguments` holds `count` values.
+unsafe extern "C" fn lane_native_in_place<H: Host>(vm: u64, residual: u64, callee: u64, receiver: u64, arguments: u64, count: u64) -> u64 {
+    // SAFETY: as the caller promises; the arguments are the body's own stack slot.
+    let (vm, residual, arguments) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
+        std::slice::from_raw_parts(arguments as *const Value, count as usize)) };
+    let callee = Value::from_bits(callee);
+    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return Value::DELETED.to_bits() };
+    let native = *native;
+    match vm.in_place_native_value(residual, native, callee, Value::from_bits(receiver), arguments) {
+        Some(value) => { super::dispatch_fast::note_allocation(vm); value.to_bits() }
+        None => Value::DELETED.to_bits(),
     }
 }
 

@@ -130,3 +130,37 @@ impl Lowering<'_, '_> {
         true
     }
 }
+
+impl Lowering<'_, '_> {
+    /// The call at `pc`, in an inlined frame, of a native that completes in place
+    /// (`Vm::in_place_native_value`): the helper runs it on the callee, receiver and arguments
+    /// the body holds (`LaneHelper::NativeInPlace`); a callee that is no such native, or a
+    /// case that does not complete in place, leaves at the call with nothing done. The native
+    /// may allocate. False where the call is not one this runs.
+    pub(super) fn native_in_place_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        if !instruction.op().class().eq(Class::Call) || instruction.result_flags() != 0
+            || instruction.direct_eval() || instruction.parameter_eval() { return false; }
+        let imm = instruction.imm();
+        let (window, argc) = (crate::bytecode::ImmediateLayout::call_window_base(imm), crate::bytecode::ImmediateLayout::argument_count(imm));
+        let exit = self.guard_exit(state, pc as u32);
+        let callee = self.tagged(state, instruction.register_b());
+        let receiver = self.tagged(state, instruction.register_c());
+        let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot, (u32::from(argc).max(1)) * 8, 3));
+        for index in 0..argc {
+            let value = self.tagged(state, window + index);
+            self.builder.ins().stack_store(types::I64, value, slot, i32::from(index) * 8);
+        }
+        let arguments = self.builder.ins().stack_addr(types::I64, slot, 0);
+        let count = self.ins().iconst(types::I64, i64::from(argc));
+        let value = self.helper_call(LaneHelper::NativeInPlace, &[callee, receiver, arguments, count]);
+        let completed = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+        emit_js_guard(&mut self.builder, completed, exit);
+        // The native may have changed any object, and allocated, which may move the property
+        // arena: proofs of their shapes and storage retire, and the arena's base reloads.
+        state.call_effect();
+        self.reload_property_arena();
+        self.set_tagged(state, instruction.result_register(), value);
+        true
+    }
+}
