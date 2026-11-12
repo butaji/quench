@@ -42,6 +42,8 @@ pub(super) struct Stitched {
     pub(super) live: Live,
     /// The inlined calls, in program order: the method's frames.
     pub(super) frames: Vec<InlinedCall>,
+    /// The copies a leave inside each frame runs first (`InlineSite::copies`), by frame.
+    pub(super) copies: Vec<Vec<(Register, Register)>>,
 }
 
 /// The first row of each caller PC's parts, and the row past the last.
@@ -68,7 +70,7 @@ pub(super) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16) -> S
     let starts = starts(region.instructions().len(), &parts);
     let tops = parts.iter().filter_map(|part| if let What::Site(site) = &part.what { Some(site.top as usize) } else { None });
     let rows = starts[starts.len() - 1] as usize;
-    let mut stitched = Stitched { rows: Vec::with_capacity(rows), origins: Vec::with_capacity(rows), live: Live::new(tops.fold(usize::from(registers), usize::max)), frames: Vec::new() };
+    let mut stitched = Stitched { rows: Vec::with_capacity(rows), origins: Vec::with_capacity(rows), live: Live::new(tops.fold(usize::from(registers), usize::max)), frames: Vec::new(), copies: Vec::new() };
     for part in parts {
         match part.what {
             What::Row(row) => {
@@ -88,11 +90,14 @@ impl Stitched {
         self.live.push(live);
     }
 
-    /// The rows of `site`, the call at `pc`: the callee's proof, then its rows, which leave at the
-    /// call. Its registers are live where the callee's are, and where the caller's are live at
+    /// The rows of `site`, the call at `pc`: the callee's proof, then its rows, which leave inside
+    /// the callee at their instruction, except the copies of the arguments, which leave at the call.
+    /// Its registers are live where the callee's are, and where the caller's are live at
     /// the call or past it (the result excepted, which the callee writes).
     fn site(&mut self, region: &LoopRegion, pc: u32, registers: u16, site: InlineSite) {
+        let frame = self.frames.len();
         self.frames.push(site.frame);
+        self.copies.push(site.copies);
         let (callee, word) = site.identity;
         let guard = Decoded { hole: word, ..Decoded::heap(Heap::Identity, None, Some(Source::Register(callee)), None) };
         self.push(guard, Origin::Caller(pc), callers(region, pc, registers));
@@ -101,7 +106,8 @@ impl Stitched {
         for row in site.rows {
             let caller = if row.pc.is_some() { around.clone() } else { callers(region, pc, registers).collect() };
             let decoded = Decoded { target: row.decoded.target.map(|target| first + target), ..row.decoded };
-            self.push(decoded, Origin::Caller(pc), caller.into_iter().chain(row.live));
+            let origin = row.pc.map_or(Origin::Caller(pc), |pc| Origin::Inlined { frame, pc });
+            self.push(decoded, origin, caller.into_iter().chain(row.live));
         }
     }
 }

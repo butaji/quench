@@ -110,6 +110,10 @@ pub(in super::super) struct InlineSite {
     pub(in super::super) rows: Vec<SiteRow>,
     /// The first register above the callee's window.
     pub(in super::super) top: u32,
+    /// The (parameter register, argument register) copies a leave inside the callee runs first:
+    /// each parameter the callee never writes is read from its argument register, where the
+    /// interpreter's activation expects it in its own.
+    pub(in super::super) copies: Vec<(Register, Register)>,
     /// The call as the method's inlined frame, which a leave inside the callee recovers
     /// (`Vm::lane_body_inlined_activation`).
     pub(in super::super) frame: Frame,
@@ -295,7 +299,8 @@ impl InlineSite {
         }
         context.reserve(callee.code.len());
         let identity = (shape.callee, callee.identity.to_bits());
-        Ok(Self { shape: *shape, identity, rows: emitter.rows, top: context.top + u32::from(callee.registers), frame: frame(shape, callee, base) })
+        let copies = emitter.aliases.iter().map(|(home, argument)| (base + *home, *argument)).collect();
+        Ok(Self { shape: *shape, identity, rows: emitter.rows, top: context.top + u32::from(callee.registers), copies, frame: frame(shape, callee, base) })
     }
 }
 

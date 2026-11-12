@@ -15228,6 +15228,9 @@ fn lane_body_inlined_activation<H: Host>(
     pc: u32,
 ) -> (Registers, Ip, Carried) {
     let frames = &method.inlined;
+    if method.framed() {
+        Vm::<H>::lane_adopt_window(r.0.cast_const(), usize::from(method.caller_registers()));
+    }
     let mut chain = vec![frame];
     while let Some(parent) = frames[*chain.last().expect("a chain has a frame")].parent {
         chain.push(parent);

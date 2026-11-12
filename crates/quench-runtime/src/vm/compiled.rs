@@ -6660,6 +6660,12 @@ impl LaneMethod {
         self.caller_registers
     }
 
+    /// Whether its inlined frames' registers are in the activation's register file past the
+    /// caller's (`LaneMethod::framed`).
+    pub(super) fn framed(&self) -> bool {
+        self.framed
+    }
+
     /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
     pub(super) fn entry_address(&self) -> usize {
         self.entry as usize
@@ -7277,6 +7283,20 @@ impl<H: Host> Vm<H> {
             (*frame).dispatch.inlined = (*frame).scratch.as_mut_ptr().addr();
         }
         exit
+    }
+
+    /// Copies the registers that follow the first `from` of the activation at `registers`, where a
+    /// stitched body kept its inlined callees' (`LaneMethod::framed`), into the scratch window a
+    /// leave inside one reads (`lane_scratch`), before the activations it makes overwrite them.
+    pub(super) fn lane_adopt_window(registers: *const Value, from: usize) {
+        let frame = lane_frame();
+        // SAFETY: as `take_shadow_frames`; the body's admission proved the room past the
+        // activation's registers (`LaneRecoverySpace`), and no lane body runs while the lane reads it.
+        unsafe {
+            for (at, slot) in (*frame).scratch.iter_mut().enumerate() {
+                *slot = registers.add(from + at).read();
+            }
+        }
     }
 
     /// Hands `write` each of the `count` registers an inlined callee its lane body left

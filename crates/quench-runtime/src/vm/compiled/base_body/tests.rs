@@ -229,3 +229,20 @@ fn a_callee_with_a_loop_and_two_returns_runs_inlined() {
     assert!(runs > 100, "the bodies ran {runs} times");
     assert!(super::super::base_region::inlined_sites() > before, "the callee's site was inlined");
 }
+
+/// A guard that fails in the middle of an inlined callee (a double or a string where the loop
+/// added ints, an int32 overflow after some iterations) leaves inside the callee: the interpreter
+/// resumes there with the callee's registers as the body held them, and the parameter the callee
+/// never writes (`x`) read from the caller's argument register, and finishes the loop. The output
+/// is the interpreter's.
+#[test]
+fn a_guard_failing_mid_callee_resumes_in_the_callee() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function walk(n, x) { var s = 0, i = 0; while (i < n) { s = s + x; i = i + 1; } return s; }
+         function f(n, x) { var t = 0; for (var j = 0; j < 3; j++) t = t + walk(n, x); return t; }
+         var t = 0; for (var k = 0; k < 300; k++) t = (t + f(k % 7, 3)) | 0;
+         print(t); print(f(9, 0.5)); print(f(40, 100000000)); print(f(5, '2')); print(f(4, null)); print(f(6, -0));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+}

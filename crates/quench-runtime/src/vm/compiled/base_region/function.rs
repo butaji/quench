@@ -189,7 +189,7 @@ fn assemble_body(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers
     let unreached = |row: Decoded, reached: &bool| if *reached { row } else { Decoded::step(Step::Leave, None) };
     let rows: Vec<Decoded> = stitched.rows.into_iter().zip(&reached).map(|(row, reached)| unreached(row, reached)).collect();
     let (reprs, homes, webs, decoded) = analyze(&span, &rows, &widened_rows(&stitched.origins, spec.widened), spec.seen);
-    let layout = Layout { span, homes, webs, ending: Ending::Body, callees: sites.facts, origins: &stitched.origins };
+    let layout = Layout { span, homes, webs, ending: Ending::Body, callees: sites.facts, origins: &stitched.origins, copies: &stitched.copies };
     let mut planned = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, &reprs, reached[k], k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let code = link(&layout, &planned)?;
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached[*k] && leaves(&layout, row)).count();

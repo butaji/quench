@@ -59,12 +59,18 @@ pub(super) fn thunk(ending: Ending, rows_at: usize) -> Result<Vec<u8>, String> {
 }
 
 /// The code that writes `spills` back to the register file (a pinned double as a canonical
-/// word, a pinned int32 tagged) and ends in the leave routine `tail`, given `leave` as its holes.
-pub(super) fn leave_chain(spills: &[(Place, Register)], tail: &str, leave: [u64; HOLES]) -> Result<Vec<u8>, String> {
+/// word, a pinned int32 tagged), then copies each of `copies` (destination register, source
+/// register) between their frame slots, and ends in the leave routine `tail`, given `leave` as its
+/// holes.
+pub(super) fn leave_chain(spills: &[(Place, Register)], copies: &[(Register, Register)], tail: &str, leave: [u64; HOLES]) -> Result<Vec<u8>, String> {
     let mut chain = Vec::new();
     for (place, register) in spills {
         let row = numeric::Row { kind: Kind::Spill, dst: Place::Mem, a: *place, b: Place::Mem, speculate: false };
         chain.push((numeric::stencil(row)?.clone(), [u64::from(*register) * SLOT, 0, 0]));
+    }
+    for (dst, src) in copies {
+        let row = numeric::Row { kind: Kind::Move, dst: Place::Mem, a: Place::Mem, b: Place::Mem, speculate: false };
+        chain.push((numeric::stencil(row)?.clone(), [u64::from(*dst) * SLOT, u64::from(*src) * SLOT, 0]));
     }
     chain.push((routine(tail)?, leave));
     let hole_fns: Vec<Box<dyn Fn(u32) -> u64 + '_>> = chain.iter().map(|(_, h)| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
@@ -89,6 +95,9 @@ pub(super) struct Layout<'a> {
     /// Per row of a stitched program, where the interpreter resumes if the row leaves; none for a
     /// loop region, whose rows are its PCs.
     pub(super) origins: &'a [Origin],
+    /// Per inlined frame, the (parameter register, argument register) copies a leave inside it runs
+    /// first: a parameter the callee never writes lives in the caller's argument register.
+    pub(super) copies: &'a [Vec<(Register, Register)>],
 }
 
 impl Layout<'_> {
@@ -124,6 +133,14 @@ impl Layout<'_> {
         matches!(self.origin(row), Some(Origin::Inlined { .. }))
     }
 
+    /// The copies a leave at `row` runs before it leaves: its inlined frame's, else none.
+    fn copies(&self, row: u32) -> &[(Register, Register)] {
+        match self.origin(row) {
+            Some(Origin::Inlined { frame, .. }) => &self.copies[frame],
+            _ => &[],
+        }
+    }
+
     /// The pinned registers live at `pc`: the ones a stub there writes back.
     pub(super) fn live_pins(&self, pc: u32) -> Vec<Pin> {
         self.live_homes(&self.homes.pins, pc)
@@ -147,7 +164,7 @@ impl Layout<'_> {
 
     /// The routine a row's exit stub jumps to: it writes the live pinned registers back and returns the PC the stub pushed.
     pub(super) fn routine(&self, pc: u32) -> Result<Vec<u8>, String> {
-        leave_chain(&self.spills(pc), self.ending.tails().1, self.ending.holes(0))
+        leave_chain(&self.spills(pc), &[], self.ending.tails().1, self.ending.holes(0))
     }
 }
 
@@ -226,12 +243,12 @@ impl Leaves {
         }
         let ending = layout.ending;
         let stencil = match leave {
-            Leave::Pc(pc) => leave_row(leave_chain(&layout.spills(pc), ending.tails().0, ending.holes(layout.exit_word(pc)))?),
-            Leave::Word(word) => leave_row(leave_chain(&[], ending.tails().0, ending.holes(word))?),
+            Leave::Pc(pc) => leave_row(leave_chain(&layout.spills(pc), layout.copies(pc), ending.tails().0, ending.holes(layout.exit_word(pc)))?),
+            Leave::Word(word) => leave_row(leave_chain(&[], &[], ending.tails().0, ending.holes(word))?),
             Leave::Status => routine(call::LEAVE_STATUS)?,
             Leave::Return { pc, slot } => {
                 let status = u64::from(super::super::LANE_BODY_RETURNED);
-                leave_row(leave_chain(&layout.spills(pc), "leave_returned", [slot, status, u64::from(layout.record(pc))])?)
+                leave_row(leave_chain(&layout.spills(pc), &[], "leave_returned", [slot, status, u64::from(layout.record(pc))])?)
             }
         };
         self.0.push((leave, stencil));

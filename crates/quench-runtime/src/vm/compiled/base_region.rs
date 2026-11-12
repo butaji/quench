@@ -220,7 +220,7 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     settle(&mut decoded);
     let span = Span::of(region);
     let (reprs, homes, webs, decoded) = analyze(&span, &decoded, widened, seen);
-    let layout = Layout { span, homes, webs, ending: Ending::Region, callees: &[], origins: &[] };
+    let layout = Layout { span, homes, webs, ending: Ending::Region, callees: &[], origins: &[], copies: &[] };
     let body = decoded.iter().enumerate().map(|(k, row)| plan(row, &layout, header + k as u32, is_general(row, &reprs), helpers)).collect::<Result<Vec<_>, _>>()?;
     let bare = decoded.iter().all(|row| row.heap.is_none() && row.step != Some(Step::Helper));
     Ok((link(&layout, &body)?, bare))
