@@ -2690,6 +2690,10 @@ impl Lowering<'_, '_> {
                 self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
                 Some(true)
             }
+            // `void`: the staged operation defines `undefined`; its operand was evaluated already.
+            Class::Unary if plain && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Void as u32 => {
+                self.operation_step(state, pc32, instruction, false)
+            }
             Class::Unary if plain && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
                 && instruction.register_b() < self.unit.registers => self.typeof_index(state, pc, instruction),
             Class::Unary if crate::bytecode::typeof_test(instruction.unary_operator()).is_some()
