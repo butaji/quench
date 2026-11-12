@@ -98,9 +98,28 @@ pub(in crate::vm) fn repays_compile(interpreted: u64, ir: usize) -> bool {
 /// `repays_compile` for `function`'s `entries` so far, each running its whole body; where its
 /// loop runs in a region that enters native code, each saves that entry alone
 /// (`TIERS.loops.region_entry_work`).
-pub(super) fn pays_compile(program: &ResidualProgram, function: u32, entries: u32, ir: usize, entering_region: bool) -> bool {
+pub(super) fn pays_compile(program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView, diagnostics: bool) -> bool {
     let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    repays_compile(u64::from(entries) * if entering_region { TIERS.loops.region_entry_work } else { length }, ir)
+    let region = caller.enters_region();
+    let today = repays_compile(u64::from(entries) * if region { TIERS.loops.region_entry_work } else { length }, ir);
+    if diagnostics { shadow_log(function, entries, ir, region, today, shadow_net_ns(length, entries, ir, region, caller.loop_work())); }
+    today
+}
+
+/// The tier model's net gain in ns for `function` at `entries` so far (shadow: logged beside
+/// `pays_compile`, deciding nothing): each future entry (Lindy: as many as seen, over the
+/// prior's divisor) saves the interpreter's share of the work the body takes over, less the
+/// body's own entry, minus the compile of `ir` instructions.
+fn shadow_net_ns(length: u64, entries: u32, ir: usize, entering_region: bool, loop_work: u64) -> i64 {
+    let priors = &TIERS.priors;
+    let per_entry = if entering_region { priors.region_entry_ns } else { (length + loop_work) * priors.interpreter_ns * (super::tier_policy::PER_MILLE - priors.body_share) / super::tier_policy::PER_MILLE };
+    let saved = per_entry.saturating_sub(priors.body_entry_ns) as i64;
+    let future = (u64::from(entries) / priors.remaining_divisor) as i64;
+    future * saved - (ir as u64 * priors.compile_ns_per_ir) as i64
+}
+
+fn shadow_log(function: u32, entries: u32, ir: usize, region: bool, today: bool, net: i64) {
+    eprintln!("QUENCH_TIER_SHADOW function={function} entries={entries} ir={ir} region={region} today={today} model={} net_ns={net}{}", net > 0, if today != (net > 0) { " DISAGREE" } else { "" });
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a
