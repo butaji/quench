@@ -70,7 +70,6 @@ pub(super) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     /// The numbers the stencil rows are compiled with (`quench-bjit/stencils/layout.rs`) are
     /// the runtime's own.

@@ -349,17 +349,3 @@ pub(crate) enum Step<W, C> {
 mod tests;
 #[cfg(test)]
 mod coverage_tests;
-
-#[cfg(test)]
-mod stencil_layout_dump {
-    use crate::value::{NarrowLayout, ValueLayout};
-    #[test]
-    #[ignore]
-    fn dump() {
-        println!("OBJECT {:#?}\nARRAY {:#?}\nENV {:#?}\nFIELD {:#?}", crate::heap::NATIVE_OBJECT_LAYOUT, crate::heap::NATIVE_ARRAY_LAYOUT, crate::heap::NATIVE_ENVIRONMENT_LAYOUT, crate::vm::NATIVE_FIELD_CACHE_LAYOUT);
-        println!("V {:#x} {:#x} {:#x} {:#x} {:#x} {:#x} {:#x} {:#x} {:#x} {} {:#x} {:#x}", ValueLayout::TAG_MASK, ValueLayout::INT_TAG, ValueLayout::INTERNAL_TAG, ValueLayout::HEAP_TAG, ValueLayout::DIRECT_ARRAY_TAG, ValueLayout::DIRECT_OBJECT_TAG, ValueLayout::DIRECT_FUNCTION_TAG, ValueLayout::HEAP_FAMILY_MASK, ValueLayout::DIRECT_STRING_TAG, ValueLayout::TAG_SHIFT, ValueLayout::FIRST_TAG_FIELD, ValueLayout::TAG_FIELD_SPAN);
-        println!("VAL {:#x} {:#x} {:#x} {:#x} CAN {:#x}", crate::Value::NULL.to_bits(), crate::Value::UNDEFINED.to_bits(), crate::Value::DELETED.to_bits(), crate::Value::FALSE.to_bits(), ValueLayout::CANONICAL_NAN);
-        println!("N {} {} {} {:#x} {} {} {:#x} {}", NarrowLayout::INTEGER_FLAG, NarrowLayout::INTEGER_BITS, NarrowLayout::CODE_SHIFT, NarrowLayout::CODE_MASK, NarrowLayout::INDEX_SHIFT, NarrowLayout::INDEX_BITS, NarrowLayout::DIRECT_OBJECT_UPPER, NarrowLayout::DIRECT_OBJECT_CODE);
-        println!("H {} {} {} {}", crate::heap::OTHERS_UNKNOWN, crate::heap::LENGTH_FROM_VALUES, crate::heap::OTHERS_FROM_VALUES, crate::value_vec::INLINE_PROPERTY_COUNT);
-    }
-}
