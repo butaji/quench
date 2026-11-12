@@ -184,6 +184,17 @@ impl LoopRegion {
         self.dynamic_field_reads.values().any(|field| *field == index)
     }
 
+    /// Whether field `index` is a dynamic read through a register the loop defines or that is
+    /// dead at the header: at entry that register holds no value of the loop's (it may name a
+    /// dead record), so the entry seeds the field's placeholder without reading through it.
+    pub(crate) fn seeds_without_receiver(&self, index: usize) -> bool {
+        let Some(FieldUse { receiver: FieldReceiver::Register(register), .. }) = self.fields.get(index) else { return false };
+        self.is_dynamic_field(index)
+            && (!self.is_live(self.header, *register)
+                || self.instructions.get(self.header as usize..=self.backedge as usize)
+                    .is_some_and(|code| code.iter().any(|instruction| instruction.defined_register() == Some(*register))))
+    }
+
     pub(crate) fn writes_fields(&self) -> bool {
         !self.field_store_sites.is_empty() || !self.dynamic_field_stores.is_empty()
     }
