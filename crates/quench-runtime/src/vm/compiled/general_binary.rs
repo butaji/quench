@@ -4,10 +4,11 @@
 //! run no guest code; a remainder of two integers is computed inline first. Any other pair
 //! takes the step.
 use super::{emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback, JsStepDispatch, PcLowering, ResidualProgram, Vm};
+use crate::vm::compiled::regions;
 use crate::bytecode::{Constant, Operand, OperandKind, WideInstruction};
 use crate::value::ValueLayout;
 use crate::Value;
-use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
+use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
 use oxc_ast::ast::BinaryOperator;
 
@@ -64,12 +65,12 @@ fn lower_logical_not(
         (false, None) => return false,
     };
     let fallback = builder.create_block();
-    let bits = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
+    let bits = builder.ins().load(types::I64, regions::frame(), arguments, source);
     let truthy = super::emit_js_tagged_truthiness(builder, bits, fallback);
     let (truth, falsity) = (builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64),
         builder.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
     let negated = builder.ins().select(truthy, falsity, truth);
-    builder.ins().store(MemFlagsData::trusted(), negated, arguments, destination);
+    builder.ins().store(regions::frame(), negated, arguments, destination);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
     true
@@ -95,7 +96,7 @@ fn lower_binary(
     let (Some(left), Some(right)) = (binary_operand(program, register_offset, instruction.operand_b()),
         binary_operand(program, register_offset, instruction.operand_c())) else { return false };
     let value = |builder: &mut FunctionBuilder<'_>, (offset, _): (Option<i32>, u64)| match offset {
-        Some(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
+        Some(offset) => builder.ins().load(types::I64, regions::frame(), arguments, offset),
         None => builder.ins().iconst(types::I64, 0) };
     let (left_value, right_value) = (value(builder, left), value(builder, right));
     let (store, fallback) = (builder.create_block(), builder.create_block());
@@ -110,7 +111,7 @@ fn lower_binary(
     let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, answered, Value::DELETED.to_bits() as i64);
     builder.ins().brif(hit, store, &[ir::BlockArg::Value(answered)], fallback, &[]);
     builder.switch_to_block(store);
-    builder.ins().store(MemFlagsData::trusted(), result, arguments, destination);
+    builder.ins().store(regions::frame(), result, arguments, destination);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
     true

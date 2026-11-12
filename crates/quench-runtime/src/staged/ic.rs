@@ -4,6 +4,7 @@
 //! writing the read again.
 
 use super::Stage;
+use super::region::Region;
 use super::object::{Form, PackedAccess, arena_run, extras_pointer, has_extras, inline_storage, object_record_at, own_layout,
     proto_link, proto_object_record_id, read_slot};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
@@ -85,7 +86,7 @@ fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, slot: u16,
 
 /// The reached record's exact shape word: the caller's where it holds one, else loaded.
 fn shape_word<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>) -> S::Word {
-    at.shape.unwrap_or_else(|| stage.load_u32(at.record, OBJECT.auxiliary_offset as i32))
+    at.shape.unwrap_or_else(|| stage.load_u32(Region::ShapeWord.mutable(), at.record, OBJECT.auxiliary_offset as i32))
 }
 
 /// `IcOp::PrototypeConstants`: the value `values` pair with the link of `record`'s prototype.
@@ -110,15 +111,15 @@ fn prototype_slot<S: Stage>(stage: &mut S, record: S::Word, slot: u16, miss: S::
     let inline = inline_storage(stage, record);
     let in_arena = stage.not(inline);
     stage.guard(in_arena, miss)?;
-    let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let extras = has_extras(stage, payload);
     stage.guard(extras, miss)?;
     let pointer = extras_pointer(stage, payload);
     let present = stage.ne_imm(pointer, 0u32);
     stage.guard(present, miss)?;
-    let start = stage.load_u32(pointer, OBJECT.extras_arena_start_offset as i32);
+    let start = stage.load_u32(Region::Payload.mutable(), pointer, OBJECT.extras_arena_start_offset as i32);
     let run = arena_run(stage, start);
-    { let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64); Some(stage.load_site(run, offset)) }
+    { let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64); Some(stage.load_site(Region::ObjectSlots.mutable(), run, offset)) }
 }
 
 /// The own field a site's hint proved: the value at `slot` of `object` where its exact shape

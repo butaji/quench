@@ -3,9 +3,10 @@
 //! prototypes do not hold (`Vm::absent_array_element`) and a plain store
 //! (`Vm::store_plain_element`). Anything else takes the step at the same PC.
 use super::{emit_js_payload_word, emit_lane_helper_call, Host, JsExactFallback, JsStepDispatch, Vm};
+use crate::vm::compiled::regions;
 use crate::bytecode::WideInstruction;
 use crate::Value;
-use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
+use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
 
 /// Stores the absent element `base[key]` reads at `destination` and continues at `next`;
@@ -18,7 +19,7 @@ pub(super) fn emit_absent(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
     let (read, exact) = (builder.create_block(), builder.create_block());
     builder.ins().brif(found, read, &[], exact, &[]);
     builder.switch_to_block(read);
-    builder.ins().store(MemFlagsData::trusted(), absent, arguments, destination);
+    builder.ins().store(regions::frame(), absent, arguments, destination);
     builder.ins().jump(next, &[]);
     builder.switch_to_block(exact);
 }
@@ -34,7 +35,7 @@ pub(super) fn lower_store(
 ) -> bool {
     let (Some(value), Some(base), Some(key)) = (register_offset(instruction.register_a()),
         register_offset(instruction.register_b()), register_offset(instruction.register_c())) else { return false };
-    let [value, base, key] = [value, base, key].map(|offset| builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset));
+    let [value, base, key] = [value, base, key].map(|offset| builder.ins().load(types::I64, regions::frame(), arguments, offset));
     let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, element_set));
     let stored = emit_lane_helper_call(builder, payload, helper, &[payload, base, key, value]);
     let stored = builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);

@@ -4,6 +4,7 @@
 
 use super::object::{arena_run, inline_storage, plain_payload};
 use super::Stage;
+use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::value::{NarrowLayout, ValueLayout, LOWER_WORD};
 
@@ -76,13 +77,13 @@ fn reference_form<S: Stage>(stage: &mut S, value: S::Word, upper: S::Word) -> S:
 #[inline(always)]
 pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, slot: u16,
     value: S::Word, miss: S::Miss) -> Option<()> {
-    let exact = stage.load_u32(record, OBJECT.auxiliary_offset as i32);
+    let exact = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
     let shape = stage.site(u64::from(shape));
     let same = stage.eq_imm(exact, shape);
     stage.guard(same, miss)?;
     let open = stage.store_gate(record_id, value);
     stage.guard(open, miss)?;
-    let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
     let inline = inline_storage(stage, record);
@@ -93,13 +94,13 @@ pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::
     stage.choose(inline, |stage| {
         let half = stage.site(OBJECT.payload_offset as u64 + u64::from(slot) * HALF_BYTES);
         let address = stage.add_imm(record, half);
-        stage.store_u32(address, 0, narrow);
+        stage.store_u32(Region::Payload.mutable(), address, 0, narrow);
         stage.constant(0)
     }, |stage| {
         let run = arena_run(stage, payload);
         let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
         let address = stage.add_imm(run, offset);
-        stage.store_u64(address, 0, value);
+        stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
         stage.constant(0)
     });
     Some(())

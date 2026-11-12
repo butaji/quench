@@ -1,10 +1,11 @@
 //! The admission of an inlined callee bound by its function (`CalleeBinding::Function`):
 //! the VM's cached in-loop call target answers inline, its binding helper otherwise.
 use super::*;
+use crate::vm::compiled::regions;
 
 impl Lowering<'_, '_> {
     pub(super) fn function_binding(&mut self, callee: ir::Value, function: u32) -> ir::Value {
-        let program = self.builder.ins().load(types::I32, MemFlagsData::trusted(), self.payload,
+        let program = self.builder.ins().load(types::I32, regions::dispatch(), self.payload,
             std::mem::offset_of!(JsStepDispatch, program_id) as i32);
         let program = self.ins().uextend(types::I64, program);
         let probed = function != super::super::ROOT_FUNCTION_ID;

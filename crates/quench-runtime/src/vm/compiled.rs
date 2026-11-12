@@ -120,6 +120,7 @@ fn forced_or(ok: ir::Block, fail: ir::Block) -> ir::Block {
 }
 mod object_slots;
 mod frame_ssa;
+pub(super) mod regions;
 pub(super) use object_slots::{InheritedConstant, NativeFieldLoad};
 #[cfg(feature = "aot")]
 mod scalar_region;
