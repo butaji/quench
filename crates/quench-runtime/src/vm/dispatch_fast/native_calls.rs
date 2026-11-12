@@ -114,14 +114,14 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
     }
 }
 
-/// A lane body's call of a native that completes in place (`Vm::in_place_native_value`: no
-/// guest code, no raised error, no frame observed), its value in the call's register, which
-/// the body reads as it reads a completed script call's: the body stays native across
-/// `Math.imul`, a string method or a collection read instead of leaving at each. Any other
-/// callee or case is a miss, which leaves the body at the call.
-pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction, callee: Value) -> u64 {
+/// A lane body's call of a native: one that completes in place (`Vm::in_place_native_value`: no
+/// guest code, no raised error, no frame observed) writes its value to the call's register, which
+/// the body reads as it reads a completed script call's, so the body stays native across
+/// `Math.imul`, a string method or a collection read. Any other native is called out
+/// (`lane_body_native_out`). A call that returns its result is a miss, which leaves the body at the call.
+pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, callee: Value) -> u64 {
     use super::super::compiled::LANE_CALL_COMPLETED;
-    let vm = unsafe { vm(cx) };
+    let (vm, i) = (unsafe { vm(cx) }, unsafe { &*ip });
     // A returning call's completion is its activation's, which the lane makes.
     if i.a & crate::bytecode::RETURN_REGISTER != 0 { return super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeReturning); }
     let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeNotNative) };
@@ -129,8 +129,33 @@ pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, r: Registe
     // SAFETY: the context's program outlives the lane run; the window is registers of the
     // running function, which the native reads before anything can move them.
     let (code, args) = unsafe { (&*(*cx).code, lane_call_window(r, i)) };
-    let Some(value) = vm.in_place_native_value(code, native, callee, r.get(i.c), args) else { return super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeInPlaceDeclined) };
+    let Some(value) = vm.in_place_native_value(code, native, callee, r.get(i.c), args) else {
+        return lane_body_native_out(cx, r, ip, native, callee, args);
+    };
     note_allocation(vm);
     r.set(i.a, value);
     LANE_CALL_COMPLETED
+}
+
+/// `lane_body_native_call` of a native that is not in place: the lane's own call of it
+/// (`lane_call_native`), beside the body's activations where the native allows, else from the
+/// frame, so the callbacks it makes run as activations of the lane above the body
+/// (`Vm::lane_deferred_callback`, `Vm::lane_native_callback`) and their returns go back to the
+/// native, which returns to the body. `LANE_CALL_COMPLETED` with the value in the call's
+/// register; `LANE_CALL_LEFT` where the native made the body's activations frames, whose
+/// registers then hold it and which continue at the next record; `LANE_CALL_MISSED` where the
+/// native is not one the lane calls or raised (the error stashed in `Vm::lane_raised` for the
+/// general path, as `lane_body_value_step`'s).
+fn lane_body_native_out<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, native: Native, callee: Value, args: &[Value]) -> u64 {
+    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT};
+    let i = unsafe { &*ip };
+    let Some(value) = lane_call_native(cx, ip, native, callee, r.get(i.c), args) else {
+        return super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeNotCompleted);
+    };
+    // Guest code the native ran may have made the activations frames, whose registers these are.
+    let after = unsafe { (*cx).registers };
+    after.set(i.a, value);
+    if after.0 == r.0 { return LANE_CALL_COMPLETED; }
+    unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
+    LANE_CALL_LEFT
 }

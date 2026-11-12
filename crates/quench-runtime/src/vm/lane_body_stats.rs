@@ -153,7 +153,7 @@ miss_reasons! {
     PlanDependencies => "plan:dependencies",
     NativeReturning => "native:returning",
     NativeNotNative => "native:not-native",
-    NativeInPlaceDeclined => "native:in-place-declined",
+    NativeNotCompleted => "native:not-completed",
 }
 static MISSES: [std::sync::atomic::AtomicU64; MISS_NAMES.len()] = [const { std::sync::atomic::AtomicU64::new(0) }; MISS_NAMES.len()];
 
