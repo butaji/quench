@@ -18,6 +18,7 @@ impl Lowering<'_, '_> {
         let callers = matches!(self.unit.origins.get(pc), Some(super::super::lane_unit::Origin::Caller(_)));
         let plain = instruction.result_flags() == 0 && self.completion.status_and_pc();
         match allocation {
+            Allocation::Array { .. } | Allocation::RegExp { .. } => false,
             Allocation::Empty | Allocation::ConstArray { .. } | Allocation::ObjectPair { .. } => self.literal_completes(instruction, pc),
             Allocation::ObjectLiteral { window, .. } | Allocation::Concat { window } => plain && inside(window),
             Allocation::Closure { .. } | Allocation::Template { .. } => plain && callers,

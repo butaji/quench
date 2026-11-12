@@ -5313,10 +5313,9 @@ fn lane_body_callee_env<H: Host>() -> Option<Value> {
 script_handler! {
     /// `CreateRegExpLiteral` (`Vm::regexp_literal`), which allocates and runs no guest code.
     fn lane_regexp_literal<>(cx, r, ip, i, view) {
-        let Some(value) = lane_regexp_literal_value(cx, i) else {
+        if !staged_allocate(cx, r, i.a, Allocation::RegExp { site: i.imm() }) {
             return exit(ip);
-        };
-        r.set(i.a, value);
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -5364,14 +5363,11 @@ fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Va
 /// run; inside a lane activation, `None` leaves it to the general path, which raises the
 /// same error from the site's cached record.
 #[inline(never)]
-fn lane_regexp_literal_value<H: Host>(
-    cx: *mut LaneContext<H>,
-    i: &LaneInstruction,
-) -> Option<Value> {
+fn lane_regexp_literal_value<H: Host>(cx: *mut LaneContext<H>, site: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
-    let result = vm.regexp_literal_of(code, program, i.imm() as usize);
+    let result = vm.regexp_literal_of(code, program, site as usize);
     note_allocation(vm);
     match result {
         Ok(value) => Some(value),
@@ -5440,7 +5436,9 @@ script_handler! {
 lane_handler! {
     /// `MakeArray`: a fresh array of the record's length in holes (`Vm::hole_array`).
     fn lane_make_array<>(cx, r, ip, i, view) {
-        r.set(i.a, lane_new_hole_array(unsafe { vm(cx) }, i.imm() as usize));
+        if !staged_allocate(cx, r, i.a, Allocation::Array { length: i.imm() }) {
+            return exit(ip);
+        }
         next!(cx, r, following(ip), view)
     }
 }

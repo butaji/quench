@@ -14,6 +14,12 @@ use crate::bytecode::{Op, Register, RegisterWindow, WideInstruction};
 pub(crate) enum Allocation {
     /// An empty ordinary object (`Vm::object`).
     Empty,
+    /// An array of `length` holes (`Vm::hole_array`); an array whose elements are written with
+    /// it keeps the word-operand `Operation::MakeArray`.
+    Array { length: u32 },
+    /// A fresh object of regexp literal `site`'s compiled template: the matcher program is the
+    /// site's, its state is fresh. A pattern that fails to compile raises at the instruction.
+    RegExp { site: u32 },
     /// The array of the `count` program constants from constant `constant`.
     ConstArray { constant: u32, count: u16 },
     /// An ordinary object of literal `site`'s shape holding registers `first` and `second`.
@@ -35,6 +41,9 @@ impl Allocation {
     pub(crate) fn decode(instruction: WideInstruction) -> Option<(Register, Self)> {
         let allocation = match instruction.op() {
             Op::MakeObject => Self::Empty,
+            Op::MakeArray => Self::Array { length: u32::try_from(instruction.array_length()).ok()? },
+            Op::CreateRegExpLiteral => Self::RegExp {
+                site: u32::try_from(instruction.regexp_literal_site_index()).ok()? },
             Op::MakeConstArray => Self::ConstArray {
                 constant: u32::try_from(instruction.constant_index()).ok()?, count: instruction.element_count() },
             Op::MakeObject2 => Self::ObjectPair { site: u32::try_from(instruction.object_site_index()).ok()?,
@@ -90,6 +99,10 @@ mod tests {
             allocation: Allocation::ObjectPair { site: 5, first: 1, second: 2 }, .. })));
         assert!(matches!(make(Op::MakeConstArray, 2, 0, 5), Some(Operation::Allocate {
             allocation: Allocation::ConstArray { constant: 5, count: 2 }, .. })));
+        assert!(matches!(make(Op::MakeArray, 0, 0, 4), Some(Operation::Allocate {
+            allocation: Allocation::Array { length: 4 }, .. })));
+        assert!(matches!(make(Op::CreateRegExpLiteral, 0, 0, 6), Some(Operation::Allocate {
+            allocation: Allocation::RegExp { site: 6 }, .. })));
         assert!(matches!(make(Op::StringConcat, 1, 1, 0), Some(Operation::Allocate { destination: 3, .. })));
         assert!(make(Op::Jump, 0, 0, 0).is_none());
     }

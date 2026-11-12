@@ -312,6 +312,8 @@ unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Alloca
     let cx = cx.cast::<LaneContext<H>>();
     match allocation {
         Allocation::Empty => Some(lane_new_object(unsafe { vm(cx) })),
+        Allocation::Array { length } => Some(lane_new_hole_array(unsafe { vm(cx) }, length as usize)),
+        Allocation::RegExp { site } => lane_regexp_literal_value(cx, site),
         Allocation::ConstArray { constant, count } => lane_const_array_value(cx, constant, count),
         Allocation::ObjectPair { site, first, second } => Some(lane_object_pair(cx, r, site, [first, second])),
         Allocation::ObjectLiteral { site, window } => Some(lane_object_literal_value(cx, r, site, window)),

@@ -83,6 +83,9 @@ pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>
     allocation: Allocation, proof: EmitProof) -> Option<ir::Value> {
     let (helper, arguments) = match allocation {
         Allocation::Empty => (LaneHelper::NewObject, vec![]),
+        Allocation::Array { length } =>
+            (LaneHelper::NewArray, vec![immediate(stage, i64::from(length)), immediate(stage, 0)]),
+        Allocation::RegExp { .. } => return None,
         Allocation::ConstArray { constant, count } =>
             (LaneHelper::NewConstArray, vec![immediate(stage, i64::from(constant)), immediate(stage, i64::from(count))]),
         Allocation::ObjectPair { site, first, second } => {

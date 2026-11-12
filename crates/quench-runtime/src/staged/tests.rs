@@ -82,7 +82,7 @@ fn window_values(allocation: Allocation) -> i32 {
     match allocation {
         Allocation::ObjectLiteral { window, .. } | Allocation::Concat { window } => i32::from(window.count),
         Allocation::ObjectPair { .. } => 2,
-        Allocation::Empty | Allocation::ConstArray { .. } | Allocation::Closure { .. } | Allocation::Template { .. } => 0,
+        Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { .. } | Allocation::ConstArray { .. } | Allocation::Closure { .. } | Allocation::Template { .. } => 0,
     }
 }
 
@@ -390,6 +390,8 @@ fn an_allocation_row_defines_its_destination_through_the_frame_or_declines() {
         (Allocation::Closure { function: 1 }, 0),
         (Allocation::Template { template: 0 }, 0),
         (Allocation::Empty, 0),
+        (Allocation::Array { length: 3 }, 0),
+        (Allocation::RegExp { site: 0 }, 0),
         (Allocation::ConstArray { constant: 0, count: 2 }, 0),
         (Allocation::ObjectPair { site: 1, first: 1, second: 2 }, 2),
     ];
