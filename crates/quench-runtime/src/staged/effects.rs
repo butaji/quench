@@ -5,7 +5,7 @@
 
 #![allow(dead_code)] // Stage v2 vocabulary; first consumers are the rows moving under `Concrete` next.
 
-use super::Operation;
+use super::{CallOperation, Operation};
 pub(crate) use super::region::Region;
 
 /// A set of regions, one bit each, so a fact's invalidation is a mask intersection.
@@ -66,6 +66,18 @@ pub(crate) enum CallTarget<W> {
     Builtin(u32),
 }
 
+impl<W> CallOperation<W> {
+    /// The effect row of a call-protocol step: the guards leave and write nothing, the window
+    /// writes the callee's registers, and a site names a call, which may run anything.
+    const fn effects(&self) -> Effects {
+        match self {
+            Self::Callee { .. } | Self::Receiver { .. } | Self::BindThis { .. } | Self::Room { .. } | Self::Complete { .. } => Effects::NONE,
+            Self::Window { .. } => Effects::writes(Region::Frame),
+            Self::Site(_) => Effects::ANY,
+        }
+    }
+}
+
 impl<W, P> Operation<W, P> {
     /// The effect row of the operation, from its variant alone.
     pub(crate) const fn effects(&self) -> Effects {
@@ -98,6 +110,7 @@ impl<W, P> Operation<W, P> {
             Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Number(_) => Effects::NONE,
             Self::RequireObjectCoercible { .. } => Effects { may_throw: true, ..Effects::NONE },
             Self::Safepoint { .. } => Effects { may_collect: true, ..Effects::NONE },
+            Self::Call(operation) => operation.effects(),
             // The memory operations answered in `memory_effects`; anything else is conservative.
             _ => Effects::ANY,
         }

@@ -34,6 +34,8 @@ pub(crate) mod store;
 pub(crate) mod holder;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
+pub(crate) mod protocol;
+pub(crate) use protocol::{CallOperation, Invocation, WindowFill};
 pub(crate) mod plan_fields;
 pub(crate) mod value;
 mod steps;
@@ -275,6 +277,9 @@ pub(crate) enum Operation<W, P> {
     GlobalRead { destination: Register, atom: u32, site: u16, binding: GlobalBinding, proof: P },
     /// The VM field-store helper for `object.atom = value` through cache `site`.
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
+    /// A step of the call protocol: admission, `this` binding, the callee's window, completion
+    /// (`protocol`).
+    Call(CallOperation<W>),
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes.
@@ -296,6 +301,8 @@ impl<W, P> Operation<W, P> {
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
             Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary => return Self::decode_value(instruction),
+            Op::Call | Op::CallForwardingArguments | Op::Construct =>
+                Self::Call(CallOperation::Site(Invocation::of(instruction)?)),
             _ => return None,
         })
     }

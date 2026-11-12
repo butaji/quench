@@ -11823,10 +11823,7 @@ macro_rules! lane_plain_activation {
         // program's target (`lane_push_activation`).
         // So does a window past `FIXED_ARGUMENT_COPIES`, whose copy is a call.
         let argc = call_argument_count::<$argc>(i);
-        if argc > target.params
-            || argc > FIXED_ARGUMENT_COPIES
-            || !lane_activation_room(vm, target)
-        {
+        if argc > FIXED_ARGUMENT_COPIES || !lane_admits_window(vm, target, argc) {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
@@ -11894,7 +11891,7 @@ script_handler! {
         };
         // The cached target is of the running program (`Vm::script_call_holds`).
         debug_assert!(!lane_crosses::<H, true>(cx, target));
-        if ARGC > target.params || vm.with_scope_entered || !lane_activation_room(vm, target) {
+        if vm.with_scope_entered || !lane_admits_window(vm, target, ARGC) {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
         vm.programs.record_js_jit_lane_entry(target.program, target.function);
@@ -14714,7 +14711,14 @@ fn lane_activate<H: Host>(
 #[inline(always)]
 fn lane_activation_room<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget) -> bool {
     vm.lane_stack.activations.len() < vm.lane_stack.activation_limit.get()
-        && vm.lane_stack.values.room() >= usize::from(target.room)
+        && crate::staged::call::concrete_fits(vm.lane_stack.values.room() as u64, u64::from(target.room))
+}
+
+/// Whether `target`'s parameters take `argc` arguments and the lane stack holds its activation:
+/// the staged admission (`staged::call::admit_room`) that the native tiers emit, run on words.
+#[inline(always)]
+fn lane_admits_window<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, argc: u16) -> bool {
+    crate::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) && lane_activation_room(vm, target)
 }
 
 script_handler! {

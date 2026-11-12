@@ -3396,10 +3396,14 @@ impl Lowering<'_, '_> {
         self.spill_written(pc);
         let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
         self.reentries.push(completed);
-        match self.direct.get(&pc).copied() {
+        let site = match crate::staged::Operation::<ir::Value, EmitProof>::decode(instruction, |_| None) {
+            Some(crate::staged::Operation::Call(crate::staged::CallOperation::Site(site))) => Some(site),
+            _ => None,
+        };
+        match (self.direct.get(&pc).copied(), site) {
             // SAFETY: the body owns the callee for as long as its code runs.
-            Some(callee) if instruction.op().class().eq(Class::Call) => self.direct_call(instruction, unsafe { &*callee }, generic, completed),
-            Some(callee) if instruction.op().class().eq(Class::Construct) => self.direct_construct(instruction, unsafe { &*callee }, generic, completed),
+            (Some(callee), Some(site)) if site.receiver.is_some() => self.direct_call(state, site, unsafe { &*callee }, generic, completed),
+            (Some(callee), Some(site)) => self.direct_construct(state, site, unsafe { &*callee }, generic, completed),
             _ => { self.ins().jump(generic, &[]); }
         }
         self.builder.switch_to_block(generic);
