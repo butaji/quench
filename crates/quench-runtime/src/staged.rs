@@ -22,8 +22,10 @@ pub(crate) mod numeric;
 mod heap;
 mod global;
 mod names;
+mod callout;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
+pub(crate) use callout::CallOut;
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
@@ -197,17 +199,13 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
 
-    /// The iteration or spread `step` over its operand words (`Protocol`), which may run guest
-    /// code: the word it defines, `Some(None)` where it defines none, `None` where it raised
-    /// or the frame has no host, leaving the instruction to the interpreter.
+    /// The VM's own operation `operation` (`CallOut`), run in place where a row's words do not
+    /// decide it, defining `result` where the operation has one: the word it defined with the
+    /// fact the frame keeps of it, or a placeholder word where it defines none. `None` where the
+    /// frame has no host, or the operation raised, leaving the instruction to the interpreter.
     #[inline(always)]
-    fn protocol(&mut self, _stage: &mut S, _step: Protocol, _operands: [Option<S::Word>; 2])
-        -> Option<Option<(S::Word, Self::Fact)>> { None }
-
-    /// Define `destination` with the next key of the for-in state `state` unless none is
-    /// left; the condition that none is. `None` where the frame has no host.
-    #[inline(always)]
-    fn for_in_next(&mut self, _stage: &mut S, _destination: Register, _state: S::Word) -> Option<S::Cond> { None }
+    fn vm_step(&mut self, _stage: &mut S, _operation: CallOut, _result: Option<Register>)
+        -> Option<(S::Word, Self::Fact)> { None }
 
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.

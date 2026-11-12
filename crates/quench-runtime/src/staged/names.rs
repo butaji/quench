@@ -2,12 +2,13 @@
 //! writes, the arguments length, the global-name store and `typeof`, and the iteration and
 //! spread steps. Each is one definition every tier runs; what runs guest code or the host's
 //! binding rules (the generic iterator protocol, a store's TDZ and constant checks) is a
-//! `Frame` callout the frame answers or declines.
-use super::{Operation, NumericFrame, NumericStage, Register, Step};
+//! `Frame` callout the frame answers or declines (`Frame::vm_step`).
+use super::{CallOut, Operation, NumericFrame, NumericStage, Register, Step};
 use crate::bytecode::{Op, WideInstruction};
+use crate::Value;
 
 /// An iteration or spread step the host makes by the interpreter's own definition
-/// (`Vm::value_step`): the protocol runs guest code (`@@iterator`, `next`, `return`), so a
+/// (`Vm::call_out`): the protocol runs guest code (`@@iterator`, `next`, `return`), so a
 /// frame answers it with a callout.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Protocol {
@@ -41,7 +42,7 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
     })
 }
 
-/// The iteration and spread steps of `decode`, with the registers `Vm::value_step` reads.
+/// The iteration and spread steps of `decode`, with the registers `Vm::call_out` reads.
 fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
     let (step, destination, operands) = match instruction.op() {
         Op::AppendArray => (Protocol::AppendArray { length: instruction.array_length(),
@@ -78,14 +79,9 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
                 None => Step::Unresolved,
             }
         }
-        Operation::Protocol { step, destination, operands } => protocol(stage, frame, step, destination, operands),
-        Operation::ForInNext { destination, state } => {
-            let state = frame.tagged(stage, state);
-            match frame.for_in_next(stage, destination, state) {
-                Some(exhausted) => Step::Control(frame.branch(stage, exhausted)),
-                None => Step::Unresolved,
-            }
-        }
+        Operation::Protocol { step, destination, operands } =>
+            protocol(stage, frame, CallOut::Protocol { step, operands }, destination),
+        Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),
         _ => Step::Unresolved,
     }
 }
@@ -136,18 +132,30 @@ fn store_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
     Step::Value(value)
 }
 
-/// An iteration or spread step: its operand words go to the frame's callout, and the word it
-/// defines, if any, to `destination`.
+/// An iteration or spread step: the VM makes it, and the word it defines, if any, is
+/// `destination`'s.
 #[inline(always)]
-fn protocol<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, step: Protocol,
-    destination: Option<Register>, operands: [Option<Register>; 2]) -> Step<S::Word, F::Control> {
-    let words = operands.map(|register| register.map(|register| frame.tagged(stage, register)));
-    match frame.protocol(stage, step, words) {
-        Some(Some((value, fact))) => {
+fn protocol<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, call: CallOut,
+    destination: Option<Register>) -> Step<S::Word, F::Control> {
+    match frame.vm_step(stage, call, destination) {
+        Some((value, fact)) => {
             if let Some(destination) = destination { frame.write(stage, destination, value, fact); }
             Step::Value(value)
         }
-        Some(None) => Step::Value(stage.constant(0)),
+        None => Step::Unresolved,
+    }
+}
+
+/// `ForInNext`: the VM's next key, or `Value::DELETED` where none is left, which takes the jump.
+#[inline(always)]
+fn for_in_next<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+    state: Register) -> Step<S::Word, F::Control> {
+    match frame.vm_step(stage, CallOut::ForInNext { state }, Some(destination)) {
+        Some((key, fact)) => {
+            frame.write(stage, destination, key, fact);
+            let exhausted = stage.eq_imm(key, Value::DELETED.to_bits());
+            Step::Control(frame.branch(stage, exhausted))
+        }
         None => Step::Unresolved,
     }
 }

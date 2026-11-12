@@ -1,7 +1,7 @@
 //! The name, environment and iteration rows on the interpreter's stage (`Concrete`).
 use crate::bytecode::{Op, Operand, Register, WideInstruction};
 use crate::heap::EnvironmentSlots;
-use crate::staged::{step, Concrete, Constant, Edge, Frame, GlobalFrame, NumericFrame, Operation, Protocol, Step};
+use crate::staged::{step, CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NumericFrame, Operation, Protocol, Step};
 use crate::Value;
 use crate::staged::Operation as Row;
 
@@ -13,7 +13,7 @@ struct Probe {
     storage: Option<u64>,
     environment_writes: Vec<(u16, u64)>,
     keys: Vec<u64>,
-    protocols: Vec<(Protocol, [Option<u64>; 2])>,
+    calls: Vec<(CallOut, Option<Register>)>,
     global_writes: Vec<(u32, u16, u64, bool)>,
 }
 
@@ -49,16 +49,14 @@ impl Frame<Concrete> for Probe {
     fn arguments_length(&mut self, _stage: &mut Concrete, slot: u16) -> Option<(u64, ())> {
         (self.answers() && slot == 1).then(|| (Value::integer(3).to_bits(), ()))
     }
-    fn protocol(&mut self, _stage: &mut Concrete, step: Protocol, operands: [Option<u64>; 2]) -> Option<Option<(u64, ())>> {
+    fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, result: Option<Register>) -> Option<(u64, ())> {
         if !self.answers() { return None; }
-        self.protocols.push((step, operands));
-        Some(if matches!(step, Protocol::AppendArray { .. }) { None } else { Some((Value::number(9.0).to_bits(), ())) })
-    }
-    fn for_in_next(&mut self, _stage: &mut Concrete, destination: Register, _state: u64) -> Option<bool> {
-        if !self.answers() { return None; }
-        let key = self.keys.pop();
-        if let Some(key) = key { self.registers[usize::from(destination)] = key; }
-        Some(key.is_none())
+        self.calls.push((operation, result));
+        Some(match operation {
+            CallOut::ForInNext { .. } => (self.keys.pop().unwrap_or(Value::DELETED.to_bits()), ()),
+            _ if result.is_some() => (Value::number(9.0).to_bits(), ()),
+            _ => (0, ()),
+        })
     }
 }
 
@@ -133,12 +131,11 @@ fn a_global_store_passes_its_value_and_a_typeof_defines_its_name() {
 }
 
 #[test]
-fn a_protocol_step_reads_its_operands_defines_its_result_and_declines_with_the_host() {
+fn a_protocol_step_names_its_operands_defines_its_result_and_declines_with_the_host() {
     let mut frame = Probe::new(3);
-    frame.registers[1] = Value::number(5.0).to_bits();
     let iterator = Row::Protocol { step: Protocol::GetIterator, destination: Some(2), operands: [None, Some(1)] };
     assert!(matches!(run(&mut frame, iterator), Step::Value(_)));
-    assert_eq!(frame.protocols, [(Protocol::GetIterator, [None, Some(Value::number(5.0).to_bits())])]);
+    assert_eq!(frame.calls, [(CallOut::Protocol { step: Protocol::GetIterator, operands: [None, Some(1)] }, Some(2))]);
     assert_eq!(Value::from_bits(frame.registers[2]), Value::number(9.0));
     frame.registers[2] = 0;
     let append = Row::Protocol { step: Protocol::AppendArray { length: 1, spread: true }, destination: None, operands: [Some(1), None] };
@@ -158,9 +155,48 @@ fn a_for_in_next_defines_the_next_key_then_takes_the_jump_when_none_is_left() {
     assert!(matches!(run(&mut frame, next), Step::Control(Edge::Following)));
     assert_eq!(Value::from_bits(frame.registers[0]), Value::number(2.0));
     assert!(matches!(run(&mut frame, next), Step::Control(Edge::Target)));
-    assert_eq!(Value::from_bits(frame.registers[0]), Value::number(2.0), "exhaustion writes nothing");
+    assert_eq!(Value::from_bits(frame.registers[0]), Value::DELETED, "exhaustion defines the marker");
     frame.declines = true;
     assert!(matches!(run(&mut frame, next), Step::Unresolved));
+}
+
+#[test]
+fn a_row_that_calls_out_names_the_call_its_frame_receives() {
+    let mut frame = Probe::new(3);
+    let rows = [
+        Row::Protocol { step: Protocol::IteratorClose, destination: Some(2), operands: [None, Some(1)] },
+        Row::ForInNext { destination: 2, state: 1 },
+    ];
+    for row in rows {
+        run(&mut frame, row);
+        let (call, result) = row.call_out().expect("a calling row");
+        assert_eq!(frame.calls.last(), Some(&(call, result)));
+    }
+    assert_eq!(CallOut::ForInNext { state: 1 }.operands(), [None, Some(1)]);
+    assert!(Row::<u64, ()>::Jump.call_out().is_none());
+}
+
+#[test]
+fn an_equality_or_key_the_words_do_not_decide_calls_the_vm_and_a_decided_one_does_not() {
+    let mut frame = Probe::new(3);
+    frame.registers[..2].copy_from_slice(&[Value::number(1.5).to_bits(), Value::number(2.5).to_bits()]);
+    let equality = Row::Equality { destination: 2, left: 0, right: 1, strict: true, negated: true };
+    assert!(matches!(run(&mut frame, equality), Step::Value(_)));
+    assert_eq!(frame.calls, [(CallOut::Equality { left: 0, right: 1, strict: true, negated: true }, Some(2))]);
+    frame.calls.clear();
+    frame.registers[1] = frame.registers[0];
+    assert!(matches!(run(&mut frame, equality), Step::Value(_)));
+    assert!(frame.calls.is_empty(), "the same word decides it");
+    assert_eq!(Value::from_bits(frame.registers[2]), Value::FALSE);
+    let key = Row::PropertyKey { destination: 2, source: 0 };
+    assert!(matches!(run(&mut frame, key), Step::Value(_)));
+    assert_eq!(frame.calls, [(CallOut::PropertyKey { source: 0 }, Some(2))]);
+    frame.declines = true;
+    assert!(matches!(run(&mut frame, key), Step::Unresolved));
+    assert!(matches!(run(&mut frame, Row::Equality { destination: 2, left: 0, right: 1, strict: true, negated: false }),
+        Step::Value(_)), "a decided pair needs no host");
+    frame.registers[1] = Value::number(2.5).to_bits();
+    assert!(matches!(run(&mut frame, equality), Step::Unresolved));
 }
 
 #[test]

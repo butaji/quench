@@ -1,8 +1,8 @@
 //! Value steps whose words decide them: `void`, a string's own property key, and equality of
 //! two words (`Operation::Void`, `PropertyKey`, `Equality`). A value these words do not decide
-//! leaves at the frame's miss edge for the VM's exact step (a conversion that allocates, a
-//! string or BigInt comparison, guest code), so every tier shares the one rule and the one
-//! boundary.
+//! is the VM's exact step (a conversion that allocates, a string or BigInt comparison, guest
+//! code), which the frame makes in place (`Frame::vm_step`) or declines, so every tier shares
+//! the one rule and the one boundary.
 
 use super::value::{is_direct_string, is_int};
 use super::*;
@@ -55,17 +55,22 @@ fn void<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     Step::Value(value)
 }
 
-/// A direct string `source` is its own key, copied with its facts.
+/// A direct string `source` is its own key; any other value is the VM's conversion.
 #[inline(always)]
 fn property_key<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Register) -> Step<S::Word, F::Control> {
-    let miss = frame.miss();
     let bits = frame.tagged(stage, source);
     let string = is_direct_string(stage, bits);
-    match stage.guard(string, miss) {
-        Some(()) => Step::Value(frame.move_register(stage, destination, source)),
-        None => Step::Unresolved,
-    }
+    let mut converted = None;
+    let key = stage.choose_leaving(string, |_| Some(bits), |stage| {
+        let (key, fact) = frame.vm_step(stage, CallOut::PropertyKey { source }, Some(destination))?;
+        converted = Some(fact);
+        Some(key)
+    });
+    let Some(key) = key else { return Step::Unresolved };
+    let fact = converted.unwrap_or_else(|| frame.fact(source));
+    frame.write(stage, destination, key, fact);
+    Step::Value(key)
 }
 
 /// Whether `bits` is `null` or `undefined`.
@@ -94,16 +99,19 @@ fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2], strict: b
     (stage.either(by_words, nullish_pair), stage.either(same, nullish_pair))
 }
 
-/// The canonical boolean of the pair's equality, negated for `!=` and `!==`.
+/// The canonical boolean of the pair's equality, negated for `!=` and `!==`; the VM's where the
+/// words do not decide it.
 #[inline(always)]
 fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
     [left, right]: [Register; 2], (strict, negated): (bool, bool)) -> Step<S::Word, F::Control> {
-    let miss = frame.miss();
     let words = [frame.tagged(stage, left), frame.tagged(stage, right)];
     let (decided, equal) = decide(stage, words, strict);
-    if stage.guard(decided, miss).is_none() { return Step::Unresolved; }
     let result = if negated { stage.not(equal) } else { equal };
-    let (value, fact) = frame.boolean(stage, result);
+    let (decision, fact) = frame.boolean(stage, result);
+    let call = CallOut::Equality { left, right, strict, negated };
+    let value = stage.choose_leaving(decided, |_| Some(decision),
+        |stage| frame.vm_step(stage, call, Some(destination)).map(|(word, _)| word));
+    let Some(value) = value else { return Step::Unresolved };
     frame.write(stage, destination, value, fact);
     Step::Value(value)
 }

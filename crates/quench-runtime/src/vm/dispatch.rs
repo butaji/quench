@@ -1052,10 +1052,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_c()),
             )?,
             Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart => {
-                let [a, b] = value_step_operands(i).map(|register| register.map(|register| self.read(f, register)));
-                if let Some(value) = self.value_step(p, i, a, b)? {
-                    self.write(f, i.result_register(), value);
-                }
+                self.staged_value_step(p, f, i)?;
             }
             Op::RequireObjectCoercible => {
                 self.require_object_coercible(p, self.read(f, i.register_b()))?;
@@ -1837,57 +1834,6 @@ impl<H: Host> Vm<H> {
             // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
             Op::GetField => (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value),
             _ => (self.read(caller, i.register_b()), i.call_window(), self.read(caller, i.register_c()), CallCompletion::Value),
-        }
-    }
-}
-
-/// The operand registers `Vm::value_step` reads for `i`: `AppendArray`'s array and optional
-/// element, or the one operand of `ToPropertyKey` and `GetIterator`.
-pub(super) fn value_step_operands(i: WideInstruction) -> [Option<crate::bytecode::Register>; 2] {
-    match i.op() {
-        Op::AppendArray => [Some(i.register_a()), i.optional_register_b()],
-        _ => [None, Some(i.register_b())],
-    }
-}
-
-/// The register a value step writes its result to: every one but `AppendArray`, which has none.
-pub(super) fn value_step_result(i: WideInstruction) -> Option<crate::bytecode::Register> {
-    (i.op() != Op::AppendArray).then(|| i.result_register())
-}
-
-impl<H: Host> Vm<H> {
-    /// `ToPropertyKey`, `GetIterator`, `ForInStart`, `IteratorClose` or `AppendArray` of its operand values
-    /// (`value_step_operands`): the value it writes to its result register, if any. The
-    /// general step and a frameless activation's (`lane_step_beside_activations`) share it.
-    pub(super) fn value_step(
-        &mut self,
-        p: &ResidualProgram,
-        i: WideInstruction,
-        a: Option<Value>,
-        b: Option<Value>,
-    ) -> Result<Option<Value>, JsError> {
-        let operand = b.unwrap_or(Value::UNDEFINED);
-        match i.op() {
-            Op::ToPropertyKey => self.to_property_key(p, operand).map(Some),
-            Op::GetIterator => self.get_iterator(p, operand).map(Some),
-            Op::ForInStart => self.for_in_start(p, operand).map(Some),
-            Op::IteratorClose => self.iterator_close(p, operand).map(Some),
-            Op::AppendArray => {
-                let array = a.expect("AppendArray names its array");
-                self.append_array_literal_holes(array, i.array_length())?;
-                if let Some(value) = b {
-                    let spread = i
-                        .boolean_field(crate::bytecode::InstructionField::C)
-                        .expect("validated boolean field");
-                    if spread {
-                        self.spread_into_array(p, array, value)?;
-                    } else {
-                        self.append_array_literal_elements(p, array, [value])?;
-                    }
-                }
-                Ok(None)
-            }
-            op => unreachable!("{op:?} is no value step"),
         }
     }
 }
