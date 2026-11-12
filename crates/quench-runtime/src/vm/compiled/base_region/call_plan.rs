@@ -351,7 +351,8 @@ mod tests {
         }
         assert_eq!(form(Op::Move), None);
         assert_eq!(CallForm::of(WideInstruction::new(Op::Call, 1 | RETURN_REGISTER, 2, 3, 0)), None);
-        assert_eq!([CallForm::Plain, CallForm::Construct, CallForm::Stepped].map(CallForm::helper).map(|helper| helper as usize).len(), 3);
+        let [plain, construct, stepped] = [CallForm::Plain, CallForm::Construct, CallForm::Stepped].map(|form| form.helper() as usize);
+        assert!(plain != construct && construct != stepped && plain != stepped, "each form has its own helper");
     }
 
     #[test]
