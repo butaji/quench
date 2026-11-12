@@ -102,7 +102,7 @@ impl<H: Host> Vm<H> {
     fn settle_job_end(&mut self, code: &ResidualProgram, resume: AwaitResume, end: JobEnd) -> Result<(), JsError> {
         match end {
             JobEnd::Returned(value) => self.complete_resumed(code, resume, value),
-            JobEnd::Awaited(value) => match (resume.role.generator(), resume.state) {
+            JobEnd::Suspended(value) => match (resume.role.generator(), resume.state) {
                 (Some(generator), _) => self.await_again(code, resume, AwaitKind::generator_await(generator), value),
                 (None, Some(state)) => {
                     self.with_call_roots([state, value], |vm| vm.attach_await_reactions(code, state, resume.promise, None, value))

@@ -1,6 +1,6 @@
 //! What a lane run is rooted in: the VM frame a general loop entered it from, or, for a promise
-//! job, the suspended frame of an async function or async generator that its owner keeps
-//! (`Vm::run_lane_job`). A job's lane resumes the activation over its record's register file
+//! job or a native `next`, the suspended frame of an async function or a generator that its
+//! owner keeps (`Vm::run_lane_job`). A job's lane resumes the activation over its record's register file
 //! with no VM frame beneath it; its `await` suspends it back into the record (`lane_await`), its
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
 use super::*;
@@ -17,7 +17,8 @@ const NO_FRAME: usize = usize::MAX;
 pub(super) enum LaneRoot {
     /// The VM frame the run continues, the innermost when it starts.
     Frame(usize),
-    /// The activation of a promise job, which the lane runs frameless over its owner's record.
+    /// The activation of a promise job or a native generator step, which the lane runs
+    /// frameless over its owner's record.
     Job(JobRoot),
 }
 
@@ -69,9 +70,10 @@ pub(super) struct LaneStart<'a> {
 pub(in crate::vm) enum JobEnd {
     /// The activation returned the value: its owner is finished.
     Returned(Value),
-    /// The activation awaited the value in the lane: its owner holds the frame, and the await's
-    /// reactions are the job's to attach.
-    Awaited(Value),
+    /// The activation awaited the value in the lane, its owner holding the frame and the
+    /// await's reactions the job's to attach, or a sync generator's root yielded it, its record
+    /// suspended.
+    Suspended(Value),
     /// The activation raised an exception no handler of it covers, which ended it in its owner
     /// (`raised_windows`): the promise or request the job settles rejects with the error.
     Threw(JsError),
@@ -294,8 +296,8 @@ impl<H: Host> Vm<H> {
             self.finish_job_window(job);
             return JobEnd::Returned(value);
         }
-        if let Some(value) = self.lane_awaited.take() {
-            return JobEnd::Awaited(value);
+        if let Some(value) = self.lane_suspended.take() {
+            return JobEnd::Suspended(value);
         }
         // A raise the lane settled left the job's root in place: no activation became a frame.
         if matches!(context.root, LaneRoot::Job(_))

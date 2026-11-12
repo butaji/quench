@@ -1,8 +1,9 @@
-//! The owners of the frames a promise job's lane run resumes over their register files
-//! (`Vm::run_lane_job`): an async function's await state, which keeps its continuation while
-//! the activation runs, and an async generator's record. Each suspends the activation back in
-//! place at an `await`, completes with it, or gives its frame up when the lane's activations
-//! become VM frames, or when the lane does not admit the run (`Vm::run_job`).
+//! The owners of the frames a lane run resumes over their register files (`Vm::run_lane_job`):
+//! an async function's await state, which keeps its continuation while the activation runs,
+//! and a generator's record, async (a promise job's) or sync (the native `next`'s). Each
+//! suspends the activation back in place at an `await` or `yield`, completes with it, or gives
+//! its frame up when the lane's activations become VM frames, or when the lane does not admit
+//! the run (`Vm::run_job`).
 use super::*;
 use super::super::activation::{FrameRecord, JobResume, JobRoot, SuspendKind};
 use super::super::dispatch_fast::JobEnd;
@@ -15,30 +16,27 @@ impl<H: Host> Vm<H> {
     /// general loop runs from the resume point, or, for a throw, from the handler the suspended
     /// `await` or `yield` selects. How the run ended.
     pub(in crate::vm) fn run_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> JobEnd {
-        if let JobResume::Sends(sent) = resume
+        let (sent, error) = match resume {
+            JobResume::Sends(sent) => (sent, None),
+            JobResume::Throws(error) => (Value::UNDEFINED, Some(error)),
+        };
+        if error.is_none()
             && let Some(end) = self.run_lane_job(code, job, sent)
         {
             return end;
         }
-        let sent = match resume {
-            JobResume::Sends(sent) => sent,
-            JobResume::Throws(_) => Value::UNDEFINED,
-        };
         self.resume_job_window(job, sent).expect("a job's owner keeps the frame its suspension parked");
         self.push_job_window_frame(job, std::iter::empty(), std::iter::empty());
         let frame = self.frames.len() - 1;
-        JobEnd::Frames(match resume {
-            JobResume::Sends(_) => self.run_resumed_frame(code, frame),
-            JobResume::Throws(error) => self.run_frame_general_with_error(code, frame, Some(error)),
-        })
+        JobEnd::Frames(self.run_frame_general_with_error(code, frame, error))
     }
 
-    /// The frame `job`'s owner suspended: an async function's pending await's, or the frame an
-    /// async generator parked at an `await` (or a `yield`) in its record.
+    /// The frame `job`'s owner suspended: an async function's pending await's, or the frame a
+    /// generator parked at an `await` or a `yield` in its record.
     pub(in crate::vm) fn job_frame(&self, job: JobRoot) -> Option<&FrameRecord> {
         match job.kind {
             SuspendKind::AsyncFunction => self.heap.await_state(job.object)?.suspended_frame(),
-            SuspendKind::AsyncGenerator => {
+            SuspendKind::AsyncGenerator | SuspendKind::Generator => {
                 let IteratorRecord { ext, .. } = self.heap.iterator(job.object)?;
                 Some(&*ext.generator.as_deref()?.continuation()?.frame)
             }
@@ -51,7 +49,7 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn resume_job_window(&mut self, job: JobRoot, sent: Value) -> Option<*mut FrameRecord> {
         let (frame, resume_register) = match job.kind {
             SuspendKind::AsyncFunction => self.heap.await_state_mut(job.object)?.resume_windowed()?,
-            SuspendKind::AsyncGenerator => self.generator_record_mut(job.object)?.resume_windowed()?,
+            SuspendKind::AsyncGenerator | SuspendKind::Generator => self.generator_record_mut(job.object)?.resume_windowed()?,
         };
         // SAFETY: the owner keeps the box, which nothing moves or drops until the run ends.
         unsafe { &mut *frame }.receive(resume_register, sent);
@@ -61,7 +59,7 @@ impl<H: Host> Vm<H> {
     /// Ends the lane run of `job`'s activation at an `await` of `value` that resumes at `pc`,
     /// whose result goes to `destination`: the frame is suspended where it stands, as a
     /// generator's yield suspends it (`park_frame`), and its owner holds it awaiting again,
-    /// the await state armed anew.
+    /// the await state armed anew. A sync generator's root suspends at its `yield` of `value`.
     pub(in crate::vm) fn suspend_job_window(
         &mut self,
         job: JobRoot,
@@ -86,17 +84,36 @@ impl<H: Host> Vm<H> {
                 }
             }
             SuspendKind::AsyncGenerator => {
-                let mut frame = self
-                    .generator_record_mut(job.object)
-                    .and_then(GeneratorRecord::take_windowed)
-                    .expect("a windowed async generator keeps its frame in its record");
-                self.park_frame(&mut frame, pc, depth);
-                let continuation = Continuation { frame, completion, resume_register: Some(destination), promise: Value::UNDEFINED };
+                let continuation = self.park_generator_job(job, pc, destination, completion, depth);
                 if let Some(record) = self.generator_record_mut(job.object) {
                     record.await_with(continuation);
                 }
             }
+            SuspendKind::Generator => {
+                let continuation = self.park_generator_job(job, pc, destination, Completion::Yield(value), depth);
+                if let Some(record) = self.generator_record_mut(job.object) {
+                    record.suspend(continuation);
+                }
+            }
         }
+    }
+
+    /// The continuation of a windowed generator `job`'s frame, parked at `pc` with its result
+    /// going to `destination`.
+    fn park_generator_job(
+        &mut self,
+        job: JobRoot,
+        pc: usize,
+        destination: crate::bytecode::Register,
+        completion: Completion,
+        depth: usize,
+    ) -> Continuation {
+        let mut frame = self
+            .generator_record_mut(job.object)
+            .and_then(GeneratorRecord::take_windowed)
+            .expect("a windowed generator keeps its frame in its record");
+        self.park_frame(&mut frame, pc, depth);
+        Continuation { frame, completion, resume_register: Some(destination), promise: Value::UNDEFINED }
     }
 
     /// Ends the lane run of `job`'s activation at its return: the owner drops the frame, the
@@ -108,7 +125,7 @@ impl<H: Host> Vm<H> {
                     state.take_running();
                 }
             }
-            SuspendKind::AsyncGenerator => {
+            SuspendKind::AsyncGenerator | SuspendKind::Generator => {
                 if let Some(record) = self.generator_record_mut(job.object) {
                     record.complete();
                 }
@@ -131,7 +148,7 @@ impl<H: Host> Vm<H> {
                 .await_state_mut(job.object)
                 .and_then(AwaitState::take_running)
                 .map(|(continuation, ..)| continuation.frame),
-            SuspendKind::AsyncGenerator => self.generator_record_mut(job.object).and_then(GeneratorRecord::take_windowed),
+            SuspendKind::AsyncGenerator | SuspendKind::Generator => self.generator_record_mut(job.object).and_then(GeneratorRecord::take_windowed),
         }
         .expect("a job's activation materializes from its owner");
         self.push_resumed_frame(frame, iterators, with_objects);

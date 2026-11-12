@@ -4,15 +4,29 @@
 //! frame's, takes the general path, which suspends the frame back into its generator.
 use super::*;
 use super::generator_windows::{lane_yield_in_window, lane_yield_star_in_window, running_generator};
+use super::super::activation::SuspendKind;
 
 script_handler! {
     /// `yield` of the generator activation the lane runs over its record (`running_generator`):
     /// the frame suspends in place and the caller continues with the step's result
-    /// (`lane_yield_in_window`). Any other `yield` takes the general path.
+    /// (`lane_yield_in_window`). The root of a native `next`'s run (`LaneRoot::Job` of a sync
+    /// generator) suspends into its record and ends the run with the yielded value
+    /// (`Vm::suspend_job_window`). Any other `yield` takes the general path.
     #[inline(never)]
     fn lane_yield<>(cx, r, ip, i, view) {
         if running_generator(unsafe { vm(cx) }) {
             resume!(cx, lane_yield_in_window(cx, r, ip, i))
+        }
+        if let LaneRoot::Job(job) = unsafe { (*cx).root }
+            && job.kind == SuspendKind::Generator
+        {
+            let vm = unsafe { vm(cx) };
+            let value = r.get(i.b);
+            // SAFETY: the record lies in the running view.
+            let pc = unsafe { ip.offset_from((*cx).base) } as usize;
+            vm.suspend_job_window(job, pc + 1, i.a & crate::bytecode::REGISTER_MASK, value, 0);
+            vm.lane_stack.pop_activation();
+            vm.lane_suspended = Some(value);
         }
         exit(ip)
     }
@@ -66,7 +80,7 @@ script_handler! {
         let pc = unsafe { ip.offset_from((*cx).base) } as usize;
         vm.suspend_job_window(job, pc + 1, i.a & crate::bytecode::REGISTER_MASK, value, 0);
         vm.lane_stack.pop_activation();
-        vm.lane_awaited = Some(value);
+        vm.lane_suspended = Some(value);
         exit(ip)
     }
 }

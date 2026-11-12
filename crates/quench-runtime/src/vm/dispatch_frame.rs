@@ -1549,23 +1549,6 @@ impl<H: Host> Vm<H> {
     const FRAME_ENTRY_LANE_RUNS: bool = crate::DYNAMIC_EXECUTION_ENABLED
         && !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"));
 
-    /// `run_frame_general_with_error` of a resumed generator's or async function's frame
-    /// `frame` with no error to raise. Without JS tiers the general loop would only enter the
-    /// lane at the frame's PC, so the lane runs from here (`run_frame_from_lane`).
-    pub(super) fn run_resumed_frame(&mut self, p: &ResidualProgram, frame: usize) -> Result<FrameOutcome, JsError> {
-        let (program, function, pc) = (self.frames[frame].program, self.frames[frame].function, self.frames[frame].pc);
-        // With JS tiers or JIT general dispatch the loop may run the resumed frame in a tier
-        // instead of the lane, so only the tier-free loop's lane entry is mirrored here.
-        let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
-            && !self.js_tier_runs()
-            && !self.programs.js_jit_general_dispatch_enabled();
-        let cursor = self.general_cursor(program, p, function, lane_runs);
-        if !Self::lane_runs(cursor.lane, pc) {
-            return self.run_frame_general_with_error(p, frame, None);
-        }
-        self.run_frame_from_lane(p, frame, &cursor, pc)
-    }
-
     /// Runs frame `frame` from `pc` in the lane of `cursor`'s view, which runs that
     /// instruction. The frame's own return, a generator's plain `yield` and an async
     /// function's observation-free `await` the lane stops at become the frame's outcome as

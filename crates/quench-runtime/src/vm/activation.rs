@@ -23,14 +23,16 @@ pub(crate) enum Completion {
 }
 
 /// What owns the suspended activation a lane resumes with no VM frame beneath it
-/// (`JobRoot`): an async function's await state, or an async generator's record.
+/// (`JobRoot`): an async function's await state, or a generator's record, async or the native
+/// `next` of a sync one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SuspendKind {
+    Generator,
     AsyncFunction,
     AsyncGenerator,
 }
 
-/// The root of a lane run that resumes a promise job's activation (`Vm::run_lane_job`): the
+/// The root of a lane run that resumes a suspended activation (`Vm::run_lane_job`): the
 /// object that owns its frame, the await state or the generator, and what kind it is.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct JobRoot {

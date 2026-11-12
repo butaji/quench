@@ -2046,9 +2046,10 @@ pub(crate) struct Vm<H> {
     /// The completion of a native's frameless callback (`Completion::ReturnsToNative`), which
     /// its run hands to the native once the lane exits there.
     lane_native_returned: Option<Value>,
-    /// The value an async activation a lane job ran awaited (`dispatch_fast::lane_await`),
-    /// which its run hands to the await's reactions once the lane exits there.
-    lane_awaited: Option<Value>,
+    /// The value the activation a lane job ran awaited or yielded (`dispatch_fast::lane_await`,
+    /// `dispatch_fast::lane_yield`), which its run hands to the await's reactions, or to the
+    /// native `next` that stepped a sync generator, once the lane exits there.
+    lane_suspended: Option<Value>,
     /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
     active_layout: ProgramCacheLayout,
     /// The active program's materialized constants, kept by `set_active_program` and by

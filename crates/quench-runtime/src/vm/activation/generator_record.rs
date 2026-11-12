@@ -163,21 +163,6 @@ impl GeneratorRecord {
         }
     }
 
-    /// The continuation a resumption runs, taken: a suspended generator executes from it,
-    /// while one that has not started and receives an `abrupt` completion closes without
-    /// running, leaving no frame.
-    pub(crate) fn take_for_resume(&mut self, abrupt: bool) -> Option<Continuation> {
-        match &self.life {
-            GeneratorLife::Suspended(continuation)
-                if abrupt && matches!(continuation.completion, Completion::GeneratorStart) =>
-            {
-                self.take_suspended()
-            }
-            GeneratorLife::Suspended(_) => self.resume(),
-            _ => None,
-        }
-    }
-
     /// The continuation of a suspended generator, taken without running it: it keeps no frame.
     pub(crate) fn take_suspended(&mut self) -> Option<Continuation> {
         match std::mem::replace(&mut self.life, GeneratorLife::Frameless) {
