@@ -31,6 +31,9 @@ pub(super) struct LaneBodyHistory {
 /// The entries and the milliseconds of warming past which a function specializes by its
 /// recurrence alone (`LaneView::recurrent`).
 const RECURRENT_ENTRIES: u16 = 16;
+/// The completed handler runs of a body per credit to the callees it calls natively: a callee's
+/// completions inside those runs are bounded by the caller's, so the credit lags by fewer than this.
+const NATIVE_CREDIT_RUNS: u64 = 64;
 const RECURRENT_TICKS: u32 = 256;
 
 /// The warming entries every function has counted so far: a clock of the work the program does
@@ -55,6 +58,16 @@ fn verdict(completed: bool, recompiles: u8, leaves: LaneLeaves, stuck: LaneLeave
     let nothing_new = leaves != LaneLeaves::Scattered && stuck != LaneLeaves::Scattered
         && leaves.exits().all(|exit| stuck.exits().any(|known| known == exit));
     (recompiles < TIERS.lane_body.max_recompiles && !(recompiles > 0 && nothing_new)).then(|| stuck.union(leaves))
+}
+
+/// Credits the callees `method`'s body calls natively with `NATIVE_CREDIT_RUNS` completions
+/// (a bound, as the caller's completed runs need not reach each call).
+fn credit_native_callees(method: &super::compiled::PublishedLaneMethod) {
+    let Some(body) = method.lease() else { return };
+    for callee in body.direct.iter() {
+        // SAFETY: the caller's body owns the callee it named; the view outlives the run.
+        unsafe { &*callee.target.view }.entry.note_completions(NATIVE_CREDIT_RUNS);
+    }
 }
 
 /// The function a leave at `exit` is in (`None`: the body's own) and its PC, for a leave that
@@ -87,17 +100,18 @@ impl LaneView {
     pub(super) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, left_new: impl FnOnce((Option<u32>, usize))) {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        let LaneBody::Specialized { exits, leaves_at, completed, completions, recompiles, stuck, method, .. } = body else { return };
+        let LaneBody::Specialized { leaves_at, completed, recompiles, stuck, method, .. } = body else { return };
         if completed_region || matches!(exit, LaneExit::Returned { .. }) {
             completed.set(true);
-            completions.set(completions.get().saturating_add(1));
+            if self.entry.note_completions(1) % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); }
             return;
         }
-        exits.set(exits.get().saturating_add(1));
+        let exits = self.entry.note_leave();
         name_leave(leaves_at, exit, method, left_new);
         // Leaves past the first `reoptimize_exits` that exceed `reoptimize_share` percent of the runs.
-        let (leaves, runs) = (u64::from(exits.get()), u64::from(exits.get()) + u64::from(completions.get()));
-        if exits.get() < TIERS.lane_body.reoptimize_exits || leaves * PERCENT <= runs * u64::from(TIERS.lane_body.reoptimize_share) {
+        let (completions, _) = self.entry.evidence();
+        let (leaves, runs) = (exits, exits + completions);
+        if exits < u64::from(TIERS.lane_body.reoptimize_exits) || leaves * PERCENT <= runs * u64::from(TIERS.lane_body.reoptimize_share) {
             return;
         }
         let Some(stuck) = verdict(completed.get(), *recompiles, leaves_at.get(), *stuck) else {
@@ -113,6 +127,14 @@ impl LaneView {
         let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck };
         self.retire_body(body, next);
     }
+
+    /// Counts a leave inside this function's body that a native caller's run made, which no
+    /// handler entry notes (`lane_materialize_frames`): one add to the cell's word, on the leave.
+    pub(super) fn note_native_leave(&self) { self.entry.note_leave(); }
+
+    /// The body's completions and leaves since it specialized (completions of natively called
+    /// runs are credited in bulk, so a bound): the one reader the tier model uses.
+    pub(in crate::vm) fn body_completion_evidence(&self) -> (u64, u64) { self.entry.evidence() }
 
     /// Replaces the specialized `body` with `next`: its entry's handler runs no more, its entry
     /// cell takes the stub, and its code waits for the callers that still name it.
@@ -280,7 +302,8 @@ impl LaneView {
             self.pinned.borrow_mut().push(body);
             self.entry.publish(&method);
         }
-        LaneBody::Specialized { method, tier_prologue, completions: Cell::new(0), exits: Cell::new(0),
+        self.entry.reset_evidence();
+        LaneBody::Specialized { method, tier_prologue,
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
     }
 

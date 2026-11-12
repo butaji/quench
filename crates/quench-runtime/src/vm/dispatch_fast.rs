@@ -852,12 +852,9 @@ enum LaneBody {
     Specialized {
         method: std::rc::Rc<super::compiled::PublishedLaneMethod>,
         tier_prologue: *const (),
-        /// Its runs that completed since it specialized: the leaves are judged against them
-        /// (`LaneView::note_lane_body_end`).
-        completions: std::cell::Cell<u32>,
-        /// Its leaves since it specialized, toward `TIERS.lane_body.reoptimize_exits` and `TIERS.lane_body.reoptimize_share`, and where
-        /// they went (`LaneLeaves`).
-        exits: std::cell::Cell<u16>,
+        /// Its leaves' places (`LaneLeaves`); the counts of its leaves and completed runs since
+        /// it specialized live in its entry cell (`EntryCell::evidence`), toward
+        /// `TIERS.lane_body.reoptimize_exits` and `TIERS.lane_body.reoptimize_share`.
         leaves_at: std::cell::Cell<LaneLeaves>,
         /// Whether a run of it completed, natively called ones included.
         completed: std::cell::Cell<bool>,
@@ -15170,7 +15167,9 @@ fn lane_materialize_frames<H: Host>(
         let method = frame.body as *const super::compiled::LaneMethod;
         // SAFETY: the active caller's code lease pins a named callee body through recovery, and
         // the view pins every body it published, even once its publication retired.
-        innermost = Some(unsafe { (&*callee.target.view, &*method) });
+        let view = unsafe { &*callee.target.view };
+        view.note_native_leave();
+        innermost = Some((view, unsafe { &*method }));
     }
     innermost
 }
