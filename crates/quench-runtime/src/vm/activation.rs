@@ -22,6 +22,22 @@ pub(crate) enum Completion {
     Await(Value),
 }
 
+/// What owns the suspended activation a lane resumes with no VM frame beneath it
+/// (`JobRoot`): an async function's await state, or an async generator's record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SuspendKind {
+    AsyncFunction,
+    AsyncGenerator,
+}
+
+/// The root of a lane run that resumes a promise job's activation (`Vm::run_lane_job`): the
+/// object that owns its frame, the await state or the generator, and what kind it is.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct JobRoot {
+    pub(crate) object: Value,
+    pub(crate) kind: SuspendKind,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct NativeActivation {
     pub callable: Value,
@@ -197,6 +213,15 @@ impl Continuation {
     /// field and binding site, the capture cache, a fixed `this`, the `with` base) starts anew.
     pub(super) fn resume(self, with_base: usize) -> Box<super::Frame> {
         self.frame.into_frame(with_base)
+    }
+
+    /// A lane resumes the frame as an activation over its register file, which stays in this
+    /// continuation's record: the frame's address, which its box keeps until the run ends,
+    /// and the register that takes the value the run resumes with. Every register is live
+    /// while it runs.
+    pub(crate) fn begin_window(&mut self) -> (*mut GeneratorFrame, Option<u16>) {
+        self.frame.live_registers = None;
+        (&raw mut *self.frame, self.resume_register)
     }
 
     /// The program the suspended activation runs.

@@ -228,23 +228,23 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// `enqueue_async_resume` of an async function's activation that awaits again from the
-    /// reaction of its last await, `resume`: its spent state takes the continuation, as a
-    /// fresh one would. That reaction was the state's only one and is running, so nothing
-    /// else names the state, and an activation keeps one state for all its awaits.
+    /// `enqueue_async_resume` of an activation that awaits again from the reaction of its last
+    /// await, `resume`: its spent state takes `kind`, as a fresh one would. That reaction was
+    /// the state's only one and is running, so nothing else names the state, and an activation
+    /// keeps one state for all its awaits.
     fn await_again(
         &mut self,
         p: &ResidualProgram,
         resume: AwaitResume,
-        continuation: Continuation,
+        kind: AwaitKind,
         source: Value,
     ) -> Result<(), JsError> {
         let realm = self.realm.globals;
         let state = self.heap.await_state_mut(resume.state).expect("a running await reaction keeps its state");
         debug_assert!(matches!(state, AwaitState::Spent), "an await state re-arms only once spent");
-        *state = AwaitState::arm(AwaitKind::function(continuation), realm, resume.promise);
+        *state = AwaitState::arm(kind, realm, resume.promise);
         self.with_call_roots([resume.state, source], |vm| {
-            vm.attach_await_reactions(p, resume.state, resume.promise, None, source)
+            vm.attach_await_reactions(p, resume.state, resume.promise, resume.role.generator(), source)
         })
     }
 
@@ -307,8 +307,10 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    /// Runs an await's reaction: `state` is the `AwaitState` both its handlers name. The
-    /// first run takes the continuation, which resumes in the realm that awaited.
+    /// Runs an await's reaction: `state` is the `AwaitState` both its handlers name. A
+    /// fulfilled await whose activation the lane resumes from its record runs there
+    /// (`resume_await_in_lane`); any other run takes the continuation, which resumes in the
+    /// realm that awaited.
     pub(super) fn resume_await(
         &mut self,
         p: &ResidualProgram,
@@ -316,6 +318,9 @@ impl<H: Host> Vm<H> {
         rejected: bool,
         value: Value,
     ) -> Result<Value, JsError> {
+        if !rejected && let Some(settled) = self.resume_await_in_lane(p, state, value) {
+            return settled.map(|()| Value::UNDEFINED);
+        }
         let spent = state;
         let Some(state) = self.heap.await_state_mut(state) else {
             return Err(JsError("await reaction without its state".into()));
@@ -417,111 +422,9 @@ impl<H: Host> Vm<H> {
             Some(error) => self.run_frame_general_with_error(p, self.frames.len() - 1, Some(error)),
             None => self.run_resumed_frame(p, self.frames.len() - 1),
         };
-        let mut frame = self.frames.pop().expect("resumed frame exists");
-        self.deactivate_frame(&mut frame, &result);
-        let result = match result {
-            Ok(result) => result,
-            Err(error) => {
-                self.pool_frame(frame);
-                if let Some(generator) = resume.role.generator() {
-                    self.fail_async_generator(p, generator, resume.promise, error)?;
-                } else {
-                    let reason = error
-                        .thrown_value()
-                        .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-                    self.promise_settle(p, resume.promise, PromiseState::Rejected, reason)?;
-                }
-                return Ok(());
-            }
-        };
-        match result {
-            super::FrameOutcome::Complete(value)
-            | super::FrameOutcome::ConstructComplete { value, .. } => {
-                self.pool_frame(frame);
-                if let Some(generator) = resume.role.generator() {
-                    self.finish_async_generator(p, generator, resume.promise, value)?;
-                } else {
-                    self.promise_resolve_value(p, resume.promise, value)?;
-                }
-            }
-            super::FrameOutcome::Await {
-                value,
-                destination,
-                frame: None,
-            } => {
-                let continuation = self.suspend_activation(
-                    frame,
-                    Completion::Await(value),
-                    Some(destination),
-                    resume.promise,
-                );
-                if resume.role.generator().is_none() {
-                    self.await_again(p, resume, continuation, value)?;
-                } else {
-                    let AwaitRole::AsyncGeneratorAwait(generator) = resume.role else {
-                        unreachable!("an await inside an async generator body resumes its generator");
-                    };
-                    self.async_generator_await(p, generator, resume.promise, continuation, value)?;
-                }
-            }
-            super::FrameOutcome::Await {
-                frame: Some(frame), ..
-            } => {
-                self.pool_frame(frame);
-                if let Some(generator) = resume.role.generator() {
-                    self.fail_async_generator(
-                        p,
-                        generator,
-                        resume.promise,
-                        JsError("resumed async generator frame retained unexpectedly".into()),
-                    )?;
-                } else {
-                    return Err(JsError("resumed async frame retained unexpectedly".into()));
-                }
-            }
-            super::FrameOutcome::Yield {
-                frame: Some(frame), ..
-            } => {
-                self.pool_frame(frame);
-                if let Some(generator) = resume.role.generator() {
-                    self.fail_async_generator(
-                        p,
-                        generator,
-                        resume.promise,
-                        JsError("resumed async generator frame retained unexpectedly".into()),
-                    )?;
-                } else {
-                    return Err(JsError("yield is not valid in an async function".into()));
-                }
-            }
-            super::FrameOutcome::ParameterInitializationComplete => {
-                self.pool_frame(frame);
-                return Err(JsError(
-                    "unexpected generator parameter initialization boundary".into(),
-                ));
-            }
-            super::FrameOutcome::Yield {
-                value,
-                destination,
-                delegated_result,
-                frame: None,
-            } => {
-                if let Some(generator) = resume.role.generator() {
-                    self.async_generator_yield(
-                        p,
-                        generator,
-                        resume.promise,
-                        frame,
-                        value,
-                        destination,
-                        delegated_result.is_some(),
-                    )?;
-                } else {
-                    self.pool_frame(frame);
-                    return Err(JsError("yield is not valid in an async function".into()));
-                }
-            }
-        }
-        Ok(())
+        self.settle_resumed_frame(p, resume, result)
     }
 }
+
+mod lane_resume;
+mod settle;

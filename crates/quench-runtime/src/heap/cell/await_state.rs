@@ -1,6 +1,6 @@
 use crate::value::Value;
 use crate::vm::program_store::ProgramId;
-use crate::vm::activation::Continuation;
+use crate::vm::activation::{Continuation, GeneratorFrame, JobRoot, SuspendKind};
 
 /// What an await resumes, which fixes what it holds: an async function's activation, or an
 /// async generator, whose frame stays parked in its record (`GeneratorRecord::await_with`)
@@ -28,6 +28,14 @@ pub(crate) enum AwaitState {
         /// The async function's promise, or the async generator request's promise.
         promise: Value,
     },
+    /// Its reaction runs the async function in the lane as an activation over its frame's
+    /// register file (`Vm::run_lane_job`), so the frame stays here until the activation awaits
+    /// again (`Vm::suspend_job_window` arms the state anew) or ends.
+    Running {
+        continuation: Box<Continuation>,
+        realm: Value,
+        promise: Value,
+    },
     /// Its reaction took it, so nothing names a frame or a promise any more.
     Spent,
 }
@@ -42,7 +50,64 @@ impl AwaitState {
     pub(crate) fn resume(&mut self) -> Option<(AwaitKind, Value, Value)> {
         match std::mem::replace(self, Self::Spent) {
             Self::Pending { kind, realm, promise } => Some((kind, realm, promise)),
+            running @ Self::Running { .. } => {
+                *self = running;
+                None
+            }
             Self::Spent => None,
+        }
+    }
+
+    /// The activation a pending await resumes in the lane, with the realm and promise it
+    /// settles: an async function's own, whose continuation this state keeps (`state` names this
+    /// state), or the async generator whose frame is parked in its record. `None` for an await
+    /// of a `yield`'s value, which resumes no frame, and for a state that is not pending.
+    pub(crate) fn pending_job(&self, state: Value) -> Option<(JobRoot, Value, Value)> {
+        match self {
+            Self::Pending { kind: AwaitKind::AsyncFunction(_), realm, promise } => {
+                Some((JobRoot { object: state, kind: SuspendKind::AsyncFunction }, *realm, *promise))
+            }
+            Self::Pending { kind: AwaitKind::AsyncGeneratorAwait { generator }, realm, promise } => {
+                Some((JobRoot { object: *generator, kind: SuspendKind::AsyncGenerator }, *realm, *promise))
+            }
+            _ => None,
+        }
+    }
+
+    /// The frame an async function's pending await suspended: what a lane job resumes.
+    pub(crate) fn suspended_frame(&self) -> Option<&GeneratorFrame> {
+        match self {
+            Self::Pending { kind: AwaitKind::AsyncFunction(continuation), .. } => Some(&continuation.frame),
+            _ => None,
+        }
+    }
+
+    /// Starts a lane run of a pending async function: its continuation stays here, running.
+    /// The frame's address and the register that takes the awaited value
+    /// (`Continuation::begin_window`); `None`, changing nothing, for any other state.
+    pub(crate) fn resume_windowed(&mut self) -> Option<(*mut GeneratorFrame, Option<u16>)> {
+        match std::mem::replace(self, Self::Spent) {
+            Self::Pending { kind: AwaitKind::AsyncFunction(mut continuation), realm, promise } => {
+                let window = continuation.begin_window();
+                *self = Self::Running { continuation, realm, promise };
+                Some(window)
+            }
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+
+    /// Takes the continuation of a running activation, with its realm and promise, leaving the
+    /// state spent: the activation awaits again or its frame becomes a VM frame.
+    pub(crate) fn take_running(&mut self) -> Option<(Box<Continuation>, Value, Value)> {
+        match std::mem::replace(self, Self::Spent) {
+            Self::Running { continuation, realm, promise } => Some((continuation, realm, promise)),
+            other => {
+                *self = other;
+                None
+            }
         }
     }
 
@@ -64,15 +129,23 @@ impl AwaitState {
     /// The program its suspended continuation resumes in, which stays alive with it. An async
     /// generator's frame is parked in its record, which names its own.
     pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
-        if let Self::Pending { kind: AwaitKind::AsyncFunction(continuation), .. } = self {
+        if let Self::Pending { kind: AwaitKind::AsyncFunction(continuation), .. }
+        | Self::Running { continuation, .. } = self
+        {
             visit(continuation.program());
         }
     }
 
     /// Its edges: the realm and promise it resumes, the generator, the suspended frame.
     pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
-        let Self::Pending { kind, realm, promise } = self else {
-            return;
+        let (kind, realm, promise) = match self {
+            Self::Pending { kind, realm, promise } => (kind, realm, promise),
+            Self::Running { continuation, realm, promise } => {
+                out.extend([*realm, *promise]);
+                continuation.extend_roots(out);
+                return;
+            }
+            Self::Spent => return,
         };
         out.extend([*realm, *promise]);
         match kind {

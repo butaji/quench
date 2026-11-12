@@ -5,6 +5,7 @@ use crate::heap::AwaitKind;
 use super::promise::{PromiseReaction, PromiseState};
 use super::*;
 mod in_place_steps;
+mod job_windows;
 mod window_steps;
 #[cfg(test)]
 mod async_await_tests;

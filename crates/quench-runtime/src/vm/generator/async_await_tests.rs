@@ -1,5 +1,7 @@
 //! An async generator awaiting inside its body parks its frame in its record, so the await's
-//! reaction holds the generator and no continuation of its own.
+//! reaction holds the generator and no continuation of its own; an async activation a promise
+//! job resumes runs in the lane over its frame's register file (`Vm::run_lane_job`).
+use super::window_steps::tests::run;
 use crate::test_host::TestHost;
 use crate::vm::Vm;
 use crate::Engine;
@@ -24,4 +26,66 @@ fn an_async_generators_body_await_parks_its_frame_in_the_record() {
     let mut held = 0;
     vm.heap.for_each_await_state(|state| held += usize::from(state.holds_continuation()));
     assert_eq!(held, 0, "the reaction holds the generator, not a continuation");
+}
+
+#[test]
+fn an_async_function_awaiting_in_a_loop_resumes_in_the_lane_without_frames() {
+    // Each await after the first suspends the activation back into its await state and each
+    // reaction resumes it over the same register file: no `Box<Frame>` is made, whatever the count.
+    let source = |steps: u32| {
+        format!(
+            "async function total(n) {{ let sum = 0; for (let i = 0; i < n; i++) sum += await i; return sum; }}
+             total({steps}).then((sum) => print(String(sum)));"
+        )
+    };
+    let (few_output, few) = run(&source(3));
+    let (many_output, many) = run(&source(500));
+    assert_eq!(few_output, ["3"]);
+    assert_eq!(many_output, ["124750"]);
+    assert_eq!(few, 0, "a resume made a frame");
+    assert_eq!(many, 0, "a resume made a frame");
+}
+
+#[test]
+fn async_functions_resumed_in_the_lane_reject_and_unwind_through_try_finally() {
+    // A rejection resumes the frame at the await, a throw leaves the lane for the frames the
+    // activation becomes, and the handlers are those of its bytecode either way.
+    let (lines, _) = run(
+        r#"
+        const out = [];
+        async function guarded(promise) {
+            try { await promise; } catch (e) { out.push("caught " + e); } finally { out.push("finally"); }
+            return await "done";
+        }
+        async function throws() {
+            await 1;
+            try { await 2; null.x; } catch (e) { out.push(e.constructor.name); } finally { out.push("cleanup"); }
+        }
+        async function fails() { await 1; throw new Error("fail"); }
+        async function main() {
+            out.push(await guarded(Promise.reject("boom")));
+            await throws();
+            try { await fails(); } catch (e) { out.push(e.message); }
+            print(out.join(" "));
+        }
+        main();
+        "#,
+    );
+    assert_eq!(lines, ["caught boom finally done TypeError cleanup fail"]);
+}
+
+#[test]
+fn an_async_generator_awaits_in_the_lane_and_serves_for_await() {
+    let (lines, _) = run(
+        r#"
+        async function* count(n) { for (let i = 0; i < n; i++) { await null; yield i; } }
+        async function main() {
+            let sum = 0;
+            for await (const x of count(100)) sum += x;
+            print(String(sum));
+        }
+        main();
+        "#,
+    );
+    assert_eq!(lines, ["4950"]);
 }

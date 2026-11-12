@@ -103,6 +103,7 @@ impl<H: Host> Vm<H> {
             lane_returned: None,
             lane_native: None,
             lane_native_returned: None,
+            lane_awaited: None,
             active_layout: Default::default(),
             active_constants: &[],
             active_field_entries: std::ptr::null(),

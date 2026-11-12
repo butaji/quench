@@ -181,7 +181,7 @@ pub(super) fn staged_load_this(r: Registers, view: Carried, this: Value, destina
 pub(super) fn staged_load_local_plain<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
     r: Registers, view: Carried, destination: u16, slot: u16) -> bool {
     let vm = unsafe { vm(cx) };
-    let frame = &mut vm.frames[unsafe { (*cx).frame }];
+    let frame = &mut vm.frames[unsafe { (*cx).frame() }];
     let (locals, len) = (frame.locals.as_mut_ptr(), frame.locals.len());
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, locals, len);
@@ -195,7 +195,7 @@ pub(super) fn staged_load_local_plain<H: Host, const ACC: u8>(cx: *mut LaneConte
 pub(super) fn staged_store_local_plain<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
     r: Registers, view: Carried, source: u16, slot: u16, result: Option<u16>) -> bool {
     let vm = unsafe { vm(cx) };
-    let frame = &mut vm.frames[unsafe { (*cx).frame }];
+    let frame = &mut vm.frames[unsafe { (*cx).frame() }];
     let (locals, len) = (frame.locals.as_mut_ptr(), frame.locals.len());
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, locals, len);

@@ -7,13 +7,14 @@ use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT};
 
 /// The end of a nested run at the return with `value` of `activation`, popped with its
 /// caller's state restored: a native's callback's (`Completion::ReturnsToNative`), whose
-/// native takes the value, or a body's callee's, whose call's register takes it, a
-/// construction's receiver (`this`) for a non-object. `None` for any other completion.
+/// native takes the value, a job's (`Completion::ResumesJob`), whose run ends with it for the
+/// job to deliver, or a body's callee's, whose call's register takes it, a construction's
+/// receiver (`this`) for a non-object. `None` for any other completion.
 #[inline(always)]
 pub(super) fn ends_run<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, completion: Completion, this: Value, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     match completion {
-        Completion::ReturnsToNative => {}
+        Completion::ReturnsToNative | Completion::ResumesJob => {}
         Completion::ReturnsToBody | Completion::ConstructsToBody => {
             let value = setters::completed_value(vm, activation, completion, this, value);
             // SAFETY: the call record belongs to the caller's live view, whose registers the context names.
@@ -27,12 +28,12 @@ pub(super) fn ends_run<H: Host>(cx: *mut LaneContext<H>, activation: &Activation
 }
 
 /// Whether `activation`, which becomes the frame at index `frame`, is the entry frame of
-/// the general loop that finishes it, as a native's callback is. A body's callee is not:
+/// the general loop that finishes it, as a native's callback or a job's is. A body's callee is not:
 /// its frame's return leaves the lane instead (`LaneStack::body_boundary`), which the
 /// innermost such frame decides.
 pub(super) fn enters_as_frame(stack: &mut LaneStack, activation: &Activation, frame: usize) -> bool {
     match activation.script().map(|script| script.completion) {
-        Some(Completion::ReturnsToNative) => true,
+        Some(Completion::ReturnsToNative | Completion::ResumesJob) => true,
         Some(Completion::ReturnsToBody | Completion::ConstructsToBody) => {
             stack.body_boundary = Some(frame);
             false

@@ -25,7 +25,7 @@ unsafe fn lane_body_value_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
     let function = match vm.lane_stack.activations.last() {
         Some(activation) => activation.function,
-        None => vm.frames[unsafe { (*cx).frame }].function,
+        None => vm.frames[unsafe { (*cx).frame() }].function,
     };
     // SAFETY: the context's program outlives the lane run.
     let body = unsafe { &*(*cx).code }.function(function as usize);

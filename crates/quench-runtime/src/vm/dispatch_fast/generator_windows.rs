@@ -30,7 +30,7 @@ impl LaneStack {
     ///
     /// # Safety
     /// The activations' room holds one more.
-    unsafe fn push_generator_activation(&mut self, mut activation: Activation) {
+    pub(super) unsafe fn push_generator_activation(&mut self, mut activation: Activation) {
         activation.native.window |= HEAP_WINDOW;
         // SAFETY: as the caller guarantees; a script activation holds no Wasm storage.
         unsafe { self.activations.push_unchecked(activation) };
@@ -38,7 +38,7 @@ impl LaneStack {
 
     /// The iterators a resumed generator's loops left open, now the loops of the activation at
     /// `depth` (`LaneStack::iterators`).
-    fn restore_iterators(&mut self, depth: usize, open: &mut Vec<super::super::ActiveIterator>) {
+    pub(super) fn restore_iterators(&mut self, depth: usize, open: &mut Vec<super::super::ActiveIterator>) {
         self.iterators.extend(open.drain(..).map(|iterator| (depth, iterator)));
     }
 
@@ -77,17 +77,17 @@ pub(super) fn lane_resume_generator_step<H: Host>(
 /// How a resumed generator's window carries its locals (`GeneratorFrame::open_environment_window`):
 /// its function's captured-slot mask and, for a frame that made its environment, the slot storage
 /// of that environment.
-struct WindowLocals {
+pub(super) struct WindowLocals {
     captured: u64,
     own_slots: Option<*const crate::heap::EnvironmentSlots>,
 }
 
 /// The environment a generator's closures and captures run under, and its window's locals when
-/// `environment` (`CallPlan::generator_environment`) says the window carries them: the frame's
+/// `environment` (`Vm::window_layout`) says the window carries them: the frame's
 /// `env` is its own environment once it made one (`captured`), whose parent the activation
 /// runs under, else the closure's. `None`, before any effect, where `view` has no environment
 /// window or the environment is no cell.
-fn window_environments<H: Host>(
+pub(super) fn window_environments<H: Host>(
     vm: &Vm<H>,
     view: *const LaneView,
     env: Value,
@@ -165,7 +165,7 @@ fn lane_resume_generator<H: Host>(
 /// An environment the frame made already is written through the window's stores without the
 /// barrier a heap write takes, so it joins the remembered set once, as a capture store's target
 /// does (`Vm::target_capture`).
-fn open_window_locals<H: Host>(vm: &mut Vm<H>, frame: *mut GeneratorFrame, env: Value, locals: &WindowLocals) {
+pub(super) fn open_window_locals<H: Host>(vm: &mut Vm<H>, frame: *mut GeneratorFrame, env: Value, locals: &WindowLocals) {
     if locals.own_slots.is_some() {
         vm.heap.remember_cell(env);
     }

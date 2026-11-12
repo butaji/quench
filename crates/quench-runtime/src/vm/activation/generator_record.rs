@@ -15,8 +15,8 @@ pub(crate) enum GeneratorLife {
     /// Running: its frame is on the VM stack, and (async) requests queue.
     Executing,
     /// Running as a lane activation whose window is the frame's register file, which stays
-    /// here: a yield suspends it from here and a materialization takes it for its frame
-    /// (`take_windowed`).
+    /// here: a yield or an await suspends it from here and a materialization takes it for its
+    /// frame (`take_windowed`).
     Windowed(Box<GeneratorFrame>),
     /// An async generator busy awaiting a `yield`'s value, a `return`'s, or inside its body,
     /// its continuation still parked here: requests queue.
@@ -132,17 +132,17 @@ impl GeneratorRecord {
         }
     }
 
-    /// A lane resumes a suspended generator as an activation over its register file: the frame
-    /// stays in the record, which runs `Windowed`. Its address, which the box keeps while it
-    /// lives, and the register that takes the sent value; `None`, leaving the generator as it
-    /// was, when it is not suspended. Every register is live while it runs.
+    /// A lane resumes a suspended generator, or an async generator parked at an `await`, as an
+    /// activation over its register file: the frame stays in the record, which runs `Windowed`.
+    /// Its address, which the box keeps while it lives, and the register that takes the sent
+    /// value (`Continuation::begin_window`); `None`, leaving the generator as it was, when it
+    /// holds no frame to resume.
     pub(crate) fn resume_windowed(&mut self) -> Option<(*mut GeneratorFrame, Option<u16>)> {
         match std::mem::replace(&mut self.life, GeneratorLife::Executing) {
-            GeneratorLife::Suspended(Continuation { mut frame, resume_register, .. }) => {
-                frame.live_registers = None;
-                let at: *mut GeneratorFrame = &raw mut *frame;
-                self.life = GeneratorLife::Windowed(frame);
-                Some((at, resume_register))
+            GeneratorLife::Suspended(mut continuation) | GeneratorLife::Busy(mut continuation) => {
+                let window = continuation.begin_window();
+                self.life = GeneratorLife::Windowed(continuation.frame);
+                Some(window)
             }
             other => {
                 self.life = other;
