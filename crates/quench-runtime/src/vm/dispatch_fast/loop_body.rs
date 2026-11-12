@@ -129,7 +129,7 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
         if !matches!(*site.body.borrow(), LoopBody::Declined | LoopBody::Compiling { wait: 1.., .. }) { plan_loop_body(cx, r, own, site); }
         return None;
     };
-    if !lane_body_admits(cx, &method) { return None; }
+    if !lane_body_admits(cx, &method, NO_PENDING_ACTIVATIONS) { return None; }
     // SAFETY: the context's program outlives the lane run; the activation owns its receiver
     // and captures, as at its body's prologue.
     let (program, code, receiver) = unsafe { ((*cx).program, &*(*cx).code, lane_this(cx).unwrap_or(Value::DELETED)) };

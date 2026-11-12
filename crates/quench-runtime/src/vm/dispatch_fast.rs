@@ -22,6 +22,7 @@
 //! safepoint jump leaves the lane.
 
 use super::compiled::tier_policy::TIERS;
+use super::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 use super::dispatch_frame::PendingGeneralCall;
 use smallvec::SmallVec;
 use crate::heap::InlineObjectHeader;
@@ -918,7 +919,7 @@ impl LaneView {
     /// reentrant change of the publication leaves the run its code.
     fn cell_body(&self) -> Option<std::rc::Rc<super::compiled::LaneMethod>> {
         let cell = &self.entry;
-        (cell.entry.get() != super::compiled::entry_cell::EntryCell::stub()).then(|| {
+        self.entry_published().then(|| {
             let body = cell.body.get() as *const super::compiled::LaneMethod;
             // SAFETY: a published cell's `body` is `Rc::as_ptr` of the body `pinned` keeps
             // (`EntryCell::publish`); the strong count taken here is the run's own.
@@ -927,6 +928,12 @@ impl LaneView {
                 std::rc::Rc::from_raw(body)
             }
         })
+    }
+
+    /// Whether its entry cell holds a published body rather than the stub.
+    #[inline(always)]
+    fn entry_published(&self) -> bool {
+        self.entry.entry.get() != super::compiled::entry_cell::EntryCell::stub()
     }
 
     /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).
@@ -2249,6 +2256,11 @@ struct LaneContext<H: Host> {
 struct LeafCall {
     /// The call record, null while no leaf runs.
     call: Ip,
+    /// The form the call ran as, which decides what its activation takes from the caller
+    /// (`lane_materialize_leaf`): a published body's entry (`lane_enter_cell_body`) runs as `CONTEXT_LEAF`.
+    form: LeafForm,
+    /// The values the call passed, which its activation records.
+    argc: u16,
     caller_registers: Registers,
     caller_base: Ip,
     /// The target the call resolved, which stays in its cache while the leaf runs: nothing
@@ -2263,6 +2275,8 @@ struct LeafCall {
 
 const NO_LEAF_CALL: LeafCall = LeafCall {
     call: std::ptr::null(),
+    form: NOT_LEAF,
+    argc: 0,
     caller_registers: Registers(std::ptr::null_mut()),
     caller_base: std::ptr::null(),
     target: std::ptr::null(),
@@ -11730,13 +11744,16 @@ impl<H: Host> Vm<H> {
 
     /// The lane stack's free values, its next and the end of its capacity, where a lane
     /// body's direct calls place their callees' registers (`compiled::DirectCallee`); and the
-    /// activations it may still take past one, which those calls' frames may become.
-    pub(super) fn lane_stack_spare(&mut self) -> (*mut Value, *mut Value, usize, *mut Activation) {
+    /// activations it may still take past one, which those calls' frames may become. The
+    /// `pending` activations the running body's call has not pushed yet (`lane_enter_cell_body`)
+    /// are counted as pushed: the frames start past them.
+    pub(super) fn lane_stack_spare(&mut self, pending: usize) -> (*mut Value, *mut Value, usize, *mut Activation) {
         let stack = &mut self.lane_stack;
-        let activations = stack.activation_limit.get().saturating_sub(stack.activations.len() + 1);
+        let held = stack.activations.len() + pending;
+        let activations = stack.activation_limit.get().saturating_sub(held + 1);
         let values = &mut stack.values;
         // SAFETY: both bound the vector's own allocation.
-        unsafe { (values.as_mut_ptr().add(values.len()), values.as_mut_ptr().add(values.capacity()), activations, stack.activations.as_mut_ptr().add(stack.activations.len())) }
+        unsafe { (values.as_mut_ptr().add(values.len()), values.as_mut_ptr().add(values.capacity()), activations, stack.activations.as_mut_ptr().add(held)) }
     }
 
     /// The lane view a hot loop of `function` runs with (`Vm::note_back_edge`), or null.
@@ -11853,6 +11870,13 @@ macro_rules! lane_plain_activation {
         }
         // SAFETY: the record's window of `r` holds its values.
         let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
+        // A callee whose entry cell holds a body runs it before any activation exists.
+        if !returns
+            && unsafe { (*target.view).entry_published() }
+            && let Some(resumed) = lane_enter_cell_body(cx, r, ip, target, passed, argc, this)
+        {
+            resume!(cx, resumed)
+        }
         let (registers, base) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, false);
         next!(cx, registers, base, Carried::script(cx))
     }};
@@ -11931,6 +11955,7 @@ script_handler! {
         unsafe {
             let leaf = &mut (*cx).leaf;
             leaf.call = ip;
+            (leaf.form, leaf.argc) = (LEAF, ARGC);
             leaf.caller_registers = r;
             leaf.caller_base = (*cx).base;
             leaf.target = target;
@@ -12004,7 +12029,7 @@ fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value, form: Leaf
     let caller = leaf.caller_registers;
     // SAFETY: the call record belongs to the caller's live view; the target stays cached.
     unsafe {
-        debug_assert!((*leaf.target).entry.leaf_form() == form);
+        debug_assert!(leaf.form == form);
         if form == CONTEXT_LEAF {
             (*cx).this = leaf.caller_this;
         }
@@ -12044,7 +12069,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
     // SAFETY: the leaf's target stays in its cache while it runs, and its call record
     // belongs to the caller's live view.
     let (target, call) = unsafe { (&*leaf.target, &*leaf.call) };
-    let form = target.entry.leaf_form();
+    let form = leaf.form;
     let stack = &mut vm.lane_stack;
     // SAFETY: the leaf's window starts at the stack's length, within its capacity
     // (`lane_script_call_leaf`).
@@ -12064,7 +12089,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
         caller_program: unsafe { (*cx).program },
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
-            argc: ImmediateLayout::argument_count(call.imm()),
+            argc: leaf.argc,
             caller_this,
             caller_env,
             caller_capture,
@@ -12919,10 +12944,7 @@ script_handler! {
             let value = lane_native_value(cx, ip, i, native, callee, receiver, args);
             resume!(cx, lane_native_complete(cx, ip, i, value));
         }
-        match lane_function_call_activation(cx, r, ip, i, callee, receiver, args) {
-            Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
-            Err(next) => next,
-        }
+        resume!(cx, lane_function_call_activation(cx, r, ip, i, callee, receiver, args))
     }
 }
 
@@ -12965,16 +12987,46 @@ fn lane_function_call_activation<H: Host>(
     callee: Value,
     receiver: Value,
     args: &[Value],
-) -> Result<(Registers, Ip), Ip> {
+) -> Resumed {
     let vm = unsafe { vm(cx) };
     let Some(target) = lane_passed_target(cx, callee, args.len()) else {
-        return Err(lane_forwarded_frame_call(cx, r, ip, i, callee, receiver, args));
+        return Resumed::Exit(lane_forwarded_frame_call(cx, r, ip, i, callee, receiver, args));
     };
     // `call_this_value` without its boxing of primitives, which allocates.
     let Some(this) = lane_call_this(vm, &target, receiver) else {
-        return Err(exit(ip));
+        return Resumed::Exit(exit(ip));
     };
-    lane_activate_passed(cx, r, ip, &target, args, this)
+    if let Some(resumed) = lane_forwarded_cell_entry(cx, r, ip, i, &target, args, this) {
+        return resumed;
+    }
+    match lane_activate_passed(cx, r, ip, &target, args, this) {
+        Ok((registers, base)) => Resumed::At(registers, base, Carried::script(cx)),
+        Err(next) => Resumed::Exit(next),
+    }
+}
+
+/// `lane_enter_cell_body` of a forwarded call of a plain target of the running program, passed
+/// at most its parameters and not completing its caller, whose entry cell holds a body.
+#[inline(always)]
+fn lane_forwarded_cell_entry<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    target: &ScriptCallTarget,
+    args: &[Value],
+    this: Value,
+) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let argc = u16::try_from(args.len()).ok().filter(|argc| *argc <= target.params)?;
+    (target.entry == CallEntry::Activates
+        && !lane_crosses::<H, true>(cx, target)
+        && i.a & crate::bytecode::RETURN_REGISTER == 0
+        && !vm.with_scope_entered
+        && lane_activation_room(vm, target)
+        && unsafe { (*target.view).entry_published() })
+    .then_some(())?;
+    lane_enter_cell_body(cx, r, ip, target, args.as_ptr(), argc, this)
 }
 
 /// The frameless target a forwarded or applied call of `callee` with `passed` values
@@ -14786,7 +14838,7 @@ script_handler! {
             own.settle_retired_body();
             next!(cx, r, base, Carried::script(cx))
         };
-        if !lane_body_admits(cx, &method) {
+        if !lane_body_admits(cx, &method, NO_PENDING_ACTIVATIONS) {
             if lane_body_prepare_recovery(cx, &method) { return exit(base); }
             drop(method);
             if vm.programs.js_jit_diagnostics_enabled() {
@@ -14803,7 +14855,7 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
-        lane_body_conclude!(cx, r, ip, own, method, exit, function)
+        resume!(cx, lane_body_concluded::<H>(cx, r, ip, own, method, exit, function))
     }
 }
 
@@ -14811,36 +14863,47 @@ script_handler! {
 /// activation `cx` holds, with registers `r`, and ended at `exit`: a returned run completes
 /// the activation (no leave to resolve, no frame to materialize), any other leave resumes
 /// where it names (`lane_body_left`).
-macro_rules! lane_body_conclude {
-    ($cx:expr, $r:expr, $ip:expr, $own:expr, $method:expr, $exit:expr, $function:expr) => {{
-        let (cx, r, ip, own, method, exit, function) = ($cx, $r, $ip, $own, $method, $exit, $function);
-        let base = unsafe { (*cx).base };
-        if let super::compiled::LaneExit::Returned { pc, value } = exit
-            && !unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled()
-        {
-            // SAFETY: as `lane_leave_counts`; a completed run carries no warming callee.
-            unsafe { (*cx).callee_warming = false };
-            own.note_lane_body_end(exit, false, |_| {});
-            drop(method);
-            // SAFETY: the record that completes the activation is one of its function's.
-            lane_return_value!(cx, unsafe { base.add(pc) }, value)
-        }
-        let counts = lane_leave_counts(cx, exit);
-        let (resumed, feedback) = lane_body_left(cx, r, own, &method, exit);
+#[inline(always)]
+fn lane_body_concluded<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    own: &LaneView,
+    method: std::rc::Rc<super::compiled::LaneMethod>,
+    left: super::compiled::LaneExit,
+    function: u32,
+) -> Resumed {
+    let base = unsafe { (*cx).base };
+    if let super::compiled::LaneExit::Returned { pc, value } = left
+        && !unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled()
+    {
+        // SAFETY: as `lane_leave_counts`; a completed run carries no warming callee.
+        unsafe { (*cx).callee_warming = false };
+        own.note_lane_body_end(left, false, |_| {});
         drop(method);
-        // Counted once nothing reads the body: a retirement or reoptimization moves it.
-        if counts {
-            own.note_lane_body_end(feedback, false, |left| lane_note_leave(cx, function, left));
-        }
-        match resumed {
-            LaneBodyLeft::Terminated => return self::exit(ip),
-            LaneBodyLeft::Resume(_, resume, _) if body_calls::left_lane(resume) => return resume,
-            LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
-            LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value),
-        }
-    }};
+        // SAFETY: the record that completes the activation is one of its function's.
+        return lane_returned(cx, unsafe { base.add(pc) }, value);
+    }
+    let counts = lane_leave_counts(cx, left);
+    let (resumed, feedback) = lane_body_left(cx, r, own, &method, left);
+    drop(method);
+    // Counted once nothing reads the body: a retirement or reoptimization moves it.
+    if counts {
+        own.note_lane_body_end(feedback, false, |left| lane_note_leave(cx, function, left));
+    }
+    match resumed {
+        LaneBodyLeft::Terminated => Resumed::Exit(exit(ip)),
+        LaneBodyLeft::Resume(_, resume, _) if body_calls::left_lane(resume) => Resumed::Exit(resume),
+        LaneBodyLeft::Resume(registers, resume, carried) => Resumed::At(registers, resume, carried),
+        LaneBodyLeft::Completed(record, value) => lane_returned(cx, record, value),
+    }
 }
-use lane_body_conclude;
+
+/// `lane_return_value!` as the resumption it continues at.
+#[inline(always)]
+fn lane_returned<H: Host>(cx: *mut LaneContext<H>, record: Ip, value: Value) -> Resumed {
+    lane_complete_plain_activation::<H, NOT_LEAF>(cx, value).unwrap_or_else(|| lane_return_value_general(cx, record, value))
+}
 
 /// The tier prologue's run of the compiled body `own` keeps for a body that reads only its
 /// parameters (`LaneView::tier_direct`): the `Return` to continue at, its register and the
@@ -15194,13 +15257,14 @@ fn lane_materialize_frames<H: Host>(
 
 /// Whether a run of `own`'s specialized body may start: the one thing per run it cannot
 /// prove at specialization, that the lane can make the activation of a call it inlines
-/// should it leave inside one (`lane_body_inlined_activation`).
+/// should it leave inside one (`lane_body_inlined_activation`). `pending` activations are
+/// the running body's own, which its call has not pushed yet (`lane_enter_cell_body`).
 #[inline(always)]
-fn lane_body_admits<H: Host>(cx: *mut LaneContext<H>, method: &super::compiled::LaneMethod) -> bool {
+fn lane_body_admits<H: Host>(cx: *mut LaneContext<H>, method: &super::compiled::LaneMethod, pending: usize) -> bool {
     let room = method.recovery_space();
     let vm = unsafe { vm(cx) };
     room.activations == 0
-        || (vm.lane_stack.activation_limit.get().saturating_sub(vm.lane_stack.activations.len()) >= room.activations
+        || (vm.lane_stack.activation_limit.get().saturating_sub(vm.lane_stack.activations.len() + pending) >= room.activations
             && vm.lane_stack.values.room() >= room.values
             && unsafe { (*cx).script_calls }
             && !vm.with_scope_entered)
@@ -15370,6 +15434,8 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
+    // A body entered through its cell has no activation yet, which a call pushes above.
+    lane_materialize_running_leaf(cx);
     let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { lane_body_record(cx, call_pc) };
     let i = unsafe { &*ip };
@@ -15455,6 +15521,9 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return lane_body_stats::miss(lane_body_stats::Miss::ConstructReturning);
     }
+    // What is left resolves a target and pushes an activation above the body's own, which a
+    // body entered through its cell makes now.
+    lane_materialize_running_leaf(cx);
     let Some(target) = lane_construct_target(cx, vm, callee) else { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoTarget) };
     // A forwarding constructor is built by its forwarded initializer's plan or not at all here.
     if target.forwards() { return lane_body_forwarded(vm, callee, r, i); }
@@ -15606,7 +15675,7 @@ fn lane_body_activate<H: Host>(
     } else if own.lane_body().is_none() {
         lane_specialize(cx, own, target.function, false, &[]);
     }
-    let Some(method) = own.lane_body().filter(|method| lane_body_admits(cx, method)) else {
+    let Some(method) = own.lane_body().filter(|method| lane_body_admits(cx, method, NO_PENDING_ACTIVATIONS)) else {
         unsafe { (*cx).callee_warming = own.warming() };
         return leave(start, Value::UNDEFINED);
     };
@@ -15758,20 +15827,120 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
     // Only `lane_script_call_settles` activates a settling target, and it says so statically,
     // so the other call forms decide the completion without reading the target's entry.
     debug_assert_eq!(SETTLES, target.settles(), "a settling target activates through its own call form");
+    let callee_registers = lane_fill_window(unsafe { vm(cx) }, target, passed, argc);
+    lane_enter_window::<H, GENERAL, SETTLES>(cx, r, ip, target, callee_registers, argc, this, constructs, None)
+}
+
+/// A plain call of `target`, of the running program, passed the `argc` values at `passed` (at
+/// most its parameters) and not completing its caller, whose entry cell holds a published body
+/// (`LaneView::cell_body`): the body runs on the activation's window before the activation
+/// exists. The call is a leaf the context holds (`CONTEXT_LEAF`: the caller's receiver and
+/// environment are the leaf's to restore), so a body that returns completes the call with the
+/// caller's registers and the next record, nothing pushed and nothing to pop; a leave, and any
+/// helper that observes activations (`lane_materialize_running_leaf`), make the activation the
+/// push would have made, in the room the run reserved for it (`CALLEE_ACTIVATION_PENDING`),
+/// and resume as the body's prologue would (`lane_body_concluded`). `None`, which changes
+/// nothing, where the body does not run: diagnostics count its entries (`lane_body_entry`), or
+/// the lane cannot make the activations a leave inside its inlined calls would
+/// (`lane_body_admits`).
+#[inline(never)]
+fn lane_enter_cell_body<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    passed: *const Value,
+    argc: u16,
+    this: Value,
+) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
+    if vm.programs.js_jit_diagnostics_enabled() {
+        return None;
+    }
+    // SAFETY: the program store keeps a derived view alive with its program.
+    let own = unsafe { &*target.view };
+    let method = own.cell_body()?;
+    let window = lane_fill_window(vm, target, passed, argc);
+    if !lane_body_admits(cx, &method, CALLEE_ACTIVATION_PENDING) {
+        // SAFETY: the window starts at the stack's top, which the fill moved.
+        unsafe { vm.lane_stack.values.set_top(window.0) };
+        return None;
+    }
+    vm.programs.record_js_jit_lane_entry(target.program, target.function);
+    #[cfg(test)]
+    super::compiled::LANE_CELL_CROSSINGS.with(|count| count.set(count.get() + 1));
+    lane_begin_cell_leaf(cx, ip, r, target, argc, this, window);
+    let run = super::compiled::BodyRun {
+        method: &method, direct_calls: lane_direct_calls(cx), program: unsafe { (*cx).program }, residual: unsafe { &*(*cx).code },
+        registers: window.0, receiver: this, captures: capture_reads(target.capture), lane_context: cx.cast(),
+        pending: CALLEE_ACTIVATION_PENDING,
+    };
+    let exit = vm.run_lane_body(&run);
+    Some(lane_cell_body_ended(cx, window, own, target.function, method, exit))
+}
+
+/// Makes the call of `target` the context's running leaf (`CONTEXT_LEAF`), which holds what its
+/// activation would (`lane_materialize_leaf`): the callee's receiver, environment, captures,
+/// registers and records are the context's, the caller's are the leaf's.
+#[inline(always)]
+fn lane_begin_cell_leaf<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, target: &ScriptCallTarget, argc: u16, this: Value, window: Registers) {
+    // SAFETY: the running lane's context, and the callee's view outlives its program.
+    unsafe {
+        (*cx).leaf = LeafCall {
+            call: ip, form: CONTEXT_LEAF, argc, caller_registers: r, caller_base: (*cx).base, target,
+            caller_this: (*cx).this, caller_env: (*cx).env, caller_capture: (*cx).capture,
+        };
+        ((*cx).this, (*cx).env, (*cx).capture) = (this, target.env, target.capture);
+        ((*cx).registers, (*cx).base) = (window, (*target.view).records());
+    }
+}
+
+/// Where the lane continues after the body `lane_enter_cell_body` ran on `window` ended at
+/// `exit`: the caller, past the call, where the body returned and the leaf still runs; else
+/// the leave, in the activation made now. A helper that pushed it resolved targets since the
+/// call, so the callee is `own` and `function`, not the call's target.
+#[inline(always)]
+fn lane_cell_body_ended<H: Host>(
+    cx: *mut LaneContext<H>,
+    window: Registers,
+    own: &LaneView,
+    function: u32,
+    method: std::rc::Rc<super::compiled::LaneMethod>,
+    exit: super::compiled::LaneExit,
+) -> Resumed {
+    if let super::compiled::LaneExit::Returned { value, .. } = exit
+        && !unsafe { (*cx).leaf.call }.is_null()
+    {
+        // SAFETY: the window held the callee's registers; the completed call leaves the stack as it found it.
+        unsafe {
+            (*cx).callee_warming = false;
+            vm(cx).lane_stack.values.set_top(window.0);
+        }
+        own.note_lane_body_end(exit, false, |_| {});
+        drop(method);
+        let (registers, next) = lane_complete_leaf(cx, value, CONTEXT_LEAF).expect("the leaf runs until it completes or materializes");
+        return Resumed::At(registers, next, Carried::script(cx));
+    }
+    lane_materialize_running_leaf(cx);
+    lane_body_concluded::<H>(cx, window, own.start(), own, method, exit, function)
+}
+
+/// The window of `target`'s plain activation at the lane stack's top, holding the `argc`
+/// values at `passed` as its parameters, which the stack's values cover from here on.
+#[inline(always)]
+fn lane_fill_window<H: Host>(vm: &mut Vm<H>, target: &ScriptCallTarget, passed: *const Value, argc: u16) -> Registers {
     let count = usize::from(target.registers);
     let stack = &mut vm.lane_stack;
     // SAFETY: capacity holds the window's admitted room (`ScriptCallTarget::room`); each
     // slot is written before the length covers it, and no activation's window moves.
     // Parameter `k` lives in register `k` of a plain activation (`Vm::place_plain_parameters`).
-    let callee_registers = unsafe {
+    unsafe {
         let registers = stack.values.top();
         fill_admitted_window(registers, count);
         copy_arguments(registers, passed, argc);
         stack.values.set_top(registers.add(count));
         Registers(registers)
-    };
-    lane_enter_window::<H, GENERAL, SETTLES>(cx, r, ip, target, callee_registers, argc, this, constructs, None)
+    }
 }
 
 /// `lane_push_passed` past its window, which the stack's values cover from `window` on and

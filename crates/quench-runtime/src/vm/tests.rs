@@ -25503,18 +25503,37 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
     assert_eq!(compiled.specialized_guard_misses(), 0, "interrupts are native exits, not entry guard misses");
 }
 
-/// Runs `source` and returns the number it leaves in `globalThis.answer`, with the lane body
-/// entries the run made and the runs those entries bound (`LaneFrame::bind_run`).
-fn lane_entry_counts(source: &str, mode: crate::ExecutionMode) -> (Option<f64>, (usize, usize), bool) {
+/// What `lane_entry_counts` measured of a run.
+struct LaneEntryCounts {
+    /// The number the source left in `globalThis.answer`.
+    answer: Option<f64>,
+    /// The lane body entries the run made.
+    entries: usize,
+    /// The runs those entries bound (`LaneFrame::bind_run`).
+    binds: usize,
+    /// The calls that entered a body through its entry cell before any activation.
+    crossings: usize,
+    /// Whether the memory policy compiles lane bodies at all.
+    compiles: bool,
+}
+
+/// Runs `source` and measures it: its answer, and the lane body entries it made.
+fn lane_entry_counts(source: &str, mode: crate::ExecutionMode) -> LaneEntryCounts {
     let program = Engine::specialize(source, "lane-crossing.js").unwrap();
     super::compiled::LANE_ENTRIES.with(|counts| counts.set((0, 0)));
+    super::compiled::LANE_CELL_CROSSINGS.with(|count| count.set(0));
     let mut vm = Vm::new(TestHost::default());
     vm.programs.enable_js_lane_methods();
     vm.set_execution_mode(mode);
     vm.execute(&program).unwrap();
     let atom = vm.intern_atom("answer");
     let answer = vm.own_property(vm.realm.globals, atom).and_then(Value::as_number);
-    (answer, super::compiled::LANE_ENTRIES.with(std::cell::Cell::get), super::compiled::js_function_tiers_compile(vm.memory_policy()))
+    let (entries, binds) = super::compiled::LANE_ENTRIES.with(std::cell::Cell::get);
+    LaneEntryCounts {
+        answer, entries, binds,
+        crossings: super::compiled::LANE_CELL_CROSSINGS.with(std::cell::Cell::get),
+        compiles: super::compiled::js_function_tiers_compile(vm.memory_policy()),
+    }
 }
 
 /// The interpreter enters a hot callee's body through its function's one entry word, and a run
@@ -25528,12 +25547,13 @@ fn interpreter_calls_cross_into_bodies_with_one_payload_per_lane_run() {
       for (let round = 0; round < 20000; round++) { total = (total + step(round & 7, round & 3)) & 1048575; }
       globalThis.answer = total;
     })();"#;
-    let (expected, ..) = lane_entry_counts(source, crate::ExecutionMode::Interpreted);
-    let (answer, (entries, binds), compiles) = lane_entry_counts(source, crate::ExecutionMode::Compiled);
+    let expected = lane_entry_counts(source, crate::ExecutionMode::Interpreted).answer;
+    let LaneEntryCounts { answer, entries, binds, crossings, compiles } = lane_entry_counts(source, crate::ExecutionMode::Compiled);
     assert_eq!(answer, expected, "entering through the cell matches the interpreter");
     if compiles {
         assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
-        assert!(binds * 50 < entries, "{binds} payload binds for {entries} entries");
+        assert!(binds * 200 < entries, "{binds} payload binds for {entries} entries");
+        assert!(crossings > 1000, "the interpreter's calls enter the body through its cell before any activation, {crossings} times");
     }
 }
 
@@ -25556,8 +25576,89 @@ fn interpreter_calls_of_stub_callees_match_the_interpreter() {
       }
       globalThis.answer = total * 8 + caught;
     })();"#;
-    let (expected, ..) = lane_entry_counts(source, crate::ExecutionMode::Interpreted);
-    let (answer, ..) = lane_entry_counts(source, crate::ExecutionMode::Compiled);
+    let expected = lane_entry_counts(source, crate::ExecutionMode::Interpreted).answer;
+    let answer = lane_entry_counts(source, crate::ExecutionMode::Compiled).answer;
     assert!(expected.is_some());
     assert_eq!(answer, expected);
+}
+
+/// Runs `source` interpreted and compiled and requires the same answer, which the interpreter
+/// leaves in `globalThis.answer`.
+fn assert_cell_crossings_match(source: &str) {
+    let expected = lane_entry_counts(source, crate::ExecutionMode::Interpreted).answer;
+    let compiled = lane_entry_counts(source, crate::ExecutionMode::Compiled);
+    assert!(expected.is_some(), "the source leaves its answer");
+    assert_eq!(compiled.answer, expected);
+}
+
+/// A body entered through its cell that leaves at its first instruction (its receiver's shape
+/// or type no longer the one it proved) resumes in the activation the call would have pushed:
+/// the interpreter runs the whole callee, including the throw of a `null` argument.
+#[test]
+fn cell_entered_bodies_leaving_at_their_first_instruction_match_the_interpreter() {
+    assert_cell_crossings_match(r#"(function () {
+      function first(o) { return o.x * 2 + 1; }
+      const shapes = [{ x: 1 }, { y: 0, x: 2 }, { x: 3, z: 0 }, "text", { get x() { return 5; } }, null];
+      let total = 0, caught = 0;
+      for (let round = 0; round < 8000; round++) {
+        const o = shapes[round < 6000 ? 0 : (round - 6000) % shapes.length];
+        try { total = (total + first(o)) | 0; } catch (e) { caught++; }
+      }
+      globalThis.answer = total * 16 + caught;
+    })();"#);
+}
+
+/// A body that leaves in the middle (a loop whose later element is no number) resumes at the
+/// record it names, in the registers the body wrote, with the loop's partial sum.
+#[test]
+fn cell_entered_bodies_leaving_in_the_middle_match_the_interpreter() {
+    assert_cell_crossings_match(r#"(function () {
+      function sum(a) { let s = 0; for (let i = 0; i < a.length; i++) { s = (s + a[i]) | 0; } return s; }
+      const ints = [1, 2, 3, 4, 5, 6, 7, 8], mixed = [1, 2, 3, "4", 5, undefined, 7, 8.5];
+      let total = 0;
+      for (let round = 0; round < 6000; round++) {
+        total = (total + sum(round < 5000 || round % 3 ? ints : mixed)) & 1048575;
+      }
+      globalThis.answer = total;
+    })();"#);
+}
+
+/// A body that leaves inside a call it inlined resumes in the callee's activation made on top
+/// of the activation of the call the interpreter made into the body.
+#[test]
+fn cell_entered_bodies_leaving_inside_an_inlined_call_match_the_interpreter() {
+    assert_cell_crossings_match(r#"(function () {
+      function inner(o) { return o.v + 1; }
+      function outer(o) { return inner(o) + inner(o) * 2; }
+      const plain = { v: 3 }, other = { w: 0, v: 4 }, odd = { v: "5" };
+      let total = 0;
+      for (let round = 0; round < 8000; round++) {
+        total = (total + outer(round < 6000 ? plain : round % 2 ? other : odd)) | 0;
+      }
+      globalThis.answer = total;
+    })();"#);
+}
+
+/// A body whose helper call needs an activation under it (a call it does not inline) takes the
+/// activation the crossing deferred first, and the callee returns into it.
+#[test]
+fn cell_entered_bodies_calling_through_helpers_match_the_interpreter() {
+    assert_cell_crossings_match(r#"(function () {
+      const callees = [(a) => a + 1, (a) => a * 2, function (a) { return this === undefined ? a : a - 1; }];
+      function dispatch(k, a) { let s = a; for (let i = 0; i < 3; i++) { s = (callees[(k + i) % 3](s)) | 0; } return s; }
+      let total = 0;
+      for (let round = 0; round < 6000; round++) { total = (total + dispatch(round % 7, round & 15)) & 1048575; }
+      globalThis.answer = total;
+    })();"#);
+}
+
+/// A forwarded call (`Function.prototype.call`) of a callee with a body crosses into it too.
+#[test]
+fn forwarded_calls_cross_into_cell_bodies() {
+    assert_cell_crossings_match(r#"(function () {
+      function step(a, b) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + a * i + b) | 0; } return s; }
+      let total = 0;
+      for (let round = 0; round < 8000; round++) { total = (total + step.call(null, round & 7, round & 3)) & 1048575; }
+      globalThis.answer = total;
+    })();"#);
 }

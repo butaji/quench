@@ -131,6 +131,8 @@ mod direct_callee;
 pub(super) use direct_callee::{DirectCallee, DirectCandidates, ShadowFrame};
 #[path = "compiled/lane_storage.rs"]
 mod lane_storage;
+mod lane_body_run;
+pub(in crate::vm) use lane_body_run::{BodyRun, CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 #[path = "compiled/general_call.rs"]
 mod general_call;
 #[path = "compiled/general_capture.rs"]
@@ -6760,10 +6762,14 @@ impl LaneExit {
 /// Lane bodies compiled by this process, for tests that a lane activation ran natively.
 #[cfg(test)]
 pub(super) static LANE_METHODS_COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-/// Entries `Vm::run_lane_method` made on this thread and the runs they bound
+/// Entries `Vm::run_lane_body` made on this thread and the runs they bound
 /// (`LaneFrame::bind_run` writing its words), for the crossing-cost test.
 #[cfg(test)]
 thread_local! { pub(super) static LANE_ENTRIES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) }; }
+/// Calls of lane bodies made through their entry cells before any activation
+/// (`dispatch_fast::lane_enter_cell_body`) on this thread, for the crossing test.
+#[cfg(test)]
+thread_local! { pub(super) static LANE_CELL_CROSSINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 /// Calls lane bodies compiled by this process inline, for tests that inlining happened.
 #[cfg(test)]
 pub(super) static LANE_CALLS_INLINED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -7136,62 +7142,10 @@ impl<H: Host> Vm<H> {
         captures: *const usize,
         lane_context: *mut (),
     ) -> LaneExit {
-        let frame = lane_frame();
-        #[cfg(test)]
-        LANE_ENTRIES.with(|counts| counts.set((counts.get().0 + 1, counts.get().1)));
-        // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
-        let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(captures) }
-            .unwrap_or((std::ptr::null(), 0));
-        // SAFETY: the frame lives for the thread and is never moved once made; no reference
-        // into it is held across the body's run, which may enter it again
-        // (`run_nested_lane_method`).
-        let context = unsafe {
-            if (*frame).scratch.len() < method.scratch_width {
-                (*frame).scratch.resize(method.scratch_width, Value::UNDEFINED);
-            }
-            let dispatch = &raw mut (*frame).dispatch;
-            let run = LaneRun {
-                program_id: program,
-                lane_context: lane_context.addr(),
-                residual: residual as *const ResidualProgram as usize,
-                stores_specialized: usize::from(self.specialized && residual.specialized),
-            };
-            (*frame).bind_run(run, &self.execution_interrupt);
-            (*dispatch).field_entries = self.program_field_entries(program).unwrap_or(0);
-            (*dispatch).native_registers = registers;
-            (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
-            (*dispatch).refresh_object_bases_at_entry(self);
-            let vm = self as *mut Self;
-            (*dispatch).bind_lane_storage(vm);
-            // A run starts with no native frames; its direct calls place their callees past
-            // the stack's values.
-            let (top, end, activations, shadow) = self.lane_stack_spare();
-            ((*dispatch).native_top, (*dispatch).native_end) = (top.addr(), end.addr());
-            // A run whose lane may not make the frames' activations makes no direct call.
-            let frames = if direct_calls { SHADOW_FRAMES.min(activations) } else { 0 };
-            (*dispatch).shadow_base = shadow.addr();
-            ((*dispatch).shadow_top, (*dispatch).shadow_end) = (shadow.addr(), shadow.add(frames).addr());
-            &raw mut (*frame).context
-        };
-        // SAFETY: the body was compiled for this function, never allocates or collects, and
-        // reads only the registers, constants and heap bases set above.
-        let BodyReturn { status, value: word } = if method.fault_poll {
-            let poll = native_poll_page(&self.execution_interrupt);
-            // SAFETY: this entry owns the TLS binding until it returns. Reentrant
-            // entries checkpoint it in `run_nested_lane_method`.
-            let context = unsafe { &mut *context };
-            context.bind_native_adapter(context.adapter_payload,
-                self.execution_interrupt.atomic_flag() as *const _, poll);
-            unsafe { enter_body(context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast(), method.entry) }
-        } else {
-            unsafe { (method.entry)(&mut *context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast()) }
-        };
-        if status == LANE_BODY_RETURNED {
-            // SAFETY: as above; the body wrote the record before it returned.
-            let pc = unsafe { (*frame).dispatch.returned_pc };
-            return LaneExit::Returned { pc, value: Value::from_bits(word) };
-        }
-        Self::lane_method_exit(status, word)
+        self.run_lane_body(&BodyRun {
+            method, direct_calls, program, residual, registers, receiver, captures, lane_context,
+            pending: NO_PENDING_ACTIVATIONS,
+        })
     }
 
     /// The native frames the last run left inside, outermost first, which the lane now
