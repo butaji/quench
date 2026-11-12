@@ -275,24 +275,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     /// to a block that `Lowering::finish_number_returns` completes with the joined format.
     #[inline(always)]
     fn ret(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<()> {
-        let Edges::ValueGuarded { miss } = self.edges else { return None };
-        let fact = self.state.values[usize::from(register)].value;
-        let value = if fact.ty.is_subtype(Type::INT32) || fact.representation == Representation::Int32 {
-            register_int_value(stage.builder, self.registers, self.state, register, miss)
-        } else {
-            register_number_value(stage.builder, self.registers, self.state, register, miss)
-        };
-        let fact = self.state.values[usize::from(register)].value;
-        let machine = match fact.representation {
-            Representation::Int32 => types::I32,
-            Representation::Float64 => types::F64,
-            Representation::Tagged => unreachable!("Number return has an unboxed view"),
-        };
-        let block = stage.builder.create_block();
-        stage.builder.append_block_param(block, machine);
-        stage.builder.ins().jump(block, &[value.into()]);
-        self.number_returns.push(NumberReturn { block, fact });
-        Some(())
+        calls::number_return(self, stage, register)
     }
 
     #[inline(always)]

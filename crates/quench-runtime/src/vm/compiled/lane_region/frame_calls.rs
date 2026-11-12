@@ -15,6 +15,29 @@ pub(super) fn safepoint(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, pro
     safepoint_parts(stage.builder, frame.polls, proof)
 }
 
+/// A Number return: the register in the int32 or binary64 view its facts favor, jumped to a
+/// block that `Lowering::finish_number_returns` completes with the joined format.
+pub(super) fn number_return(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, register: Register) -> Option<()> {
+    let super::Edges::ValueGuarded { miss } = frame.edges else { return None };
+    let fact = frame.state.values[usize::from(register)].value;
+    let value = if fact.ty.is_subtype(Type::INT32) || fact.representation == Representation::Int32 {
+        super::register_int_value(stage.builder, frame.registers, frame.state, register, miss)
+    } else {
+        super::register_number_value(stage.builder, frame.registers, frame.state, register, miss)
+    };
+    let fact = frame.state.values[usize::from(register)].value;
+    let machine = match fact.representation {
+        Representation::Int32 => types::I32,
+        Representation::Float64 => types::F64,
+        Representation::Tagged => unreachable!("Number return has an unboxed view"),
+    };
+    let block = stage.builder.create_block();
+    stage.builder.append_block_param(block, machine);
+    stage.builder.ins().jump(block, &[value.into()]);
+    frame.number_returns.push(super::super::NumberReturn { block, fact });
+    Some(())
+}
+
 /// The safepoint emission without a frame: the entry poll-latch fill has no register state.
 pub(in super::super) fn safepoint_parts(builder: &mut cranelift_frontend::FunctionBuilder<'_>,
     polls: &mut smallvec::SmallVec<[cranelift_codegen::ir::Inst; super::super::INLINE_EFFECT_EDGES]>,
