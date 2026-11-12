@@ -13436,6 +13436,7 @@ mod lane_roots;
 mod with_scopes;
 mod scoped_names;
 mod lane_eval;
+mod root_windows;
 use lane_roots::{LaneRoot, LaneStart};
 pub(in crate::vm) use lane_roots::JobEnd;
 mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step};
@@ -20856,7 +20857,9 @@ fn specialize_environment_window<H: Host>(
         // the general step decides.
         let own_name_store = function.is_self_binding_slot(own as usize)
             && matches!(op.class(), Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal);
-        let handler: Handler = mapped.unwrap_or(match (op.class(), environment) {
+        // A program's root, whose slots may stand for bindings outside its window (`root_windows`).
+        let root = function.parent.is_none() && !scoped;
+        let handler: Handler = mapped.or_else(|| root.then(|| root_windows::root_local_handler::<H>(op.class(), environment)).flatten()).unwrap_or(match (op.class(), environment) {
             _ if own_name_store => lane_exit::<H>,
             (Class::MakeClosure, _) if scoped => scoped_names::scoped_closure::<H>(),
             (Class::MakeClosure, _) => lane_make_window_closure::<H>,

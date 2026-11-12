@@ -143,6 +143,7 @@ mod inspection;
 mod caller_view;
 mod environment;
 mod var_owner;
+mod root_bindings;
 mod handler_entry;
 mod equality;
 mod error;
@@ -215,6 +216,7 @@ pub(crate) use regexp::RegExpFlags;
 use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
+use root_bindings::RootBinding;
 use var_owner::{EvalCaller, VarOwner};
 pub(crate) mod operations;
 #[cfg(all(test, feature = "bench-primitives"))]

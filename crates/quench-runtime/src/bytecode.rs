@@ -2437,9 +2437,12 @@ impl Function {
             // Its locals and closures ride an environment window as an ordinary body's do, and so
             // does the `arguments` object it made on entry (`arguments_ride_window`); so do its
             // `with` objects and dynamic bindings, which its record and activation carry.
+            // An async module's body is a program's root, which no function encloses: its slots
+            // that stand for imports and global bindings are read through the activation
+            // (`Vm::root_binding`).
             let suspended_environment = suspendable
                 && !suspended_registers
-                && self.parent.is_some()
+                && (self.parent.is_some() || self.is_async)
                 && self.locals_ride_window(tables);
             CallPlan {
                 environment_activation,

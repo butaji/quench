@@ -658,17 +658,11 @@ impl<H: Host> Vm<H> {
         if let Some(value) = self.direct_eval_var_binding(frame, slot) {
             return Ok(Some(value));
         }
-        if let Some(value) = self.root_global_lexical_value(p, self.frames[frame].function, slot) {
-            return Ok(Some(value));
+        match self.root_binding(self.frame_caller(frame), slot) {
+            Some(RootBinding::GlobalLexical(value) | RootBinding::Import(value)) => Ok(Some(value)),
+            Some(RootBinding::GlobalVar(atom)) => self.get_property(p, self.realm.globals, atom).map(Some),
+            None => Ok(None),
         }
-        if let Some(atom) = self.global_object_var_atom(self.frame_caller(frame), slot) {
-            return self.get_property(p, self.realm.globals, atom).map(Some);
-        }
-        Ok(self.module_import_value(
-            self.frames[frame].program,
-            self.frames[frame].function,
-            slot,
-        ))
     }
 
     fn is_self_binding(&self, atom: Atom) -> bool {

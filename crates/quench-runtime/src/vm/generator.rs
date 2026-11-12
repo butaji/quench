@@ -19,6 +19,8 @@ mod hidden_name_tests;
 #[cfg(test)]
 mod native_step_tests;
 #[cfg(test)]
+mod root_tests;
+#[cfg(test)]
 mod iteration_environment_tests;
 #[cfg(test)]
 mod window_raise_tests;

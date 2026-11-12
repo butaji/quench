@@ -186,6 +186,18 @@ pub(super) mod tests {
         (lines, made)
     }
 
+    /// What running `source` as a module prints, and how many frames its resumes made.
+    pub(in crate::vm) fn module_run(source: &str) -> (Vec<String>, usize) {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = Engine::specialize_module(source, "generator-windows.mjs").unwrap();
+        let before = frames_made();
+        vm.execute(&program).unwrap();
+        let made = frames_made() - before;
+        let lines = output.borrow().clone();
+        (lines, made)
+    }
+
     /// What running `source` prints in each execution mode, which must agree.
     pub(in crate::vm) fn agree(source: &str) -> Vec<String> {
         let outputs: Vec<Vec<String>> = [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled]
