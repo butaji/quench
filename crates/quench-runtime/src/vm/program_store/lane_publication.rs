@@ -20,6 +20,17 @@ pub(in crate::vm) enum NativeCallBinding {
 pub(in crate::vm) type LaneKey = (u32, u32, Option<u32>, u64);
 
 impl ProgramStore {
+    /// The loaded ahead-of-time bodies of `id`, which is `program`.
+    pub(in crate::vm) fn ahead_images(&self, id: super::ProgramId, program: &crate::ResidualProgram) -> Option<Rc<crate::vm::compiled::AheadImages>> {
+        if self.ahead.borrow().is_empty() { return None; }
+        self.ahead.borrow().iter().find(|images| images.is_of(id.raw(), program)).cloned()
+    }
+
+    /// Takes `images` as the ahead-of-time bodies of the program they were compiled from.
+    pub(in crate::vm) fn add_ahead_images(&self, images: crate::vm::compiled::AheadImages) {
+        self.ahead.borrow_mut().push(Rc::new(images));
+    }
+
     /// The published body of `key`, if one still holds.
     pub(in crate::vm) fn installed_lane(&self, key: &LaneKey) -> Option<Rc<PublishedLaneMethod>> {
         self.lane_installed.borrow().get(key).and_then(Weak::upgrade).filter(|published| published.is_published())

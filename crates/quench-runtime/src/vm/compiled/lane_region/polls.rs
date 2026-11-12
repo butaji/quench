@@ -33,6 +33,15 @@ pub(super) fn retain_closed_polls(function: &ir::Function, reentries: &[ir::Bloc
     });
 }
 
+/// The address of the interrupt owner helper: a symbol for a frameless Number region, whose
+/// loader resolves it (`relocs::numeric_symbol`), else the helper table's.
+fn interrupt_owner_address(cursor: &mut cranelift_codegen::cursor::FuncCursor<'_>, helpers: LaneHelpers) -> ir::Value {
+    if helpers.names_symbols() {
+        return crate::vm::jit_backend::symbol_in(cursor, RelocKind::Helper as u32, LaneHelper::InterruptOwner as u32);
+    }
+    helpers.table_address(cursor.ins(), LaneHelper::InterruptOwner)
+}
+
 /// Bind the current owner's proof once, after helper binding and before guest execution.
 /// Each selected poll lies before any reachable callback completion.
 fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers, context: ir::Value,
@@ -45,14 +54,14 @@ fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers,
         LaneHelpers::Bound(table, _) => match function.dfg.value_def(table) {
             ir::ValueDef::Result(inst, _) => Some(inst), _ => unreachable!("bound helper table"),
         },
-        LaneHelpers::Numeric | LaneHelpers::Process(_) => None,
         #[cfg(feature = "aot")]
         LaneHelpers::Linked(..) => unreachable!("helpers bind before lowering"),
+        _ => None,
     };
     let mut cursor = FuncCursor::new(function);
     if let Some(inst) = after { cursor.goto_inst(inst); cursor.next_inst(); }
     else { cursor.goto_inst(cursor.func.layout.first_inst(entry).expect("entry instruction")); }
-    let address = helpers.address(cursor.ins(), LaneHelper::InterruptOwner);
+    let address = interrupt_owner_address(&mut cursor, helpers);
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(ir::AbiParam::new(types::I64));
     signature.returns.push(ir::AbiParam::new(types::I64));

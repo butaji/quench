@@ -76,6 +76,8 @@ use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_n
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
+#[path = "compiled/numeric_image.rs"] mod numeric_image; pub(super) use numeric_image::compile_js_typed_numeric_region;
+#[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, lane_body_signature, BodyEntry, BodyReturn};
 #[path = "compiled/general_tier_queries.rs"] mod general_tier_queries;
 #[path = "compiled/lane_facts.rs"]
@@ -452,35 +454,6 @@ fn emit_number_truthiness(builder: &mut FunctionBuilder<'_>, number: ir::Value) 
     }
 
     crate::vm::operations::number_truthiness(&mut Emit { builder }, number)
-}
-
-/// Bind the numeric JIT ABI to the same semantic SSA specializer used by
-/// frameless JIT bodies and linked AOT regions, without a canonical VM frame.
-pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, function_id: u32)
-    -> Option<super::js_compiled::JsJitArtifact> {
-    use super::specializer::Specializer;
-    let function = program.function_get(function_id as usize)?;
-    let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
-    let isa = super::jit_backend::target_isa()?;
-    let region = lane_region::RegionSpecializer { function_id, unit: &unit,
-        helpers: LaneHelpers::Numeric, fields: &std::collections::BTreeMap::new(),
-        global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
-        direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
-        plan: lane_region::RegionPlan { coverage: lane_region::Coverage::Full,
-            completion: lane_region::Completion::Number, views: lane_region::ElementViews::Dense } }
-        .specialize(program).ok()?;
-    let dump = native_dump_directory().map(|_| region.function.to_string());
-    let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
-        |code| Some(code.to_vec())).ok()?;
-    if let (Some(directory), Some(clif)) = (native_dump_directory(), dump) {
-        dump_native_bytes(directory, function_id, &code, None, &clif);
-    }
-    Some(super::js_compiled::JsJitArtifact {
-        code, params: usize::from(function.params),
-        result: super::js_compiled::JsJitResultKind::SharedNumberEntry(NativeEntryMode::Resumable, region.number_result?),
-        general_dispatch_native_pcs: Vec::new(),
-    })
 }
 
 const MAX_JS_GENERAL_DISPATCH_BLOCKS: usize = 2048;
@@ -1977,8 +1950,11 @@ thread_local! {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneHelpers {
+    /// A frameless Number region: no VM helper capability, helpers named by symbol.
     Numeric,
     Process(&'static [*const (); LaneHelper::COUNT]),
+    /// The compile target "ahead": every run-time address `RelocKind` names is a symbol (`Process`, "live", embeds them).
+    Ahead,
     #[cfg(feature = "aot")]
     Linked(u32, u32),
     #[cfg(feature = "aot")]
@@ -1997,12 +1973,33 @@ impl LaneHelpers {
         Self::Linked(helper_symbol, u32::try_from(program.function_count()).unwrap_or_default())
     }
 
-    fn address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
+    /// Whether this is a frameless Number region, which has no VM helper capability.
+    fn is_numeric(self) -> bool {
+        matches!(self, Self::Numeric)
+    }
+
+    /// Whether helper addresses are symbols a loader resolves, not addresses of this process.
+    pub(super) fn links(self) -> bool {
+        !matches!(self, Self::Process(_))
+    }
+
+    /// The address of `helper`: a symbol, or the table's entry (a symbol per use in live lane
+    /// bodies costs raytrace compile Ir +17.5%, run-only +0.6%).
+    fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
+        if self.names_symbols() { return lane_region::helper_symbol(builder, helper); }
+        self.table_address(builder.ins(), helper)
+    }
+
+    /// Whether helpers are symbols a loader resolves, not table entries.
+    fn names_symbols(self) -> bool {
+        matches!(self, Self::Numeric | Self::Ahead)
+    }
+
+    /// The address of `helper` in this process's table, embedded, or loaded from the bound one.
+    fn table_address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
         match self {
-            Self::Numeric => match helper {
-                LaneHelper::InterruptOwner => builder.iconst(types::I64, lane_interrupt_owner as *const () as usize as i64),
-                _ => unreachable!("frameless Number regions have no VM helper capability"),
-            },
+            Self::Numeric => unreachable!("a frameless Number region names its helper by symbol"),
+            Self::Ahead => unreachable!("an ahead region names its helper by symbol"),
             Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
             #[cfg(feature = "aot")]
             Self::Bound(table, _) => {
@@ -6592,6 +6589,7 @@ struct JsStepDispatch {
     /// `epoch`, and the admission a site whose entry misses asks.
     call_cache: usize,
     epoch: u64,
+    layout_seen: u64, // `Heap::native_layout_epoch` at the last lane entry's refresh; `u64::MAX`: never
     frameless: usize,
     /// The VM's in-loop call targets (`Vm::in_loop_call_target`), which an inlined body's
     /// binding probes before its helper; an empty table where an eval binds no callee.
@@ -7148,7 +7146,7 @@ impl<H: Host> Vm<H> {
             }
             .install(&mut *dispatch);
             (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
-            (*dispatch).refresh_object_bases(self);
+            (*dispatch).refresh_object_bases_at_entry(self);
             (*dispatch).stores_specialized = usize::from(self.specialized && residual.specialized);
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);
@@ -7189,20 +7187,17 @@ impl<H: Host> Vm<H> {
 
     /// The native frames the last run left inside, outermost first, which the lane now
     /// materializes (`ShadowFrame`); none once taken.
-    pub(super) fn take_shadow_frames() -> &'static [ShadowFrame] {
+    pub(super) fn take_shadow_frames() -> ShadowFrames {
         let frame = lane_frame();
         // SAFETY: no lane body runs while the lane reads the frame; the frames sit past the
-        // activations' end, which the lane's own pushes (materialization) then overwrite in
-        // order, so their native prefixes are copied out first.
+        // activations' end, which the lane's own pushes (materialization) overwrite in
+        // order, each after the frame it replaces was read (`ShadowFrames::get`).
         unsafe {
             let base = (*frame).dispatch.shadow_base as *const Activation;
             let top = (*frame).dispatch.shadow_top as *const Activation;
             let count = if top.is_null() { 0 } else { top.offset_from(base) as usize };
             (*frame).dispatch.shadow_top = base.addr();
-            for index in 0..count {
-                (*frame).leaving[index] = (*base.add(index)).native;
-            }
-            std::slice::from_raw_parts((*frame).leaving.as_ptr(), count)
+            ShadowFrames { base, count }
         }
     }
 
@@ -7286,6 +7281,22 @@ impl<H: Host> Vm<H> {
 /// machine stack each costs a frame; the bound keeps a native recursion within it.
 const SHADOW_FRAMES: usize = 64;
 
+/// The native frames a leave took (`Vm::take_shadow_frames`): the prefixes of `count` activations
+/// at `base`, in the activations' spare room, where materialization makes the activations in place.
+#[derive(Clone, Copy)]
+pub(super) struct ShadowFrames {
+    base: *const Activation,
+    pub(super) count: usize,
+}
+
+impl ShadowFrames {
+    /// Frame `index`, outermost first, read before the activation that replaces it is pushed.
+    pub(super) fn get(&self, index: usize) -> ShadowFrame {
+        // SAFETY: `index < count` frames were pushed in place by the run that left.
+        unsafe { (*self.base.add(index)).native }
+    }
+}
+
 /// `shadow_base` before any lane body ran on the frame: no frame word equals it, so a helper
 /// a loop region calls then sees native frames (`lane_shadow_active`) and its call leaves.
 const NO_LANE_RUN: usize = usize::MAX;
@@ -7330,9 +7341,6 @@ struct LaneFrame {
     dispatch: JsStepDispatch,
     /// The registers of an inlined callee its lane body left inside.
     scratch: Vec<Value>,
-    /// The native prefixes of the frames a leave took out of the activations' spare room, outermost
-    /// first (`Vm::take_shadow_frames`).
-    leaving: Box<[ShadowFrame; SHADOW_FRAMES]>,
 }
 
 impl LaneFrame {
@@ -7366,7 +7374,7 @@ impl LaneFrame {
                 field_entries: 0,
                 field_store: 0,
                 field_get: 0, field_getter: 0,
-                native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0,
+                native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0,
                 allocated: 0,
                 collect_at: 0,
                 loop_entry: 0,
@@ -7392,7 +7400,6 @@ impl LaneFrame {
                 outcome: None,
             },
             scratch: Vec::new(),
-            leaving: Box::new([ShadowFrame::EMPTY; SHADOW_FRAMES]),
         }
     }
 }
@@ -7518,7 +7525,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
+            field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,

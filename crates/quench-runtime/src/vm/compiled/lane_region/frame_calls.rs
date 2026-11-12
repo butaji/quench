@@ -39,7 +39,7 @@ pub(super) fn index_set_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
     value: cranelift_codegen::ir::Value, proof: EmitProof) -> Option<()> {
     let EmitProof::IndexSetHelper { miss } = proof else { return None };
     let payload = frame.payload;
-    let address = frame.helpers.address(stage.builder.ins(), LaneHelper::IndexSet);
+    let address = frame.helpers.address(&mut stage.builder, LaneHelper::IndexSet);
     let stored = emit_lane_helper_call(stage.builder, payload, address, &[base, key, value]);
     let hit = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
     emit_js_guard(stage.builder, hit, miss);
@@ -62,9 +62,9 @@ pub(super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
     atom: u32, site: u16, value: ir::Value, proof: EmitProof) -> Option<()> {
     let EmitProof::FieldStoreMiss { miss } = proof else { return None };
     let payload = frame.payload;
-    let atom = stage.builder.ins().iconst(types::I64, i64::from(atom));
+    let atom = atom_word(frame, stage, atom);
     let site = stage.builder.ins().iconst(types::I64, i64::from(site));
-    let set = frame.helpers.address(stage.builder.ins(), LaneHelper::FieldSet);
+    let set = frame.helpers.address(&mut stage.builder, LaneHelper::FieldSet);
     let stored = emit_lane_helper_call(stage.builder, payload, set, &[object, atom, site, value]);
     let ok = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
     emit_js_guard(stage.builder, ok, miss);
@@ -73,8 +73,8 @@ pub(super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
 
 /// The lane's own global-name read word (`LaneHelper::GlobalGet`): `Value::DELETED` where it misses.
 fn global_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32, site: u16) -> ir::Value {
-    let (atom, site) = (immediate(stage, i64::from(atom)), immediate(stage, i64::from(site)));
-    let get = frame.helpers.address(stage.builder.ins(), LaneHelper::GlobalGet);
+    let (atom, site) = (atom_word(frame, stage, atom), immediate(stage, i64::from(site)));
+    let get = frame.helpers.address(&mut stage.builder, LaneHelper::GlobalGet);
     emit_lane_helper_call(stage.builder, frame.payload, get, &[atom, site])
 }
 
@@ -98,6 +98,12 @@ fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination:
 
 /// The 64-bit immediate `bits`.
 fn immediate(stage: &mut Emit<'_, '_>, bits: i64) -> ir::Value { stage.builder.ins().iconst(types::I64, bits) }
+
+/// The word of `atom`: its id now for a live lowering, its symbol for a linking one (`RelocKind::Atom`).
+fn atom_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32) -> ir::Value {
+    if !frame.helpers.links() { return immediate(stage, i64::from(atom)); }
+    crate::vm::jit_backend::symbol_address(&mut stage.builder, types::I64, super::relocs::RelocKind::Atom as u32, atom)
+}
 
 /// `value` as the tagged immediate `destination` holds under `fact`.
 fn define_immediate(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, value: Value,

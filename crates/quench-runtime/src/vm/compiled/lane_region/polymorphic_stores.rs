@@ -28,7 +28,7 @@ impl Lowering<'_, '_> {
     /// The store of `value` to `atom` of `object` by the VM's own, polymorphic and adding
     /// entries (`compiled::lane_field_add`); a miss leaves through `exit`.
     pub(super) fn field_add(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
-        let write = self.ins().iconst(types::I64, (u64::from(atom) << u16::BITS | u64::from(site)) as i64);
+        let write = self.atom_site_word(atom, site);
         let payload = self.payload;
         let stored = self.helper_call(LaneHelper::FieldAdd, &[payload, object, write, value]);
         self.forget_append_rooms(self.at);

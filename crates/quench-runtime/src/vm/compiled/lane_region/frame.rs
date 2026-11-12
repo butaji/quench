@@ -55,7 +55,7 @@ impl EmitFrame<'_> {
         proof: EmitProof) -> Option<ir::Value> {
         let EmitProof::Allocation { miss } = proof else { return None };
         let payload = self.payload;
-        let address = self.helpers.address(stage.builder.ins(), helper);
+        let address = self.helpers.address(&mut stage.builder, helper);
         let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[&[payload], arguments].concat());
         calls::finish_allocation(stage, self, destination, value, miss);
         Some(value)
