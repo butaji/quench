@@ -286,7 +286,7 @@ fn frame(shape: &CallShape, callee: &Callee, base: Register) -> Frame {
         receiver: shape.this,
         window: shape.window,
         arguments: shape.argc,
-        result: Some(shape.result),
+        result: (!shape.returning).then_some(shape.result),
         base,
         registers: callee.registers,
         alternative: None,
@@ -330,7 +330,7 @@ mod tests {
     use oxc_ast::ast::BinaryOperator;
     use std::rc::Rc;
 
-    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6 };
+    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false };
     /// The caller's registers: the callee's window starts here.
     const BASE: Register = 8;
     const IDENTITY: u64 = 7;
@@ -434,6 +434,16 @@ mod tests {
         assert_eq!(InlineSite::plan(&SHAPE, &facts(), &missing, &mut Context::root(CALLER, BASE)).err(), Some(Refused::Arguments));
         let record = DirectFacts { callee: IDENTITY + 1, ..facts() };
         assert_eq!(InlineSite::plan(&SHAPE, &record, &callee(&code, &HOMES, &live), &mut Context::root(CALLER, BASE)).err(), Some(Refused::Identity));
+    }
+
+    #[test]
+    fn a_returning_call_has_no_result_register_to_resume_into() {
+        let (code, live, mut context) = (sum(), parameters_live(), Context::root(CALLER, BASE));
+        let returning = CallShape { returning: true, ..SHAPE };
+        let site = InlineSite::plan(&returning, &facts(), &callee(&code, &HOMES, &live), &mut context).expect("inlined");
+        assert_eq!((site.frame.result, site.frame.call), (None, SHAPE.call_pc));
+        let site = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut Context::root(CALLER, BASE)).expect("inlined");
+        assert_eq!(site.frame.result, Some(SHAPE.result));
     }
 
     #[test]

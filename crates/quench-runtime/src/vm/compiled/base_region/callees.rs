@@ -48,9 +48,10 @@ pub(in crate::vm::compiled) struct Callees {
     stable: Vec<Option<GlobalFact>>,
 }
 
-/// Whether the call at `instruction` is one a body's call chain makes.
+/// Whether the call at `instruction` is one a body's call chain makes: a call whose result is its
+/// register's, or one that returns its result (`return f(x)`).
 pub(super) fn chains(instruction: WideInstruction) -> bool {
-    instruction.op().class() == Class::Call && instruction.result_flags() == 0 && !instruction.direct_eval() && !instruction.parameter_eval()
+    instruction.op().class() == Class::Call && matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER) && !instruction.direct_eval() && !instruction.parameter_eval()
 }
 
 /// The callee the call site `instruction` makes calls, if its body's call chain makes it: the

@@ -107,7 +107,8 @@ impl Stitched {
     /// invalidation word at `held` where a call before it may have changed a fact it folds), then its rows, which leave inside
     /// the callee at their instruction, except the copies of the arguments, which leave at the call.
     /// Its registers are live where the callee's are, and where the caller's are live at
-    /// the call or past it (the result excepted, which the callee writes).
+    /// the call or past it (the result excepted, which the callee writes; a returning call has no
+    /// past).
     fn site(&mut self, region: &LoopRegion, pc: u32, registers: u16, site: InlineSite, held: Option<usize>) {
         let frame = self.frames.len();
         self.frames.push(site.frame);
@@ -123,7 +124,8 @@ impl Stitched {
             self.push(proof, Origin::Caller(pc), callers(region, pc, registers));
         }
         let (first, result) = (self.rows.len() as u32, site.shape.result);
-        let around: Vec<Register> = callers(region, pc, registers).chain(callers(region, pc + 1, registers).filter(|register| *register != result)).collect();
+        let after = callers(region, pc + 1, registers).filter(|register| *register != result && !site.shape.returning);
+        let around: Vec<Register> = callers(region, pc, registers).chain(after).collect();
         for row in site.rows {
             let caller = if row.pc.is_some() { around.clone() } else { callers(region, pc, registers).collect() };
             let decoded = Decoded { target: row.decoded.target.map(|target| first + target), ..row.decoded };

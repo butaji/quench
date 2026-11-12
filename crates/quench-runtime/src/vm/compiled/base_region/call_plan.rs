@@ -2,9 +2,10 @@
 //! chain of stencil parts (`quench-bjit/stencils/call_rows.rs` holds the rows and their register
 //! and stack contract; `quench_bjit::call` names them).
 //!
-//! A call whose callee is small and monomorphic is not a chain at all where its callee is one
-//! row: the stitcher decodes it as that row (`inline::InlineSite`), so no part is planned and
-//! the pinned registers stay where they are.
+//! A call whose callee is small and monomorphic is not a chain at all: the stitch splices in the
+//! callee's rows (`inline::InlineSite`), so no part is planned and the pinned registers stay where
+//! they are. A call that returns its result (`return f(x)`) is followed by the row that completes
+//! the activation with it.
 //!
 //! The chain, in layout order:
 //!
@@ -55,6 +56,8 @@ pub(super) struct CallShape {
     pub(super) window: Register,
     pub(super) argc: u16,
     pub(super) result: Register,
+    /// The call completes its caller's activation with its result (`return f(x)`).
+    pub(super) returning: bool,
 }
 
 impl CallShape {
@@ -67,6 +70,7 @@ impl CallShape {
             window: ImmediateLayout::call_window_base(imm),
             argc: ImmediateLayout::argument_count(imm),
             result: instruction.result_register(),
+            returning: instruction.returns_from_frame(),
         }
     }
 }
@@ -269,7 +273,7 @@ mod tests {
     use super::*;
     use quench_bjit::call_record as protocol;
 
-    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6 };
+    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false };
 
     fn facts(registers: u16, params: u16) -> DirectFacts {
         let cell = CellFacts { registers, room: registers, params, entry: ENTRY_ACTIVATES as u8 };

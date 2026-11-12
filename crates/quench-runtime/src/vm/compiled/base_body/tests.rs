@@ -296,3 +296,32 @@ fn a_closure_held_callee_keeps_its_guard() {
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the bodies ran {runs} times");
 }
+
+/// `return f(x)` is the call and the completion with its result: a chain of returning calls, the
+/// innermost callee inlined, runs in bodies that never leave.
+#[test]
+fn returning_calls_run_in_a_body_and_chain() {
+    assert_bodies_never_leave(
+        "function leaf(x) { return x * 3 + 1; }
+         function mid(x) { return leaf(x + 1); }
+         function top(x) { return mid(x); }
+         var t = 0; for (var k = 0; k < 300; k++) t = (t + top(k % 11)) | 0;
+         print(t);",
+    );
+}
+
+/// A returning call whose callee is not the one recorded, or whose argument is no int32, leaves at
+/// the call and the interpreter makes it, so the output is the interpreter's.
+#[test]
+fn a_returning_call_that_misses_prints_what_the_interpreter_prints() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function twice(x) { return x + x; }
+         function f(x) { return twice(x); }
+         var t = 0; for (var k = 0; k < 300; k++) t = (t + f(k % 9)) | 0;
+         print(t); print(f(0.25)); print(f('4')); print(f(2147483647));
+         twice = function (x) { return -x; };
+         print(f(5));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+}

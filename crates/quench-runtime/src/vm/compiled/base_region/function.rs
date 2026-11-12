@@ -39,23 +39,34 @@ struct Sites<'a> {
     registers: u16,
 }
 
-/// The row of the instruction at `pc`: a `Return` of a register, a call the stitch inlines as its
-/// callee's rows or the call planner's chain, else what the loop regions' decode covers (a leave
-/// where nothing does).
-fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction, helpers: LaneHelpers) -> What {
+/// The row that completes the activation with the register `register` holds.
+fn returned(register: Register) -> Decoded {
+    Decoded { a: Some(Source::Register(register)), ..Decoded::step(Step::Return, None) }
+}
+
+/// A call: the stitch's site where its callee inlines, else the call planner's chain; and where
+/// it returns its result (`return f(x)`), the completion with it. A tail jump that reuses the
+/// caller's frame for the callee's window is not made: the lane stack holds one activation per
+/// native frame, and a leave rebuilds them (`lane_materialize_frames`), which a frame the callee
+/// took over would leave inexact.
+fn call(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction) -> Vec<What> {
+    let shape = CallShape::of(pc, instruction);
+    let first = match sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape) {
+        Some(site) => What::Site(site),
+        None => What::Row(Decoded::step(Step::Call(shape), Some(shape.result))),
+    };
+    let completion = shape.returning.then(|| What::Row(returned(shape.result)));
+    std::iter::once(first).chain(completion).collect()
+}
+
+/// The rows of the instruction at `pc`: a `Return` of a register, a call, else what the loop
+/// regions' decode covers (a leave where nothing does).
+fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction, helpers: LaneHelpers) -> Vec<What> {
     let plain = instruction.result_flags() == 0;
     match instruction.op().class() {
-        Class::Return if plain && instruction.register_a() < sites.registers => {
-            What::Row(Decoded { a: Some(Source::Register(instruction.register_a())), ..Decoded::step(Step::Return, None) })
-        }
-        Class::Call if chains(instruction) => {
-            let shape = CallShape::of(pc, instruction);
-            match sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape) {
-                Some(site) => What::Site(site),
-                None => What::Row(Decoded::step(Step::Call(shape), Some(shape.result))),
-            }
-        }
-        _ => What::Row(decode(region, Facts::Site, pc, instruction, helpers)),
+        Class::Return if plain && instruction.register_a() < sites.registers => vec![What::Row(returned(instruction.register_a()))],
+        Class::Call if chains(instruction) => call(region, pc, sites, instruction),
+        _ => vec![What::Row(decode(region, Facts::Site, pc, instruction, helpers))],
     }
 }
 
@@ -179,10 +190,11 @@ fn widened_rows(origins: &[Origin], widened: &[usize]) -> Vec<usize> {
     origins.iter().enumerate().filter(|(_, origin)| widens(origin)).map(|(k, _)| k).collect()
 }
 
-/// Every caller instruction as its part: its row, or its call's site.
+/// Every caller instruction as its parts: its row, or its call's site, and a returning call's
+/// completion.
 fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Part> {
     let instructions = region.instructions().iter().enumerate();
-    instructions.map(|(pc, instruction)| Part { pc: pc as u32, what: cover(region, pc as u32, sites, *instruction, helpers) }).collect()
+    instructions.flat_map(|(pc, instruction)| cover(region, pc as u32, sites, *instruction, helpers).into_iter().map(move |what| Part { pc: pc as u32, what })).collect()
 }
 
 fn assemble_body(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {
