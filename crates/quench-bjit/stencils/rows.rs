@@ -3,14 +3,16 @@
 //! in r13, the pinned ints in r14, r15, rdi, rsi and the pinned doubles in xmm0..7, and every
 //! successor is a guaranteed tail call (`become`) through a hole (`HOLE_NEXT`, `HOLE_TAKEN`,
 //! `HOLE_EXIT0`); no row saves or restores a register. `HOLE_V<n>` are the value holes the
-//! stitcher patches. `build.rs` appends the generated instances (one row per kind, places and
-//! speculation) after this file and turns the object's relocations into the stencil tables.
+//! stitcher patches. `build.rs` compiles this file once per shard, each appending its own slice of
+//! the generated instances (one row per kind, places and speculation); `entry.rs`'s fixed rows
+//! belong to the shard built with `--cfg fixed_rows` and turns the object's relocations into the stencil tables.
 #![no_std]
 #![feature(explicit_tail_calls, rust_preserve_none_cc)]
 #![allow(incomplete_features, non_upper_case_globals, dead_code, unused_imports)]
 extern crate core as std;
 
 mod codes;
+#[cfg(fixed_rows)]
 mod entry;
 mod facade;
 mod heap_rows;
@@ -82,4 +84,4 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-include!(concat!(env!("OUT_DIR"), "/instances.rs"));
+include!(env!("QUENCH_STENCIL_INSTANCES"));
