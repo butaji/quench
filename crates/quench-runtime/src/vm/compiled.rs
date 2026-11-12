@@ -86,6 +86,7 @@ pub(super) use numeric_image::NumericImage;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
 #[path = "compiled/tier_model.rs"] mod tier_model;
+#[path = "compiled/loop_model.rs"] pub(in crate::vm) mod loop_model;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
 mod static_loops;

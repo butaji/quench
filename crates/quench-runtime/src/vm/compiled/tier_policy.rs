@@ -46,18 +46,18 @@ pub(in crate::vm) struct Priors {
 
 /// The loop tier (OSR regions at backward jumps).
 pub(in crate::vm) struct Loops {
-    /// Backward jumps a loop takes in the interpreter before it compiles: enough that loops
-    /// which run briefly never pay the compilation.
-    pub(in crate::vm) threshold: u32,
-    /// Native runs that complete no iteration, less the iterations other runs complete, before
-    /// the site stops entering native code: a loop whose runs keep leaving before their
-    /// backward jump (a guard that fails each iteration, a loop that seldom iterates) is the
-    /// interpreter's. Richards --jit entered one list walk 6M times for 0.02 iterations a run.
-    pub(in crate::vm) max_exits: u32,
-    /// Entries a site's guards may decline in a row before it stops trying: a field whose cache
-    /// never hits at entry (an array's `length`) made V8-v7 Crypto's sum loop decline at each of
-    /// its iterations.
-    pub(in crate::vm) max_declines: u32,
+    /// The backward jumps a loop takes in the interpreter before the tier model weighs its
+    /// compile (`loop_model`): a resource and correctness floor, enough that the call sites of
+    /// its body have linked their targets (which the region inlines) and its entry facts are
+    /// observed. The model asks more where the compile does not yet pay.
+    pub(in crate::vm) warmup_taken: u32,
+    /// IR instructions a bytecode of a loop's span compiles to, which prices the compile before
+    /// it runs (its own census replaces the guess in the learned cost per IR instruction).
+    pub(in crate::vm) ir_per_bytecode: u64,
+    /// The weight of the prior that a site's native entries repay themselves, in entries: the
+    /// site's measured runs outweigh it as they mount (`loop_model::repays`), and it stops
+    /// entering where its entries cost more than the iterations they ran save.
+    pub(in crate::vm) prior_runs: u64,
     /// Runs that leave at one operation before the site compiles again with that operation's
     /// int32 speculation dropped (`LoopTier::left_at`): a sum that overflows on most runs
     /// (SHA-256's rounds) is a double's, and one that overflowed once is not.
@@ -192,7 +192,7 @@ pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
 /// Each threshold at the least value its controller accepts. Thresholds only price
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
-    loops: Loops { threshold: 2, ..MEASURED.loops },
+    loops: Loops { warmup_taken: 2, ..MEASURED.loops },
     lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
@@ -203,7 +203,7 @@ const FLOOR: Tiers = Tiers {
 pub(in crate::vm) const PERCENT: u64 = 100;
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8 },
+    loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 8 },
     lane_body: LaneBody {
         warmup_entries: 400,
         reoptimize_share: 1,

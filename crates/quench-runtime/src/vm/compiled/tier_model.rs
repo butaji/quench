@@ -27,7 +27,7 @@ pub(super) struct Observed {
 /// has one (the compile then takes the program's own time).
 const SINGLE_CORE: usize = 1;
 
-fn compile_wall_permille() -> u64 {
+pub(super) fn compile_wall_permille() -> u64 {
     static SHARE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *SHARE.get_or_init(|| match std::thread::available_parallelism() {
         Ok(cores) if cores.get() > SINGLE_CORE => TIERS.priors.compile_wall_permille,
@@ -62,7 +62,7 @@ pub(super) fn note_compile(took: std::time::Duration, ir: usize) {
     COMPILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).record(&TIERS.priors, took.as_nanos() as u64, ir);
 }
 
-fn learned_ns_per_ir() -> u64 {
+pub(super) fn learned_ns_per_ir() -> u64 {
     COMPILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).ns_per_ir(&TIERS.priors)
 }
 

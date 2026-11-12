@@ -27,9 +27,9 @@ struct Case {
 
 const HARNESS: &str = "var weak = {}, kept = null;\nfunction release() { kept = null; }\n";
 
-/// Runs `make` past the loop tier-up threshold before the final run, so the closures are made
+/// Runs `make` past the loop tier-up (the model's requirement for a short loop is a few thousand jumps) before the final run, so the closures are made
 /// and their activations unwound by tiered code too.
-const HOT_RUNS: u32 = 2 * crate::vm::compiled::tier_policy::TIERS.loops.threshold;
+const HOT_RUNS: u32 = 4000;
 
 const CASES: &[Case] = &[
     Case {
