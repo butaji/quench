@@ -6037,13 +6037,25 @@ thread_local! {
 /// A native OSR region published by the shared compiler. Its lowerer is private to this
 /// module; lanes only ask the region to run and inspect its exact-PC widening result.
 pub(super) struct CompiledOsrRegion {
-    _code: CodeMemory,
+    code: CodeMemory,
     entry: Entry,
     pub(super) facts: OsrFacts,
     crossing: Crossing,
+    /// The inline-cache entries of the code a miss may re-patch (`base_region::CacheSites`).
+    sites: std::cell::RefCell<base_region::CacheSites>,
 }
 
 impl CompiledOsrRegion {
+    /// A miss at the cache site of `pc` met `load`'s shape: points the site's one entry at it by
+    /// rewriting its shape and slot in the published code (through the code heap's write view),
+    /// where the entry's slot type and dependencies allow and the site has patches left.
+    /// `watch` is the region's publication, which the new load's slot observation retires.
+    #[allow(dead_code)] // called from the leave path once it carries the receiver's load
+    pub(in crate::vm) fn repatch(&self, pc: u32, atom: crate::bytecode::Atom, load: &NativeFieldLoad, watch: &Rc<dyn crate::code_dependencies::DependentCode>, heap: &mut crate::heap::Heap) -> base_region::Repatch {
+        let subscribe = || OsrFacts::of_loads([load]).subscribe(watch, heap);
+        self.sites.borrow_mut().repatch(pc, atom, load, subscribe, |at, value| self.code.write_imm32(at, value))
+    }
+
     /// Runs the region on `registers` with `entry`'s record, through the native entry every
     /// compiled artifact shares (`enter_native`).
     ///

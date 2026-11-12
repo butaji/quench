@@ -75,12 +75,13 @@ fn layout(rows: &[Row]) -> (Vec<usize>, Vec<usize>, usize) {
 }
 
 /// Bytes a 32-bit immediate or pc-relative patch writes, and an absolute one.
-const IMM32_WIDTH: usize = 4;
+pub const IMM32_WIDTH: usize = 4;
 const ABS64_WIDTH: usize = 8;
 
-/// Every patch lands inside the row's copied code: a write past it would overwrite the next
-/// row's first bytes.
-fn patch_ends_inside(offset: u32, width: usize, size: usize, what: &str) {
+/// Every patch lands inside the code it patches, at link time (a row's copied code: a write
+/// past it would overwrite the next row's first bytes) and at run time (an inline-cache
+/// re-patch of published code, which must end inside the body's own bytes).
+pub fn patch_ends_inside(offset: u32, width: usize, size: usize, what: &str) {
     assert!(offset as usize + width <= size, "{what} patch ends past its row's code");
 }
 

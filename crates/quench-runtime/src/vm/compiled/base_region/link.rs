@@ -152,7 +152,7 @@ fn row_starts(planned: &[Planned]) -> Vec<usize> {
 }
 
 /// Lays the entry rows, rows and leave stubs out as one code buffer behind the entry thunk.
-pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<Vec<u8>, String> {
+pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, CacheSites), String> {
     let (header, backedge) = (layout.header, layout.backedge);
     // A row's own rows run before and after it at its PC: a branch to the PC lands on the first.
     let body: Vec<&Planned> = planned.iter().flat_map(|row| row.pre.iter().chain(std::iter::once(row)).chain(&row.post)).collect();
@@ -184,7 +184,8 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<Vec<u8>, Stri
     rows.extend(body.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &*hole_fns[g + k], taken: targets[k] }));
     rows.extend(leave_stencils.iter().enumerate().map(|(k, stencil)| Placed { stencil, hole: &*hole_fns[g + n + k], taken: None }));
     let (exits, routines) = exit_routines(layout, &body, g)?;
-    place_rows(&rows, &exits, &routines)
+    let (code, offsets) = place_rows(&rows, &exits, &routines)?;
+    Ok((code, CacheSites::collect(&body, g, &offsets)))
 }
 
 pub(super) fn leaf_index(layout: &Layout, leaves: &mut Vec<(u64, Vec<u8>)>, pc: u32) -> Result<usize, String> {
@@ -198,15 +199,15 @@ pub(super) fn leaf_index(layout: &Layout, leaves: &mut Vec<(u64, Vec<u8>)>, pc: 
 
 /// Copies the rows behind the thunk, then the exit routines and each row's stub, patching each
 /// row's exit to its stub; the code is position independent, so the buffer can move to
-/// executable memory.
-pub(super) fn place_rows(rows: &[Placed], exits: &[(usize, u32, usize)], routines: &[Vec<u8>]) -> Result<Vec<u8>, String> {
+/// executable memory. Also each row's start offset in the code.
+pub(super) fn place_rows(rows: &[Placed], exits: &[(usize, u32, usize)], routines: &[Vec<u8>]) -> Result<(Vec<u8>, Vec<usize>), String> {
     let head = thunk(0)?.len();
     let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();
     let tail: usize = routines.iter().map(Vec::len).sum::<usize>() + exits.len() * EXIT_STUB_LEN;
     let mut code = vec![0u8; head + bound + tail];
     let base = code.as_mut_ptr();
     // SAFETY: `base + head` has room for every stencil's full length, which bounds the rows.
-    let (len, _) = unsafe { quench_bjit::copy_patch(rows, base.add(head), |_, _| base as usize) };
+    let (len, starts) = unsafe { quench_bjit::copy_patch(rows, base.add(head), |_, _| base as usize) };
     let mut at = head + len;
     let mut routine_at = Vec::with_capacity(routines.len());
     for routine in routines {
@@ -227,5 +228,5 @@ pub(super) fn place_rows(rows: &[Placed], exits: &[(usize, u32, usize)], routine
     let thunk_bytes = thunk(head)?;
     code[..head].copy_from_slice(&thunk_bytes);
     code.truncate(at);
-    Ok(code)
+    Ok((code, starts.into_iter().map(|start| head + start).collect()))
 }

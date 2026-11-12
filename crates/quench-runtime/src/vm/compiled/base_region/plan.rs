@@ -68,11 +68,14 @@ pub(super) struct Planned {
     /// frame slots only; these move its operands and result between the slot and a pinned register).
     pub(super) pre: Vec<Planned>,
     pub(super) post: Vec<Planned>,
+    /// Set where the row is a site's only cache entry and its shape and slot may be re-patched
+    /// in place (`patch.rs`).
+    pub(super) patch: Option<SiteEntry>,
 }
 
 impl Planned {
     fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
-        Self { stencil, holes, target, exit_pc, pre: Vec::new(), post: Vec::new() }
+        Self { stencil, holes, target, exit_pc, pre: Vec::new(), post: Vec::new(), patch: None }
     }
 }
 

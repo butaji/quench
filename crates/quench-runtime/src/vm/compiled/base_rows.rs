@@ -85,6 +85,18 @@ pub(super) fn cache_holes(operands: [u64; CACHE_ENTRY_HOLE], entry: EntryHoles) 
     holes
 }
 
+/// Where a cache entry's shape and slot offset sit among its holes (`EntryHoles`) for a get and
+/// for a store: the two operands an in-place re-patch rewrites. The entry holes' constructors
+/// below put them there.
+#[derive(Clone, Copy)]
+pub(super) struct EntryOperands {
+    pub(super) shape: usize,
+    pub(super) slot: usize,
+}
+
+pub(super) const GET_ENTRY_OPERANDS: EntryOperands = EntryOperands { shape: 0, slot: 1 };
+pub(super) const SET_ENTRY_OPERANDS: EntryOperands = EntryOperands { shape: 1, slot: 2 };
+
 /// The byte offset of `load`'s slot in a flat run of arena values.
 fn slot_offset(load: &NativeFieldLoad) -> u64 {
     u64::from(load.slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64

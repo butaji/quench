@@ -24,12 +24,15 @@ use std::sync::Mutex;
 mod cache;
 mod decode;
 mod link;
+mod patch;
 mod plan;
 mod repr;
 mod webs;
 use cache::*;
 use decode::*;
 use link::*;
+pub(in crate::vm) use patch::{CacheSites, Repatch};
+use patch::SiteEntry;
 use plan::*;
 use repr::*;
 use webs::*;
@@ -166,6 +169,8 @@ pub(super) struct Built {
     pub(super) code: Vec<u8>,
     pub(super) bare: bool,
     pub(super) embedded: Vec<NativeFieldLoad>,
+    /// Where each re-patchable cache entry's shape and slot sit in `code`.
+    pub(super) sites: CacheSites,
 }
 
 fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], loads: &[Vec<NativeFieldLoad>]) -> Result<Built, String> {
@@ -193,7 +198,8 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     }
     let bare = decoded.iter().all(|row| row.heap.is_none());
     let embedded = decoded.iter().filter_map(|row| row.cache.as_ref()).flat_map(|cache| cache.loads.iter().copied()).collect();
-    Ok(Built { code: link(&layout, &body)?, bare, embedded })
+    let (code, sites) = link(&layout, &body)?;
+    Ok(Built { code, bare, embedded, sites })
 }
 
 impl<H: crate::Host> crate::vm::Vm<H> {

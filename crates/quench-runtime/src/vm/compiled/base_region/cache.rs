@@ -26,14 +26,14 @@ pub(super) struct Cache {
 /// Whether a get takes the entry: a plan the layout admits, a receiver that is an object record
 /// (a function record's own fields are not read here), and a flat own slot or one a prototype
 /// holds (a holder that keeps its values inline misses at run time).
-fn takes_get(load: &NativeFieldLoad) -> bool {
+pub(super) fn takes_get(load: &NativeFieldLoad) -> bool {
     load.valid() && !load.function_shape && (load.holder.is_some() || Form::of(load.storage, load.storage_len) == Form::Arena)
 }
 
 /// Whether a store takes the entry: an own flat slot whose observed type a stored Number keeps:
 /// no compiled read of the slot assumed more (`SlotDependency`), or an int32 slot, which the row
 /// guards (`Heap::CacheSetInt`).
-fn takes_set(load: &NativeFieldLoad) -> bool {
+pub(super) fn takes_set(load: &NativeFieldLoad) -> bool {
     takes_get(load) && load.holder.is_none() && store_heap(load).is_some()
 }
 
@@ -100,7 +100,8 @@ pub(super) fn cache_plan(decoded: &Decoded, cache: &Cache, homes: &Homes, pc: u3
         let chained = k + 1 < cache.loads.len();
         let (row, holes) = entry_row(decoded, cache, load, (dst, a), chained, operands)?;
         let target = chained.then_some(pc + 1);
-        parts.push(Planned { stencil: base_rows::stencil(row)?, holes, target, exit_pc: Some(pc), pre: Vec::new(), post: Vec::new() });
+        let patch = SiteEntry::of(pc, store, load, cache.loads.len());
+        parts.push(Planned { stencil: base_rows::stencil(row)?, holes, target, exit_pc: Some(pc), pre: Vec::new(), post: Vec::new(), patch });
     }
     let mut last = parts.pop().ok_or("a cache access with no entry")?;
     last.pre = parts;
