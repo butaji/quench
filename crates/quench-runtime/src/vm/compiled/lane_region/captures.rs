@@ -1,4 +1,7 @@
-//! Capture reads: dense slot loads and the VM's own lookups where they miss.
+//! Capture reads and stores, the lane's lowering of the staged capture rows
+//! (`Frame::capture_slot`, `Frame::store_capture`): dense slot loads and the VM's own lookups
+//! where they miss. The lowering decides, per read, what its slow case reaches (`CaptureSite`);
+//! the frame emits the access.
 use super::*;
 
 /// Whether a capture read may take the lane's own lookup for a root-held binding, and where it runs.
@@ -11,107 +14,237 @@ pub(super) enum RootedRead {
     OnEntry,
 }
 
+/// Where the activation that reads keeps its dense capture slots, as one load reaches them.
+#[derive(Clone, Copy)]
+pub(super) enum Dense {
+    /// The slots (values, count) the running activation holds (`Entry::capture_values`), or a
+    /// published callee's, fixed by the identity its call guards (`Lowering::frame_captures`).
+    Held(ir::Value, ir::Value),
+    /// The bound callee's frameless admission, as its frameless activation would read them
+    /// (`frameless::emit_admitted_captures`).
+    Admitted,
+    /// No dense slots: the read takes its slow case.
+    Absent,
+}
+
+/// What a capture row's emission needs of the lowering: the slots its fast case loads, the
+/// closure its slow case projects, whether the lane's own lookup may serve it, and the value a
+/// frozen binding must hold.
+#[derive(Clone, Copy)]
+pub(super) struct CaptureSite {
+    pub(super) dense: Dense,
+    /// The closure an inlined frame's call bound, whose captures the VM projects
+    /// (`LaneHelper::FunctionCapture`).
+    pub(super) callee: Option<ir::Value>,
+    /// Whether a read past the dense slots may take the lane's own lookup (`LaneHelper::CaptureGet`):
+    /// for a root-held binding, and for a capture past the activation's own scope.
+    pub(super) walks: bool,
+    /// The value a frozen read must hold (`GlobalRead::Frozen`), which then folds to a constant.
+    pub(super) frozen: Option<Value>,
+}
+
+impl CaptureSite {
+    /// A store's site, or a read past the activation's scope: the lane's own lookup, nothing else.
+    pub(super) const OUTER: Self = Self { dense: Dense::Absent, callee: None, walks: true, frozen: None };
+}
+
+/// The emit stage's reach into the running body: its payload and helper table.
+type Reach = (ir::Value, LaneHelpers);
+
+/// The capture `slot`, `depth` scopes out, as the site reaches it: one load from its dense
+/// slots where the slot holds an ordinary value, else the slow case; a frozen binding's read is
+/// guarded against the closed program's value, then folds. Anything the access cannot serve
+/// leaves at `exit`.
+pub(super) fn read_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureSite,
+    (depth, slot): (u16, u16), exit: ir::Block) -> ir::Value {
+    let (slow, join) = (builder.create_block(), builder.create_block());
+    builder.set_cold_block(slow);
+    let dense = dense_slots(builder, reach.0, site, slow);
+    let value = builder.append_block_param(join, types::I64);
+    match dense {
+        Some((values, len)) => {
+            let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None };
+            let read = crate::staged::environment::dense_capture(&mut stage, values, len, slot, slow)
+                .expect("the emit stage continues past its guards");
+            builder.ins().jump(join, &[ir::BlockArg::Value(read)]);
+        }
+        None => { builder.ins().jump(slow, &[]); }
+    }
+    builder.switch_to_block(slow);
+    let read = capture_miss(builder, reach, site, (depth, slot), exit);
+    builder.ins().jump(join, &[ir::BlockArg::Value(read)]);
+    builder.switch_to_block(join);
+    freeze(builder, site.frozen, value, exit)
+}
+
+/// The dense slots (values, length) the site names; `slow` where a callee's admission declines.
+fn dense_slots(builder: &mut FunctionBuilder<'_>, payload: ir::Value, site: &CaptureSite,
+    slow: ir::Block) -> Option<(ir::Value, ir::Value)> {
+    match site.dense {
+        Dense::Held(values, len) => Some((values, len)),
+        Dense::Admitted => site.callee.map(|callee| super::super::frameless::emit_admitted_captures(builder, payload, callee, slow)),
+        Dense::Absent => None,
+    }
+}
+
+/// A read past the dense slots: the VM's projection of the closure an inlined frame's call
+/// bound, else the lane's own lookup of the activation's slots where the site allows it; a miss
+/// leaves at `exit`.
+fn capture_miss(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureSite, at: (u16, u16),
+    exit: ir::Block) -> ir::Value {
+    let Some(callee) = site.callee else {
+        if site.walks { return capture_get(builder, reach, at, exit); }
+        builder.ins().jump(exit, &[]);
+        let dead = builder.create_block();
+        builder.switch_to_block(dead);
+        return builder.ins().iconst(types::I64, 0);
+    };
+    let (payload, helpers) = reach;
+    let vm = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
+    let slot = builder.ins().iconst(types::I64, i64::from(at.1));
+    let helper = helpers.address(builder, LaneHelper::FunctionCapture);
+    let read = emit_lane_call(builder, helper, &[vm, callee, slot]);
+    let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, read, Value::DELETED.to_bits() as i64);
+    emit_js_guard(builder, hit, exit);
+    read
+}
+
+/// A capture's read by the lane's own lookup (`dispatch_fast::lane_body_capture`); a miss leaves.
+fn capture_get(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), exit: ir::Block) -> ir::Value {
+    let (context, packed) = capture_operands(builder, reach.0, at);
+    let value = call_helper(builder, reach, LaneHelper::CaptureGet, &[context, packed]);
+    let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+    emit_js_guard(builder, hit, exit);
+    value
+}
+
+/// A capture's store by the lane's own store (`dispatch_fast::lane_body_capture_store`); a binding
+/// it does not take leaves at `exit`.
+pub(super) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), value: ir::Value,
+    exit: ir::Block) {
+    let (context, packed) = capture_operands(builder, reach.0, at);
+    let stored = call_helper(builder, reach, LaneHelper::CaptureSet, &[context, packed, value]);
+    let stored = builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+    emit_js_guard(builder, stored, exit);
+}
+
+/// The lane context and the packed capture (depth in the high half, slot in the low) a capture
+/// helper takes.
+fn capture_operands(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (depth, slot): (u16, u16)) -> (ir::Value, ir::Value) {
+    let context = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+    let packed = builder.ins().iconst(types::I64, i64::from(u32::from(depth) << u16::BITS | u32::from(slot)));
+    (context, packed)
+}
+
+/// `helper`'s call by its address in the running image's table (`LaneHelpers::address`).
+fn call_helper(builder: &mut FunctionBuilder<'_>, (payload, helpers): Reach, helper: LaneHelper,
+    arguments: &[ir::Value]) -> ir::Value {
+    let address = helpers.address(builder, helper);
+    emit_lane_helper_call(builder, payload, address, arguments)
+}
+
+/// The read-site guard of a frozen capture read: compare the value the read loaded with the
+/// closed program's value, then use that constant. A binding changed elsewhere (or read before
+/// its declaration) fails the guard and leaves to the shared body, so the fold is sound without
+/// an invalidation word.
+fn freeze(builder: &mut FunctionBuilder<'_>, frozen: Option<Value>, value: ir::Value, exit: ir::Block) -> ir::Value {
+    let Some(expected) = frozen else { return value };
+    let same = builder.ins().icmp_imm_u(IntCC::Equal, value, expected.to_bits() as i64);
+    emit_js_guard(builder, same, exit);
+    builder.ins().iconst(types::I64, expected.to_bits() as i64)
+}
+
 impl Lowering<'_, '_> {
-    /// A depth-zero capture read: one load from the dense slots of the activation that reads
-    /// it, the running one's (`Entry::capture_values`) or a published callee's, fixed by the
-    /// identity its call guards (`Lowering::frame_captures`), where the slot holds an
-    /// ordinary value; otherwise, in an inlined frame, the VM's own projection of the closure
-    /// the call bound (`lane_function_capture_read`), which also resolves shared and
-    /// statically bound callees' slots, else the lane's own read (`capture_miss`). Each read loads
-    /// where it runs, after any call that may have stored to the slot.
-    pub(super) fn load_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, exit: ir::Block,
-        admitted_callee: Option<ir::Value>, rooted: RootedRead) -> ir::Value {
-        let slot = crate::bytecode::ImmediateLayout::capture_slot(instruction.imm());
+    /// The site of the capture read at `pc`, `depth` scopes out. A depth-zero read is one load
+    /// from the dense slots of the activation that reads it, the running one's
+    /// (`Entry::capture_values`) or a published callee's, fixed by the identity its call guards
+    /// (`Lowering::frame_captures`), where the slot holds an ordinary value; otherwise, in an
+    /// inlined frame, the VM's own projection of the closure the call bound
+    /// (`lane_function_capture_read`), which also resolves shared and statically bound callees'
+    /// slots, else the lane's own read. Each read loads where it runs, after any call that may
+    /// have stored to the slot.
+    pub(super) fn capture_site(&mut self, state: &mut State, pc: usize, depth: u16,
+        admitted_callee: Option<ir::Value>, rooted: RootedRead) -> CaptureSite {
         let frame = match self.unit.origins.get(pc).copied() {
             Some(super::super::lane_unit::Origin::Inlined { frame, .. }) => Some(frame),
             _ => None,
         };
         let callee = admitted_callee.or_else(|| frame.map(|frame| self.tagged(state, self.unit.frames[frame].callee_register)));
-        let (slow, join) = (self.builder.create_block(), self.builder.create_block());
-        self.builder.set_cold_block(slow);
-        let dense = self.dense_captures(frame, callee, slow);
-        let value = self.builder.append_block_param(join, types::I64);
-        match dense {
-            Some((values, len)) => {
-                let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: None };
-                let read = crate::staged::environment::dense_capture(&mut stage, values, len, slot, slow)
-                    .expect("the emit stage continues past its guards");
-                self.ins().jump(join, &[ir::BlockArg::Value(read)]);
-            }
-            None => { self.ins().jump(slow, &[]); }
-        }
-        self.builder.switch_to_block(slow);
-        let read = self.capture_miss(instruction, callee, exit, rooted);
-        self.ins().jump(join, &[ir::BlockArg::Value(read)]);
-        self.builder.switch_to_block(join);
-        value
+        let dense = if depth == 0 { self.dense_slots(frame, callee) } else { Dense::Absent };
+        let frozen = match self.global_reads.get(&pc).copied() {
+            Some(crate::vm::global_facts::GlobalRead::Frozen { value, .. }) => Some(value),
+            _ => None,
+        };
+        CaptureSite { dense, callee, walks: depth != 0 || self.rooted_walk(rooted), frozen }
     }
 
-    /// The dense slots (values, length) of the activation that runs `frame`: the running
-    /// one's, a published callee's its call's guarded identity fixes, or else those of the
-    /// bound `callee`'s frameless admission, as its frameless activation would read them
-    /// (`frameless::emit_admitted_captures`, `slow` where it has none).
-    fn dense_captures(&mut self, frame: Option<usize>, callee: Option<ir::Value>, slow: ir::Block) -> Option<(ir::Value, ir::Value)> {
+    /// Where the activation that runs `frame` keeps its dense slots: the running one's, a
+    /// published callee's its call's guarded identity fixes, or else those of the bound `callee`'s
+    /// frameless admission.
+    fn dense_slots(&mut self, frame: Option<usize>, callee: Option<ir::Value>) -> Dense {
         match frame {
             None => {
                 let entry = self.entry.as_ref().expect("entry facts");
-                Some((self.builder.use_var(entry.capture_values), self.builder.use_var(entry.capture_len)))
+                Dense::Held(self.builder.use_var(entry.capture_values), self.builder.use_var(entry.capture_len))
             }
             Some(frame) if self.unit.frames[frame].target.identity().is_some() => {
                 let (values, len) = self.frame_captures.get(frame).copied().unwrap_or((0, 0));
-                Some((self.ins().iconst(types::I64, values as i64), self.ins().iconst(types::I64, len as i64)))
+                Dense::Held(self.ins().iconst(types::I64, values as i64), self.ins().iconst(types::I64, len as i64))
             }
-            Some(_) => callee.map(|callee| super::super::frameless::emit_admitted_captures(&mut self.builder, self.payload, callee, slow)),
+            Some(_) if callee.is_some() => Dense::Admitted,
+            Some(_) => Dense::Absent,
         }
     }
 
-    /// `load_capture` past its dense slots: the VM's projection of the closure an inlined
-    /// frame's call bound, else the lane's own read of the activation's slots, root-held or
-    /// not yet viewed, where it may read a root-held binding (`InvariantRead::rooted`); a
-    /// miss, or a region with no lane context, leaves.
-    fn capture_miss(&mut self, instruction: WideInstruction, callee: Option<ir::Value>, exit: ir::Block, rooted: RootedRead) -> ir::Value {
-        let Some(callee) = callee else {
-            // A loop's read leaves at a root-held binding until the code has left here: the
-            // helper is a call every value live around the loop is spilled across (`left_here`).
-            let loop_code = matches!(self.coverage, Coverage::Loop { .. });
-            if rooted != RootedRead::No && self.completion.status_and_pc()
-                && (self.left_here || !loop_code || rooted == RootedRead::OnEntry) {
-                return self.capture_get(instruction, exit);
-            }
-            self.ins().jump(exit, &[]);
-            let dead = self.builder.create_block();
-            self.builder.switch_to_block(dead);
-            return self.ins().iconst(types::I64, 0);
+    /// Whether a read the dense slots miss may take the lane's own lookup of a root-held
+    /// binding. A loop's read leaves at one until the code has left here: the helper is a call
+    /// every value live around the loop is spilled across (`left_here`).
+    fn rooted_walk(&self, rooted: RootedRead) -> bool {
+        let loop_code = matches!(self.coverage, Coverage::Loop { .. });
+        rooted != RootedRead::No && self.completion.status_and_pc()
+            && (self.left_here || !loop_code || rooted == RootedRead::OnEntry)
+    }
+
+    /// A loop's hoisted read of the capture `instruction` names, on the entry edge, with the
+    /// callee its inlined frame was admitted for.
+    pub(super) fn load_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, exit: ir::Block,
+        admitted_callee: Option<ir::Value>, rooted: RootedRead) -> ir::Value {
+        let at = (instruction.capture_depth(), instruction.capture_slot());
+        let site = self.capture_site(state, pc, at.0, admitted_callee, rooted);
+        read_capture(&mut self.builder, (self.payload, self.helpers), &site, at, exit)
+    }
+
+    /// The capture row `instruction` decodes to, where this lowering makes it: a read at depth
+    /// zero, or either at a caller's record, where the lane's own lookup serves it.
+    fn capture_row(&self, pc: usize, instruction: WideInstruction) -> Option<crate::staged::Operation<ir::Value, EmitProof>> {
+        use crate::staged::Operation;
+        let row = Operation::decode(instruction, |_| None)?;
+        let caller = self.completion.status_and_pc()
+            && matches!(self.unit.origins.get(pc), Some(super::super::lane_unit::Origin::Caller(_)));
+        match row {
+            Operation::LoadCapture { depth: 0, .. } => Some(row),
+            Operation::LoadCapture { .. } | Operation::StoreCapture { .. } => caller.then_some(row),
+            _ => None,
+        }
+    }
+
+    /// Whether `instruction` is a capture row this lowering makes.
+    pub(super) fn is_capture_row(&self, pc: usize, instruction: WideInstruction) -> bool {
+        self.capture_row(pc, instruction).is_some()
+    }
+
+    /// The capture row at `pc`, stepped by its staged definition: a store retires every field
+    /// proof, as another register may name what it wrote, and both leave at `pc` where the lane's
+    /// access declines.
+    pub(super) fn capture_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        let row = self.capture_row(pc, instruction).expect("a capture row decodes");
+        let store = matches!(row, crate::staged::Operation::StoreCapture { .. });
+        if store { state.proofs.fields.clear(); }
+        let exit = self.guard_exit(state, pc as u32);
+        let site = if store { CaptureSite::OUTER } else {
+            self.capture_site(state, pc, instruction.capture_depth(), None, RootedRead::InBody)
         };
-        let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
-        let slot = self.ins().iconst(types::I64, i64::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())));
-        let helper = self.helpers.address(&mut self.builder, LaneHelper::FunctionCapture);
-        let read = emit_lane_call(&mut self.builder, helper, &[vm, callee, slot]);
-        let hit = self.ins().icmp_imm_u(IntCC::NotEqual, read, Value::DELETED.to_bits() as i64);
-        emit_js_guard(&mut self.builder, hit, exit);
-        read
-    }
-
-    /// The read-site guard of a frozen capture read at `pc`: compare the value the read
-    /// loaded with the closed program's value, then use that constant. A binding changed
-    /// elsewhere (or read before its declaration) fails the guard and leaves to the shared
-    /// body, so the fold is sound without an invalidation word.
-    pub(super) fn frozen_capture(&mut self, pc: usize, value: ir::Value, exit: ir::Block) -> ir::Value {
-        let Some(crate::vm::global_facts::GlobalRead::Frozen { value: expected, .. }) =
-            self.global_reads.get(&pc).copied() else { return value };
-        let same = self.ins().icmp_imm_u(IntCC::Equal, value, expected.to_bits() as i64);
-        emit_js_guard(&mut self.builder, same, exit);
-        self.ins().iconst(types::I64, expected.to_bits() as i64)
-    }
-
-    /// A capture's read by the lane's own lookup (`dispatch_fast::lane_body_capture`); a miss leaves.
-    pub(super) fn capture_get(&mut self, instruction: WideInstruction, exit: ir::Block) -> ir::Value {
-        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
-        let (depth, slot) = (crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()), crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
-        let packed = self.ins().iconst(types::I64, i64::from(u32::from(depth) << u16::BITS | u32::from(slot)));
-        let value = self.helper_call(LaneHelper::CaptureGet, &[context, packed]);
-        let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-        emit_js_guard(&mut self.builder, hit, exit);
-        value
+        self.step_with(state, frame::Edges::ValueGuarded { miss: exit }, row, None, frame::Sites { capture: Some(&site), ..frame::Sites::default() });
+        true
     }
 }

@@ -43,12 +43,12 @@ impl Lowering<'_, '_> {
         let site = frame::call_out::CallOutSite { record, stop: self.call_out_stop(), registers: self.registers_base,
             properties: self.entry.as_ref().expect("entry facts").receiver.properties, spill: self.spilled(pc) };
         if !matches!(row, crate::staged::Operation::ForInNext { .. }) {
-            self.step_with(state, frame::Edges::ValueGuarded { miss }, row, None, Some(&site));
+            self.step_with(state, frame::Edges::ValueGuarded { miss }, row, None, sites(&site));
             state.call_effect();
             return true;
         }
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
-        self.step_with(state, frame::Edges::Branch { target: taken, following: fall, miss }, row, None, Some(&site));
+        self.step_with(state, frame::Edges::Branch { target: taken, following: fall, miss }, row, None, sites(&site));
         state.call_effect();
         self.continue_branch(state, pc, instruction.jump_target() as usize, taken, fall);
         false
@@ -73,6 +73,11 @@ impl Lowering<'_, '_> {
         let status = self.builder.block_params(block)[0];
         self.stop_by_status(status);
     }
+}
+
+/// The step's sites where the lowering made a call-out's record.
+fn sites(site: &frame::call_out::CallOutSite) -> frame::Sites<'_> {
+    frame::Sites { call_out: Some(site), ..frame::Sites::default() }
 }
 
 /// Whether `row` is a `Binary` of two registers, equality or any other operator.

@@ -21,6 +21,14 @@ pub(super) enum Edges {
     Jump,
 }
 
+/// What a step's slow cases need of the lowering, where it made them: a call-out's record, a
+/// capture access's reach.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Sites<'a> {
+    pub(super) call_out: Option<&'a call_out::CallOutSite>,
+    pub(super) capture: Option<&'a super::captures::CaptureSite>,
+}
+
 /// The lane specializer's register frame (`crate::staged::Frame`): the SSA homes and the facts
 /// `State` keeps, with the stage's builder emitting each operation's IR.
 pub(super) struct EmitFrame<'a> {
@@ -44,6 +52,8 @@ pub(super) struct EmitFrame<'a> {
     pub(super) fields: Option<super::frame_fields::FieldFacts<'a>>,
     /// The record a call-out calls for, where the lowering made one (`call_outs`).
     pub(super) call_out: Option<&'a call_out::CallOutSite>,
+    /// What a capture access reaches, where the lowering made it (`captures`).
+    pub(super) capture: Option<&'a super::captures::CaptureSite>,
 }
 
 impl EmitFrame<'_> {
@@ -134,6 +144,26 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn vm_step(&mut self, stage: &mut Emit<'_, '_>, _operation: crate::staged::CallOut, result: Option<Register>)
         -> Option<(ir::Value, RegisterFact)> {
         call_out::vm_step(self, stage, result)
+    }
+
+    /// A capture read: the site's fast and slow cases (`captures::read_capture`); a miss leaves
+    /// at the step's miss edge.
+    #[inline(always)]
+    fn capture_slot(&mut self, stage: &mut Emit<'_, '_>, depth: u16, slot: u16) -> Option<(ir::Value, RegisterFact)> {
+        let site = self.capture?;
+        let Edges::ValueGuarded { miss } = self.edges else { return None };
+        let value = super::captures::read_capture(stage.builder, (self.payload, self.helpers), site, (depth, slot), miss);
+        Some((value, RegisterFact::definition(Type::ANY, Representation::Tagged)))
+    }
+
+    /// A capture store by the lane's own store, whose refusal leaves at the miss edge
+    /// (`captures::store_capture`).
+    #[inline(always)]
+    fn store_capture(&mut self, stage: &mut Emit<'_, '_>, depth: u16, slot: u16, value: ir::Value) -> Option<()> {
+        self.capture?;
+        let Edges::ValueGuarded { miss } = self.edges else { return None };
+        super::captures::store_capture(stage.builder, (self.payload, self.helpers), (depth, slot), value, miss);
+        Some(())
     }
 
     /// A dense element under the view proof; a hole or an index past the view continues at
@@ -403,7 +433,7 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
 
     fn miss(&self) -> ir::Block {
         match self.edges {
-            Edges::ValueGuarded { miss } => miss,
+            Edges::ValueGuarded { miss } | Edges::Branch { miss, .. } => miss,
             _ => unreachable!("a numeric operation has a miss edge"),
         }
     }

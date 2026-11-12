@@ -39,6 +39,7 @@ mod polls;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
+#[path = "lane_region/compare_jumps.rs"] mod compare_jumps;
 #[path = "lane_region/relocs.rs"] pub(super) mod relocs;
 use relocs::RelocKind; pub(super) use relocs::{helper_symbol, numeric_symbol};
 use captures::RootedRead;
@@ -2618,37 +2619,8 @@ impl Lowering<'_, '_> {
                 self.return_number(state, instruction.register_a(), pc32);
                 Some(false)
             }
-            opcode if opcode.is_load_capture() && plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
-                let exit = self.guard_exit(state, pc as u32);
-                let value = self.load_capture(state, pc, instruction, exit, None, RootedRead::InBody);
-                let value = self.frozen_capture(pc, value, exit);
-                self.set_tagged(state, instruction.result_register(), value);
-                Some(true)
-            }
-            // An outer capture of the caller's activation, by the lane's own lookup.
-            opcode if opcode.is_load_capture() && plain && self.completion.status_and_pc()
-                && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) => {
-                let exit = self.guard_exit(state, pc32);
-                let value = self.capture_get(instruction, exit);
-                let value = self.frozen_capture(pc, value, exit);
-                self.set_tagged(state, instruction.result_register(), value);
-                Some(true)
-            }
-            // A capture's store, by the lane's own store; a binding it does not take leaves.
-            opcode if opcode.is_store_capture() && self.completion.status_and_pc()
-                && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) => {
-                state.proofs.fields.clear();
-                let exit = self.guard_exit(state, pc32);
-                let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
-                let depth = u64::from(crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()));
-                let slot = u64::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
-                let packed = self.ins().iconst(types::I64, (depth << u16::BITS | slot) as i64);
-                let value = self.tagged(state, instruction.register_a());
-                let stored = self.helper_call(LaneHelper::CaptureSet, &[context, packed, value]);
-                let stored = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-                emit_js_guard(&mut self.builder, stored, exit);
-                Some(true)
-            }
+            // A capture's read or store, by its staged row.
+            _ if self.is_capture_row(pc, instruction) => Some(self.capture_step(state, pc, instruction)),
             _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
             _ if instruction.op().is_get_index() && plain && [instruction.operand_b(), instruction.operand_c()].into_iter().all(|operand| self.operand_supported(operand)) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
@@ -2723,82 +2695,9 @@ impl Lowering<'_, '_> {
                 self.continue_branch(state, pc, target, taken_block, fall_block);
                 return false;
             }
-            opcode if opcode.is_jump_binary_false() && plain => {
-                let operator = instruction.binary_operator_field();
-                let (left, right) = (instruction.operand_b(), instruction.operand_c());
-                if let Some(comparison) = nullish_comparison(&self.program.constants, instruction,
-                    |register| state.values[usize::from(register)].value.ty) {
-                    let ty = state.values[usize::from(comparison.source)].value.ty;
-                    let target = instruction.jump_target() as usize;
-                    if let Some(taken) = comparison.known_outcome(ty) {
-                        let taken = self.ins().iconst(types::I8, i64::from(taken));
-                        if target <= pc { self.interrupt_check(state, pc32); }
-                        self.branch(state, pc, target, taken);
-                    } else if target > pc {
-                        let exit = self.guard_exit(state, pc32);
-                        let value = self.tagged(state, comparison.source);
-                        let taken = self.builder.create_block();
-                        let fall = self.builder.create_block();
-                        let unequal = if comparison.negated { pc + 1 } else { target };
-                        let identity = self.builder.func.dfg.resolve_aliases(value);
-                        let direct = (!comparison.strict && self.facts.at(unequal)
-                            .is_some_and(|types| types.iter().enumerate().any(|(index, ty)|
-                                *ty == Type::DIRECT_OBJECT_FAMILY && self.is_live(unequal, index as Register)
-                                && matches!(state.values[index].tagged, TaggedView::Value(alias)
-                                    if self.builder.func.dfg.resolve_aliases(alias) == identity))))
-                            .then(|| self.builder.create_block());
-                        emit_nullish_edges(&mut self.builder, value, comparison, self.vm.html_dda, exit, taken, fall, direct);
-                        if let Some(direct) = direct {
-                            self.builder.switch_to_block(direct);
-                            let mut direct_state = state.clone();
-                            self.refine_object_family(&mut direct_state, value);
-                            self.continue_at(&mut direct_state, unequal);
-                            // The other unequal arm has already excluded this family.
-                            // Resume before the latch's moves, with the original homes.
-                            self.builder.switch_to_block(if comparison.negated { fall } else { taken });
-                            self.exit(state, unequal as u32);
-                            self.builder.switch_to_block(if comparison.negated { taken } else { fall });
-                            self.continue_at(&mut state.clone(), if comparison.negated { target } else { pc + 1 });
-                        } else {
-                            self.continue_branch(state, pc, target, taken, fall);
-                        }
-                    } else {
-                        let exit = self.guard_exit(state, pc32);
-                        let value = self.tagged(state, comparison.source);
-                        let taken = emit_nullish_branch(&mut self.builder, value, comparison, self.vm.html_dda, exit);
-                        self.interrupt_check(state, pc32);
-                        self.branch(state, pc, target, taken);
-                    }
-                    return false;
-                }
-                if let Some(operation) = super::operations::NumberBitwise::from_operator(operator)
-                    && self.operand_supported(left) && self.operand_supported(right)
-                    && [left, right].iter().all(|operand| operand.kind() != Some(OperandKind::Constant)
-                        || super::facts::operand_type(&self.program.constants, *operand, |_| Type::ANY).is_subtype(Type::NUMBER))
-                {
-                    let exit = self.guard_exit(state, pc32);
-                    let left = self.operand_to_int32(state, left, exit).expect("supported numeric operand");
-                    let right = self.operand_to_int32(state, right, exit).expect("supported numeric operand");
-                    // Signed and unsigned bitwise results are false exactly when all bits
-                    // are zero. Reuse the value operation without boxing its branch result.
-                    let bits = emit_number_bitwise_bits(&mut self.builder, operation, left, right);
-                    let taken = self.ins().icmp_imm_u(IntCC::Equal, bits, 0);
-                    let target = instruction.jump_target() as usize;
-                    if target <= pc { self.interrupt_check(state, pc32); }
-                    self.branch(state, pc, target, taken);
-                    return false;
-                }
-                if let Some(holds) = self.relation(state, pc32, operator, left, right) {
-                    let taken = self.ins().icmp_imm_u(IntCC::Equal, holds, 0);
-                    let target = instruction.jump_target() as usize;
-                    if target <= pc {
-                        self.interrupt_check(state, pc32);
-                    }
-                    self.branch(state, pc, target, taken);
-                    return false;
-                } else {
-                    None
-                }
+            _ if plain && self.is_compare_jump(instruction) => {
+                if self.compare_jump(state, pc, instruction) { return false; }
+                None
             }
             _ => None,
         };
@@ -3004,20 +2903,20 @@ impl Lowering<'_, '_> {
     /// no step is left unresolved.
     fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>)
         -> crate::staged::Step<ir::Value, ()> {
-        self.step_with(state, edges, operation, None, None)
+        self.step_with(state, edges, operation, None, frame::Sites::default())
     }
 
     /// `step` of a named field access: the frame holds the `plans` the sites proved and what
     /// the access already has (`HeldRead`), and the stage addresses the property arena.
     fn field_step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>,
         access: (&LanePlans<'_>, HeldRead)) -> crate::staged::Step<ir::Value, ()> {
-        self.step_with(state, edges, operation, Some(access), None)
+        self.step_with(state, edges, operation, Some(access), frame::Sites::default())
     }
 
-    /// `step` of an operation whose slow case calls the VM (`call_out`: the record and what its
-    /// helper needs), or of a field access (`access`).
+    /// `step` of an operation whose slow case needs the lowering (`sites`: a call-out's record, a
+    /// capture access's reach), or of a field access (`access`).
     fn step_with(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>,
-        access: Option<(&LanePlans<'_>, HeldRead)>, call_out: Option<&frame::call_out::CallOutSite>)
+        access: Option<(&LanePlans<'_>, HeldRead)>, sites: frame::Sites<'_>)
         -> crate::staged::Step<ir::Value, ()> {
         let locals = self.completion != Completion::Number;
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
@@ -3028,7 +2927,8 @@ impl Lowering<'_, '_> {
             stable: StableHold { uses: &mut self.stable, online: self.vm.online, at: self.at } });
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
-            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls, fields, call_out };
+            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls, fields,
+            call_out: sites.call_out, capture: sites.capture };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
@@ -3210,27 +3110,15 @@ impl Lowering<'_, '_> {
     fn number_relation(&mut self, state: &mut State, pc: u32, operator: u32,
         left: Operand, right: Operand) -> Option<ir::Value> {
         let relation = super::operations::NumberRelation::from_operator(operator)?;
-        if !self.operand_supported(left)
-            || !self.operand_supported(right)
-            || [left, right].iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
-                && !super::facts::operand_type(&self.program.constants, *operand, |_| Type::ANY).is_subtype(Type::NUMBER))
-        {
+        if !self.operand_supported(left) || !self.operand_supported(right) || !self.numbers_supported(left, right) {
             return None;
         }
         let exit = self.guard_exit(state, pc);
-        let integer = [left, right].iter().all(|operand| super::facts::operand_type(
-            &self.program.constants, *operand, |register| state.values[usize::from(register)].value.ty)
-            .is_subtype(Type::INT32));
-        if integer {
-            return Some(self.number_relation_step(state, exit, relation, left, right, crate::staged::Domain::Int32));
+        if let Some(domain) = self.number_domain(state, left, right) {
+            return Some(self.number_relation_step(state, exit, relation, left, right, domain));
         }
         // Operands only their tags type compare as int32 where both tags say so, else as
         // Numbers; neither path proves a fact the other does not.
-        let tagged = |operand: &Operand| operand.register_index()
-            .is_none_or(|register| state.values[usize::from(register)].value.representation == Representation::Tagged);
-        if !(tagged(&left) && tagged(&right)) {
-            return Some(self.number_relation_step(state, exit, relation, left, right, crate::staged::Domain::Float64));
-        }
         let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
         let (left_int, right_int) = (is_int_tagged(&mut self.builder, left), is_int_tagged(&mut self.builder, right));
         let ints = self.ins().band(left_int, right_int);
@@ -3794,7 +3682,6 @@ impl Lowering<'_, '_> {
             let (value, int32) = if instruction.op().is_load_capture() {
                 let Ok(admitted_callee) = self.admitted_callee_read(pc, &reads, &boundaries) else { continue };
                 let value = self.load_capture(state, pc, instruction, exit, admitted_callee, if rooted { RootedRead::OnEntry } else { RootedRead::No });
-                let value = self.frozen_capture(pc, value, exit);
                 let int32 = self.capture_int32_use(pc, &boundaries) || self.capture_observed_int(instruction);
                 (value, int32)
             } else {

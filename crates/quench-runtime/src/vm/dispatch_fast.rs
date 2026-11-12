@@ -5212,7 +5212,8 @@ script_handler! {
     #[inline(never)]
     fn lane_store_outer_capture<>(cx, r, ip, i, view) {
         let imm = i.imm();
-        if !lane_capture_store(cx, ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm), r.get(i.a)) {
+        let at = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
+        if !lane_frame::staged_store_capture::<H>(cx, r, view, i.a, at) {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)

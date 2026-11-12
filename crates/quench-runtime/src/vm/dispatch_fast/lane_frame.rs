@@ -4,6 +4,21 @@ use super::*;
 use crate::bytecode::{Operand, Register};
 use crate::staged::{Concrete, Constant, Edge, Frame, NumberOperation, NumericFrame, Operation, Step};
 
+/// The lane context's capture stores, erased of its host so the frame names no `H`
+/// (`lane_capture_store`).
+#[derive(Clone, Copy)]
+struct CaptureStores {
+    context: *mut (),
+    store: fn(*mut (), u16, u16, Value) -> bool,
+}
+
+impl CaptureStores {
+    /// The stores of the running lane's `cx`.
+    fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
+        Self { context: cx.cast(), store: |context, depth, slot, value| lane_capture_store(context.cast::<LaneContext<H>>(), depth, slot, value) }
+    }
+}
+
 /// The interpreter's frame: the live register file and the accumulator view a producer
 /// carries. `ACC` names the record's accumulator field (`read`).
 struct LaneFrame<const ACC: u8> {
@@ -14,19 +29,21 @@ struct LaneFrame<const ACC: u8> {
     this: Value,
     /// The activation's local slots and their count, for a staged local operation.
     locals: Option<(*mut Value, usize)>,
+    /// The capture stores of the running lane, for a staged capture store.
+    captures: Option<CaptureStores>,
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame for an operation that reads no `this`.
     #[inline(always)]
     fn new(registers: Registers, view: Carried) -> Self {
-        Self { registers, view, this: Value::DELETED, locals: None }
+        Self { registers, view, this: Value::DELETED, locals: None, captures: None }
     }
 
     /// A frame that may read and write the activation's local slots.
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
-        Self { registers, view, this, locals: Some((locals, len)) }
+        Self { registers, view, this, locals: Some((locals, len)), captures: None }
     }
 }
 
@@ -99,6 +116,12 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         // SAFETY: `slot` is inside the activation's live local slots.
         unsafe { *locals.add(usize::from(slot)) = Value::from_bits(value) };
         true
+    }
+
+    #[inline(always)]
+    fn store_capture(&mut self, _stage: &mut Concrete, depth: u16, slot: u16, value: u64) -> Option<()> {
+        let CaptureStores { context, store } = self.captures?;
+        store(context, depth, slot, Value::from_bits(value)).then_some(())
     }
 }
 
@@ -182,7 +205,7 @@ pub(super) fn staged_property_key(r: Registers, view: Carried, destination: u16,
 #[inline(always)]
 pub(super) fn staged_load_this(r: Registers, view: Carried, this: Value, destination: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view, this, locals: None };
+    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view, this, locals: None, captures: None };
     match crate::staged::step(&mut stage, &mut frame, Operation::LoadThis { destination }) {
         Step::Value(_) => true,
         Step::Unresolved => false,
@@ -216,6 +239,18 @@ pub(super) fn staged_store_local_plain<H: Host, const ACC: u8>(cx: *mut LaneCont
     let mut frame = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, locals, len);
     matches!(crate::staged::step(&mut stage, &mut frame,
         Operation::StoreLocalPlain { source, slot, result }), Step::Value(_))
+}
+
+/// `StoreCapture` of `source` to the capture at `depth` and `slot` past the running function's
+/// dense slots, by the staged operation and the lane's own store (`lane_capture_store`); false,
+/// storing nothing, where the binding does not take the direct store.
+#[inline(always)]
+pub(super) fn staged_store_capture<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
+    source: u16, (depth, slot): (u16, u16)) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
+    frame.captures = Some(CaptureStores::of(cx));
+    matches!(crate::staged::step(&mut stage, &mut frame, Operation::StoreCapture { source, depth, slot }), Step::Value(_))
 }
 
 /// The edge a staged unconditional jump takes.
