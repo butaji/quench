@@ -12,8 +12,8 @@
 //! The interpreter's call admits through the same rows on machine words (`protocol`'s
 //! `concrete_*`); the u-jit's lane frame emits them. `ret` completes an activation with a register.
 
-use super::protocol::{bind_this, complete_call, fill_window, guard_callee, guard_received, window_offset};
-use super::{CallFacts, CallOperation, Frame, Invocation, Operation, Register, Stage, Step, WindowFill};
+use super::protocol::{bind_this, complete_call, fill_window, guard_callee, guard_received};
+use super::{word_offset, CallFacts, CallOperation, Frame, Invocation, Operation, Register, Stage, Step, WindowFill};
 
 /// The kinds of callee a site binds to a direct entry. A native has no body to enter and a bound
 /// function forwards to another callee, so both take the VM's call (`CallEntry::Helper`).
@@ -142,14 +142,14 @@ pub(crate) fn invoke<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, mi
 fn enter_direct<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss, site: &Invocation, plan: DirectPlan)
     -> Option<S::Word> {
     let file = frame.call_registers(stage)?;
-    let held = stage.load_u64(file, window_offset(site.callee));
+    let held = stage.load_u64(file, word_offset(site.callee));
     guard_callee(stage, held, plan.identity, miss)?;
     let this = if plan.kind.allocates_receiver() {
         let allocated = frame.call_receiver(stage, held)?;
         guard_received(stage, allocated, miss)?;
         allocated
     } else {
-        let receiver = stage.load_u64(file, window_offset(site.receiver?));
+        let receiver = stage.load_u64(file, word_offset(site.receiver?));
         bind_this(stage, receiver, plan.sloppy, miss)?
     };
     let room = frame.call_room(stage, miss)?;

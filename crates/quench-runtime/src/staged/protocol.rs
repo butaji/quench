@@ -17,13 +17,12 @@
 
 use super::call::admit_room;
 use super::value::{is_direct_array, is_direct_function, is_direct_object};
-use super::{Stage, Step};
+use super::{word_bytes, Stage, Step};
 use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, Register, WideInstruction, RETURN_REGISTER};
 use crate::value::ValueLayout;
 use crate::Value;
 
-/// Bytes in one register of a window.
-const VALUE_BYTES: i32 = std::mem::size_of::<Value>() as i32;
+const _: () = assert!(std::mem::size_of::<Value>() == std::mem::size_of::<u64>(), "a register of a window is one word");
 
 /// The static operands of a call instruction: where its callee, receiver and arguments live and
 /// where its result goes. A construction has no receiver register: the plan allocates it.
@@ -164,10 +163,10 @@ pub(crate) fn guard_received<S: Stage>(stage: &mut S, receiver: S::Word, miss: S
 }
 
 /// Whether `bits` names an object of any direct family (`Value::is_direct_object_family`): an
-/// ordinary object, array, function, promise or iterator record.
+/// ordinary object, array, function, promise or iterator. `object` is the test of the first, which
+/// the caller made.
 #[inline(always)]
-fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
-    let object = is_direct_object(stage, bits);
+fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word, object: S::Cond) -> S::Cond {
     let array = is_direct_array(stage, bits);
     let function = is_direct_function(stage, bits);
     let family = stage.and_imm(bits, ValueLayout::HEAP_FAMILY_MASK);
@@ -186,7 +185,10 @@ fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
 pub(crate) fn bind_this<S: Stage>(stage: &mut S, receiver: S::Word, sloppy: Option<u64>, miss: S::Miss)
     -> Option<S::Word> {
     let Some(global) = sloppy else { return Some(receiver) };
-    let object = is_object_family(stage, receiver);
+    let ordinary = is_direct_object(stage, receiver);
+    // A stage that knows its words (the interpreter) binds the common ordinary object on that one test.
+    if stage.known(ordinary) == Some(true) { return Some(receiver); }
+    let object = is_object_family(stage, receiver, ordinary);
     let undefined = stage.eq_imm(receiver, Value::UNDEFINED.to_bits());
     let null = stage.eq_imm(receiver, Value::NULL.to_bits());
     let nullish = stage.any(undefined, null);
@@ -203,25 +205,13 @@ pub(crate) fn concrete_bind_this(receiver: u64, global: u64) -> Option<u64> {
     bind_this(&mut super::Concrete::new(std::ptr::null()), receiver, Some(global), ())
 }
 
-/// The byte offset of register `register` in a window.
-#[inline(always)]
-pub(super) const fn window_offset(register: u16) -> i32 {
-    register as i32 * VALUE_BYTES
-}
-
 /// The callee's window at `top`: parameter `k` lives in register `k` of a plain activation, so
 /// the `argc` arguments at `source` fill its first registers and the rest start undefined.
 #[inline(always)]
 pub(crate) fn fill_window<S: Stage>(stage: &mut S, top: S::Word, source: S::Word, fill: WindowFill) {
     let undefined = stage.constant(Value::UNDEFINED.to_bits());
-    for register in 0..fill.registers {
-        let value = if register < fill.argc {
-            stage.load_u64(source, window_offset(fill.first + register))
-        } else {
-            undefined
-        };
-        stage.store_u64(top, window_offset(register), value);
-    }
+    let arguments = stage.add_imm(source, word_bytes(fill.first));
+    stage.fill_window(top, arguments, undefined, fill.argc.min(fill.registers), fill.registers);
 }
 
 /// The value of a call whose callee ended with `status`: the construction's `receiver` where
@@ -293,7 +283,8 @@ mod tests {
         let text = heap.alloc_string("x".into());
         let mut stage = Concrete::new(std::ptr::null());
         for value in [object, text, Value::UNDEFINED, Value::NULL, Value::integer(1), Value::number(1.5), Value::TRUE] {
-            assert_eq!(is_object_family(&mut stage, value.to_bits()), value.is_direct_object_family(), "{value:?}");
+            let ordinary = is_direct_object(&mut stage, value.to_bits());
+            assert_eq!(is_object_family(&mut stage, value.to_bits(), ordinary), value.is_direct_object_family(), "{value:?}");
         }
     }
 

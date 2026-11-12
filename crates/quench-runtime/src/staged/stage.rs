@@ -5,6 +5,21 @@
 use crate::typed_ir::Type;
 use super::effects::Region;
 
+/// Bytes in one word of memory a stage addresses (a register of a window is one).
+const WORD_BYTES: u32 = std::mem::size_of::<u64>() as u32;
+
+/// The byte offset of word `index` from a base.
+#[inline(always)]
+pub(crate) fn word_offset(index: u16) -> i32 {
+    (u32::from(index) * WORD_BYTES) as i32
+}
+
+/// The byte count of `index` words.
+#[inline(always)]
+pub(crate) fn word_bytes(index: u16) -> u64 {
+    u64::from(u32::from(index) * WORD_BYTES)
+}
+
 /// A binding-time domain: the 64-bit words an operation computes on, its conditions, and where
 /// a failed guard goes. A 32-bit load zero-extends.
 pub(crate) trait Stage {
@@ -101,6 +116,17 @@ pub(crate) trait Stage {
     fn known(&self, cond: Self::Cond) -> Option<bool>;
     /// The base of `table`.
     fn table(&mut self, table: Table) -> Self::Word;
+
+    /// A call's window of `registers` words at `top`: the first `copied` are the arguments at
+    /// `arguments`, the rest `undefined` (a word the caller made). A stage with a tuned fill runs
+    /// it instead (`Concrete`).
+    #[inline(always)]
+    fn fill_window(&mut self, top: Self::Word, arguments: Self::Word, undefined: Self::Word, copied: u16, registers: u16) {
+        for register in 0..registers {
+            let value = if register < copied { self.load_u64(arguments, word_offset(register)) } else { undefined };
+            self.store_u64(top, word_offset(register), value);
+        }
+    }
 
     // Stage v2: additions with defaults, so a stage written before them is unchanged.
 

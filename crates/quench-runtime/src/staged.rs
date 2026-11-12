@@ -59,7 +59,7 @@ pub(crate) use ic::concrete_own_field_hit;
 pub(crate) use object::{Form, Layout, concrete_own_read};
 
 mod stage;
-pub(crate) use stage::{Stage, Table};
+pub(crate) use stage::{Stage, Table, word_bytes, word_offset};
 
 /// A constant an instruction materializes: its value and the semantic type a stage that
 /// keeps type facts records for it.

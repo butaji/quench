@@ -133,6 +133,7 @@ mod data_view;
 mod date;
 mod dispatch;
 mod dispatch_fast; mod lane_values;
+pub(crate) use dispatch_fast::{copy_arguments, fill_window as fill_registers};
 mod dispatch_frame;
 mod dispatch_wasm;
 mod dynamic_strings;

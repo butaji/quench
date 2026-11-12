@@ -97,6 +97,15 @@ impl Stage for Concrete {
         unsafe { ((base as *mut u8).offset(offset as isize) as *mut u64).write(value) }
     }
     #[inline(always)]
+    fn fill_window(&mut self, top: u64, arguments: u64, undefined: u64, copied: u16, registers: u16) {
+        // SAFETY: the window at `top` holds `registers` words, none live, and the `copied` arguments lie
+        // outside it (`protocol::fill_window`): the interpreter's own fill and argument copy.
+        unsafe {
+            crate::vm::fill_registers(top as *mut crate::Value, usize::from(registers), crate::Value::from_bits(undefined));
+            crate::vm::copy_arguments(top as *mut crate::Value, arguments as *const crate::Value, copied);
+        }
+    }
+    #[inline(always)]
     fn not(&mut self, cond: bool) -> bool { !cond }
     #[inline(always)]
     fn any(&mut self, a: bool, b: bool) -> bool { a | b }
