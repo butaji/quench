@@ -130,15 +130,70 @@ impl FrameRecord {
             return;
         }
         // SAFETY: `open_environment_window` wrote the entries and the locals after the registers.
+        unsafe { self.pull_window(self.registers.as_ptr().add(self.registers.len()), self.locals.len()) };
+    }
+
+    /// Takes the state of the environment window starting at `entries` (the entries
+    /// `open_environment_window` lays out, or those of an ordinary activation's window): the
+    /// environment a closure or a direct eval made, which the record then owns (`captured`),
+    /// and the `locals` locals, which an eval's stores read and write through the record.
+    ///
+    /// # Safety
+    /// `entries` starts a live environment window of `locals` locals.
+    pub(in crate::vm) unsafe fn pull_window(&mut self, entries: *const Value, locals: usize) {
+        // SAFETY: as the caller guarantees.
         unsafe {
-            let entries = self.registers.as_ptr().add(self.registers.len());
             let environment = *entries.add(usize::from(WINDOW_ENVIRONMENT));
             if !environment.is_deleted() {
                 self.env = environment;
                 self.captured = true;
             }
-            self.locals.as_mut_ptr().copy_from_nonoverlapping(entries.add(usize::from(WINDOW_LOCALS)), self.locals.len());
+            self.locals.resize(locals, Value::UNDEFINED);
+            self.locals.as_mut_ptr().copy_from_nonoverlapping(entries.add(usize::from(WINDOW_LOCALS)), locals);
         }
+    }
+
+    /// Gives the window the locals a direct eval left in the record (`pull_window`).
+    ///
+    /// # Safety
+    /// `entries` starts the live environment window `pull_window` read.
+    pub(in crate::vm) unsafe fn push_window_locals(&self, entries: *mut Value) {
+        // SAFETY: as the caller guarantees; the record holds as many locals as the window.
+        unsafe { entries.add(usize::from(WINDOW_LOCALS)).copy_from_nonoverlapping(self.locals.as_ptr(), self.locals.len()) };
+    }
+
+    /// The record of an ordinary activation of `function` of `program` that runs a direct eval
+    /// (`lane_eval`): its closure `callee`, its receiver and the environment its closure
+    /// captured, with no registers or locals of its own until the window is pulled.
+    pub(in crate::vm) fn for_eval(program: ProgramId, function: u32, callee: Value, this: Value, env: Value) -> Box<Self> {
+        let mut record = Self {
+            prefix: ShadowFrame { this: this.to_bits(), ..ShadowFrame::EMPTY },
+            context: CallContext::Function(callee),
+            reflected_parameters: 0,
+            original_arguments: Vec::new(),
+            program,
+            function,
+            pc: 0,
+            env,
+            locals: Vec::new(),
+            dynamic_bindings: Vec::new(),
+            captured: false,
+            registers: Vec::new(),
+            active_iterators: Vec::new(),
+            with_objects: Vec::new(),
+            live_registers: None,
+            js_jit_skip_entry_once: false,
+            environment_window: false,
+            binding_site_pc: None,
+        };
+        record.bind_window();
+        Box::new(record)
+    }
+
+    /// Makes `this` the receiver an eval's code reads (`CallerView::this`) and returns the
+    /// one it replaces, which the caller puts back when the eval ends.
+    pub(in crate::vm) fn replace_this(&mut self, this: Value) -> Value {
+        Value::from_bits(std::mem::replace(&mut self.prefix.this, this.to_bits()))
     }
 
     /// The suspension of a frame that ran in a lane activation over its register file: it resumes

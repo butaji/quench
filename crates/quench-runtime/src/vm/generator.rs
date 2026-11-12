@@ -13,6 +13,8 @@ mod arguments_tests;
 #[cfg(test)]
 mod async_await_tests;
 #[cfg(test)]
+mod eval_tests;
+#[cfg(test)]
 mod hidden_name_tests;
 #[cfg(test)]
 mod native_step_tests;

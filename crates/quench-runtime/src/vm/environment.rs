@@ -162,7 +162,7 @@ impl<H: Host> Vm<H> {
         let atom = self.runtime_atoms.lexical_this;
         let owner = self.lexical_this_owner(self.frame_caller(frame), atom);
         if !self.store_owner_binding(VarOwner::Frame(frame), atom, value)
-            && !self.store_outer_dynamic_binding(frame, atom, value)
+            && !self.store_outer_dynamic_binding(VarOwner::Frame(frame), atom, value)
         {
             return Err(self.reference_error(p, "this binding is unavailable".into()));
         }
@@ -1152,15 +1152,11 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn store_outer_dynamic_binding(
         &mut self,
-        frame: usize,
+        owner: VarOwner,
         atom: Atom,
         value: Value,
     ) -> bool {
-        let Some((env, index)) = self
-            .frames
-            .get(frame)
-            .and_then(|activation| self.outer_dynamic_binding(&**activation, atom))
-        else {
+        let Some((env, index)) = self.outer_dynamic_binding(self.owner_view(owner), atom) else {
             return false;
         };
         let Some(dynamic_bindings) = self.heap.environment_bindings_mut(env) else {
@@ -2407,7 +2403,9 @@ impl<H: Host> Vm<H> {
                 self.mapped_argument_store(p, frame_index, slot, value);
                 return Ok(());
             }
-            if self.store_outer_dynamic_binding(self.frames.len().saturating_sub(1), atom, value) {
+            if let Some(frame) = self.frames.len().checked_sub(1)
+                && self.store_outer_dynamic_binding(VarOwner::Frame(frame), atom, value)
+            {
                 return Ok(());
             }
             if let Some(frame) = self.frames.len().checked_sub(1)

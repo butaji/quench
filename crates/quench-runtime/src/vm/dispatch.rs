@@ -1426,15 +1426,7 @@ impl<H: Host> Vm<H> {
                 caller.pc = *pc;
                 caller.pc_is_resume = true;
                 debug_assert_eq!(caller.program, self.active_program);
-                let direct_eval = i.direct_eval()
-                    && matches!(
-                        self.heap.function(callee),
-                        Some(FunctionRecord {
-                            kind: FunctionKind::Native(Native::Eval),
-                            realm,
-                            ..
-                        }) if *realm == self.realm.globals
-                    );
+                let direct_eval = i.direct_eval() && self.calls_direct_eval(callee);
                 // The one raise of a function whose parameters' `eval` declares `arguments`
                 // (`Function::parameter_eval_arguments_error`): its activations run as any
                 // other's until that call, which the lane leaves to this step.

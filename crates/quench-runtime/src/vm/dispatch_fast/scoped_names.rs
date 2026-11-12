@@ -12,9 +12,9 @@ use crate::bytecode::Atom;
 
 /// What a name lookup reads of the window activation making it, which it reads as it reads a
 /// frame (`CallerView`).
-struct WindowScope {
-    function: u32,
-    program: ProgramId,
+pub(super) struct WindowScope {
+    pub(super) function: u32,
+    pub(super) program: ProgramId,
     /// The activation's receiver as the lane holds it.
     this: Value,
     /// The activation's environment: its own once a closure made one (`captured`), else the
@@ -23,21 +23,21 @@ struct WindowScope {
     captured: bool,
     /// The activation's record, null for an ordinary function's: it holds no dynamic bindings,
     /// which only a frame's direct eval makes.
-    record: *mut FrameRecord,
+    pub(super) record: *mut FrameRecord,
     /// The function the activation runs: its record's, else its call's own.
     callee: Option<Value>,
     /// The resume pc of the binding site the access is at (`Frame::binding_site_pc`), if it is
     /// at one.
-    site: Option<u32>,
+    pub(super) site: Option<u32>,
     /// The `with` objects of the activation's scope chain (`LaneStack::with_chain`), outermost
     /// first, which no `with` statement has entered while none is (`Vm::with_scope_entered`).
-    chain: Vec<Value>,
+    pub(super) chain: Vec<Value>,
 }
 
 /// The scope of the innermost activation, when it is an environment window: registers `r` and
 /// the record at `ip` of its function are the access's. `at_site` where the access is an
 /// instruction a binding site scopes (`Frame::binding_site_pc`). `None` in a frame's run.
-fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, at_site: bool) -> Option<WindowScope> {
+pub(super) fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, at_site: bool) -> Option<WindowScope> {
     let vm = unsafe { vm(cx) };
     let depth = vm.lane_stack.activations.len().checked_sub(1)?;
     let activation = vm.lane_stack.activations.last()?;
@@ -124,21 +124,12 @@ impl<H: Host> Vm<H> {
         let objects = self.with_objects_before_binding(scope, atom);
         self.plain_first_with_binding(&objects, atom)
     }
-
-    /// The value of the dynamic binding `atom` of the window activation `scope` holds itself (a
-    /// direct eval's `var`): its environment's once a closure made one, else its record's.
-    fn window_dynamic_binding(&self, scope: &WindowScope, atom: Atom) -> Option<Value> {
-        self.own_dynamic_bindings(scope)?
-            .iter()
-            .rev()
-            .find(|(candidate, _)| *candidate == atom)
-            .map(|(_, value)| *value)
-    }
 }
 
 /// The read of `atom` the window activation at `ip` makes by name, as `Vm::load_name_call`
-/// makes it: its value and its call's receiver, the `with` object that has it, else the
-/// activation's own dynamic binding. `None`, before any effect, leaves it to the general path.
+/// makes it: its value and its call's receiver, the `with` object that has it, else the dynamic
+/// binding it resolves (`Vm::dynamic_binding`): its own, which a direct eval declared in its record's
+/// environment, or an enclosing activation's. `None`, before any effect, leaves it to the general path.
 fn scoped_name_read<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, atom: Atom) -> Option<(Value, Value)> {
     let vm = unsafe { vm(cx) };
     if vm.atom_class(atom).contains(AtomClass::INTERNAL) {
@@ -148,7 +139,7 @@ fn scoped_name_read<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, atom
     if let Some((object, value)) = vm.window_with_binding(&scope, atom)? {
         return Some((value, object));
     }
-    vm.window_dynamic_binding(&scope, atom).filter(|value| !value.is_deleted()).map(|value| (value, Value::UNDEFINED))
+    vm.dynamic_binding(&scope, atom).filter(|value| !value.is_deleted()).map(|value| (value, Value::UNDEFINED))
 }
 
 /// How a store by name of a window activation went among its `with` objects.

@@ -265,8 +265,6 @@ impl<H: Host> Vm<H> {
         if !self.execution_mode.allows_dynamic_execution()
             || !self.lane_stack.activations.is_empty()
             || self.lane_deferred.is_some()
-            || self.direct_eval
-            || self.parameter_eval
             || code.kind == crate::bytecode::ProgramKind::Wasm
         {
             return None;

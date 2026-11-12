@@ -1729,6 +1729,7 @@ call_plan_bits!(
     environment_activation,
     suspended_registers,
     suspended_environment,
+    admits_direct_eval,
 );
 
 #[derive(Clone, Copy, Debug)]
@@ -1792,6 +1793,11 @@ pub(crate) struct CallPlan {
     /// names may resolve through `with` objects and dynamic bindings, which its record carries
     /// and its window's handlers read (`scoped_names`).
     pub(crate) suspended_environment: bool,
+    /// A function whose window activations run the direct evals and the closures at binding
+    /// sites it holds in the lane (`evals_in_scope`): its window rides (`holds_window_scope`),
+    /// and the eval promotes the window's environment into the activation's record, which owns
+    /// the eval's variable environment (`Vm::eval_owner`).
+    pub(crate) admits_direct_eval: bool,
 }
 
 impl CallPlan {
@@ -2139,13 +2145,29 @@ impl Function {
     /// environment activation's window keeps those its closures may observe in the
     /// environment it makes (`window_environment`), which a copy shares as a frame's does.
     fn body_binding_reads_beside_clones(&self, tables: &impl FactTables) -> bool {
+        self.evals_in_scope() || self.reads_implicit_bindings(tables)
+    }
+
+    /// Whether the function runs a direct eval, which declares `var`s in its variable
+    /// environment and reads its scope by name, or records binding sites, the lexical scope
+    /// its closures and evals resolve names in.
+    pub(crate) fn evals_in_scope(&self) -> bool {
+        !self.binding_sites.is_empty()
+            || self.instructions().any(|instruction| {
+                instruction.op().is_call_with_eval_flags() && (instruction.direct_eval() || instruction.parameter_eval())
+            })
+    }
+
+    /// The implicit bindings (`new.target`, `super`, the home object, a derived constructor's
+    /// `this`) the body reads by a hidden name or a scope operation, which a window activation
+    /// leaves to the frame it becomes: not those of a direct eval, which its record serves.
+    fn reads_implicit_bindings(&self, tables: &impl FactTables) -> bool {
         self.derived_constructor
             // A field initializer or static block keeps its instance's implicit bindings; an
             // arrow inside one (also `class_initializer`) binds none of its own.
             || (self.class_initializer && !self.is_arrow)
             || self.instance_initializer.is_some()
             || self.inherited_with_scope
-            || !self.binding_sites.is_empty()
             || self.instructions().any(|instruction| {
                 name_bindings::reads_hidden_name(instruction, tables)
                     || matches!(
@@ -2158,8 +2180,6 @@ impl Function {
                             | Op::InitializeThis
                             | Op::SuperCallCheck
                     )
-                    || (instruction.op().is_call_with_eval_flags()
-                        && (instruction.direct_eval() || instruction.parameter_eval()))
             })
     }
 
@@ -2302,7 +2322,7 @@ impl Function {
             // a suspended function's record keeps them (and gives them to the environment its
             // window makes, `window_environment`), and the opcodes that read them
             // exit the lane to the frame it becomes.
-            && (!self.body_binding_reads_beside_clones(tables) || self.suspends_in_record())
+            && (!self.reads_implicit_bindings(tables) || self.suspends_in_record())
             && self.instructions().all(|instruction| {
                 let op = instruction.op();
                 // An iteration's `CloneEnv` copies the window's environment, once a closure
@@ -2425,6 +2445,7 @@ impl Function {
                 environment_activation,
                 suspended_registers,
                 suspended_environment,
+                admits_direct_eval: self.evals_in_scope() && (environment_activation || suspended_environment),
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 settles_in_loop,

@@ -1959,6 +1959,11 @@ pub(super) struct LaneStack {
     /// activation's frame takes when it materializes. A completion drops its activation's
     /// entries, as a frame's pop truncates the VM's scope stack.
     with_objects: Vec<(usize, Value)>,
+    /// The records ordinary activations made for a direct eval (`lane_eval`), each with the
+    /// index of the activation that owns it, innermost last; the activation names it
+    /// (`ScriptActivation::record`). A completion drops its activation's, and a materialization
+    /// its frame's own state takes over: the environment the eval promoted.
+    records: Vec<(usize, Box<super::activation::FrameRecord>)>,
     /// The forwarding constructor bodies call targets name (`ScriptCallTarget::forwarded_method`),
     /// each once: a program's bodies are fixed, so the table only grows with distinct ones.
     forwarded_methods: Vec<crate::bytecode::ForwardedThisMethod>,
@@ -2014,6 +2019,7 @@ impl Default for LaneStack {
             steps: Vec::new(),
             iterators: Vec::new(),
             with_objects: Vec::new(),
+            records: Vec::new(),
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
@@ -2112,7 +2118,7 @@ impl LaneStack {
     /// iterators and their `with` objects.
     #[inline(always)]
     fn drop_owned_from(&mut self, depth: usize) {
-        if !self.iterators.is_empty() || !self.with_objects.is_empty() {
+        if !self.iterators.is_empty() || !self.with_objects.is_empty() || !self.records.is_empty() {
             self.drop_owned_held_from(depth);
         }
     }
@@ -2122,6 +2128,7 @@ impl LaneStack {
     fn drop_owned_held_from(&mut self, depth: usize) {
         self.iterators.retain(|(owner, _)| *owner < depth);
         self.with_objects.retain(|(owner, _)| *owner < depth);
+        self.records.retain(|(owner, _)| *owner < depth);
     }
 
     /// The generation of a lane run under `key`: the current one while the key holds, else
@@ -11218,6 +11225,8 @@ impl<H: Host> Vm<H> {
         let mut steps = std::mem::take(&mut self.lane_stack.steps).into_iter();
         let iterators = std::mem::take(&mut self.lane_stack.iterators);
         let scopes = std::mem::take(&mut self.lane_stack.with_objects);
+        // Each frame holds the environment its eval promoted; the records go with the activations.
+        let _records = std::mem::take(&mut self.lane_stack.records);
         let states = ActivationState::of(&activations, cx);
         // A deferred native's caller activations below its callback take the lane's outer
         // pending calls and executing program (`NativeBoundary`).
@@ -13426,6 +13435,7 @@ mod native_calls; mod generator_yields; use generator_yields::suspend_handler;
 mod lane_roots;
 mod with_scopes;
 mod scoped_names;
+mod lane_eval;
 use lane_roots::{LaneRoot, LaneStart};
 pub(in crate::vm) use lane_roots::JobEnd;
 mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step};
@@ -18585,7 +18595,7 @@ fn lane_operand(
 }
 
 /// A `Call` runs in the lane only as the general loop pushes one in place: it evaluates no
-/// direct or parameter-scope `eval`. It, `GetField`, `Unary` and `Binary` may return their
+/// direct or parameter-scope `eval`, which a window activation's call record runs apart (`lane_eval`). It, `GetField`, `Unary` and `Binary` may return their
 /// result from the frame (`lane_returns`, `lane_returning`); a returning record runs no
 /// other result flag.
 fn lane_call_fits(instruction: WideInstruction) -> bool {
@@ -20823,6 +20833,11 @@ fn specialize_environment_window<H: Host>(
     let mut replacements = Vec::new();
     for (pc, &instruction) in decoded.iter().enumerate() {
         let op = instruction.op();
+        // A direct eval runs in a window activation (`lane_eval`); in a frame's run it leaves.
+        if op.class().eq(Class::Call) && instruction.direct_eval() {
+            replacements.push((pc, lane_eval::direct_eval::<H>(), instruction.imm()));
+            continue;
+        }
         let own = match op.class() {
             Class::MakeClosure => instruction.imm(),
             Class::CloneEnv => 0,
@@ -21407,8 +21422,6 @@ impl<H: Host> Vm<H> {
             inline_calls,
             script_calls: inline_calls
                 && code.kind != crate::bytecode::ProgramKind::Wasm
-                && !self.direct_eval
-                && !self.parameter_eval
                 && root_calls::in_lane(*frame + 1 == self.frames.len(), self.frames[*frame].function),
             script_constructs: code
                 .function_get(self.frames[*frame].function as usize)

@@ -740,6 +740,14 @@ impl<H: Host> Vm<H> {
     /// realm's global bindings: a Script, an indirect eval or host script, or a
     /// sloppy direct eval called from such code. The root of a direct eval
     /// running in a function's or module's scope is not.
+    /// Whether a call of `callee` flagged as a direct eval is one: the running realm's `eval`.
+    pub(super) fn calls_direct_eval(&self, callee: Value) -> bool {
+        matches!(
+            self.heap.function(callee),
+            Some(FunctionRecord { kind: FunctionKind::Native(Native::Eval), realm, .. }) if *realm == self.realm.globals
+        )
+    }
+
     fn running_global_code(&self) -> bool {
         self.eval_caller().is_some_and(|caller| {
             caller.function() == super::ROOT_FUNCTION_ID
