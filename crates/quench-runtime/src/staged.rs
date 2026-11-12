@@ -23,6 +23,7 @@ mod heap;
 mod global;
 mod names;
 mod callout;
+mod admission;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::CallOut;

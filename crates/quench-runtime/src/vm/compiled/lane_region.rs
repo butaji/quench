@@ -61,6 +61,7 @@ use captures::RootedRead;
 #[path = "lane_region/direct_admission.rs"] mod direct_admission;
 #[path = "lane_region/direct_enter.rs"] mod direct_enter;
 #[path = "lane_region/call_outs.rs"] mod call_outs;
+#[path = "lane_region/register_rows.rs"] mod register_rows;
 use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
@@ -2605,11 +2606,7 @@ impl Lowering<'_, '_> {
                 && (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval() => Some(self.intrinsic_call(state, pc, instruction) || self.call(state, pc, instruction, LaneHelper::Call)),
-            // ToNumeric of a Number is the Number: a typed operand is copied with its facts, and an
-            // untyped one is taken for an int, tested once, which leaves where it is not. Anything
-            // but `null` and `undefined` is coercible; those take the lane's TypeError.
-            Class::ToNumeric | Class::RequireObjectCoercible if plain && instruction.register_b() < self.unit.registers =>
-                self.operation_step(state, pc32, instruction, true),
+            _ if self.is_register_row(instruction) => Some(self.register_step(state, pc32, instruction)),
             Class::LoadName | Class::LoadNameCall if plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
             Class::Nop if plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
@@ -2619,15 +2616,10 @@ impl Lowering<'_, '_> {
                 let Some(constant) = self.program.constants.get(instruction.constant_index()) else { return false };
                 self.load_constant(state, pc, instruction, constant)
             }
-            Class::LoadLocalPlain | Class::StoreLocalPlain if plain && self.completion != Completion::Number =>
-                self.operation_step(state, pc32, instruction, false),
-            _ if plain && instruction.op().js_denotation() == JsDenotation::Move =>
-                self.operation_step(state, pc32, instruction, false),
             Class::Return if plain && self.completion == Completion::Number => {
                 self.return_number(state, instruction.register_a(), pc32);
                 Some(false)
             }
-            Class::LoadThis if plain && !instruction.writes_current_this() => self.operation_step(state, pc32, instruction, true),
             Class::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
                 let exit = self.guard_exit(state, pc as u32);
                 let value = self.load_capture(state, pc, instruction, exit, None, RootedRead::InBody);
@@ -2689,18 +2681,6 @@ impl Lowering<'_, '_> {
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
             _ if instruction.op().js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.operator(state, pc, instruction).or_else(|| self.binary_call_out(state, pc, instruction))
-            }
-            Class::Unary if plain && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::LogicalNot as u32
-                && instruction.register_b() < self.unit.registers => {
-                let exit = self.guard_exit(state, pc32);
-                let operation = crate::staged::Operation::decode(instruction, |_| None)
-                    .expect("logical not decodes");
-                self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
-                Some(true)
-            }
-            // `void`: the staged operation defines `undefined`; its operand was evaluated already.
-            Class::Unary if plain && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Void as u32 => {
-                self.operation_step(state, pc32, instruction, false)
             }
             Class::Unary if plain && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
                 && instruction.register_b() < self.unit.registers => self.typeof_index(state, pc, instruction),
@@ -2895,15 +2875,6 @@ impl Lowering<'_, '_> {
         let word = self.ins().iconst(types::I64, LaneExit::Callee.word() as i64);
         let stop = self.stop;
         self.ins().jump(stop, &[word.into()]);
-    }
-
-    /// `instruction` as its staged operation, stepped: guarded at `pc` where it can leave (`guarded`).
-    /// None where the instruction has no staged operation.
-    fn operation_step(&mut self, state: &mut State, pc: u32, instruction: WideInstruction, guarded: bool) -> Option<bool> {
-        let operation = crate::staged::Operation::decode(instruction, |_| None)?;
-        let edges = if guarded { frame::Edges::ValueGuarded { miss: self.guard_exit(state, pc) } } else { frame::Edges::Value };
-        self.step(state, edges, operation);
-        Some(true)
     }
 
     /// A lane helper of the record at `call_pc`, by the lane's context: its status word.
