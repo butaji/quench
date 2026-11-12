@@ -1,13 +1,11 @@
 //! The property rows on the concrete stage, against the heap's own object model.
 
 use super::ic::IcOp;
-use super::property::{read_plan, Arm, FieldPlan, PlanSource, StorePlan};
+use super::property::{read_with, Arm, FieldPlan, Owner, PlanSource, StorePlan};
 use super::*;
 use crate::bytecode::{FieldBase, Operand};
-use crate::code_dependencies::PublishedCode;
-use crate::heap::{Cell, Heap, Object, NATIVE_OBJECT_LAYOUT as OBJECT};
+use crate::heap::{Cell, Heap, Object};
 use crate::Value;
-use std::rc::Rc;
 
 /// The word a host callout answers, and what each callout was asked.
 const ANSWER: u64 = 0xA5A5;
@@ -30,11 +28,14 @@ struct Host<'p> {
     plans: &'p Plans,
     answers: bool,
     log: Vec<&'static str>,
+    /// The shape this frame claims it proved of every owner, and the shapes its guards recorded.
+    proven: Option<u32>,
+    proved: Vec<u32>,
 }
 
 impl<'p> Host<'p> {
     fn new(records: u64, plans: &'p Plans, registers: Vec<u64>) -> Self {
-        Self { registers, records, plans, answers: true, log: Vec::new() }
+        Self { registers, records, plans, answers: true, log: Vec::new(), proven: None, proved: Vec::new() }
     }
 
     fn call(&mut self, name: &'static str) -> bool {
@@ -70,6 +71,8 @@ impl<'p> PropertyFrame<Concrete> for Host<'p> {
     type Plans = &'p Plans;
     fn plans(&self) -> &'p Plans { self.plans }
     fn object_records(&mut self, _stage: &mut Concrete) -> Option<u64> { Some(self.records) }
+    fn proven_shape(&mut self, _stage: &mut Concrete, _owner: Owner) -> Option<u32> { self.proven }
+    fn prove_shape(&mut self, _stage: &mut Concrete, _owner: Owner, shape: u32, _direct: bool) { self.proved.push(shape); }
     fn field_get_host(&mut self, _stage: &mut Concrete, _object: u64, _atom: u32, _site: u16, _miss: ()) -> Option<u64> {
         self.call("field_get_host").then_some(ANSWER)
     }
@@ -131,12 +134,12 @@ fn object_of(heap: &mut Heap, values: &[Value]) -> (Value, u32) {
 
 fn records(heap: &Heap) -> u64 { heap.object_record_base().map_or(0, |base| base as u64) }
 
-/// `plan` read from `object` on the concrete stage.
+/// `plan` read from `object` on the concrete stage, by a frame that holds no proof.
 fn read(heap: &Heap, plan: FieldPlan<'static>, object: Value) -> Option<Value> {
     let plans = Plans { read: plan, store: NO_STORE };
     let mut frame = Host::new(records(heap), &plans, vec![0]);
     let mut stage = Concrete::new(heap.property_values_base());
-    read_plan(&mut stage, &mut frame, object.to_bits(), plan, ()).map(Value::from_bits)
+    read_with(&mut stage, &mut frame, (Owner::Temporary, false), object.to_bits(), plan, ()).map(Value::from_bits)
 }
 
 #[test]
@@ -155,8 +158,8 @@ fn a_polymorphic_plan_reads_through_the_arm_that_holds_the_shape() {
     let (second, second_shape) = object_of(&mut heap, &[Value::integer(20), Value::integer(31)]);
     let (third, _) = object_of(&mut heap, &[]);
     let arms: &'static [Arm<'static>] = Box::leak(Box::new([
-        Arm { shapes: Box::leak(Box::new([first_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1 }]) },
-        Arm { shapes: Box::leak(Box::new([second_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2 }]) },
+        Arm { shapes: Box::leak(Box::new([first_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1 }]), holds: None },
+        Arm { shapes: Box::leak(Box::new([second_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2 }]), holds: None },
     ]));
     let plan = FieldPlan::Arms(arms);
     assert_eq!(read(&heap, plan, first), Some(Value::integer(10)));
@@ -175,33 +178,6 @@ fn a_nested_chain_reads_each_link_from_the_previous_value() {
     let (broken, _) = object_of(&mut heap, &[Value::integer(1)]);
     let (outer, _) = object_of(&mut heap, &[broken]);
     assert_eq!(read(&heap, FieldPlan::Chain(links), outer), None, "a link that is no object leaves");
-}
-
-#[test]
-fn a_holder_plan_needs_the_shape_the_link_and_the_watch() {
-    let mut heap = heap_of(1);
-    let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
-    let object = heap.alloc(Cell::Object(Object::new(prototype)));
-    heap.property_add(object, Value::integer(1), 1);
-    let (shape, link) = (heap.object(object).unwrap().exact_shape(), crate::heap::ProtoLink::of(prototype).bits());
-    let watch = Rc::new(PublishedCode::new(()));
-    let method = Value::integer(42);
-    let plan = |shape, link| FieldPlan::Holder { shape, link, watch: Rc::as_ptr(&watch) as u64, value: method.to_bits() };
-    assert_eq!(read(&heap, plan(shape, link), object), Some(method));
-    assert_eq!(read(&heap, plan(shape + 1, link), object), None);
-    assert_eq!(read(&heap, plan(shape, link ^ 1), object), None);
-    watch.retire();
-    assert_eq!(read(&heap, plan(shape, link), object), None, "a retired watch");
-}
-
-#[test]
-fn a_string_receiver_reads_its_method_under_the_watch() {
-    let heap = Heap::new();
-    let watch = Rc::new(PublishedCode::new(()));
-    let method = Value::integer(9);
-    let plan = FieldPlan::StringHolder { watch: Rc::as_ptr(&watch) as u64, value: method.to_bits() };
-    assert_eq!(read(&heap, plan, Value::direct_string(3)), Some(method));
-    assert_eq!(read(&heap, plan, Value::integer(1)), None);
 }
 
 /// The step of `operation` on a host frame, with its log.
@@ -253,27 +229,6 @@ fn a_store_plan_chooses_the_adding_or_the_vm_store_and_stores_the_value_it_was_g
 }
 
 #[test]
-fn an_own_store_writes_the_slot_where_the_shape_matches_and_leaves_otherwise() {
-    let mut heap = heap_of(2);
-    let (object, shape) = object_of(&mut heap, &[Value::integer(1), Value::integer(2)]);
-    let id = object.direct_object_index().unwrap();
-    // SAFETY: a live record of this heap, which nothing else borrows during the test.
-    let record = unsafe { heap.unlogged_object_record(id) } as u64;
-    let base = record - u64::from(id) * OBJECT.record_size as u64;
-    for (value, planned, stored) in [(Value::integer(9), shape, true), (Value::integer(11), shape + 1, false)] {
-        let plans = Plans { read: FieldPlan::Host { atom: 0, site: 0 }, store: StorePlan::Own { shape: planned, slot: 1 } };
-        let mut frame = Host::new(base, &plans, vec![0, object.to_bits(), value.to_bits()]);
-        let mut stage = Concrete::storing(&heap);
-        let word = step(&mut stage, &mut frame, Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3 });
-        assert_eq!(matches!(word, Step::Value(_)), stored);
-        // SAFETY: the object is live with a shape covering slot 1.
-        let slot = unsafe { crate::staged::concrete_own_field_hit(heap.object(object).unwrap(), heap.arena_values_base(), shape, 1) };
-        assert_eq!(slot == Some(value), stored);
-        assert!(frame.log.is_empty(), "an own store calls out to nothing");
-    }
-}
-
-#[test]
 fn the_property_instructions_decode_to_their_operations() {
     use crate::bytecode::{Op, WideInstruction};
     let decode = |instruction| Operation::<u64, ()>::decode(instruction, |_| None);
@@ -291,4 +246,34 @@ fn the_property_instructions_decode_to_their_operations() {
     let add = decode(WideInstruction::new(Op::Binary, 1, Operand(2).0, Operand(3).0,
         oxc_ast::ast::BinaryOperator::Addition as u32));
     assert!(add.is_none(), "another binary operator is not a property operation");
+}
+
+/// `plan` read from `object` as register 1's owner, by a frame claiming `proven`; the word read
+/// and the shapes its guards recorded.
+fn read_owned_by(heap: &Heap, plan: FieldPlan<'static>, object: Value, proven: Option<u32>) -> (Option<Value>, Vec<u32>) {
+    let plans = Plans { read: plan, store: NO_STORE };
+    let mut frame = Host::new(records(heap), &plans, vec![0]);
+    frame.proven = proven;
+    let mut stage = Concrete::new(heap.property_values_base());
+    let lookup = FieldLookup::Atom { atom: 0, base: FieldBase::register(1), cache_site: 0 };
+    frame.registers = vec![0, object.to_bits()];
+    let word = match step(&mut stage, &mut frame, Operation::GetField { base: FieldBase::register(1), lookup }) {
+        Step::Value(word) => Some(Value::from_bits(word)),
+        _ => None,
+    };
+    (word, frame.proved)
+}
+
+#[test]
+fn a_guard_is_recorded_as_the_owners_proof_and_a_proven_shape_is_not_tested_again() {
+    let mut heap = heap_of(2);
+    let (object, shape) = object_of(&mut heap, &[Value::integer(7), Value::integer(8)]);
+    let (read, proved) = read_owned_by(&heap, own(shape, 1, 2), object, None);
+    assert_eq!((read, proved), (Some(Value::integer(8)), vec![shape]), "a guard that holds is recorded");
+    let (read, proved) = read_owned_by(&heap, own(shape + 1, 1, 2), object, None);
+    assert_eq!((read, proved), (None, vec![]), "a guard that fails proves nothing");
+    // A frame that holds the proof makes no guard: the read does not leave for a shape it was
+    // told is proved, and records nothing again.
+    let (read, proved) = read_owned_by(&heap, own(shape + 1, 1, 2), object, Some(shape + 1));
+    assert_eq!((read, proved), (Some(Value::integer(8)), vec![]));
 }

@@ -83,8 +83,11 @@ impl Stage for Emit<'_, '_> {
         let shifted = self.builder.ins().sshr_imm_u(low, i64::from(shift));
         self.builder.ins().uextend(types::I64, shifted)
     }
+    /// Compared at `a`'s width: a record's 32-bit shape word against a shape id is a 32-bit test.
     fn eq_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(imm.into());
+        let EmitImm::Const(bits) = imm.into();
+        let width = self.builder.func.dfg.value_type(a);
+        let v = self.builder.ins().iconst(width, bits as i64);
         self.builder.ins().icmp(IntCC::Equal, a, v)
     }
     fn ne_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {

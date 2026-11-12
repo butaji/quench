@@ -109,13 +109,6 @@ pub(crate) trait Frame<S: Stage> {
     /// `register`'s value from `constant`, with the fact the stage keeps of it.
     fn constant(&mut self, stage: &mut S, constant: Constant) -> (S::Word, Self::Fact);
 
-    /// The proven slot `slot` of `base`'s object, with the fact the read proves; `None` where
-    /// the frame has no heap or the slot is not proved, leaving the instruction to the host.
-    #[inline(always)]
-    fn field_read(&mut self, _stage: &mut S, _base: Register, _slot: u16, _ty: Type, _proof: S::Proof) -> Option<(S::Word, Self::Fact)> {
-        None
-    }
-
     /// Write `value` to the proven slot; `None` where the frame has no heap or the slot is
     /// not writable, leaving the instruction to the host.
     #[inline(always)]
@@ -238,8 +231,6 @@ pub(crate) enum Operation<W, P> {
     RequireObjectCoercible { register: Register },
     /// Define `destination` with the logical negation of register `source`'s truthiness.
     LogicalNot { destination: Register, source: Register },
-    /// The proven slot `slot` of `base`'s object, under `proof`, as a value (`Frame::field_read`).
-    ReadField { base: Register, slot: u16, ty: Type, proof: P },
     /// Write `value` to the proven slot `slot` of `base`'s object under `proof`.
     WriteField { base: Register, slot: u16, ty: Type, value: W, proof: P },
     /// A dense array element at `index`, under `proof`; a hole or miss leaves `Unresolved`.
@@ -270,13 +261,14 @@ pub(crate) enum Operation<W, P> {
     GlobalRead { destination: Register, atom: u32, site: u16, binding: GlobalBinding, proof: P },
     /// The VM field-store helper for `object.atom = value` through cache `site`.
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
-    /// The value `base.name` reads through `lookup`'s plan (`property::read_plan`); the tier
+    /// The value `base.name` reads through `lookup`'s plan (`property::read_with`); the tier
     /// defines the result register.
     GetField { base: FieldBase, lookup: FieldLookup },
     /// `base.atom = value` through cache `site`'s store plan (`property_write::set_field`);
     /// `base` is `this` for `None`.
     SetField { value: Register, base: Option<Register>, atom: u32, site: u16 },
-    /// The VM's cached read of `atom` of `object` through `site` (`PropertyFrame::field_get_host`).
+    /// The VM's read of `atom` of `object`, a value no register names, through `site`
+    /// (`PropertyFrame::field_probe`).
     FieldGetHost { object: W, atom: u32, site: u16 },
     /// The VM's adding store of `value` to `atom` of `object` (`PropertyFrame::field_add`).
     FieldAdd { object: W, atom: u32, site: u16, value: W },

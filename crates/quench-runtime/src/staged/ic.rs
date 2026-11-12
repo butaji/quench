@@ -4,7 +4,7 @@
 //! writing the read again.
 
 use super::Stage;
-use super::object::{Form, PackedAccess, arena_run, extras_pointer, has_extras, inline_storage, object_record_at, own_layout,
+use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, has_extras, inline_storage, object_record_at, own_layout,
     proto_link, proto_object_record_id, read_slot};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
@@ -13,8 +13,6 @@ use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 pub(crate) enum IcOp<'a> {
     /// The record's exact shape (`Object::exact_shape`) is this one, else the read misses.
     GuardShape(u32),
-    /// The record's exact shape is one of these, sorted (a layout family), else the read misses.
-    GuardShapes(&'a [u32]),
     /// The read moves to the record's prototype, an object record, else misses.
     Prototype,
     /// The value at `slot` of the record, whose guarded shapes keep at least `storage_len`
@@ -47,11 +45,6 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
     for op in ops {
         match *op {
             IcOp::GuardShape(shape) => guard_shape(stage, &at, shape, miss)?,
-            IcOp::GuardShapes(shapes) => {
-                let exact = shape_word(stage, &at);
-                let member = stage.shape_in_site(exact, shapes);
-                stage.guard(member, miss)?;
-            }
             IcOp::Prototype => {
                 let link = proto_link(stage, at.record);
                 let id = proto_object_record_id(stage, link, miss)?;
@@ -68,7 +61,7 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
 
 /// `IcOp::GuardShape`: continues where the reached record's exact shape is `shape`.
 #[inline(always)]
-fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<()> {
+pub(super) fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<()> {
     let exact = shape_word(stage, at);
     let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(exact, shape) };
     stage.guard(same, miss)
@@ -78,9 +71,18 @@ fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shape: u
 #[inline(always)]
 fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, slot: u16, form: Form, storage_len: usize,
     miss: S::Miss) -> Option<S::Word> {
-    let inline = at.inline.unwrap_or_else(|| inline_storage(stage, at.record));
-    let layout = own_layout(stage, at.record, inline, form, storage_len, PackedAccess::Reload, miss)?;
+    let layout = slot_layout(stage, at, form, storage_len, miss)?;
     Some(read_slot(stage, layout, slot))
+}
+
+/// The layout `IcOp::LoadSlot` reads through: the reached record's, whose shape is guarded
+/// and keeps `storage_len` values in `form`. A caller that proved it before reads through it
+/// again instead of proving it twice (`property::kept_slot`).
+#[inline(always)]
+pub(super) fn slot_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, form: Form, storage_len: usize,
+    miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
+    let inline = at.inline.unwrap_or_else(|| inline_storage(stage, at.record));
+    own_layout(stage, at.record, inline, form, storage_len, PackedAccess::Reload, miss)
 }
 
 /// The reached record's exact shape word: the caller's where it holds one, else loaded.
@@ -171,9 +173,8 @@ mod tests {
         let read = |receiver, holder| [IcOp::GuardShape(receiver), IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(0)];
         assert_eq!(concrete(&heap, &read(own, holder), object), Some(Value::number(1.5)));
         let load = IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2 };
-        let family = [own.min(holder), own.max(holder)];
-        assert_eq!(concrete(&heap, &[IcOp::GuardShapes(&family), load], object), Some(Value::number(8.0)));
-        assert_eq!(concrete(&heap, &[IcOp::GuardShapes(&[holder]), load], object), None);
+        assert_eq!(concrete(&heap, &[IcOp::GuardShape(own), load], object), Some(Value::number(8.0)));
+        assert_eq!(concrete(&heap, &[IcOp::GuardShape(holder), load], object), None);
         assert_eq!(concrete(&heap, &read(holder, holder), object), None);
         assert_eq!(concrete(&heap, &read(own, own), object), None);
         assert_eq!(concrete(&heap, &read(holder, holder), prototype), None);
@@ -224,19 +225,18 @@ mod tests {
     /// sites give one trace and differ only in what the holes took.
     #[test]
     fn site_values_change_holes_not_the_trace() {
-        let read = |shapes: &[u32], shape: u32, slot: u16| {
+        let read = |shape: u32, slot: u16| {
             let mut trace = super::super::trace::Trace::default();
             let at = Reached { record: 0, shape: None, inline: None };
             let record = trace.constant(0);
             let at = Reached { record, ..at };
-            let ops = [IcOp::GuardShapes(shapes), IcOp::GuardShape(shape),
-                IcOp::LoadSlot { slot, form: Form::Either, storage_len: usize::from(slot) + 1 }];
+            let ops = [IcOp::GuardShape(shape), IcOp::LoadSlot { slot, form: Form::Either, storage_len: usize::from(slot) + 1 }];
             run(&mut trace, &ops, at, None, ()).expect("a load ends the read");
             trace
         };
-        let (first, second) = (read(&[3, 9], 5, 1), read(&[40, 70], 6, 0));
+        let (first, second) = (read(5, 1), read(6, 0));
         assert_eq!(first.ops, second.ops, "the trace never depends on a site value");
-        assert_eq!(first.holes, [3, 9, 5, 32, 8]);
-        assert_eq!(second.holes, [40, 70, 6, 0, 0]);
+        assert_eq!(first.holes, [5, 32, 8]);
+        assert_eq!(second.holes, [6, 0, 0]);
     }
 }

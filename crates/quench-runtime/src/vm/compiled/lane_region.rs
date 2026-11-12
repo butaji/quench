@@ -49,6 +49,9 @@ use captures::RootedRead;
 #[path = "lane_region/dense_appends.rs"] mod dense_appends;
 #[path = "lane_region/bindings.rs"] mod bindings;
 #[path = "lane_region/frame.rs"] mod frame;
+#[path = "lane_region/frame_fields.rs"] mod frame_fields;
+#[path = "lane_region/field_plans.rs"] mod field_plans;
+#[path = "lane_region/headers.rs"] mod headers;
 #[path = "lane_region/polymorphic_stores.rs"] mod polymorphic_stores;
 #[path = "lane_region/hoisted_reads.rs"] mod hoisted_reads;
 #[path = "lane_region/field_reads.rs"] mod field_reads;
@@ -60,6 +63,9 @@ use captures::RootedRead;
 use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
+use frame_fields::{FieldFacts, HeldRead, StableHold};
+use field_plans::{with_read_plan, LanePlans, LinkInput};
+use crate::staged::property::StorePlan;
 use polls::specialize_closed_polls;
 #[cfg(test)]
 use polls::retain_closed_polls;
@@ -224,10 +230,6 @@ impl State {
         }
     }
 }
-
-/// An intermediate chain value has no register lifetime to memoize.
-#[derive(Clone, Copy)]
-enum FieldOwner { This, Register(Register), Temporary }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReceiverRecovery { Object, ObjectOrNullish }
@@ -958,7 +960,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         if let Some(shape) = ty.object_shape() && !state.values[index].value.ty.is_subtype(ty) {
             let exit = self.guard_exit(state, target as u32);
             let header = self.object_header(state, Some(register), false, exit);
-            self.prove_shape(state, Some(Some(register)), header.shape, shape, exit);
+            headers::prove_header_shape(&mut self.builder, state, Some(register), header.shape, shape, exit);
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,
                 ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
         }
@@ -2581,7 +2583,7 @@ impl Lowering<'_, '_> {
             state.proofs.arrays.clear();
         }
         if let Some(read) = self.hoisted.get(&pc).copied() {
-            self.hoisted_read(state, instruction, read);
+            self.hoisted_read(state, pc, instruction, read);
             return true;
         }
         let instructions = &self.unit.instructions;
@@ -3058,11 +3060,27 @@ impl Lowering<'_, '_> {
     /// no step is left unresolved.
     fn step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>)
         -> crate::staged::Step<ir::Value, ()> {
+        self.step_with(state, edges, operation, None)
+    }
+
+    /// `step` of a named field access: the frame holds the `plans` the sites proved and what
+    /// the access already has (`HeldRead`), and the stage addresses the property arena.
+    fn field_step(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>,
+        access: (&LanePlans<'_>, HeldRead)) -> crate::staged::Step<ir::Value, ()> {
+        self.step_with(state, edges, operation, Some(access))
+    }
+
+    fn step_with(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>,
+        access: Option<(&LanePlans<'_>, HeldRead)>) -> crate::staged::Step<ir::Value, ()> {
         let locals = self.completion != Completion::Number;
-        let mut stage = Emit { builder: &mut self.builder, property_values: None };
+        let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
+        let mut stage = Emit { builder: &mut self.builder, property_values };
+        let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
+            held, registers_base: self.registers_base,
+            stable: StableHold { uses: &mut self.stable, online: self.vm.online, at: self.at } });
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
-            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls };
+            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls, fields };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
@@ -3834,16 +3852,18 @@ impl Lowering<'_, '_> {
             } else {
                 let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() else { continue };
                 let register = owner.or_else(|| base.register_index());
-                let receiver = !self.native_calls
-                    && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.proofs.receivers.contains(&register)));
                 // A `length` read is made once, natively where its base is a direct array.
                 match register.filter(|_| super::names_length(self.program, atom)) {
                     Some(register) => {
                         let length = self.array_length(state, register, (atom, cache_site), exit);
                         (int_tagged(&mut self.builder, length), true)
                     }
-                    None => (self.base_field_read(state, register, receiver, (atom, cache_site), exit),
-                        int32_read(self.program, self.fields, instruction)),
+                    None => {
+                        let base = register.map_or(crate::bytecode::FieldBase::THIS, crate::bytecode::FieldBase::register);
+                        let lookup = FieldLookup::Atom { atom, base, cache_site };
+                        let Some(value) = self.field_value(state, (base, lookup), &[(atom, cache_site)], HeldRead::default(), exit) else { continue };
+                        (value, int32_read(self.program, self.fields, instruction))
+                    }
                 }
             };
             let carried = field.is_some();
@@ -4225,21 +4245,6 @@ impl Lowering<'_, '_> {
         })
     }
 
-    /// The value word `word` of the loop's entry record, defining `destination`.
-    fn entry_field_read(&mut self, state: &mut State, destination: Register, word: u32) {
-        let bits = self.loop_entry_word(word);
-        self.set_tagged(state, destination, bits);
-    }
-
-    /// Word `word` of the loop's entry record.
-    fn loop_entry_word(&mut self, word: u32) -> ir::Value {
-        let entry = emit_js_payload_word(&mut self.builder, self.payload,
-            std::mem::offset_of!(super::JsStepDispatch, loop_entry));
-        let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
-            * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
-        self.ins().load(types::I64, MemFlagsData::trusted(), entry, offset)
-    }
-
     /// The owner and name of a plain read of `instruction`'s lookup (no sink, no completion):
     /// `None` where the lookup names a site the program does not have.
     fn plain_field(&self, instruction: WideInstruction, owner: Option<Register>, plain: bool) -> Option<Option<(Option<Register>, Atom)>> {
@@ -4250,6 +4255,9 @@ impl Lowering<'_, '_> {
         })
     }
 
+    /// A named read: what the instruction does around its value (completing the activation,
+    /// storing a sink, a direct array's `length`, a whole-program prototype value, the proofs
+    /// the value carries), with the value itself one `GetField` row (`field_value`).
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         // A returning read completes the activation with its value, at a caller record; an
         // inlined callee's is the unit's read, move and jump (`lane_unit`).
@@ -4281,18 +4289,19 @@ impl Lowering<'_, '_> {
             return None;
         }
         let destination = instruction.result_register();
+        let lookup = instruction.field_lookup()?;
         // An OSR region's static field read answers from the entry record, as the verified
         // lowering's does: the value the field held at entry, which the loop does not write.
         if sink.is_none() && completes.is_none() && !instruction.writes_current_this()
             && let Some(&word) = self.entry_fields.get(&pc)
         {
-            self.entry_field_read(state, destination, word);
+            let exit = self.guard_exit(state, pc as u32);
+            let held = HeldRead { entry_word: Some(word), ..HeldRead::default() };
+            let bits = self.field_value(state, (base, lookup), &[], held, exit)?;
+            self.set_tagged(state, destination, bits);
             return Some(true);
         }
         let exit = self.guard_exit(state, pc as u32);
-        let receiver = !self.native_calls
-            && (base == crate::bytecode::FieldBase::THIS
-                || register.is_some_and(|register| state.proofs.receivers.contains(&register)));
         let (first, rest) = parts.split_first()?;
         // A direct array's `length` is its record's, an int32.
         if let (Some(register), [], None, None) = (register, rest, sink, completes)
@@ -4308,22 +4317,15 @@ impl Lowering<'_, '_> {
         // guard and leaves to the shared body.
         if rest.is_empty() && sink.is_none() && completes.is_none()
             && !instruction.writes_current_this()
-            && self.fold_frozen_field(state, (register, receiver), *first, destination, exit)
+            && self.fold_frozen_field(state, (base, lookup), *first, destination, exit)
         {
             return Some(true);
         }
         let known = field.and_then(|(owner, atom)| state.proofs.fields.iter().copied()
             .find(|field| field.owner == owner && field.atom == atom));
-        let mut value = match known {
-            Some(field) => {
-                #[cfg(test)] record_field_forward(first.1);
-                field.value
-            }
-            None => self.base_field_read(state, register, receiver, *first, exit),
-        };
-        for site in rest {
-            value = self.object_field_read(state, value, *site, exit)?;
-        }
+        #[cfg(test)] if known.is_some() { record_field_forward(first.1); }
+        let held = HeldRead { known: known.map(|field| field.value), ..HeldRead::default() };
+        let value = self.field_value(state, (base, lookup), &parts, held, exit)?;
         if let Some((atom, site)) = sink {
             self.store_field(state, sink_owner, atom, site, value, Type::ANY, exit)?;
         }
@@ -4333,6 +4335,29 @@ impl Lowering<'_, '_> {
         }
         self.define_field_read(state, instruction, value, (field, rest.is_empty(), known), exit);
         Some(true)
+    }
+
+    /// The value `base`'s lookup reads through `links`, the sites of its chain: one `GetField`
+    /// row under the plans their caches proved, or the value `held` already has. A guard of it
+    /// that fails leaves through `exit`.
+    fn field_value(&mut self, state: &mut State, (base, lookup): (crate::bytecode::FieldBase, FieldLookup), links: &[(Atom, u16)],
+        held: HeldRead, exit: ir::Block) -> Option<ir::Value> {
+        let inputs: Vec<LinkInput> = links.iter().map(|link| self.link_input(*link)).collect();
+        let folds = self.division().folds(BindingTime::Stable);
+        with_read_plan(&inputs, (folds, held.known.is_some()), |plans| {
+            let edges = frame::Edges::ValueGuarded { miss: exit };
+            match self.field_step(state, edges, crate::staged::Operation::GetField { base, lookup }, (plans, held)) {
+                crate::staged::Step::Value(value) => Some(value),
+                _ => None,
+            }
+        })
+    }
+
+    /// A chain link's site, with the loads its cache proved and whether its misses probe.
+    fn link_input(&self, (atom, site): (Atom, u16)) -> LinkInput {
+        let loads = self.fields.get(&site).cloned().unwrap_or_default();
+        let probed = self.probes_field_misses(&loads);
+        LinkInput { atom, site, loads, probed }
     }
 
     /// The `length` read through `read` of the value `register` holds, as an int32: a direct
@@ -4346,57 +4371,16 @@ impl Lowering<'_, '_> {
         let native = super::emit_array_length_read(&mut self.builder, self.payload, base, generic);
         self.ins().jump(join, &[ir::BlockArg::Value(native)]);
         self.builder.switch_to_block(generic);
-        let value = self.field_probe(state, FieldOwner::Temporary, base, read, exit);
+        let (atom, site) = read;
+        let probe = crate::staged::Operation::FieldGetHost { object: base, atom, site };
+        let crate::staged::Step::Value(value) = self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, probe,
+            (&LanePlans::NONE, HeldRead::default())) else { unreachable!("the lane's field read is a host call") };
         let integer = is_int_tagged(&mut self.builder, value);
         emit_js_guard(&mut self.builder, integer, exit);
         let int = self.ins().ireduce(types::I32, value);
         self.ins().jump(join, &[ir::BlockArg::Value(int)]);
         self.builder.switch_to_block(join);
         length
-    }
-
-    /// The read through `site` of the base `register` names (`this` for `None`): folded to
-    /// the site's proved shapes and slots, with the base's record proved once (the
-    /// receiver's at entry), else the VM's cached read.
-    fn base_field_read(&mut self, state: &mut State, register: Option<Register>, receiver: bool, read: (Atom, u16), exit: ir::Block) -> ir::Value {
-        let site = read.1;
-        let object_bits = match register {
-            None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
-            Some(register) => self.tagged(state, register),
-        };
-        let probe_owner = match register {
-            Some(register) if !receiver => FieldOwner::Register(register),
-            _ => FieldOwner::This,
-        };
-        let shapes = self.fields.get(&site).cloned().unwrap_or_default();
-        if shapes.is_empty() {
-            return self.field_probe(state, probe_owner, object_bits, read, exit);
-        }
-        let owner = if receiver { None } else { register };
-        let probed = self.probes_field_misses(&shapes);
-        self.probed_read(state, owner, probe_owner, probed, object_bits, read, exit, |lowering, state, generic| {
-            let (object, shape, inline) = if receiver {
-                let entry = lowering.entry.as_ref().expect("entry facts");
-                (
-                    lowering.builder.use_var(entry.receiver.object),
-                    lowering.builder.use_var(entry.receiver.shape),
-                    lowering.builder.use_var(entry.receiver.inline),
-                )
-            } else {
-                // A single shape's read proves an object, as the facts the CFG carries say
-                // (`facts::analyze`); a shape switch's may read a function's own fields.
-                let header = lowering.object_header(state, register, shapes.len() > 1 || shapes[0].function_shape, generic);
-                (header.address, header.shape, header.inline)
-            };
-            let read = lowering.shape_switch_read(state, Some(owner), object, shape, inline, &shapes, generic)?;
-            // A single own shape read proves the register's object has it, for the block, a
-            // receiver alias's too.
-            if let ([field], Some(register)) = (shapes.as_slice(), register) && !field.function_shape {
-                state.values[usize::from(register)] = RegisterFact::definition(
-                    Type::direct_object(field.shape), Representation::Tagged);
-            }
-            Some(read)
-        })
     }
 
     /// Whether a read of these shapes asks the VM's caches on a guard miss rather than leaves.
@@ -4411,332 +4395,21 @@ impl Lowering<'_, '_> {
         self.generic.iter().any(|pc| self.unit.instructions.get(*pc).is_some_and(|instruction| instruction.op().class().eq(Class::GetField)))
     }
 
-    /// The read through `site` of the object a previous read of a chain produced, whose
-    /// record nothing else names, so it is proved for this read alone.
-    fn object_field_read(&mut self, state: &mut State, object_bits: ir::Value, read: (Atom, u16), exit: ir::Block) -> Option<ir::Value> {
-        let site = read.1;
-        let shapes = self.fields.get(&site).cloned().unwrap_or_default();
-        if shapes.is_empty() {
-            return Some(self.field_probe(state, FieldOwner::Temporary, object_bits, read, exit));
-        }
-        let probed = self.probes_field_misses(&shapes);
-        Some(self.probed_read(state, None, FieldOwner::Temporary, probed, object_bits, read, exit, |lowering, state, generic| {
-            let records = lowering.object_table_base();
-            let functions = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
-            let header = ObjectHeader::prove_readable(&mut lowering.builder, object_bits, records, functions, generic);
-            let record = header.address;
-            lowering.shape_switch_read(state, None, record, header.shape, header.inline, &shapes, generic)
-        }))
+    /// Word `word` of the loop's entry record (`frame_fields::entry_record_word`).
+    fn loop_entry_word(&mut self, word: u32) -> ir::Value {
+        frame_fields::entry_record_word(&mut self.builder, self.payload, word)
     }
 
-    /// A read by the site's proved shapes (`fast`), whose misses leave through `exit`; where
-    /// `probed` (the site names prototype-held slots, which prove only the immediate prototype,
-    /// `Vm::ordinary_holder_entry_value`), a miss first asks the VM's caches, whose other tiers
-    /// read deeper holders (`field_probe`). Past that join only what both paths prove holds:
-    /// the fast path's proofs of `owner`'s object do not.
-    #[allow(clippy::too_many_arguments)]
-    fn probed_read(&mut self, state: &mut State, owner: Option<Register>, probe_owner: FieldOwner, probed: bool,
-        object_bits: ir::Value, read: (Atom, u16), exit: ir::Block,
-        fast: impl FnOnce(&mut Self, &mut State, ir::Block) -> Option<ir::Value>) -> ir::Value {
-        if !probed {
-            return match fast(self, state, exit) {
-                Some(read) => read,
-                None => self.field_probe(state, probe_owner, object_bits, read, exit),
-            };
-        }
-        let (generic, join) = (self.builder.create_block(), self.builder.create_block());
-        self.builder.set_cold_block(generic);
-        let value = self.builder.append_block_param(join, types::I64);
-        let before = state.clone();
-        match fast(self, state, generic) {
-            Some(read) => { self.ins().jump(join, &[ir::BlockArg::Value(read)]); }
-            None => { self.ins().jump(generic, &[]); }
-        }
-        self.builder.switch_to_block(generic);
-        // The generic path starts from any of the fast path's guards: only the proofs from
-        // before the read dominate it.
-        let probed = self.field_probe(&mut before.clone(), probe_owner, object_bits, read, exit);
-        self.ins().jump(join, &[ir::BlockArg::Value(probed)]);
-        self.builder.switch_to_block(join);
-        state.proofs.headers.clone_from(&before.proofs.headers);
-        state.proofs.readable.clone_from(&before.proofs.readable);
-        state.proofs.layouts.retain(|key, _| before.proofs.layouts.contains_key(key));
-        if let Some(register) = owner {
-            state.values[usize::from(register)] = before.values[usize::from(register)];
-        }
-        value
-    }
-
-    /// Read the slot `shapes` names for the record's `shape`; `exit` for any other shape. A
-    /// single shape's layout proof is kept for `owner` (a register's object, or `this`'s for
-    /// `Some(None)`) until an effect retires it; an object no owner names keeps none.
-    #[allow(clippy::too_many_arguments)]
-    fn shape_switch_read(
-        &mut self,
-        state: &mut State,
-        owner: Option<Option<Register>>,
-        object: ir::Value,
-        shape: ir::Value,
-        inline: ir::Value,
-        shapes: &[NativeFieldLoad],
-        exit: ir::Block,
-    ) -> Option<ir::Value> {
-        let entry = self.entry.as_ref().expect("entry facts");
-        let properties = self.builder.use_var(entry.receiver.properties);
-        // One shape: its test is a guard, and the shape it proves is the owner's from then on
-        // (`prove_shape`), so a later read of the owner tests nothing.
-        if let [field] = shapes && let Some(holder) = field.holder {
-            self.prove_shape(state, owner, shape, field.shape, exit);
-            return self.holder_read(state, object, holder, *field, exit);
-        }
-        if let [field] = shapes {
-            return self.single_shape_read(state, owner, object, shape, inline, properties, *field, exit);
-        }
-        // Layout families (`object_slots::field_load_groups`): own fields at one slot of every
-        // shape of a family take one shape-set test and one read; a prototype-held slot its own.
-        let groups = super::object_slots::field_load_groups(shapes)?;
-        if let [(family, members)] = groups.as_slice() && family.holder.is_none() {
-            let at = crate::staged::ic::Reached { record: object, shape: Some(shape), inline: Some(inline) };
-            return self.own_slot_read_guarded(*family, Some(members), at, properties, exit);
-        }
-        self.family_switch_read(state, (object, shape, inline, properties), &groups, exit)
-    }
-
-    /// `field`'s own slot of the object `at` reached, through the arena at `properties`, as the
-    /// staged op list `[GuardShapes(members), LoadSlot]` (`staged::ic`); with no members, the
-    /// caller has matched the shape. `None` for a plan no layout proof admits.
-    fn own_slot_read_guarded(&mut self, field: NativeFieldLoad, members: Option<&[u32]>,
-        at: crate::staged::ic::Reached<ir::Value, ir::Value>, properties: ir::Value, exit: ir::Block) -> Option<ir::Value> {
-        use crate::staged::ic::IcOp;
-        if !field.valid() { return None; }
-        let load = IcOp::LoadSlot { slot: field.slot, form: crate::staged::Form::of(field.storage, field.storage_len),
-            storage_len: field.storage_len };
-        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
-        let ops: &[IcOp<'_>] = match members { Some(members) => &[IcOp::GuardShapes(members), load], None => &[load] };
-        crate::staged::ic::run(&mut stage, ops, at, None, exit)
-    }
-
-    /// Layout families each tested by their shape set and read at their slot, joined; a shape
-    /// in none exits.
-    fn family_switch_read(&mut self, state: &mut State,
-        (object, shape, inline, properties): (ir::Value, ir::Value, ir::Value, ir::Value),
-        groups: &[(NativeFieldLoad, Vec<u32>)], exit: ir::Block) -> Option<ir::Value> {
-        let join = self.builder.create_block();
-        let value = self.builder.append_block_param(join, types::I64);
-        for (field, members) in groups {
-            let matched = self.builder.create_block();
-            let next = self.builder.create_block();
-            let same = super::object_slots::shape_in_set(&mut self.builder, shape, members);
-            self.ins().brif(same, matched, &[], next, &[]);
-            self.builder.switch_to_block(matched);
-            let read = match field.holder {
-                None => self.own_slot_read_guarded(*field, None,
-                    crate::staged::ic::Reached { record: object, shape: Some(shape), inline: Some(inline) }, properties, exit)?,
-                Some(holder) => self.holder_read(state, object, holder, *field, exit)?,
-            };
-            self.ins().jump(join, &[ir::BlockArg::Value(read)]);
-            self.builder.switch_to_block(next);
-        }
-        self.ins().jump(exit, &[]);
-        self.builder.switch_to_block(join);
-        Some(value)
-    }
-
-    /// One proven shape's slot read: the owner's kept layout proof where it still holds the
-    /// slot, otherwise the proof this shape test establishes, read by the staged operation.
-    #[allow(clippy::too_many_arguments)]
-    fn single_shape_read(&mut self, state: &mut State, owner: Option<Option<Register>>,
-        object: ir::Value, shape: ir::Value, inline: ir::Value, properties: ir::Value,
-        field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
-        let known = owner.and_then(|owner| state.proofs.layouts.get(&(owner, field.shape)).copied());
-        let projection = match known {
-            Some(projection) if usize::from(field.slot) < projection.storage_len() => projection,
-            _ => {
-                self.prove_shape(state, owner, shape, field.shape, exit);
-                let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                    field, PackedAccess::Reload, exit)?;
-                if let Some(owner) = owner {
-                    state.proofs.layouts.insert((owner, field.shape), projection);
-                }
-                projection
-            }
-        };
-        let step = self.step(state, frame::Edges::Value, crate::staged::Operation::ReadField {
-            base: owner.flatten().unwrap_or(0), slot: field.slot, ty: field.ty, proof: EmitProof::Field(projection) });
-        match step {
-            crate::staged::Step::Value(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    /// Guards that `shape`, the shape word of `owner`'s object, is `expected`; the owner's
-    /// proof then holds the shape as that constant, which folds every later test of it.
-    fn prove_shape(&mut self, state: &mut State, owner: Option<Option<Register>>, shape: ir::Value, expected: u32, exit: ir::Block) {
-        let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(expected));
-        emit_js_guard(&mut self.builder, same, exit);
-        if let Some(owner) = owner {
-            let index = state.header_index(owner);
-            if state.proofs.headers[index].is_some() {
-                let constant = self.ins().iconst(types::I32, i64::from(expected));
-                if let Some(proof) = &mut state.proofs.headers[index] {
-                    proof.shape = constant;
-                }
-            }
-        }
-    }
-
-    /// The slot `field` names in the prototype of the object record `record`: an object
-    /// record of the exact shape `holder`, else `exit` (`Vm::record_field_entry_hit`).
-    fn holder_read(&mut self, state: &mut State, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
-        // A prototype that is the one compiled against, unchanged since, holds the value it
-        // held then: the read is that constant (`NativeFieldLoad::inherited`).
-        if let Some(constant) = field.inherited.filter(|_| self.division().folds(BindingTime::Stable)) {
-            self.hold_holder(state, exit, holder);
-            // The receiver's link selects its prototype's value; one prototype's is a constant.
-            let pairs: smallvec::SmallVec<[(u32, u64); 4]> = constant.values().iter().map(|(link, value)| (*link, value.to_bits())).collect();
-            let mut stage = super::object_slots::emit(&mut self.builder);
-            let read = crate::staged::ic::run(&mut stage, &[crate::staged::ic::IcOp::PrototypeConstants(&pairs)],
-                crate::staged::ic::Reached { record, shape: None, inline: None }, None, exit)?;
-            return Some(read);
-        }
-        let records = match self.object_table() {
-            ObjectTable::Checked(table) => table.base(),
-            ObjectTable::Unchecked(base) => base,
-        };
-        // The prototype's run lies inside the arena, as every live flat object's does
-        // (`object_slots::arena_range`).
-        let properties = self.builder.use_var(self.entry.as_ref().expect("entry facts").receiver.properties);
-        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
-        use crate::staged::ic::IcOp;
-        crate::staged::ic::run(&mut stage, &[IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(field.slot)],
-            crate::staged::ic::Reached { record, shape: None, inline: None }, Some(records), exit)
-    }
-
-    /// A dominating proof of `owner`'s object (a register's, or `this`'s), for its lifetime
-    /// until an effect that may change it retires the proof (`State::headers`), derived from
-    /// the entry's record certificate where it has one, otherwise proved here: for a `read`
-    /// of a value not known to be a direct object, an object's or a function's record
-    /// (`ObjectHeader::prove_readable`); for a store, an object's only. A store of a read's
-    /// proof tests the family once, after which the proof is the object's.
+    /// A dominating proof of `owner`'s object (`headers::object_header`).
     fn object_header(&mut self, state: &mut State, owner: Option<Register>, read: bool, exit: ir::Block) -> ObjectHeader {
-        let index = state.header_index(owner);
-        let fact = owner.map(|register| state.values[usize::from(register)].value);
-        if let Some(header) = state.proofs.headers[index] {
-            if !read && state.proofs.readable.contains(index) {
-                let bits = self.owner_bits(state, owner);
-                let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), bits);
-                emit_js_guard(&mut self.builder, object, exit);
-                state.proofs.readable.remove(index);
-                self.refine_owner(state, index, fact);
-            }
-            return header;
-        }
-        let mut readable = false;
-        let header = if let Some(record) = self.entry.as_ref().expect("entry facts").records[index] {
-            record.header(&mut self.builder, fact)
-        } else {
-            let bits = self.owner_bits(state, owner);
-            if read && !fact.is_some_and(|fact| fact.ty.is_direct_object_family()) {
-                readable = true;
-                let records = self.object_table_base();
-                let functions = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
-                ObjectHeader::prove_readable(&mut self.builder, bits, records, functions, exit)
-            } else {
-                let records = self.object_table();
-                ObjectHeader::prove(&mut self.builder, bits, records, fact, exit)
-            }
-        };
-        state.proofs.headers[index] = Some(header);
-        state.proofs.set_readable(index, readable);
-        if !readable { self.refine_owner(state, index, fact); }
-        header
+        let entry = self.entry.as_ref().expect("entry facts");
+        headers::object_header(&mut self.builder, &mut self.registers, state, (entry, self.payload), owner, read, exit)
     }
 
     /// `owner`'s value: a register's, or the fixed `this`.
     fn owner_bits(&mut self, state: &mut State, owner: Option<Register>) -> ir::Value {
-        match owner {
-            Some(register) => self.tagged(state, register),
-            None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
-        }
-    }
-
-    /// A register whose object an object proof names holds a direct object from then on.
-    fn refine_owner(&mut self, state: &mut State, index: usize, fact: Option<VerifiedFact>) {
-        // An unboxed register has no tagged view to keep: an object proof of it is a
-        // contradiction its reads leave at, so the register keeps its own fact.
-        if let Some(fact) = fact.filter(|_| state.values[index].tagged.current()) {
-            state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-                ..RegisterFact::definition(
-                    fact.ty.direct_object_part().unwrap_or(Type::DIRECT_OBJECT_FAMILY),
-                    Representation::Tagged) };
-        }
-    }
-
-    fn object_table(&mut self) -> ObjectTable {
-        match self.entry.as_ref().and_then(|entry| entry.object_table) {
-            Some(table) => ObjectTable::Checked(table),
-            None => ObjectTable::Unchecked(emit_js_payload_word(&mut self.builder, self.payload,
-                std::mem::offset_of!(JsStepDispatch, object_record_base))),
-        }
-    }
-
-    /// The object record reservation's base (`object_table`).
-    fn object_table_base(&mut self) -> ir::Value {
-        match self.object_table() {
-            ObjectTable::Checked(table) => table.base(),
-            ObjectTable::Unchecked(base) => base,
-        }
-    }
-
-    /// The VM's own field-cache read (`Vm::cached_field_hit`), prototype holders included,
-    /// through the site's bound slot first where the entry bound one; a miss leaves through
-    /// `exit`.
-    fn field_probe(&mut self, state: &mut State, owner: FieldOwner, object: ir::Value, read: (Atom, u16), exit: ir::Block) -> ir::Value {
-        let site = read.1;
-        let bound = self.entry.as_ref().and_then(|entry| entry.fields.iter()
-            .find_map(|(known, binding)| (*known == site).then_some(*binding)));
-        if let Some(binding) = bound {
-            let header = match owner {
-                FieldOwner::This => Some(self.object_header(state, None, true, exit)),
-                FieldOwner::Register(register) => Some(self.object_header(state, Some(register), true, exit)),
-                FieldOwner::Temporary => None,
-            };
-            let slow = self.builder.create_block();
-            self.builder.set_cold_block(slow);
-            let done = self.builder.create_block();
-            let packed = self.builder.create_block();
-            let packed_address = self.builder.append_block_param(packed, types::I64);
-            let result = self.builder.append_block_param(done, types::I64);
-            let (address, _) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-                JsFieldReceiver::Value(object), site, true, slow, Some(binding), header, Some(packed));
-            let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-            self.ins().jump(done, &[ir::BlockArg::Value(value)]);
-            self.builder.switch_to_block(packed);
-            let narrow = self.ins().load(types::I32, MemFlagsData::trusted(), packed_address, 0);
-            let table = match self.helpers {
-                #[cfg(feature = "aot")]
-                LaneHelpers::Bound(_, symbol) => NarrowTable::Linked(symbol),
-                _ => NarrowTable::Process,
-            };
-            emit_narrow_read(&mut self.builder, narrow, table, done);
-            self.builder.switch_to_block(slow);
-            let value = self.field_probe_unbound(state, object, read, exit);
-            self.ins().jump(done, &[ir::BlockArg::Value(value)]);
-            self.builder.switch_to_block(done);
-            return result;
-        }
-        self.field_probe_unbound(state, object, read, exit)
-    }
-
-    /// The VM's own read of `read`'s atom through its cache site (`compiled::lane_field_get`),
-    /// whose miss leaves through `exit`: the staged host read.
-    fn field_probe_unbound(&mut self, state: &mut State, object: ir::Value, read: (Atom, u16), exit: ir::Block) -> ir::Value {
-        let (atom, site) = read;
-        match self.step(state, frame::Edges::ValueGuarded { miss: exit },
-            crate::staged::Operation::FieldGetHost { object, atom, site }) {
-            crate::staged::Step::Value(value) => value,
-            _ => unreachable!("the lane's field read is a host call"),
-        }
+        let entry = self.entry.as_ref().expect("entry facts");
+        headers::owner_bits(&mut self.builder, &mut self.registers, state, entry, owner)
     }
 
     fn set_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
@@ -4764,8 +4437,8 @@ impl Lowering<'_, '_> {
         // an object retires, as another register may name it, and `this`'s facts are read
         // again.
         if self.generic.contains(&pc) && self.completion.status_and_pc() {
-            let object = self.owner_bits(state, register);
-            self.field_add(state, object, instruction.atom_index(), instruction.cache_site_index(), value, exit);
+            self.store_through_vm(state, (source, register), instruction, StorePlan::Add, exit)?;
+            self.forget_append_rooms(self.at);
             self.reshaped(state);
             self.reload_receiver();
             return Some(true);
@@ -4774,31 +4447,12 @@ impl Lowering<'_, '_> {
             ty.is_subtype(Type::INT32) && state.proofs.headers[state.header_index(register)]
                 .is_some_and(|header| header.record == slot.header.record));
         if let Some(slot) = projected {
-            #[cfg(test)] LOOP_SLOT_STORES.with(|count| count.set(count.get() + 1));
+            self.loop_slot_store(state, instruction, slot, (value, exit));
+        } else if self.stores_through_vm(instruction) {
             state.proofs.write_field(instruction.atom_index());
-            let packed = self.builder.create_block();
-            let arena = self.builder.create_block();
-            let done = self.builder.create_block();
-            self.ins().brif(slot.header.inline, packed, &[], arena, &[]);
-            self.builder.switch_to_block(packed);
-            #[cfg(test)] if slot.packed_range.is_some() { PACKED_RANGE_SITE.with(|site| {
-                if let Some((expected, count)) = site.get() && expected == instruction.cache_site_index() {
-                    site.set(Some((expected, count + 1)));
-                }
-            }); }
-            let narrow = emit_narrow_integer_write(&mut self.builder, value, exit, slot.packed_range);
-            // Ordinary JS own fields are not shared memory. Observation requires
-            // a guest/host effect or poll; the backend must prove their absence
-            // before deferring this numeric, barrier-free write to an exit.
-            let store = self.ins().store(MemFlagsData::trusted(), narrow, slot.address, 0);
-            self.builder.func.private_stores.push(store);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(arena);
-            // Verified integers neither widen an arena slot nor create a heap edge.
-            let store = self.ins().store(MemFlagsData::trusted(), value, slot.address, 0);
-            self.builder.func.private_stores.push(store);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(done);
+            self.store_through_vm(state, (source, register), instruction, StorePlan::Host, exit)?;
+            state.proofs.stable = false;
+            self.forget_append_rooms(self.at);
         } else {
             self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, ty, exit)?;
         }
@@ -4809,6 +4463,60 @@ impl Lowering<'_, '_> {
             }
         }
         Some(true)
+    }
+
+    /// The int32 `value` stored through the slot a loop's entry projected (`LoopStore`): a
+    /// packed object takes the narrow word, an arena object the full one, both without the
+    /// store barrier a verified integer never needs.
+    fn loop_slot_store(&mut self, state: &mut State, instruction: WideInstruction, slot: LoopStore,
+        (value, exit): (ir::Value, ir::Block)) {
+        #[cfg(test)] LOOP_SLOT_STORES.with(|count| count.set(count.get() + 1));
+        state.proofs.write_field(instruction.atom_index());
+        let packed = self.builder.create_block();
+        let arena = self.builder.create_block();
+        let done = self.builder.create_block();
+        self.ins().brif(slot.header.inline, packed, &[], arena, &[]);
+        self.builder.switch_to_block(packed);
+        #[cfg(test)] if slot.packed_range.is_some() { PACKED_RANGE_SITE.with(|site| {
+            if let Some((expected, count)) = site.get() && expected == instruction.cache_site_index() {
+                site.set(Some((expected, count + 1)));
+            }
+        }); }
+        let narrow = emit_narrow_integer_write(&mut self.builder, value, exit, slot.packed_range);
+        // Ordinary JS own fields are not shared memory. Observation requires
+        // a guest/host effect or poll; the backend must prove their absence
+        // before deferring this numeric, barrier-free write to an exit.
+        let store = self.ins().store(MemFlagsData::trusted(), narrow, slot.address, 0);
+        self.builder.func.private_stores.push(store);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(arena);
+        // Verified integers neither widen an arena slot nor create a heap edge.
+        let store = self.ins().store(MemFlagsData::trusted(), value, slot.address, 0);
+        self.builder.func.private_stores.push(store);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(done);
+    }
+
+    /// Whether the store at `instruction` folds no own shape of its site and binds no slot at
+    /// entry, so the VM's store is all it makes (`store_field`'s own-shape cases need a shape).
+    fn stores_through_vm(&self, instruction: WideInstruction) -> bool {
+        let site = instruction.cache_site_index();
+        let own = self.fields.get(&site).is_some_and(|loads| loads.iter().any(|load| load.holder.is_none()));
+        let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
+        !own && !bound
+    }
+
+    /// The store of the `source` register's value to `instruction`'s field of `register`'s
+    /// object (`this` for `None`) by the VM, as one `SetField` row under `plan`.
+    fn store_through_vm(&mut self, state: &mut State, (source, register): (Register, Option<Register>),
+        instruction: WideInstruction, plan: StorePlan, exit: ir::Block) -> Option<()> {
+        let operation = crate::staged::Operation::SetField { value: source, base: register,
+            atom: instruction.atom_index(), site: instruction.cache_site_index() };
+        let plans = LanePlans { store: Some(plan), ..LanePlans::NONE };
+        match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, HeldRead::default())) {
+            crate::staged::Step::Value(_) => Some(()),
+            _ => None,
+        }
     }
 
     /// The receiver's shape and storage kind again, and the entry's tests of its shape, after
@@ -4838,7 +4546,7 @@ impl Lowering<'_, '_> {
 
     /// The store of `value` through `site` to the field `atom` of the object `register` names
     /// (`this` for `None`): the site's proved own shapes and slots written directly, one by a
-    /// guard and several by a shape switch, as a read's (`shape_switch_read`), with the
+    /// guard and several by a shape switch, as a read's (`field_plans`), with the
     /// object's record proved once (the receiver's at entry, in a body that makes no call),
     /// else the VM's own-field store hit; anything else leaves through `exit`. A value of
     /// type `ty` the slot's type may not hold takes the hit too, which joins it.
@@ -5845,6 +5553,38 @@ mod tests {
         // The implicit receiver has its entry projection; o needs one shape
         // proof, shared by both paths to its second field read.
         assert_eq!(shapes, 2, "the CFG must carry the proven shape:\n{native}");
+    }
+
+    /// The shape tests (an int32 shape word compared for equality) of the lowering of `source`'s
+    /// `subject`, whose sites read `names` as own slots of one shape.
+    fn shape_tests(source: &str, names: &[&str]) -> usize {
+        let program = crate::Engine::specialize(source, "shape-tests.js").unwrap();
+        let function = program.function(1);
+        let fields: BTreeMap<u16, Vec<NativeFieldLoad>> = function.instructions().filter_map(|instruction| {
+            if instruction.op().class().eq(Class::GetField)
+                && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
+                && let Some(slot) = names.iter().position(|name| *name == &program.atoms[atom as usize]) {
+                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: names.len(),
+                    storage: None, ty: Type::ANY, inherited: None, function_shape: false }]))
+            } else { None }
+        }).collect();
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
+        let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+        let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::StatusAndPc, ElementViews::Dense).unwrap();
+        let native = region.function;
+        native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+            .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::IntCompare { cond: IntCC::Equal, args, .. }
+                if native.dfg.value_type(args[0]) == types::I32)).count()
+    }
+
+    #[test]
+    fn a_shape_the_owner_already_proved_is_not_tested_again() {
+        let names = ["left", "right"];
+        let once = shape_tests("function subject(o) { return o.left; }", &names);
+        let twice = shape_tests("function subject(o) { return o.left + o.right; }", &names);
+        assert!(once > 0, "the first read tests the shape");
+        assert_eq!(twice, once, "the second read of the same object tests nothing");
     }
 
     #[test]

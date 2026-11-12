@@ -1,8 +1,8 @@
-//! The named store as a staged row: the plan a site proved decides whether the value lands in
-//! an own slot by the shared `store::own_store`, or goes to the VM's adding or general store.
+//! The named store as a staged row: the plan a site proved decides whether the value goes to
+//! the VM's adding store or to its general one.
 
-use super::property::{base_word, receiver, PlanSource, PropertyFrame, StorePlan};
-use super::{store, Stage};
+use super::property::{base_word, PlanSource, PropertyFrame, StorePlan};
+use super::Stage;
 use crate::bytecode::{FieldBase, Register};
 
 /// `base.atom = value` through cache site `site`: the stored word, or a leave at `miss`.
@@ -15,10 +15,6 @@ pub(super) fn set_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     let object = base_word(stage, frame, base, miss)?;
     let value = frame.tagged(stage, value);
     match plan {
-        StorePlan::Own { shape, slot } => {
-            let (at, id) = receiver(stage, frame, object, miss)?;
-            store::own_store(stage, at.record, id, shape, slot, value, miss)?;
-        }
         StorePlan::Add => frame.field_add(stage, object, atom, site, value, miss)?,
         StorePlan::Host => frame.field_store_host(stage, object, atom, site, value, miss)?,
     }

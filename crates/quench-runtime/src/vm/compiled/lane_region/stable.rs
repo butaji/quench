@@ -41,6 +41,37 @@ impl StableUses {
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
             globals: std::mem::take(&mut self.globals).into_iter().collect() }
     }
+
+    /// Holds the values of prototypes of exact shape `holder` from the instruction at `at`: an
+    /// invalidation point unless the block or loop holds every Stable fact already
+    /// (`Lowering::hold_stable`).
+    pub(super) fn hold_holder(&mut self, (builder, helpers): (&mut FunctionBuilder<'_>, LaneHelpers),
+        online: OnlineFacts<'_>, at: usize, state: &mut State, exit: ir::Block, holder: u32) {
+        let held = state.proofs.stable || self.stable_loops.iter().any(|(header, end)| (*header..=*end).contains(&at));
+        if !held { read_invalidation_word(builder, helpers, online, state, exit); }
+        self.holders.insert(holder);
+    }
+}
+
+/// The code's invalidation word, as it is now (`code_dependencies::Invalidation`): its address
+/// for a live lowering, a symbol the loader resolves for a linking one.
+fn invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelpers, online: OnlineFacts<'_>) -> ir::Value {
+    let address = if helpers.links() {
+        crate::vm::jit_backend::symbol_address(builder, types::I64, RelocKind::Invalidation as u32, 0)
+    } else {
+        builder.ins().iconst(types::I64, online.invalidation as i64)
+    };
+    builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0)
+}
+
+/// The invalidation point: the word read once, leaving through `exit` where a change retired
+/// the code; the block then holds every Stable fact until a helper that may change one.
+fn read_invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelpers, online: OnlineFacts<'_>,
+    state: &mut State, exit: ir::Block) {
+    let invalidated = invalidation_word(builder, helpers, online);
+    let held = builder.ins().icmp_imm_u(IntCC::Equal, invalidated, 0);
+    emit_js_guard(builder, held, exit);
+    state.proofs.stable = true;
 }
 
 impl Lowering<'_, '_> {
@@ -52,12 +83,6 @@ impl Lowering<'_, '_> {
             Some(_) if self.vm.frozen => Division::Frozen,
             Some(_) => Division::Online,
         }
-    }
-
-    /// The code's invalidation word, as it is now (`code_dependencies::Invalidation`).
-    fn invalidation_word(&mut self, online: OnlineFacts<'_>) -> ir::Value {
-        let address = self.reloc(RelocKind::Invalidation, 0, online.invalidation as u64);
-        self.ins().load(types::I64, MemFlagsData::trusted(), address, 0)
     }
 
     /// Holds every Stable fact the code folded from here to the block's next helper that may
@@ -74,17 +99,7 @@ impl Lowering<'_, '_> {
     /// The invalidation point of `hold_stable`, made here.
     pub(super) fn read_invalidation(&mut self, state: &mut State, exit: ir::Block) {
         let online = self.vm.online.expect("only a division with Stable facts reads the word");
-        let invalidated = self.invalidation_word(online);
-        let held = self.ins().icmp_imm_u(IntCC::Equal, invalidated, 0);
-        emit_js_guard(&mut self.builder, held, exit);
-        state.proofs.stable = true;
-    }
-
-
-    /// Holds the values of prototypes of exact shape `holder` (`hold_stable`).
-    pub(super) fn hold_holder(&mut self, state: &mut State, exit: ir::Block, holder: u32) {
-        self.hold_stable(state, exit);
-        self.stable.holders.insert(holder);
+        read_invalidation_word(&mut self.builder, self.helpers, online, state, exit);
     }
 
     /// Holds the value of global cell `fact` (`hold_stable`), read from the global object
@@ -121,7 +136,7 @@ impl Lowering<'_, '_> {
     pub(super) fn store_held_unnamed(&mut self, atom: Atom, specialized: ir::Value) -> Option<ir::Value> {
         let online = self.vm.online.filter(|online| !online.names(atom))?;
         self.stable.atoms.insert(atom);
-        let invalidated = self.invalidation_word(online);
+        let invalidated = invalidation_word(&mut self.builder, self.helpers, online);
         let held = self.builder.ins().icmp_imm_u(IntCC::Equal, invalidated, 0);
         Some(self.builder.ins().band(specialized, held))
     }

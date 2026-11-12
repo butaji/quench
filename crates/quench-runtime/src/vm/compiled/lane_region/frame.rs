@@ -39,6 +39,8 @@ pub(super) struct EmitFrame<'a> {
     pub(super) helpers: LaneHelpers,
     /// The poll instructions a fault-polling body records for later patching.
     pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
+    /// What a named field access is proved under (`PropertyFrame`); none for any other step.
+    pub(super) fields: Option<super::frame_fields::FieldFacts<'a>>,
 }
 
 impl EmitFrame<'_> {
@@ -122,16 +124,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
             binding: BindingTime::Static, proof: Proof::Static, projection: Projection::Exact })
             .expect("constant's canonical semantic type");
         (value, fact)
-    }
-
-    /// A proven-slot read: the `CheckedObject` projection carries the layout and the slot
-    /// read, so the frame adds no second decode.
-    #[inline(always)]
-    fn field_read(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, ty: Type,
-        proof: EmitProof) -> Option<(ir::Value, RegisterFact)> {
-        let EmitProof::Field(proof) = proof else { return None };
-        Some((proof.read(stage.builder, slot),
-            RegisterFact::definition(ty, Representation::Tagged)))
     }
 
     /// A proven-slot write: the projection's arena address, with the miss edge its layout
@@ -388,28 +380,6 @@ pub(super) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
     if receiver { state.proofs.receivers.insert(destination); }
     state.proofs.fields.extend(fields);
     value
-}
-
-impl crate::staged::PropertyFrame<Emit<'_, '_>> for EmitFrame<'_> {
-    type Plans = crate::staged::NoPlans;
-
-    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
-
-    fn field_get_host(&mut self, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32, site: u16,
-        miss: ir::Block) -> Option<ir::Value> {
-        Some(calls::field_get_host(self, stage, object, atom, site, miss))
-    }
-
-    fn field_add(&mut self, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32, site: u16, value: ir::Value,
-        miss: ir::Block) -> Option<()> {
-        calls::field_add(self, stage, object, atom, site, value, miss);
-        Some(())
-    }
-
-    fn field_store_host(&mut self, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32, site: u16,
-        value: ir::Value, miss: ir::Block) -> Option<()> {
-        calls::field_store_miss(self, stage, object, atom, site, value, EmitProof::FieldStoreMiss { miss })
-    }
 }
 
 impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {

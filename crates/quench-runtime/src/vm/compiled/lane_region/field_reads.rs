@@ -22,14 +22,14 @@ impl Lowering<'_, '_> {
         receiver
     }
 
-    /// Folds the read of `first` through `base` (its register and whether it is a proved
-    /// receiver) into `destination` when the closed program gives the field one value: the
-    /// field is read once here as data and required to hold it, so a changed prototype
-    /// fails the guard and leaves to the shared body. False, emitting nothing, otherwise.
-    pub(super) fn fold_frozen_field(&mut self, state: &mut State, (register, receiver): (Option<Register>, bool),
+    /// Folds the read of `first` through `read` (its base and lookup) into `destination` when
+    /// the closed program gives the field one value: the field is read once here as data and
+    /// required to hold it, so a changed prototype fails the guard and leaves to the shared
+    /// body. False, emitting nothing, otherwise.
+    pub(super) fn fold_frozen_field(&mut self, state: &mut State, read: (crate::bytecode::FieldBase, FieldLookup),
         first: (Atom, u16), destination: Register, exit: ir::Block) -> bool {
         let Some(expected) = self.vm.frozen_fields.and_then(|fields| fields.get(&first.0)).copied() else { return false };
-        let actual = self.base_field_read(state, register, receiver, first, exit);
+        let Some(actual) = self.field_value(state, read, &[first], HeldRead::default(), exit) else { return false };
         let same = self.ins().icmp_imm_u(IntCC::Equal, actual, expected.to_bits() as i64);
         emit_js_guard(&mut self.builder, same, exit);
         let value = self.ins().iconst(types::I64, expected.to_bits() as i64);

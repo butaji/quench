@@ -455,8 +455,6 @@ pub(super) use emit::Emit;
 pub(super) struct CheckedObject(Layout<ir::Value, ir::Value>);
 
 impl CheckedObject {
-    pub(super) fn storage_len(self) -> usize { self.0.storage_len }
-
     /// A flat store can reuse the range proof; packed writes use the VM's
     /// narrow-value encoder and layout-preserving barrier helper instead.
     pub(super) fn arena_address(self, builder: &mut FunctionBuilder<'_>, slot: u16, miss: ir::Block) -> Option<ir::Value> {
@@ -492,8 +490,9 @@ impl CheckedObject {
             plan.storage_len, access, miss).map(Self)
     }
 
-    /// Read fresh contents using only the established layout and slot bound.
-    pub(super) fn read(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> ir::Value {
-        crate::staged::read_slot(&mut Emit { builder, property_values: None }, self.0, slot)
-    }
+    /// The proof of a layout a staged read established.
+    pub(super) fn of(layout: Layout<ir::Value, ir::Value>) -> Self { Self(layout) }
+
+    /// The layout this proof carries, for a staged read of fresh contents through it.
+    pub(super) fn layout(self) -> Layout<ir::Value, ir::Value> { self.0 }
 }

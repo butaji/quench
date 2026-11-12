@@ -94,7 +94,6 @@ impl<W, P> Operation<W, P> {
     /// Effects of the field, element and allocation operations.
     const fn memory_effects(&self) -> Option<Effects> {
         Some(match self {
-            Self::ReadField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord), ..Effects::NONE },
             Self::WriteField { .. } => Effects::writes(Region::ObjectSlots),
             Self::IndexRead { .. } | Self::TypedIndexRead { .. } => Effects::reads(Region::Elements),
             Self::IndexWrite { .. } | Self::TypedIndexWrite { .. } => Effects::writes(Region::Elements),
