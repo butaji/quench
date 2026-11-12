@@ -750,7 +750,20 @@ impl Residual {
 impl std::ops::Deref for Residual {
     type Target = Rc<ResidualProgram>;
 
+    #[inline(always)]
     fn deref(&self) -> &Rc<ResidualProgram> {
+        match self.decoded.get() {
+            Some(program) => program,
+            None => self.decode(),
+        }
+    }
+}
+
+impl Residual {
+    /// The first use of a restored snapshot's program: decodes it.
+    #[cold]
+    #[inline(never)]
+    fn decode(&self) -> &Rc<ResidualProgram> {
         self.decoded.get_or_init(|| {
             let EncodedResidual { bytes, text, atoms } =
                 *self.encoded.take().expect("a residual is decoded or holds its encoding");
@@ -864,10 +877,12 @@ impl ProgramId {
         u32::try_from(index).ok().map(Self)
     }
 
+    #[inline(always)]
     fn index(self) -> usize {
         self.0 as usize
     }
 
+    #[inline(always)]
     pub(crate) const fn raw(self) -> u32 {
         self.0
     }
@@ -1020,6 +1035,7 @@ impl ProgramStore {
         self.programs.len()
     }
 
+    #[inline(always)]
     fn entry(&self, id: ProgramId) -> Option<&ProgramEntry> {
         self.programs.get(id.index())?.as_deref()
     }
@@ -3757,7 +3773,17 @@ impl LaneViews {
 
     /// The table, one cell per function of `residual`. Its address is fixed once made, as
     /// the lane context's pointer to it requires.
+    #[inline(always)]
     fn of(&self, residual: &ResidualProgram) -> &[LaneViewCell] {
+        match self.table.get() {
+            Some(table) => table,
+            None => self.make_table(residual),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn make_table(&self, residual: &ResidualProgram) -> &[LaneViewCell] {
         self.table.get_or_init(|| residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect())
     }
 

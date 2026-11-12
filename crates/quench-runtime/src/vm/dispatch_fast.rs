@@ -11446,18 +11446,42 @@ impl<H: Host> Vm<H> {
     /// `script_call_entry` of a callee of another program than the running one, whose
     /// targets `LaneStack::cross_targets` holds (`lane_script_call_cross`).
     #[inline(always)]
-    fn cross_call_entry(&self, callee: Value) -> Option<*const ScriptCallTarget> {
+    fn cross_call_index(&self, callee: Value) -> Option<usize> {
         let set = self.lane_stack.cross_targets.set(callee)?;
-        let (generation, program) = (self.lane_stack.generation, self.active_program);
-        let holds = |cached: &ScriptCallTarget| {
-            cached.callee == callee && cached.generation == generation && cached.program != program
+        [set, set | 1].into_iter().find(|&index| self.cross_call_holds(index, callee))
+    }
+
+    /// Whether `LaneStack::cross_targets` entry `index` holds `callee`'s target for this
+    /// generation, for a caller in another program than the callee's.
+    #[inline(always)]
+    fn cross_call_holds(&self, index: usize, callee: Value) -> bool {
+        self.lane_stack.cross_targets.entries.get(index).is_some_and(|cached| {
+            cached.callee == callee && cached.generation == self.lane_stack.generation && cached.program != self.active_program
+        })
+    }
+
+    /// `cross_call_entry` for the call record whose hint is `link` (`LaneInstruction::call_link`),
+    /// as `linked_script_call_entry` is for the running program's targets: the entry the hint
+    /// names when it holds `callee`'s target, else the set's, which the hint names from then on.
+    #[inline(always)]
+    fn linked_cross_call_entry(&self, callee: Value, link: &std::cell::Cell<u16>) -> Option<*const ScriptCallTarget> {
+        let linked = usize::from(link.get());
+        let index = if self.cross_call_holds(linked, callee) {
+            linked
+        } else {
+            let index = self.cross_call_index(callee)?;
+            // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
+            link.set(index as u16);
+            index
         };
-        let targets = &self.lane_stack.cross_targets;
-        [set, set | 1]
-            .into_iter()
-            .map(|index| &targets[index])
-            .find(|cached| holds(cached))
-            .map(std::ptr::from_ref)
+        // SAFETY: `cross_call_holds` found the entry within the cache.
+        Some(unsafe { self.lane_stack.cross_targets.entries.get_unchecked(index) } as *const ScriptCallTarget)
+    }
+
+    /// `cross_call_index`'s entry, in place.
+    #[inline(always)]
+    fn cross_call_entry(&self, callee: Value) -> Option<*const ScriptCallTarget> {
+        self.cross_call_index(callee).map(|index| &self.lane_stack.cross_targets[index] as *const ScriptCallTarget)
     }
 
     /// Whether `callee` activates as `function` in place, in the active program, with an
@@ -12501,7 +12525,7 @@ script_handler! {
         if lane_constructing(vm, callee) {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
         }
-        let Some(target) = vm.cross_call_entry(callee) else {
+        let Some(target) = vm.linked_cross_call_entry(callee, &i.call_link) else {
             requicken::<H>(ip, script_call_handler::<H>(i.imm()));
             sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script(cx))
         };
